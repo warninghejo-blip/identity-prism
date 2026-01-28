@@ -34,7 +34,17 @@ const decodeBase64ToPublicKey = (value?: string) => {
   try {
     return new PublicKey(Buffer.from(value, 'base64')).toBase58();
   } catch {
-    return undefined;
+    try {
+      const binary = globalThis.atob?.(value);
+      if (!binary) return undefined;
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new PublicKey(bytes).toBase58();
+    } catch {
+      return undefined;
+    }
   }
 };
 

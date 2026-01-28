@@ -78,7 +78,7 @@ const appIdentity = {
   icon: appIconUrl ?? 'https://identityprism.xyz/phav.png',
 };
 const isMobileBrowser = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? '');
-const useMobileWallet = isCapacitor;
+const useMobileWallet = isCapacitor || isMobileBrowser;
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   addressSelector: createDefaultAddressSelector(),
@@ -108,7 +108,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       {debugEnabled && <DebugConsole />}
       <WalletProvider
         wallets={wallets}
-        autoConnect={false}
+        autoConnect={useMobileWallet}
         localStorageKey={useMobileWallet ? 'walletNameMobile' : 'walletName'}
       >
         <WalletModalProvider>

@@ -118,11 +118,6 @@ const Index = () => {
     console.log("[MobileConnect] Direct connection initiated:", preferredMobileWallet.adapter.name);
     
     try {
-      const cacheResult = await purgeInvalidMwaCache();
-      if (cacheResult.cleared) {
-        console.log("[MobileConnect] Cleared invalid MWA cache:", cacheResult.reason);
-      }
-
       // 1. Force disconnect if needed (cleanup)
       if (isConnected) {
         console.log("[MobileConnect] Already connected, forcing disconnect first...");
@@ -131,19 +126,10 @@ const Index = () => {
 
       // 2. Select the wallet in the provider (background sync)
       select(preferredMobileWallet.adapter.name);
-      await new Promise((resolve) => setTimeout(resolve, 150));
 
-      // 3. Connect through the wallet provider to keep state in sync
-      console.log("[MobileConnect] Calling wallet.connect()...");
-      await connect();
-      if (!wallet.publicKey && !preferredMobileWallet.adapter.connected) {
-        console.log("[MobileConnect] Falling back to adapter.connect()...");
-        try {
-          await preferredMobileWallet.adapter.connect();
-        } catch (error) {
-          console.warn("[MobileConnect] adapter.connect() fallback failed:", error);
-        }
-      }
+      // 3. Connect directly through adapter for mobile reliability
+      console.log("[MobileConnect] Calling adapter.connect()...");
+      await preferredMobileWallet.adapter.connect();
       
       console.log("[MobileConnect] Adapter state after connect():", {
         connected: preferredMobileWallet.adapter.connected,
@@ -153,13 +139,11 @@ const Index = () => {
 
       // 4. Poll for public key if it's not immediately available
       let attempts = 0;
-      const maxAttempts = 30;
+      const maxAttempts = 20;
       let resolvedAddress: string | undefined;
       while (!resolvedAddress && attempts < maxAttempts) {
         console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
-        const adapterPublicKey = preferredMobileWallet.adapter.publicKey?.toBase58();
-        const walletPublicKey = wallet.publicKey?.toBase58();
-        resolvedAddress = walletPublicKey || adapterPublicKey;
+        resolvedAddress = preferredMobileWallet.adapter.publicKey?.toBase58();
 
         if (!resolvedAddress && preferredMobileWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
           const mwaAdapter = preferredMobileWallet.adapter as any;
@@ -192,12 +176,6 @@ const Index = () => {
         toast.success("Wallet Connected");
       } else {
          console.error("[MobileConnect] Failure: No public key and no cache.");
-         try {
-           await mwaAuthorizationCache.clear();
-           window.localStorage?.removeItem(MWA_AUTH_CACHE_KEY);
-         } catch {
-           // ignore cache cleanup failures
-         }
          if (isConnected) {
            await disconnect();
          }
@@ -212,7 +190,7 @@ const Index = () => {
         description: err instanceof Error ? err.message : String(err)
       });
     }
-  }, [preferredMobileWallet, select, connect, isConnected, disconnect, wallet.publicKey]);
+  }, [preferredMobileWallet, select, isConnected, disconnect]);
 
   // Reset active address if wallet disconnects (keep this for cleanup)
   useEffect(() => {
