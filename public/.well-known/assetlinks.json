@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.identityprism.app",
+      "sha256_cert_fingerprints": [
+        "9E:25:C0:C8:C6:D1:A7:59:CE:1B:49:D2:B7:6B:09:54:CC:51:BD:54:F4:FC:E1:97:A6:37:6F:62:ED:DC:D7:1B"
+      ]
+    }
+  }
+]

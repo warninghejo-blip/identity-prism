@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Identity Prism</string>
+    <string name="title_activity_main">Identity Prism</string>
+    <string name="package_name">com.identityprism.app</string>
+    <string name="custom_url_scheme">com.identityprism.app</string>
+</resources>

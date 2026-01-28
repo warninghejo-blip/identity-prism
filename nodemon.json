@@ -1,0 +1,9 @@
+{
+  "watch": ["src"],
+  "ext": ".ts,.tsx,.js,.jsx,.json",
+  "ignore": ["src/**/*.test.ts"],
+  "exec": "vite",
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

@@ -1,0 +1,35 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Secrets
+.env
+twitter-bot/.env
+twitter-bot/oauth2_tokens.json
+twitter-bot/.code_verifier.tmp
+
+# Local/temp
+.tmp.driveupload/
+.tmp.ssh_identity_prism
+temp/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,15 @@
+{
+  "name": "identity-prism-twitter-bot",
+  "version": "1.0.0",
+  "description": "Twitter bot for Identity Prism on Solana Seeker",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3",
+    "twitter-api-v2": "^1.15.0"
+  }
+}
