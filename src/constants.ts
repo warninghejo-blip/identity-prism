@@ -2,6 +2,10 @@ const HELIUS_PROXY_URL = (import.meta.env.VITE_HELIUS_PROXY_URL ?? '').trim();
 const METADATA_BASE_URL = (import.meta.env.VITE_METADATA_BASE_URL ?? '').trim();
 const METADATA_IMAGE_URL = (import.meta.env.VITE_METADATA_IMAGE_URL ?? '').trim();
 const APP_BASE_URL = (import.meta.env.VITE_APP_BASE_URL ?? '').trim();
+const COLLECTION_MINT = (import.meta.env.VITE_COLLECTION_MINT ?? '').trim();
+const COLLECTION_VERIFY_URL = (import.meta.env.VITE_COLLECTION_VERIFY_URL ?? '').trim();
+const UPDATE_AUTHORITY = (import.meta.env.VITE_UPDATE_AUTHORITY ?? '').trim();
+const CNFT_MINT_URL = (import.meta.env.VITE_CNFT_MINT_URL ?? '').trim();
 const HELIUS_KEYS = (import.meta.env.VITE_HELIUS_API_KEYS ?? import.meta.env.VITE_HELIUS_API_KEY ?? '')
   .split(',')
   .map((key) => key.trim())
@@ -17,6 +21,11 @@ export const getMetadataImageUrl = () => {
   return baseUrl ? `${baseUrl}/assets/identity-prism.png` : null;
 };
 export const getAppBaseUrl = () => (APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : null);
+export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : null);
+export const getCollectionVerifyUrl = () =>
+  COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null;
+export const getUpdateAuthorityAddress = () => (UPDATE_AUTHORITY ? UPDATE_AUTHORITY : null);
+export const getCnftMintUrl = () => (CNFT_MINT_URL ? normalizeProxyUrl(CNFT_MINT_URL) : null);
 
 const getHeliusKeyIndex = (seed?: string) => {
   if (!HELIUS_KEYS.length) return -1;

@@ -39,6 +39,13 @@ const purgeInvalidMwaCache = async () => {
       window.localStorage?.removeItem(MWA_AUTH_CACHE_KEY);
       return { cleared: true, reason: "empty_accounts" };
     }
+    const firstAccount = accounts[0] as { address?: string; publicKey?: string | Record<string, number> } | undefined;
+    const hasAddress = Boolean(firstAccount?.address || firstAccount?.publicKey);
+    if (!hasAddress) {
+      await mwaAuthorizationCache.clear();
+      window.localStorage?.removeItem(MWA_AUTH_CACHE_KEY);
+      return { cleared: true, reason: "missing_address" };
+    }
     return { cleared: false, reason: "valid" };
   } catch (error) {
     try {
@@ -124,10 +131,19 @@ const Index = () => {
 
       // 2. Select the wallet in the provider (background sync)
       select(preferredMobileWallet.adapter.name);
+      await new Promise((resolve) => setTimeout(resolve, 150));
 
-      // 3. Directly connect the adapter (bypass provider delay)
-      console.log("[MobileConnect] Calling adapter.connect()...");
-      await preferredMobileWallet.adapter.connect();
+      // 3. Connect through the wallet provider to keep state in sync
+      console.log("[MobileConnect] Calling wallet.connect()...");
+      await connect();
+      if (!wallet.publicKey && !preferredMobileWallet.adapter.connected) {
+        console.log("[MobileConnect] Falling back to adapter.connect()...");
+        try {
+          await preferredMobileWallet.adapter.connect();
+        } catch (error) {
+          console.warn("[MobileConnect] adapter.connect() fallback failed:", error);
+        }
+      }
       
       console.log("[MobileConnect] Adapter state after connect():", {
         connected: preferredMobileWallet.adapter.connected,
@@ -137,36 +153,37 @@ const Index = () => {
 
       // 4. Poll for public key if it's not immediately available
       let attempts = 0;
-      let pubKey = preferredMobileWallet.adapter.publicKey;
-      
-      while (!pubKey && attempts < 15) {
+      const maxAttempts = 30;
+      let resolvedAddress: string | undefined;
+      while (!resolvedAddress && attempts < maxAttempts) {
         console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
-        await new Promise(resolve => setTimeout(resolve, 300));
-        pubKey = preferredMobileWallet.adapter.publicKey;
+        const adapterPublicKey = preferredMobileWallet.adapter.publicKey?.toBase58();
+        const walletPublicKey = wallet.publicKey?.toBase58();
+        resolvedAddress = walletPublicKey || adapterPublicKey;
+
+        if (!resolvedAddress && preferredMobileWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
+          const mwaAdapter = preferredMobileWallet.adapter as any;
+          const internalAddress = extractMwaAddress(mwaAdapter._authorizationResult);
+          if (internalAddress) {
+            console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
+            resolvedAddress = internalAddress;
+          }
+        }
+
+        if (!resolvedAddress) {
+          const cachedAddress = await getCachedMwaAddress();
+          if (cachedAddress) {
+            console.log("[MobileConnect] Using cached MWA address:", cachedAddress);
+            resolvedAddress = cachedAddress;
+          }
+        }
+
+        if (!resolvedAddress) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
         attempts++;
       }
-      
-      // If still missing, try to peek into the adapter's internal state if it's MWA
-      if (!pubKey && preferredMobileWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
-        const mwaAdapter = preferredMobileWallet.adapter as any;
-        console.log("[MobileConnect] MWA Internal Check:", {
-          hasAuthorizationResult: !!mwaAdapter._authorizationResult,
-          accounts: mwaAdapter._authorizationResult?.accounts?.length
-        });
-        
-        const internalAccount = mwaAdapter._authorizationResult?.accounts?.[0];
-        if (internalAccount?.address) {
-           console.log("[MobileConnect] FORCING address from internal MWA state:", internalAccount.address);
-           try {
-             pubKey = new PublicKey(internalAccount.address);
-           } catch (e) {
-             console.error("[MobileConnect] Failed to parse internal address:", internalAccount.address);
-           }
-        }
-      }
-
-      const cachedAddress = await getCachedMwaAddress();
-      const resolvedAddress = pubKey?.toBase58() ?? cachedAddress;
       
       if (resolvedAddress) {
         console.log("[MobileConnect] Success! Resolved Address:", resolvedAddress);
@@ -175,7 +192,19 @@ const Index = () => {
         toast.success("Wallet Connected");
       } else {
          console.error("[MobileConnect] Failure: No public key and no cache.");
-         throw new Error("Wallet connected but Public Key is missing. Please try again.");
+         try {
+           await mwaAuthorizationCache.clear();
+           window.localStorage?.removeItem(MWA_AUTH_CACHE_KEY);
+         } catch {
+           // ignore cache cleanup failures
+         }
+         if (isConnected) {
+           await disconnect();
+         }
+         const hint = preferredMobileWallet.adapter.name === SolanaMobileWalletAdapterWalletName
+           ? "No public key received. Make sure a Solana Mobile-compatible wallet is installed and approve the request."
+           : "Wallet connected but Public Key is missing. Please try again.";
+         throw new Error(hint);
       }
     } catch (err) {
       console.error("[MobileConnect] Connection error detail:", err);
@@ -183,7 +212,7 @@ const Index = () => {
         description: err instanceof Error ? err.message : String(err)
       });
     }
-  }, [preferredMobileWallet, select, isConnected, disconnect]);
+  }, [preferredMobileWallet, select, connect, isConnected, disconnect, wallet.publicKey]);
 
   // Reset active address if wallet disconnects (keep this for cleanup)
   useEffect(() => {

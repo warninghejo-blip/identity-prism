@@ -15,6 +15,10 @@ import {
   getHeliusRpcUrl,
   getMetadataBaseUrl,
   getMetadataImageUrl,
+  getCollectionMint,
+  getCollectionVerifyUrl,
+  getUpdateAuthorityAddress,
+  getCnftMintUrl,
   MINT_CONFIG,
   TREASURY_ADDRESS,
 } from '@/constants';
@@ -35,6 +39,7 @@ import {
 
 export interface MintMetadata {
   collection: string;
+  collectionMint?: string;
   network: string;
   score: number;
   planetTier: WalletTraits['planetTier'];
@@ -112,9 +117,26 @@ export async function mintIdentityPrism({
   }
   const appBaseUrl = getAppBaseUrl();
   const shortAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
+  const collectionMintAddress = getCollectionMint();
+  const updateAuthorityAddress = getUpdateAuthorityAddress();
+  const collectionVerifyUrl = getCollectionVerifyUrl();
+  const cnftMintUrl = getCnftMintUrl();
+
+  const parseOptionalPublicKey = (value: string | null, label: string) => {
+    if (!value) return null;
+    try {
+      return new PublicKey(value);
+    } catch {
+      throw new Error(`${label} is not a valid public key`);
+    }
+  };
+
+  const collectionMint = parseOptionalPublicKey(collectionMintAddress, 'VITE_COLLECTION_MINT');
+  const updateAuthority = parseOptionalPublicKey(updateAuthorityAddress, 'VITE_UPDATE_AUTHORITY') ?? payer;
 
   const metadata: MintMetadata = {
     collection: MINT_CONFIG.COLLECTION,
+    collectionMint: collectionMint?.toBase58(),
     network: MINT_CONFIG.NETWORK,
     score,
     planetTier: traits.planetTier,
@@ -175,6 +197,48 @@ export async function mintIdentityPrism({
     throw new Error('Metadata URI not returned');
   }
 
+  if (cnftMintUrl) {
+    if (!collectionMint) {
+      throw new Error('Collection mint is required for compressed minting');
+    }
+    const cnftResponse = await fetch(`${cnftMintUrl}/mint-cnft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        owner: address,
+        metadataUri,
+        name: metadataJson.name,
+        symbol: metadataJson.symbol,
+        sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
+        collectionMint: collectionMint.toBase58(),
+      }),
+    });
+
+    if (!cnftResponse.ok) {
+      throw new Error('Core mint failed');
+    }
+
+    const cnftPayload = (await cnftResponse.json()) as {
+      transaction?: string;
+      assetId?: string;
+    };
+    if (!cnftPayload.transaction) {
+      throw new Error('Core mint transaction missing');
+    }
+
+    const transaction = Transaction.from(Buffer.from(cnftPayload.transaction, 'base64'));
+    const signature = await wallet.sendTransaction(transaction, connection);
+    await connection.confirmTransaction(signature, 'confirmed');
+
+    return {
+      signature,
+      mint: cnftPayload.assetId ?? signature,
+      metadataUri,
+      metadata,
+      metadataBase64: encodeBase64(JSON.stringify(metadata)),
+    };
+  }
+
   const mintKeypair = Keypair.generate();
   const mintRent = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
   const ata = await getAssociatedTokenAddress(mintKeypair.publicKey, payer);
@@ -217,7 +281,7 @@ export async function mintIdentityPrism({
       mint: mintKeypair.publicKey,
       mintAuthority: payer,
       payer,
-      updateAuthority: payer,
+      updateAuthority,
       systemProgram: SystemProgram.programId,
       rent: SYSVAR_RENT_PUBKEY,
     },
@@ -229,7 +293,12 @@ export async function mintIdentityPrism({
           uri: metadataUri,
           sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
           creators: null,
-          collection: null,
+          collection: collectionMint
+            ? {
+                verified: false,
+                key: collectionMint,
+              }
+            : null,
           uses: null,
         },
         isMutable: true,
@@ -241,7 +310,7 @@ export async function mintIdentityPrism({
     {
       edition: masterEditionPda,
       mint: mintKeypair.publicKey,
-      updateAuthority: payer,
+      updateAuthority,
       mintAuthority: payer,
       payer,
       metadata: metadataPda,
@@ -285,6 +354,22 @@ export async function mintIdentityPrism({
     },
     'confirmed'
   );
+
+  if (collectionMint && collectionVerifyUrl) {
+    try {
+      await fetch(`${collectionVerifyUrl}/verify-collection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mint: mintKeypair.publicKey.toBase58(),
+          collectionMint: collectionMint.toBase58(),
+          signature,
+        }),
+      });
+    } catch (error) {
+      console.warn('[mint] collection verify request failed', error);
+    }
+  }
 
   return {
     signature,

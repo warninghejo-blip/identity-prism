@@ -65,35 +65,24 @@ const cluster =
       ? WalletAdapterNetwork.Testnet
       : WalletAdapterNetwork.Mainnet;
 
+const isCapacitor = Boolean((globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 const toHttps = (url?: string | null) => (url && url.startsWith('https://') ? url : null);
-const appBaseUrl = toHttps(getAppBaseUrl());
-const appIconUrl = toHttps(getMetadataImageUrl());
+const rawAppBaseUrl = getAppBaseUrl();
+const rawAppIconUrl = getMetadataImageUrl();
+const appBaseUrl = isCapacitor ? rawAppBaseUrl : toHttps(rawAppBaseUrl);
+const appIconUrl = isCapacitor ? rawAppIconUrl : toHttps(rawAppIconUrl);
 const appIdentity = {
   name: 'Identity Prism',
   uri: appBaseUrl ?? 'https://identityprism.xyz',
   icon: appIconUrl ?? 'https://identityprism.xyz/phav.png',
 };
-
-const isCapacitor = Boolean((globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 const isMobileBrowser = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? '');
 const useMobileWallet = isCapacitor;
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
-  addressSelector: {
-    select: (accounts) => {
-      try {
-        console.log("[MWA] AddressSelector received accounts:", JSON.stringify(accounts));
-        const selected = accounts?.[0] ?? null;
-        console.log("[MWA] Selected account:", JSON.stringify(selected));
-        return selected;
-      } catch (e) {
-        console.error("[MWA] AddressSelector error:", e);
-        return accounts?.[0] ?? null;
-      }
-    }
-  },
+  addressSelector: createDefaultAddressSelector(),
   appIdentity,
-  cluster: MINT_CONFIG.NETWORK,
+  cluster,
   authorizationResultCache: mwaAuthorizationCache,
   onWalletNotFound: createDefaultWalletNotFoundHandler(),
 });

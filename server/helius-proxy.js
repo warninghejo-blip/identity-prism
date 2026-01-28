@@ -3,6 +3,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
+import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
+import { createNoopSigner, generateSigner, keypairIdentity, publicKey } from '@metaplex-foundation/umi';
+import { create, fetchCollection, mplCore } from '@metaplex-foundation/mpl-core';
+import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HELIUS_RPC_BASE = (process.env.HELIUS_RPC_BASE ?? 'https://mainnet.helius-rpc.com/').trim();
@@ -16,6 +28,14 @@ const METADATA_DIR = process.env.METADATA_DIR
   : path.join(process.cwd(), 'metadata');
 const ASSETS_DIR = path.join(METADATA_DIR, 'assets');
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL ?? '').trim();
+const COLLECTION_AUTHORITY_SECRET = (process.env.COLLECTION_AUTHORITY_SECRET ?? '').trim();
+const CORE_COLLECTION = (process.env.CORE_COLLECTION ?? '').trim();
+const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS ?? '').trim();
+const MINT_PRICE_SOL = Number(process.env.MINT_PRICE_SOL ?? '0.01');
+const LAMPORTS_PER_SOL = 1_000_000_000;
+const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
+);
 
 if (!fs.existsSync(METADATA_DIR)) {
   fs.mkdirSync(METADATA_DIR, { recursive: true });
@@ -38,6 +58,44 @@ const pickHeliusKey = (seed) => {
   const index = getHeliusKeyIndex(seed);
   if (index < 0) return null;
   return HELIUS_KEYS[index];
+};
+
+const getRpcUrl = (seed) => {
+  const apiKey = pickHeliusKey(seed);
+  if (!apiKey) return null;
+  const targetUrl = new URL(HELIUS_RPC_BASE);
+  targetUrl.searchParams.set('api-key', apiKey);
+  return targetUrl.toString();
+};
+
+const parseSecretKey = (value) => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  try {
+    if (trimmed.startsWith('[')) {
+      return Uint8Array.from(JSON.parse(trimmed));
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const decoded = Buffer.from(trimmed, 'base64').toString('utf8');
+    if (decoded.trim().startsWith('[')) {
+      return Uint8Array.from(JSON.parse(decoded));
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
+const parsePublicKey = (value, label) => {
+  if (!value) return null;
+  try {
+    return new PublicKey(value);
+  } catch {
+    throw new Error(`${label} is not a valid public key`);
+  }
 };
 
 const applyCors = (res) => {
@@ -97,6 +155,214 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  if (pathname === '/mint-cnft') {
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      if (!COLLECTION_AUTHORITY_SECRET) {
+        respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured' });
+        return;
+      }
+      if (!TREASURY_ADDRESS) {
+        respondJson(res, 500, { error: 'TREASURY_ADDRESS is not configured' });
+        return;
+      }
+
+      const collectionSecret = parseSecretKey(COLLECTION_AUTHORITY_SECRET);
+      if (!collectionSecret) {
+        respondJson(res, 500, { error: 'Invalid collection authority secret' });
+        return;
+      }
+
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const owner = payload?.owner ?? '';
+      const metadataUri = payload?.metadataUri ?? '';
+      const name = payload?.name ?? '';
+      const symbol = payload?.symbol ?? '';
+      const sellerFeeBasisPoints = Number(payload?.sellerFeeBasisPoints ?? 0);
+      const collectionMintRaw = payload?.collectionMint ?? CORE_COLLECTION ?? '';
+
+      if (!owner || !metadataUri || !name || !collectionMintRaw) {
+        respondJson(res, 400, { error: 'Missing required mint payload' });
+        return;
+      }
+
+      const collectionMintKey = parsePublicKey(collectionMintRaw, 'collectionMint');
+      const ownerKey = parsePublicKey(owner, 'owner');
+      if (!collectionMintKey || !ownerKey) {
+        respondJson(res, 400, { error: 'Invalid public keys in mint request' });
+        return;
+      }
+
+      const rpcUrl = getRpcUrl(ownerKey.toBase58());
+      if (!rpcUrl) {
+        respondJson(res, 500, { error: 'Helius API key required' });
+        return;
+      }
+
+      const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+      const treasuryKey = new PublicKey(TREASURY_ADDRESS);
+      const expectedLamports = Math.round(MINT_PRICE_SOL * LAMPORTS_PER_SOL);
+      const umi = createUmi(rpcUrl).use(mplCore());
+      const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
+      const collectionAuthoritySigner = umi.eddsa.createKeypairFromSecretKey(collectionSecret);
+      umi.use(keypairIdentity(collectionAuthoritySigner));
+
+      const collection = await fetchCollection(umi, publicKey(collectionMintKey.toBase58()));
+      const assetSigner = generateSigner(umi);
+      const payerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
+      const builder = create(umi, {
+        asset: assetSigner,
+        collection,
+        name,
+        uri: metadataUri,
+        owner: publicKey(ownerKey.toBase58()),
+        payer: payerSigner,
+      }).setFeePayer(payerSigner);
+
+      const transferIx = SystemProgram.transfer({
+        fromPubkey: ownerKey,
+        toPubkey: treasuryKey,
+        lamports: expectedLamports,
+      });
+      const latestBlockhash = await connection.getLatestBlockhash('finalized');
+      const transaction = new Transaction().add(
+        transferIx,
+        ...builder.getInstructions().map((instruction) => toWeb3JsInstruction(instruction))
+      );
+      transaction.feePayer = ownerKey;
+      transaction.recentBlockhash = latestBlockhash.blockhash;
+      transaction.partialSign(collectionAuthorityKeypair, toWeb3JsKeypair(assetSigner));
+
+      const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+      respondJson(res, 200, {
+        transaction: serialized,
+        assetId: assetSigner.publicKey,
+        blockhash: latestBlockhash.blockhash,
+      });
+    } catch (error) {
+      console.error('[mint-cnft] failed', error);
+      respondJson(res, 500, { error: 'Core mint failed' });
+    }
+    return;
+  }
+
+  if (pathname === '/verify-collection') {
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      if (!COLLECTION_AUTHORITY_SECRET) {
+        respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured' });
+        return;
+      }
+
+      const secretKey = parseSecretKey(COLLECTION_AUTHORITY_SECRET);
+      if (!secretKey) {
+        respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is invalid' });
+        return;
+      }
+
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const mint = payload?.mint ? new PublicKey(payload.mint) : null;
+      const collectionMint = payload?.collectionMint ? new PublicKey(payload.collectionMint) : null;
+      if (!mint || !collectionMint) {
+        respondJson(res, 400, { error: 'mint and collectionMint are required' });
+        return;
+      }
+
+      const rpcUrl = getRpcUrl(mint.toBase58());
+      if (!rpcUrl) {
+        respondJson(res, 500, { error: 'Helius API key required' });
+        return;
+      }
+
+      const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+      const collectionAuthority = Keypair.fromSecretKey(secretKey);
+      const metadataPda = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('metadata'),
+          TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+          mint.toBuffer(),
+        ],
+        TOKEN_METADATA_PROGRAM_ID
+      )[0];
+      const collectionMetadataPda = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('metadata'),
+          TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+          collectionMint.toBuffer(),
+        ],
+        TOKEN_METADATA_PROGRAM_ID
+      )[0];
+      const collectionMasterEditionPda = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from('metadata'),
+          TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+          collectionMint.toBuffer(),
+          Buffer.from('edition'),
+        ],
+        TOKEN_METADATA_PROGRAM_ID
+      )[0];
+
+      const buildVerifyInstruction = (discriminator) =>
+        new TransactionInstruction({
+          programId: TOKEN_METADATA_PROGRAM_ID,
+          keys: [
+            { pubkey: metadataPda, isSigner: false, isWritable: true },
+            { pubkey: collectionAuthority.publicKey, isSigner: true, isWritable: true },
+            { pubkey: collectionAuthority.publicKey, isSigner: true, isWritable: true },
+            { pubkey: collectionMint, isSigner: false, isWritable: false },
+            { pubkey: collectionMetadataPda, isSigner: false, isWritable: true },
+            { pubkey: collectionMasterEditionPda, isSigner: false, isWritable: false },
+          ],
+          data: Buffer.from([discriminator]),
+        });
+
+      const sendVerify = async (discriminator) => {
+        const transaction = new Transaction().add(buildVerifyInstruction(discriminator));
+        transaction.feePayer = collectionAuthority.publicKey;
+        const latestBlockhash = await connection.getLatestBlockhash('finalized');
+        transaction.recentBlockhash = latestBlockhash.blockhash;
+        transaction.sign(collectionAuthority);
+
+        const signature = await connection.sendRawTransaction(transaction.serialize(), {
+          skipPreflight: false,
+        });
+        await connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latestBlockhash.blockhash,
+            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+          },
+          'confirmed'
+        );
+        return signature;
+      };
+
+      let signature;
+      try {
+        signature = await sendVerify(18);
+      } catch (error) {
+        console.warn('[verify-collection] verifyCollection failed, trying sized item', error);
+        signature = await sendVerify(30);
+      }
+
+      respondJson(res, 200, { signature });
+    } catch (error) {
+      console.error('[verify-collection] failed', error);
+      respondJson(res, 500, { error: 'Collection verification failed' });
+    }
     return;
   }
 

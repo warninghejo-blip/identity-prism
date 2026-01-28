@@ -113,6 +113,32 @@ cd android
 ```
 Итоговый APK: `android/app/build/outputs/apk/release/app-release.apk`
 
+## 9. Переменные окружения для минта
+
+### 9.1 Клиент (Vite `.env`)
+```env
+VITE_METADATA_BASE_URL=https://identityprism.xyz
+VITE_METADATA_IMAGE_URL=https://identityprism.xyz/assets/identity-prism.png
+VITE_APP_BASE_URL=https://identityprism.xyz
+VITE_COLLECTION_MINT=COLLECTION_MINT_ADDRESS
+VITE_UPDATE_AUTHORITY=UPDATE_AUTHORITY_PUBKEY
+VITE_COLLECTION_VERIFY_URL=https://identityprism.xyz
+VITE_CNFT_MINT_URL=https://identityprism.xyz
+```
+
+### 9.2 Сервер (backend env)
+```env
+PUBLIC_BASE_URL=https://identityprism.xyz
+HELIUS_API_KEYS=your_helius_key
+TREASURY_ADDRESS=2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN
+MINT_PRICE_SOL=0.01
+COLLECTION_AUTHORITY_SECRET=[...]
+CNFT_MERKLE_TREE=MERKLE_TREE_PUBKEY
+CNFT_TREE_AUTHORITY_SECRET=[...]
+```
+
+`COLLECTION_AUTHORITY_SECRET` и `CNFT_TREE_AUTHORITY_SECRET` — это приватные ключи (JSON array или base64 JSON). Хранить только на сервере.
+
 ## Полезные команды для обновления
 Каждый раз, когда вы меняете код сайта (React), делайте:
 ```bash
