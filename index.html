@@ -20,6 +20,20 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@Lovable" />
     <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <script>
+      (function () {
+        if (!globalThis.global) {
+          globalThis.global = globalThis;
+        }
+        if (!globalThis.process) {
+          globalThis.process = { env: { DEBUG: undefined } };
+        } else if (!globalThis.process.env) {
+          globalThis.process.env = { DEBUG: undefined };
+        } else if (!('DEBUG' in globalThis.process.env)) {
+          globalThis.process.env.DEBUG = undefined;
+        }
+      })();
+    </script>
   </head>
 
   <body>
