@@ -71,6 +71,37 @@ const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
 
+const PENDING_MINT_TTL_MS = 10 * 60 * 1000;
+const pendingMintSigners = new Map();
+
+const prunePendingMints = () => {
+  const now = Date.now();
+  for (const [key, entry] of pendingMintSigners.entries()) {
+    if (!entry || now - entry.createdAt > PENDING_MINT_TTL_MS) {
+      pendingMintSigners.delete(key);
+    }
+  }
+};
+
+const storePendingMint = ({ requestId, owner, assetId, assetSecret, transaction }) => {
+  prunePendingMints();
+  pendingMintSigners.set(requestId, {
+    owner,
+    assetId,
+    assetSecret,
+    transaction,
+    createdAt: Date.now(),
+  });
+};
+
+const consumePendingMint = (requestId) => {
+  prunePendingMints();
+  const entry = pendingMintSigners.get(requestId);
+  if (!entry) return null;
+  pendingMintSigners.delete(requestId);
+  return entry;
+};
+
 if (!fs.existsSync(METADATA_DIR)) {
   fs.mkdirSync(METADATA_DIR, { recursive: true });
 }
@@ -147,10 +178,36 @@ const parsePublicKey = (value, label) => {
   }
 };
 
-const applyCors = (res) => {
-  res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
+const resolveCorsOrigin = (req) => {
+  const origin = String(req?.headers?.origin ?? '').trim();
+  const configured = String(CORS_ORIGIN ?? '').trim();
+  if (!origin) {
+    return configured || '*';
+  }
+  if (!configured || configured === '*') {
+    return origin;
+  }
+  const allowList = configured.split(',').map((value) => value.trim()).filter(Boolean);
+  if (!allowList.length) {
+    return origin;
+  }
+  if (allowList.includes('*')) {
+    return origin;
+  }
+  if (allowList.includes(origin)) {
+    return origin;
+  }
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+    return origin;
+  }
+  return allowList[0];
+};
+
+const applyCors = (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', resolveCorsOrigin(req));
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'content-type,x-wallet-address,solana-client');
-  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
 };
 
 const readBody = (req) => new Promise((resolve, reject) => {
@@ -196,7 +253,7 @@ const getContentType = (fileName) => {
 };
 
 const server = http.createServer(async (req, res) => {
-  applyCors(res);
+  applyCors(req, res);
 
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
@@ -214,9 +271,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const requestId = crypto.randomUUID
+      const fallbackRequestId = crypto.randomUUID
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const body = await readBody(req);
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch (error) {
+        console.error('[mint-cnft] invalid json', {
+          requestId: fallbackRequestId,
+          error: error instanceof Error ? error.message : String(error),
+          bodyPreview: body.slice(0, 200),
+        });
+        respondJson(res, 400, { error: 'Invalid JSON payload', requestId: fallbackRequestId });
+        return;
+      }
+
+      const payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId.trim() : '';
+      const requestId = payloadRequestId || fallbackRequestId;
       if (!COLLECTION_AUTHORITY_SECRET) {
         respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured', requestId });
         return;
@@ -232,19 +305,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const body = await readBody(req);
-      let payload = {};
-      try {
-        payload = body ? JSON.parse(body) : {};
-      } catch (error) {
-        console.error('[mint-cnft] invalid json', {
-          requestId,
-          error: error instanceof Error ? error.message : String(error),
-          bodyPreview: body.slice(0, 200),
-        });
-        respondJson(res, 400, { error: 'Invalid JSON payload', requestId });
-        return;
-      }
       const owner = payload?.owner ?? '';
       const metadataUri = payload?.metadataUri ?? '';
       const name = payload?.name ?? '';
@@ -252,6 +312,96 @@ const server = http.createServer(async (req, res) => {
       const sellerFeeBasisPoints = Number(payload?.sellerFeeBasisPoints ?? 0);
       const collectionMintRaw = payload?.collectionMint ?? CORE_COLLECTION ?? '';
       const adminMode = Boolean(payload?.admin);
+      const signedTransaction = typeof payload?.signedTransaction === 'string' ? payload.signedTransaction.trim() : '';
+      if (signedTransaction && !payloadRequestId) {
+        respondJson(res, 400, { error: 'requestId is required to finalize mint', requestId });
+        return;
+      }
+      const isFinalize = Boolean(payloadRequestId && signedTransaction);
+      if (isFinalize) {
+        const pending = consumePendingMint(payloadRequestId);
+        if (!pending) {
+          respondJson(res, 400, { error: 'Mint finalize request expired or missing', requestId: payloadRequestId });
+          return;
+        }
+        if (owner && pending.owner && owner !== pending.owner) {
+          respondJson(res, 400, { error: 'Owner mismatch for finalize request', requestId: payloadRequestId });
+          return;
+        }
+        const ownerAddress = owner || pending.owner;
+        const ownerKey = parsePublicKey(ownerAddress, 'owner');
+        if (!ownerKey) {
+          respondJson(res, 400, { error: 'Invalid owner for finalize request', requestId: payloadRequestId });
+          return;
+        }
+        const rpcUrl = getRpcUrl(ownerKey.toBase58());
+        if (!rpcUrl) {
+          respondJson(res, 500, { error: 'Helius API key required', requestId: payloadRequestId });
+          return;
+        }
+        const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+        
+        let baseTransaction;
+        let clientTransaction;
+        try {
+          if (!pending.transaction) {
+            throw new Error('Pending transaction not found in cache');
+          }
+          baseTransaction = Transaction.from(Buffer.from(pending.transaction, 'base64'));
+          clientTransaction = Transaction.from(Buffer.from(signedTransaction, 'base64'));
+        } catch (error) {
+          respondJson(res, 400, { error: 'Invalid transaction payload or cache missing', requestId: payloadRequestId });
+          return;
+        }
+
+        const assetKeypair = Keypair.fromSecretKey(Uint8Array.from(pending.assetSecret));
+        const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
+
+        // Copy valid signatures from client transaction to base transaction
+        // This preserves the payer/owner signature while keeping the server's instruction structure
+        const clientSignatureMap = new Map(
+          clientTransaction.signatures
+            .filter((s) => s.signature !== null)
+            .map((s) => [s.publicKey.toBase58(), s.signature])
+        );
+
+        baseTransaction.signatures = baseTransaction.signatures.map((s) => {
+          const clientSig = clientSignatureMap.get(s.publicKey.toBase58());
+          if (clientSig) {
+            return { publicKey: s.publicKey, signature: clientSig };
+          }
+          return s;
+        });
+
+        const signerPool = [];
+        const message = baseTransaction.compileMessage();
+        const requiredSigners = message.accountKeys
+          .slice(0, message.header.numRequiredSignatures)
+          .map((key) => key.toBase58());
+
+        if (requiredSigners.includes(assetKeypair.publicKey.toBase58())) {
+          signerPool.push(assetKeypair);
+        }
+        if (requiredSigners.includes(collectionAuthorityKeypair.publicKey.toBase58())) {
+          signerPool.push(collectionAuthorityKeypair);
+        }
+        
+        if (signerPool.length) {
+          baseTransaction.partialSign(...signerPool);
+        }
+        
+        const signature = await connection.sendRawTransaction(baseTransaction.serialize(), {
+          preflightCommitment: 'confirmed',
+        });
+        await connection.confirmTransaction(signature, 'confirmed');
+        respondJson(res, 200, {
+          signature,
+          assetId: pending.assetId,
+          requestId: payloadRequestId,
+          finalized: true,
+        });
+        return;
+      }
 
       const treasurySecret = adminMode
         ? parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH)
@@ -303,6 +453,37 @@ const server = http.createServer(async (req, res) => {
       const treasuryKeypair = adminMode && treasurySecret ? Keypair.fromSecretKey(treasurySecret) : null;
 
       const collection = await fetchCollection(umi, publicKey(collectionMintKey.toBase58()));
+      const resolveUpdateAuthorityAddress = (value) => {
+        if (!value) return null;
+        if (typeof value === 'string') return value;
+        const addressValue =
+          typeof value.address === 'string'
+            ? value.address
+            : value.address?.toString?.();
+        if (addressValue) return addressValue;
+        const publicKeyValue =
+          typeof value.publicKey === 'string'
+            ? value.publicKey
+            : value.publicKey?.toString?.();
+        if (publicKeyValue) return publicKeyValue;
+        return value.toString?.() ?? null;
+      };
+      const updateAuthorityAddress = resolveUpdateAuthorityAddress(collection?.updateAuthority);
+      if (!updateAuthorityAddress) {
+        console.warn('[mint-cnft] collection update authority unresolved', {
+          requestId,
+          collectionMint: collectionMintKey.toBase58(),
+          collectionAddress: collection?.publicKey?.toString?.(),
+        });
+      } else {
+        console.info('[mint-cnft] collection fetched', {
+          address: collection.publicKey.toString(),
+          updateAuthority: updateAuthorityAddress,
+          configuredAuthority: collectionAuthorityKeypair.publicKey.toBase58(),
+          match: updateAuthorityAddress === collectionAuthorityKeypair.publicKey.toBase58()
+        });
+      }
+
       const assetSigner = generateSigner(umi);
       const ownerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
       const payerSigner = adminMode && treasuryKeypair
@@ -328,8 +509,46 @@ const server = http.createServer(async (req, res) => {
       const latestBlockhash = await connection.getLatestBlockhash('finalized');
       const instructions = [
         ...(transferIx ? [transferIx] : []),
-        ...builder.getInstructions().map((instruction) => toWeb3JsInstruction(instruction)),
+        ...builder.getInstructions().map((instruction) => {
+          const web3Ix = toWeb3JsInstruction(instruction);
+          // Ensure collection authority and asset are signers
+          let foundCollectionAuth = false;
+          let foundAsset = false;
+          
+          web3Ix.keys = web3Ix.keys.map((key) => {
+            const keyStr = key.pubkey.toBase58();
+            if (keyStr === collectionAuthorityKeypair.publicKey.toBase58()) {
+              foundCollectionAuth = true;
+              return { ...key, isSigner: true };
+            }
+            if (keyStr === assetKeypair.publicKey.toBase58()) {
+              foundAsset = true;
+              return { ...key, isSigner: true };
+            }
+            return key;
+          });
+          
+          console.info(`[mint-cnft] ix processed`, {
+             programId: web3Ix.programId.toBase58(),
+             foundCollectionAuth,
+             foundAsset,
+             collectionAuth: collectionAuthorityKeypair.publicKey.toBase58(),
+             asset: assetKeypair.publicKey.toBase58()
+          });
+          
+          return web3Ix;
+        }),
       ];
+      
+      // Log instruction keys for debugging
+      instructions.forEach((ix, i) => {
+        console.info(`[mint-cnft] instruction ${i} keys`, ix.keys.map(k => ({
+          pubkey: k.pubkey.toBase58(),
+          isSigner: k.isSigner,
+          isWritable: k.isWritable
+        })));
+      });
+
       const transaction = new Transaction().add(...instructions);
       transaction.feePayer = adminMode && treasuryKeypair ? treasuryKeypair.publicKey : ownerKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
@@ -350,9 +569,11 @@ const server = http.createServer(async (req, res) => {
       if (adminMode && treasuryKeypair && requiredSigners.includes(treasuryKeypair.publicKey.toBase58())) {
         signerPool.push(treasuryKeypair);
       }
-      if (signerPool.length) {
+      if (adminMode && signerPool.length) {
         transaction.partialSign(...signerPool);
       }
+
+      const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
 
       if (adminMode) {
         const signature = await connection.sendRawTransaction(transaction.serialize(), {
@@ -376,21 +597,20 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const signatureMap = signerPool.reduce((acc, signer) => {
-        const entry = transaction.signatures.find((sig) => sig.publicKey.equals(signer.publicKey));
-        if (entry?.signature) {
-          acc[signer.publicKey.toBase58()] = Buffer.from(entry.signature).toString('base64');
-        }
-        return acc;
-      }, {});
+      storePendingMint({
+        requestId,
+        owner,
+        assetId: assetSigner.publicKey,
+        assetSecret: Array.from(assetKeypair.secretKey),
+        transaction: serialized,
+      });
 
-      const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
       respondJson(res, 200, {
         transaction: serialized,
         assetId: assetSigner.publicKey,
         blockhash: latestBlockhash.blockhash,
         requestId,
-        signatures: signatureMap,
+        finalize: true,
       });
     } catch (error) {
       console.error('[mint-cnft] failed', error);
@@ -514,7 +734,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === '/assets' || pathname === '/assets/') {
+  const isAssetUpload =
+    pathname === '/assets' ||
+    pathname === '/assets/' ||
+    pathname === '/metadata/assets' ||
+    pathname === '/metadata/assets/';
+  if (isAssetUpload) {
     if (req.method !== 'POST') {
       respondJson(res, 405, { error: 'Method not allowed' });
       return;
@@ -567,7 +792,7 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
         return;
       }
-      respondJson(res, 200, { url: `${baseUrl}/assets/${fileName}` });
+      respondJson(res, 200, { url: `${baseUrl}/metadata/assets/${fileName}` });
     } catch (error) {
       console.error('[assets] upload failed', error);
       respondJson(res, 500, { error: 'Asset upload failed' });
@@ -575,13 +800,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname.startsWith('/assets/')) {
+  const isAssetFetch = pathname.startsWith('/assets/') || pathname.startsWith('/metadata/assets/');
+  if (isAssetFetch) {
     if (req.method !== 'GET') {
       respondJson(res, 405, { error: 'Method not allowed' });
       return;
     }
     const parts = pathname.split('/').filter(Boolean);
-    const rawName = parts[1] ?? '';
+    const rawName = parts[parts.length - 1] ?? '';
     const fileName = resolveAssetFile(rawName);
     if (!fileName) {
       respondJson(res, 404, { error: 'Asset not found' });
