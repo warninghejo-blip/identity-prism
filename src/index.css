@@ -92,6 +92,22 @@
   z-index: 2;
 }
 
+.nft-capture {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 420px;
+  height: 760px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.nft-capture .celestial-card-shell {
+  width: 420px;
+  height: 760px;
+}
+
 .card-stage {
   position: relative;
   z-index: 10;
@@ -638,33 +654,34 @@
 .scanning-status {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0;
   font-family: 'Orbitron', monospace;
   font-size: 0.7rem;
   letter-spacing: 0.24em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.6);
   margin-top: 0.75rem;
+  min-height: 1.1rem;
+  align-items: center;
 }
 
 .scanning-status-line {
   opacity: 0;
-  animation: scanningLinePulse 2.4s ease-in-out infinite;
+  animation: scanningLinePulse 2.2s ease-in-out infinite;
 }
 
 @keyframes scanningLinePulse {
   0% {
     opacity: 0;
-    transform: translateY(6px);
+    text-shadow: none;
   }
   30% {
     opacity: 0.95;
     text-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
-    transform: translateY(0);
   }
   100% {
     opacity: 0;
-    transform: translateY(-6px);
+    text-shadow: none;
   }
 }
 

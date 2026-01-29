@@ -1,4 +1,4 @@
-import { Suspense, useState, useMemo } from 'react';
+import { Suspense, useEffect, useMemo, useState, forwardRef } from 'react';
 import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion';
 import { Canvas } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
@@ -13,6 +13,7 @@ import { getRandomFunnyFact } from '@/utils/funnyFacts';
 
 interface CelestialCardProps {
   data: WalletData;
+  captureMode?: boolean;
 }
 
 const TIER_COLORS: Record<string, string> = {
@@ -41,10 +42,14 @@ const TIER_LABELS: Record<string, string> = {
   binary_sun: 'BINARY SUN',
 };
 
-export function CelestialCard({ data }: CelestialCardProps) {
+export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(function CelestialCard(
+  { data, captureMode = false },
+  ref
+) {
   const [isFlipped, setIsFlipped] = useState(false);
   const [isInteracting, setIsInteracting] = useState(false);
   const { traits, score, address } = data;
+  const isCapture = Boolean(captureMode);
 
   // 3D Tilt Logic
   const x = useMotionValue(0);
@@ -53,7 +58,7 @@ export function CelestialCard({ data }: CelestialCardProps) {
   const rotateY = useSpring(useTransform(x, [-300, 300], [-5, 5]), { stiffness: 150, damping: 20 });
 
   function handleMouseMove(event: React.MouseEvent<HTMLDivElement>) {
-    if (isInteracting || isFlipped) return;
+    if (isCapture || isInteracting || isFlipped) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
@@ -62,10 +67,16 @@ export function CelestialCard({ data }: CelestialCardProps) {
   }
 
   function handleMouseLeave() {
-    if (isFlipped) return;
+    if (isCapture || isFlipped) return;
     x.set(0);
     y.set(0);
   }
+
+  useEffect(() => {
+    if (isCapture && isFlipped) {
+      setIsFlipped(false);
+    }
+  }, [isCapture, isFlipped]);
 
   const fallbackTraits: WalletTraits = {
     hasSeeker: false,
@@ -117,8 +128,9 @@ export function CelestialCard({ data }: CelestialCardProps) {
       className="celestial-card-shell relative w-full perspective-1000 mx-auto group"
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      style={{ rotateX, rotateY, transformStyle: 'preserve-3d' }}
+      style={{ rotateX: isCapture ? 0 : rotateX, rotateY: isCapture ? 0 : rotateY, transformStyle: 'preserve-3d' }}
       transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+      ref={ref}
     >
       <motion.div
         className="w-full h-full relative preserve-3d"
@@ -131,7 +143,11 @@ export function CelestialCard({ data }: CelestialCardProps) {
         <div
           className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border border-white/10 bg-[#020408] shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] backface-hidden flex flex-col transition-opacity duration-300 ${isFlipped ? 'pointer-events-none opacity-0' : 'pointer-events-auto cursor-pointer opacity-100'}`}
           style={{ backfaceVisibility: 'hidden', zIndex: isFlipped ? 0 : 20 }}
-          onClick={() => setIsFlipped(true)}
+          onClick={() => {
+            if (!isCapture) {
+              setIsFlipped(true);
+            }
+          }}
         >
           {/* Subtle bg gradient */}
           <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-transparent to-black/60 pointer-events-none" />
@@ -170,7 +186,7 @@ export function CelestialCard({ data }: CelestialCardProps) {
           >
             <Canvas
               camera={{ position: [0, 0, 8.5], fov: 35 }}
-              gl={{ antialias: true, alpha: true }}
+              gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
               dpr={[1, 1.5]}
             >
               <ambientLight intensity={0.6} />
@@ -178,10 +194,10 @@ export function CelestialCard({ data }: CelestialCardProps) {
               <pointLight position={[-8, -5, -5]} intensity={0.5} color="#4cc9f0" />
               
               <StarField
-                count={420}
-                radius={[10, 18]}
-                sizeRange={[0.35, 0.9]}
-                intensityRange={[0.35, 0.75]}
+                count={560}
+                radius={[9, 18]}
+                sizeRange={[0.45, 1.35]}
+                intensityRange={[0.4, 0.85]}
                 hemisphere="back"
                 colors={['#fff5e6', '#ffffff', '#ffe2b0']}
               />
@@ -197,7 +213,7 @@ export function CelestialCard({ data }: CelestialCardProps) {
                 enableZoom
                 enableRotate
                 enablePan={false}
-                minDistance={4}
+                minDistance={5.5}
                 maxDistance={12}
                 zoomSpeed={0.8}
                 rotateSpeed={0.6}
@@ -339,7 +355,7 @@ export function CelestialCard({ data }: CelestialCardProps) {
       </motion.div>
     </motion.div>
   );
-}
+});
 
 function StatItem({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (

@@ -26,8 +26,8 @@ void main() {
   vIntensity = intensity;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
 
-  float pointSize = size * uPixelRatio * (32.0 / -mvPosition.z);
-  gl_PointSize = clamp(pointSize, 1.0, 7.0);
+  float pointSize = size * uPixelRatio * (42.0 / -mvPosition.z);
+  gl_PointSize = clamp(pointSize, 1.8, 10.0);
   gl_Position = projectionMatrix * mvPosition;
 }
 `;
@@ -95,7 +95,7 @@ export function StarField({
       col[i * 3 + 1] = color.g;
       col[i * 3 + 2] = color.b;
 
-      const sizeValue = sizeMin + Math.random() * sizeSpan;
+      const sizeValue = sizeMin + Math.pow(Math.random(), 0.6) * sizeSpan;
       sz[i] = sizeValue;
       intens[i] = intensityMin + Math.random() * intensitySpan;
     }

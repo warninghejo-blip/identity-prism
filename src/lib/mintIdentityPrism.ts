@@ -45,6 +45,7 @@ export interface MintIdentityPrismArgs {
   address: string;
   traits: WalletTraits;
   score: number;
+  cardImageUrl?: string;
 }
 
 export interface MintIdentityPrismResult {
@@ -114,6 +115,7 @@ export async function mintIdentityPrism({
   address,
   traits,
   score,
+  cardImageUrl,
 }: MintIdentityPrismArgs): Promise<MintIdentityPrismResult> {
   const wantsAdminMode = isAdminModeEnabled();
   const heliusRpcUrl = getHeliusRpcUrl(address);
@@ -133,6 +135,7 @@ export async function mintIdentityPrism({
   if (!imageUrl) {
     throw new Error('Metadata image URL not configured');
   }
+  const resolvedImageUrl = cardImageUrl ?? imageUrl;
   const appBaseUrl = getAppBaseUrl();
   const shortAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
   const collectionMintAddress = getCollectionMint();
@@ -188,7 +191,7 @@ export async function mintIdentityPrism({
     name: `${MINT_CONFIG.COLLECTION} #${shortAddress}`,
     symbol: MINT_CONFIG.SYMBOL ?? 'PRISM',
     description: 'Identity Prism — a living Solana identity card built from your on-chain footprint.',
-    image: imageUrl,
+    image: resolvedImageUrl,
     external_url: appBaseUrl ? `${appBaseUrl}/?address=${address}` : undefined,
     animation_url: appBaseUrl ? `${appBaseUrl}/?address=${address}` : undefined,
     attributes: [
@@ -200,7 +203,7 @@ export async function mintIdentityPrism({
       { trait_type: 'Wallet Age (days)', value: traits.walletAgeDays },
     ],
     properties: {
-      files: [{ uri: imageUrl, type: 'image/png' }],
+      files: [{ uri: resolvedImageUrl, type: 'image/png' }],
       category: 'image',
     },
   };
@@ -261,6 +264,9 @@ export async function mintIdentityPrism({
     signature?: string;
     signatures?: Record<string, string>;
     admin?: boolean;
+    requestId?: string;
+    finalize?: boolean;
+    finalized?: boolean;
   };
   if (adminMode && cnftPayload.signature) {
     return {
@@ -281,7 +287,7 @@ export async function mintIdentityPrism({
     throw new Error('Wallet does not support signTransaction required for core minting');
   }
 
-  const serverSignatures = cnftPayload.signatures ?? {};
+  const requestId = cnftPayload.requestId;
   const compiledMessage = transaction.compileMessage();
   const requiredSigners = compiledMessage.accountKeys
     .slice(0, compiledMessage.header.numRequiredSignatures)
@@ -291,33 +297,41 @@ export async function mintIdentityPrism({
     signature: null,
   }));
   console.info('[mint] required signers', requiredSigners);
-  console.info('[mint] server signatures', Object.keys(serverSignatures));
+  if (!requestId) {
+    throw new Error('Mint requestId missing from server response');
+  }
 
   let signature = '';
   try {
     const signedTransaction = await wallet.signTransaction(transaction);
-    Object.entries(serverSignatures).forEach(([pubkey, signatureBase64]) => {
-      try {
-        signedTransaction.addSignature(new PublicKey(pubkey), Buffer.from(signatureBase64, 'base64'));
-      } catch (error) {
-        console.warn('[mint] failed to re-apply server signature', { pubkey, error });
+    const walletSigner = wallet.publicKey?.toBase58();
+    if (walletSigner) {
+      const walletSignature = signedTransaction.signatures.find(
+        (entry) => entry.publicKey.toBase58() === walletSigner
+      );
+      if (!walletSignature?.signature) {
+        throw new Error(`Wallet signature missing for ${walletSigner}`);
       }
-    });
-
-    const compiled = signedTransaction.compileMessage();
-    const required = compiled.accountKeys
-      .slice(0, compiled.header.numRequiredSignatures)
-      .map((key) => key.toBase58());
-    const missing = signedTransaction.signatures
-      .filter((entry) => required.includes(entry.publicKey.toBase58()) && !entry.signature)
-      .map((entry) => entry.publicKey.toBase58());
-    if (missing.length) {
-      throw new Error(`Missing required signatures: ${missing.join(', ')}`);
     }
 
-    signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      preflightCommitment: 'confirmed',
+    const finalizeResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId,
+        owner: payer.toBase58(),
+        signedTransaction: signedTransaction.serialize({ requireAllSignatures: false }).toString('base64'),
+      }),
     });
+    if (!finalizeResponse.ok) {
+      const errorText = await finalizeResponse.text();
+      throw new Error(`Mint finalize failed: ${finalizeResponse.status} ${errorText || finalizeResponse.statusText}`);
+    }
+    const finalizePayload = (await finalizeResponse.json()) as { signature?: string };
+    if (!finalizePayload.signature) {
+      throw new Error('Mint finalize response missing signature');
+    }
+    signature = finalizePayload.signature;
   } catch (error) {
     await logSendTransactionError(error);
     throw error;

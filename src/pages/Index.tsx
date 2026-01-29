@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { CelestialCard } from "@/components/CelestialCard";
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { useWalletData } from "@/hooks/useWalletData";
@@ -11,9 +11,10 @@ import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorization
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from "lucide-react";
-import { MINT_CONFIG } from "@/constants";
+import { getMetadataBaseUrl, MINT_CONFIG } from "@/constants";
 import { PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
+import html2canvas from "html2canvas";
 
 type ViewState = "landing" | "scanning" | "ready";
 
@@ -67,6 +68,8 @@ const Index = () => {
   const searchParams = new URLSearchParams(window.location.search);
   const [isWarping, setIsWarping] = useState(false);
   const [viewState, setViewState] = useState<ViewState>("landing");
+  const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
+  const cardCaptureRef = useRef<HTMLDivElement | null>(null);
 
   const wallet = useWallet();
   const {
@@ -133,6 +136,20 @@ const Index = () => {
       adapter.off?.("error", handleError as any);
     };
   }, [mobileWallet?.adapter, activeAddress]);
+
+  useEffect(() => {
+    if (viewState !== "scanning") return;
+    const interval = window.setInterval(() => {
+      setScanningMessageIndex((prev) => (prev + 1) % SCANNING_MESSAGES.length);
+    }, 2200);
+    return () => window.clearInterval(interval);
+  }, [viewState]);
+
+  useEffect(() => {
+    if (viewState !== "scanning") {
+      setScanningMessageIndex(0);
+    }
+  }, [viewState]);
 
   const [debugClicks, setDebugClicks] = useState(0);
   const handleDebugTrigger = () => {
@@ -337,16 +354,54 @@ const Index = () => {
 
   const [mintState, setMintState] = useState<"idle" | "minting" | "success" | "error">("idle");
   const [isMintPanelOpen, setIsMintPanelOpen] = useState(true);
+  const captureCardImage = useCallback(async () => {
+    if (!cardCaptureRef.current) {
+      throw new Error("Card preview is not ready yet");
+    }
+    const metadataBaseUrl = getMetadataBaseUrl();
+    if (!metadataBaseUrl) {
+      throw new Error("Metadata service URL not configured");
+    }
+    if (document?.fonts?.ready) {
+      await document.fonts.ready;
+    }
+    const canvas = await html2canvas(cardCaptureRef.current, {
+      backgroundColor: "#050505",
+      scale: 2,
+      useCORS: true,
+      ignoreElements: (element) => {
+        if (!(element instanceof HTMLCanvasElement)) return false;
+        return !cardCaptureRef.current?.contains(element);
+      },
+    });
+    const dataUrl = canvas.toDataURL("image/png");
+    const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: dataUrl, contentType: "image/png" }),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`Card image upload failed: ${response.status} ${text}`);
+    }
+    const payload = JSON.parse(text);
+    if (!payload?.url) {
+      throw new Error("Card image URL missing from upload response");
+    }
+    return payload.url as string;
+  }, []);
   const handleMint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
     
     setMintState("minting");
     try {
+      const cardImageUrl = await captureCardImage();
       const result = await mintIdentityPrism({
         wallet,
         address: wallet.publicKey.toBase58(),
         traits,
         score,
+        cardImageUrl,
       });
       
       console.log("Mint success:", result);
@@ -362,7 +417,7 @@ const Index = () => {
       });
       setTimeout(() => setMintState("idle"), 3000);
     }
-  }, [wallet, traits, score]);
+  }, [wallet, traits, score, captureCardImage]);
 
   const shareInsight = useMemo(() => {
     if (!traits) return "Cosmic insight pending... 🔮";
@@ -406,6 +461,11 @@ const Index = () => {
 
   return (
     <div className={`identity-shell relative ${previewMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''}`}>
+      {traits && (
+        <div className="nft-capture" aria-hidden="true">
+          <CelestialCard ref={cardCaptureRef} data={walletData} captureMode />
+        </div>
+      )}
       <div className="absolute inset-0 bg-[#050505] background-base" />
       <div className="nebula-layer nebula-one" />
       <div className="nebula-layer nebula-two" />
@@ -425,6 +485,7 @@ const Index = () => {
           onDesktopConnect={handleDesktopConnect}
           desktopWalletReady={desktopWalletReady}
           onDebugTrigger={handleDebugTrigger}
+          scanningMessageIndex={scanningMessageIndex}
         />
       ) : (
         <>
@@ -503,7 +564,8 @@ function LandingOverlay({
   mobileWalletReady,
   onDesktopConnect,
   desktopWalletReady,
-  onDebugTrigger
+  onDebugTrigger,
+  scanningMessageIndex
 }: { 
   isScanning: boolean;
   isConnected?: boolean;
@@ -516,8 +578,10 @@ function LandingOverlay({
   onDesktopConnect?: () => void;
   desktopWalletReady?: boolean;
   onDebugTrigger?: () => void;
+  scanningMessageIndex?: number;
 }) {
   if (isScanning) {
+    const activeMessage = SCANNING_MESSAGES[scanningMessageIndex ?? 0] ?? SCANNING_MESSAGES[0];
     return (
       <div className="warp-overlay scanning-overlay">
         <div className="warp-content">
@@ -526,15 +590,9 @@ function LandingOverlay({
             <div className="scanning-bar"></div>
           </div>
           <div className="scanning-status">
-            {SCANNING_MESSAGES.map((message, index) => (
-              <span
-                key={message}
-                className="scanning-status-line"
-                style={{ animationDelay: `${index * 0.6}s` }}
-              >
-                {message}
-              </span>
-            ))}
+            <span key={activeMessage} className="scanning-status-line">
+              {activeMessage}
+            </span>
           </div>
         </div>
       </div>
