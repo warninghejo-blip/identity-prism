@@ -4,7 +4,7 @@ import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData
 import { useWalletData } from "@/hooks/useWalletData";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { SolanaMobileWalletAdapterWalletName } from "@solana-mobile/wallet-adapter-mobile";
 import { mintIdentityPrism } from "@/lib/mintIdentityPrism";
 import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorizationCache";
@@ -18,6 +18,11 @@ import { getRandomFunnyFact } from "@/utils/funnyFacts";
 type ViewState = "landing" | "scanning" | "ready";
 
 const MWA_AUTH_CACHE_KEY = "SolanaMobileWalletAdapterDefaultAuthorizationCache";
+const SCANNING_MESSAGES = [
+  "Aligning star maps",
+  "Decoding Solana signatures",
+  "Synchronizing cosmic ledger",
+];
 
 const getCachedMwaAddress = async () => {
   try {
@@ -71,12 +76,15 @@ const Index = () => {
     select,
     connect,
     wallets: availableWallets,
+    wallet: selectedWallet,
   } = wallet;
+  const { setVisible: setWalletModalVisible } = useWalletModal();
 
   const [activeAddress, setActiveAddress] = useState<string | undefined>();
 
   const isCapacitor = Boolean((globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-  const useMobileWallet = isCapacitor;
+  const isMobileBrowser = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? '');
+  const useMobileWallet = isCapacitor || isMobileBrowser;
 
   const mobileWallet = useMemo(
     () => availableWallets.find((w) => w.adapter.name === SolanaMobileWalletAdapterWalletName),
@@ -91,7 +99,40 @@ const Index = () => {
     candidate?.readyState === WalletReadyState.Loadable;
   const mobileWalletReady = isWalletUsable(mobileWallet);
   const phantomWalletReady = isWalletUsable(phantomWallet);
-  const preferredMobileWallet = phantomWalletReady ? phantomWallet : mobileWalletReady ? mobileWallet : undefined;
+  const preferredMobileWallet = useMobileWallet
+    ? mobileWallet
+    : phantomWalletReady
+      ? phantomWallet
+      : mobileWallet;
+  const preferredDesktopWallet = phantomWallet ?? availableWallets[0];
+  const desktopWalletReady = isWalletUsable(preferredDesktopWallet);
+
+  useEffect(() => {
+    const adapter = mobileWallet?.adapter;
+    if (!adapter) return;
+
+    const handleConnect = (pubKey: PublicKey) => {
+      if (!activeAddress) {
+        const resolved = pubKey?.toBase58?.();
+        if (resolved) {
+          console.log("[MobileConnect] Adapter connect event:", resolved);
+          setActiveAddress(resolved);
+          setViewState("scanning");
+        }
+      }
+    };
+
+    const handleError = (error: unknown) => {
+      console.warn("[MobileConnect] Adapter error event:", error);
+    };
+
+    adapter.on?.("connect", handleConnect as any);
+    adapter.on?.("error", handleError as any);
+    return () => {
+      adapter.off?.("connect", handleConnect as any);
+      adapter.off?.("error", handleError as any);
+    };
+  }, [mobileWallet?.adapter, activeAddress]);
 
   const [debugClicks, setDebugClicks] = useState(0);
   const handleDebugTrigger = () => {
@@ -110,31 +151,32 @@ const Index = () => {
   };
 
   const handleMobileConnect = useCallback(async () => {
-    if (!preferredMobileWallet) {
+    const mwaWallet = useMobileWallet ? mobileWallet : preferredMobileWallet;
+    if (!mwaWallet) {
       toast.error("Mobile wallet not detected");
       return;
     }
 
-    console.log("[MobileConnect] Direct connection initiated:", preferredMobileWallet.adapter.name);
+    console.log("[MobileConnect] Direct connection initiated:", mwaWallet.adapter.name);
     
     try {
-      // 1. Force disconnect if needed (cleanup)
-      if (isConnected) {
-        console.log("[MobileConnect] Already connected, forcing disconnect first...");
-        await disconnect();
+      if (isConnected && connectedAddress) {
+        setActiveAddress(connectedAddress.toBase58());
+        setViewState("scanning");
+        return;
       }
 
-      // 2. Select the wallet in the provider (background sync)
-      select(preferredMobileWallet.adapter.name);
+      // 1. Select the wallet in the provider (background sync)
+      select(mwaWallet.adapter.name);
 
-      // 3. Connect directly through adapter for mobile reliability
+      // 2. Connect directly through adapter for mobile reliability
       console.log("[MobileConnect] Calling adapter.connect()...");
-      await preferredMobileWallet.adapter.connect();
+      await mwaWallet.adapter.connect();
       
       console.log("[MobileConnect] Adapter state after connect():", {
-        connected: preferredMobileWallet.adapter.connected,
-        publicKey: preferredMobileWallet.adapter.publicKey?.toBase58(),
-        readyState: preferredMobileWallet.readyState
+        connected: mwaWallet.adapter.connected,
+        publicKey: mwaWallet.adapter.publicKey?.toBase58(),
+        readyState: mwaWallet.readyState
       });
 
       // 4. Poll for public key if it's not immediately available
@@ -143,10 +185,10 @@ const Index = () => {
       let resolvedAddress: string | undefined;
       while (!resolvedAddress && attempts < maxAttempts) {
         console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
-        resolvedAddress = preferredMobileWallet.adapter.publicKey?.toBase58();
+        resolvedAddress = mwaWallet.adapter.publicKey?.toBase58();
 
-        if (!resolvedAddress && preferredMobileWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
-          const mwaAdapter = preferredMobileWallet.adapter as any;
+        if (!resolvedAddress && mwaWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
+          const mwaAdapter = mwaWallet.adapter as any;
           const internalAddress = extractMwaAddress(mwaAdapter._authorizationResult);
           if (internalAddress) {
             console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
@@ -176,10 +218,18 @@ const Index = () => {
         toast.success("Wallet Connected");
       } else {
          console.error("[MobileConnect] Failure: No public key and no cache.");
+         try {
+           const cacheResult = await purgeInvalidMwaCache();
+           if (cacheResult.cleared) {
+             console.log("[MobileConnect] Cleared invalid MWA cache:", cacheResult.reason);
+           }
+         } catch {
+           // ignore cache cleanup failures
+         }
          if (isConnected) {
            await disconnect();
          }
-         const hint = preferredMobileWallet.adapter.name === SolanaMobileWalletAdapterWalletName
+         const hint = mwaWallet.adapter.name === SolanaMobileWalletAdapterWalletName
            ? "No public key received. Make sure a Solana Mobile-compatible wallet is installed and approve the request."
            : "Wallet connected but Public Key is missing. Please try again.";
          throw new Error(hint);
@@ -190,7 +240,51 @@ const Index = () => {
         description: err instanceof Error ? err.message : String(err)
       });
     }
-  }, [preferredMobileWallet, select, isConnected, disconnect]);
+  }, [useMobileWallet, mobileWallet, preferredMobileWallet, select, isConnected, disconnect]);
+
+  const handleDesktopConnect = useCallback(async () => {
+    const targetWallet = preferredDesktopWallet;
+    if (!targetWallet) {
+      toast.error("Wallet not detected");
+      return;
+    }
+
+    try {
+      if (isConnected && connectedAddress) {
+        setActiveAddress(connectedAddress.toBase58());
+        setViewState("scanning");
+        return;
+      }
+
+      if (!desktopWalletReady) {
+        if (targetWallet.adapter.name === "Phantom") {
+          window.open("https://phantom.app/", "_blank", "noopener,noreferrer");
+        } else {
+          setWalletModalVisible(true);
+        }
+        return;
+      }
+
+      select(targetWallet.adapter.name);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (targetWallet.adapter.connect) {
+        await targetWallet.adapter.connect();
+      } else {
+        await connect();
+      }
+
+      const resolved = targetWallet.adapter.publicKey?.toBase58();
+      if (resolved) {
+        setActiveAddress(resolved);
+        setViewState("scanning");
+      }
+    } catch (err) {
+      console.error("[DesktopConnect] Connection error:", err);
+      toast.error("Connection failed", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [preferredDesktopWallet, desktopWalletReady, isConnected, connectedAddress, select, connect, setWalletModalVisible, selectedWallet]);
 
   // Reset active address if wallet disconnects (keep this for cleanup)
   useEffect(() => {
@@ -328,6 +422,8 @@ const Index = () => {
           useMobileWallet={useMobileWallet}
           onMobileConnect={handleMobileConnect}
           mobileWalletReady={Boolean(preferredMobileWallet)}
+          onDesktopConnect={handleDesktopConnect}
+          desktopWalletReady={desktopWalletReady}
           onDebugTrigger={handleDebugTrigger}
         />
       ) : (
@@ -405,6 +501,8 @@ function LandingOverlay({
   useMobileWallet,
   onMobileConnect,
   mobileWalletReady,
+  onDesktopConnect,
+  desktopWalletReady,
   onDebugTrigger
 }: { 
   isScanning: boolean;
@@ -415,6 +513,8 @@ function LandingOverlay({
   useMobileWallet?: boolean;
   onMobileConnect?: () => void;
   mobileWalletReady?: boolean;
+  onDesktopConnect?: () => void;
+  desktopWalletReady?: boolean;
   onDebugTrigger?: () => void;
 }) {
   if (isScanning) {
@@ -424,6 +524,17 @@ function LandingOverlay({
           <img src="/phav.png" alt="Identity Prism" className="scanning-logo" />
           <div className="scanning-progress">
             <div className="scanning-bar"></div>
+          </div>
+          <div className="scanning-status">
+            {SCANNING_MESSAGES.map((message, index) => (
+              <span
+                key={message}
+                className="scanning-status-line"
+                style={{ animationDelay: `${index * 0.6}s` }}
+              >
+                {message}
+              </span>
+            ))}
           </div>
         </div>
       </div>
@@ -489,7 +600,12 @@ function LandingOverlay({
                   {mobileWalletReady ? "CONNECT WALLET" : "GET WALLET"}
                 </Button>
               ) : (
-                <WalletMultiButton className="prism-wallet-btn-landing" />
+                <Button
+                  className="w-full h-12 bg-cyan-500 hover:bg-cyan-400 text-black font-bold tracking-[0.2em] text-sm shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all hover:scale-105"
+                  onClick={onDesktopConnect}
+                >
+                  {desktopWalletReady ? "CONNECT WALLET" : "GET WALLET"}
+                </Button>
               )}
             </div>
           )}

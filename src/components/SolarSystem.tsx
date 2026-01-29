@@ -20,7 +20,7 @@ import {
 } from 'three';
 import { useRef, useMemo, Suspense, useEffect, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Stars, OrbitControls } from '@react-three/drei';
+import { OrbitControls } from '@react-three/drei';
 import { EffectComposer, Bloom, ChromaticAberration, Vignette, Noise } from '@react-three/postprocessing';
 import { BlendFunction } from 'postprocessing';
 import { VISUAL_CONFIG } from '@/constants';
@@ -616,20 +616,6 @@ function HyperjumpLines() {
   );
 }
 
-// High-quality starfield background
-function Starfield({ isWarping }: { isWarping?: boolean }) {
-  return (
-    <Stars 
-      radius={VISUAL_CONFIG.STARS.RADIUS} 
-      depth={VISUAL_CONFIG.STARS.DEPTH} 
-      count={isWarping ? 1000 : VISUAL_CONFIG.STARS.COUNT} 
-      factor={VISUAL_CONFIG.STARS.FACTOR} 
-      saturation={VISUAL_CONFIG.STARS.SATURATION} 
-      fade={VISUAL_CONFIG.STARS.FADE}
-    />
-  );
-}
-
 // Nebula background particles
 function Nebula({ config }: { config?: NebulaConfig }) {
   const nebulaRef = useRef<Points>(null);
@@ -708,8 +694,6 @@ function SolarSystemScene({ traits, walletAddress, isWarping }: SolarSystemProps
     <>
       <CinematicCamera isWarping={isWarping} hasTraits={hasTraits} />
       <ambientLight intensity={0.04} />
-      <Starfield isWarping={isWarping} />
-      
       {isWarping ? <HyperjumpLines /> : systemData && (
         <>
           <Nebula config={systemData.nebula} />
@@ -807,7 +791,6 @@ export function SolarSystem({ traits, walletAddress, isWarping }: SolarSystemPro
           {!isConnected && !traits && !isWarping && (
             <>
               <ambientLight intensity={0.01} />
-              <Starfield />
               <OrbitControls enablePan={false} enableZoom={false} rotateSpeed={0.2} />
             </>
           )}

@@ -41,7 +41,7 @@ function getProceduralParams(seed: string) {
   return {
     noiseScale: 2.0 + (hash % 100) / 80,
     turbulence: 0.6 + (hash % 60) / 100,
-    pulseSpeed: 0.15 + (hash % 40) / 200,
+    pulseSpeed: 0.05 + (hash % 30) / 500,
     sunspotDensity: 0.4 + (hash % 60) / 100,
     hueShift: (hash % 30) / 100, // Subtle color variation
   };
@@ -277,7 +277,7 @@ const coronaFragmentShader = `
     float fresnel = pow(1.0 - abs(dot(vNormal, viewDir)), 2.5);
     
     // Pulsating corona
-    float pulse = 0.85 + 0.15 * sin(uTime * 1.5);
+    float pulse = 0.85 + 0.15 * sin(uTime * 0.6);
     float glow = fresnel * pulse;
     
     gl_FragColor = vec4(uColor * 1.5, glow * uOpacity);
@@ -311,7 +311,7 @@ const beamFragmentShader = `
     float lengthFade = 1.0 - pow(vUv.y, 0.5);
     
     // Pulsating energy
-    float pulse = 0.7 + 0.3 * sin(uTime * 4.0 + vUv.y * 10.0);
+    float pulse = 0.7 + 0.3 * sin(uTime * 1.2 + vUv.y * 6.0);
     
     // Combine for soft volumetric look
     float alpha = radialFade * lengthFade * pulse * uIntensity;
@@ -412,12 +412,7 @@ function SunCore({ color1, color2, size, intensity = 3, params, archetype }: Sun
           toneMapped={false}
         />
       </mesh>
-
-      {/* Multi-layer corona for atmospheric scattering */}
-      <CoronaLayer size={size} color={color1} opacity={0.5} scale={1.15} />
-      <CoronaLayer size={size} color="#ffffff" opacity={0.25} scale={1.3} />
-      <CoronaLayer size={size} color={color1} opacity={0.12} scale={archetype.coronaScale} />
-      <CoronaLayer size={size} color={color2} opacity={0.05} scale={archetype.coronaScale * 1.5} />
+      <CoronaLayer size={size} color={color1} opacity={0.12} scale={1.12} />
     </group>
   );
 }

@@ -7,7 +7,6 @@ import { Outlet } from "react-router-dom";
 import { Canvas } from '@react-three/fiber';
 import { EffectComposer, Bloom, ChromaticAberration, Vignette, Noise } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { StarField } from "@/components/StarField";
 import { VISUAL_CONFIG as GLOBAL_VISUAL_CONFIG } from "@/constants";
 
 const queryClient = new QueryClient();
@@ -16,7 +15,6 @@ const SceneContent = () => {
   return (
     <>
       <color attach="background" args={["#000000"]} />
-      <StarField count={2000} />
       <ambientLight intensity={0.2} />
     </>
   );

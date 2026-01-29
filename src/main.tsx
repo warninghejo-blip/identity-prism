@@ -71,11 +71,11 @@ const rawAppBaseUrl = getAppBaseUrl();
 const rawAppIconUrl = getMetadataImageUrl();
 const appBaseUrl = isCapacitor ? rawAppBaseUrl : toHttps(rawAppBaseUrl);
 const appIconUrl = isCapacitor ? rawAppIconUrl : toHttps(rawAppIconUrl);
-const appIdentityUri = isCapacitor ? 'identityprism://app' : (appBaseUrl ?? 'https://identityprism.xyz');
+const appIdentityBaseUrl = toHttps(rawAppBaseUrl) ?? 'https://identityprism.xyz';
 const appIdentity = {
   name: 'Identity Prism',
-  uri: appIdentityUri,
-  icon: appIconUrl ?? 'https://identityprism.xyz/phav.png',
+  uri: appIdentityBaseUrl,
+  icon: `${appIdentityBaseUrl}/phav.png`,
 };
 const isMobileBrowser = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? '');
 const useMobileWallet = isCapacitor || isMobileBrowser;
