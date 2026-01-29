@@ -265,7 +265,7 @@ float snoise(vec3 v) {
   vec4 p = permute( permute( permute(
              i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
            + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
-           + i.x + vec4(0.0, i1.x, i2.x, 1.0 )));
+           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
 
   float n_ = 0.142857142857;
   vec3  ns = n_ * D.wyz - D.xzx;
@@ -664,8 +664,7 @@ export function Planet3D({ tier }: Planet3DProps) {
             uniforms={sun1ShaderUniforms}
           />
         </mesh>
-        {/* Sun 1 Atmosphere */}
-        <mesh position={[-1.0, 0, 0]} scale={[1.18, 1.18, 1.18]}>
+        <mesh position={[-1.0, 0, 0]} scale={[1.12, 1.12, 1.12]}>
           <sphereGeometry args={[0.65, 32, 32]} />
           <shaderMaterial
             vertexShader={atmosphereVertexShader}
@@ -674,20 +673,7 @@ export function Planet3D({ tier }: Planet3DProps) {
             blending={AdditiveBlending}
             side={BackSide}
             transparent
-            opacity={0.32}
-            depthWrite={false}
-          />
-        </mesh>
-        <mesh position={[-1.0, 0, 0]} scale={[1.34, 1.34, 1.34]}>
-          <sphereGeometry args={[0.65, 32, 32]} />
-          <shaderMaterial
-            vertexShader={atmosphereVertexShader}
-            fragmentShader={atmosphereFragmentShader}
-            uniforms={{ uColor: { value: new Color('#ffb347') } }}
-            blending={AdditiveBlending}
-            side={BackSide}
-            transparent
-            opacity={0.25}
+            opacity={0.18}
             depthWrite={false}
           />
         </mesh>
@@ -714,8 +700,7 @@ export function Planet3D({ tier }: Planet3DProps) {
             uniforms={sun2ShaderUniforms}
           />
         </mesh>
-        {/* Sun 2 Atmosphere */}
-        <mesh position={[1.0, 0, 0]} scale={[1.18, 1.18, 1.18]}>
+        <mesh position={[1.0, 0, 0]} scale={[1.12, 1.12, 1.12]}>
           <sphereGeometry args={[0.6, 32, 32]} />
           <shaderMaterial
             vertexShader={atmosphereVertexShader}
@@ -724,20 +709,7 @@ export function Planet3D({ tier }: Planet3DProps) {
             blending={AdditiveBlending}
             side={BackSide}
             transparent
-            opacity={0.32}
-            depthWrite={false}
-          />
-        </mesh>
-        <mesh position={[1.0, 0, 0]} scale={[1.32, 1.32, 1.32]}>
-          <sphereGeometry args={[0.6, 32, 32]} />
-          <shaderMaterial
-            vertexShader={atmosphereVertexShader}
-            fragmentShader={atmosphereFragmentShader}
-            uniforms={{ uColor: { value: new Color('#6fb4ff') } }}
-            blending={AdditiveBlending}
-            side={BackSide}
-            transparent
-            opacity={0.24}
+            opacity={0.17}
             depthWrite={false}
           />
         </mesh>
@@ -869,9 +841,7 @@ export function Planet3D({ tier }: Planet3DProps) {
             depthWrite={false}
           />
         </mesh>
-
-        {/* Sun Atmosphere */}
-        <mesh scale={[1.22, 1.22, 1.22]}>
+        <mesh scale={[1.12, 1.12, 1.12]}>
           <sphereGeometry args={[size, 64, 64]} />
           <shaderMaterial
             vertexShader={atmosphereVertexShader}
@@ -880,20 +850,7 @@ export function Planet3D({ tier }: Planet3DProps) {
             blending={AdditiveBlending}
             side={BackSide}
             transparent
-            opacity={0.38}
-            depthWrite={false}
-          />
-        </mesh>
-        <mesh scale={[1.42, 1.42, 1.42]}>
-          <sphereGeometry args={[size, 64, 64]} />
-          <shaderMaterial
-            vertexShader={atmosphereVertexShader}
-            fragmentShader={atmosphereFragmentShader}
-            uniforms={{ uColor: { value: new Color('#ffb347') } }}
-            blending={AdditiveBlending}
-            side={BackSide}
-            transparent
-            opacity={0.28}
+            opacity={0.18}
             depthWrite={false}
           />
         </mesh>

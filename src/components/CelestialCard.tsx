@@ -182,8 +182,6 @@ export function CelestialCard({ data }: CelestialCardProps) {
                 radius={[10, 18]}
                 sizeRange={[0.35, 0.9]}
                 intensityRange={[0.35, 0.75]}
-                twinkleChance={0.04}
-                twinkleStrength={0.22}
                 hemisphere="back"
                 colors={['#fff5e6', '#ffffff', '#ffe2b0']}
               />

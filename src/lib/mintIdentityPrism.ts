@@ -1,13 +1,5 @@
 import { WalletContextState } from '@solana/wallet-adapter-react';
-import {
-  Connection,
-  Keypair,
-  PublicKey,
-  SystemProgram,
-  Transaction,
-  LAMPORTS_PER_SOL,
-  SYSVAR_RENT_PUBKEY,
-} from '@solana/web3.js';
+import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { Buffer } from 'buffer';
 import {
   getAppBaseUrl,
@@ -16,26 +8,10 @@ import {
   getMetadataBaseUrl,
   getMetadataImageUrl,
   getCollectionMint,
-  getCollectionVerifyUrl,
-  getUpdateAuthorityAddress,
   getCnftMintUrl,
   MINT_CONFIG,
-  TREASURY_ADDRESS,
 } from '@/constants';
 import type { WalletTraits } from '@/hooks/useWalletData';
-import {
-  createAssociatedTokenAccountInstruction,
-  createInitializeMintInstruction,
-  createMintToInstruction,
-  getAssociatedTokenAddress,
-  MINT_SIZE,
-  TOKEN_PROGRAM_ID,
-} from '@solana/spl-token';
-import {
-  createCreateMasterEditionV3Instruction,
-  createCreateMetadataAccountV3Instruction,
-  PROGRAM_ID as TOKEN_METADATA_PROGRAM_ID,
-} from '@metaplex-foundation/mpl-token-metadata';
 
 export interface MintMetadata {
   collection: string;
@@ -86,16 +62,60 @@ function encodeBase64(value: string): string {
   return Buffer.from(value, 'utf-8').toString('base64');
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function confirmTransactionWithPolling(
+  connection: Connection,
+  signature: string,
+  timeoutMs = 60000
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const statusResponse = await connection.getSignatureStatuses([signature], {
+      searchTransactionHistory: true,
+    });
+    const status = statusResponse?.value?.[0];
+    if (status?.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(status.err)}`);
+    }
+    if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
+      return;
+    }
+    await sleep(2000);
+  }
+  throw new Error('Transaction confirmation timed out');
+}
+
+const isAdminModeEnabled = () => {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('admin') === 'false' || params.has('noadmin')) {
+    return false;
+  }
+  return params.get('admin') === 'true' || params.has('admin');
+};
+
+const logSendTransactionError = async (error: unknown) => {
+  const candidate = error as { getLogs?: () => Promise<string[] | null> };
+  if (candidate?.getLogs) {
+    try {
+      const logs = await candidate.getLogs();
+      if (logs?.length) {
+        console.error('[mint] transaction logs', logs);
+      }
+    } catch (logError) {
+      console.warn('[mint] failed to read transaction logs', logError);
+    }
+  }
+};
+
 export async function mintIdentityPrism({
   wallet,
   address,
   traits,
   score,
 }: MintIdentityPrismArgs): Promise<MintIdentityPrismResult> {
-  if (!wallet || !wallet.publicKey || !wallet.sendTransaction) {
-    throw new Error('Wallet not ready or does not support transactions');
-  }
-
+  const wantsAdminMode = isAdminModeEnabled();
   const heliusRpcUrl = getHeliusRpcUrl(address);
   if (!heliusRpcUrl) {
     throw new Error('Helius API key required for minting');
@@ -105,8 +125,6 @@ export async function mintIdentityPrism({
     httpHeaders: getHeliusProxyHeaders(address),
   });
   const payer = wallet.publicKey;
-  const treasury = new PublicKey(TREASURY_ADDRESS);
-  const priceLamports = Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL);
   const metadataBaseUrl = getMetadataBaseUrl();
   if (!metadataBaseUrl) {
     throw new Error('Metadata service URL not configured');
@@ -118,9 +136,16 @@ export async function mintIdentityPrism({
   const appBaseUrl = getAppBaseUrl();
   const shortAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
   const collectionMintAddress = getCollectionMint();
-  const updateAuthorityAddress = getUpdateAuthorityAddress();
-  const collectionVerifyUrl = getCollectionVerifyUrl();
-  const cnftMintUrl = getCnftMintUrl();
+  const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;
+  if (!coreMintUrl) {
+    throw new Error('Core mint endpoint is not configured');
+  }
+  const adminMode = wantsAdminMode;
+  const requiresWalletTx = !adminMode;
+
+  if (!wallet || !wallet.publicKey || (requiresWalletTx && !wallet.sendTransaction)) {
+    throw new Error('Wallet not ready or does not support transactions');
+  }
 
   const parseOptionalPublicKey = (value: string | null, label: string) => {
     if (!value) return null;
@@ -132,8 +157,6 @@ export async function mintIdentityPrism({
   };
 
   const collectionMint = parseOptionalPublicKey(collectionMintAddress, 'VITE_COLLECTION_MINT');
-  const updateAuthority = parseOptionalPublicKey(updateAuthorityAddress, 'VITE_UPDATE_AUTHORITY') ?? payer;
-
   const metadata: MintMetadata = {
     collection: MINT_CONFIG.COLLECTION,
     collectionMint: collectionMint?.toBase58(),
@@ -189,7 +212,14 @@ export async function mintIdentityPrism({
   });
 
   if (!metadataResponse.ok) {
-    throw new Error('Metadata upload failed');
+    const errorText = await metadataResponse.text();
+    console.error('[mint] metadata upload failed', {
+      status: metadataResponse.status,
+      statusText: metadataResponse.statusText,
+      body: errorText,
+      metadataBaseUrl,
+    });
+    throw new Error(`Metadata upload failed: ${metadataResponse.status} ${errorText || metadataResponse.statusText}`);
   }
   const metadataPayload = (await metadataResponse.json()) as { uri?: string };
   const metadataUri = metadataPayload.uri;
@@ -197,183 +227,106 @@ export async function mintIdentityPrism({
     throw new Error('Metadata URI not returned');
   }
 
-  if (cnftMintUrl) {
-    if (!collectionMint) {
-      throw new Error('Collection mint is required for compressed minting');
-    }
-    const cnftResponse = await fetch(`${cnftMintUrl}/mint-cnft`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        owner: address,
-        metadataUri,
-        name: metadataJson.name,
-        symbol: metadataJson.symbol,
-        sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
-        collectionMint: collectionMint.toBase58(),
-      }),
+  if (!collectionMint) {
+    throw new Error('Collection mint is required for core minting');
+  }
+  const cnftResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      owner: address,
+      metadataUri,
+      name: metadataJson.name,
+      symbol: metadataJson.symbol,
+      sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
+      collectionMint: collectionMint.toBase58(),
+      admin: adminMode,
+    }),
+  });
+
+  if (!cnftResponse.ok) {
+    const errorText = await cnftResponse.text();
+    console.error('[mint] core mint failed', {
+      status: cnftResponse.status,
+      statusText: cnftResponse.statusText,
+      body: errorText,
+      coreMintUrl,
     });
+    throw new Error(`Core mint failed: ${cnftResponse.status} ${errorText || cnftResponse.statusText}`);
+  }
 
-    if (!cnftResponse.ok) {
-      throw new Error('Core mint failed');
-    }
-
-    const cnftPayload = (await cnftResponse.json()) as {
-      transaction?: string;
-      assetId?: string;
-    };
-    if (!cnftPayload.transaction) {
-      throw new Error('Core mint transaction missing');
-    }
-
-    const transaction = Transaction.from(Buffer.from(cnftPayload.transaction, 'base64'));
-    const signature = await wallet.sendTransaction(transaction, connection);
-    await connection.confirmTransaction(signature, 'confirmed');
-
+  const cnftPayload = (await cnftResponse.json()) as {
+    transaction?: string;
+    assetId?: string;
+    signature?: string;
+    signatures?: Record<string, string>;
+    admin?: boolean;
+  };
+  if (adminMode && cnftPayload.signature) {
     return {
-      signature,
-      mint: cnftPayload.assetId ?? signature,
+      signature: cnftPayload.signature,
+      mint: cnftPayload.assetId ?? cnftPayload.signature,
       metadataUri,
       metadata,
       metadataBase64: encodeBase64(JSON.stringify(metadata)),
     };
   }
-
-  const mintKeypair = Keypair.generate();
-  const mintRent = await connection.getMinimumBalanceForRentExemption(MINT_SIZE);
-  const ata = await getAssociatedTokenAddress(mintKeypair.publicKey, payer);
-  const [metadataPda] = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from('metadata'),
-      TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-      mintKeypair.publicKey.toBuffer(),
-    ],
-    TOKEN_METADATA_PROGRAM_ID
-  );
-  const [masterEditionPda] = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from('metadata'),
-      TOKEN_METADATA_PROGRAM_ID.toBuffer(),
-      mintKeypair.publicKey.toBuffer(),
-      Buffer.from('edition'),
-    ],
-    TOKEN_METADATA_PROGRAM_ID
-  );
-
-  const createMintIx = SystemProgram.createAccount({
-    fromPubkey: payer,
-    newAccountPubkey: mintKeypair.publicKey,
-    lamports: mintRent,
-    space: MINT_SIZE,
-    programId: TOKEN_PROGRAM_ID,
-  });
-  const initMintIx = createInitializeMintInstruction(mintKeypair.publicKey, 0, payer, payer);
-  const createAtaIx = createAssociatedTokenAccountInstruction(
-    payer,
-    ata,
-    payer,
-    mintKeypair.publicKey
-  );
-  const mintToIx = createMintToInstruction(mintKeypair.publicKey, ata, payer, 1);
-  const metadataIx = createCreateMetadataAccountV3Instruction(
-    {
-      metadata: metadataPda,
-      mint: mintKeypair.publicKey,
-      mintAuthority: payer,
-      payer,
-      updateAuthority,
-      systemProgram: SystemProgram.programId,
-      rent: SYSVAR_RENT_PUBKEY,
-    },
-    {
-      createMetadataAccountArgsV3: {
-        data: {
-          name: metadataJson.name,
-          symbol: metadataJson.symbol,
-          uri: metadataUri,
-          sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
-          creators: null,
-          collection: collectionMint
-            ? {
-                verified: false,
-                key: collectionMint,
-              }
-            : null,
-          uses: null,
-        },
-        isMutable: true,
-        collectionDetails: null,
-      },
-    }
-  );
-  const masterEditionIx = createCreateMasterEditionV3Instruction(
-    {
-      edition: masterEditionPda,
-      mint: mintKeypair.publicKey,
-      updateAuthority,
-      mintAuthority: payer,
-      payer,
-      metadata: metadataPda,
-      tokenProgram: TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-      rent: SYSVAR_RENT_PUBKEY,
-    },
-    {
-      createMasterEditionArgs: {
-        maxSupply: 0,
-      },
-    }
-  );
-
-  const transferIx = SystemProgram.transfer({
-    fromPubkey: payer,
-    toPubkey: treasury,
-    lamports: priceLamports,
-  });
-
-  const transaction = new Transaction().add(
-    createMintIx,
-    initMintIx,
-    createAtaIx,
-    mintToIx,
-    metadataIx,
-    masterEditionIx,
-    transferIx
-  );
-  
-  const signature = await wallet.sendTransaction(transaction, connection, {
-    signers: [mintKeypair],
-  });
-  
-  const latestBlockhash = await connection.getLatestBlockhash('finalized');
-  await connection.confirmTransaction(
-    {
-      signature,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-    },
-    'confirmed'
-  );
-
-  if (collectionMint && collectionVerifyUrl) {
-    try {
-      await fetch(`${collectionVerifyUrl}/verify-collection`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mint: mintKeypair.publicKey.toBase58(),
-          collectionMint: collectionMint.toBase58(),
-          signature,
-        }),
-      });
-    } catch (error) {
-      console.warn('[mint] collection verify request failed', error);
-    }
+  if (!cnftPayload.transaction) {
+    throw new Error('Core mint transaction missing');
   }
+
+  const transaction = Transaction.from(Buffer.from(cnftPayload.transaction, 'base64'));
+
+  if (!wallet.signTransaction) {
+    throw new Error('Wallet does not support signTransaction required for core minting');
+  }
+
+  const serverSignatures = cnftPayload.signatures ?? {};
+  const compiledMessage = transaction.compileMessage();
+  const requiredSigners = compiledMessage.accountKeys
+    .slice(0, compiledMessage.header.numRequiredSignatures)
+    .map((key) => key.toBase58());
+  transaction.signatures = requiredSigners.map((signer) => ({
+    publicKey: new PublicKey(signer),
+    signature: null,
+  }));
+  console.info('[mint] required signers', requiredSigners);
+  console.info('[mint] server signatures', Object.keys(serverSignatures));
+
+  let signature = '';
+  try {
+    const signedTransaction = await wallet.signTransaction(transaction);
+    Object.entries(serverSignatures).forEach(([pubkey, signatureBase64]) => {
+      try {
+        signedTransaction.addSignature(new PublicKey(pubkey), Buffer.from(signatureBase64, 'base64'));
+      } catch (error) {
+        console.warn('[mint] failed to re-apply server signature', { pubkey, error });
+      }
+    });
+
+    const compiled = signedTransaction.compileMessage();
+    const required = compiled.accountKeys
+      .slice(0, compiled.header.numRequiredSignatures)
+      .map((key) => key.toBase58());
+    const missing = signedTransaction.signatures
+      .filter((entry) => required.includes(entry.publicKey.toBase58()) && !entry.signature)
+      .map((entry) => entry.publicKey.toBase58());
+    if (missing.length) {
+      throw new Error(`Missing required signatures: ${missing.join(', ')}`);
+    }
+
+    signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+      preflightCommitment: 'confirmed',
+    });
+  } catch (error) {
+    await logSendTransactionError(error);
+    throw error;
+  }
+  await confirmTransactionWithPolling(connection, signature);
 
   return {
     signature,
-    mint: mintKeypair.publicKey.toBase58(),
+    mint: cnftPayload.assetId ?? signature,
     metadataUri,
     metadata,
     metadataBase64: encodeBase64(JSON.stringify(metadata)),

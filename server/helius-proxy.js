@@ -12,9 +12,41 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js';
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
-import { createNoopSigner, generateSigner, keypairIdentity, publicKey } from '@metaplex-foundation/umi';
+import {
+  createNoopSigner,
+  createSignerFromKeypair,
+  generateSigner,
+  keypairIdentity,
+  publicKey,
+} from '@metaplex-foundation/umi';
 import { create, fetchCollection, mplCore } from '@metaplex-foundation/mpl-core';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
+
+const loadEnvFile = (filePath) => {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    content.split(/\r?\n/).forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const splitIndex = trimmed.indexOf('=');
+      if (splitIndex <= 0) return;
+      const key = trimmed.slice(0, splitIndex).trim();
+      if (!key || process.env[key] !== undefined) return;
+      let value = trimmed.slice(splitIndex + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    });
+  } catch {
+    // ignore missing env file
+  }
+};
+
+loadEnvFile(process.env.ENV_PATH ?? path.join(process.cwd(), '.env'));
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HELIUS_RPC_BASE = (process.env.HELIUS_RPC_BASE ?? 'https://mainnet.helius-rpc.com/').trim();
@@ -29,6 +61,8 @@ const METADATA_DIR = process.env.METADATA_DIR
 const ASSETS_DIR = path.join(METADATA_DIR, 'assets');
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL ?? '').trim();
 const COLLECTION_AUTHORITY_SECRET = (process.env.COLLECTION_AUTHORITY_SECRET ?? '').trim();
+const TREASURY_SECRET = (process.env.TREASURY_SECRET ?? '').trim();
+const TREASURY_SECRET_PATH = (process.env.TREASURY_SECRET_PATH ?? path.join(process.cwd(), 'keys', 'treasury.json')).trim();
 const CORE_COLLECTION = (process.env.CORE_COLLECTION ?? '').trim();
 const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS ?? '').trim();
 const MINT_PRICE_SOL = Number(process.env.MINT_PRICE_SOL ?? '0.01');
@@ -89,6 +123,21 @@ const parseSecretKey = (value) => {
   return null;
 };
 
+const loadSecretKeyFromFile = (filePath) => {
+  if (!filePath) return null;
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const content = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed)) {
+      return Uint8Array.from(parsed);
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
 const parsePublicKey = (value, label) => {
   if (!value) return null;
   try {
@@ -100,7 +149,7 @@ const parsePublicKey = (value, label) => {
 
 const applyCors = (res) => {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
-  res.setHeader('Access-Control-Allow-Headers', 'content-type,x-wallet-address');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type,x-wallet-address,solana-client');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
 };
 
@@ -165,45 +214,82 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
+      const requestId = crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       if (!COLLECTION_AUTHORITY_SECRET) {
-        respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured' });
+        respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured', requestId });
         return;
       }
       if (!TREASURY_ADDRESS) {
-        respondJson(res, 500, { error: 'TREASURY_ADDRESS is not configured' });
+        respondJson(res, 500, { error: 'TREASURY_ADDRESS is not configured', requestId });
         return;
       }
 
       const collectionSecret = parseSecretKey(COLLECTION_AUTHORITY_SECRET);
       if (!collectionSecret) {
-        respondJson(res, 500, { error: 'Invalid collection authority secret' });
+        respondJson(res, 500, { error: 'Invalid collection authority secret', requestId });
         return;
       }
 
       const body = await readBody(req);
-      const payload = body ? JSON.parse(body) : {};
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch (error) {
+        console.error('[mint-cnft] invalid json', {
+          requestId,
+          error: error instanceof Error ? error.message : String(error),
+          bodyPreview: body.slice(0, 200),
+        });
+        respondJson(res, 400, { error: 'Invalid JSON payload', requestId });
+        return;
+      }
       const owner = payload?.owner ?? '';
       const metadataUri = payload?.metadataUri ?? '';
       const name = payload?.name ?? '';
       const symbol = payload?.symbol ?? '';
       const sellerFeeBasisPoints = Number(payload?.sellerFeeBasisPoints ?? 0);
       const collectionMintRaw = payload?.collectionMint ?? CORE_COLLECTION ?? '';
+      const adminMode = Boolean(payload?.admin);
+
+      const treasurySecret = adminMode
+        ? parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH)
+        : null;
+      if (adminMode && !treasurySecret) {
+        respondJson(res, 500, {
+          error: 'Treasury secret not configured',
+          requestId,
+          hint: `Set TREASURY_SECRET or place key at ${TREASURY_SECRET_PATH}`,
+        });
+        return;
+      }
+
+      console.info('[mint-cnft] request', {
+        requestId,
+        owner,
+        collectionMint: collectionMintRaw,
+        metadataUri,
+        name,
+        symbol,
+        sellerFeeBasisPoints,
+      });
 
       if (!owner || !metadataUri || !name || !collectionMintRaw) {
-        respondJson(res, 400, { error: 'Missing required mint payload' });
+        respondJson(res, 400, { error: 'Missing required mint payload', requestId });
         return;
       }
 
       const collectionMintKey = parsePublicKey(collectionMintRaw, 'collectionMint');
       const ownerKey = parsePublicKey(owner, 'owner');
       if (!collectionMintKey || !ownerKey) {
-        respondJson(res, 400, { error: 'Invalid public keys in mint request' });
+        respondJson(res, 400, { error: 'Invalid public keys in mint request', requestId });
         return;
       }
 
       const rpcUrl = getRpcUrl(ownerKey.toBase58());
       if (!rpcUrl) {
-        respondJson(res, 500, { error: 'Helius API key required' });
+        respondJson(res, 500, { error: 'Helius API key required', requestId });
         return;
       }
 
@@ -214,42 +300,104 @@ const server = http.createServer(async (req, res) => {
       const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
       const collectionAuthoritySigner = umi.eddsa.createKeypairFromSecretKey(collectionSecret);
       umi.use(keypairIdentity(collectionAuthoritySigner));
+      const treasuryKeypair = adminMode && treasurySecret ? Keypair.fromSecretKey(treasurySecret) : null;
 
       const collection = await fetchCollection(umi, publicKey(collectionMintKey.toBase58()));
       const assetSigner = generateSigner(umi);
-      const payerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
+      const ownerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
+      const payerSigner = adminMode && treasuryKeypair
+        ? createSignerFromKeypair(umi, treasuryKeypair)
+        : ownerSigner;
       const builder = create(umi, {
         asset: assetSigner,
         collection,
         name,
         uri: metadataUri,
-        owner: publicKey(ownerKey.toBase58()),
+        owner: ownerSigner,
         payer: payerSigner,
+        authority: collectionAuthoritySigner,
       }).setFeePayer(payerSigner);
 
-      const transferIx = SystemProgram.transfer({
-        fromPubkey: ownerKey,
-        toPubkey: treasuryKey,
-        lamports: expectedLamports,
-      });
+      const transferIx = adminMode
+        ? null
+        : SystemProgram.transfer({
+            fromPubkey: ownerKey,
+            toPubkey: treasuryKey,
+            lamports: expectedLamports,
+          });
       const latestBlockhash = await connection.getLatestBlockhash('finalized');
-      const transaction = new Transaction().add(
-        transferIx,
-        ...builder.getInstructions().map((instruction) => toWeb3JsInstruction(instruction))
-      );
-      transaction.feePayer = ownerKey;
+      const instructions = [
+        ...(transferIx ? [transferIx] : []),
+        ...builder.getInstructions().map((instruction) => toWeb3JsInstruction(instruction)),
+      ];
+      const transaction = new Transaction().add(...instructions);
+      transaction.feePayer = adminMode && treasuryKeypair ? treasuryKeypair.publicKey : ownerKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
-      transaction.partialSign(collectionAuthorityKeypair, toWeb3JsKeypair(assetSigner));
+      const compiledMessage = transaction.compileMessage();
+      const requiredSigners = compiledMessage.accountKeys
+        .slice(0, compiledMessage.header.numRequiredSignatures)
+        .map((key) => key.toBase58());
+      console.info('[mint-cnft] required signers', { requestId, requiredSigners });
+
+      const signerPool = [];
+      const assetKeypair = toWeb3JsKeypair(assetSigner);
+      if (requiredSigners.includes(assetKeypair.publicKey.toBase58())) {
+        signerPool.push(assetKeypair);
+      }
+      if (requiredSigners.includes(collectionAuthorityKeypair.publicKey.toBase58())) {
+        signerPool.push(collectionAuthorityKeypair);
+      }
+      if (adminMode && treasuryKeypair && requiredSigners.includes(treasuryKeypair.publicKey.toBase58())) {
+        signerPool.push(treasuryKeypair);
+      }
+      if (signerPool.length) {
+        transaction.partialSign(...signerPool);
+      }
+
+      if (adminMode) {
+        const signature = await connection.sendRawTransaction(transaction.serialize(), {
+          preflightCommitment: 'confirmed',
+        });
+        await connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latestBlockhash.blockhash,
+            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+          },
+          'confirmed'
+        );
+        respondJson(res, 200, {
+          signature,
+          assetId: assetSigner.publicKey,
+          blockhash: latestBlockhash.blockhash,
+          requestId,
+          admin: true,
+        });
+        return;
+      }
+
+      const signatureMap = signerPool.reduce((acc, signer) => {
+        const entry = transaction.signatures.find((sig) => sig.publicKey.equals(signer.publicKey));
+        if (entry?.signature) {
+          acc[signer.publicKey.toBase58()] = Buffer.from(entry.signature).toString('base64');
+        }
+        return acc;
+      }, {});
 
       const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
       respondJson(res, 200, {
         transaction: serialized,
         assetId: assetSigner.publicKey,
         blockhash: latestBlockhash.blockhash,
+        requestId,
+        signatures: signatureMap,
       });
     } catch (error) {
       console.error('[mint-cnft] failed', error);
-      respondJson(res, 500, { error: 'Core mint failed' });
+      respondJson(res, 500, {
+        error: 'Core mint failed',
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
     return;
   }
@@ -366,6 +514,67 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/assets' || pathname === '/assets/') {
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch (error) {
+        console.error('[assets] invalid json', {
+          error: error instanceof Error ? error.message : String(error),
+          bodyPreview: body.slice(0, 200),
+        });
+        respondJson(res, 400, { error: 'Invalid JSON payload' });
+        return;
+      }
+      const imageValue = payload?.image ?? payload?.dataUrl ?? payload?.imageBase64 ?? '';
+      if (!imageValue || typeof imageValue !== 'string') {
+        respondJson(res, 400, { error: 'Missing image payload' });
+        return;
+      }
+      let base64 = imageValue.trim();
+      let contentType = typeof payload?.contentType === 'string' ? payload.contentType : '';
+      const dataMatch = base64.match(/^data:([^;]+);base64,(.+)$/);
+      if (dataMatch) {
+        contentType = dataMatch[1];
+        base64 = dataMatch[2];
+      }
+      if (!base64) {
+        respondJson(res, 400, { error: 'Invalid image payload' });
+        return;
+      }
+      let extension = 'png';
+      if (contentType.includes('jpeg') || contentType.includes('jpg')) {
+        extension = 'jpg';
+      } else if (contentType.includes('webp')) {
+        extension = 'webp';
+      }
+      const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const fileName = resolveAssetFile(`${id}.${extension}`);
+      if (!fileName) {
+        respondJson(res, 500, { error: 'Failed to create asset file' });
+        return;
+      }
+      const filePath = path.join(ASSETS_DIR, fileName);
+      fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+      const baseUrl = getBaseUrl(req);
+      if (!baseUrl) {
+        respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
+        return;
+      }
+      respondJson(res, 200, { url: `${baseUrl}/assets/${fileName}` });
+    } catch (error) {
+      console.error('[assets] upload failed', error);
+      respondJson(res, 500, { error: 'Asset upload failed' });
+    }
+    return;
+  }
+
   if (pathname.startsWith('/assets/')) {
     if (req.method !== 'GET') {
       respondJson(res, 405, { error: 'Method not allowed' });
@@ -398,7 +607,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && (pathname === '/metadata' || pathname === '/metadata/')) {
       try {
         const body = await readBody(req);
-        const payload = body ? JSON.parse(body) : {};
+        let payload = {};
+        try {
+          payload = body ? JSON.parse(body) : {};
+        } catch (error) {
+          console.error('[metadata] invalid json', {
+            error: error instanceof Error ? error.message : String(error),
+            bodyPreview: body.slice(0, 200),
+          });
+          respondJson(res, 400, { error: 'Invalid JSON payload' });
+          return;
+        }
         const metadata = payload?.metadata;
         if (!metadata || typeof metadata !== 'object') {
           respondJson(res, 400, { error: 'Missing metadata payload' });

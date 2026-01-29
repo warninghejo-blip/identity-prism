@@ -166,17 +166,15 @@ function generatePlanetTexture(tier: PlanetTier, score: number) {
 export function PlanetIdentity({ tier, score }: PlanetIdentityProps) {
   const groupRef = useRef<Group>(null);
   const planetRef = useRef<Mesh>(null);
-  const atmosphereRef = useRef<Mesh>(null);
 
   const config = PLANET_CONFIGS[tier];
   const texture = useMemo(() => generatePlanetTexture(tier, score), [tier, score]);
+  const atmosphereScale = tier === 'sun' ? 1.05 : 1.08;
+  const atmosphereOpacity = tier === 'sun' ? 0.12 : 0.15;
 
   useFrame((state, delta) => {
     if (planetRef.current) {
       planetRef.current.rotation.y += delta * 0.05;
-    }
-    if (atmosphereRef.current) {
-      atmosphereRef.current.rotation.y += delta * 0.08;
     }
   });
 
@@ -201,13 +199,12 @@ export function PlanetIdentity({ tier, score }: PlanetIdentityProps) {
         />
       </mesh>
 
-      {/* Atmospheric Glow */}
-      <mesh ref={atmosphereRef} scale={1.08}>
+      <mesh scale={atmosphereScale}>
         <sphereGeometry args={[config.size, 64, 64]} />
         <meshBasicMaterial
           color={config.atmosphereColor}
           transparent
-          opacity={0.15}
+          opacity={atmosphereOpacity}
           side={BackSide}
           depthWrite={false}
         />
@@ -271,12 +268,12 @@ function BinarySunIdentity({ score }: { score: number }) {
             roughness={0.3}
           />
         </mesh>
-        <mesh scale={1.15}>
+        <mesh scale={1.08}>
           <sphereGeometry args={[2.2, 64, 64]} />
           <meshBasicMaterial
             color="#FFD700"
             transparent
-            opacity={0.25}
+            opacity={0.16}
             side={BackSide}
             depthWrite={false}
           />
@@ -297,12 +294,12 @@ function BinarySunIdentity({ score }: { score: number }) {
             roughness={0.2}
           />
         </mesh>
-        <mesh scale={1.15}>
+        <mesh scale={1.08}>
           <sphereGeometry args={[1.8, 64, 64]} />
           <meshBasicMaterial
             color="#00FFFF"
             transparent
-            opacity={0.3}
+            opacity={0.16}
             side={BackSide}
             depthWrite={false}
           />
