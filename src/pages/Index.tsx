@@ -393,13 +393,28 @@ const Index = () => {
     const captureFrame = async () =>
       html2canvas(cardCaptureRef.current as HTMLDivElement, {
         backgroundColor: "#050505",
-        scale: 2,
+        scale: 1,
         useCORS: true,
         ignoreElements: (element) => {
           if (!(element instanceof HTMLCanvasElement)) return false;
           return !cardCaptureRef.current?.contains(element);
         },
       });
+
+    const resizeCanvas = (source: HTMLCanvasElement, maxSize: number, force = false) => {
+      const { width, height } = source;
+      const ratio = Math.min(1, maxSize / Math.max(width, height));
+      if (ratio >= 1 && !force) return source;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(width * ratio));
+      canvas.height = Math.max(1, Math.round(height * ratio));
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) {
+        throw new Error("Failed to create canvas context");
+      }
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    };
 
     const uploadCardImage = async (dataUrl: string, contentType: string) => {
       const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
@@ -419,17 +434,17 @@ const Index = () => {
     };
 
     const buildGifCover = async () => {
-      const frameCount = 8;
-      const frameDelay = 120;
+      const frameCount = 6;
+      const frameDelay = 140;
       const frames: HTMLCanvasElement[] = [];
       for (let i = 0; i < frameCount; i += 1) {
         const frame = await captureFrame();
-        frames.push(frame);
+        frames.push(resizeCanvas(frame, 640, true));
         await new Promise((resolve) => setTimeout(resolve, frameDelay));
       }
       const gif = new GIF({
         workers: 2,
-        quality: 10,
+        quality: 20,
         workerScript: gifWorker,
         width: frames[0].width,
         height: frames[0].height,
@@ -456,7 +471,7 @@ const Index = () => {
       console.warn("[Mint] GIF cover failed, falling back to PNG", error);
     }
 
-    const canvas = await captureFrame();
+    const canvas = resizeCanvas(await captureFrame(), 640);
     const dataUrl = canvas.toDataURL("image/png");
     return uploadCardImage(dataUrl, "image/png");
   }, []);
