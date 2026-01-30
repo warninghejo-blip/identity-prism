@@ -19,13 +19,7 @@ import './index.css';
 import '@solana/wallet-adapter-react-ui/styles.css';
 import { Buffer } from 'buffer';
 import { mwaAuthorizationCache } from './lib/mwaAuthorizationCache';
-import {
-  getAppBaseUrl,
-  getHeliusRpcUrl,
-  getMetadataBaseUrl,
-  getMetadataImageUrl,
-  MINT_CONFIG,
-} from './constants';
+import { getHeliusRpcUrl, MINT_CONFIG } from './constants';
 
 declare global {
   interface Window {
@@ -66,26 +60,12 @@ const cluster =
       ? WalletAdapterNetwork.Testnet
       : WalletAdapterNetwork.Mainnet;
 
-const isCapacitor = Boolean((globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-const toHttps = (url?: string | null) => {
-  if (!url) return null;
-  if (url.startsWith('https://')) return url;
-  if (url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) return url;
-  return url.replace('http://', 'https://');
-};
-const rawAppBaseUrl = getAppBaseUrl();
-const rawAppIconUrl = getMetadataImageUrl();
-const appBaseUrl = isCapacitor ? rawAppBaseUrl : toHttps(rawAppBaseUrl);
-const appIconUrl = isCapacitor ? rawAppIconUrl : toHttps(rawAppIconUrl);
 const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://identityprism.xyz';
-const appIdentityBaseUrl = currentOrigin.startsWith('https') ? currentOrigin : 'https://identityprism.xyz';
 const appIdentity = {
   name: 'Identity Prism',
-  uri: appIdentityBaseUrl,
+  uri: currentOrigin,
   icon: `${currentOrigin}/phav.png`,
 };
-const isMobileBrowser = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(globalThis.navigator?.userAgent ?? '');
-const useMobileWallet = isCapacitor || isMobileBrowser;
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   addressSelector: createDefaultAddressSelector(),
@@ -95,9 +75,7 @@ const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   onWalletNotFound: createDefaultWalletNotFoundHandler(),
 });
 
-const wallets = useMobileWallet
-  ? [mobileWalletAdapter]
-  : [new PhantomWalletAdapter()];
+const wallets = [new PhantomWalletAdapter(), mobileWalletAdapter];
 const heliusRpcUrl = getHeliusRpcUrl();
 if (!heliusRpcUrl) {
   console.error('Helius API key missing. Wallet scan requires VITE_HELIUS_API_KEYS.');
@@ -115,8 +93,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       {debugEnabled && <DebugConsole />}
       <WalletProvider
         wallets={wallets}
-        autoConnect={useMobileWallet}
-        localStorageKey={useMobileWallet ? 'walletNameMobile' : 'walletName'}
+        autoConnect={true}
+        localStorageKey="walletAdapter"
       >
         <WalletModalProvider>
           <RouterProvider router={router} />

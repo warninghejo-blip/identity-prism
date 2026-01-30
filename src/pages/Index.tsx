@@ -126,11 +126,8 @@ const Index = () => {
     candidate?.readyState === WalletReadyState.Loadable;
   const mobileWalletReady = isWalletUsable(mobileWallet);
   const phantomWalletReady = isWalletUsable(phantomWallet);
-  const preferredMobileWallet = useMobileWallet
-    ? mobileWallet
-    : phantomWalletReady
-      ? phantomWallet
-      : mobileWallet;
+  const isPhantomInstalled = phantomWallet?.readyState === WalletReadyState.Installed;
+  const mobileConnectReady = isPhantomInstalled ? phantomWalletReady : mobileWalletReady;
   const preferredDesktopWallet = phantomWallet ?? availableWallets[0];
   const desktopWalletReady = isWalletUsable(preferredDesktopWallet);
 
@@ -192,14 +189,16 @@ const Index = () => {
   };
 
   const handleMobileConnect = useCallback(async () => {
-    const mwaWallet = useMobileWallet ? mobileWallet : preferredMobileWallet;
-    if (!mwaWallet) {
-      toast.error("Mobile wallet not detected");
+    const isPhantomAvailable = phantomWallet?.readyState === WalletReadyState.Installed;
+    const targetWallet = isPhantomAvailable ? phantomWallet : mobileWallet;
+
+    if (!targetWallet) {
+      toast.error("Wallet not detected");
       return;
     }
 
-    console.log("[MobileConnect] Direct connection initiated:", mwaWallet.adapter.name);
-    
+    console.log("[MobileConnect] Using wallet:", targetWallet.adapter.name);
+
     try {
       if (isConnected && connectedAddress) {
         setActiveAddress(connectedAddress.toBase58());
@@ -207,29 +206,36 @@ const Index = () => {
         return;
       }
 
-      // 1. Select the wallet in the provider (background sync)
-      select(mwaWallet.adapter.name);
-
-      // 2. Connect directly through adapter for mobile reliability
+      select(targetWallet.adapter.name);
       console.log("[MobileConnect] Calling adapter.connect()...");
-      await mwaWallet.adapter.connect();
-      
+      await targetWallet.adapter.connect();
+
+      if (isPhantomAvailable) {
+        const resolved = targetWallet.adapter.publicKey?.toBase58();
+        if (resolved) {
+          setActiveAddress(resolved);
+          setViewState("scanning");
+          toast.success("Wallet Connected");
+          return;
+        }
+        throw new Error("Phantom connected but public key is missing.");
+      }
+
       console.log("[MobileConnect] Adapter state after connect():", {
-        connected: mwaWallet.adapter.connected,
-        publicKey: mwaWallet.adapter.publicKey?.toBase58(),
-        readyState: mwaWallet.readyState
+        connected: targetWallet.adapter.connected,
+        publicKey: targetWallet.adapter.publicKey?.toBase58(),
+        readyState: targetWallet.readyState,
       });
 
-      // 4. Poll for public key if it's not immediately available
       let attempts = 0;
       const maxAttempts = 20;
       let resolvedAddress: string | undefined;
       while (!resolvedAddress && attempts < maxAttempts) {
         console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
-        resolvedAddress = mwaWallet.adapter.publicKey?.toBase58();
+        resolvedAddress = targetWallet.adapter.publicKey?.toBase58();
 
-        if (!resolvedAddress && mwaWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
-          const mwaAdapter = mwaWallet.adapter as { _authorizationResult?: unknown };
+        if (!resolvedAddress && targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
+          const mwaAdapter = targetWallet.adapter as { _authorizationResult?: unknown };
           const internalAddress = extractMwaAddress(mwaAdapter._authorizationResult);
           if (internalAddress) {
             console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
@@ -246,42 +252,43 @@ const Index = () => {
         }
 
         if (!resolvedAddress) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
 
         attempts++;
       }
-      
+
       if (resolvedAddress) {
         console.log("[MobileConnect] Success! Resolved Address:", resolvedAddress);
         setActiveAddress(resolvedAddress);
         setViewState("scanning");
         toast.success("Wallet Connected");
       } else {
-         console.error("[MobileConnect] Failure: No public key and no cache.");
-         try {
-           const cacheResult = await purgeInvalidMwaCache();
-           if (cacheResult.cleared) {
-             console.log("[MobileConnect] Cleared invalid MWA cache:", cacheResult.reason);
-           }
-         } catch {
-           // ignore cache cleanup failures
-         }
-         if (isConnected) {
-           await disconnect();
-         }
-         const hint = mwaWallet.adapter.name === SolanaMobileWalletAdapterWalletName
-           ? "No public key received. Make sure a Solana Mobile-compatible wallet is installed and approve the request."
-           : "Wallet connected but Public Key is missing. Please try again.";
-         throw new Error(hint);
+        console.error("[MobileConnect] Failure: No public key and no cache.");
+        try {
+          const cacheResult = await purgeInvalidMwaCache();
+          if (cacheResult.cleared) {
+            console.log("[MobileConnect] Cleared invalid MWA cache:", cacheResult.reason);
+          }
+        } catch {
+          // ignore cache cleanup failures
+        }
+        if (isConnected) {
+          await disconnect();
+        }
+        const hint =
+          targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName
+            ? "No public key received. Make sure a Solana Mobile-compatible wallet is installed and approve the request."
+            : "Wallet connected but Public Key is missing. Please try again.";
+        throw new Error(hint);
       }
     } catch (err) {
       console.error("[MobileConnect] Connection error detail:", err);
       toast.error("Connection failed", {
-        description: err instanceof Error ? err.message : String(err)
+        description: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [useMobileWallet, mobileWallet, preferredMobileWallet, select, isConnected, disconnect]);
+  }, [phantomWallet, mobileWallet, select, isConnected, connectedAddress, disconnect]);
 
   const handleDesktopConnect = useCallback(async () => {
     const targetWallet = preferredDesktopWallet;
@@ -590,7 +597,7 @@ const Index = () => {
               connectedAddress={connectedAddress?.toBase58()}
               useMobileWallet={useMobileWallet}
               onMobileConnect={handleMobileConnect}
-              mobileWalletReady={Boolean(preferredMobileWallet)}
+              mobileWalletReady={mobileConnectReady}
               onDesktopConnect={handleDesktopConnect}
               desktopWalletReady={desktopWalletReady}
               onDebugTrigger={handleDebugTrigger}
