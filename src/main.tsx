@@ -66,7 +66,12 @@ const cluster =
       : WalletAdapterNetwork.Mainnet;
 
 const isCapacitor = Boolean((globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-const toHttps = (url?: string | null) => (url && url.startsWith('https://') ? url : null);
+const toHttps = (url?: string | null) => {
+  if (!url) return null;
+  if (url.startsWith('https://')) return url;
+  if (url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) return url;
+  return url.replace('http://', 'https://');
+};
 const rawAppBaseUrl = getAppBaseUrl();
 const rawAppIconUrl = getMetadataImageUrl();
 const appBaseUrl = isCapacitor ? rawAppBaseUrl : toHttps(rawAppBaseUrl);
@@ -77,7 +82,7 @@ const appIdentity = {
   uri: appIdentityBaseUrl,
   icon: `${appIdentityBaseUrl}/phav.png`,
 };
-const isMobileBrowser = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? '');
+const isMobileBrowser = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(globalThis.navigator?.userAgent ?? '');
 const useMobileWallet = isCapacitor || isMobileBrowser;
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({

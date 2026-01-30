@@ -395,6 +395,13 @@ const Index = () => {
         backgroundColor: "#050505",
         scale: 1,
         useCORS: true,
+        allowTaint: true,
+        onclone: (doc) => {
+          const canvases = doc.getElementsByTagName('canvas');
+          for (let i = 0; i < canvases.length; i++) {
+            canvases[i].getContext('2d', { willReadFrequently: true });
+          }
+        },
         ignoreElements: (element) => {
           if (!(element instanceof HTMLCanvasElement)) return false;
           return !cardCaptureRef.current?.contains(element);
@@ -424,7 +431,7 @@ const Index = () => {
       });
       const text = await response.text();
       if (!response.ok) {
-        throw new Error(`Card image upload failed: ${response.status} ${text}`);
+        throw new Error(`Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 100)}`);
       }
       const payload = JSON.parse(text);
       if (!payload?.url) {
@@ -472,8 +479,8 @@ const Index = () => {
     }
 
     const canvas = resizeCanvas(await captureFrame(), 640);
-    const dataUrl = canvas.toDataURL("image/png");
-    return uploadCardImage(dataUrl, "image/png");
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    return uploadCardImage(dataUrl, "image/jpeg");
   }, []);
   const handleMint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
