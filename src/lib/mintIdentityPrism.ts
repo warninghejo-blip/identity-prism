@@ -140,22 +140,12 @@ export async function mintIdentityPrism({
     const fallbackBase = resolveBaseUrl(appBaseUrl) ?? resolveBaseUrl(metadataBaseUrl) ?? 'https://identityprism.xyz';
     return `${fallbackBase}/assets/identity-prism.png`;
   })();
-  const buildAppUrl = (baseUrl: string, params: Record<string, string>) => {
-    try {
-      const url = new URL(baseUrl);
-      Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-      return url.toString();
-    } catch {
-      const joiner = baseUrl.includes('?') ? '&' : '?';
-      const query = new URLSearchParams(params);
-      return `${baseUrl}${joiner}${query.toString()}`;
-    }
-  };
-  const resolvedExternalUrl = appBaseUrl
-    ? buildAppUrl(appBaseUrl, { address })
+  const resolvedAppBaseUrl = resolveBaseUrl(appBaseUrl);
+  const resolvedExternalUrl = resolvedAppBaseUrl
+    ? `${resolvedAppBaseUrl}/?address=${address}`
     : undefined;
-  const resolvedAnimationUrl = appBaseUrl
-    ? `${resolveBaseUrl(appBaseUrl)}/?address=${address}&mode=nft`
+  const resolvedAnimationUrl = resolvedAppBaseUrl
+    ? `${resolvedAppBaseUrl}/?address=${address}&mode=nft`
     : undefined;
   const resolveImageContentType = (url: string) => {
     const normalized = url.split('?')[0]?.toLowerCase() ?? '';
@@ -166,20 +156,8 @@ export async function mintIdentityPrism({
   };
   const resolvedImageContentType = resolveImageContentType(resolvedImageUrl);
   const shortAddress = address.slice(0, 4);
-  const tierDisplayNames: Record<WalletTraits['planetTier'], string> = {
-    mercury: 'Swift Messenger',
-    mars: 'Red Explorer',
-    venus: 'Golden Seeker',
-    earth: 'Gaia Guardian',
-    neptune: 'Deep Voyager',
-    uranus: 'Ice Wanderer',
-    saturn: 'Ring Master',
-    jupiter: 'Great Giant',
-    sun: 'Solar Deity',
-    binary_sun: 'Twin Star Legend',
-  };
-  const displayName = `${tierDisplayNames[traits.planetTier] ?? 'Cosmic Identity'} #${shortAddress}`;
-  const metadataAppUrl = resolvedAnimationUrl ?? resolvedExternalUrl ?? appBaseUrl ?? undefined;
+  const displayName = `Identity Prism #${shortAddress}`;
+  const metadataAppUrl = resolvedAnimationUrl ?? resolvedExternalUrl ?? resolvedAppBaseUrl ?? undefined;
   const collectionMintAddress = getCollectionMint();
   const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;
   if (!coreMintUrl) {
@@ -238,7 +216,7 @@ export async function mintIdentityPrism({
     animation_url: resolvedAnimationUrl ?? metadataAppUrl,
     attributes: [
       { trait_type: 'Tier', value: traits.planetTier },
-      { trait_type: 'Score', value: score },
+      { trait_type: 'Score', value: score.toString() },
       { trait_type: 'Origin', value: 'Identity Prism' },
       { trait_type: 'NFTs', value: traits.nftCount },
       { trait_type: 'Tokens', value: traits.uniqueTokenCount },
