@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { CelestialCard } from "@/components/CelestialCard";
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { useWalletData } from "@/hooks/useWalletData";
@@ -65,9 +66,11 @@ const purgeInvalidMwaCache = async () => {
 };
 
 const Index = () => {
-  const searchParams = new URLSearchParams(window.location.search);
+  const [searchParams] = useSearchParams();
+  const isNftMode = searchParams.get("mode") === "nft";
+  const urlAddress = searchParams.get("address");
   const [isWarping, setIsWarping] = useState(false);
-  const [viewState, setViewState] = useState<ViewState>("landing");
+  const [viewState, setViewState] = useState<ViewState>(urlAddress ? "ready" : "landing");
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
 
@@ -83,7 +86,26 @@ const Index = () => {
   } = wallet;
   const { setVisible: setWalletModalVisible } = useWalletModal();
 
-  const [activeAddress, setActiveAddress] = useState<string | undefined>();
+  const [activeAddress, setActiveAddress] = useState<string | undefined>(urlAddress || undefined);
+
+  useEffect(() => {
+    if (!urlAddress) return;
+    try {
+      new PublicKey(urlAddress);
+      if (activeAddress !== urlAddress) {
+        setActiveAddress(urlAddress);
+      }
+      if (viewState === "landing") {
+        setViewState("ready");
+      }
+    } catch (error) {
+      console.error("Invalid address in URL", error);
+      if (activeAddress === urlAddress) {
+        setActiveAddress(undefined);
+        setViewState("landing");
+      }
+    }
+  }, [urlAddress, activeAddress, viewState]);
 
   const isCapacitor = Boolean((globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
   const isMobileBrowser = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? '');
@@ -457,97 +479,118 @@ const Index = () => {
   }, [address, score, shareInsight, traits]);
 
   const showReadyView = previewMode || viewState === "ready";
-  const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen;
+  const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
 
   return (
-    <div className={`identity-shell relative ${previewMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''}`}>
-      {traits && (
-        <div className="nft-capture" aria-hidden="true">
-          <CelestialCard ref={cardCaptureRef} data={walletData} captureMode />
-        </div>
-      )}
-      <div className="absolute inset-0 bg-[#050505] background-base" />
-      <div className="nebula-layer nebula-one" />
-      <div className="nebula-layer nebula-two" />
-      <div className="nebula-layer nebula-three" />
-      <div className="identity-gradient" />
-
-      {!showReadyView ? (
-        <LandingOverlay
-          isScanning={viewState === "scanning"}
-          isConnected={isConnected}
-          onEnter={handleEnter}
-          onDisconnect={handleDisconnect}
-          connectedAddress={connectedAddress?.toBase58()}
-          useMobileWallet={useMobileWallet}
-          onMobileConnect={handleMobileConnect}
-          mobileWalletReady={Boolean(preferredMobileWallet)}
-          onDesktopConnect={handleDesktopConnect}
-          desktopWalletReady={desktopWalletReady}
-          onDebugTrigger={handleDebugTrigger}
-          scanningMessageIndex={scanningMessageIndex}
-        />
+    <div
+      className={`identity-shell relative ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view' : ''}`}
+    >
+      {isNftMode ? (
+        <>
+          <div className="absolute inset-0 bg-[#050505] background-base" />
+          <div className="nebula-layer nebula-one" />
+          <div className="nebula-layer nebula-two" />
+          <div className="nebula-layer nebula-three" />
+          <div className="identity-gradient" />
+          <div className="card-stage">
+            {walletData.traits ? (
+              <CelestialCard data={walletData} />
+            ) : (
+              <div className="text-white/70 text-xs tracking-[0.4em] uppercase">Loading Identity...</div>
+            )}
+          </div>
+        </>
       ) : (
         <>
-          {/* Celestial Card - Center of Screen */}
-          {previewMode ? (
-            <PreviewGallery />
+          {traits && (
+            <div className="nft-capture" aria-hidden="true">
+              <CelestialCard ref={cardCaptureRef} data={walletData} captureMode />
+            </div>
+          )}
+          <div className="absolute inset-0 bg-[#050505] background-base" />
+          <div className="nebula-layer nebula-one" />
+          <div className="nebula-layer nebula-two" />
+          <div className="nebula-layer nebula-three" />
+          <div className="identity-gradient" />
+
+          {!showReadyView ? (
+            <LandingOverlay
+              isScanning={viewState === "scanning"}
+              isConnected={isConnected}
+              onEnter={handleEnter}
+              onDisconnect={handleDisconnect}
+              connectedAddress={connectedAddress?.toBase58()}
+              useMobileWallet={useMobileWallet}
+              onMobileConnect={handleMobileConnect}
+              mobileWalletReady={Boolean(preferredMobileWallet)}
+              onDesktopConnect={handleDesktopConnect}
+              desktopWalletReady={desktopWalletReady}
+              onDebugTrigger={handleDebugTrigger}
+              scanningMessageIndex={scanningMessageIndex}
+            />
           ) : (
-            <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}`}>
-              <CelestialCard data={walletData} />
-              {!previewMode && (
-                <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
-                  <button
-                    type="button"
-                    className="mint-toggle"
-                    onClick={() => setIsMintPanelOpen((prev) => !prev)}
-                  >
-                    {isMintPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-                    <span>{isMintPanelOpen ? 'Hide controls' : 'Show controls'}</span>
-                  </button>
-                  <div className="mint-panel-content">
-                    <div className="mint-action-row">
-                      <Button
-                        onClick={handleMint}
-                        disabled={mintState === "minting" || isLoading || !isConnected}
-                        className="mint-primary-btn"
+            <>
+              {/* Celestial Card - Center of Screen */}
+              {previewMode ? (
+                <PreviewGallery />
+              ) : (
+                <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}`}>
+                  <CelestialCard data={walletData} />
+                  {!previewMode && (
+                    <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
+                      <button
+                        type="button"
+                        className="mint-toggle"
+                        onClick={() => setIsMintPanelOpen((prev) => !prev)}
                       >
-                        {mintState === "idle" && <span>MINT IDENTITY</span>}
-                        {mintState === "minting" && <Loader2 className="h-5 w-5 animate-spin" />}
-                        {mintState === "success" && <span>IDENTITY SECURED</span>}
-                      </Button>
+                        {isMintPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                        <span>{isMintPanelOpen ? 'Hide controls' : 'Show controls'}</span>
+                      </button>
+                      <div className="mint-panel-content">
+                        <div className="mint-action-row">
+                          <Button
+                            onClick={handleMint}
+                            disabled={mintState === "minting" || isLoading || !isConnected}
+                            className="mint-primary-btn"
+                          >
+                            {mintState === "idle" && <span>MINT IDENTITY</span>}
+                            {mintState === "minting" && <Loader2 className="h-5 w-5 animate-spin" />}
+                            {mintState === "success" && <span>IDENTITY SECURED</span>}
+                          </Button>
+                        </div>
+                        <div className="mint-meta">
+                          <span>MINT COST {MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL</span>
+                        </div>
+                        <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
+                          <Share2 className="h-4 w-4 mr-2" />
+                          SHARE TO TWITTER
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            setActiveAddress(undefined);
+                            setViewState("landing");
+                          }}
+                          className="mint-secondary-btn"
+                        >
+                          <ArrowLeft className="h-4 w-4 mr-2" />
+                          BACK
+                        </Button>
+                      </div>
                     </div>
-                    <div className="mint-meta">
-                      <span>MINT COST {MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL</span>
-                    </div>
-                    <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
-                      <Share2 className="h-4 w-4 mr-2" />
-                      SHARE TO TWITTER
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setActiveAddress(undefined);
-                        setViewState("landing");
-                      }}
-                      className="mint-secondary-btn"
-                    >
-                      <ArrowLeft className="h-4 w-4 mr-2" />
-                      BACK
-                    </Button>
-                  </div>
+                  )}
                 </div>
               )}
+            </>
+          )}
+
+          {walletData?.error && !showReadyView && (
+            <div className="prism-error-toast">
+              <AlertCircle className="h-4 w-4" />
+              <span>{walletData.error}</span>
             </div>
           )}
         </>
-      )}
-
-      {walletData?.error && !showReadyView && (
-        <div className="prism-error-toast">
-          <AlertCircle className="h-4 w-4" />
-          <span>{walletData.error}</span>
-        </div>
       )}
     </div>
   );

@@ -33,6 +33,13 @@
   background: radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.05), transparent 70%), #020617;
 }
 
+/* NFT kiosk mode */
+.is-nft-view {
+  background: black !important;
+  overflow: hidden !important;
+  touch-action: none;
+}
+
 .scrollable-shell {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -118,6 +125,12 @@
   padding-bottom: clamp(160px, 28vh, 320px);
   box-sizing: border-box;
   pointer-events: none;
+}
+
+.is-nft-view .card-stage {
+  padding: 0;
+  margin: 0;
+  height: 100vh;
 }
 
 .card-stage.controls-open {

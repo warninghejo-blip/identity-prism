@@ -48,7 +48,8 @@ const loadEnvFile = (filePath) => {
 
 loadEnvFile(process.env.ENV_PATH ?? path.join(process.cwd(), '.env'));
 
-const PORT = Number(process.env.PORT ?? 8787);
+const PORT = Number(process.env.PORT ?? 3000);
+const HOST = (process.env.HOST ?? '0.0.0.0').trim() || '0.0.0.0';
 const HELIUS_RPC_BASE = (process.env.HELIUS_RPC_BASE ?? 'https://mainnet.helius-rpc.com/').trim();
 const HELIUS_KEYS = (process.env.HELIUS_API_KEYS ?? process.env.HELIUS_API_KEY ?? '')
   .split(',')
@@ -340,57 +341,20 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
-        
-        let baseTransaction;
-        let clientTransaction;
+
+        let transaction;
         try {
-          if (!pending.transaction) {
-            throw new Error('Pending transaction not found in cache');
-          }
-          baseTransaction = Transaction.from(Buffer.from(pending.transaction, 'base64'));
-          clientTransaction = Transaction.from(Buffer.from(signedTransaction, 'base64'));
+          transaction = Transaction.from(Buffer.from(signedTransaction, 'base64'));
         } catch (error) {
-          respondJson(res, 400, { error: 'Invalid transaction payload or cache missing', requestId: payloadRequestId });
+          respondJson(res, 400, { error: 'Invalid signed transaction payload', requestId: payloadRequestId });
           return;
         }
 
         const assetKeypair = Keypair.fromSecretKey(Uint8Array.from(pending.assetSecret));
         const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
+        transaction.partialSign(assetKeypair, collectionAuthorityKeypair);
 
-        // Copy valid signatures from client transaction to base transaction
-        // This preserves the payer/owner signature while keeping the server's instruction structure
-        const clientSignatureMap = new Map(
-          clientTransaction.signatures
-            .filter((s) => s.signature !== null)
-            .map((s) => [s.publicKey.toBase58(), s.signature])
-        );
-
-        baseTransaction.signatures = baseTransaction.signatures.map((s) => {
-          const clientSig = clientSignatureMap.get(s.publicKey.toBase58());
-          if (clientSig) {
-            return { publicKey: s.publicKey, signature: clientSig };
-          }
-          return s;
-        });
-
-        const signerPool = [];
-        const message = baseTransaction.compileMessage();
-        const requiredSigners = message.accountKeys
-          .slice(0, message.header.numRequiredSignatures)
-          .map((key) => key.toBase58());
-
-        if (requiredSigners.includes(assetKeypair.publicKey.toBase58())) {
-          signerPool.push(assetKeypair);
-        }
-        if (requiredSigners.includes(collectionAuthorityKeypair.publicKey.toBase58())) {
-          signerPool.push(collectionAuthorityKeypair);
-        }
-        
-        if (signerPool.length) {
-          baseTransaction.partialSign(...signerPool);
-        }
-        
-        const signature = await connection.sendRawTransaction(baseTransaction.serialize(), {
+        const signature = await connection.sendRawTransaction(transaction.serialize(), {
           preflightCommitment: 'confirmed',
         });
         await connection.confirmTransaction(signature, 'confirmed');
@@ -485,6 +449,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const assetSigner = generateSigner(umi);
+      const assetKeypair = toWeb3JsKeypair(assetSigner);
       const ownerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
       const payerSigner = adminMode && treasuryKeypair
         ? createSignerFromKeypair(umi, treasuryKeypair)
@@ -559,7 +524,6 @@ const server = http.createServer(async (req, res) => {
       console.info('[mint-cnft] required signers', { requestId, requiredSigners });
 
       const signerPool = [];
-      const assetKeypair = toWeb3JsKeypair(assetSigner);
       if (requiredSigners.includes(assetKeypair.publicKey.toBase58())) {
         signerPool.push(assetKeypair);
       }
@@ -844,8 +808,14 @@ const server = http.createServer(async (req, res) => {
           respondJson(res, 400, { error: 'Invalid JSON payload' });
           return;
         }
-        const metadata = payload?.metadata;
-        if (!metadata || typeof metadata !== 'object') {
+        const wrappedMetadata = payload?.metadata;
+        const metadata =
+          wrappedMetadata && typeof wrappedMetadata === 'object'
+            ? wrappedMetadata
+            : payload && typeof payload === 'object'
+              ? payload
+              : null;
+        if (!metadata || Array.isArray(metadata)) {
           respondJson(res, 400, { error: 'Missing metadata payload' });
           return;
         }
@@ -940,6 +910,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`[helius-proxy] listening on :${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`[helius-proxy] listening on ${HOST}:${PORT}`);
 });
