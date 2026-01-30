@@ -155,8 +155,16 @@ export async function mintIdentityPrism({
     ? buildAppUrl(appBaseUrl, { address })
     : undefined;
   const resolvedAnimationUrl = appBaseUrl
-    ? buildAppUrl(appBaseUrl, { address, mode: 'nft' })
+    ? `${resolveBaseUrl(appBaseUrl)}/?address=${address}&mode=nft`
     : undefined;
+  const resolveImageContentType = (url: string) => {
+    const normalized = url.split('?')[0]?.toLowerCase() ?? '';
+    if (normalized.endsWith('.gif')) return 'image/gif';
+    if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) return 'image/jpeg';
+    if (normalized.endsWith('.webp')) return 'image/webp';
+    return 'image/png';
+  };
+  const resolvedImageContentType = resolveImageContentType(resolvedImageUrl);
   const shortAddress = address.slice(0, 4);
   const tierDisplayNames: Record<WalletTraits['planetTier'], string> = {
     mercury: 'Swift Messenger',
@@ -239,7 +247,7 @@ export async function mintIdentityPrism({
     ],
     properties: {
       files: [
-        { uri: resolvedImageUrl, type: 'image/png' },
+        { uri: resolvedImageUrl, type: resolvedImageContentType },
         ...(metadataAppUrl ? [{ uri: metadataAppUrl, type: 'text/html' }] : []),
       ],
       category: 'image',

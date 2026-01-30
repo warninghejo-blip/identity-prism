@@ -16,6 +16,8 @@ import { getMetadataBaseUrl, MINT_CONFIG } from "@/constants";
 import { PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import html2canvas from "html2canvas";
+import GIF from "gif.js";
+import gifWorker from "gif.js/dist/gif.worker.js?url";
 
 type ViewState = "landing" | "scanning" | "ready";
 
@@ -387,30 +389,76 @@ const Index = () => {
     if (document?.fonts?.ready) {
       await document.fonts.ready;
     }
-    const canvas = await html2canvas(cardCaptureRef.current, {
-      backgroundColor: "#050505",
-      scale: 2,
-      useCORS: true,
-      ignoreElements: (element) => {
-        if (!(element instanceof HTMLCanvasElement)) return false;
-        return !cardCaptureRef.current?.contains(element);
-      },
-    });
+
+    const captureFrame = async () =>
+      html2canvas(cardCaptureRef.current as HTMLDivElement, {
+        backgroundColor: "#050505",
+        scale: 2,
+        useCORS: true,
+        ignoreElements: (element) => {
+          if (!(element instanceof HTMLCanvasElement)) return false;
+          return !cardCaptureRef.current?.contains(element);
+        },
+      });
+
+    const uploadCardImage = async (dataUrl: string, contentType: string) => {
+      const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: dataUrl, contentType }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Card image upload failed: ${response.status} ${text}`);
+      }
+      const payload = JSON.parse(text);
+      if (!payload?.url) {
+        throw new Error("Card image URL missing from upload response");
+      }
+      return payload.url as string;
+    };
+
+    const buildGifCover = async () => {
+      const frameCount = 8;
+      const frameDelay = 120;
+      const frames: HTMLCanvasElement[] = [];
+      for (let i = 0; i < frameCount; i += 1) {
+        const frame = await captureFrame();
+        frames.push(frame);
+        await new Promise((resolve) => setTimeout(resolve, frameDelay));
+      }
+      const gif = new GIF({
+        workers: 2,
+        quality: 10,
+        workerScript: gifWorker,
+        width: frames[0].width,
+        height: frames[0].height,
+        repeat: 0,
+      });
+      frames.forEach((frame) => gif.addFrame(frame, { delay: frameDelay }));
+      const gifBlob = await new Promise<Blob>((resolve, reject) => {
+        gif.on("finished", resolve);
+        gif.on("abort", () => reject(new Error("GIF render aborted")));
+        gif.render();
+      });
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("GIF encoding failed"));
+        reader.readAsDataURL(gifBlob);
+      });
+      return uploadCardImage(dataUrl, "image/gif");
+    };
+
+    try {
+      return await buildGifCover();
+    } catch (error) {
+      console.warn("[Mint] GIF cover failed, falling back to PNG", error);
+    }
+
+    const canvas = await captureFrame();
     const dataUrl = canvas.toDataURL("image/png");
-    const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: dataUrl, contentType: "image/png" }),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw new Error(`Card image upload failed: ${response.status} ${text}`);
-    }
-    const payload = JSON.parse(text);
-    if (!payload?.url) {
-      throw new Error("Card image URL missing from upload response");
-    }
-    return payload.url as string;
+    return uploadCardImage(dataUrl, "image/png");
   }, []);
   const handleMint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
@@ -483,20 +531,18 @@ const Index = () => {
 
   return (
     <div
-      className={`identity-shell relative ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view' : ''}`}
+      className={`identity-shell relative min-h-screen ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view nft-kiosk-mode' : ''}`}
     >
       {isNftMode ? (
         <>
           <div className="absolute inset-0 bg-[#050505] background-base" />
           <div className="nebula-layer nebula-one" />
-          <div className="nebula-layer nebula-two" />
-          <div className="nebula-layer nebula-three" />
           <div className="identity-gradient" />
-          <div className="card-stage">
+          <div className="flex items-center justify-center w-full h-screen p-0 overflow-hidden">
             {walletData.traits ? (
               <CelestialCard data={walletData} />
             ) : (
-              <div className="text-white/70 text-xs tracking-[0.4em] uppercase">Loading Identity...</div>
+              <div className="text-cyan-500 animate-pulse">Loading Identity...</div>
             )}
           </div>
         </>

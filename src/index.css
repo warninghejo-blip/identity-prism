@@ -40,6 +40,12 @@
   touch-action: none;
 }
 
+.nft-kiosk-mode {
+  background: black !important;
+  overflow: hidden !important;
+  touch-action: none;
+}
+
 .scrollable-shell {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
