@@ -132,12 +132,46 @@ export async function mintIdentityPrism({
     throw new Error('Metadata service URL not configured');
   }
   const imageUrl = getMetadataImageUrl();
-  if (!imageUrl) {
-    throw new Error('Metadata image URL not configured');
-  }
-  const resolvedImageUrl = cardImageUrl ?? imageUrl;
   const appBaseUrl = getAppBaseUrl();
-  const shortAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
+  const resolveBaseUrl = (value?: string | null) => (value ? value.replace(/\/+$/, '') : null);
+  const resolvedImageUrl = (() => {
+    if (cardImageUrl) return cardImageUrl;
+    if (imageUrl) return imageUrl;
+    const fallbackBase = resolveBaseUrl(appBaseUrl) ?? resolveBaseUrl(metadataBaseUrl) ?? 'https://identityprism.xyz';
+    return `${fallbackBase}/assets/identity-prism.png`;
+  })();
+  const buildAppUrl = (baseUrl: string, params: Record<string, string>) => {
+    try {
+      const url = new URL(baseUrl);
+      Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+      return url.toString();
+    } catch {
+      const joiner = baseUrl.includes('?') ? '&' : '?';
+      const query = new URLSearchParams(params);
+      return `${baseUrl}${joiner}${query.toString()}`;
+    }
+  };
+  const resolvedExternalUrl = appBaseUrl
+    ? buildAppUrl(appBaseUrl, { address })
+    : undefined;
+  const resolvedAnimationUrl = appBaseUrl
+    ? buildAppUrl(appBaseUrl, { address, mode: 'nft' })
+    : undefined;
+  const shortAddress = address.slice(0, 4);
+  const tierDisplayNames: Record<WalletTraits['planetTier'], string> = {
+    mercury: 'Swift Messenger',
+    mars: 'Red Explorer',
+    venus: 'Golden Seeker',
+    earth: 'Gaia Guardian',
+    neptune: 'Deep Voyager',
+    uranus: 'Ice Wanderer',
+    saturn: 'Ring Master',
+    jupiter: 'Great Giant',
+    sun: 'Solar Deity',
+    binary_sun: 'Twin Star Legend',
+  };
+  const displayName = `${tierDisplayNames[traits.planetTier] ?? 'Cosmic Identity'} #${shortAddress}`;
+  const metadataAppUrl = resolvedAnimationUrl ?? resolvedExternalUrl ?? appBaseUrl ?? undefined;
   const collectionMintAddress = getCollectionMint();
   const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;
   if (!coreMintUrl) {
@@ -188,22 +222,26 @@ export async function mintIdentityPrism({
   };
 
   const metadataJson = {
-    name: `${MINT_CONFIG.COLLECTION} #${shortAddress}`,
+    name: displayName,
     symbol: MINT_CONFIG.SYMBOL ?? 'PRISM',
     description: 'Identity Prism — a living Solana identity card built from your on-chain footprint.',
     image: resolvedImageUrl,
-    external_url: appBaseUrl ? `${appBaseUrl}/?address=${address}` : undefined,
-    animation_url: appBaseUrl ? `${appBaseUrl}/?address=${address}` : undefined,
+    external_url: resolvedExternalUrl ?? metadataAppUrl,
+    animation_url: resolvedAnimationUrl ?? metadataAppUrl,
     attributes: [
       { trait_type: 'Tier', value: traits.planetTier },
       { trait_type: 'Score', value: score },
+      { trait_type: 'Origin', value: 'Identity Prism' },
       { trait_type: 'NFTs', value: traits.nftCount },
       { trait_type: 'Tokens', value: traits.uniqueTokenCount },
       { trait_type: 'Transactions', value: traits.txCount },
       { trait_type: 'Wallet Age (days)', value: traits.walletAgeDays },
     ],
     properties: {
-      files: [{ uri: resolvedImageUrl, type: 'image/png' }],
+      files: [
+        { uri: resolvedImageUrl, type: 'image/png' },
+        ...(metadataAppUrl ? [{ uri: metadataAppUrl, type: 'text/html' }] : []),
+      ],
       category: 'image',
     },
   };
@@ -211,7 +249,7 @@ export async function mintIdentityPrism({
   const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ metadata: metadataJson }),
+    body: JSON.stringify(metadataJson),
   });
 
   if (!metadataResponse.ok) {
