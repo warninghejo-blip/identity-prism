@@ -250,6 +250,7 @@ const getContentType = (fileName) => {
   if (fileName.endsWith('.png')) return 'image/png';
   if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) return 'image/jpeg';
   if (fileName.endsWith('.webp')) return 'image/webp';
+  if (fileName.endsWith('.gif')) return 'image/gif';
   return 'application/octet-stream';
 };
 
@@ -742,6 +743,8 @@ const server = http.createServer(async (req, res) => {
         extension = 'jpg';
       } else if (contentType.includes('webp')) {
         extension = 'webp';
+      } else if (contentType.includes('gif')) {
+        extension = 'gif';
       }
       const id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const fileName = resolveAssetFile(`${id}.${extension}`);
