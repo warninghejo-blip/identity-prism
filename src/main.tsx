@@ -41,6 +41,12 @@ if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
 }
 
+const routerOptions: Parameters<typeof createBrowserRouter>[1] = {
+  future: {
+    v7_relativeSplatPath: true,
+  },
+};
+
 const router = createBrowserRouter([
   {
     path: '/',
@@ -51,12 +57,7 @@ const router = createBrowserRouter([
       { path: '*', element: <NotFound /> },
     ],
   },
-], {
-  future: {
-    v7_startTransition: true,
-    v7_relativeSplatPath: true,
-  } as any,
-});
+], routerOptions);
 
 const cluster =
   MINT_CONFIG.NETWORK === 'devnet'
@@ -76,11 +77,12 @@ const rawAppBaseUrl = getAppBaseUrl();
 const rawAppIconUrl = getMetadataImageUrl();
 const appBaseUrl = isCapacitor ? rawAppBaseUrl : toHttps(rawAppBaseUrl);
 const appIconUrl = isCapacitor ? rawAppIconUrl : toHttps(rawAppIconUrl);
-const appIdentityBaseUrl = toHttps(rawAppBaseUrl) ?? 'https://identityprism.xyz';
+const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://identityprism.xyz';
+const appIdentityBaseUrl = currentOrigin.startsWith('https') ? currentOrigin : 'https://identityprism.xyz';
 const appIdentity = {
   name: 'Identity Prism',
   uri: appIdentityBaseUrl,
-  icon: `${appIdentityBaseUrl}/phav.png`,
+  icon: `${currentOrigin}/phav.png`,
 };
 const isMobileBrowser = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(globalThis.navigator?.userAgent ?? '');
 const useMobileWallet = isCapacitor || isMobileBrowser;

@@ -153,11 +153,11 @@ const Index = () => {
       console.warn("[MobileConnect] Adapter error event:", error);
     };
 
-    adapter.on?.("connect", handleConnect as any);
-    adapter.on?.("error", handleError as any);
+    adapter.on?.("connect", handleConnect);
+    adapter.on?.("error", handleError);
     return () => {
-      adapter.off?.("connect", handleConnect as any);
-      adapter.off?.("error", handleError as any);
+      adapter.off?.("connect", handleConnect);
+      adapter.off?.("error", handleError);
     };
   }, [mobileWallet?.adapter, activeAddress]);
 
@@ -229,7 +229,7 @@ const Index = () => {
         resolvedAddress = mwaWallet.adapter.publicKey?.toBase58();
 
         if (!resolvedAddress && mwaWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
-          const mwaAdapter = mwaWallet.adapter as any;
+          const mwaAdapter = mwaWallet.adapter as { _authorizationResult?: unknown };
           const internalAddress = extractMwaAddress(mwaAdapter._authorizationResult);
           if (internalAddress) {
             console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
@@ -475,11 +475,11 @@ const Index = () => {
     try {
       return await buildGifCover();
     } catch (error) {
-      console.warn("[Mint] GIF cover failed, falling back to PNG", error);
+      console.warn("[Mint] GIF cover failed, falling back to JPEG", error);
     }
 
     const canvas = resizeCanvas(await captureFrame(), 640);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
     return uploadCardImage(dataUrl, "image/jpeg");
   }, []);
   const handleMint = useCallback(async () => {
