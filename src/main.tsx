@@ -63,7 +63,6 @@ const cluster =
 const appIdentity = {
   name: 'Identity Prism',
   uri: 'https://identityprism.xyz',
-  icon: 'https://identityprism.xyz/phav.png',
 };
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
