@@ -484,7 +484,7 @@ const Index = () => {
       binary_sun: "☀️",
     }[traits.planetTier] ?? "✨";
 
-    const shareText = `🌌 Identity Prism\n\n${tierEmoji} Тир: ${tierLabel}\n💎 Скор: ${score}\n⏳ Возраст: ${traits.walletAgeDays} дней\n\n🔮 Инсайт: ${shareInsight}`;
+    const shareText = `🌌 Identity Prism\n\n${tierEmoji} Тир: ${tierLabel}\n💎 Скор: ${score}\n⏳ Возраст: ${traits.walletAgeDays} дней\n\n🔮 Инсайт: ${shareInsight}\n\n@solana\nhttps://x.com/Identity_Prism`;
 
     const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
     const popup = window.open(twitterUrl, "_blank", "noopener,noreferrer");
