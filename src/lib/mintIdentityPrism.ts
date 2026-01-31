@@ -228,7 +228,7 @@ export async function mintIdentityPrism({
         { uri: resolvedImageUrl, type: resolvedImageContentType },
         ...(metadataAppUrl ? [{ uri: metadataAppUrl, type: 'text/html' }] : []),
       ],
-      category: 'image',
+      category: 'html',
     },
   };
 
