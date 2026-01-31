@@ -490,9 +490,13 @@ const Index = () => {
     const popup = window.open(twitterUrl, "_blank", "noopener,noreferrer");
 
     if (!popup) {
+      if (isCapacitor || isMobileBrowser) {
+        window.location.href = twitterUrl;
+        return;
+      }
       toast.error("Popup blocked. Allow popups to share on X.");
     }
-  }, [address, score, shareInsight, traits]);
+  }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);
 
   const showReadyView = previewMode || viewState === "ready";
   const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
