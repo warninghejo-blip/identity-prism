@@ -198,7 +198,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 radius={[9, 18]}
                 sizeRange={[0.45, 1.35]}
                 intensityRange={[0.4, 0.85]}
-                hemisphere="back"
+                hemisphere="full"
                 colors={['#fff5e6', '#ffffff', '#ffe2b0']}
               />
 
