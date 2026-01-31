@@ -12,7 +12,7 @@ import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorization
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from "lucide-react";
-import { getMetadataBaseUrl, MINT_CONFIG } from "@/constants";
+import { getAppBaseUrl, getMetadataBaseUrl, MINT_CONFIG } from "@/constants";
 import { PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import html2canvas from "html2canvas";
@@ -484,16 +484,21 @@ const Index = () => {
       binary_sun: "☀️",
     }[traits.planetTier] ?? "✨";
 
-    const shareText = `🌌 Identity Prism\n\n${tierEmoji} Тир: ${tierLabel}\n💎 Скор: ${score}\n⏳ Возраст: ${traits.walletAgeDays} дней\n\n🔮 Инсайт: ${shareInsight}\n\n@solana\nhttps://x.com/Identity_Prism`;
+    const appBaseUrl = (getAppBaseUrl() ?? "https://identityprism.xyz").replace(/\/+$/, "");
+    const shareUrl = `${appBaseUrl}/?address=${address}`;
+    const shareText = `🌌 Identity Prism\n${tierEmoji} Тир: ${tierLabel}\n💎 Скор: ${score}\n🔮 Инсайт: ${shareInsight}\n\nПроверь свой кошелек и получи свой Prism 👇\n@solana\nhttps://x.com/Identity_Prism`;
 
-    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
+    const encodedText = encodeURIComponent(shareText);
+    const encodedUrl = encodeURIComponent(shareUrl);
+    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}&hashtags=solana,identityprism&via=Identity_Prism`;
+
+    if (isCapacitor || isMobileBrowser) {
+      window.location.href = twitterUrl;
+      return;
+    }
+
     const popup = window.open(twitterUrl, "_blank", "noopener,noreferrer");
-
     if (!popup) {
-      if (isCapacitor || isMobileBrowser) {
-        window.location.href = twitterUrl;
-        return;
-      }
       toast.error("Popup blocked. Allow popups to share on X.");
     }
   }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);

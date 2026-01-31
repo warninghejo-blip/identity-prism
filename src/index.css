@@ -1219,9 +1219,25 @@
   display: flex;
   align-items: center;
   gap: 1rem;
+  justify-content: center;
+  text-align: center;
   z-index: 1000;
   backdrop-filter: blur(15px);
   box-shadow: 0 10px 30px rgba(0, 10, 30, 0.4);
+}
+
+.toaster [data-sonner-toaster] {
+  left: 50% !important;
+  transform: translateX(-50%);
+  right: auto !important;
+  width: min(92vw, 420px);
+}
+
+.toaster [data-sonner-toast] {
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
 }
 
 /* Custom Scrollbar */
