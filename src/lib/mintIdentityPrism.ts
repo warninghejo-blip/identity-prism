@@ -316,9 +316,12 @@ export async function mintIdentityPrism({
   const requiredSigners = compiledMessage.accountKeys
     .slice(0, compiledMessage.header.numRequiredSignatures)
     .map((key) => key.toBase58());
+  const signatureMap = new Map(
+    transaction.signatures.map((entry) => [entry.publicKey.toBase58(), entry.signature])
+  );
   transaction.signatures = requiredSigners.map((signer) => ({
     publicKey: new PublicKey(signer),
-    signature: null,
+    signature: signatureMap.get(signer) ?? null,
   }));
   console.info('[mint] required signers', requiredSigners);
   if (!requestId) {
