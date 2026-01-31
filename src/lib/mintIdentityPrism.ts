@@ -330,6 +330,13 @@ export async function mintIdentityPrism({
 
   let signature = '';
   try {
+    const serializeTransaction = transaction.serialize.bind(transaction);
+    transaction.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+      serializeTransaction({
+        ...config,
+        requireAllSignatures: false,
+        verifySignatures: false,
+      })) as typeof transaction.serialize;
     const signedTransaction = await wallet.signTransaction(transaction);
     const walletSigner = wallet.publicKey?.toBase58();
     if (walletSigner) {

@@ -226,7 +226,7 @@ const Index = () => {
       });
 
       let attempts = 0;
-      const maxAttempts = 20;
+      const maxAttempts = 40;
       let resolvedAddress: string | undefined;
       while (!resolvedAddress && attempts < maxAttempts) {
         console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
