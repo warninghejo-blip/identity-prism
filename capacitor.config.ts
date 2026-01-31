@@ -10,6 +10,8 @@ const config: CapacitorConfig = {
   },
   android: {
     allowMixedContent: true,
+    overrideUserAgent:
+      'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.147 Mobile Safari/537.36',
   },
 };
 
