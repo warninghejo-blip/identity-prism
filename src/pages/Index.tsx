@@ -16,8 +16,6 @@ import { getMetadataBaseUrl, MINT_CONFIG } from "@/constants";
 import { PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import html2canvas from "html2canvas";
-import GIF from "gif.js";
-import gifWorker from "gif.js/dist/gif.worker.js?url";
 
 type ViewState = "landing" | "scanning" | "ready";
 
@@ -390,104 +388,45 @@ const Index = () => {
       throw new Error("Card preview is not ready yet");
     }
     const metadataBaseUrl = getMetadataBaseUrl();
-    if (!metadataBaseUrl) {
-      throw new Error("Metadata service URL not configured");
+    if (!metadataBaseUrl) throw new Error("Metadata URL missing");
+
+    if (document?.fonts?.ready) await document.fonts.ready;
+
+    const canvas = await html2canvas(cardCaptureRef.current as HTMLDivElement, {
+      backgroundColor: "#020408",
+      scale: 1.5,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      onclone: (doc) => {
+        const canvases = doc.getElementsByTagName('canvas');
+        for (let i = 0; i < canvases.length; i++) {
+          canvases[i].getContext('2d', { willReadFrequently: true });
+        }
+        const cardFace = doc.querySelector('.celestial-card-face') as HTMLElement | null;
+        if (cardFace) {
+          cardFace.style.borderRadius = '0px';
+          cardFace.style.boxShadow = 'none';
+        }
+      },
+      ignoreElements: (el) => el.classList?.contains('mint-panel') ?? false,
+    });
+
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: dataUrl, contentType: "image/jpeg" }),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 100)}`);
     }
-    if (document?.fonts?.ready) {
-      await document.fonts.ready;
+    const payload = JSON.parse(text);
+    if (!payload?.url) {
+      throw new Error("Card image URL missing from upload response");
     }
-
-    const captureFrame = async () =>
-      html2canvas(cardCaptureRef.current as HTMLDivElement, {
-        backgroundColor: "#050505",
-        scale: 1,
-        useCORS: true,
-        allowTaint: true,
-        onclone: (doc) => {
-          const canvases = doc.getElementsByTagName('canvas');
-          for (let i = 0; i < canvases.length; i++) {
-            canvases[i].getContext('2d', { willReadFrequently: true });
-          }
-        },
-        ignoreElements: (element) => {
-          if (!(element instanceof HTMLCanvasElement)) return false;
-          return !cardCaptureRef.current?.contains(element);
-        },
-      });
-
-    const resizeCanvas = (source: HTMLCanvasElement, maxSize: number, force = false) => {
-      const { width, height } = source;
-      const ratio = Math.min(1, maxSize / Math.max(width, height));
-      if (ratio >= 1 && !force) return source;
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(width * ratio));
-      canvas.height = Math.max(1, Math.round(height * ratio));
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      if (!ctx) {
-        throw new Error("Failed to create canvas context");
-      }
-      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-      return canvas;
-    };
-
-    const uploadCardImage = async (dataUrl: string, contentType: string) => {
-      const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: dataUrl, contentType }),
-      });
-      const text = await response.text();
-      if (!response.ok) {
-        throw new Error(`Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 100)}`);
-      }
-      const payload = JSON.parse(text);
-      if (!payload?.url) {
-        throw new Error("Card image URL missing from upload response");
-      }
-      return payload.url as string;
-    };
-
-    const buildGifCover = async () => {
-      const frameCount = 6;
-      const frameDelay = 140;
-      const frames: HTMLCanvasElement[] = [];
-      for (let i = 0; i < frameCount; i += 1) {
-        const frame = await captureFrame();
-        frames.push(resizeCanvas(frame, 640, true));
-        await new Promise((resolve) => setTimeout(resolve, frameDelay));
-      }
-      const gif = new GIF({
-        workers: 2,
-        quality: 20,
-        workerScript: gifWorker,
-        width: frames[0].width,
-        height: frames[0].height,
-        repeat: 0,
-      });
-      frames.forEach((frame) => gif.addFrame(frame, { delay: frameDelay }));
-      const gifBlob = await new Promise<Blob>((resolve, reject) => {
-        gif.on("finished", resolve);
-        gif.on("abort", () => reject(new Error("GIF render aborted")));
-        gif.render();
-      });
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error("GIF encoding failed"));
-        reader.readAsDataURL(gifBlob);
-      });
-      return uploadCardImage(dataUrl, "image/gif");
-    };
-
-    try {
-      return await buildGifCover();
-    } catch (error) {
-      console.warn("[Mint] GIF cover failed, falling back to JPEG", error);
-    }
-
-    const canvas = resizeCanvas(await captureFrame(), 640);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-    return uploadCardImage(dataUrl, "image/jpeg");
+    return payload.url as string;
   }, []);
   const handleMint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;

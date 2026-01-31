@@ -397,18 +397,22 @@ export function Planet3D({ tier, isCapture = false }: Planet3DProps) {
   const ringsRef = useRef<Group>(null);
   const ringBaseRef = useRef<Points>(null);
   const saturnCoreRef = useRef<Group>(null);
-  const size = PLANET_SIZES[tier];
+  const baseSize = PLANET_SIZES[tier];
+  const size = isCapture ? baseSize * 0.85 : baseSize;
+  const captureScale = isCapture ? 0.9 : 1;
   const isBinary = tier === 'binary_sun';
   const textureTier = isBinary ? 'sun' : tier;
 
   useFrame((state, delta) => {
     if (isCapture) {
+      const captureRotationY = tier === 'saturn' ? 0.5 : 0.8;
+      const captureRotationX = tier === 'saturn' ? 0.2 : 0;
       if (groupRef.current) {
-        groupRef.current.rotation.y = Math.PI * 0.15;
-        groupRef.current.rotation.x = 0;
+        groupRef.current.rotation.y = captureRotationY;
+        groupRef.current.rotation.x = captureRotationX;
       }
       if (saturnCoreRef.current) {
-        saturnCoreRef.current.rotation.y = Math.PI * 0.15;
+        saturnCoreRef.current.rotation.y = captureRotationY;
       }
       if (cloudsRef.current) {
         cloudsRef.current.rotation.y = 0;
@@ -668,7 +672,7 @@ export function Planet3D({ tier, isCapture = false }: Planet3DProps) {
 
   if (isBinary) {
     return (
-      <group ref={groupRef}>
+      <group ref={groupRef} scale={captureScale}>
         <pointLight intensity={5} color="#ffb703" distance={25} />
         <pointLight intensity={3.5} color="#0077b6" distance={25} position={[3, 0, 0]} />
         
@@ -831,7 +835,7 @@ export function Planet3D({ tier, isCapture = false }: Planet3DProps) {
   // Single Sun - Special Shader Treatment
   if (tier === 'sun') {
     return (
-      <group ref={groupRef}>
+      <group ref={groupRef} scale={captureScale}>
         <pointLight intensity={4} color="#ffb703" distance={20} />
         
         {/* Sun Surface */}
@@ -876,7 +880,7 @@ export function Planet3D({ tier, isCapture = false }: Planet3DProps) {
   }
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} scale={captureScale}>
       {tier === 'saturn' ? (
         <group ref={saturnCoreRef}>
           <mesh>

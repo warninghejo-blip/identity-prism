@@ -232,7 +232,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             <div className="flex justify-center items-center border-t border-white/5 pt-5 relative z-30">
                {/* Badges moved here */}
                {frontBadges.length > 0 ? (
-                <div className="front-badges flex gap-2.5 flex-wrap justify-center">
+                <div className="front-badges flex gap-2 flex-wrap justify-center px-6 w-full">
                   {frontBadges.map((badge) => (
                     <BadgeIcon key={badge.key} badge={badge} size="sm" />
                   ))}
