@@ -35,6 +35,21 @@ if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
 }
 
+const isCapacitorNative = Boolean(
+  (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
+    ?.isNativePlatform?.()
+);
+
+if (isCapacitorNative && typeof document !== 'undefined') {
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') {
+      window.dispatchEvent(new Event('blur'));
+    }
+  };
+
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+}
+
 const routerOptions: Parameters<typeof createBrowserRouter>[1] = {
   future: {
     v7_relativeSplatPath: true,
