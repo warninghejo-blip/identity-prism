@@ -60,11 +60,10 @@ const cluster =
       ? WalletAdapterNetwork.Testnet
       : WalletAdapterNetwork.Mainnet;
 
-const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://identityprism.xyz';
 const appIdentity = {
   name: 'Identity Prism',
-  uri: currentOrigin,
-  icon: `${currentOrigin}/phav.png`,
+  uri: 'https://identityprism.xyz',
+  icon: 'https://identityprism.xyz/phav.png',
 };
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
