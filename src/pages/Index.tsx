@@ -567,11 +567,16 @@ const Index = () => {
           <div className="absolute inset-0 bg-[#050505] background-base" />
           <div className="nebula-layer nebula-one" />
           <div className="identity-gradient" />
-          <div className="flex items-center justify-center w-full h-screen p-0 overflow-hidden">
+          <div className="flex items-center justify-center w-full h-screen p-0 overflow-hidden relative z-10">
             {walletData.traits ? (
               <CelestialCard data={walletData} />
             ) : (
-              <div className="text-cyan-500 animate-pulse">Loading Identity...</div>
+              <div className="flex flex-col items-center gap-4">
+                <img src="/phav.png" className="w-16 h-16 animate-pulse opacity-50" alt="Identity Prism" />
+                <div className="text-cyan-500/50 text-xs font-bold tracking-[0.3em] uppercase animate-pulse">
+                  Decyphering...
+                </div>
+              </div>
             )}
           </div>
         </>

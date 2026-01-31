@@ -264,6 +264,35 @@
   filter: drop-shadow(0 0 10px rgba(148, 220, 255, 0.75));
 }
 
+/* === NFT KIOSK MODE FIXES === */
+.nft-kiosk-mode .celestial-card-shell {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+}
+
+.nft-kiosk-mode .celestial-card-face {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.nft-kiosk-mode .front-badges {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  width: 100%;
+}
+
+.nft-kiosk-mode::-webkit-scrollbar {
+  display: none;
+}
+
 .mint-bar {
   position: fixed;
   bottom: 32px;

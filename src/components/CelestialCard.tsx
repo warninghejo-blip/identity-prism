@@ -202,9 +202,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 colors={['#fff5e6', '#ffffff', '#ffe2b0']}
               />
 
-              <Float speed={1.5} rotationIntensity={0.2} floatIntensity={0.2}>
+              <Float
+                speed={isCapture ? 0 : 1.5}
+                rotationIntensity={isCapture ? 0 : 0.2}
+                floatIntensity={isCapture ? 0 : 0.2}
+              >
                 <Suspense fallback={null}>
-                  <Planet3D tier={safeTraits.planetTier} />
+                  <Planet3D tier={safeTraits.planetTier} isCapture={isCapture} />
                 </Suspense>
               </Float>
 

@@ -156,7 +156,7 @@ export async function mintIdentityPrism({
   };
   const resolvedImageContentType = resolveImageContentType(resolvedImageUrl);
   const shortAddress = address.slice(0, 4);
-  const displayName = `Identity Prism #${shortAddress}`;
+  const displayName = `Identity Prism ${shortAddress}`;
   const metadataAppUrl = resolvedAnimationUrl ?? resolvedExternalUrl ?? resolvedAppBaseUrl ?? undefined;
   const collectionMintAddress = getCollectionMint();
   const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;

@@ -388,9 +388,10 @@ void main() {
 
 interface Planet3DProps {
   tier: PlanetTier;
+  isCapture?: boolean;
 }
 
-export function Planet3D({ tier }: Planet3DProps) {
+export function Planet3D({ tier, isCapture = false }: Planet3DProps) {
   const groupRef = useRef<Group>(null);
   const cloudsRef = useRef<Mesh>(null);
   const ringsRef = useRef<Group>(null);
@@ -401,11 +402,27 @@ export function Planet3D({ tier }: Planet3DProps) {
   const textureTier = isBinary ? 'sun' : tier;
 
   useFrame((state, delta) => {
-    if (groupRef.current && tier !== 'saturn') groupRef.current.rotation.y += delta * 0.08;
-    if (saturnCoreRef.current) saturnCoreRef.current.rotation.y += delta * 0.08;
-    if (cloudsRef.current) cloudsRef.current.rotation.y += delta * 0.12;
-    if (ringsRef.current) ringsRef.current.rotation.y -= delta * 0.022;
-    
+    if (isCapture) {
+      if (groupRef.current) {
+        groupRef.current.rotation.y = Math.PI * 0.15;
+        groupRef.current.rotation.x = 0;
+      }
+      if (saturnCoreRef.current) {
+        saturnCoreRef.current.rotation.y = Math.PI * 0.15;
+      }
+      if (cloudsRef.current) {
+        cloudsRef.current.rotation.y = 0;
+      }
+      if (ringsRef.current) {
+        ringsRef.current.rotation.y = 0;
+      }
+    } else {
+      if (groupRef.current && tier !== 'saturn') groupRef.current.rotation.y += delta * 0.08;
+      if (saturnCoreRef.current) saturnCoreRef.current.rotation.y += delta * 0.08;
+      if (cloudsRef.current) cloudsRef.current.rotation.y += delta * 0.12;
+      if (ringsRef.current) ringsRef.current.rotation.y -= delta * 0.022;
+    }
+
     // Update shader uniforms
     if (groupRef.current) {
       groupRef.current.traverse((child) => {
