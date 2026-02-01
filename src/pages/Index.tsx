@@ -73,6 +73,7 @@ const Index = () => {
   const [viewState, setViewState] = useState<ViewState>(urlAddress ? "ready" : "landing");
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
+  const mwaErrorRef = useRef<string | null>(null);
 
   const wallet = useWallet();
   const {
@@ -107,8 +108,16 @@ const Index = () => {
     }
   }, [urlAddress, activeAddress, viewState]);
 
-  const isCapacitor = Boolean((globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-  const isMobileBrowser = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? '');
+  const userAgent = globalThis.navigator?.userAgent ?? "";
+  const isCapacitor = Boolean(
+    (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()
+  );
+  const isAndroidDevice = /android/i.test(userAgent);
+  const isMobileBrowser = /android|iphone|ipad|ipod/i.test(userAgent);
+  const isIosDevice = /iphone|ipad|ipod/i.test(userAgent);
+  const isWebView = /(WebView|Version\/.+(Chrome)\/(\d+)\.(\d+)\.(\d+)\.(\d+)|; wv\).+(Chrome)\/(\d+)\.(\d+)\.(\d+)\.(\d+))/i.test(
+    userAgent
+  );
   const useMobileWallet = isCapacitor || isMobileBrowser;
 
   const mobileWallet = useMemo(
@@ -119,15 +128,48 @@ const Index = () => {
     () => availableWallets.find((w) => w.adapter.name === "Phantom"),
     [availableWallets]
   );
+  const nonMwaWallets = useMemo(
+    () => availableWallets.filter((w) => w.adapter.name !== SolanaMobileWalletAdapterWalletName),
+    [availableWallets]
+  );
   const isWalletUsable = (candidate?: typeof mobileWallet) =>
     candidate?.readyState === WalletReadyState.Installed ||
     candidate?.readyState === WalletReadyState.Loadable;
+  const preferredMobileWallet = useMemo(() => {
+    const installed = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Installed);
+    if (installed) return installed;
+    const loadable = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Loadable);
+    if (loadable) return loadable;
+    return mobileWallet;
+  }, [nonMwaWallets, mobileWallet]);
   const mobileWalletReady = isWalletUsable(mobileWallet);
-  const phantomWalletReady = isWalletUsable(phantomWallet);
-  const isPhantomInstalled = phantomWallet?.readyState === WalletReadyState.Installed;
-  const mobileConnectReady = isPhantomInstalled ? phantomWalletReady : mobileWalletReady;
+  const preferredMobileWalletReady = isWalletUsable(preferredMobileWallet);
+  const mobileConnectReady = preferredMobileWalletReady || mobileWalletReady;
   const preferredDesktopWallet = phantomWallet ?? availableWallets[0];
   const desktopWalletReady = isWalletUsable(preferredDesktopWallet);
+  const shouldNudgeMwaAssociation = isCapacitor && isAndroidDevice;
+
+  const startMwaAssociationNudge = useCallback(() => {
+    if (!shouldNudgeMwaAssociation) {
+      return () => {};
+    }
+    let ticks = 0;
+    let intervalId: number | null = null;
+    const dispatchBlur = () => {
+      window.dispatchEvent(new Event("blur"));
+      ticks += 1;
+      if (ticks >= 12 && intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+    };
+    intervalId = window.setInterval(dispatchBlur, 250);
+    dispatchBlur();
+    return () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+    };
+  }, [shouldNudgeMwaAssociation]);
 
   useEffect(() => {
     const adapter = mobileWallet?.adapter;
@@ -145,7 +187,9 @@ const Index = () => {
     };
 
     const handleError = (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error ?? "");
       console.warn("[MobileConnect] Adapter error event:", error);
+      mwaErrorRef.current = message;
     };
 
     adapter.on?.("connect", handleConnect);
@@ -187,17 +231,28 @@ const Index = () => {
   };
 
   const handleMobileConnect = useCallback(async () => {
-    const isPhantomAvailable = phantomWallet?.readyState === WalletReadyState.Installed;
-    const targetWallet = isPhantomAvailable ? phantomWallet : mobileWallet;
+    const targetWallet = preferredMobileWallet;
+    const targetReady = preferredMobileWalletReady;
 
-    if (!targetWallet) {
+    if (!targetWallet || !targetReady) {
       toast.error("Wallet not detected");
       return;
     }
 
     console.log("[MobileConnect] Using wallet:", targetWallet.adapter.name);
 
+    const openPhantomDeepLink = () => {
+      if (!isIosDevice) {
+        return false;
+      }
+      const encodedUrl = encodeURIComponent(window.location.href);
+      const encodedRef = encodeURIComponent(window.location.origin);
+      window.location.href = `https://phantom.app/ul/browse/${encodedUrl}?ref=${encodedRef}`;
+      return true;
+    };
+
     try {
+      mwaErrorRef.current = null;
       if (isConnected && connectedAddress) {
         setActiveAddress(connectedAddress.toBase58());
         setViewState("scanning");
@@ -206,9 +261,15 @@ const Index = () => {
 
       select(targetWallet.adapter.name);
       console.log("[MobileConnect] Calling adapter.connect()...");
-      await targetWallet.adapter.connect();
+      const stopMwaNudge =
+        targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName ? startMwaAssociationNudge() : undefined;
+      try {
+        await targetWallet.adapter.connect();
+      } finally {
+        stopMwaNudge?.();
+      }
 
-      if (isPhantomAvailable) {
+      if (targetWallet.adapter.name !== SolanaMobileWalletAdapterWalletName) {
         const resolved = targetWallet.adapter.publicKey?.toBase58();
         if (resolved) {
           setActiveAddress(resolved);
@@ -216,7 +277,10 @@ const Index = () => {
           toast.success("Wallet Connected");
           return;
         }
-        throw new Error("Phantom connected but public key is missing.");
+        if (targetWallet.readyState === WalletReadyState.Loadable) {
+          return;
+        }
+        throw new Error(`${targetWallet.adapter.name} connected but public key is missing.`);
       }
 
       console.log("[MobileConnect] Adapter state after connect():", {
@@ -238,6 +302,18 @@ const Index = () => {
           if (internalAddress) {
             console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
             resolvedAddress = internalAddress;
+          }
+        }
+
+        if (!resolvedAddress && targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
+          const message = mwaErrorRef.current ?? "";
+          if (message.includes("mobile wallet protocol") || message.includes("ERROR_WALLET_NOT_FOUND")) {
+            if (isConnected) {
+              await disconnect();
+            }
+            if (openPhantomDeepLink()) {
+              return;
+            }
           }
         }
 
@@ -274,6 +350,9 @@ const Index = () => {
         if (isConnected) {
           await disconnect();
         }
+        if (targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName && openPhantomDeepLink()) {
+          return;
+        }
         const hint =
           targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName
             ? "No public key received. Make sure a Solana Mobile-compatible wallet is installed and approve the request."
@@ -281,12 +360,20 @@ const Index = () => {
         throw new Error(hint);
       }
     } catch (err) {
+      if (targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
+        const message = err instanceof Error ? err.message : String(err ?? "");
+        if (message.includes("mobile wallet protocol") || message.includes("ERROR_WALLET_NOT_FOUND")) {
+          if (openPhantomDeepLink()) {
+            return;
+          }
+        }
+      }
       console.error("[MobileConnect] Connection error detail:", err);
       toast.error("Connection failed", {
         description: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [phantomWallet, mobileWallet, select, isConnected, connectedAddress, disconnect]);
+  }, [preferredMobileWallet, preferredMobileWalletReady, select, isConnected, connectedAddress, disconnect, isIosDevice]);
 
   const handleDesktopConnect = useCallback(async () => {
     const targetWallet = preferredDesktopWallet;
@@ -486,11 +573,11 @@ const Index = () => {
 
     const appBaseUrl = (getAppBaseUrl() ?? "https://identityprism.xyz").replace(/\/+$/, "");
     const shareUrl = `${appBaseUrl}/?address=${address}`;
-    const shareText = `🌌 Identity Prism\n${tierEmoji} Тир: ${tierLabel}\n💎 Скор: ${score}\n🔮 Инсайт: ${shareInsight}\n\nПроверь свой кошелек и получи свой Prism 👇\n@solana\nhttps://x.com/Identity_Prism`;
+    const shareText = `🌌 Identity Prism\n\n${tierEmoji} Tier: ${tierLabel}\n💎 Score: ${score}\n\n🔮 Insight: ${shareInsight}\n\nCheck your wallet and claim your Prism 👇\n@solana $SOL #IdentityPrism`;
 
     const encodedText = encodeURIComponent(shareText);
     const encodedUrl = encodeURIComponent(shareUrl);
-    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}&hashtags=solana,identityprism&via=Identity_Prism`;
+    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}&via=Identity_Prism`;
 
     if (isCapacitor || isMobileBrowser) {
       window.location.href = twitterUrl;

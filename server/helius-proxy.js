@@ -21,6 +21,8 @@ import {
 } from '@metaplex-foundation/umi';
 import { create, fetchCollection, mplCore } from '@metaplex-foundation/mpl-core';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
+import { calculateIdentity } from './services/scoring.js';
+import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
 
 const loadEnvFile = (filePath) => {
   try {
@@ -71,6 +73,7 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
 const PENDING_MINT_TTL_MS = 10 * 60 * 1000;
 const pendingMintSigners = new Map();
@@ -207,8 +210,11 @@ const resolveCorsOrigin = (req) => {
 const applyCors = (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', resolveCorsOrigin(req));
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type,x-wallet-address,solana-client');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type,x-wallet-address,solana-client,x-action-version,x-blockchain-ids');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version,X-Blockchain-Ids');
+  res.setHeader('X-Action-Version', '2');
+  res.setHeader('X-Blockchain-Ids', 'solana:mainnet');
 };
 
 const readBody = (req) => new Promise((resolve, reject) => {
@@ -254,6 +260,77 @@ const getContentType = (fileName) => {
   return 'application/octet-stream';
 };
 
+const sendImageDataUrl = (res, dataUrl) => {
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl ?? '');
+  if (!match) {
+    respondJson(res, 500, { error: 'Invalid image payload' });
+    return;
+  }
+  const [, contentType, data] = match;
+  const buffer = Buffer.from(data, 'base64');
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Content-Length': buffer.length,
+    'Cache-Control': 'no-store',
+  });
+  res.end(buffer);
+};
+
+const formatActionAddress = (address) => {
+  if (!address) return '';
+  if (address.length <= 12) return address;
+  return `${address.slice(0, 4)}...${address.slice(-4)}`;
+};
+
+const fetchIdentitySnapshot = async (address) => {
+  const rpcUrl = getRpcUrl(address);
+  if (!rpcUrl) {
+    throw new Error('Helius API key required');
+  }
+  const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+  const pubkey = new PublicKey(address);
+  const [balance, signatures, tokenAccounts] = await Promise.all([
+    connection.getBalance(pubkey),
+    connection.getSignaturesForAddress(pubkey, { limit: 1000 }),
+    connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_PROGRAM_ID }),
+  ]);
+
+  const solBalance = balance / LAMPORTS_PER_SOL;
+  const txCount = signatures.length;
+  const oldest = signatures[signatures.length - 1];
+  const firstTxTime = oldest?.blockTime ?? null;
+
+  let tokenCount = 0;
+  let nftCount = 0;
+  tokenAccounts.value.forEach((account) => {
+    const info = account?.account?.data?.parsed?.info;
+    const tokenAmount = info?.tokenAmount;
+    const uiAmount = tokenAmount?.uiAmount ?? 0;
+    if (!uiAmount || uiAmount <= 0) return;
+    if ((tokenAmount?.decimals ?? 0) === 0) {
+      nftCount += 1;
+    } else {
+      tokenCount += 1;
+    }
+  });
+
+  const walletAgeDays = firstTxTime
+    ? Math.floor((Date.now() - firstTxTime * 1000) / (1000 * 60 * 60 * 24))
+    : 0;
+  const identity = calculateIdentity(txCount, firstTxTime, solBalance, tokenCount, nftCount);
+  const stats = {
+    score: identity.score,
+    address: formatActionAddress(address),
+    ageDays: walletAgeDays,
+    txCount,
+    solBalance,
+    tokenCount,
+    nftCount,
+  };
+
+  return { identity, stats, walletAgeDays, solBalance, txCount, tokenCount, nftCount };
+};
+
 const server = http.createServer(async (req, res) => {
   applyCors(req, res);
 
@@ -263,6 +340,324 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  if (pathname === '/api/actions/render') {
+    const viewParam = String(url.searchParams.get('view') ?? 'front').trim();
+    const view = viewParam === 'back' ? 'back' : 'front';
+    const empty = String(url.searchParams.get('empty') ?? '') === '1';
+    const tierParam = String(url.searchParams.get('tier') ?? 'mercury').trim();
+    const addressParam = String(url.searchParams.get('address') ?? '').trim();
+
+    try {
+      if (view === 'back') {
+        let stats = null;
+        let badges = [];
+        if (!empty && addressParam) {
+          const snapshot = await fetchIdentitySnapshot(addressParam);
+          stats = snapshot.stats;
+          badges = snapshot.identity.badges;
+        }
+        const image = await drawBackCard(stats, badges);
+        sendImageDataUrl(res, image);
+        return;
+      }
+
+      let tier = tierParam;
+      if (addressParam && !empty) {
+        const snapshot = await fetchIdentitySnapshot(addressParam);
+        tier = snapshot.identity.tier;
+      }
+      const image = await drawFrontCardImage(tier);
+      sendImageDataUrl(res, image);
+      return;
+    } catch (error) {
+      console.error('[actions/render] failed', error);
+      respondJson(res, 500, {
+        error: 'Unable to render card image',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  if (pathname === '/api/actions/share') {
+    const baseUrl = getBaseUrl(req);
+    if (!baseUrl) {
+      respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
+      return;
+    }
+
+    if (req.method === 'GET') {
+      const icon = await drawFrontCardImage('mercury');
+      respondJson(res, 200, {
+        title: 'Identity Prism',
+        icon,
+        description: 'Scan a Solana address to reveal your Identity Prism card.',
+        label: 'Scan',
+        links: {
+          actions: [
+            {
+              label: 'Scan',
+              href: `${baseUrl}/api/actions/share?address={address}`,
+              parameters: [
+                {
+                  name: 'address',
+                  label: 'Solana Address',
+                  required: true,
+                },
+              ],
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      const body = await readBody(req);
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch (error) {
+        respondJson(res, 400, { error: 'Invalid JSON payload' });
+        return;
+      }
+
+      const address = String(url.searchParams.get('address') ?? payload?.address ?? '').trim();
+      if (!address) {
+        respondJson(res, 400, { error: 'Address is required' });
+        return;
+      }
+      try {
+        new PublicKey(address);
+      } catch {
+        respondJson(res, 400, { error: 'Invalid address' });
+        return;
+      }
+
+      const viewParam = String(url.searchParams.get('view') ?? payload?.view ?? 'front').trim();
+      const view = viewParam === 'back' ? 'back' : 'front';
+      const { identity, stats } = await fetchIdentitySnapshot(address);
+
+      const icon = view === 'back'
+        ? await drawBackCard(stats, identity.badges)
+        : await drawFrontCardImage(identity.tier);
+      const description = `Tier: ${identity.tier.toUpperCase()} • Score ${identity.score} • ${stats.txCount} tx • ${stats.ageDays} days`;
+      const encodedAddress = encodeURIComponent(address);
+      const flipView = view === 'back' ? 'front' : 'back';
+
+      respondJson(res, 200, {
+        title: 'Identity Prism',
+        icon,
+        description,
+        label: view === 'back' ? 'Back View' : 'Front View',
+        links: {
+          actions: [
+            {
+              label: view === 'back' ? 'Flip to Front' : 'Flip Card',
+              href: `${baseUrl}/api/actions/share?address=${encodedAddress}&view=${flipView}`,
+            },
+            {
+              label: 'Mint',
+              href: `${baseUrl}/api/actions/mint-blink?address=${encodedAddress}`,
+            },
+            {
+              label: 'View App',
+              href: `${baseUrl}/?address=${encodedAddress}`,
+            },
+          ],
+        },
+      });
+    } catch (error) {
+      console.error('[actions/share] failed', error);
+      respondJson(res, 500, {
+        error: 'Unable to build action payload',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+
+  if (pathname === '/api/actions/mint-blink') {
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      const baseUrl = getBaseUrl(req);
+      if (!baseUrl) {
+        respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
+        return;
+      }
+      const body = await readBody(req);
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch {
+        respondJson(res, 400, { error: 'Invalid JSON payload' });
+        return;
+      }
+
+      const owner = String(url.searchParams.get('address') ?? payload?.address ?? '').trim();
+      const payer = String(payload?.account ?? '').trim();
+      if (!owner || !payer) {
+        respondJson(res, 400, { error: 'Address and account are required' });
+        return;
+      }
+
+      if (!COLLECTION_AUTHORITY_SECRET) {
+        respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured' });
+        return;
+      }
+      if (!TREASURY_ADDRESS) {
+        respondJson(res, 500, { error: 'TREASURY_ADDRESS is not configured' });
+        return;
+      }
+      if (!CORE_COLLECTION) {
+        respondJson(res, 500, { error: 'CORE_COLLECTION is not configured' });
+        return;
+      }
+
+      const collectionSecret = parseSecretKey(COLLECTION_AUTHORITY_SECRET);
+      if (!collectionSecret) {
+        respondJson(res, 500, { error: 'Invalid collection authority secret' });
+        return;
+      }
+
+      const ownerKey = parsePublicKey(owner, 'owner');
+      const payerKey = parsePublicKey(payer, 'account');
+      const collectionMintKey = parsePublicKey(CORE_COLLECTION, 'collectionMint');
+      if (!ownerKey || !payerKey || !collectionMintKey) {
+        respondJson(res, 400, { error: 'Invalid owner/account/collection mint' });
+        return;
+      }
+
+      const { identity, stats, walletAgeDays } = await fetchIdentitySnapshot(ownerKey.toBase58());
+      const imageUrl = drawFrontCard(identity.tier);
+      const metadata = {
+        name: `Identity Prism ${ownerKey.toBase58().slice(0, 4)}`,
+        symbol: 'PRISM',
+        description: 'Identity Prism — a living Solana identity card built from your on-chain footprint.',
+        image: imageUrl,
+        external_url: `${baseUrl}/?address=${ownerKey.toBase58()}`,
+        attributes: [
+          { trait_type: 'Tier', value: identity.tier },
+          { trait_type: 'Score', value: identity.score.toString() },
+          { trait_type: 'Wallet Age (days)', value: walletAgeDays },
+          { trait_type: 'Transactions', value: stats.txCount },
+        ],
+        properties: {
+          files: [{ uri: imageUrl, type: 'image/jpeg' }],
+          category: 'image',
+        },
+      };
+
+      const metadataId = crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const metadataFile = resolveMetadataFile(metadataId);
+      if (!metadataFile) {
+        respondJson(res, 500, { error: 'Failed to create metadata file' });
+        return;
+      }
+      const metadataPath = path.join(METADATA_DIR, metadataFile);
+      fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+      const metadataUri = `${baseUrl}/metadata/${metadataFile}`;
+
+      const rpcUrl = getRpcUrl(payerKey.toBase58());
+      if (!rpcUrl) {
+        respondJson(res, 500, { error: 'Helius API key required' });
+        return;
+      }
+
+      const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+      const treasuryKey = new PublicKey(TREASURY_ADDRESS);
+      const expectedLamports = Math.round(MINT_PRICE_SOL * LAMPORTS_PER_SOL);
+      const umi = createUmi(rpcUrl).use(mplCore());
+      const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
+      const collectionAuthoritySigner = umi.eddsa.createKeypairFromSecretKey(collectionSecret);
+      umi.use(keypairIdentity(collectionAuthoritySigner));
+
+      const collection = await fetchCollection(umi, publicKey(collectionMintKey.toBase58()));
+      const assetSigner = generateSigner(umi);
+      const assetKeypair = toWeb3JsKeypair(assetSigner);
+      const ownerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
+      const payerSigner = createNoopSigner(publicKey(payerKey.toBase58()));
+      const builder = create(umi, {
+        asset: assetSigner,
+        collection,
+        name: metadata.name,
+        uri: metadataUri,
+        owner: ownerSigner,
+        payer: payerSigner,
+        authority: collectionAuthoritySigner,
+      }).setFeePayer(payerSigner);
+
+      const transferIx = expectedLamports > 0
+        ? SystemProgram.transfer({
+            fromPubkey: payerKey,
+            toPubkey: treasuryKey,
+            lamports: expectedLamports,
+          })
+        : null;
+      const latestBlockhash = await connection.getLatestBlockhash('finalized');
+      const instructions = [
+        ...(transferIx ? [transferIx] : []),
+        ...builder.getInstructions().map((instruction) => {
+          const web3Ix = toWeb3JsInstruction(instruction);
+          web3Ix.keys = web3Ix.keys.map((key) => {
+            const keyStr = key.pubkey.toBase58();
+            if (keyStr === collectionAuthorityKeypair.publicKey.toBase58()) {
+              return { ...key, isSigner: true };
+            }
+            if (keyStr === assetKeypair.publicKey.toBase58()) {
+              return { ...key, isSigner: true };
+            }
+            return key;
+          });
+          return web3Ix;
+        }),
+      ];
+
+      const transaction = new Transaction().add(...instructions);
+      transaction.feePayer = payerKey;
+      transaction.recentBlockhash = latestBlockhash.blockhash;
+      const compiledMessage = transaction.compileMessage();
+      const requiredSigners = compiledMessage.accountKeys
+        .slice(0, compiledMessage.header.numRequiredSignatures)
+        .map((key) => key.toBase58());
+      const signerPool = [];
+      if (requiredSigners.includes(assetKeypair.publicKey.toBase58())) {
+        signerPool.push(assetKeypair);
+      }
+      if (requiredSigners.includes(collectionAuthorityKeypair.publicKey.toBase58())) {
+        signerPool.push(collectionAuthorityKeypair);
+      }
+      if (signerPool.length) {
+        transaction.partialSign(...signerPool);
+      }
+
+      const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+      respondJson(res, 200, {
+        transaction: serialized,
+        message: 'Sign to mint your Identity Prism.',
+        blockhash: latestBlockhash.blockhash,
+      });
+    } catch (error) {
+      console.error('[actions/mint] failed', error);
+      respondJson(res, 500, {
+        error: 'Action mint failed',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
     return;
   }
 
