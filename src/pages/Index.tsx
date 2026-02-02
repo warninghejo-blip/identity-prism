@@ -115,6 +115,7 @@ const Index = () => {
   const isAndroidDevice = /android/i.test(userAgent);
   const isMobileBrowser = /android|iphone|ipad|ipod/i.test(userAgent);
   const isIosDevice = /iphone|ipad|ipod/i.test(userAgent);
+  const isSeekerDevice = /seeker/i.test(userAgent);
   const isWebView = /(WebView|Version\/.+(Chrome)\/(\d+)\.(\d+)\.(\d+)\.(\d+)|; wv\).+(Chrome)\/(\d+)\.(\d+)\.(\d+)\.(\d+))/i.test(
     userAgent
   );
@@ -147,7 +148,7 @@ const Index = () => {
   const mobileConnectReady = preferredMobileWalletReady || mobileWalletReady;
   const preferredDesktopWallet = phantomWallet ?? availableWallets[0];
   const desktopWalletReady = isWalletUsable(preferredDesktopWallet);
-  const shouldNudgeMwaAssociation = isCapacitor && isAndroidDevice;
+  const shouldNudgeMwaAssociation = isCapacitor && isAndroidDevice && !isSeekerDevice;
 
   const startMwaAssociationNudge = useCallback(() => {
     if (!shouldNudgeMwaAssociation) {
@@ -201,17 +202,17 @@ const Index = () => {
   }, [mobileWallet?.adapter, activeAddress]);
 
   useEffect(() => {
-    if (viewState !== "scanning") return;
-    const interval = window.setInterval(() => {
-      setScanningMessageIndex((prev) => (prev + 1) % SCANNING_MESSAGES.length);
-    }, 2200);
-    return () => window.clearInterval(interval);
+    if (viewState === "scanning") {
+      setScanningMessageIndex(0);
+    }
   }, [viewState]);
 
   useEffect(() => {
-    if (viewState !== "scanning") {
-      setScanningMessageIndex(0);
-    }
+    if (viewState !== "scanning") return;
+    const interval = window.setInterval(() => {
+      setScanningMessageIndex((prev) => (prev + 1) % SCANNING_MESSAGES.length);
+    }, 1600);
+    return () => window.clearInterval(interval);
   }, [viewState]);
 
   const [debugClicks, setDebugClicks] = useState(0);
@@ -290,7 +291,8 @@ const Index = () => {
       });
 
       let attempts = 0;
-      const maxAttempts = 40;
+      const maxAttempts = 60;
+      const pollIntervalMs = 200;
       let resolvedAddress: string | undefined;
       while (!resolvedAddress && attempts < maxAttempts) {
         console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
@@ -326,7 +328,7 @@ const Index = () => {
         }
 
         if (!resolvedAddress) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         }
 
         attempts++;
@@ -572,8 +574,16 @@ const Index = () => {
     }[traits.planetTier] ?? "✨";
 
     const appBaseUrl = (getAppBaseUrl() ?? "https://identityprism.xyz").replace(/\/+$/, "");
-    const shareUrl = `${appBaseUrl}/?address=${address}`;
-    const shareText = `🌌 Identity Prism\n\n${tierEmoji} Tier: ${tierLabel}\n💎 Score: ${score}\n\n🔮 Insight: ${shareInsight}\n\nCheck your wallet and claim your Prism 👇\n@solana $SOL #IdentityPrism`;
+    const shareUrl = `${appBaseUrl}/share`;
+    const shareText = [
+      "🌌 Identity Prism",
+      `${tierEmoji} Tier: ${tierLabel} • 💎 Score: ${score}`,
+      `🔮 Insight: ${shareInsight}`,
+      "⚡️ Powered by Solana Blinks",
+      "",
+      "Scan your wallet to reveal your Prism 👇",
+      "@solana $SOL #IdentityPrism",
+    ].join("\n");
 
     const encodedText = encodeURIComponent(shareText);
     const encodedUrl = encodeURIComponent(shareUrl);
@@ -748,7 +758,7 @@ function LandingOverlay({
             <div className="scanning-bar"></div>
           </div>
           <div className="scanning-status">
-            <span key={activeMessage} className="scanning-status-line">
+            <span key={`scan-${scanningMessageIndex ?? 0}`} className="scanning-status-line">
               {activeMessage}
             </span>
           </div>

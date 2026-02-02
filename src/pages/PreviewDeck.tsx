@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { CelestialCard } from "@/components/CelestialCard";
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { Button } from "@/components/ui/button";
@@ -80,6 +80,12 @@ function buildPreviewWalletData(tier: PlanetTier): WalletData {
 }
 
 export default function PreviewDeck() {
+  const { tier: tierParam } = useParams();
+  const normalizedTier = tierParam?.toLowerCase().replace("-", "_");
+  const activeTier = PREVIEW_TIERS.includes(normalizedTier as PlanetTier)
+    ? (normalizedTier as PlanetTier)
+    : null;
+
   return (
     <div className="identity-shell relative min-h-screen overflow-y-auto">
       <div className="absolute inset-0 bg-[#050505] background-base fixed" />
@@ -98,23 +104,41 @@ export default function PreviewDeck() {
             </Link>
             <div className="text-center">
               <p className="text-xs tracking-[0.4em] uppercase text-cyan-200/60">System Preview</p>
-              <h2 className="text-3xl font-black text-white mt-1">Celestial Tier Deck</h2>
+              <h2 className="text-3xl font-black text-white mt-1">
+                {activeTier ? `${activeTier.replace("_", " ")} Tier` : "Celestial Tier Deck"}
+              </h2>
             </div>
-            <div className="w-[100px]" /> {/* Spacer for centering */}
+            <div className="w-[100px]" />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-            {PREVIEW_TIERS.map((tier) => (
-              <div key={tier} className="flex flex-col items-center">
-                 <div className="mb-4 text-center">
-                    <span className="text-[10px] uppercase tracking-widest text-white/30 border border-white/10 px-2 py-1 rounded-full bg-black/40">
-                      {tier.replace('_', ' ')}
-                    </span>
-                 </div>
-                <CelestialCard data={buildPreviewWalletData(tier)} />
+          {activeTier ? (
+            <div className="flex flex-col items-center gap-6">
+              <span className="text-[10px] uppercase tracking-widest text-white/30 border border-white/10 px-3 py-1 rounded-full bg-black/40">
+                {activeTier.replace("_", " ")}
+              </span>
+              <div className="w-full max-w-md">
+                <CelestialCard data={buildPreviewWalletData(activeTier)} />
               </div>
-            ))}
-          </div>
+              <Link to="/preview">
+                <Button variant="outline" className="border-white/15 text-white/80 hover:text-white hover:bg-white/5">
+                  View All Tiers
+                </Button>
+              </Link>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+              {PREVIEW_TIERS.map((tier) => (
+                <div key={tier} className="flex flex-col items-center gap-3">
+                  <span className="text-[10px] uppercase tracking-widest text-white/30 border border-white/10 px-2 py-1 rounded-full bg-black/40">
+                    {tier.replace("_", " ")}
+                  </span>
+                  <Link to={`/preview/${tier}`} className="w-full flex justify-center">
+                    <CelestialCard data={buildPreviewWalletData(tier)} />
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

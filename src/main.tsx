@@ -39,6 +39,7 @@ const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
     ?.isNativePlatform?.()
 );
+const isMobileUserAgent = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? "");
 
 if (isCapacitorNative && typeof document !== 'undefined') {
   const handleVisibilityChange = () => {
@@ -62,7 +63,9 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <Index /> },
+      { path: 'share', element: <Index /> },
       { path: 'preview', element: <PreviewDeck /> },
+      { path: 'preview/:tier', element: <PreviewDeck /> },
       { path: '*', element: <NotFound /> },
     ],
   },
@@ -106,7 +109,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       {debugEnabled && <DebugConsole />}
       <WalletProvider
         wallets={wallets}
-        autoConnect={true}
+        autoConnect={!isCapacitorNative && !isMobileUserAgent}
         localStorageKey="walletAdapter"
       >
         <WalletModalProvider>

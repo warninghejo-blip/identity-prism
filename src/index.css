@@ -728,21 +728,21 @@
 }
 
 .scanning-status-line {
-  opacity: 0;
-  animation: scanningLinePulse 2.2s ease-in-out infinite;
+  opacity: 0.4;
+  animation: scanningLinePulse 1.6s ease-in-out infinite;
 }
 
 @keyframes scanningLinePulse {
   0% {
-    opacity: 0;
+    opacity: 0.35;
     text-shadow: none;
   }
-  30% {
+  50% {
     opacity: 0.95;
     text-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
   }
   100% {
-    opacity: 0;
+    opacity: 0.35;
     text-shadow: none;
   }
 }
@@ -1211,8 +1211,10 @@
 .prism-error-toast {
   position: fixed;
   top: 1.5rem;
-  left: 1.5rem;
-  right: 1.5rem;
+  left: 50%;
+  right: auto;
+  width: min(92vw, 420px);
+  transform: translate3d(-50%, 0, 0);
   background: rgba(220, 38, 38, 0.95);
   padding: 1rem 1.5rem;
   border-radius: 20px;
@@ -1222,15 +1224,17 @@
   justify-content: center;
   text-align: center;
   z-index: 1000;
+  box-sizing: border-box;
   backdrop-filter: blur(15px);
   box-shadow: 0 10px 30px rgba(0, 10, 30, 0.4);
 }
 
 .toaster [data-sonner-toaster] {
   left: 50% !important;
-  transform: translateX(-50%);
+  transform: translate3d(-50%, 0, 0);
   right: auto !important;
   width: min(92vw, 420px);
+  box-sizing: border-box;
 }
 
 .toaster [data-sonner-toast] {
