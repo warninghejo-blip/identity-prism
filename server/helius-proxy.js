@@ -403,7 +403,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === 'GET') {
+    const respondLanding = () => {
       const icon = `${baseUrl}/api/actions/render?view=front&empty=1`;
       respondJson(res, 200, {
         title: 'Identity Prism',
@@ -426,29 +426,9 @@ const server = http.createServer(async (req, res) => {
           ],
         },
       });
-      return;
-    }
+    };
 
-    if (req.method !== 'POST') {
-      respondJson(res, 405, { error: 'Method not allowed' });
-      return;
-    }
-
-    try {
-      const body = await readBody(req);
-      let payload = {};
-      try {
-        payload = body ? JSON.parse(body) : {};
-      } catch (error) {
-        respondJson(res, 400, { error: 'Invalid JSON payload' });
-        return;
-      }
-
-      const address = String(url.searchParams.get('address') ?? payload?.address ?? '').trim();
-      if (!address) {
-        respondJson(res, 400, { error: 'Address is required' });
-        return;
-      }
+    const respondForAddress = async (address, viewParam) => {
       try {
         new PublicKey(address);
       } catch {
@@ -456,7 +436,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const viewParam = String(url.searchParams.get('view') ?? payload?.view ?? 'front').trim();
       const view = viewParam === 'back' ? 'back' : 'front';
       const { identity, stats } = await fetchIdentitySnapshot(address);
 
@@ -487,6 +466,50 @@ const server = http.createServer(async (req, res) => {
           ],
         },
       });
+    };
+
+    const queryAddress = String(url.searchParams.get('address') ?? '').trim();
+    const queryView = String(url.searchParams.get('view') ?? 'front').trim();
+
+    if (req.method === 'GET') {
+      if (!queryAddress) {
+        respondLanding();
+        return;
+      }
+      await respondForAddress(queryAddress, queryView);
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      const body = await readBody(req);
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch (error) {
+        respondJson(res, 400, { error: 'Invalid JSON payload' });
+        return;
+      }
+
+      const payloadAddress = String(
+        payload?.address ??
+          payload?.addressInput ??
+          payload?.inputs?.address ??
+          payload?.inputs?.addressInput ??
+          ''
+      ).trim();
+      const address = queryAddress || payloadAddress;
+      if (!address) {
+        respondLanding();
+        return;
+      }
+
+      const viewParam = String(url.searchParams.get('view') ?? payload?.view ?? 'front').trim();
+      await respondForAddress(address, viewParam);
     } catch (error) {
       console.error('[actions/share] failed', error);
       respondJson(res, 500, {
