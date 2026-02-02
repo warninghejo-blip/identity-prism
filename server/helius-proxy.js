@@ -208,13 +208,27 @@ const resolveCorsOrigin = (req) => {
 };
 
 const applyCors = (req, res) => {
+  const requestUrl = typeof req.url === 'string' ? req.url : '';
+  if (requestUrl.startsWith('/api/actions/') || requestUrl.startsWith('/actions.json')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, Content-Encoding, Accept-Encoding, X-Action-Version, X-Blockchain-Ids, X-Wallet-Address, Solana-Client'
+    );
+    res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version,X-Blockchain-Ids');
+    res.setHeader('X-Action-Version', '2.1.3');
+    res.setHeader('X-Blockchain-Ids', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
+    return;
+  }
+
   res.setHeader('Access-Control-Allow-Origin', resolveCorsOrigin(req));
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Headers', 'content-type,x-wallet-address,solana-client,x-action-version,x-blockchain-ids');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version,X-Blockchain-Ids');
-  res.setHeader('X-Action-Version', '2');
-  res.setHeader('X-Blockchain-Ids', 'solana:mainnet');
+  res.setHeader('X-Action-Version', '2.1.3');
+  res.setHeader('X-Blockchain-Ids', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
 };
 
 const readBody = (req) => new Promise((resolve, reject) => {
@@ -390,7 +404,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET') {
-      const icon = await drawFrontCardImage('mercury');
+      const icon = `${baseUrl}/api/actions/render?view=front&empty=1`;
       respondJson(res, 200, {
         title: 'Identity Prism',
         icon,
@@ -446,11 +460,9 @@ const server = http.createServer(async (req, res) => {
       const view = viewParam === 'back' ? 'back' : 'front';
       const { identity, stats } = await fetchIdentitySnapshot(address);
 
-      const icon = view === 'back'
-        ? await drawBackCard(stats, identity.badges)
-        : await drawFrontCardImage(identity.tier);
-      const description = `Tier: ${identity.tier.toUpperCase()} • Score ${identity.score} • ${stats.txCount} tx • ${stats.ageDays} days`;
       const encodedAddress = encodeURIComponent(address);
+      const icon = `${baseUrl}/api/actions/render?view=${view}&address=${encodedAddress}`;
+      const description = `Tier: ${identity.tier.toUpperCase()} • Score ${identity.score} • ${stats.txCount} tx • ${stats.ageDays} days`;
       const flipView = view === 'back' ? 'front' : 'back';
 
       respondJson(res, 200, {
