@@ -89,21 +89,17 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     }
   }, []);
 
-  // Suck-in: calculate offsets when animation starts
-  useEffect(() => {
-    if (!suckingIn) return;
-    requestAnimationFrame(setSuckVars);
-  }, [suckingIn, setSuckVars]);
-
   // Reverse suck (return from black hole): set offsets then clear after animation
   useEffect(() => {
     if (!unsucking) return;
-    // Wait one frame for DOM to be ready
-    const raf = requestAnimationFrame(() => {
-      setSuckVars();
+    // Double-rAF to ensure DOM is fully laid out before setting vars
+    const raf1 = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setSuckVars();
+      });
     });
-    const timer = setTimeout(() => setUnsucking(false), 1800);
-    return () => { cancelAnimationFrame(raf); clearTimeout(timer); };
+    const timer = setTimeout(() => setUnsucking(false), 2400);
+    return () => { cancelAnimationFrame(raf1); clearTimeout(timer); };
   }, [unsucking, setSuckVars]);
 
   // 3D Tilt Logic
@@ -238,10 +234,31 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               className="bh-card-portal capture-hidden"
               onClick={(event) => {
                 event.stopPropagation();
-                setSuckingIn(true);
-                setTimeout(() => setWormholeActive(true), 1400);
+                // Set CSS variables FIRST (synchronously) so animation has correct targets
+                setSuckVars();
+                // Then trigger animation on next frame so vars are painted
+                requestAnimationFrame(() => {
+                  setSuckingIn(true);
+                });
+                // After pieces are mostly gone, trigger camera-suck on whole stage
+                setTimeout(() => {
+                  const shell = shellRef.current;
+                  if (shell) {
+                    const stage = shell.closest('.card-stage') as HTMLElement;
+                    const portal = shell.querySelector('.bh-card-portal');
+                    if (stage && portal) {
+                      const sr = stage.getBoundingClientRect();
+                      const pr = portal.getBoundingClientRect();
+                      const px = ((pr.left + pr.width / 2 - sr.left) / sr.width * 100);
+                      const py = ((pr.top + pr.height / 2 - sr.top) / sr.height * 100);
+                      stage.style.setProperty('--portal-x', `${px}%`);
+                      stage.style.setProperty('--portal-y', `${py}%`);
+                      stage.classList.add('camera-sucking');
+                    }
+                  }
+                }, 2200);
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                setTimeout(() => navigate(target), 2400);
+                setTimeout(() => navigate(target), 3400);
               }}
             >
               <span className="bh-card-portal__glow" />
@@ -402,7 +419,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </div>
 
               {/* STATS CONTENT */}
-              <TabsContent value="stats" className="flex-1 overflow-y-auto px-6 pt-4 pb-10 custom-scrollbar relative z-20 pointer-events-auto">
+              <TabsContent value="stats" className="flex-1 overflow-y-auto px-6 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
                 <div className="grid grid-cols-2 gap-3 mb-6">
                   <StatItem
                     icon={<Wallet className="w-4 h-4" />}
@@ -454,7 +471,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </TabsContent>
 
               {/* BADGES CONTENT */}
-              <TabsContent value="badges" className="flex-1 overflow-y-auto px-6 pt-4 pb-10 custom-scrollbar relative z-20 pointer-events-auto">
+              <TabsContent value="badges" className="flex-1 overflow-y-auto px-6 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
                 <div className="space-y-3 pb-4">
                   {badgeItems.length === 0 ? (
                     <div className="text-center py-10 opacity-50">
