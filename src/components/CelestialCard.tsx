@@ -288,7 +288,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 requestAnimationFrame(() => {
                   setSuckingIn(true);
                 });
-                // After charge-up (1s) + suck pieces (~1.8s), trigger camera-suck
+                // After charge-up (1s) + portal consume fills viewport (~1.8s), trigger final darkness
                 setTimeout(() => {
                   const shell = shellRef.current;
                   if (shell) {
@@ -304,9 +304,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       stage.classList.add('camera-sucking');
                     }
                   }
-                }, 3200);
+                }, 2800);
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                setTimeout(() => navigate(target), 4500);
+                setTimeout(() => navigate(target), 3600);
               }}
             >
               <span className="bh-card-portal__glow" />
