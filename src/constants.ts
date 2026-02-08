@@ -13,7 +13,14 @@ const HELIUS_KEYS = (import.meta.env.VITE_HELIUS_API_KEYS ?? import.meta.env.VIT
 
 const normalizeProxyUrl = (url: string) => url.replace(/\/+$/, '');
 
-export const getHeliusProxyUrl = () => (HELIUS_PROXY_URL ? normalizeProxyUrl(HELIUS_PROXY_URL) : null);
+export const getHeliusProxyUrl = () => {
+  if (HELIUS_PROXY_URL) return normalizeProxyUrl(HELIUS_PROXY_URL);
+  if (APP_BASE_URL) return normalizeProxyUrl(APP_BASE_URL);
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return normalizeProxyUrl(window.location.origin);
+  }
+  return null;
+};
 export const getMetadataBaseUrl = () => (METADATA_BASE_URL ? normalizeProxyUrl(METADATA_BASE_URL) : null);
 export const getMetadataImageUrl = () => {
   if (METADATA_IMAGE_URL) return METADATA_IMAGE_URL;
@@ -75,6 +82,14 @@ export const MINT_CONFIG = {
   SYMBOL: 'PRISM',
   SELLER_FEE_BASIS_POINTS: 0,
 };
+
+export const SEEKER_TOKEN = {
+  MINT: 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3',
+  SYMBOL: 'SKR',
+  DISCOUNT: 0.5,
+} as const;
+
+export const BLACKHOLE_ENABLED = true;
 
 // Scoring + rarity system (Identity Prism 3.0)
 export const SCORING = {

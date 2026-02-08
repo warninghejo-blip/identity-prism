@@ -1,5 +1,17 @@
 import { WalletContextState } from '@solana/wallet-adapter-react';
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
+import {
+  Connection,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemInstruction,
+  SystemProgram,
+  Transaction,
+} from '@solana/web3.js';
+import {
+  getAssociatedTokenAddress,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+} from '@solana/spl-token';
 import { Buffer } from 'buffer';
 import {
   getAppBaseUrl,
@@ -10,6 +22,7 @@ import {
   getCollectionMint,
   getCnftMintUrl,
   MINT_CONFIG,
+  SEEKER_TOKEN,
 } from '@/constants';
 import type { WalletTraits } from '@/hooks/useWalletData';
 
@@ -46,6 +59,7 @@ export interface MintIdentityPrismArgs {
   traits: WalletTraits;
   score: number;
   cardImageUrl?: string;
+  paymentToken?: 'SOL' | 'SKR';
 }
 
 export interface MintIdentityPrismResult {
@@ -64,6 +78,20 @@ function encodeBase64(value: string): string {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const TX_FEE_BUFFER_SOL = 0.001;
+const MIN_REQUIRED_SOL = 0.015;
+
+const buildPreflightError = (
+  code: 'INSUFFICIENT_SOL' | 'INSUFFICIENT_SKR' | 'SIMULATION_FAILED',
+  message: string,
+  details?: Record<string, unknown>
+) => {
+  const error = new Error(message) as Error & { code?: string } & Record<string, unknown>;
+  error.code = code;
+  if (details) Object.assign(error, details);
+  return error;
+};
 
 async function confirmTransactionWithPolling(
   connection: Connection,
@@ -116,6 +144,7 @@ export async function mintIdentityPrism({
   traits,
   score,
   cardImageUrl,
+  paymentToken = 'SOL',
 }: MintIdentityPrismArgs): Promise<MintIdentityPrismResult> {
   const wantsAdminMode = isAdminModeEnabled();
   const heliusRpcUrl = getHeliusRpcUrl(address);
@@ -257,6 +286,31 @@ export async function mintIdentityPrism({
   if (!collectionMint) {
     throw new Error('Collection mint is required for core minting');
   }
+
+  // SKR balance preflight check — fail early before opening wallet
+  if (paymentToken === 'SKR' && requiresWalletTx) {
+    const skrMintKey = new PublicKey(SEEKER_TOKEN.MINT);
+    let skrBalance = 0;
+    for (const progId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+      try {
+        const ata = await getAssociatedTokenAddress(skrMintKey, payer, false, progId);
+        const info = await connection.getTokenAccountBalance(ata);
+        skrBalance = Number(info.value.uiAmount ?? 0);
+        break;
+      } catch {
+        // ATA doesn't exist under this program, try next
+      }
+    }
+    // We don't know the exact SKR amount until the server computes the quote,
+    // but we can at least check the user has *some* SKR.
+    if (skrBalance <= 0) {
+      throw buildPreflightError('INSUFFICIENT_SKR', 'No SKR tokens in wallet', {
+        skrBalance,
+        requiredSkr: 1,
+      });
+    }
+  }
+
   const cnftResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -268,6 +322,7 @@ export async function mintIdentityPrism({
       sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
       collectionMint: collectionMint.toBase58(),
       admin: adminMode,
+      paymentToken,
     }),
   });
 
@@ -326,6 +381,66 @@ export async function mintIdentityPrism({
   console.info('[mint] required signers', requiredSigners);
   if (!requestId) {
     throw new Error('Mint requestId missing from server response');
+  }
+
+  if (requiresWalletTx) {
+    const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
+    const feeLamports = feeForMessage.value ?? 0;
+    const configuredLamports =
+      paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0;
+    const transferLamports = transaction.instructions.reduce((total, instruction) => {
+      if (!instruction.programId.equals(SystemProgram.programId)) return total;
+      try {
+        const type = SystemInstruction.decodeInstructionType(instruction);
+        if (type === 'Transfer') {
+          const decoded = SystemInstruction.decodeTransfer(instruction);
+          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+        }
+        if (type === 'TransferWithSeed') {
+          const decoded = SystemInstruction.decodeTransferWithSeed(instruction);
+          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+        }
+      } catch {
+        return total;
+      }
+      return total;
+    }, 0);
+    const baseLamports = Math.max(configuredLamports, transferLamports);
+    const bufferedLamports =
+      baseLamports +
+      feeLamports +
+      Math.round(TX_FEE_BUFFER_SOL * LAMPORTS_PER_SOL);
+    const minRequiredLamports = Math.round(MIN_REQUIRED_SOL * LAMPORTS_PER_SOL);
+    const requiredLamports = Math.max(bufferedLamports, minRequiredLamports);
+    const balanceLamports = await connection.getBalance(payer);
+    if (balanceLamports < requiredLamports) {
+      throw buildPreflightError('INSUFFICIENT_SOL', 'Insufficient SOL for transaction', {
+        requiredLamports,
+        balanceLamports,
+        feeLamports,
+      });
+    }
+
+    try {
+      const simulation = await connection.simulateTransaction(transaction, {
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+      });
+      if (simulation.value.err) {
+        console.warn('[mint] simulation error', simulation.value.err, simulation.value.logs);
+        if (paymentToken === 'SOL') {
+          throw buildPreflightError('SIMULATION_FAILED', 'Transaction simulation failed', {
+            simulationError: simulation.value.err,
+            simulationLogs: simulation.value.logs ?? [],
+          });
+        }
+      }
+    } catch (simError) {
+      console.warn('[mint] simulateTransaction threw', simError);
+      if ((simError as { code?: string })?.code === 'SIMULATION_FAILED') throw simError;
+      // For SKR path, don't block on simulation errors (server already validated tx)
+      if (paymentToken === 'SOL') throw simError;
+    }
   }
 
   let signature = '';

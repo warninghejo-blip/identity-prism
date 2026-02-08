@@ -37,7 +37,14 @@ const App = () => {
         <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30">
           <Outlet />
           <Toaster />
-          <Sonner position="top-center" expand={false} richColors closeButton />
+          <Sonner
+            position="bottom-center"
+            expand={false}
+            richColors
+            closeButton
+            offset={{ bottom: 16 }}
+            mobileOffset={{ bottom: 12, left: 16, right: 16 }}
+          />
 
           {isMounted && (
             <div className="fixed inset-0 pointer-events-none z-0">

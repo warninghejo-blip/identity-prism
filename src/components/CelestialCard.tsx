@@ -1,4 +1,5 @@
-import { Suspense, useEffect, useMemo, useState, forwardRef } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, forwardRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion';
 import { Canvas } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
@@ -10,10 +11,14 @@ import { StarField } from './StarField';
 import type { WalletData, WalletTraits } from '@/hooks/useWalletData';
 
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
+import { BLACKHOLE_ENABLED } from '@/constants';
 
 interface CelestialCardProps {
   data: WalletData;
   captureMode?: boolean;
+  captureView?: 'front' | 'back';
+  captureTab?: 'stats' | 'badges';
+  fromBlackHole?: boolean;
 }
 
 const TIER_COLORS: Record<string, string> = {
@@ -43,13 +48,63 @@ const TIER_LABELS: Record<string, string> = {
 };
 
 export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(function CelestialCard(
-  { data, captureMode = false },
+  { data, captureMode = false, captureView = 'front', captureTab = 'stats', fromBlackHole = false },
   ref
 ) {
-  const [isFlipped, setIsFlipped] = useState(false);
+  const [isFlipped, setIsFlipped] = useState(captureView === 'back');
   const [isInteracting, setIsInteracting] = useState(false);
+  const [wormholeActive, setWormholeActive] = useState(false);
+  const [suckingIn, setSuckingIn] = useState(false);
+  const [unsucking, setUnsucking] = useState(fromBlackHole);
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
+  const defaultTab = captureTab === 'badges' ? 'badges' : 'stats';
+  const navigate = useNavigate();
+
+  // Helper: set --tx/--ty on suck targets relative to portal center
+  const setSuckVars = useCallback(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const portal = shell.querySelector('.bh-card-portal');
+    if (!portal) return;
+    const pr = portal.getBoundingClientRect();
+    const pcx = pr.left + pr.width / 2;
+    const pcy = pr.top + pr.height / 2;
+
+    shell.querySelectorAll('[data-suck]').forEach((el) => {
+      const r = (el as HTMLElement).getBoundingClientRect();
+      (el as HTMLElement).style.setProperty('--tx', `${pcx - (r.left + r.width / 2)}px`);
+      (el as HTMLElement).style.setProperty('--ty', `${pcy - (r.top + r.height / 2)}px`);
+    });
+
+    const stage = shell.closest('.card-stage');
+    if (stage) {
+      const mp = stage.querySelector('.mint-panel') as HTMLElement | null;
+      if (mp) {
+        const r = mp.getBoundingClientRect();
+        mp.style.setProperty('--tx', `${pcx - (r.left + r.width / 2)}px`);
+        mp.style.setProperty('--ty', `${pcy - (r.top + r.height / 2)}px`);
+      }
+    }
+  }, []);
+
+  // Suck-in: calculate offsets when animation starts
+  useEffect(() => {
+    if (!suckingIn) return;
+    requestAnimationFrame(setSuckVars);
+  }, [suckingIn, setSuckVars]);
+
+  // Reverse suck (return from black hole): set offsets then clear after animation
+  useEffect(() => {
+    if (!unsucking) return;
+    // Wait one frame for DOM to be ready
+    const raf = requestAnimationFrame(() => {
+      setSuckVars();
+    });
+    const timer = setTimeout(() => setUnsucking(false), 1800);
+    return () => { cancelAnimationFrame(raf); clearTimeout(timer); };
+  }, [unsucking, setSuckVars]);
 
   // 3D Tilt Logic
   const x = useMotionValue(0);
@@ -73,10 +128,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   }
 
   useEffect(() => {
-    if (isCapture && isFlipped) {
-      setIsFlipped(false);
-    }
-  }, [isCapture, isFlipped]);
+    if (!isCapture) return;
+    setIsFlipped(captureView === 'back');
+  }, [isCapture, captureView]);
 
   const fallbackTraits: WalletTraits = {
     hasSeeker: false,
@@ -125,12 +179,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
   return (
     <motion.div 
-      className="celestial-card-shell relative w-full perspective-1000 mx-auto group"
+      className={`celestial-card-shell relative w-full perspective-1000 mx-auto group ${suckingIn ? 'card-suckin-active' : ''} ${unsucking ? 'card-unsuck-active' : ''}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       style={{ rotateX: isCapture ? 0 : rotateX, rotateY: isCapture ? 0 : rotateY, transformStyle: 'preserve-3d' }}
       transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-      ref={ref}
+      ref={(node) => {
+        shellRef.current = node;
+        if (typeof ref === 'function') ref(node);
+        else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+      }}
     >
       <motion.div
         className="w-full h-full relative preserve-3d"
@@ -149,20 +207,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             }
           }}
         >
-          {/* Subtle bg gradient */}
-          <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-transparent to-black/60 pointer-events-none" />
+          {/* Card background — separate suckable piece */}
+          <div data-suck="bg" className="absolute inset-0 rounded-[40px] bg-[#020408] border border-white/10 shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] pointer-events-none">
+            <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-transparent to-black/60 rounded-[40px]" />
+          </div>
 
           {/* Header */}
-          <div className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
+          <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 setIsFlipped(true);
               }}
-              className="absolute right-3 top-3 flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
+              className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
               title="Flip Card"
             >
-              <RotateCw className="w-4.5 h-4.5 transition-transform group-hover/btn:rotate-180 duration-500" />
+              <RotateCw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:rotate-180 duration-500" />
             </button>
             <p className="text-cyan-200/50 text-[9px] font-bold tracking-[0.3em] uppercase">
               Tier Level
@@ -172,8 +232,52 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             </h1>
           </div>
 
+          {!isCapture && BLACKHOLE_ENABLED && (
+            <button
+              type="button"
+              className="bh-card-portal capture-hidden"
+              onClick={(event) => {
+                event.stopPropagation();
+                setSuckingIn(true);
+                setTimeout(() => setWormholeActive(true), 1400);
+                const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
+                setTimeout(() => navigate(target), 2400);
+              }}
+            >
+              <span className="bh-card-portal__glow" />
+              <span className="bh-card-portal__disk" />
+              <span className="bh-card-portal__ring" />
+              <span className="bh-card-portal__core" />
+              <span className="bh-card-portal__flare bh-card-portal__flare--t" />
+              <span className="bh-card-portal__flare bh-card-portal__flare--b" />
+              <span className="bh-card-portal__label">Black Hole</span>
+            </button>
+          )}
+          {wormholeActive && (
+            <div className="wormhole-overlay">
+              {Array.from({ length: 14 }).map((_, i) => (
+                <span
+                  key={i}
+                  className="wh-ring"
+                  style={{
+                    width: `${30 + i * 50}px`,
+                    height: `${30 + i * 50}px`,
+                    borderColor: i % 3 === 0
+                      ? 'rgba(255,140,90,0.4)'
+                      : i % 3 === 1
+                        ? 'rgba(100,180,255,0.35)'
+                        : 'rgba(255,200,160,0.2)',
+                    borderWidth: i < 4 ? '2px' : '1px',
+                    animation: `wh-ring-expand 1.6s ${i * 0.06}s cubic-bezier(0.22,1,0.36,1) forwards`,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+
           {/* 3D Scene */}
           <div
+            data-suck="scene"
             className="absolute inset-0 z-10"
             onPointerDown={(event) => {
               event.stopPropagation();
@@ -188,6 +292,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               camera={{ position: [0, 0, 8.5], fov: 35 }}
               gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
               dpr={[1, 1.5]}
+              onCreated={({ gl }) => {
+                const canvas = gl.domElement;
+                canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); });
+                canvas.addEventListener('webglcontextrestored', () => { gl.forceContextRestore?.(); });
+              }}
             >
               <ambientLight intensity={0.6} />
               <pointLight position={[10, 5, 5]} intensity={1.5} color="#fff" />
@@ -228,7 +337,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           </div>
 
           {/* Footer Info */}
-          <div className="relative z-20 mt-auto px-7 pb-8 flex flex-col gap-5 pointer-events-none">
+          <div data-suck="footer" className="relative z-20 mt-auto px-7 pb-8 flex flex-col gap-5 pointer-events-none">
             <div className="flex justify-center items-center border-t border-white/5 pt-5 relative z-30">
                {/* Badges moved here */}
                {frontBadges.length > 0 ? (
@@ -259,22 +368,32 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   e.stopPropagation();
                   setIsFlipped(false);
                 }}
-                className="absolute right-3 top-3 flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
+                className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
                 title="Flip Back"
               >
-                <RotateCcw className="w-4.5 h-4.5 transition-transform group-hover/btn:-rotate-180 duration-500" />
+                <RotateCcw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:-rotate-180 duration-500" />
               </button>
               <h2 className="text-lg font-bold text-white uppercase tracking-widest">Data Prism</h2>
               <div className="flex flex-col gap-0.5 items-center mt-2 mb-1">
-                <span className={`text-4xl font-mono font-bold tracking-tighter drop-shadow-lg ${tierColorClass}`}>{displayScore}</span>
+                <span
+                  data-capture="score"
+                  className={`capture-value text-4xl font-mono font-bold tracking-tighter drop-shadow-lg ${tierColorClass}`}
+                >
+                  {displayScore}
+                </span>
                 <span className="text-white/20 text-[8px] uppercase tracking-[0.3em]">Identity Score</span>
               </div>
-              <p className={`font-mono text-[10px] mt-1 tracking-wider ${tierColorClass}`}>{shortAddress}</p>
+              <p
+                data-capture="address"
+                className={`capture-value font-mono text-[10px] mt-1 tracking-wider ${tierColorClass}`}
+              >
+                {shortAddress}
+              </p>
             </div>
 
             {/* Tabs Container */}
             <div className="flex-1 flex flex-col min-h-0 bg-black/10 cursor-auto relative z-10" onClick={(e) => e.stopPropagation()}>
-            <Tabs defaultValue="stats" className="w-full h-full flex flex-col pointer-events-auto">
+            <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
               <div className="px-6 pt-4">
                 <TabsList className="w-full grid grid-cols-2 bg-white/5 border border-white/5 pointer-events-auto">
                   <TabsTrigger value="stats" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 cursor-pointer pointer-events-auto">STATS</TabsTrigger>
@@ -283,37 +402,43 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </div>
 
               {/* STATS CONTENT */}
-              <TabsContent value="stats" className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar relative z-20 pointer-events-auto">
+              <TabsContent value="stats" className="flex-1 overflow-y-auto px-6 pt-4 pb-10 custom-scrollbar relative z-20 pointer-events-auto">
                 <div className="grid grid-cols-2 gap-3 mb-6">
                   <StatItem
                     icon={<Wallet className="w-4 h-4" />}
                     label="SOL Balance"
                     value={`${safeTraits.solBalance.toFixed(2)}`}
+                    captureKey="sol"
                   />
                   <StatItem
                     icon={<Clock className="w-4 h-4" />}
                     label="Wallet Age"
                     value={`${safeTraits.walletAgeDays}d`}
+                    captureKey="age"
                   />
                   <StatItem
                     icon={<Activity className="w-4 h-4" />}
                     label="Tx Count"
                     value={safeTraits.txCount.toString()}
+                    captureKey="tx"
                   />
                   <StatItem
                     icon={<Trophy className="w-4 h-4" />}
                     label="NFTs Held"
                     value={safeTraits.nftCount.toString()}
+                    captureKey="nfts"
                   />
                   <StatItem
                     icon={<Flame className="w-4 h-4" />}
                     label="Activity Idx"
                     value={(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(2)}
+                    captureKey="activity"
                   />
                   <StatItem
                     icon={<Hourglass className="w-4 h-4" />}
                     label="Dormancy"
                     value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d` : 'Active'}
+                    captureKey="dormancy"
                   />
                 </div>
 
@@ -329,7 +454,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </TabsContent>
 
               {/* BADGES CONTENT */}
-              <TabsContent value="badges" className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar relative z-20 pointer-events-auto">
+              <TabsContent value="badges" className="flex-1 overflow-y-auto px-6 pt-4 pb-10 custom-scrollbar relative z-20 pointer-events-auto">
                 <div className="space-y-3 pb-4">
                   {badgeItems.length === 0 ? (
                     <div className="text-center py-10 opacity-50">
@@ -337,15 +462,28 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       <p className="text-[10px] text-white/20 mt-1">Keep exploring the cosmos.</p>
                     </div>
                   ) : (
-                    orderedBadges.map((badge) => (
+                    orderedBadges.map((badge, index) => (
                       <div
                         key={badge.key}
+                        data-badge-row={index}
                         className={`flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all ${badge.isActive ? 'bg-white/5 hover:border-white/10' : 'bg-white/2 opacity-50'}`}
                       >
-                        <BadgeIcon badge={badge} size="md" />
-                        <div className="flex-1 min-w-0 text-center">
-                          <p className={`text-xs font-bold uppercase tracking-wider ${badge.isActive ? 'text-white' : 'text-white/50'}`}>{badge.label}</p>
-                          <p className={`text-[10px] leading-relaxed ${badge.isActive ? 'text-white/50' : 'text-white/30'}`}>{badge.description}</p>
+                        <div className="capture-badge-content flex items-center gap-3 w-full">
+                          <BadgeIcon badge={badge} size="md" dataBadgeIcon />
+                          <div className="flex-1 min-w-0 text-center">
+                            <p
+                              data-badge-label
+                              className={`text-xs font-bold uppercase tracking-wider ${badge.isActive ? 'text-white' : 'text-white/50'}`}
+                            >
+                              {badge.label}
+                            </p>
+                            <p
+                              data-badge-desc
+                              className={`text-[10px] leading-relaxed ${badge.isActive ? 'text-white/50' : 'text-white/30'}`}
+                            >
+                              {badge.description}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     ))
@@ -361,12 +499,27 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   );
 });
 
-function StatItem({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function StatItem({
+  icon,
+  label,
+  value,
+  captureKey,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  captureKey?: string;
+}) {
   return (
     <div className="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-white/5 border border-white/5 group hover:bg-white/10 transition-colors">
       <div className="text-cyan-400/80 mb-2">{icon}</div>
       <span className="text-[9px] text-white/30 uppercase tracking-wider mb-0.5">{label}</span>
-      <span className="text-sm font-bold text-white font-mono">{value}</span>
+      <span
+        data-stat-key={captureKey}
+        className="capture-value text-sm font-bold text-white font-mono"
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -472,10 +625,19 @@ function getBadgeItems(traits: WalletTraits): BadgeItem[] {
   ];
 }
 
-function BadgeIcon({ badge, size }: { badge: BadgeItem; size: 'sm' | 'md' }) {
+function BadgeIcon({
+  badge,
+  size,
+  dataBadgeIcon = false,
+}: {
+  badge: BadgeItem;
+  size: 'sm' | 'md';
+  dataBadgeIcon?: boolean;
+}) {
   return (
     <div
       className={`badge-icon badge-${size} ${badge.isActive ? 'is-active' : 'is-inactive'} shrink-0`}
+      data-badge-icon={dataBadgeIcon ? true : undefined}
       style={{ backgroundImage: `url(${badge.texture})` }}
       title={badge.label}
     />

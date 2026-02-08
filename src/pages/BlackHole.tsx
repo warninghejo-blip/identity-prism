@@ -1,0 +1,1080 @@
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { 
+  TOKEN_PROGRAM_ID, 
+  TOKEN_2022_PROGRAM_ID,
+  createBurnInstruction, 
+  createCloseAccountInstruction 
+} from '@solana/spl-token';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { toast } from 'sonner';
+import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLeft, ExternalLink } from 'lucide-react';
+import { getHeliusProxyUrl, getHeliusRpcUrl, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Toaster } from '@/components/ui/sonner';
+
+type AssetStatus = 'protected' | 'valuable' | 'burnable';
+
+interface TokenAccount {
+  pubkey: PublicKey;
+  programId: PublicKey;
+  mint: string;
+  amount: bigint;
+  decimals: number;
+  uiAmount: number;
+  lamports: number;
+  rentSol: number;
+  symbol?: string;
+  name?: string;
+  image?: string;
+  isNft?: boolean;
+  collectionId?: string;
+  collectionName?: string;
+  collectionSymbol?: string;
+  marketStatus?: 'listed' | 'not_listed' | 'unknown';
+  marketSource?: 'magic_eden' | 'tensor' | null;
+  marketFloorSol?: number | null;
+  tensorUrl?: string | null;
+  meUrl?: string | null;
+  priceUsd?: number | null;
+  valueUsd?: number | null;
+  valueSol?: number | null;
+  netGainSol?: number | null;
+  isCandidate?: boolean;
+  assetStatus?: AssetStatus;
+  protectReason?: string;
+}
+
+interface MarketStats {
+  status: 'listed' | 'not_listed' | 'unknown';
+  floorSol?: number | null;
+  source?: 'magic_eden' | 'tensor';
+  tensorUrl?: string | null;
+  meUrl?: string | null;
+}
+
+interface IncinerationToken {
+  id: string;
+  image?: string;
+  label: string;
+  delay: number;
+  startX: string;
+  startY: string;
+}
+
+const formatUsd = (value?: number | null) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  if (value === 0) return '$0.00';
+  if (value < 0.01) return '<$0.01';
+  return `$${value.toFixed(2)}`;
+};
+
+const parseNumber = (value: unknown) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const formatSol = (value?: number | null) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  if (value === 0) return '0.0000 SOL';
+  return `${value.toFixed(4)} SOL`;
+};
+
+const formatSolGain = (value?: number | null) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  const sign = value >= 0 ? '+' : '';
+  return `${sign}${value.toFixed(4)} SOL`;
+};
+
+const fetchCollectionMarketStats = async (
+  proxyBase: string | null,
+  symbol?: string,
+  collectionId?: string,
+  collectionName?: string,
+  sampleMint?: string
+): Promise<MarketStats> => {
+  if (!proxyBase || (!symbol && !collectionId && !collectionName && !sampleMint)) {
+    return { status: 'unknown' };
+  }
+  try {
+    const url = new URL(`${proxyBase}/api/market/collection-stats`);
+    if (symbol) url.searchParams.set('symbol', symbol);
+    if (collectionId) url.searchParams.set('collectionId', collectionId);
+    if (collectionName) url.searchParams.set('name', collectionName);
+    if (sampleMint) url.searchParams.set('mint', sampleMint);
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      return { status: 'unknown' };
+    }
+    const data = await response.json();
+    const status = data?.status === 'listed' || data?.status === 'not_listed' ? data.status : 'unknown';
+    const floorSol = parseNumber(data?.floorSol);
+    const source = data?.source === 'magic_eden' || data?.source === 'tensor' ? data.source : undefined;
+    return { status, floorSol, source, tensorUrl: data?.tensorUrl ?? null, meUrl: data?.meUrl ?? null };
+  } catch {
+    return { status: 'unknown' };
+  }
+};
+
+const fetchSolPriceUsd = async (proxyBase: string | null) => {
+  if (!proxyBase) return null;
+  try {
+    const response = await fetch(`${proxyBase}/api/market/sol-price`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return (
+      parseNumber(data?.solana?.usd) ??
+      parseNumber(data?.usd) ??
+      parseNumber(data?.price) ??
+      null
+    );
+  } catch {
+    return null;
+  }
+};
+
+const RENT_RECLAIM_SOL = 0.002;
+const VALUE_THRESHOLD_SOL = 0.0015;
+const COMMISSION_RATE = 0.10;
+const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+
+const PROTECTED_MINTS = new Set([
+  SEEKER_TOKEN.MINT,
+  TOKEN_ADDRESSES.CHAPTER2_PREORDER,
+]);
+
+const PROTECTED_COLLECTIONS = new Set([
+  TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION,
+  TOKEN_ADDRESSES.CHAPTER2_PREORDER,
+  '4JAq5D5qYMU5RtRuQj4eotQErWvTMKrMYGK87vtbJqJD', // Identity Prism
+  ...BLUE_CHIP_COLLECTIONS,
+]);
+
+const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: string } => {
+  if (PROTECTED_MINTS.has(token.mint)) {
+    return { status: 'protected', reason: 'Core ecosystem token' };
+  }
+  if (token.collectionId && PROTECTED_COLLECTIONS.has(token.collectionId)) {
+    return { status: 'protected', reason: 'Valuable collection NFT' };
+  }
+  if (token.isNft && token.marketStatus === 'listed') {
+    return { status: 'protected', reason: 'Listed on marketplace' };
+  }
+  if (token.isNft && token.marketFloorSol && token.marketFloorSol > 0.1) {
+    return { status: 'valuable', reason: `Floor ~${token.marketFloorSol.toFixed(2)} SOL` };
+  }
+  if (token.valueSol !== null && token.valueSol !== undefined && token.valueSol > VALUE_THRESHOLD_SOL) {
+    return { status: 'valuable', reason: `Worth ~${token.valueSol.toFixed(4)} SOL` };
+  }
+  return { status: 'burnable' };
+};
+
+const BlackHole = () => {
+  const { connection } = useConnection();
+  const { publicKey, sendTransaction } = useWallet();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [tokens, setTokens] = useState<TokenAccount[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
+  const [isBurning, setIsBurning] = useState(false);
+  const [showAllAssets, setShowAllAssets] = useState(false);
+  const [incinerationTokens, setIncinerationTokens] = useState<IncinerationToken[]>([]);
+  const [wormholeBack, setWormholeBack] = useState(false);
+  const [solPriceUsd, setSolPriceUsd] = useState<number | null>(null);
+  const collectionMarketCache = useRef(new Map<string, MarketStats>());
+  const lastOwnerRef = useRef<string | null>(null);
+  const addressErrorShown = useRef(false);
+  const addressParam = searchParams.get('address');
+  const [ownerPublicKey, setOwnerPublicKey] = useState<PublicKey | null>(publicKey ?? null);
+
+  useEffect(() => {
+    if (addressParam) {
+      addressErrorShown.current = false;
+    }
+  }, [addressParam]);
+
+  useEffect(() => {
+    if (publicKey) {
+      setOwnerPublicKey(publicKey);
+      return;
+    }
+    if (!addressParam) {
+      setOwnerPublicKey(null);
+      return;
+    }
+    try {
+      setOwnerPublicKey(new PublicKey(addressParam));
+    } catch {
+      setOwnerPublicKey(null);
+      if (!addressErrorShown.current) {
+        addressErrorShown.current = true;
+        toast.error('Invalid address in link');
+      }
+    }
+  }, [publicKey, addressParam]);
+
+  useEffect(() => {
+    if (incinerationTokens.length === 0) return;
+    const timeout = window.setTimeout(() => {
+      setIncinerationTokens([]);
+    }, 3600);
+    return () => window.clearTimeout(timeout);
+  }, [incinerationTokens.length]);
+
+  const getVisibleTokens = useCallback(
+    (list: TokenAccount[] = tokens, showAll = showAllAssets) =>
+      showAll ? list : list.filter(token => token.isCandidate),
+    [showAllAssets, tokens]
+  );
+
+  const fetchTokens = useCallback(async (owner?: PublicKey | null) => {
+    const targetOwner = owner ?? publicKey;
+    if (!targetOwner) return;
+    
+    setIsLoading(true);
+    setTokens([]);
+    setSelectedTokens(new Set());
+
+    try {
+      const [splTokens, token2022Tokens] = await Promise.all([
+        connection.getParsedTokenAccountsByOwner(targetOwner, { programId: TOKEN_PROGRAM_ID }),
+        connection.getParsedTokenAccountsByOwner(targetOwner, { programId: TOKEN_2022_PROGRAM_ID }),
+      ]);
+
+      const parsedTokens: TokenAccount[] = [
+        ...splTokens.value.map((item) => {
+          const info = item.account.data.parsed.info;
+          return {
+            pubkey: item.pubkey,
+            programId: TOKEN_PROGRAM_ID,
+            mint: info.mint,
+            amount: BigInt(info.tokenAmount.amount),
+            decimals: info.tokenAmount.decimals,
+            uiAmount: Number(info.tokenAmount.uiAmount ?? 0),
+            lamports: item.account.lamports,
+            rentSol: item.account.lamports / LAMPORTS_PER_SOL,
+          };
+        }),
+        ...token2022Tokens.value.map((item) => {
+          const info = item.account.data.parsed.info;
+          return {
+            pubkey: item.pubkey,
+            programId: TOKEN_2022_PROGRAM_ID,
+            mint: info.mint,
+            amount: BigInt(info.tokenAmount.amount),
+            decimals: info.tokenAmount.decimals,
+            uiAmount: Number(info.tokenAmount.uiAmount ?? 0),
+            lamports: item.account.lamports,
+            rentSol: item.account.lamports / LAMPORTS_PER_SOL,
+          };
+        }),
+      ];
+
+      const proxyBase = getHeliusProxyUrl();
+      const solUsd = await fetchSolPriceUsd(proxyBase);
+      setSolPriceUsd(solUsd);
+
+      const heliusUrl = getHeliusRpcUrl(targetOwner.toBase58());
+      if (heliusUrl && parsedTokens.length > 0) {
+        const mints = [...new Set(parsedTokens.map(t => t.mint))];
+        const BATCH_SIZE = 100;
+        const metadataMap = new Map<
+          string,
+          {
+            name?: string;
+            symbol?: string;
+            image?: string;
+            isNft?: boolean;
+            collectionId?: string;
+            collectionName?: string;
+            collectionSymbol?: string;
+            priceUsd?: number | null;
+          }
+        >();
+
+        for (let i = 0; i < mints.length; i += BATCH_SIZE) {
+          const batch = mints.slice(i, i + BATCH_SIZE);
+          try {
+            const dasResponse = await fetch(heliusUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 'blackhole-metadata',
+                method: 'getAssetBatch',
+                params: { ids: batch },
+              }),
+            });
+
+            const data = await dasResponse.json();
+            if (data.result) {
+              data.result.forEach((asset: any) => {
+                if (!asset) return;
+                const content = asset.content || {};
+                const metadata = content.metadata || {};
+                const grouping = asset.grouping || [];
+                const collectionGroup = grouping.find((group: any) => group.group_key === 'collection');
+                const collectionMeta = collectionGroup?.collection_metadata || {};
+                const tokenInfo = asset.token_info || {};
+                const priceInfo = tokenInfo.price_info || {};
+                const decimals = tokenInfo.decimals ?? null;
+                const supply = parseNumber(tokenInfo.supply);
+                const iface = String(asset.interface || '').toUpperCase();
+                const isNft =
+                  iface.includes('NFT') ||
+                  iface.includes('PROGRAMMABLE') ||
+                  asset.compression?.compressed === true ||
+                  (decimals === 0 && (supply === 1 || supply === null));
+
+                const priceUsd =
+                  parseNumber(priceInfo.price_per_token ?? priceInfo.price_per_token_usd) ??
+                  parseNumber(priceInfo.floor_price ?? priceInfo.floorPrice ?? priceInfo.price) ??
+                  null;
+
+                metadataMap.set(asset.id, {
+                  name: metadata.name || content.json_uri?.split('/').pop(),
+                  symbol: metadata.symbol,
+                  image: content.links?.image || content.files?.[0]?.uri,
+                  isNft,
+                  collectionId: collectionGroup?.group_value,
+                  collectionName: collectionMeta.name || metadata.name,
+                  collectionSymbol: collectionMeta.symbol || metadata.symbol,
+                  priceUsd,
+                });
+              });
+            }
+          } catch {
+            // silently ignore metadata batch errors
+          }
+        }
+
+        parsedTokens.forEach(t => {
+          const meta = metadataMap.get(t.mint);
+          if (!meta) return;
+          t.name = meta.name;
+          t.symbol = meta.symbol;
+          t.image = meta.image;
+          t.isNft = meta.isNft;
+          t.collectionId = meta.collectionId;
+          t.collectionName = meta.collectionName;
+          t.collectionSymbol = meta.collectionSymbol;
+          t.priceUsd = meta.priceUsd ?? null;
+        });
+      }
+
+      // Tokens without Helius DAS price data are treated as zero-value dust
+      parsedTokens.forEach(token => {
+        if (token.isNft === undefined) {
+          const isMaybeNft = token.decimals === 0 && token.uiAmount <= 1;
+          token.isNft = isMaybeNft;
+        }
+      });
+
+      const collectionLookups = new Map<string, { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }>();
+      parsedTokens
+        .filter(token => token.isNft)
+        .forEach(token => {
+          const key = `${token.collectionSymbol ?? ''}|${token.collectionId ?? ''}`;
+          if (!collectionLookups.has(key)) {
+            collectionLookups.set(key, {
+              symbol: token.collectionSymbol,
+              collectionId: token.collectionId,
+              collectionName: token.collectionName,
+              sampleMint: token.mint,
+            });
+          }
+        });
+
+      if (collectionLookups.size > 0) {
+        const statuses = await Promise.all(
+          Array.from(collectionLookups.entries()).map(async ([key, lookup]) => {
+            const cached = collectionMarketCache.current.get(key);
+            if (cached) return [key, cached] as const;
+            const stats = await fetchCollectionMarketStats(proxyBase, lookup.symbol, lookup.collectionId, lookup.collectionName, lookup.sampleMint);
+            collectionMarketCache.current.set(key, stats);
+            return [key, stats] as const;
+          })
+        );
+        const statusMap = new Map(statuses);
+        parsedTokens.forEach(token => {
+          if (!token.isNft) return;
+          const key = `${token.collectionSymbol ?? ''}|${token.collectionId ?? ''}`;
+          const stats = statusMap.get(key);
+          token.marketStatus = stats?.status ?? 'unknown';
+          token.marketFloorSol = stats?.floorSol ?? null;
+          token.marketSource = stats?.source ?? null;
+          token.tensorUrl = stats?.tensorUrl ?? null;
+          token.meUrl = stats?.meUrl ?? null;
+        });
+      } else {
+        parsedTokens.forEach(token => {
+          if (token.isNft) token.marketStatus = 'unknown';
+        });
+      }
+
+      parsedTokens.forEach(token => {
+        const priceKnown = token.priceUsd !== null && token.priceUsd !== undefined;
+        if (priceKnown) {
+          token.valueUsd = token.priceUsd * token.uiAmount;
+        }
+
+        if (token.marketFloorSol !== null && token.marketFloorSol !== undefined) {
+          token.valueSol = token.marketFloorSol;
+          if (solUsd) {
+            token.valueUsd = token.marketFloorSol * solUsd;
+          }
+        } else if (solUsd && token.valueUsd !== null && token.valueUsd !== undefined) {
+          token.valueSol = token.valueUsd / solUsd;
+        }
+
+        const actualRent = token.rentSol;
+        if (token.valueSol !== null && token.valueSol !== undefined) {
+          token.netGainSol = actualRent - token.valueSol;
+        } else if (token.uiAmount === 0) {
+          token.netGainSol = actualRent;
+        } else {
+          token.netGainSol = actualRent;
+        }
+
+        const classification = classifyAsset(token);
+        token.assetStatus = classification.status;
+        token.protectReason = classification.reason;
+
+        if (classification.status === 'protected') {
+          token.isCandidate = false;
+        } else if (classification.status === 'valuable') {
+          token.isCandidate = false;
+        } else {
+          const valueKnown = token.valueSol !== null && token.valueSol !== undefined;
+          const valueLow = valueKnown ? token.valueSol! <= VALUE_THRESHOLD_SOL : false;
+          const netGainPositive = token.netGainSol !== null && token.netGainSol !== undefined && token.netGainSol >= 0;
+          const hasCollection = Boolean(token.collectionId || token.collectionSymbol);
+
+          if (token.isNft) {
+            if (token.marketStatus === 'not_listed') {
+              token.isCandidate = true;
+            } else {
+              token.isCandidate = (!hasCollection && (netGainPositive || !valueKnown)) || valueLow;
+            }
+          } else {
+            if (token.uiAmount === 0 && actualRent > 0.0001) {
+              token.isCandidate = true;
+            } else if (token.uiAmount === 0 && actualRent <= 0.0001) {
+              token.isCandidate = false;
+            } else if (valueKnown) {
+              token.isCandidate = netGainPositive || valueLow;
+            } else {
+              const isDust = token.uiAmount > 0 && token.uiAmount < 0.0001;
+              const isUnnamed = !token.symbol && !token.name;
+              token.isCandidate = isDust || isUnnamed;
+            }
+          }
+        }
+      });
+
+      parsedTokens.sort((a, b) => {
+        const aCandidate = a.isCandidate ? 0 : 1;
+        const bCandidate = b.isCandidate ? 0 : 1;
+        if (aCandidate !== bCandidate) return aCandidate - bCandidate;
+        if (a.uiAmount === 0 && b.uiAmount > 0) return -1;
+        if (a.uiAmount > 0 && b.uiAmount === 0) return 1;
+        return 0;
+      });
+
+      setTokens(parsedTokens);
+      toast.success(`Found ${parsedTokens.length} token accounts`);
+    } catch {
+      toast.error('Failed to fetch tokens');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [connection, publicKey]);
+
+  useEffect(() => {
+    const ownerBase58 = ownerPublicKey?.toBase58() ?? null;
+    if (!ownerBase58 || lastOwnerRef.current === ownerBase58) return;
+    lastOwnerRef.current = ownerBase58;
+    fetchTokens(ownerPublicKey);
+  }, [ownerPublicKey, fetchTokens]);
+
+  const toggleSelection = (pubkey: string) => {
+    const newSelection = new Set(selectedTokens);
+    if (newSelection.has(pubkey)) {
+      newSelection.delete(pubkey);
+    } else {
+      newSelection.add(pubkey);
+    }
+    setSelectedTokens(newSelection);
+  };
+
+  const selectAll = () => {
+    const visibleTokens = getVisibleTokens();
+    const selectedVisibleCount = visibleTokens.filter(token =>
+      selectedTokens.has(token.pubkey.toBase58())
+    ).length;
+
+    if (visibleTokens.length > 0 && selectedVisibleCount === visibleTokens.length) {
+      setSelectedTokens(new Set());
+    } else {
+      setSelectedTokens(new Set(visibleTokens.map(token => token.pubkey.toBase58())));
+    }
+  };
+
+  const handleShowAllToggle = (value: boolean | 'indeterminate') => {
+    const next = Boolean(value);
+    setShowAllAssets(next);
+    if (!next) {
+      const candidateKeys = new Set(
+        tokens.filter(token => token.isCandidate).map(token => token.pubkey.toBase58())
+      );
+      setSelectedTokens(prev => new Set([...prev].filter(key => candidateKeys.has(key))));
+    }
+  };
+
+  const handleIncinerate = async () => {
+    if (!publicKey) {
+      toast.error('Connect wallet to incinerate');
+      return;
+    }
+    if (ownerPublicKey && ownerPublicKey.toBase58() !== publicKey.toBase58()) {
+      toast.error('Connected wallet does not match scanned address');
+      return;
+    }
+    if (selectedTokens.size === 0) return;
+
+    setIsBurning(true);
+    try {
+      const transaction = new Transaction();
+      let instructionCount = 0;
+      
+      const targets = tokens.filter(t => selectedTokens.has(t.pubkey.toBase58()));
+      const safeTargets = targets.filter(t => t.assetStatus !== 'protected');
+      if (safeTargets.length < targets.length) {
+        const blocked = targets.length - safeTargets.length;
+        toast.warning(`${blocked} protected asset(s) excluded from burn`);
+      }
+      if (safeTargets.length === 0) {
+        toast.error('No burnable assets selected');
+        setIsBurning(false);
+        return;
+      }
+
+      const animationTargets: IncinerationToken[] = safeTargets.map((token, index) => ({
+        id: token.pubkey.toBase58(),
+        image: token.image,
+        label: token.name || token.symbol || token.mint.slice(0, 6),
+        delay: index * 120,
+        startX: `${Math.random() * 60 - 30}vw`,
+        startY: `${25 + Math.random() * 45}vh`,
+      }));
+      setIncinerationTokens(animationTargets);
+      
+      for (const token of safeTargets) {
+        if (token.amount > 0n) {
+          transaction.add(
+            createBurnInstruction(
+              token.pubkey,
+              new PublicKey(token.mint),
+              publicKey,
+              token.amount,
+              undefined,
+              token.programId
+            )
+          );
+          instructionCount++;
+        }
+        transaction.add(
+          createCloseAccountInstruction(
+            token.pubkey,
+            publicKey,
+            publicKey,
+            undefined,
+            token.programId
+          )
+        );
+        instructionCount++;
+      }
+
+      // 10% commission to treasury (based on actual rent in each account)
+      const totalReclaimLamports = safeTargets.reduce((sum, t) => sum + t.lamports, 0);
+      const commissionLamports = Math.round(totalReclaimLamports * COMMISSION_RATE);
+      if (commissionLamports > 0) {
+        transaction.add(
+          SystemProgram.transfer({
+            fromPubkey: publicKey,
+            toPubkey: new PublicKey(TREASURY_ADDRESS),
+            lamports: commissionLamports,
+          })
+        );
+        instructionCount++;
+      }
+
+      if (instructionCount === 0) {
+        toast.info("Nothing to do");
+        return;
+      }
+
+      const signature = await sendTransaction(transaction, connection);
+      
+      const netReclaim = (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL;
+      toast.info("Incineration started...", {
+        description: `Burning ${safeTargets.length} accounts · returning ~${netReclaim.toFixed(4)} SOL`
+      });
+
+      // Poll for confirmation instead of WebSocket to avoid WSS proxy issues
+      let confirmed = false;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          const status = await connection.getSignatureStatus(signature);
+          const conf = status?.value?.confirmationStatus;
+          if (conf === 'confirmed' || conf === 'finalized') {
+            if (status.value?.err) {
+              throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
+            }
+            confirmed = true;
+            break;
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message.startsWith('Transaction failed')) throw e;
+        }
+      }
+      if (!confirmed) {
+        toast.warning("Transaction sent but confirmation timed out. Check your wallet.");
+      } else {
+        toast.success("Incineration complete!", {
+          description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(COMMISSION_RATE * 100).toFixed(0)}% fee)`
+        });
+      }
+      
+      // Refresh
+      fetchTokens();
+
+    } catch (error) {
+      toast.error("Incineration failed", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+    } finally {
+      setIsBurning(false);
+    }
+  };
+
+  const visibleTokens = getVisibleTokens();
+
+  const summary = useMemo(() => {
+    const selected = tokens.filter(t => selectedTokens.has(t.pubkey.toBase58()));
+    const burnable = selected.filter(t => t.assetStatus !== 'protected');
+    const totalAccounts = burnable.length;
+    const grossReclaim = burnable.reduce((sum, t) => sum + t.rentSol, 0);
+    const commission = grossReclaim * COMMISSION_RATE;
+    const netReturn = grossReclaim - commission;
+    const protectedCount = tokens.filter(t => t.assetStatus === 'protected').length;
+    const valuableCount = tokens.filter(t => t.assetStatus === 'valuable').length;
+    const burnableCount = tokens.filter(t => t.assetStatus === 'burnable').length;
+    return { totalAccounts, grossReclaim, commission, netReturn, protectedCount, valuableCount, burnableCount };
+  }, [tokens, selectedTokens]);
+
+  const debrisParticles = useMemo(() => {
+    const particles: { key: number; style: React.CSSProperties }[] = [];
+    for (let i = 0; i < 14; i++) {
+      const hue = 15 + (i * 7) % 40;
+      const size = 2 + (i % 4) * 1.5;
+      particles.push({
+        key: i,
+        style: {
+          width: `${size}px`,
+          height: `${size}px`,
+          left: '50%',
+          top: '50%',
+          ['--start' as any]: `${i * 26}deg`,
+          ['--radius' as any]: `${55 + (i % 6) * 22}px`,
+          ['--dur' as any]: `${3.5 + (i % 5) * 1.8}s`,
+          ['--delay' as any]: `${i * 0.4}s`,
+          ['--color' as any]: `hsla(${hue}, 80%, 65%, 0.8)`,
+        } as React.CSSProperties,
+      });
+    }
+    return particles;
+  }, []);
+
+  const handleReturnToCard = () => {
+    const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
+    const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
+    navigate(target, { state: { fromBlackHole: true } });
+  };
+
+  return (
+    <div className="identity-shell blackhole-shell">
+      {/* Same background layers as card page */}
+      <div className="absolute inset-0 bg-[#050505] background-base" />
+      <div className="nebula-layer nebula-one" />
+      <div className="nebula-layer nebula-two" />
+      <div className="nebula-layer nebula-three" />
+      <div className="identity-gradient" />
+
+      {/* Incineration animation overlay */}
+      <div className="blackhole-incineration-layer" aria-hidden>
+        {incinerationTokens.map((token) => {
+          const style = {
+            ['--start-x' as any]: token.startX,
+            ['--start-y' as any]: token.startY,
+            animationDelay: `${token.delay}ms`,
+          } as React.CSSProperties;
+          return (
+            <div key={token.id} className="incineration-token" style={style}>
+              {token.image ? (
+                <img src={token.image} alt="" />
+              ) : (
+                <div className="incineration-dot" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ══ Hero: Title + Cinematic Black Hole ══ */}
+      <div className="blackhole-hero">
+        <h1 className="blackhole-hero__title">Black Hole</h1>
+        <p className="blackhole-hero__sub">Feed the void &middot; Reclaim your SOL</p>
+
+        <div
+          className="blackhole-visual"
+          onMouseMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+            const y = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+            e.currentTarget.style.setProperty('--mx', `${x * 10}px`);
+            e.currentTarget.style.setProperty('--my', `${y * 10}px`);
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.setProperty('--mx', '0px');
+            e.currentTarget.style.setProperty('--my', '0px');
+          }}
+        >
+          <div className="blackhole-glow" />
+          <div className="blackhole-warp" />
+          <div className="blackhole-jet blackhole-jet--north" />
+          <div className="blackhole-jet blackhole-jet--south" />
+          <div className="blackhole-accretion" />
+          <div className="blackhole-ring" />
+          <div className="blackhole-photon" />
+          <div className="blackhole-lens" />
+          <div className="blackhole-shadow" />
+          <div className="blackhole-core" />
+          {/* Debris particles being sucked in */}
+          <div className="blackhole-debris">
+            {debrisParticles.map((p) => (
+              <div key={p.key} className="bh-debris-particle" style={p.style} />
+            ))}
+          </div>
+        </div>
+
+        {/* Return portal — prominent button below black hole */}
+        <button className="bh-return-portal" onClick={handleReturnToCard}>
+          <span className="bh-return-portal__glow" />
+          <span className="bh-return-portal__disk" />
+          <span className="bh-return-portal__core">
+            <ArrowLeft className="h-3 w-3 text-cyan-300" />
+          </span>
+          <span className="bh-return-portal__label">Identity Prism</span>
+        </button>
+      </div>
+
+      {/* Wormhole back transition with tunnel rings */}
+      {wormholeBack && (
+        <div className="wormhole-overlay">
+          {Array.from({ length: 14 }).map((_, i) => (
+            <span
+              key={i}
+              className="wh-ring"
+              style={{
+                width: `${30 + i * 50}px`,
+                height: `${30 + i * 50}px`,
+                borderColor: i % 3 === 0
+                  ? 'rgba(100,180,255,0.4)'
+                  : i % 3 === 1
+                    ? 'rgba(255,140,90,0.35)'
+                    : 'rgba(200,220,255,0.2)',
+                borderWidth: i < 4 ? '2px' : '1px',
+                animation: `wh-ring-expand 1.6s ${i * 0.06}s cubic-bezier(0.22,1,0.36,1) forwards`,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ══ Content below the black hole ══ */}
+      <div className="blackhole-content">
+        {/* If wallet not connected — prominent connect prompt */}
+        {!publicKey ? (
+          <div className="blackhole-panel flex flex-col items-center gap-6 py-12 text-center">
+            <p className="text-zinc-400 text-sm max-w-md leading-relaxed">
+              Connect your wallet to scan for dust tokens and abandoned NFTs.<br />
+              Burn them to reclaim locked SOL rent.
+            </p>
+            <WalletMultiButton className="!bg-gradient-to-r !from-red-600 !to-orange-600 hover:!from-red-500 hover:!to-orange-500 !rounded-xl !h-12 !px-8 !text-base !font-bold !shadow-lg !shadow-red-900/30" />
+            <p className="text-zinc-600 text-xs">
+              Valuable assets (Seeker, preorder, blue chips) are automatically protected.
+            </p>
+          </div>
+        ) : (
+        <div className="blackhole-panel space-y-6">
+
+          {/* Wallet row */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-white/6">
+            <p className="text-zinc-500 text-sm max-w-lg leading-relaxed">
+              Burn dust tokens and abandoned NFTs to reclaim locked SOL rent.
+              Valuable assets are automatically protected.
+            </p>
+            <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0" />
+          </div>
+
+          {/* Asset Summary Stats */}
+          {tokens.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3 text-center">
+                <div className="text-xl font-bold text-zinc-100">{tokens.length}</div>
+                <div className="text-[11px] text-zinc-500 mt-0.5">Total Accounts</div>
+              </div>
+              <div className="bg-emerald-950/20 border border-emerald-900/20 rounded-xl p-3 text-center">
+                <div className="flex items-center justify-center gap-1.5">
+                  <Shield className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="text-xl font-bold text-emerald-400">{summary.protectedCount}</span>
+                </div>
+                <div className="text-[11px] text-emerald-600/80 mt-0.5">Protected</div>
+              </div>
+              <div className="bg-amber-950/20 border border-amber-900/20 rounded-xl p-3 text-center">
+                <div className="flex items-center justify-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                  <span className="text-xl font-bold text-amber-400">{summary.valuableCount}</span>
+                </div>
+                <div className="text-[11px] text-amber-600/80 mt-0.5">Valuable</div>
+              </div>
+              <div className="bg-red-950/20 border border-red-900/20 rounded-xl p-3 text-center">
+                <div className="flex items-center justify-center gap-1.5">
+                  <Flame className="h-3.5 w-3.5 text-red-400" />
+                  <span className="text-xl font-bold text-red-400">{summary.burnableCount}</span>
+                </div>
+                <div className="text-[11px] text-red-600/80 mt-0.5">Burnable</div>
+              </div>
+            </div>
+          )}
+
+          {/* Selection & Burn Summary */}
+          {selectedTokens.size > 0 && (
+            <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-5">
+              <div className="flex flex-col gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                  <div>
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Accounts</div>
+                    <div className="text-lg font-bold text-red-400 mt-1">{summary.totalAccounts}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Rent Reclaim</div>
+                    <div className="text-lg font-bold font-mono text-zinc-200 mt-1">{summary.grossReclaim.toFixed(4)} <span className="text-xs text-zinc-500">SOL</span></div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Fee ({(COMMISSION_RATE * 100).toFixed(0)}%)</div>
+                    <div className="text-lg font-mono text-zinc-400 mt-1">-{summary.commission.toFixed(4)} <span className="text-xs text-zinc-500">SOL</span></div>
+                  </div>
+                  <div className="bg-emerald-950/30 rounded-lg p-2">
+                    <div className="text-[11px] text-emerald-500 uppercase tracking-wider">You Receive</div>
+                    <div className="text-xl font-black font-mono text-emerald-400 mt-1">{summary.netReturn.toFixed(4)} <span className="text-xs">SOL</span></div>
+                    {solPriceUsd && (
+                      <div className="text-[11px] text-emerald-600">{formatUsd(summary.netReturn * solPriceUsd)}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleIncinerate}
+                    disabled={isBurning || summary.totalAccounts === 0}
+                    className="bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-11 text-base shadow-lg shadow-red-900/30"
+                  >
+                    {isBurning ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Flame className="mr-2 h-5 w-5" />}
+                    Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr; +{summary.netReturn.toFixed(4)} SOL
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Controls */}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={() => fetchTokens(ownerPublicKey)}
+              disabled={!ownerPublicKey || isLoading}
+              variant="outline"
+              size="sm"
+              className="border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+            >
+              {isLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              Rescan
+            </Button>
+            <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer">
+              <Checkbox
+                checked={showAllAssets}
+                onCheckedChange={handleShowAllToggle}
+                className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 h-3.5 w-3.5"
+              />
+              Show all
+            </label>
+          </div>
+
+          {/* Token List */}
+            <div className="rounded-xl border border-zinc-800/50 bg-zinc-950/40 overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent border-zinc-800/50">
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
+                        onCheckedChange={selectAll}
+                        className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                      />
+                    </TableHead>
+                    <TableHead className="text-zinc-500 text-xs">Asset</TableHead>
+                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Balance</TableHead>
+                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Value</TableHead>
+                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Return</TableHead>
+                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleTokens.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="h-20 text-center text-zinc-600 text-sm">
+                        {isLoading ? 'Scanning event horizon...' : 'No burn candidates found. Toggle "Show all" to review.'}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    visibleTokens.map((token) => (
+                      <TableRow key={token.pubkey.toBase58()} className="hover:bg-zinc-900/40 border-zinc-800/40">
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedTokens.has(token.pubkey.toBase58())}
+                            onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
+                            className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
+                              {token.image ? (
+                                <img
+                                  src={token.image}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    const img = e.currentTarget;
+                                    img.style.display = 'none';
+                                    const fallback = document.createElement('div');
+                                    fallback.className = 'w-3 h-3 rounded-full bg-zinc-700';
+                                    img.parentElement?.appendChild(fallback);
+                                  }}
+                                />
+                              ) : (
+                                <div className="w-3 h-3 rounded-full bg-zinc-800" />
+                              )}
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-medium text-zinc-200 text-sm truncate max-w-[180px]">
+                                {token.name || 'Unknown'}
+                              </span>
+                              <span className="text-[10px] text-zinc-600 font-mono">
+                                {token.symbol ? `${token.symbol} · ` : ''}{token.mint.slice(0, 4)}...{token.mint.slice(-4)}
+                              </span>
+                              {token.isNft && (
+                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                  {token.collectionName && (
+                                    <span className="text-[10px] text-zinc-500 truncate max-w-[100px]">{token.collectionName}</span>
+                                  )}
+                                  {token.marketFloorSol != null && token.marketFloorSol > 0 && (
+                                    <span className="text-[9px] text-amber-500/80 font-mono whitespace-nowrap">{token.marketFloorSol.toFixed(2)} SOL</span>
+                                  )}
+                                  <span className="flex items-center gap-1">
+                                    <a href={token.tensorUrl || `https://www.tensor.trade/item/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-cyan-500/70 hover:text-cyan-400 transition-colors" onClick={e => e.stopPropagation()} title="Tensor">T</a>
+                                    <a href={token.meUrl || `https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-zinc-400 text-sm">
+                          {token.uiAmount > 0 ? token.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '0'}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          <div className="flex flex-col items-end">
+                            <span className="font-mono text-zinc-300">{formatSol(token.valueSol) ?? (token.priceUsd != null ? `$${token.priceUsd.toFixed(4)}` : '—')}</span>
+                            {token.valueUsd != null && token.valueUsd > 0 && (
+                              <span className="text-[10px] text-zinc-600">{formatUsd(token.valueUsd)}</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right text-sm font-mono">
+                          {token.rentSol > 0.0001 ? (
+                            <>
+                              <span className="text-emerald-400/80">+{(token.rentSol * (1 - COMMISSION_RATE)).toFixed(4)}</span>
+                              <span className="text-[10px] text-zinc-600 ml-0.5">SOL</span>
+                            </>
+                          ) : (
+                            <span className="text-zinc-600 text-xs">~0</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {token.assetStatus === 'protected' ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-900/20 text-emerald-400">
+                                <Shield className="h-2.5 w-2.5" /> Protected
+                              </span>
+                              {token.protectReason && <span className="text-[9px] text-emerald-700">{token.protectReason}</span>}
+                            </div>
+                          ) : token.assetStatus === 'valuable' ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-900/20 text-amber-400">
+                                <AlertTriangle className="h-2.5 w-2.5" /> Valuable
+                              </span>
+                              {token.protectReason && <span className="text-[9px] text-amber-700">{token.protectReason}</span>}
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-900/15 text-red-400/80">
+                              <Flame className="h-2.5 w-2.5" /> Burnable
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+        </div>
+        )}
+      </div>
+
+      <Toaster position="bottom-right" theme="dark" />
+    </div>
+  );
+};
+
+export default BlackHole;

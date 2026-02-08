@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="/phav.png" />
+    <link rel="apple-touch-icon" href="/phav.png" />
+    <title>Identity Prism Copyright</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+        margin: 0;
+        line-height: 1.6;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      .legal-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 40px;
+        background: #ffffff;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+        position: sticky;
+        top: 0;
+      }
+      .legal-back {
+        text-decoration: none;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .legal-back:hover {
+        color: #0ea5e9;
+      }
+      .legal-logo {
+        width: 28px;
+        height: 28px;
+      }
+      .legal-shell {
+        padding: 32px 40px 48px;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 16px;
+      }
+      p {
+        max-width: 820px;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="legal-nav">
+      <a class="legal-back" href="/" data-legal-back>Back to app</a>
+      <img class="legal-logo" src="/phav.png" alt="Identity Prism" />
+    </nav>
+    <main class="legal-shell">
+      <h1>Copyright</h1>
+      <p><strong>Last updated:</strong> 2026-02-03</p>
+      <p>
+        (c) 2026 Dmitriy. All rights reserved. Identity Prism, its visuals, and related assets are
+        protected by copyright law.
+      </p>
+      <p>
+        For permissions, contact
+        <a href="mailto:support@identityprism.xyz">support@identityprism.xyz</a>.
+      </p>
+    </main>
+    <script>
+      (function () {
+        var back = document.querySelector("[data-legal-back]");
+        if (!back) return;
+        back.addEventListener("click", function (event) {
+          event.preventDefault();
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.href = "/";
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

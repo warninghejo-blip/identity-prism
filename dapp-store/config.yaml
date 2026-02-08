@@ -1,0 +1,66 @@
+publisher:
+  name: Dmitriy
+  website: https://identityprism.xyz
+  email: support@identityprism.xyz
+  support_email: support@identityprism.xyz
+app:
+  name: Identity Prism
+  address: AKuwHGvPHVe4E57stGnkd3ciVXs5LeVqBgxUuiDhmV3C
+  android_package: com.identityprism.app
+  urls:
+    license_url: https://identityprism.xyz/terms.html
+    copyright_url: https://identityprism.xyz/copyright.html
+    privacy_policy_url: https://identityprism.xyz/privacy.html
+    website: https://identityprism.xyz
+  media:
+    - purpose: icon
+      uri: ./media/app_icon.png
+release:
+  address: HEn5KLiRtT5eywfDZwXnCw9ZL7WSJpvhf7vp9Bpao3wn
+  media:
+    - purpose: icon
+      uri: ./media/release_icon.png
+    - purpose: banner
+      uri: ./media/banner.png
+    - purpose: screenshot
+      uri: ./media/screenshot_1_landing.png
+    - purpose: screenshot
+      uri: ./media/screenshot_2_front.png
+    - purpose: screenshot
+      uri: ./media/screenshot_3_stats.png
+    - purpose: screenshot
+      uri: ./media/screenshot_4_badges.png
+  files:
+    - purpose: install
+      uri: ./files/app-release.apk
+  catalog:
+    en-US:
+      name: Identity Prism
+      short_description: Wallet insights on Solana.
+      long_description: |
+        Identity Prism turns a Solana wallet into a cosmic identity card. Connect any
+        wallet to scan on-chain activity, reveal tiers and badges, and share a visual
+        identity powered by Solana Blinks. Built for collectors, degen explorers, and
+        anyone who wants a beautiful, shareable view of their Solana history.
+      new_in_version: v1.0.23 SKR payment (50% discount) + bottom notifications + scrollbar fix.
+      saga_features: Supports Solana Mobile Wallet Adapter for native signing.
+  android_details:
+    cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
+    min_sdk: 24
+    version: 1.0.23
+    version_code: 24
+    locales:
+      - en-US
+solana_mobile_dapp_publisher_portal:
+  google_store_package: com.identityprism.app
+  testing_instructions: |
+    1. Open the app and connect any Solana wallet.
+    2. Wait for the scan to finish and verify the Identity Prism card renders.
+    3. Flip to the back to view stats and badges.
+    4. Optional: use Share to verify the Solana Blinks link is generated.
+lastSubmittedVersionOnChain:
+  address: HEn5KLiRtT5eywfDZwXnCw9ZL7WSJpvhf7vp9Bpao3wn
+  version_code: 12
+  apk_hash: 1vPWjt3mMGKWiLqB6DfJqmw2rHdzNAroejAMNd2PCig=
+lastUpdatedVersionOnStore:
+  address: HEn5KLiRtT5eywfDZwXnCw9ZL7WSJpvhf7vp9Bpao3wn

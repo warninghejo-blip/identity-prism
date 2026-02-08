@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useLocation } from "react-router-dom";
 import { CelestialCard } from "@/components/CelestialCard";
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { useWalletData } from "@/hooks/useWalletData";
@@ -12,12 +12,13 @@ import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorization
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from "lucide-react";
-import { getAppBaseUrl, getMetadataBaseUrl, MINT_CONFIG } from "@/constants";
-import { PublicKey } from "@solana/web3.js";
+import { getAppBaseUrl, getHeliusProxyUrl, getMetadataBaseUrl, MINT_CONFIG, SEEKER_TOKEN } from "@/constants";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import html2canvas from "html2canvas";
 
 type ViewState = "landing" | "scanning" | "ready";
+type PaymentToken = "SOL" | "SKR";
 
 const MWA_AUTH_CACHE_KEY = "SolanaMobileWalletAdapterDefaultAuthorizationCache";
 const SCANNING_MESSAGES = [
@@ -67,12 +68,27 @@ const purgeInvalidMwaCache = async () => {
 
 const Index = () => {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const [fromBlackHole, setFromBlackHole] = useState(Boolean((location.state as any)?.fromBlackHole));
   const isNftMode = searchParams.get("mode") === "nft";
   const urlAddress = searchParams.get("address");
+  // Clear fromBlackHole after animation to prevent WebGL context issues
+  useEffect(() => {
+    if (fromBlackHole) {
+      const timer = setTimeout(() => {
+        setFromBlackHole(false);
+        // Clear navigation state so refresh doesn't replay animation
+        window.history.replaceState({}, '');
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [fromBlackHole]);
+
   const [isWarping, setIsWarping] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(urlAddress ? "ready" : "landing");
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const mwaErrorRef = useRef<string | null>(null);
 
   const wallet = useWallet();
@@ -214,22 +230,6 @@ const Index = () => {
     }, 1600);
     return () => window.clearInterval(interval);
   }, [viewState]);
-
-  const [debugClicks, setDebugClicks] = useState(0);
-  const handleDebugTrigger = () => {
-    const newCount = debugClicks + 1;
-    if (newCount >= 5) {
-      try {
-        window.localStorage?.setItem('debug', 'true');
-      } catch {
-        // ignore storage failures
-      }
-      window.location.search = "debug=true";
-    } else {
-      setDebugClicks(newCount);
-      if (newCount > 1) toast.info(`Debug mode in ${5 - newCount} clicks...`);
-    }
-  };
 
   const handleMobileConnect = useCallback(async () => {
     const targetWallet = preferredMobileWallet;
@@ -431,7 +431,7 @@ const Index = () => {
   const previewMode = import.meta.env.DEV && searchParams.has("preview");
   const resolvedAddress = activeAddress;
   const walletData = useWalletData(resolvedAddress);
-  const { traits, score, address, isLoading, error: dataError } = walletData;
+  const { traits, score, address, isLoading } = walletData;
 
   // Unified State Machine for UI
   useEffect(() => {
@@ -472,18 +472,56 @@ const Index = () => {
 
   const [mintState, setMintState] = useState<"idle" | "minting" | "success" | "error">("idle");
   const [isMintPanelOpen, setIsMintPanelOpen] = useState(true);
-  const captureCardImage = useCallback(async () => {
+  const [paymentToken, setPaymentToken] = useState<PaymentToken>("SOL");
+  const [skrQuote, setSkrQuote] = useState<{ skrAmount: number; discount: number } | null>(null);
+  const [skrQuoteError, setSkrQuoteError] = useState<string | null>(null);
+  const [skrQuoteLoading, setSkrQuoteLoading] = useState(false);
+  const proxyBase = getHeliusProxyUrl();
+
+  const fetchSkrQuote = useCallback(async () => {
+    if (!proxyBase) {
+      setSkrQuote(null);
+      setSkrQuoteError("SKR pricing unavailable");
+      return;
+    }
+    setSkrQuoteLoading(true);
+    try {
+      const response = await fetch(`${proxyBase}/api/market/mint-quote`);
+      if (!response.ok) {
+        throw new Error(`SKR quote unavailable (${response.status})`);
+      }
+      const data = await response.json();
+      const skrAmount = Number(data?.skrAmount);
+      const discount = Number(data?.discount ?? SEEKER_TOKEN.DISCOUNT);
+      if (!Number.isFinite(skrAmount)) {
+        throw new Error("Invalid SKR quote");
+      }
+      setSkrQuote({ skrAmount, discount: Number.isFinite(discount) ? discount : SEEKER_TOKEN.DISCOUNT });
+      setSkrQuoteError(null);
+    } catch (error) {
+      console.warn("[mint] SKR quote fetch failed", error);
+      setSkrQuote(null);
+      setSkrQuoteError("SKR pricing unavailable");
+    } finally {
+      setSkrQuoteLoading(false);
+    }
+  }, [proxyBase]);
+
+  useEffect(() => {
+    fetchSkrQuote();
+    const interval = window.setInterval(fetchSkrQuote, 60_000);
+    return () => window.clearInterval(interval);
+  }, [fetchSkrQuote]);
+  const renderCardImage = useCallback(async (scale: number, quality: number) => {
     if (!cardCaptureRef.current) {
       throw new Error("Card preview is not ready yet");
     }
-    const metadataBaseUrl = getMetadataBaseUrl();
-    if (!metadataBaseUrl) throw new Error("Metadata URL missing");
 
     if (document?.fonts?.ready) await document.fonts.ready;
 
     const canvas = await html2canvas(cardCaptureRef.current as HTMLDivElement, {
       backgroundColor: "#020408",
-      scale: 1.5,
+      scale,
       useCORS: true,
       allowTaint: true,
       logging: false,
@@ -501,7 +539,13 @@ const Index = () => {
       ignoreElements: (el) => el.classList?.contains('mint-panel') ?? false,
     });
 
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    return canvas.toDataURL("image/jpeg", quality);
+  }, []);
+
+  const uploadCardImage = useCallback(async (dataUrl: string) => {
+    const metadataBaseUrl = getMetadataBaseUrl();
+    if (!metadataBaseUrl) throw new Error("Metadata URL missing");
+
     const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -509,7 +553,11 @@ const Index = () => {
     });
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 100)}`);
+      const error = new Error(
+        `Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 120)}`
+      ) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
     const payload = JSON.parse(text);
     if (!payload?.url) {
@@ -517,8 +565,26 @@ const Index = () => {
     }
     return payload.url as string;
   }, []);
+
+  const captureCardImage = useCallback(async () => {
+    const dataUrl = await renderCardImage(1.5, 0.85);
+    try {
+      return await uploadCardImage(dataUrl);
+    } catch (error) {
+      console.warn("[mint] Card image upload failed, retrying smaller payload", error);
+      const fallbackDataUrl = await renderCardImage(1.1, 0.72);
+      return await uploadCardImage(fallbackDataUrl);
+    }
+  }, [renderCardImage, uploadCardImage]);
   const handleMint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
+
+    if (paymentToken === "SKR" && !skrQuote) {
+      toast.error("SKR price unavailable", {
+        description: "Please try again in a moment.",
+      });
+      return;
+    }
     
     setMintState("minting");
     try {
@@ -529,6 +595,7 @@ const Index = () => {
         traits,
         score,
         cardImageUrl,
+        paymentToken,
       });
       
       console.log("Mint success:", result);
@@ -537,6 +604,44 @@ const Index = () => {
         description: `Tx: ${result.signature.slice(0, 8)}...`,
       });
     } catch (err) {
+      const error = err as Error & {
+        code?: string;
+        requiredLamports?: number;
+        balanceLamports?: number;
+        feeLamports?: number;
+      };
+      if (error?.code === "INSUFFICIENT_SOL") {
+        const requiredSol =
+          typeof error.requiredLamports === "number"
+            ? error.requiredLamports / LAMPORTS_PER_SOL
+            : null;
+        const balanceSol =
+          typeof error.balanceLamports === "number"
+            ? error.balanceLamports / LAMPORTS_PER_SOL
+            : null;
+        toast.error("Insufficient SOL for transaction", {
+          description:
+            requiredSol !== null && balanceSol !== null
+              ? `Need ~${requiredSol.toFixed(4)} SOL (including fee). Available ${balanceSol.toFixed(4)} SOL.`
+              : "Please top up your wallet and try again.",
+        });
+        setMintState("idle");
+        return;
+      }
+      if (error?.code === "INSUFFICIENT_SKR") {
+        toast.error(`Insufficient ${SEEKER_TOKEN.SYMBOL} tokens`, {
+          description: `You need ${SEEKER_TOKEN.SYMBOL} tokens in your wallet to mint with this option. Buy ${SEEKER_TOKEN.SYMBOL} or switch to SOL payment.`,
+        });
+        setMintState("idle");
+        return;
+      }
+      if (error?.code === "SIMULATION_FAILED") {
+        toast.error("Transaction simulation failed", {
+          description: "Try again later or switch RPC.",
+        });
+        setMintState("idle");
+        return;
+      }
       console.error("Mint error:", err);
       setMintState("error");
       toast.error("Deployment failed", {
@@ -544,7 +649,7 @@ const Index = () => {
       });
       setTimeout(() => setMintState("idle"), 3000);
     }
-  }, [wallet, traits, score, captureCardImage]);
+  }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
 
   const shareInsight = useMemo(() => {
     if (!traits) return "Cosmic insight pending... 🔮";
@@ -576,18 +681,17 @@ const Index = () => {
     const appBaseUrl = (getAppBaseUrl() ?? "https://identityprism.xyz").replace(/\/+$/, "");
     const shareUrl = `${appBaseUrl}/share`;
     const shareText = [
-      "🌌 Identity Prism",
+      "🔮 Identity Prism",
       `${tierEmoji} Tier: ${tierLabel} • 💎 Score: ${score}`,
       `🔮 Insight: ${shareInsight}`,
-      "⚡️ Powered by Solana Blinks",
+      "⚡ Powered by Solana Blinks",
       "",
-      "Scan your wallet to reveal your Prism 👇",
-      "@solana $SOL #IdentityPrism",
+      "Scan your wallet to reveal your Identity Prism on @solana",
+      shareUrl,
     ].join("\n");
 
     const encodedText = encodeURIComponent(shareText);
-    const encodedUrl = encodeURIComponent(shareUrl);
-    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}&via=Identity_Prism`;
+    const twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
 
     if (isCapacitor || isMobileBrowser) {
       window.location.href = twitterUrl;
@@ -603,8 +707,28 @@ const Index = () => {
   const showReadyView = previewMode || viewState === "ready";
   const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
 
+  useEffect(() => {
+    const updateScrollbarWidth = () => {
+      const shell = shellRef.current;
+      const width = shell ? shell.offsetWidth - shell.clientWidth : 0;
+      document.documentElement.style.setProperty(
+        "--shell-scrollbar-width",
+        `${Math.max(width, 0)}px`
+      );
+    };
+
+    updateScrollbarWidth();
+    const raf = window.requestAnimationFrame(updateScrollbarWidth);
+    window.addEventListener("resize", updateScrollbarWidth);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", updateScrollbarWidth);
+    };
+  }, [isScrollEnabled, viewState, isMintPanelOpen, isNftMode]);
+
   return (
     <div
+      ref={shellRef}
       className={`identity-shell relative min-h-screen ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view nft-kiosk-mode' : ''}`}
     >
       {isNftMode ? (
@@ -650,7 +774,6 @@ const Index = () => {
               mobileWalletReady={mobileConnectReady}
               onDesktopConnect={handleDesktopConnect}
               desktopWalletReady={desktopWalletReady}
-              onDebugTrigger={handleDebugTrigger}
               scanningMessageIndex={scanningMessageIndex}
             />
           ) : (
@@ -660,7 +783,7 @@ const Index = () => {
                 <PreviewGallery />
               ) : (
                 <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}`}>
-                  <CelestialCard data={walletData} />
+                  <CelestialCard data={walletData} fromBlackHole={fromBlackHole} />
                   {!previewMode && (
                     <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
                       <button
@@ -672,10 +795,42 @@ const Index = () => {
                         <span>{isMintPanelOpen ? 'Hide controls' : 'Show controls'}</span>
                       </button>
                       <div className="mint-panel-content">
+                        <div className="mint-payment">
+                          <span className="mint-payment-label">Pay with</span>
+                          <div className="mint-payment-options">
+                            <button
+                              type="button"
+                              className={`mint-payment-option ${paymentToken === "SOL" ? "is-active" : ""}`}
+                              onClick={() => setPaymentToken("SOL")}
+                            >
+                              SOL
+                            </button>
+                            <button
+                              type="button"
+                              className={`mint-payment-option ${paymentToken === "SKR" ? "is-active" : ""}`}
+                              onClick={() => setPaymentToken("SKR")}
+                              disabled={!skrQuote && !skrQuoteLoading}
+                            >
+                              {SEEKER_TOKEN.SYMBOL} −50%
+                            </button>
+                          </div>
+                          {paymentToken === "SKR" && (
+                            <span className={`mint-payment-note ${skrQuoteError ? "is-error" : ""}`}>
+                              {skrQuoteError
+                                ? skrQuoteError
+                                : `50% discount with ${SEEKER_TOKEN.SYMBOL}`}
+                            </span>
+                          )}
+                        </div>
                         <div className="mint-action-row">
                           <Button
                             onClick={handleMint}
-                            disabled={mintState === "minting" || isLoading || !isConnected}
+                            disabled={
+                              mintState === "minting" ||
+                              isLoading ||
+                              !isConnected ||
+                              (paymentToken === "SKR" && !skrQuote)
+                            }
                             className="mint-primary-btn"
                           >
                             {mintState === "idle" && <span>MINT IDENTITY</span>}
@@ -684,7 +839,16 @@ const Index = () => {
                           </Button>
                         </div>
                         <div className="mint-meta">
-                          <span>MINT COST {MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL</span>
+                          {paymentToken === "SKR" ? (
+                            <>
+                              <span>
+                                MINT COST {skrQuote ? skrQuote.skrAmount : "—"} {SEEKER_TOKEN.SYMBOL}
+                              </span>
+                              <span>{`50% discount with ${SEEKER_TOKEN.SYMBOL}`}</span>
+                            </>
+                          ) : (
+                            <span>MINT COST {MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL</span>
+                          )}
                         </div>
                         <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
                           <Share2 className="h-4 w-4 mr-2" />
@@ -732,7 +896,6 @@ function LandingOverlay({
   mobileWalletReady,
   onDesktopConnect,
   desktopWalletReady,
-  onDebugTrigger,
   scanningMessageIndex
 }: { 
   isScanning: boolean;
@@ -745,7 +908,6 @@ function LandingOverlay({
   mobileWalletReady?: boolean;
   onDesktopConnect?: () => void;
   desktopWalletReady?: boolean;
-  onDebugTrigger?: () => void;
   scanningMessageIndex?: number;
 }) {
   if (isScanning) {
@@ -769,24 +931,22 @@ function LandingOverlay({
 
   return (
     <div className="landing-wrap-v2">
-      <div className="landing-card-v2 glass-panel">
+      <div className="landing-main">
+        <div className="landing-card-v2 glass-panel">
         <div className="landing-header-v2">
           <div className="glow-icon-container">
             <img src="/phav.png" alt="Identity Prism" className="h-24 w-24 mx-auto mb-6 glow-logo" />
           </div>
-          <p 
-            className="landing-eyebrow cursor-pointer select-none"
-            onClick={onDebugTrigger}
-          >
+          <p className="landing-eyebrow select-none">
             Identity Prism v3.2
           </p>
-          <h1 className="landing-title-v2">Decode your cosmic signature.</h1>
+          <h1 className="landing-title-v2">Decode your cosmic signature</h1>
         </div>
         
         <div className="landing-actions-v2">
           {isConnected && onEnter ? (
              <div className="w-full flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-500">
-                <div className="w-full p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-center">
+                <div className="wallet-connected-banner mx-auto max-w-[320px] p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-center">
                    <p className="text-cyan-200 text-[10px] mb-1 uppercase tracking-widest font-bold">Wallet Connected</p>
                    <p className="text-white font-mono text-sm font-medium truncate max-w-[200px] mx-auto">
                       {connectedAddress?.slice(0, 4)}...{connectedAddress?.slice(-4)}
@@ -835,6 +995,37 @@ function LandingOverlay({
               )}
             </div>
           )}
+        </div>
+        </div>
+      </div>
+      <div className="landing-footer">
+        <p className="landing-footer-copy">
+          Identity Prism is a Solana dApp that transforms wallet activity into a cosmic identity card
+        </p>
+        <div className="landing-footer-panel">
+          <div className="landing-footer-column">
+            <span className="landing-footer-title">Legal</span>
+            <a className="landing-footer-link" href="/privacy.html">
+              Privacy Policy
+            </a>
+            <a className="landing-footer-link" href="/terms.html">
+              Terms of Use
+            </a>
+          </div>
+          <div className="landing-footer-column">
+            <span className="landing-footer-title">Connect</span>
+            <a className="landing-footer-link" href="mailto:support@identityprism.xyz">
+              support@identityprism.xyz
+            </a>
+            <a
+              className="landing-footer-link"
+              href="https://x.com/Identity_Prism"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Twitter
+            </a>
+          </div>
         </div>
       </div>
     </div>

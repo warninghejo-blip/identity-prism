@@ -1,4 +1,5 @@
 import http from 'node:http';
+import https from 'node:https';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,6 +12,13 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+import {
+  createAssociatedTokenAccountInstruction,
+  createTransferCheckedInstruction,
+  getAssociatedTokenAddress,
+  getMint,
+  TOKEN_2022_PROGRAM_ID,
+} from '@solana/spl-token';
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
 import {
   createNoopSigner,
@@ -48,6 +56,35 @@ const loadEnvFile = (filePath) => {
   }
 };
 
+const SOL_PRICE_TTL_MS = 60 * 1000;
+let solPriceCache = { value: null, timestamp: 0 };
+const SKR_PRICE_TTL_MS = 60 * 1000;
+let skrPriceCache = { value: null, timestamp: 0 };
+
+const getCachedSolPriceUsd = async () => {
+  const now = Date.now();
+  if (solPriceCache.value && now - solPriceCache.timestamp < SOL_PRICE_TTL_MS) {
+    return solPriceCache.value;
+  }
+  const price = await fetchSolPriceUsd();
+  if (price) {
+    solPriceCache = { value: price, timestamp: now };
+  }
+  return price;
+};
+
+const getCachedSkrPriceUsd = async () => {
+  const now = Date.now();
+  if (skrPriceCache.value && now - skrPriceCache.timestamp < SKR_PRICE_TTL_MS) {
+    return skrPriceCache.value;
+  }
+  const price = await fetchSkrPriceUsd();
+  if (price) {
+    skrPriceCache = { value: price, timestamp: now };
+  }
+  return price;
+};
+
 loadEnvFile(process.env.ENV_PATH ?? path.join(process.cwd(), '.env'));
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -68,12 +105,71 @@ const TREASURY_SECRET = (process.env.TREASURY_SECRET ?? '').trim();
 const TREASURY_SECRET_PATH = (process.env.TREASURY_SECRET_PATH ?? path.join(process.cwd(), 'keys', 'treasury.json')).trim();
 const CORE_COLLECTION = (process.env.CORE_COLLECTION ?? '').trim();
 const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS ?? '').trim();
-const MINT_PRICE_SOL = Number(process.env.MINT_PRICE_SOL ?? '0.01');
+const MINT_PRICE_SOL_RAW = Number(process.env.MINT_PRICE_SOL ?? '0.01');
+const MINT_PRICE_SOL = Number.isFinite(MINT_PRICE_SOL_RAW) && MINT_PRICE_SOL_RAW > 0
+  ? MINT_PRICE_SOL_RAW
+  : 0.01;
+const SKR_MINT = (process.env.SKR_MINT ?? 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3').trim();
+const SKR_DISCOUNT = Number(process.env.SKR_DISCOUNT ?? '0.5');
+const SKR_DISCOUNT_RATE = Number.isFinite(SKR_DISCOUNT) && SKR_DISCOUNT > 0 ? SKR_DISCOUNT : 0.5;
 const LAMPORTS_PER_SOL = 1_000_000_000;
+const MAX_SIGNATURE_PAGES = Number(process.env.MAX_SIGNATURE_PAGES ?? '10');
+const SIGNATURE_PAGE_LIMIT = 1000;
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+
+const TOKEN_ADDRESSES = {
+  SEEKER_GENESIS_COLLECTION: 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te',
+  SEEKER_MINT_AUTHORITY: 'GT2zuHVaZQYZSyQMgJPLzvkmyztfyXg2NJunqFp4p3A4',
+  CHAPTER2_PREORDER: '2DMMamkkxQ6zDMBtkFp8KH7FoWzBMBA1CGTYwom4QH6Z',
+};
+const PREORDER_COLLECTION = '3uejyD3ZwHDGwT8n6KctN3Stnjn9Nih79oXES9VqA38D';
+const LST_MINTS = {
+  JITOSOL: 'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn',
+  MSOL: 'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
+  BSOL: 'BSo13v7qDMGWCM1cW8wwfsfZ7vQLZKxHCiNSN2B7Mq2u',
+};
+const MEME_COIN_MINTS = {
+  BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+  WIF: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+  POPCAT: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
+  MEW: 'MEW1VNoNHn99uH86fUvYvU42o9YkS9uH9Tst6t2291',
+};
+const MEME_COIN_PRICES_USD = {
+  BONK: 0.000002,
+  WIF: 3.5,
+  POPCAT: 0.35,
+  MEW: 0.003,
+};
+const MEME_MINT_LOOKUP = Object.entries(MEME_COIN_MINTS).reduce((acc, [symbol, mint]) => {
+  acc[mint] = symbol;
+  return acc;
+}, {});
+const DEFI_POSITION_HINTS = ['kamino', 'drift', 'marginfi', 'mango', 'jito', 'solend', 'zeta'];
+const BLUE_CHIP_COLLECTIONS = [
+  'J1S9H3QjnRtBbbuD4HjPV6RpRhwuk4zKbxsnCHuTgh9w',
+  'SMBH3wF6pdt967Y62N7S5mB4tJSTH3KAsdJ82D3L2nd',
+  'SMB3ndYpSXY97H8MhpxYit3pD8TzYJ5v6ndP4D2L2nd',
+  '6v9UWGmEB5Hthst9KqEAgXW6XF6R6yv4t7Yf3YfD3A7t',
+  'BUjZjAS2vbbb9p56fAun4sFmPAt8W6JURG5L3AkVvHP9',
+  '4S8L8L1M5E1X5vM1Y1M1X5vM1Y1M1X5vM1Y1M1X5vM1Y',
+  '7TENEKwBnkpENuefriGPg4hBDR4WJ2Gyfw5AhdkMA4rq',
+  '9uBX3ASuCtv6S5o56yq7F9n7U6o9o7o9o7o9o7o9o7o9',
+  'GGSGP689TGoX6WJ9mSj2S8mH78S8S8S8S8S8S8S8S8S8S',
+  'CDgbhX61QFADQAeeYKP5BQ7nnzDyMkkR3NEhYF2ETn1k',
+  'Port7uDYB3P8meS5m7Yv62222222222222222222222',
+  'CocMmG5v88888888888888888888888888888888888',
+  'y00t9S9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD',
+  'abc777777777777777777777777777777777777777',
+  'LILY5555555555555555555555555555555555555',
+  'PRM77777777777777777777777777777777777777',
+  'Jelly8888888888888888888888888888888888888',
+  '4Q2C5S930M9c9e96b',
+  'TFF77777777777777777777777777777777777777',
+  'DTP77777777777777777777777777777777777777',
+];
 
 const PENDING_MINT_TTL_MS = 10 * 60 * 1000;
 const pendingMintSigners = new Map();
@@ -129,12 +225,34 @@ const pickHeliusKey = (seed) => {
   return HELIUS_KEYS[index];
 };
 
+const buildRpcUrl = (apiKey) => {
+  if (!HELIUS_RPC_BASE) return null;
+  const targetUrl = new URL(HELIUS_RPC_BASE);
+  if (apiKey) {
+    targetUrl.searchParams.set('api-key', apiKey);
+  }
+  return targetUrl.toString();
+};
+
 const getRpcUrl = (seed) => {
+  if (!HELIUS_KEYS.length) {
+    return buildRpcUrl(null);
+  }
   const apiKey = pickHeliusKey(seed);
   if (!apiKey) return null;
-  const targetUrl = new URL(HELIUS_RPC_BASE);
-  targetUrl.searchParams.set('api-key', apiKey);
-  return targetUrl.toString();
+  return buildRpcUrl(apiKey);
+};
+
+const getRpcUrls = (seed) => {
+  if (!HELIUS_KEYS.length) {
+    const fallbackUrl = buildRpcUrl(null);
+    return fallbackUrl ? [fallbackUrl] : [];
+  }
+  const startIndex = Math.max(0, getHeliusKeyIndex(seed));
+  return HELIUS_KEYS.map((_, index) => {
+    const key = HELIUS_KEYS[(startIndex + index) % HELIUS_KEYS.length];
+    return buildRpcUrl(key);
+  }).filter(Boolean);
 };
 
 const parseSecretKey = (value) => {
@@ -275,7 +393,7 @@ const getContentType = (fileName) => {
 };
 
 const sendImageDataUrl = (res, dataUrl) => {
-  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl ?? '');
+  const match = /^data:(image\/[-a-zA-Z0-9.+]+);base64,(.+)$/.exec(dataUrl ?? '');
   if (!match) {
     respondJson(res, 500, { error: 'Invalid image payload' });
     return;
@@ -285,9 +403,138 @@ const sendImageDataUrl = (res, dataUrl) => {
   res.writeHead(200, {
     'Content-Type': contentType,
     'Content-Length': buffer.length,
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Surrogate-Control': 'no-store',
   });
   res.end(buffer);
+};
+
+const normalizeFloorSol = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric > 1_000_000) return numeric / LAMPORTS_PER_SOL;
+  if (numeric > 1000) return numeric / LAMPORTS_PER_SOL;
+  return numeric;
+};
+
+const fetchMagicEdenCollectionStats = async (symbol) => {
+  if (!symbol) return null;
+  try {
+    const response = await fetch(
+      `https://api-mainnet.magiceden.dev/v2/collections/${encodeURIComponent(symbol)}/stats`
+    );
+    if (!response.ok) {
+      if (response.status === 404) {
+        return { status: 'not_listed', floorSol: null, source: 'magic_eden' };
+      }
+      return null;
+    }
+    const data = await response.json();
+    const floorSol = normalizeFloorSol(data?.floorPrice ?? data?.floor_price ?? data?.floor);
+    return { status: 'listed', floorSol: floorSol ?? null, source: 'magic_eden' };
+  } catch (error) {
+    console.warn('[market] Magic Eden stats failed', error);
+    return null;
+  }
+};
+
+const fetchMeSlugByMint = async (mint) => {
+  if (!mint) return null;
+  try {
+    const response = await fetch(
+      `https://api-mainnet.magiceden.dev/v2/tokens/${encodeURIComponent(mint)}`
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data?.collection || null;
+  } catch {
+    return null;
+  }
+};
+
+const fetchTensorCollectionStats = async (collectionId) => {
+  if (!collectionId) return null;
+  const endpoints = [
+    `https://api.tensor.so/sol/collections/${collectionId}/stats`,
+    `https://api.tensor.so/sol/collections/${collectionId}`,
+  ];
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint);
+      if (!response.ok) {
+        if (response.status === 404) {
+          return { status: 'not_listed', floorSol: null, source: 'tensor' };
+        }
+        continue;
+      }
+      const data = await response.json();
+      const floorCandidate =
+        data?.floorPrice ??
+        data?.floor ??
+        data?.stats?.floorPrice ??
+        data?.stats?.floor ??
+        data?.collection?.floorPrice ??
+        data?.collection?.floor;
+      const floorSol = normalizeFloorSol(floorCandidate);
+      return { status: 'listed', floorSol: floorSol ?? null, source: 'tensor' };
+    } catch (error) {
+      console.warn('[market] Tensor stats failed', error);
+    }
+  }
+  return null;
+};
+
+const fetchSolPriceUsd = async () => {
+  try {
+    const response = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    const price = Number(data?.solana?.usd ?? data?.usd ?? data?.price);
+    return Number.isFinite(price) ? price : null;
+  } catch (error) {
+    console.warn('[market] SOL price fetch failed', error);
+    return null;
+  }
+};
+
+const fetchSkrPriceUsd = async () => {
+  try {
+    const response = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=seeker&vs_currencies=usd'
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    const price = Number(data?.seeker?.usd ?? data?.usd ?? data?.price);
+    return Number.isFinite(price) ? price : null;
+  } catch (error) {
+    console.warn('[market] SKR price fetch failed', error);
+    return null;
+  }
+};
+
+const computeSkrQuote = (solUsd, skrUsd) => {
+  if (!Number.isFinite(solUsd) || !Number.isFinite(skrUsd) || skrUsd <= 0) return null;
+  const baseUsd = MINT_PRICE_SOL * solUsd;
+  const discountedUsd = baseUsd * (1 - SKR_DISCOUNT_RATE);
+  const rawAmount = discountedUsd / skrUsd;
+  const amount = Math.max(1, Math.ceil(rawAmount));
+  return {
+    amount,
+    rawAmount,
+    solUsd,
+    skrUsd,
+    baseUsd,
+    discountedUsd,
+  };
+};
+
+const getSkrQuote = async () => {
+  const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
+  return computeSkrQuote(solUsd, skrUsd);
 };
 
 const formatActionAddress = (address) => {
@@ -296,17 +543,78 @@ const formatActionAddress = (address) => {
   return `${address.slice(0, 4)}...${address.slice(-4)}`;
 };
 
+const isFungibleAsset = (asset) => {
+  const iface = (asset?.interface ?? '').toUpperCase();
+  if (iface === 'FUNGIBLETOKEN' || iface === 'FUNGIBLEASSET') return true;
+  const supply = asset?.token_info?.supply || 0;
+  const decimals = asset?.token_info?.decimals ?? 0;
+  return decimals > 0 || supply > 1;
+};
+
+const fetchAssetsByOwner = async (rpcUrls, owner) => {
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'identity-prism-scan',
+          method: 'getAssetsByOwner',
+          params: {
+            ownerAddress: owner,
+            page: 1,
+            limit: 1000,
+            displayOptions: { showCollectionMetadata: true },
+          },
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`DAS API returned ${response.status}`);
+      }
+      const payload = await response.json();
+      if (payload?.error) {
+        throw new Error(payload.error.message || 'DAS API error');
+      }
+      return Array.isArray(payload?.result?.items) ? payload.result.items : [];
+    } catch (error) {
+      console.warn('[das] fetch assets failed', error);
+    }
+  }
+  return [];
+};
+
 const fetchIdentitySnapshot = async (address) => {
-  const rpcUrl = getRpcUrl(address);
+  const rpcUrls = getRpcUrls(address);
+  const rpcUrl = rpcUrls[0];
   if (!rpcUrl) {
     throw new Error('Helius API key required');
   }
   const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
   const pubkey = new PublicKey(address);
-  const [balance, signatures, tokenAccounts] = await Promise.all([
+  const fetchSignatures = async () => {
+    const signatures = [];
+    let before;
+    const maxPages = Number.isFinite(MAX_SIGNATURE_PAGES) && MAX_SIGNATURE_PAGES > 0
+      ? MAX_SIGNATURE_PAGES
+      : Number.POSITIVE_INFINITY;
+    for (let page = 0; page < maxPages; page += 1) {
+      const pageSignatures = await connection.getSignaturesForAddress(pubkey, {
+        limit: SIGNATURE_PAGE_LIMIT,
+        ...(before ? { before } : {}),
+      });
+      if (!pageSignatures.length) break;
+      signatures.push(...pageSignatures);
+      before = pageSignatures[pageSignatures.length - 1]?.signature;
+      if (!before || pageSignatures.length < SIGNATURE_PAGE_LIMIT) break;
+    }
+    return signatures;
+  };
+  const [balance, signatures, tokenAccounts, assets] = await Promise.all([
     connection.getBalance(pubkey),
-    connection.getSignaturesForAddress(pubkey, { limit: 1000 }),
+    fetchSignatures(),
     connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_PROGRAM_ID }),
+    fetchAssetsByOwner(rpcUrls, address),
   ]);
 
   const solBalance = balance / LAMPORTS_PER_SOL;
@@ -314,35 +622,206 @@ const fetchIdentitySnapshot = async (address) => {
   const oldest = signatures[signatures.length - 1];
   const firstTxTime = oldest?.blockTime ?? null;
 
-  let tokenCount = 0;
   let nftCount = 0;
+  let uniqueTokenCount = 0;
+  let hasSeeker = false;
+  let hasPreorder = false;
+  let isBlueChip = false;
+  let hasLstExposure = false;
+  let defiProtocolExposure = false;
+  let memeValueUSD = 0;
+  const memeHoldingsSet = new Set();
+
+  const foundPreorderAsset = assets.find((asset) => {
+    const content = asset?.content || {};
+    const metadata = content.metadata || {};
+    const grouping = asset?.grouping || [];
+    const collectionGroup = grouping.find((group) => group.group_key === 'collection');
+    const collectionMetadata = collectionGroup?.collection_metadata || {};
+    const mintExtensions = asset?.mint_extensions || {};
+    const tokenGroup = mintExtensions?.token_group_member?.group;
+    const metadataPointer = mintExtensions?.metadata_pointer?.metadata_address;
+    const groupMemberPointer = mintExtensions?.group_member_pointer?.member_address;
+    const rawName = (metadata.name || collectionMetadata.name || content.metadata?.name || asset?.id || '');
+    const name = rawName.toLowerCase();
+    const collectionName = String(collectionMetadata.name || '').toLowerCase();
+    return (
+      asset?.id === TOKEN_ADDRESSES.CHAPTER2_PREORDER ||
+      tokenGroup === PREORDER_COLLECTION ||
+      metadataPointer === PREORDER_COLLECTION ||
+      name.includes('chapter 2') ||
+      name.includes('seeker preorder') ||
+      collectionName.includes('chapter 2') ||
+      collectionName.includes('seeker preorder') ||
+      grouping.some((group) => group.group_value === PREORDER_COLLECTION)
+    );
+  });
+  if (foundPreorderAsset) {
+    hasPreorder = true;
+  }
+
+  assets.forEach((asset) => {
+    const content = asset?.content || {};
+    const metadata = content.metadata || {};
+    const mint = asset.id;
+
+    const grouping = asset.grouping || [];
+    const collectionGroup = grouping.find((group) => group.group_key === 'collection');
+    const collectionMetadata = collectionGroup?.collection_metadata || {};
+    const rawName = (metadata.name || collectionMetadata.name || content.metadata?.name || asset.id || '');
+    const rawSymbol = (metadata.symbol || collectionMetadata.symbol || content.metadata?.symbol || '');
+    const name = rawName.toLowerCase();
+    const symbol = rawSymbol.toLowerCase();
+    const collectionName = String(collectionMetadata.name || '').toLowerCase();
+    const collectionSymbol = String(collectionMetadata.symbol || '').toLowerCase();
+    const authorities = asset.authorities || [];
+    const creators = asset.creators || [];
+    const mintExtensions = asset?.mint_extensions || {};
+    const tokenGroup = mintExtensions?.token_group_member?.group;
+    const metadataPointer = mintExtensions?.metadata_pointer?.metadata_address;
+    const groupMemberPointer = mintExtensions?.group_member_pointer?.member_address;
+
+    const isSeekerNamed =
+      (
+        name.includes('seeker') ||
+        symbol.includes('seeker') ||
+        collectionName.includes('seeker') ||
+        collectionSymbol.includes('seeker')
+      ) &&
+      !name.includes('preorder') &&
+      !name.includes('chapter 2') &&
+      !collectionName.includes('preorder') &&
+      !collectionName.includes('chapter 2');
+
+    const isSeekerGenesis =
+      collectionGroup?.group_value === TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION ||
+      tokenGroup === TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION ||
+      metadataPointer === TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION ||
+      groupMemberPointer === TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION ||
+      authorities.some((auth) => auth.address === TOKEN_ADDRESSES.SEEKER_MINT_AUTHORITY) ||
+      creators.some((creator) => creator.address === TOKEN_ADDRESSES.SEEKER_MINT_AUTHORITY) ||
+      (name.includes('seeker') && (name.includes('genesis') || name.includes('citizen'))) ||
+      isSeekerNamed;
+
+    if (isSeekerGenesis) hasSeeker = true;
+
+    const isChapter2Preorder =
+      mint === TOKEN_ADDRESSES.CHAPTER2_PREORDER ||
+      tokenGroup === PREORDER_COLLECTION ||
+      metadataPointer === PREORDER_COLLECTION ||
+      name.includes('chapter 2') ||
+      name.includes('seeker preorder') ||
+      collectionName.includes('chapter 2') ||
+      collectionName.includes('seeker preorder') ||
+      grouping.some((group) => group.group_value === PREORDER_COLLECTION);
+
+    if (isChapter2Preorder) hasPreorder = true;
+
+    const iface = (asset.interface || '').toUpperCase();
+    const tokenInfo = asset.token_info || {};
+    const decimals = tokenInfo.decimals ?? (isFungibleAsset(asset) ? 9 : 0);
+
+    const isExplicitNFT =
+      iface.includes('NFT') ||
+      iface.includes('PROGRAMMABLE') ||
+      iface === 'CUSTOM' ||
+      asset.compression?.compressed === true;
+    const isLikelyNFT = decimals === 0 && (metadata.name || content.links?.image || grouping.length > 0);
+    const isKnownFungible =
+      iface === 'FUNGIBLETOKEN' ||
+      iface === 'FUNGIBLEASSET' ||
+      ((tokenInfo.supply || 0) > 1 && decimals > 0);
+
+    if (isExplicitNFT || (isLikelyNFT && !isKnownFungible)) {
+      nftCount += 1;
+      const collectionValue = collectionGroup?.group_value || '';
+      if (BLUE_CHIP_COLLECTIONS.includes(collectionValue)) {
+        isBlueChip = true;
+      }
+    } else {
+      uniqueTokenCount += 1;
+    }
+
+    if (DEFI_POSITION_HINTS.some((hint) => name.includes(hint))) {
+      defiProtocolExposure = true;
+    }
+
+    if (Object.values(LST_MINTS).some((lstMint) => lstMint === mint)) {
+      hasLstExposure = true;
+    }
+
+    const memeSymbol = MEME_MINT_LOOKUP[mint];
+    if (memeSymbol) {
+      const balanceRaw = tokenInfo.balance ?? tokenInfo.amount ?? 0;
+      const numericBalance = typeof balanceRaw === 'number' ? balanceRaw : parseFloat(balanceRaw || '0');
+      const uiAmount = decimals > 0 ? numericBalance / Math.pow(10, decimals) : numericBalance;
+      if (uiAmount > 0) {
+        memeHoldingsSet.add(memeSymbol);
+        memeValueUSD += uiAmount * (MEME_COIN_PRICES_USD[memeSymbol] || 0);
+      }
+    }
+  });
+
   tokenAccounts.value.forEach((account) => {
     const info = account?.account?.data?.parsed?.info;
     const tokenAmount = info?.tokenAmount;
     const uiAmount = tokenAmount?.uiAmount ?? 0;
     if (!uiAmount || uiAmount <= 0) return;
-    if ((tokenAmount?.decimals ?? 0) === 0) {
-      nftCount += 1;
-    } else {
-      tokenCount += 1;
+    const mint = info?.mint;
+    if (mint === TOKEN_ADDRESSES.CHAPTER2_PREORDER) hasPreorder = true;
+    if (mint === TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION) hasSeeker = true;
+    if (Object.values(LST_MINTS).some((lstMint) => lstMint === mint)) {
+      hasLstExposure = true;
+    }
+    const memeSymbol = MEME_MINT_LOOKUP[mint];
+    if (memeSymbol) {
+      const amount = tokenAmount?.uiAmount ?? 0;
+      if (amount > 0) {
+        memeHoldingsSet.add(memeSymbol);
+        memeValueUSD += amount * (MEME_COIN_PRICES_USD[memeSymbol] || 0);
+      }
+    }
+    if (!assets.some((asset) => asset.id === mint)) {
+      uniqueTokenCount += 1;
+      if ((tokenAmount?.decimals ?? 0) === 0) {
+        nftCount += 1;
+      }
     }
   });
+
+  const isMemeLord = memeValueUSD >= 10;
+  const isDeFiKing = hasLstExposure || defiProtocolExposure;
 
   const walletAgeDays = firstTxTime
     ? Math.floor((Date.now() - firstTxTime * 1000) / (1000 * 60 * 60 * 24))
     : 0;
-  const identity = calculateIdentity(txCount, firstTxTime, solBalance, tokenCount, nftCount);
+  const identity = calculateIdentity(txCount, firstTxTime, solBalance, uniqueTokenCount, nftCount, {
+    hasSeeker,
+    hasPreorder,
+    isBlueChip,
+    isDeFiKing,
+    isMemeLord,
+    uniqueTokenCount,
+  });
   const stats = {
     score: identity.score,
     address: formatActionAddress(address),
     ageDays: walletAgeDays,
     txCount,
     solBalance,
-    tokenCount,
+    tokenCount: uniqueTokenCount,
     nftCount,
   };
 
-  return { identity, stats, walletAgeDays, solBalance, txCount, tokenCount, nftCount };
+  return {
+    identity,
+    stats,
+    walletAgeDays,
+    solBalance,
+    txCount,
+    tokenCount: uniqueTokenCount,
+    nftCount,
+  };
 };
 
 const server = http.createServer(async (req, res) => {
@@ -357,9 +836,136 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/market/collection-stats' && req.method === 'GET') {
+    const symbol = String(url.searchParams.get('symbol') ?? '').trim();
+    const collectionId = String(url.searchParams.get('collectionId') ?? '').trim();
+    const collName = String(url.searchParams.get('name') ?? '').trim();
+    const mint = String(url.searchParams.get('mint') ?? '').trim();
+    try {
+      // 1. Try to get correct ME slug from mint address (most reliable)
+      let meSlug = null;
+      if (mint) {
+        meSlug = await fetchMeSlugByMint(mint).catch(() => null);
+      }
+
+      // 2. Fallback: derive slug candidates from name/symbol
+      if (!meSlug) {
+        const candidates = [];
+        if (symbol) candidates.push(symbol.toLowerCase());
+        if (collName) {
+          const derived = collName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+          if (derived && !candidates.includes(derived)) candidates.push(derived);
+        }
+        for (const slug of candidates) {
+          const test = await fetchMagicEdenCollectionStats(slug).catch(() => null);
+          if (test && test.status === 'listed') {
+            meSlug = slug;
+            break;
+          }
+        }
+        if (!meSlug && candidates.length > 0) meSlug = candidates[0];
+      }
+
+      // 3. Fetch ME collection stats with the resolved slug
+      let magicStats = null;
+      if (meSlug) {
+        magicStats = await fetchMagicEdenCollectionStats(meSlug).catch(() => null);
+      }
+
+      const tensorUrl = collectionId ? `https://www.tensor.trade/trade/${collectionId}` : null;
+      const meUrl = meSlug ? `https://magiceden.io/marketplace/${meSlug}` : (mint ? `https://magiceden.io/item-details/${mint}` : null);
+      const floorSol = magicStats?.floorSol ?? null;
+      const status = magicStats?.status ?? 'unknown';
+      respondJson(res, 200, {
+        status,
+        floorSol,
+        source: magicStats?.source ?? null,
+        tensorUrl,
+        meUrl,
+        meSlug: meSlug ?? null,
+      });
+      return;
+    } catch (error) {
+      respondJson(res, 500, {
+        status: 'unknown',
+        floorSol: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  if (pathname === '/api/market/sol-price' && req.method === 'GET') {
+    try {
+      const price = await getCachedSolPriceUsd();
+      respondJson(res, 200, { usd: price });
+      return;
+    } catch (error) {
+      respondJson(res, 500, { usd: null, error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
+
+  if (pathname === '/api/market/skr-price' && req.method === 'GET') {
+    try {
+      const price = await getCachedSkrPriceUsd();
+      respondJson(res, 200, { usd: price });
+      return;
+    } catch (error) {
+      respondJson(res, 500, { usd: null, error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
+
+  if (pathname === '/api/market/jupiter-prices' && req.method === 'GET') {
+    const ids = url.searchParams.get('ids');
+    if (!ids) {
+      respondJson(res, 400, { error: 'ids parameter required' });
+      return;
+    }
+    try {
+      const jupResp = await fetch(`https://api.jup.ag/price/v2?ids=${encodeURIComponent(ids)}`);
+      if (!jupResp.ok) {
+        respondJson(res, jupResp.status, { error: `Jupiter API returned ${jupResp.status}` });
+        return;
+      }
+      const jupData = await jupResp.json();
+      respondJson(res, 200, jupData);
+      return;
+    } catch (error) {
+      console.warn('[market] Jupiter price proxy failed', error);
+      respondJson(res, 502, { error: 'Jupiter price fetch failed' });
+      return;
+    }
+  }
+
+  if (pathname === '/api/market/mint-quote' && req.method === 'GET') {
+    try {
+      const quote = await getSkrQuote();
+      if (!quote) {
+        respondJson(res, 503, { error: 'SKR price unavailable' });
+        return;
+      }
+      respondJson(res, 200, {
+        solUsd: quote.solUsd,
+        skrUsd: quote.skrUsd,
+        baseSol: MINT_PRICE_SOL,
+        discount: SKR_DISCOUNT_RATE,
+        skrAmount: quote.amount,
+        skrAmountRaw: quote.rawAmount,
+      });
+      return;
+    } catch (error) {
+      respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
+
   if (pathname === '/api/actions/render') {
     const viewParam = String(url.searchParams.get('view') ?? 'front').trim();
     const view = viewParam === 'back' ? 'back' : 'front';
+    const tabParam = String(url.searchParams.get('tab') ?? '').trim();
+    const tab = tabParam === 'badges' ? 'badges' : 'stats';
     const empty = String(url.searchParams.get('empty') ?? '') === '1';
     const tierParam = String(url.searchParams.get('tier') ?? 'mercury').trim();
     const addressParam = String(url.searchParams.get('address') ?? '').trim();
@@ -373,17 +979,19 @@ const server = http.createServer(async (req, res) => {
           stats = snapshot.stats;
           badges = snapshot.identity.badges;
         }
-        const image = await drawBackCard(stats, badges);
+        const image = await drawBackCard(stats, badges, { tab });
         sendImageDataUrl(res, image);
         return;
       }
 
       let tier = tierParam;
+      let badges = [];
       if (addressParam && !empty) {
         const snapshot = await fetchIdentitySnapshot(addressParam);
         tier = snapshot.identity.tier;
+        badges = snapshot.identity.badges;
       }
-      const image = await drawFrontCardImage(tier);
+      const image = await drawFrontCardImage(tier, badges);
       sendImageDataUrl(res, image);
       return;
     } catch (error) {
@@ -403,9 +1011,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const respondLanding = () => {
-      const icon = `${baseUrl}/api/actions/render?view=front&empty=1`;
-      respondJson(res, 200, {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const buildLandingAction = () => {
+      const icon = `${baseUrl}/phav.png`;
+      return {
+        type: 'action',
         title: 'Identity Prism',
         icon,
         description: 'Scan a Solana address to reveal your Identity Prism card.',
@@ -413,11 +1026,12 @@ const server = http.createServer(async (req, res) => {
         links: {
           actions: [
             {
+              type: 'post',
               label: 'Scan',
-              href: `${baseUrl}/api/actions/share?address={address}`,
+              href: `${baseUrl}/api/actions/share?addressInput={addressInput}`,
               parameters: [
                 {
-                  name: 'address',
+                  name: 'addressInput',
                   label: 'Solana Address',
                   required: true,
                 },
@@ -425,10 +1039,72 @@ const server = http.createServer(async (req, res) => {
             },
           ],
         },
-      });
+      };
     };
 
-    const respondForAddress = async (address, viewParam) => {
+    const respondLanding = () => {
+      respondJson(res, 200, buildLandingAction());
+    };
+
+    const buildAddressAction = async (address, viewParam, tabParam) => {
+      const view = viewParam === 'back' ? 'back' : 'front';
+      const tab = tabParam === 'badges' ? 'badges' : 'stats';
+      const { identity, stats } = await fetchIdentitySnapshot(address);
+
+      const encodedAddress = encodeURIComponent(address);
+      const cacheKey = Date.now().toString(36);
+      const icon = `${baseUrl}/api/actions/render?view=${view}&address=${encodedAddress}${view === 'back' ? `&tab=${tab}` : ''}&v=${cacheKey}`;
+      const description = `Tier: ${identity.tier.toUpperCase()} • Score ${identity.score} • ${stats.txCount} tx • ${stats.ageDays} days`;
+      const flipView = view === 'back' ? 'front' : 'back';
+      const actionList = [
+        {
+          type: 'post',
+          label: view === 'back' ? 'Flip to Front' : 'Flip Card',
+          href: `${baseUrl}/api/actions/share?address=${encodedAddress}&view=${flipView}`,
+        },
+      ];
+
+      if (view === 'back') {
+        actionList.push(
+          {
+            type: 'post',
+            label: 'Stats Tab',
+            href: `${baseUrl}/api/actions/share?address=${encodedAddress}&view=back&tab=stats`,
+          },
+          {
+            type: 'post',
+            label: 'Badges Tab',
+            href: `${baseUrl}/api/actions/share?address=${encodedAddress}&view=back&tab=badges`,
+          },
+        );
+      }
+
+      actionList.push(
+        {
+          type: 'transaction',
+          label: 'Mint',
+          href: `${baseUrl}/api/actions/mint-blink?address=${encodedAddress}`,
+        },
+        {
+          type: 'post',
+          label: 'View App',
+          href: `${baseUrl}/api/actions/view-app?address=${encodedAddress}`,
+        },
+      );
+
+      return {
+        type: 'action',
+        title: 'Identity Prism',
+        icon,
+        description,
+        label: view === 'back' ? 'Back View' : 'Front View',
+        links: {
+          actions: actionList,
+        },
+      };
+    };
+
+    const respondForAddress = async (address, viewParam, tabParam) => {
       try {
         new PublicKey(address);
       } catch {
@@ -436,47 +1112,50 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const view = viewParam === 'back' ? 'back' : 'front';
-      const { identity, stats } = await fetchIdentitySnapshot(address);
-
-      const encodedAddress = encodeURIComponent(address);
-      const icon = `${baseUrl}/api/actions/render?view=${view}&address=${encodedAddress}`;
-      const description = `Tier: ${identity.tier.toUpperCase()} • Score ${identity.score} • ${stats.txCount} tx • ${stats.ageDays} days`;
-      const flipView = view === 'back' ? 'front' : 'back';
-
-      respondJson(res, 200, {
-        title: 'Identity Prism',
-        icon,
-        description,
-        label: view === 'back' ? 'Back View' : 'Front View',
-        links: {
-          actions: [
-            {
-              label: view === 'back' ? 'Flip to Front' : 'Flip Card',
-              href: `${baseUrl}/api/actions/share?address=${encodedAddress}&view=${flipView}`,
-            },
-            {
-              label: 'Mint',
-              href: `${baseUrl}/api/actions/mint-blink?address=${encodedAddress}`,
-            },
-            {
-              label: 'View App',
-              href: `${baseUrl}/?address=${encodedAddress}`,
-            },
-          ],
-        },
-      });
+      const action = await buildAddressAction(address, viewParam, tabParam);
+      respondJson(res, 200, action);
     };
 
-    const queryAddress = String(url.searchParams.get('address') ?? '').trim();
+    const queryAddress = String(
+      url.searchParams.get('address') ?? url.searchParams.get('addressInput') ?? ''
+    ).trim();
     const queryView = String(url.searchParams.get('view') ?? 'front').trim();
+    const queryTab = String(url.searchParams.get('tab') ?? '').trim();
+
+    const findAddressCandidate = (payload) => {
+      if (!payload || typeof payload !== 'object') return '';
+      const queue = [payload];
+      const visited = new Set();
+      while (queue.length) {
+        const current = queue.shift();
+        if (!current || typeof current !== 'object') continue;
+        if (visited.has(current)) continue;
+        visited.add(current);
+        for (const value of Object.values(current)) {
+          if (typeof value === 'string') {
+            const candidate = value.trim();
+            if (candidate.length >= 32 && candidate.length <= 44) {
+              try {
+                new PublicKey(candidate);
+                return candidate;
+              } catch {
+                // ignore invalid candidates
+              }
+            }
+          } else if (value && typeof value === 'object') {
+            queue.push(value);
+          }
+        }
+      }
+      return '';
+    };
 
     if (req.method === 'GET') {
       if (!queryAddress) {
         respondLanding();
         return;
       }
-      await respondForAddress(queryAddress, queryView);
+      await respondForAddress(queryAddress, queryView, queryTab);
       return;
     }
 
@@ -500,20 +1179,111 @@ const server = http.createServer(async (req, res) => {
           payload?.addressInput ??
           payload?.inputs?.address ??
           payload?.inputs?.addressInput ??
+          payload?.data?.address ??
+          payload?.data?.addressInput ??
+          payload?.input?.address ??
+          payload?.input?.addressInput ??
+          payload?.params?.address ??
+          payload?.params?.addressInput ??
+          payload?.fields?.address ??
+          payload?.fields?.addressInput ??
           ''
       ).trim();
-      const address = queryAddress || payloadAddress;
+      const address = queryAddress || payloadAddress || findAddressCandidate(payload);
       if (!address) {
-        respondLanding();
+        respondJson(res, 200, {
+          type: 'post',
+          links: {
+            next: {
+              type: 'inline',
+              action: buildLandingAction(),
+            },
+          },
+        });
+        return;
+      }
+
+      try {
+        new PublicKey(address);
+      } catch {
+        respondJson(res, 400, { error: 'Invalid address' });
         return;
       }
 
       const viewParam = String(url.searchParams.get('view') ?? payload?.view ?? 'front').trim();
-      await respondForAddress(address, viewParam);
+      const tabParam = String(url.searchParams.get('tab') ?? payload?.tab ?? '').trim();
+      const action = await buildAddressAction(address, viewParam, tabParam);
+      respondJson(res, 200, {
+        type: 'post',
+        links: {
+          next: {
+            type: 'inline',
+            action,
+          },
+        },
+      });
     } catch (error) {
       console.error('[actions/share] failed', error);
       respondJson(res, 500, {
         error: 'Unable to build action payload',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+
+  if (pathname === '/api/actions/view-app') {
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      const baseUrl = getBaseUrl(req);
+      if (!baseUrl) {
+        respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
+        return;
+      }
+      const body = await readBody(req);
+      let payload = {};
+      if (body) {
+        try {
+          payload = JSON.parse(body);
+        } catch {
+          const params = new URLSearchParams(body);
+          if (params.size > 0) {
+            payload = Object.fromEntries(params.entries());
+          }
+        }
+      }
+
+      const queryAddress = String(
+        url.searchParams.get('address') ?? url.searchParams.get('addressInput') ?? ''
+      ).trim();
+      const payloadAddress = String(
+        payload?.address ??
+          payload?.addressInput ??
+          payload?.inputs?.address ??
+          payload?.inputs?.addressInput ??
+          payload?.data?.address ??
+          payload?.data?.addressInput ??
+          payload?.input?.address ??
+          payload?.input?.addressInput ??
+          payload?.params?.address ??
+          payload?.params?.addressInput ??
+          payload?.fields?.address ??
+          payload?.fields?.addressInput ??
+          payload?.account ??
+          ''
+      ).trim();
+      const address = queryAddress || payloadAddress;
+      const encodedAddress = address ? encodeURIComponent(address) : '';
+      const externalLink = address ? `${baseUrl}?address=${encodedAddress}` : `${baseUrl}`;
+      respondJson(res, 200, { type: 'external-link', externalLink });
+    } catch (error) {
+      console.error('[actions/view-app] failed', error);
+      respondJson(res, 500, {
+        error: 'Unable to build view app link',
         detail: error instanceof Error ? error.message : String(error),
       });
     }
@@ -744,6 +1514,8 @@ const server = http.createServer(async (req, res) => {
       const sellerFeeBasisPoints = Number(payload?.sellerFeeBasisPoints ?? 0);
       const collectionMintRaw = payload?.collectionMint ?? CORE_COLLECTION ?? '';
       const adminMode = Boolean(payload?.admin);
+      const paymentTokenRaw = typeof payload?.paymentToken === 'string' ? payload.paymentToken.trim() : '';
+      const paymentToken = paymentTokenRaw.toUpperCase() === 'SKR' ? 'SKR' : 'SOL';
       const signedTransaction = typeof payload?.signedTransaction === 'string' ? payload.signedTransaction.trim() : '';
       if (signedTransaction && !payloadRequestId) {
         respondJson(res, 400, { error: 'requestId is required to finalize mint', requestId });
@@ -895,16 +1667,82 @@ const server = http.createServer(async (req, res) => {
         authority: collectionAuthoritySigner,
       }).setFeePayer(payerSigner);
 
-      const transferIx = adminMode
-        ? null
-        : SystemProgram.transfer({
-            fromPubkey: ownerKey,
-            toPubkey: treasuryKey,
-            lamports: expectedLamports,
-          });
+      const paymentInstructions = [];
+      if (!adminMode) {
+        if (paymentToken === 'SKR') {
+          const skrMintKey = parsePublicKey(SKR_MINT, 'SKR_MINT');
+          if (!skrMintKey) {
+            respondJson(res, 500, { error: 'SKR mint is not configured', requestId });
+            return;
+          }
+          const quote = await getSkrQuote();
+          if (!quote) {
+            respondJson(res, 503, { error: 'SKR price unavailable', requestId });
+            return;
+          }
+          const mintInfo = await getMint(connection, skrMintKey, undefined, TOKEN_PROGRAM_ID)
+            .then((info) => ({ info, programId: TOKEN_PROGRAM_ID }))
+            .catch(async () => {
+              const info = await getMint(connection, skrMintKey, undefined, TOKEN_2022_PROGRAM_ID);
+              return { info, programId: TOKEN_2022_PROGRAM_ID };
+            });
+          const decimals = mintInfo.info.decimals ?? 0;
+          const tokenProgramId = mintInfo.programId;
+          const amountBaseUnits = BigInt(quote.amount) * (10n ** BigInt(decimals));
+          const ownerAta = await getAssociatedTokenAddress(
+            skrMintKey,
+            ownerKey,
+            false,
+            tokenProgramId
+          );
+          const treasuryAta = await getAssociatedTokenAddress(
+            skrMintKey,
+            treasuryKey,
+            false,
+            tokenProgramId
+          );
+          const ownerAtaInfo = await connection.getAccountInfo(ownerAta);
+          if (!ownerAtaInfo) {
+            respondJson(res, 400, { error: 'SKR token account missing', requestId });
+            return;
+          }
+          const treasuryAtaInfo = await connection.getAccountInfo(treasuryAta);
+          if (!treasuryAtaInfo) {
+            paymentInstructions.push(
+              createAssociatedTokenAccountInstruction(
+                ownerKey,
+                treasuryAta,
+                treasuryKey,
+                skrMintKey,
+                tokenProgramId
+              )
+            );
+          }
+          paymentInstructions.push(
+            createTransferCheckedInstruction(
+              ownerAta,
+              skrMintKey,
+              treasuryAta,
+              ownerKey,
+              amountBaseUnits,
+              decimals,
+              [],
+              tokenProgramId
+            )
+          );
+        } else if (expectedLamports > 0) {
+          paymentInstructions.push(
+            SystemProgram.transfer({
+              fromPubkey: ownerKey,
+              toPubkey: treasuryKey,
+              lamports: expectedLamports,
+            })
+          );
+        }
+      }
       const latestBlockhash = await connection.getLatestBlockhash('finalized');
       const instructions = [
-        ...(transferIx ? [transferIx] : []),
+        ...paymentInstructions,
         ...builder.getInstructions().map((instruction) => {
           const web3Ix = toWeb3JsInstruction(instruction);
           // Ensure collection authority and asset are signers
@@ -1306,37 +2144,63 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (!HELIUS_KEYS.length) {
-    respondJson(res, 500, { error: 'Helius API key required' });
+  if (!HELIUS_KEYS.length && !HELIUS_RPC_BASE) {
+    respondJson(res, 500, { error: 'RPC endpoint is not configured' });
     return;
   }
 
   try {
-    const body = await readBody(req);
     const seed = String(req.headers['x-wallet-address'] ?? '');
     const apiKey = pickHeliusKey(seed);
 
-    if (!apiKey) {
+    if (!apiKey && HELIUS_KEYS.length) {
       respondJson(res, 500, { error: 'Helius API key required' });
       return;
     }
 
     const targetUrl = new URL(HELIUS_RPC_BASE);
-    targetUrl.searchParams.set('api-key', apiKey);
+    if (apiKey) {
+      targetUrl.searchParams.set('api-key', apiKey);
+    }
 
-    const upstream = await fetch(targetUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const headers = {
+      'Content-Type': req.headers['content-type'] ?? 'application/json',
+    };
+    if (req.headers['content-length']) {
+      headers['Content-Length'] = req.headers['content-length'];
+    }
+    if (req.headers['content-encoding']) {
+      headers['Content-Encoding'] = req.headers['content-encoding'];
+    }
+
+    const transport = targetUrl.protocol === 'https:' ? https : http;
+    const upstreamReq = transport.request(
+      targetUrl,
+      {
+        method: 'POST',
+        headers,
       },
-      body: body || '{}',
+      (upstreamRes) => {
+        res.writeHead(upstreamRes.statusCode ?? 502, {
+          'Content-Type': upstreamRes.headers['content-type'] ?? 'application/json',
+        });
+        upstreamRes.pipe(res);
+      }
+    );
+
+    upstreamReq.on('error', (error) => {
+      console.error('[helius-proxy] upstream error', error);
+      if (!res.headersSent) {
+        respondJson(res, 502, { error: 'Upstream request failed' });
+      } else {
+        res.end();
+      }
     });
 
-    const responseText = await upstream.text();
-    res.writeHead(upstream.status, {
-      'Content-Type': upstream.headers.get('content-type') ?? 'application/json',
-    });
-    res.end(responseText);
+    req.on('aborted', () => upstreamReq.destroy());
+    req.on('error', (error) => upstreamReq.destroy(error));
+    req.pipe(upstreamReq);
+    return;
   } catch (error) {
     console.error('[helius-proxy] upstream error', error);
     respondJson(res, 502, { error: 'Upstream request failed' });

@@ -12,16 +12,41 @@ dist
 dist-ssr
 *.local
 
-# Secrets
+# Secrets & credentials
 .env
+.env.*
+!.env.example
+secrets/
 twitter-bot/.env
 twitter-bot/oauth2_tokens.json
 twitter-bot/.code_verifier.tmp
+twitter-bot/cookies.json
+twitter-bot/agent_bot_state.json
+twitter-bot-python/.env
+twitter-bot-python/cookies*.json
+twitter-bot-python/state*.json
+twitter-bot-python/bot.pid
+twitter-bot-python/bot.*.log
+twitter-bot-python/bot_status.txt
+twitter-bot-python/media_identityprism/
+twitter-bot-python/puppeteer-profile-identityprism/
+twitter-bot-python/.venv/
+twitter-bot-python/__pycache__/
+tokens.json
+*.pid
 
 # Local/temp
 .tmp.driveupload/
 .tmp.ssh_identity_prism
 temp/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Build artifacts
+dapp-store/files/*.apk
 
 # Editor directories and files
 .vscode/*
