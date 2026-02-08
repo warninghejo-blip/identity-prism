@@ -72,10 +72,34 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     const pcx = pr.left + pr.width / 2;
     const pcy = pr.top + pr.height / 2;
 
+    const setVarsOnEl = (el: HTMLElement, dx: number, dy: number) => {
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
+      const angleDeg = angle * (180 / Math.PI);
+      // Perpendicular offset for spiral curve (rotated 90°)
+      const perpScale = dist * 0.4;
+      const px = -Math.sin(angle) * perpScale;
+      const py = Math.cos(angle) * perpScale;
+      // Transform-origin: edge closest to portal (for "pulled from one end" effect)
+      const r = el.getBoundingClientRect();
+      const ox = r.width > 0 ? Math.max(0, Math.min(100, ((dx > 0 ? r.width : 0) / r.width) * 100)) : 50;
+      const oy = r.height > 0 ? Math.max(0, Math.min(100, ((dy > 0 ? r.height : 0) / r.height) * 100)) : 50;
+      el.style.setProperty('--tx', `${dx}px`);
+      el.style.setProperty('--ty', `${dy}px`);
+      el.style.setProperty('--px', `${px}px`);
+      el.style.setProperty('--py', `${py}px`);
+      el.style.setProperty('--dist', `${dist}`);
+      el.style.setProperty('--angle', `${angleDeg}deg`);
+      el.style.setProperty('--angle-neg', `${-angleDeg}deg`);
+      el.style.setProperty('--ox', `${ox}%`);
+      el.style.setProperty('--oy', `${oy}%`);
+    };
+
     shell.querySelectorAll('[data-suck]').forEach((el) => {
       const r = (el as HTMLElement).getBoundingClientRect();
-      (el as HTMLElement).style.setProperty('--tx', `${pcx - (r.left + r.width / 2)}px`);
-      (el as HTMLElement).style.setProperty('--ty', `${pcy - (r.top + r.height / 2)}px`);
+      const dx = pcx - (r.left + r.width / 2);
+      const dy = pcy - (r.top + r.height / 2);
+      setVarsOnEl(el as HTMLElement, dx, dy);
     });
 
     const stage = shell.closest('.card-stage');
@@ -83,8 +107,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
       const mp = stage.querySelector('.mint-panel') as HTMLElement | null;
       if (mp) {
         const r = mp.getBoundingClientRect();
-        mp.style.setProperty('--tx', `${pcx - (r.left + r.width / 2)}px`);
-        mp.style.setProperty('--ty', `${pcy - (r.top + r.height / 2)}px`);
+        const dx = pcx - (r.left + r.width / 2);
+        const dy = pcy - (r.top + r.height / 2);
+        setVarsOnEl(mp, dx, dy);
       }
     }
   }, []);
@@ -98,7 +123,30 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         setSuckVars();
       });
     });
-    const timer = setTimeout(() => setUnsucking(false), 2400);
+    const timer = setTimeout(() => {
+      // Explicitly clear animation-related styles to restore WebGL canvas
+      const shell = shellRef.current;
+      if (shell) {
+        shell.querySelectorAll('[data-suck]').forEach((el) => {
+          const h = el as HTMLElement;
+          h.style.removeProperty('filter');
+          h.style.removeProperty('animation');
+          h.style.removeProperty('transform');
+          h.style.removeProperty('opacity');
+        });
+        const stage = shell.closest('.card-stage');
+        if (stage) {
+          const mp = stage.querySelector('.mint-panel') as HTMLElement | null;
+          if (mp) {
+            mp.style.removeProperty('filter');
+            mp.style.removeProperty('animation');
+            mp.style.removeProperty('transform');
+            mp.style.removeProperty('opacity');
+          }
+        }
+      }
+      setUnsucking(false);
+    }, 2400);
     return () => { cancelAnimationFrame(raf1); clearTimeout(timer); };
   }, [unsucking, setSuckVars]);
 
@@ -240,7 +288,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 requestAnimationFrame(() => {
                   setSuckingIn(true);
                 });
-                // After pieces are mostly gone, trigger camera-suck on whole stage
+                // After charge-up (1s) + suck pieces (~1.8s), trigger camera-suck
                 setTimeout(() => {
                   const shell = shellRef.current;
                   if (shell) {
@@ -256,9 +304,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       stage.classList.add('camera-sucking');
                     }
                   }
-                }, 2200);
+                }, 3200);
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                setTimeout(() => navigate(target), 3400);
+                setTimeout(() => navigate(target), 4500);
               }}
             >
               <span className="bh-card-portal__glow" />
