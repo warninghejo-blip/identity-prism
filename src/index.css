@@ -2411,12 +2411,12 @@
   transform-origin: var(--ox, 50%) var(--oy, 50%);
 }
 
-/* Portal: PHASE 1 — charge-up (first 1s), PHASE 2 — hero intensify */
+/* Portal: PHASE 1 — charge-up (first 1s), PHASE 2 — consume viewport */
 .card-suckin-active .bh-card-portal {
   animation:
     suck-portal-charge 1s ease-out forwards,
-    suck-portal-hero 2.5s 1s linear forwards !important;
-  z-index: 50 !important;
+    suck-portal-consume 2.2s 1s cubic-bezier(0.7, 0, 0.84, 0) forwards !important;
+  z-index: 9999 !important;
 }
 /* Phase 1: Portal "charges up" — pulsates, glows intensely */
 @keyframes suck-portal-charge {
@@ -2425,23 +2425,23 @@
   60%  { transform: scale(1.1); filter: brightness(1.8) drop-shadow(0 0 35px rgba(255,140,80,0.9)); }
   100% { transform: scale(1.4); filter: brightness(2.0) drop-shadow(0 0 50px rgba(255,160,100,1)); }
 }
-/* Phase 2: Portal becomes the "hero" — spins faster, grows, absorbs everything */
-@keyframes suck-portal-hero {
+/* Phase 2: Portal CONSUMES the viewport — exponential growth to fill screen with darkness */
+@keyframes suck-portal-consume {
   0%   { transform: scale(1.4) rotate(0deg); filter: brightness(2) drop-shadow(0 0 50px rgba(255,160,100,1)); }
-  25%  { transform: scale(2.0) rotate(90deg); filter: brightness(2.5) drop-shadow(0 0 60px rgba(255,140,80,0.9)); }
-  50%  { transform: scale(3.0) rotate(180deg); filter: brightness(2.0) drop-shadow(0 0 80px rgba(255,100,50,0.7)); }
-  75%  { transform: scale(4.0) rotate(270deg); filter: brightness(1.5) drop-shadow(0 0 60px rgba(255,80,40,0.5)); }
-  100% { transform: scale(6.0) rotate(360deg); opacity: 0; filter: brightness(1) drop-shadow(0 0 0px transparent); }
+  20%  { transform: scale(2.5) rotate(60deg); filter: brightness(2.5) drop-shadow(0 0 60px rgba(255,140,80,0.9)); }
+  40%  { transform: scale(5.0) rotate(120deg); filter: brightness(2.0) drop-shadow(0 0 80px rgba(255,100,50,0.7)); }
+  60%  { transform: scale(10.0) rotate(200deg); filter: brightness(1.5) drop-shadow(0 0 60px rgba(255,80,40,0.4)); }
+  80%  { transform: scale(18.0) rotate(300deg); filter: brightness(1.0) drop-shadow(0 0 30px rgba(255,60,30,0.2)); }
+  100% { transform: scale(30.0) rotate(400deg); filter: brightness(0.5) drop-shadow(0 0 0px transparent); }
 }
 
-/* Camera suck: after pieces are gone, the whole viewport gets pulled in */
+/* Camera suck: final darkness collapse after portal has consumed viewport */
 @keyframes camera-suck {
-  0%   { transform: scale(1); filter: brightness(1); }
-  50%  { transform: scale(1.05); filter: brightness(0.85); }
-  100% { transform: scale(0); filter: brightness(0); }
+  0%   { filter: brightness(0.8); }
+  100% { filter: brightness(0); opacity: 0; }
 }
 .card-stage.camera-sucking {
-  animation: camera-suck 1s ease-in forwards !important;
+  animation: camera-suck 0.6s ease-in forwards !important;
   transform-origin: var(--portal-x, 50%) var(--portal-y, 50%);
 }
 
