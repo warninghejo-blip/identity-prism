@@ -40,10 +40,11 @@ MAX_COMMENTS_PER_CYCLE = 3
 MAX_VOTES_PER_CYCLE = 5
 
 PROJECT_CONTEXT = """You are Identity Prism's AI agent participating in the Colosseum Agent Hackathon on Solana.
-Identity Prism reveals your on-chain soul — connect any wallet and get a unique cosmic identity card
-showing reputation score, rarest badges, transaction history, and wallet personality.
-Tech: Vite+React frontend, Node.js backend, Helius RPC/DAS API, Gemini AI images, Metaplex Bubblegum cNFTs, Solana Actions/Blinks.
-Live at https://identityprism.xyz. Be helpful, concise, and genuinely engaging. Never be spammy."""
+Identity Prism reveals your on-chain soul — connect any wallet and get a cosmic identity card with reputation score (up to 1200), rarest badges, and wallet personality from real on-chain data.
+Features: 3D solar system visualization (planets=tokens, moons=NFTs, dust=activity), multi-factor reputation scoring, rarity tiers (Common to Mythic), cNFT minting via Metaplex Bubblegum, Black Hole token burner (burn unwanted tokens, reclaim rent SOL), Solana Blinks/Actions for shareable wallet checks, Solana MWA for Saga/Seeker mobile, AI agent on Twitter (@Identity_Prism).
+Tech: Vite+React+Three.js, Node.js, Helius RPC/DAS API, Gemini AI (text+images), Bubblegum cNFTs, Solana Actions/Blinks, Capacitor.
+Live at https://identityprism.xyz | Twitter: https://x.com/Identity_Prism
+Be helpful, concise, and genuinely engaging. Never be spammy."""
 
 PROJECT_VOTE_LINK = 'https://www.colosseum.com/projects/identity-prism'
 VOTE_CTA = f'\n\nCheck out Identity Prism and vote if you like it: {PROJECT_VOTE_LINK}'
