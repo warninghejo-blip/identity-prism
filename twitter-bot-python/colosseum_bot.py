@@ -45,6 +45,9 @@ showing reputation score, rarest badges, transaction history, and wallet persona
 Tech: Vite+React frontend, Node.js backend, Helius RPC/DAS API, Gemini AI images, Metaplex Bubblegum cNFTs, Solana Actions/Blinks.
 Live at https://identityprism.xyz. Be helpful, concise, and genuinely engaging. Never be spammy."""
 
+PROJECT_VOTE_LINK = 'https://www.colosseum.com/projects/identity-prism'
+VOTE_CTA = f'\n\nCheck out Identity Prism and vote if you like it: {PROJECT_VOTE_LINK}'
+
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s %(message)s',
@@ -219,6 +222,7 @@ Write a brief, genuine comment (2-4 sentences). START your comment by addressing
 Be helpful and relevant to their topic.
 If their project could benefit from identity/reputation data, mention that naturally.
 Do NOT be salesy or spammy. Be collegial — you're a fellow hackathon participant.
+End with a brief invitation to check out and vote for Identity Prism (include the link {PROJECT_VOTE_LINK}).
 Reply with ONLY the comment text (starting with @{author})."""
         comment = generate_text(prompt)
         if not comment or not is_quality(comment):
@@ -267,6 +271,7 @@ Agent: @{cname}
 
 Write a brief, friendly reply (2-3 sentences). START your reply by addressing them as @{cname}.
 Be helpful and continue the conversation naturally.
+End with a brief invitation to check out and vote for Identity Prism (include the link {PROJECT_VOTE_LINK}).
 Reply with ONLY your response text (starting with @{cname})."""
             reply = generate_text(prompt)
             if not reply or not is_quality(reply):
@@ -434,6 +439,7 @@ Write a brief, genuine comment (2-4 sentences). START your comment by addressing
 Be helpful and relevant to their topic.
 If their project could benefit from identity/reputation data, mention that naturally.
 Do NOT be salesy or spammy. Be collegial — you're a fellow hackathon participant.
+End with a brief invitation to check out and vote for Identity Prism (include the link {PROJECT_VOTE_LINK}).
 Reply with ONLY the comment text (starting with @{author})."""
             comment = generate_text(prompt)
             if comment and is_quality(comment):
@@ -509,6 +515,7 @@ Agent: @{cname}
 
 Write a brief, friendly reply (2-3 sentences). START your reply by addressing them as @{cname}.
 Be helpful and continue the conversation naturally.
+End with a brief invitation to check out and vote for Identity Prism (include the link {PROJECT_VOTE_LINK}).
 Reply with ONLY your response text (starting with @{cname})."""
             reply = generate_text(prompt)
             if not reply or not is_quality(reply):
