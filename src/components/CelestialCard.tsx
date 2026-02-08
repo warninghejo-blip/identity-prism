@@ -54,13 +54,21 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [isFlipped, setIsFlipped] = useState(captureView === 'back');
   const [isInteracting, setIsInteracting] = useState(false);
   const [wormholeActive, setWormholeActive] = useState(false);
+  const [shakeWarning, setShakeWarning] = useState(false);
   const [suckingIn, setSuckingIn] = useState(false);
+  const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(fromBlackHole);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const transitionTimersRef = useRef<number[]>([]);
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : 'stats';
   const navigate = useNavigate();
+
+  const clearTransitionTimers = useCallback(() => {
+    transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    transitionTimersRef.current = [];
+  }, []);
 
   // Helper: set --tx/--ty on suck targets relative to portal center
   const setSuckVars = useCallback(() => {
@@ -150,6 +158,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     return () => { cancelAnimationFrame(raf1); clearTimeout(timer); };
   }, [unsucking, setSuckVars]);
 
+  useEffect(() => () => clearTransitionTimers(), [clearTransitionTimers]);
+
   // 3D Tilt Logic
   const x = useMotionValue(0);
   const y = useMotionValue(0);
@@ -223,7 +233,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
   return (
     <motion.div 
-      className={`celestial-card-shell relative w-full perspective-1000 mx-auto group ${suckingIn ? 'card-suckin-active' : ''} ${unsucking ? 'card-unsuck-active' : ''}`}
+      className={`celestial-card-shell relative w-full perspective-1000 mx-auto group ${shakeWarning ? 'card-shake-warning' : ''} ${suckingIn ? 'card-suckin-active' : ''} ${consuming ? 'card-consume-active' : ''} ${unsucking ? 'card-unsuck-active' : ''}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       style={{ rotateX: isCapture ? 0 : rotateX, rotateY: isCapture ? 0 : rotateY, transformStyle: 'preserve-3d' }}
@@ -234,13 +244,15 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
       }}
     >
-      <motion.div
-        className="w-full h-full relative preserve-3d"
-        initial={false}
-        animate={{ rotateY: isFlipped ? 180 : 0 }}
-        transition={{ type: 'spring', stiffness: 60, damping: 12, mass: 0.8 }}
-        style={{ transformStyle: 'preserve-3d' }}
-      >
+      <div className={`celestial-card-body relative w-full h-full ${unsucking ? 'big-bang-active' : ''}`}>
+        <span className="big-bang-flash" aria-hidden="true" />
+        <motion.div
+          className="w-full h-full relative preserve-3d"
+          initial={false}
+          animate={{ rotateY: isFlipped ? 180 : 0 }}
+          transition={{ type: 'spring', stiffness: 60, damping: 12, mass: 0.8 }}
+          style={{ transformStyle: 'preserve-3d' }}
+        >
         {/* FRONT */}
         <div
           className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border border-white/10 bg-[#020408] shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] backface-hidden flex flex-col transition-opacity duration-300 ${isFlipped ? 'pointer-events-none opacity-0' : 'pointer-events-auto cursor-pointer opacity-100'}`}
@@ -282,31 +294,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               className="bh-card-portal capture-hidden"
               onClick={(event) => {
                 event.stopPropagation();
+                if (shakeWarning || suckingIn || consuming) return;
+                clearTransitionTimers();
                 // Set CSS variables FIRST (synchronously) so animation has correct targets
                 setSuckVars();
-                // Then trigger animation on next frame so vars are painted
-                requestAnimationFrame(() => {
+                setShakeWarning(true);
+                // Phase 2: Spaghettification
+                transitionTimersRef.current.push(window.setTimeout(() => {
+                  setShakeWarning(false);
                   setSuckingIn(true);
-                });
-                // After charge-up (1s) + portal consume fills viewport (~1.8s), trigger final darkness
-                setTimeout(() => {
-                  const shell = shellRef.current;
-                  if (shell) {
-                    const stage = shell.closest('.card-stage') as HTMLElement;
-                    const portal = shell.querySelector('.bh-card-portal');
-                    if (stage && portal) {
-                      const sr = stage.getBoundingClientRect();
-                      const pr = portal.getBoundingClientRect();
-                      const px = ((pr.left + pr.width / 2 - sr.left) / sr.width * 100);
-                      const py = ((pr.top + pr.height / 2 - sr.top) / sr.height * 100);
-                      stage.style.setProperty('--portal-x', `${px}%`);
-                      stage.style.setProperty('--portal-y', `${py}%`);
-                      stage.classList.add('camera-sucking');
-                    }
-                  }
-                }, 2800);
+                }, 800));
+                // Phase 3: Event horizon consumes screen
+                transitionTimersRef.current.push(window.setTimeout(() => {
+                  setConsuming(true);
+                }, 1000));
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                setTimeout(() => navigate(target), 3600);
+                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 2500));
               }}
             >
               <span className="bh-card-portal__glow" />
@@ -559,7 +562,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             </div>
           </div>
         </div>
-      </motion.div>
+        </motion.div>
+      </div>
     </motion.div>
   );
 });
