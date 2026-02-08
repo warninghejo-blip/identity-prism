@@ -52,7 +52,7 @@ class TwitterClient:
                 raise RuntimeError('TWITTERAPI_IO_* login credentials are required when USE_TWITTERAPI_IO=true')
             self.api_client = TwitterApiIoClient(
                 api_key=TWITTERAPI_IO_API_KEY,
-                proxy=self.api_proxies[0],
+                proxies=self.api_proxies,
                 username=TWITTERAPI_IO_USERNAME,
                 email=TWITTERAPI_IO_EMAIL,
                 password=TWITTERAPI_IO_PASSWORD,
@@ -62,7 +62,8 @@ class TwitterClient:
             )
 
     def _rotate_api_proxy(self):
-        pass
+        if self.api_client:
+            self.api_client.rotate_proxy()
 
     def _require_api_client(self):
         if not self.api_client:
@@ -180,7 +181,6 @@ class TwitterClient:
 
     async def reply_to_tweet(self, tweet, text):
         self._require_api_client()
-        self._rotate_api_proxy()
         tweet_id = self._extract_tweet_id(tweet)
         if not tweet_id:
             return None
@@ -190,6 +190,18 @@ class TwitterClient:
         except Exception as exc:
             logging.warning('Reply failed (twitterapi.io): %s', exc)
             return None
+
+    async def try_reply(self, tweet_id: str, text: str):
+        """Reply returning (status, reply_id). status: 'ok', '429', 'error'."""
+        self._require_api_client()
+        try:
+            reply_id = await asyncio.to_thread(self.api_client.reply, tweet_id, text)
+            return ('ok', reply_id) if reply_id else ('error', None)
+        except Exception as exc:
+            if '429' in str(exc):
+                return '429', None
+            logging.warning('Reply error: %s', exc)
+            return 'error', None
 
     async def upload_media(self, media_path):
         self._require_api_client()
@@ -206,7 +218,6 @@ class TwitterClient:
 
     async def post_tweet(self, text, media_paths=None):
         self._require_api_client()
-        self._rotate_api_proxy()
         media_ids = []
         if media_paths:
             for media_path in media_paths:
@@ -224,6 +235,19 @@ class TwitterClient:
             )
             return tweet_id, None
         except Exception as exc:
+            if media_ids:
+                logging.warning('Post with media failed (%s); retrying text-only', exc)
+                try:
+                    tweet_id = await asyncio.to_thread(
+                        self.api_client.create_tweet,
+                        text,
+                        None,
+                        None,
+                    )
+                    return tweet_id, None
+                except Exception as exc2:
+                    logging.warning('Text-only fallback also failed: %s', exc2)
+                    return None, str(exc2)
             logging.warning('Post failed (twitterapi.io): %s', exc)
             return None, str(exc)
 
@@ -233,7 +257,6 @@ class TwitterClient:
             return False
         if not self.api_client:
             return False
-        self._rotate_api_proxy()
         try:
             await asyncio.to_thread(self.api_client.like_tweet, tweet_id)
             return True
@@ -247,7 +270,6 @@ class TwitterClient:
             return False
         if not self.api_client:
             return False
-        self._rotate_api_proxy()
         try:
             await asyncio.to_thread(self.api_client.retweet, tweet_id)
             return True
