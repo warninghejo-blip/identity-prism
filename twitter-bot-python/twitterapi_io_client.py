@@ -137,6 +137,7 @@ class TwitterApiIoClient:
             'login_cookies': self.login_cookie,
             'tweet_text': text,
             'proxy': self.proxy,
+            'reply_settings': 'everyone',
         }
         if reply_to_tweet_id:
             payload['reply_to_tweet_id'] = reply_to_tweet_id
@@ -216,6 +217,7 @@ class TwitterApiIoClient:
             'tweet_text': text,
             'proxy': self.proxy,
             'attachment_url': attachment_url,
+            'reply_settings': 'everyone',
         }
         resp = requests.post(
             'https://api.twitterapi.io/twitter/create_tweet_v2',

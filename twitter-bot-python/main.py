@@ -386,28 +386,69 @@ async def main():
             logging.warning('Test post failed to send: %s', error_message)
         return
 
-    next_sniper_at = 0
-    next_trend_at = 0
+    # 2h rotation: post -> comment (sniper/trend) -> reply (mentions) -> post ...
+    ACTION_CYCLE = ['post', 'comment', 'reply']
+    ACTION_INTERVAL = 2 * 3600  # 2 hours between actions
+    action_idx = state.get('action_index', 0) % len(ACTION_CYCLE)
+    use_trend = state.get('use_trend_next', False)  # alternate sniper/trend for comments
+
     mult = get_activity_multiplier()
-    logging.info('Bot started. Activity multiplier=%.1f (UTC hour %d)', mult, datetime.datetime.now(datetime.UTC).hour)
+    logging.info('Bot started (2h rotation). Next action: %s, multiplier=%.1f',
+                 ACTION_CYCLE[action_idx], mult)
 
     while True:
         now = time.time()
         try:
-            skip = should_skip_by_schedule()
-            if skip:
-                logging.info('Activity skip (multiplier=%.1f)', get_activity_multiplier())
-            if now >= next_sniper_at:
-                if not skip:
-                    await run_sniper(client, ai_engine, state)
-                next_sniper_at = now + random.uniform(*SNIPER_INTERVAL_RANGE)
-            if now >= next_trend_at:
-                if not skip:
+            last_action_at = state.get('last_action_at', 0)
+            wait_left = ACTION_INTERVAL - (now - last_action_at)
+
+            if wait_left > 0:
+                logging.info('Next action "%s" in %.0f min', ACTION_CYCLE[action_idx], wait_left / 60)
+                await asyncio.sleep(min(wait_left, 300) + random.uniform(5, 30))
+                continue
+
+            action = ACTION_CYCLE[action_idx]
+            logging.info('=== Action: %s ===', action)
+            did_something = False
+
+            if action == 'post':
+                prev_post = state.get('last_post_id')
+                await run_post_retry(client, ai_engine, state)
+                did_something = state.get('last_post_id') != prev_post
+
+            elif action == 'comment':
+                prev_eng = state.get('last_engagement_at', 0)
+                if use_trend:
                     await run_trend(client, ai_engine, state)
-                next_trend_at = now + random.uniform(*TREND_INTERVAL_RANGE)
-            await run_post_retry(client, ai_engine, state)
-            if not skip:
+                else:
+                    await run_sniper(client, ai_engine, state)
+                did_something = state.get('last_engagement_at', 0) > prev_eng
+                use_trend = not use_trend
+                state['use_trend_next'] = use_trend
+
+            elif action == 'reply':
+                prev_eng = state.get('last_engagement_at', 0)
                 await run_mentions(client, ai_engine, state)
+                did_something = state.get('last_engagement_at', 0) > prev_eng
+                if not did_something:
+                    logging.info('No mentions to reply — doing comment instead')
+                    if use_trend:
+                        await run_trend(client, ai_engine, state)
+                    else:
+                        await run_sniper(client, ai_engine, state)
+                    did_something = state.get('last_engagement_at', 0) > prev_eng
+                    use_trend = not use_trend
+                    state['use_trend_next'] = use_trend
+
+            if did_something:
+                state['last_action_at'] = time.time()
+                action_idx = (action_idx + 1) % len(ACTION_CYCLE)
+                state['action_index'] = action_idx
+                save_state(state, state['state_path'])
+                logging.info('Action done. Next: %s in ~2h', ACTION_CYCLE[action_idx])
+            else:
+                logging.info('Action "%s" had nothing to do — retrying next cycle', action)
+
         except Exception as exc:
             logging.warning('Cycle error: %s', exc)
         save_state(state, state['state_path'])

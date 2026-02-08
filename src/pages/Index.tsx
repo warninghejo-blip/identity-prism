@@ -70,6 +70,7 @@ const Index = () => {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const [fromBlackHole, setFromBlackHole] = useState(Boolean((location.state as any)?.fromBlackHole));
+  const returningFromBH = useRef(Boolean((location.state as any)?.fromBlackHole));
   const isNftMode = searchParams.get("mode") === "nft";
   const urlAddress = searchParams.get("address");
   // Clear fromBlackHole after animation to prevent WebGL context issues
@@ -77,15 +78,18 @@ const Index = () => {
     if (fromBlackHole) {
       const timer = setTimeout(() => {
         setFromBlackHole(false);
+        returningFromBH.current = false;
         // Clear navigation state so refresh doesn't replay animation
         window.history.replaceState({}, '');
-      }, 1500);
+      }, 2500);
       return () => clearTimeout(timer);
     }
   }, [fromBlackHole]);
 
   const [isWarping, setIsWarping] = useState(false);
-  const [viewState, setViewState] = useState<ViewState>(urlAddress ? "ready" : "landing");
+  const [viewState, setViewState] = useState<ViewState>(
+    returningFromBH.current && urlAddress ? "ready" : (urlAddress ? "ready" : "landing")
+  );
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -435,6 +439,13 @@ const Index = () => {
 
   // Unified State Machine for UI
   useEffect(() => {
+    // When returning from BlackHole, skip scanning and go straight to ready
+    // Use ref so this persists across re-renders from isLoading/traits changes
+    if (returningFromBH.current && resolvedAddress) {
+      setViewState("ready");
+      return;
+    }
+
     if (!resolvedAddress) {
       setViewState("landing");
       return;
@@ -452,7 +463,7 @@ const Index = () => {
       const timer = setTimeout(() => setViewState("ready"), 300);
       return () => clearTimeout(timer);
     }
-  }, [resolvedAddress, isWarping, isLoading, traits]);
+  }, [resolvedAddress, isWarping, isLoading, traits, fromBlackHole]);
 
   // Removed auto-warp effect
   
@@ -704,7 +715,7 @@ const Index = () => {
     }
   }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);
 
-  const showReadyView = previewMode || viewState === "ready";
+  const showReadyView = previewMode || viewState === "ready" || returningFromBH.current;
   const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
 
   useEffect(() => {

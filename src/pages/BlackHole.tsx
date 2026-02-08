@@ -103,6 +103,22 @@ const formatSolGain = (value?: number | null) => {
   return `${sign}${value.toFixed(4)} SOL`;
 };
 
+const formatCompact = (value: number): string => {
+  if (value === 0) return '0';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  if (abs >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return value.toFixed(4);
+};
+
+const formatSolCompact = (value?: number | null): string | null => {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  if (value === 0) return '0 SOL';
+  if (Math.abs(value) >= 1000) return `${formatCompact(value)} SOL`;
+  return `${value.toFixed(4)} SOL`;
+};
+
 const fetchCollectionMarketStats = async (
   proxyBase: string | null,
   symbol?: string,
@@ -349,14 +365,15 @@ const BlackHole = () => {
                   parseNumber(priceInfo.floor_price ?? priceInfo.floorPrice ?? priceInfo.price) ??
                   null;
 
+                const hasVerifiedCollection = collectionGroup?.group_value && collectionMeta.name && collectionMeta.name !== metadata.name;
                 metadataMap.set(asset.id, {
                   name: metadata.name || content.json_uri?.split('/').pop(),
                   symbol: metadata.symbol,
                   image: content.links?.image || content.files?.[0]?.uri,
                   isNft,
-                  collectionId: collectionGroup?.group_value,
-                  collectionName: collectionMeta.name || metadata.name,
-                  collectionSymbol: collectionMeta.symbol || metadata.symbol,
+                  collectionId: hasVerifiedCollection ? collectionGroup.group_value : undefined,
+                  collectionName: hasVerifiedCollection ? collectionMeta.name : undefined,
+                  collectionSymbol: hasVerifiedCollection ? (collectionMeta.symbol || metadata.symbol) : undefined,
                   priceUsd,
                 });
               });
@@ -715,14 +732,21 @@ const BlackHole = () => {
     return particles;
   }, []);
 
-  const handleReturnToCard = () => {
+  const [returning, setReturning] = useState(false);
+
+  const handleReturnToCard = useCallback(() => {
+    if (returning) return;
+    setReturning(true);
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
-    navigate(target, { state: { fromBlackHole: true } });
-  };
+    // Let suck animation play, then navigate
+    setTimeout(() => {
+      navigate(target, { state: { fromBlackHole: true } });
+    }, 1800);
+  }, [returning, ownerPublicKey, addressParam, navigate]);
 
   return (
-    <div className="identity-shell blackhole-shell">
+    <div className={`identity-shell blackhole-shell ${returning ? 'bh-returning' : ''}`}>
       {/* Same background layers as card page */}
       <div className="absolute inset-0 bg-[#050505] background-base" />
       <div className="nebula-layer nebula-one" />
@@ -741,7 +765,7 @@ const BlackHole = () => {
           return (
             <div key={token.id} className="incineration-token" style={style}>
               {token.image ? (
-                <img src={token.image} alt="" />
+                <img src={token.image} alt="" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
               ) : (
                 <div className="incineration-dot" />
               )}
@@ -787,39 +811,17 @@ const BlackHole = () => {
           </div>
         </div>
 
-        {/* Return portal — prominent button below black hole */}
-        <button className="bh-return-portal" onClick={handleReturnToCard}>
-          <span className="bh-return-portal__glow" />
-          <span className="bh-return-portal__disk" />
-          <span className="bh-return-portal__core">
-            <ArrowLeft className="h-3 w-3 text-cyan-300" />
-          </span>
-          <span className="bh-return-portal__label">Identity Prism</span>
-        </button>
-      </div>
-
-      {/* Wormhole back transition with tunnel rings */}
-      {wormholeBack && (
-        <div className="wormhole-overlay">
-          {Array.from({ length: 14 }).map((_, i) => (
-            <span
-              key={i}
-              className="wh-ring"
-              style={{
-                width: `${30 + i * 50}px`,
-                height: `${30 + i * 50}px`,
-                borderColor: i % 3 === 0
-                  ? 'rgba(100,180,255,0.4)'
-                  : i % 3 === 1
-                    ? 'rgba(255,140,90,0.35)'
-                    : 'rgba(200,220,255,0.2)',
-                borderWidth: i < 4 ? '2px' : '1px',
-                animation: `wh-ring-expand 1.6s ${i * 0.06}s cubic-bezier(0.22,1,0.36,1) forwards`,
-              }}
-            />
-          ))}
+        {/* Clickable return overlay on the black hole */}
+        <div
+          className="bh-return-overlay"
+          onClick={handleReturnToCard}
+          role="button"
+          tabIndex={0}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span>Return to Card</span>
         </div>
-      )}
+      </div>
 
       {/* ══ Content below the black hole ══ */}
       <div className="blackhole-content">
@@ -1004,41 +1006,45 @@ const BlackHole = () => {
                               </span>
                               {token.isNft && (
                                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                  {token.collectionName && (
+                                  {token.collectionId && token.collectionName && (
                                     <span className="text-[10px] text-zinc-500 truncate max-w-[100px]">{token.collectionName}</span>
                                   )}
                                   {token.marketFloorSol != null && token.marketFloorSol > 0 && (
                                     <span className="text-[9px] text-amber-500/80 font-mono whitespace-nowrap">{token.marketFloorSol.toFixed(2)} SOL</span>
                                   )}
-                                  <span className="flex items-center gap-1">
-                                    <a href={token.tensorUrl || `https://www.tensor.trade/item/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-cyan-500/70 hover:text-cyan-400 transition-colors" onClick={e => e.stopPropagation()} title="Tensor">T</a>
-                                    <a href={token.meUrl || `https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
-                                  </span>
+                                  <a href={`https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
                                 </div>
                               )}
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right font-mono text-zinc-400 text-sm">
-                          {token.uiAmount > 0 ? token.uiAmount.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '0'}
+                        <TableCell className="text-right font-mono text-zinc-400 text-sm whitespace-nowrap">
+                          {token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}
                         </TableCell>
-                        <TableCell className="text-right text-sm">
-                          <div className="flex flex-col items-end">
-                            <span className="font-mono text-zinc-300">{formatSol(token.valueSol) ?? (token.priceUsd != null ? `$${token.priceUsd.toFixed(4)}` : '—')}</span>
-                            {token.valueUsd != null && token.valueUsd > 0 && (
-                              <span className="text-[10px] text-zinc-600">{formatUsd(token.valueUsd)}</span>
+                        <TableCell className="text-center text-sm whitespace-nowrap">
+                          <div className="flex flex-col items-center">
+                            <span className="font-mono text-zinc-300">{formatSolCompact(token.valueSol) ?? (token.priceUsd != null ? `$${formatCompact(token.priceUsd)}` : '—')}</span>
+                            {token.valueSol != null && token.valueSol > 0 && (
+                              <span className="text-[9px] text-zinc-600">SOL</span>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right text-sm font-mono">
-                          {token.rentSol > 0.0001 ? (
-                            <>
-                              <span className="text-emerald-400/80">+{(token.rentSol * (1 - COMMISSION_RATE)).toFixed(4)}</span>
-                              <span className="text-[10px] text-zinc-600 ml-0.5">SOL</span>
-                            </>
-                          ) : (
-                            <span className="text-zinc-600 text-xs">~0</span>
-                          )}
+                        <TableCell className="text-right text-sm font-mono whitespace-nowrap">
+                          {(() => {
+                            const rentReturn = token.rentSol * (1 - COMMISSION_RATE);
+                            const tokenValue = token.valueSol ?? (token.isNft && token.marketFloorSol ? token.marketFloorSol : 0);
+                            const netGain = rentReturn - (tokenValue || 0);
+                            return (
+                              <div className="flex flex-col items-end">
+                                <span className="text-emerald-400/80">+{rentReturn.toFixed(4)}</span>
+                                {tokenValue > 0 && (
+                                  <span className={`text-[10px] ${netGain >= 0 ? 'text-emerald-500/70' : 'text-red-400/70'}`}>
+                                    {netGain >= 0 ? '+' : ''}{netGain.toFixed(4)}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-right">
                           {token.assetStatus === 'protected' ? (
