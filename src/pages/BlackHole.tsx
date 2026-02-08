@@ -759,6 +759,10 @@ const BlackHole = () => {
 
   return (
     <div className={`identity-shell blackhole-shell ${returning ? 'bh-returning' : ''}`}>
+      {/* Wormhole exit: start in darkness then fade out */}
+      <div className="blackhole-void-overlay bh-void-intro" />
+      {/* Wormhole return: massive void implodes when leaving */}
+      {returning && <div className="blackhole-void-overlay bh-void-outro" />}
       {/* Same background layers as card page */}
       <div className="absolute inset-0 bg-[#050505] background-base" />
       <div className="nebula-layer nebula-one" />
