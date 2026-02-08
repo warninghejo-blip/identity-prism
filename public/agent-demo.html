@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="/phav.png" />
+    <title>Identity Prism Oracle Demo</title>
+    <style>
+      :root {
+        --bg: #0b1021;
+        --card: rgba(15, 23, 42, 0.92);
+        --border: rgba(148, 163, 184, 0.25);
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --accent-2: #f97316;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: radial-gradient(circle at top, #1e293b 0%, var(--bg) 45%, #020617 100%);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 48px 24px;
+      }
+      .shell {
+        max-width: 920px;
+        width: 100%;
+        display: grid;
+        gap: 24px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      header .title {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      header img {
+        width: 46px;
+        height: 46px;
+      }
+      h1 {
+        font-size: 26px;
+        margin: 0;
+      }
+      .subtitle {
+        color: var(--muted);
+        margin: 6px 0 0;
+        font-size: 14px;
+      }
+      .pill {
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+      }
+      .tweet {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px 20px;
+        box-shadow: 0 18px 32px rgba(2, 6, 23, 0.45);
+      }
+      .tweet + .tweet {
+        border-left: 4px solid rgba(56, 189, 248, 0.45);
+      }
+      .tweet-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .tweet-name {
+        font-weight: 700;
+      }
+      .tweet-handle {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .tweet-text {
+        line-height: 1.6;
+        font-size: 15px;
+      }
+      .tweet-text span {
+        color: var(--accent);
+      }
+      .tweet-meta {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 12px;
+      }
+      .cta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px 20px;
+      }
+      .cta strong {
+        color: #fff;
+      }
+      .cta a {
+        background: linear-gradient(120deg, var(--accent), var(--accent-2));
+        color: #0b1021;
+        padding: 10px 18px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 700;
+        transition: transform 0.2s ease;
+      }
+      .cta a:hover {
+        transform: translateY(-1px);
+      }
+      .note {
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="title">
+          <img src="/phav.png" alt="Identity Prism" />
+          <div>
+            <h1>Identity Prism Oracle Demo</h1>
+            <p class="subtitle">AI agent replies to wallet mentions with on-chain identity stats.</p>
+          </div>
+        </div>
+        <span class="pill">Hackathon demo</span>
+      </header>
+
+      <section class="tweet">
+        <div class="tweet-header">
+          <div>
+            <div class="tweet-name">Solana Explorer</div>
+            <div class="tweet-handle">@solana_explorer</div>
+          </div>
+          <div class="tweet-meta">just now</div>
+        </div>
+        <div class="tweet-text">
+          <span>@Identity_Prism</span> roast my wallet
+          2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN
+        </div>
+      </section>
+
+      <section class="tweet">
+        <div class="tweet-header">
+          <div>
+            <div class="tweet-name">Identity Prism Oracle</div>
+            <div class="tweet-handle">@Identity_Prism</div>
+          </div>
+          <div class="tweet-meta">replying</div>
+        </div>
+        <div class="tweet-text">
+          Your on-chain aura is sharp and steady. Solid tier, consistent activity, and a clean track
+          record. Tap to reveal your full Identity Prism card.
+        </div>
+      </section>
+
+      <div class="cta">
+        <div>
+          <strong>Reveal the identity card</strong>
+          <div class="subtitle">Open the live card for the wallet in the mention.</div>
+        </div>
+        <a
+          href="https://identityprism.xyz/?address=2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN"
+          data-open-card
+        >
+          Open card
+        </a>
+      </div>
+
+      <div class="note">This demo is auto-generated for the hackathon submission video.</div>
+    </div>
+  </body>
+</html>

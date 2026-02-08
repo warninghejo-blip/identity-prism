@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { CelestialCard } from "@/components/CelestialCard";
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { Button } from "@/components/ui/button";
@@ -81,58 +81,77 @@ function buildPreviewWalletData(tier: PlanetTier): WalletData {
 
 export default function PreviewDeck() {
   const { tier: tierParam } = useParams();
+  const [searchParams] = useSearchParams();
   const normalizedTier = tierParam?.toLowerCase().replace("-", "_");
   const activeTier = PREVIEW_TIERS.includes(normalizedTier as PlanetTier)
     ? (normalizedTier as PlanetTier)
     : null;
+  const captureParam = searchParams.get("capture");
+  const isCapture = captureParam === "1" || captureParam === "true";
+  const captureFormat = searchParams.get("format");
+  const isBlinkCapture = isCapture && captureFormat === "blink";
+  const isStoreCapture = captureFormat === "store";
+  const captureView = (searchParams.get("view") ?? "front") as "front" | "back";
+  const captureTab = (searchParams.get("tab") ?? "stats") as "stats" | "badges";
+  const rootClassName = `identity-shell preview-scroll scrollable-shell relative min-h-screen${isCapture ? " preview-capture" : ""}${isBlinkCapture ? " preview-capture-blink" : ""}${isStoreCapture ? " preview-capture-store" : ""}`;
+  const contentPadding = isCapture ? "py-10" : isStoreCapture ? "py-24" : "pt-12 pb-32";
 
   return (
-    <div className="identity-shell relative min-h-screen overflow-y-auto">
+    <div className={rootClassName}>
       <div className="absolute inset-0 bg-[#050505] background-base fixed" />
       <div className="nebula-layer nebula-one fixed" />
       <div className="nebula-layer nebula-two fixed" />
       <div className="identity-gradient fixed" />
 
-      <div className="relative z-10 w-full px-6 pt-12 pb-32">
+      <div className={`relative z-10 w-full px-6 ${contentPadding}`}>
         <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between mb-12">
-            <Link to="/">
-              <Button variant="ghost" className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/30">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to Scanner
-              </Button>
-            </Link>
-            <div className="text-center">
-              <p className="text-xs tracking-[0.4em] uppercase text-cyan-200/60">System Preview</p>
-              <h2 className="text-3xl font-black text-white mt-1">
-                {activeTier ? `${activeTier.replace("_", " ")} Tier` : "Celestial Tier Deck"}
-              </h2>
+          {!isCapture && !isStoreCapture && (
+            <div className="preview-header flex items-center justify-between mb-12">
+              <Link to="/">
+                <Button variant="ghost" className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/30">
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back to Scanner
+                </Button>
+              </Link>
+              <div className="text-center">
+                <p className="text-xs tracking-[0.4em] uppercase text-cyan-200/60">System Preview</p>
+                <h2 className="text-3xl font-black text-white mt-1">
+                  {activeTier ? `${activeTier.replace("_", " ")} Tier` : "Celestial Tier Deck"}
+                </h2>
+              </div>
+              <div className="w-[100px]" />
             </div>
-            <div className="w-[100px]" />
-          </div>
+          )}
 
           {activeTier ? (
-            <div className="flex flex-col items-center gap-6">
+            <div className={`flex flex-col items-center gap-6${isStoreCapture ? " min-h-[70vh] justify-center" : ""}`}>
               <span className="text-[10px] uppercase tracking-widest text-white/30 border border-white/10 px-3 py-1 rounded-full bg-black/40">
                 {activeTier.replace("_", " ")}
               </span>
-              <div className="w-full max-w-md">
-                <CelestialCard data={buildPreviewWalletData(activeTier)} />
+              <div className="preview-card w-full max-w-md">
+                <CelestialCard
+                  data={buildPreviewWalletData(activeTier)}
+                  captureMode={isCapture || isStoreCapture}
+                  captureView={captureView}
+                  captureTab={captureTab}
+                />
               </div>
-              <Link to="/preview">
-                <Button variant="outline" className="border-white/15 text-white/80 hover:text-white hover:bg-white/5">
-                  View All Tiers
-                </Button>
-              </Link>
+              {!isStoreCapture && (
+                <Link to="/preview">
+                  <Button variant="outline" className="border-white/15 text-white/80 hover:text-white hover:bg-white/5">
+                    View All Tiers
+                  </Button>
+                </Link>
+              )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+            <div className="preview-grid">
               {PREVIEW_TIERS.map((tier) => (
                 <div key={tier} className="flex flex-col items-center gap-3">
                   <span className="text-[10px] uppercase tracking-widest text-white/30 border border-white/10 px-2 py-1 rounded-full bg-black/40">
                     {tier.replace("_", " ")}
                   </span>
-                  <Link to={`/preview/${tier}`} className="w-full flex justify-center">
+                  <Link to={`/preview/${tier}`} className="preview-card w-full flex justify-center">
                     <CelestialCard data={buildPreviewWalletData(tier)} />
                   </Link>
                 </div>

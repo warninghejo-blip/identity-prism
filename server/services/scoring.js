@@ -64,20 +64,22 @@ const calculateScore = (traits) => {
   return Math.min(Math.round(score), MAX_SCORE);
 };
 
-export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, nftCount) => {
+export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, nftCount, extraTraits = {}) => {
   const normalizedTimestamp = normalizeTimestamp(firstTxTime);
   const walletAgeDays = normalizedTimestamp
     ? Math.floor((Date.now() - normalizedTimestamp) / (1000 * 60 * 60 * 24))
     : 0;
   const avgTxPerDay30d = txCount / Math.max(1, walletAgeDays);
 
-  const hasSeeker = false;
-  const hasPreorder = false;
+  const {
+    hasSeeker = false,
+    hasPreorder = false,
+    isBlueChip = false,
+    isDeFiKing = false,
+    isMemeLord = false,
+    uniqueTokenCount = tokenCount,
+  } = extraTraits ?? {};
   const hasCombo = hasSeeker && hasPreorder;
-
-  const isBlueChip = false;
-  const isDeFiKing = false;
-  const isMemeLord = false;
 
   const isOGByBalance = solBalance >= 5;
   const isOGByAge = walletAgeDays >= 730;
@@ -95,7 +97,7 @@ export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, 
     isSolanaMaxi: solBalance >= 100 && txCount > 100,
     isBlueChip,
     isDeFiKing,
-    uniqueTokenCount: tokenCount,
+    uniqueTokenCount,
     nftCount,
     txCount,
     isMemeLord,
@@ -128,10 +130,6 @@ export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, 
   if (traits.isSolanaMaxi) badges.push('maxi');
   if (traits.hasSeeker) badges.push('seeker');
   if (traits.hasPreorder) badges.push('visionary');
-  if (traits.diamondHands) badges.push('diamond_hands');
-  if (traits.hyperactiveDegen) badges.push('degen');
-  if (traits.isMemeLord) badges.push('meme_lord');
-  if (traits.isDeFiKing) badges.push('defi_king');
 
   return {
     score,
