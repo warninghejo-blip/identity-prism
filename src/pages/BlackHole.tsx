@@ -106,6 +106,7 @@ const formatSolGain = (value?: number | null) => {
 const formatCompact = (value: number): string => {
   if (value === 0) return '0';
   const abs = Math.abs(value);
+  if (abs < 0.0001 && abs > 0) return '~0';
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   if (abs >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -114,9 +115,13 @@ const formatCompact = (value: number): string => {
 
 const formatSolCompact = (value?: number | null): string | null => {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
-  if (value === 0) return '0 SOL';
-  if (Math.abs(value) >= 1000) return `${formatCompact(value)} SOL`;
-  return `${value.toFixed(4)} SOL`;
+  if (value === 0) return '~0';
+  const abs = Math.abs(value);
+  if (abs < 0.00005) return '~0';
+  if (abs >= 1000) return `${formatCompact(value)}`;
+  if (abs >= 1) return value.toFixed(2);
+  if (abs >= 0.01) return value.toFixed(4);
+  return value.toFixed(4);
 };
 
 const fetchCollectionMarketStats = async (
@@ -407,7 +412,7 @@ const BlackHole = () => {
 
       const collectionLookups = new Map<string, { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }>();
       parsedTokens
-        .filter(token => token.isNft)
+        .filter(token => token.isNft && (token.collectionId || token.collectionSymbol))
         .forEach(token => {
           const key = `${token.collectionSymbol ?? ''}|${token.collectionId ?? ''}`;
           if (!collectionLookups.has(key)) {
@@ -448,18 +453,24 @@ const BlackHole = () => {
       }
 
       parsedTokens.forEach(token => {
-        const priceKnown = token.priceUsd !== null && token.priceUsd !== undefined;
-        if (priceKnown) {
-          token.valueUsd = token.priceUsd * token.uiAmount;
-        }
-
-        if (token.marketFloorSol !== null && token.marketFloorSol !== undefined) {
-          token.valueSol = token.marketFloorSol;
-          if (solUsd) {
-            token.valueUsd = token.marketFloorSol * solUsd;
+        // For NFTs: only trust marketFloorSol from verified collections
+        // priceUsd from DAS token_info is unreliable for NFTs
+        if (token.isNft) {
+          if (token.marketFloorSol !== null && token.marketFloorSol !== undefined) {
+            token.valueSol = token.marketFloorSol;
+            if (solUsd) {
+              token.valueUsd = token.marketFloorSol * solUsd;
+            }
           }
-        } else if (solUsd && token.valueUsd !== null && token.valueUsd !== undefined) {
-          token.valueSol = token.valueUsd / solUsd;
+          // Don't derive price from priceUsd for NFTs — it's not meaningful
+        } else {
+          const priceKnown = token.priceUsd !== null && token.priceUsd !== undefined;
+          if (priceKnown) {
+            token.valueUsd = token.priceUsd * token.uiAmount;
+          }
+          if (solUsd && token.valueUsd !== null && token.valueUsd !== undefined) {
+            token.valueSol = token.valueUsd / solUsd;
+          }
         }
 
         const actualRent = token.rentSol;
@@ -741,6 +752,7 @@ const BlackHole = () => {
     const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
     // Let suck animation play, then navigate
     setTimeout(() => {
+      sessionStorage.setItem('fromBlackHole', '1');
       navigate(target, { state: { fromBlackHole: true } });
     }, 1800);
   }, [returning, ownerPublicKey, addressParam, navigate]);
@@ -792,6 +804,10 @@ const BlackHole = () => {
             e.currentTarget.style.setProperty('--mx', '0px');
             e.currentTarget.style.setProperty('--my', '0px');
           }}
+          onClick={handleReturnToCard}
+          role="button"
+          tabIndex={0}
+          aria-label="Return to card"
         >
           <div className="blackhole-glow" />
           <div className="blackhole-warp" />
@@ -809,17 +825,7 @@ const BlackHole = () => {
               <div key={p.key} className="bh-debris-particle" style={p.style} />
             ))}
           </div>
-        </div>
-
-        {/* Clickable return overlay on the black hole */}
-        <div
-          className="bh-return-overlay"
-          onClick={handleReturnToCard}
-          role="button"
-          tabIndex={0}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Return to Card</span>
+          <div className="bh-return-hint">Return</div>
         </div>
       </div>
 
@@ -946,18 +952,20 @@ const BlackHole = () => {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-zinc-800/50">
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
-                        onCheckedChange={selectAll}
-                        className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
-                      />
+                    <TableHead className="w-10 text-center align-middle">
+                      <div className="flex items-center justify-center">
+                        <Checkbox
+                          checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
+                          onCheckedChange={selectAll}
+                          className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                        />
+                      </div>
                     </TableHead>
-                    <TableHead className="text-zinc-500 text-xs">Asset</TableHead>
-                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Balance</TableHead>
-                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Value</TableHead>
-                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Return</TableHead>
-                    <TableHead className="text-right text-zinc-500 text-xs whitespace-nowrap">Status</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs">Asset</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Balance</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Value</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Return</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -970,16 +978,18 @@ const BlackHole = () => {
                   ) : (
                     visibleTokens.map((token) => (
                       <TableRow key={token.pubkey.toBase58()} className="hover:bg-zinc-900/40 border-zinc-800/40">
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedTokens.has(token.pubkey.toBase58())}
-                            onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
-                            className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
-                          />
+                        <TableCell className="align-middle text-center w-10">
+                          <div className="flex items-center justify-center">
+                            <Checkbox
+                              checked={selectedTokens.has(token.pubkey.toBase58())}
+                              onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
+                              className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                            />
+                          </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
+                        <TableCell className="align-middle">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
                               {token.image ? (
                                 <img
                                   src={token.image}
@@ -998,7 +1008,7 @@ const BlackHole = () => {
                               )}
                             </div>
                             <div className="flex flex-col min-w-0">
-                              <span className="font-medium text-zinc-200 text-sm truncate max-w-[180px]">
+                              <span className="font-medium text-zinc-200 text-[12px] leading-tight truncate max-w-[105px]">
                                 {token.name || 'Unknown'}
                               </span>
                               <span className="text-[10px] text-zinc-600 font-mono">
@@ -1018,24 +1028,24 @@ const BlackHole = () => {
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right font-mono text-zinc-400 text-sm whitespace-nowrap">
+                        <TableCell className="text-center font-mono text-zinc-400 text-sm whitespace-nowrap">
                           {token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}
                         </TableCell>
-                        <TableCell className="text-center text-sm whitespace-nowrap">
-                          <div className="flex flex-col items-center">
+                        <TableCell className="text-center text-sm">
+                          <div className="flex flex-col items-center leading-tight">
                             <span className="font-mono text-zinc-300">{formatSolCompact(token.valueSol) ?? (token.priceUsd != null ? `$${formatCompact(token.priceUsd)}` : '—')}</span>
                             {token.valueSol != null && token.valueSol > 0 && (
                               <span className="text-[9px] text-zinc-600">SOL</span>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right text-sm font-mono whitespace-nowrap">
+                        <TableCell className="text-center text-sm font-mono">
                           {(() => {
                             const rentReturn = token.rentSol * (1 - COMMISSION_RATE);
                             const tokenValue = token.valueSol ?? (token.isNft && token.marketFloorSol ? token.marketFloorSol : 0);
                             const netGain = rentReturn - (tokenValue || 0);
                             return (
-                              <div className="flex flex-col items-end">
+                              <div className="flex flex-col items-center">
                                 <span className="text-emerald-400/80">+{rentReturn.toFixed(4)}</span>
                                 {tokenValue > 0 && (
                                   <span className={`text-[10px] ${netGain >= 0 ? 'text-emerald-500/70' : 'text-red-400/70'}`}>
@@ -1046,23 +1056,23 @@ const BlackHole = () => {
                             );
                           })()}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-center">
                           {token.assetStatus === 'protected' ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-900/20 text-emerald-400">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-900/20 text-emerald-400">
                                 <Shield className="h-2.5 w-2.5" /> Protected
                               </span>
                               {token.protectReason && <span className="text-[9px] text-emerald-700">{token.protectReason}</span>}
                             </div>
                           ) : token.assetStatus === 'valuable' ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-900/20 text-amber-400">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/20 text-amber-400">
                                 <AlertTriangle className="h-2.5 w-2.5" /> Valuable
                               </span>
                               {token.protectReason && <span className="text-[9px] text-amber-700">{token.protectReason}</span>}
                             </div>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-900/15 text-red-400/80">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-900/15 text-red-400/80">
                               <Flame className="h-2.5 w-2.5" /> Burnable
                             </span>
                           )}
@@ -1078,7 +1088,7 @@ const BlackHole = () => {
         )}
       </div>
 
-      <Toaster position="bottom-right" theme="dark" />
+      <Toaster position="bottom-center" theme="dark" />
     </div>
   );
 };

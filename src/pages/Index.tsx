@@ -69,22 +69,12 @@ const purgeInvalidMwaCache = async () => {
 const Index = () => {
   const [searchParams] = useSearchParams();
   const location = useLocation();
-  const [fromBlackHole, setFromBlackHole] = useState(Boolean((location.state as any)?.fromBlackHole));
-  const returningFromBH = useRef(Boolean((location.state as any)?.fromBlackHole));
+  const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
+  const [fromBlackHole, setFromBlackHole] = useState(Boolean((location.state as any)?.fromBlackHole) || storedReturn);
+  const returningFromBH = useRef(Boolean((location.state as any)?.fromBlackHole) || storedReturn);
+  const suppressLoadingRef = useRef(Boolean((location.state as any)?.fromBlackHole) || storedReturn);
   const isNftMode = searchParams.get("mode") === "nft";
   const urlAddress = searchParams.get("address");
-  // Clear fromBlackHole after animation to prevent WebGL context issues
-  useEffect(() => {
-    if (fromBlackHole) {
-      const timer = setTimeout(() => {
-        setFromBlackHole(false);
-        returningFromBH.current = false;
-        // Clear navigation state so refresh doesn't replay animation
-        window.history.replaceState({}, '');
-      }, 2500);
-      return () => clearTimeout(timer);
-    }
-  }, [fromBlackHole]);
 
   const [isWarping, setIsWarping] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
@@ -437,11 +427,40 @@ const Index = () => {
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
 
+  // Clear fromBlackHole only after data is ready to avoid loading overlay flashes
+  useEffect(() => {
+    if (!fromBlackHole) return;
+    suppressLoadingRef.current = true;
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
+    const maxTimer = setTimeout(() => {
+      setFromBlackHole(false);
+      returningFromBH.current = false;
+      suppressLoadingRef.current = false;
+      sessionStorage.removeItem('fromBlackHole');
+      window.history.replaceState({}, '');
+    }, 9000);
+
+    if (!isLoading && traits) {
+      readyTimer = setTimeout(() => {
+        setFromBlackHole(false);
+        returningFromBH.current = false;
+        suppressLoadingRef.current = false;
+        sessionStorage.removeItem('fromBlackHole');
+        window.history.replaceState({}, '');
+      }, 600);
+    }
+
+    return () => {
+      clearTimeout(maxTimer);
+      if (readyTimer) clearTimeout(readyTimer);
+    };
+  }, [fromBlackHole, isLoading, traits]);
+
   // Unified State Machine for UI
   useEffect(() => {
     // When returning from BlackHole, skip scanning and go straight to ready
     // Use ref so this persists across re-renders from isLoading/traits changes
-    if (returningFromBH.current && resolvedAddress) {
+    if ((returningFromBH.current || suppressLoadingRef.current) && resolvedAddress) {
       setViewState("ready");
       return;
     }
@@ -715,7 +734,7 @@ const Index = () => {
     }
   }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);
 
-  const showReadyView = previewMode || viewState === "ready" || returningFromBH.current;
+  const showReadyView = previewMode || viewState === "ready" || returningFromBH.current || suppressLoadingRef.current;
   const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
 
   useEffect(() => {

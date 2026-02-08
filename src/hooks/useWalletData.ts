@@ -132,14 +132,28 @@ export function useWalletData(address?: string) {
       return;
     }
 
-    // Reset state immediately for new fetch to prevent stale data
-    setWalletData({
-      address,
-      traits: null,
-      score: 0,
-      isLoading: true,
-      error: null
-    });
+    // Check for cached data so planet renders immediately on return from BlackHole
+    const cacheKey = `walletData_${address}`;
+    let hasCached = false;
+    try {
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached) as WalletData;
+        if (parsed.traits && parsed.address === address) {
+          setWalletData({ ...parsed, isLoading: true });
+          hasCached = true;
+        }
+      }
+    } catch { /* ignore */ }
+    if (!hasCached) {
+      setWalletData({
+        address,
+        traits: null,
+        score: 0,
+        isLoading: true,
+        error: null
+      });
+    }
 
     let cancelled = false;
 
@@ -540,7 +554,9 @@ export function useWalletData(address?: string) {
         }
 
         if (cancelled) return;
-        setWalletData({ address, traits, score, isLoading: false, error: null });
+        const finalData: WalletData = { address, traits, score, isLoading: false, error: null };
+        setWalletData(finalData);
+        try { sessionStorage.setItem(`walletData_${address}`, JSON.stringify(finalData)); } catch { /* ignore */ }
         console.log(`%c[Scan Final] NFTs: ${nftCount} | Tx: ${txCount} | Score: ${score}`, "color: #fff; background: #22d3ee; padding: 4px; border-radius: 4px;");
 
       } catch (error) {
