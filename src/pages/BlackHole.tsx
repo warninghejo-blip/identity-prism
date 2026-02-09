@@ -52,6 +52,8 @@ interface TokenAccount {
   valueUsd?: number | null;
   valueSol?: number | null;
   netGainSol?: number | null;
+  frozen?: boolean;
+  closeable?: boolean;
   isCandidate?: boolean;
   assetStatus?: AssetStatus;
   protectReason?: string;
@@ -229,6 +231,9 @@ const PROTECTED_NAME_PATTERNS = [
 ];
 
 const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: string } => {
+  if (token.closeable === false) {
+    return { status: 'protected', reason: token.frozen ? 'Account is frozen' : 'Account cannot be closed' };
+  }
   if (PROTECTED_MINTS.has(token.mint)) {
     return { status: 'protected', reason: 'Core ecosystem token' };
   }
@@ -335,6 +340,7 @@ const BlackHole = () => {
       const parsedTokens: TokenAccount[] = [
         ...splTokens.value.map((item) => {
           const info = item.account.data.parsed.info;
+          const isFrozen = info.state === 'frozen';
           return {
             pubkey: item.pubkey,
             programId: TOKEN_PROGRAM_ID,
@@ -344,10 +350,24 @@ const BlackHole = () => {
             uiAmount: Number(info.tokenAmount.uiAmount ?? 0),
             lamports: item.account.lamports,
             rentSol: item.account.lamports / LAMPORTS_PER_SOL,
+            frozen: isFrozen,
+            closeable: !isFrozen,
           };
         }),
         ...token2022Tokens.value.map((item) => {
           const info = item.account.data.parsed.info;
+          const isFrozen = info.state === 'frozen';
+          // Check Token-2022 extensions that prevent closing
+          const exts: any[] = info.extensions ?? [];
+          const hasWithheldFees = exts.some(
+            (e: any) => e.extension === 'transferFeeAmount' &&
+              e.state?.withheldAmount && BigInt(e.state.withheldAmount) > 0n
+          );
+          const hasConfidentialPending = exts.some(
+            (e: any) => e.extension === 'confidentialTransferAccount' &&
+              (e.state?.pending_balance_lo > 0 || e.state?.pending_balance_hi > 0)
+          );
+          const canClose = !isFrozen && !hasWithheldFees && !hasConfidentialPending;
           return {
             pubkey: item.pubkey,
             programId: TOKEN_2022_PROGRAM_ID,
@@ -357,6 +377,8 @@ const BlackHole = () => {
             uiAmount: Number(info.tokenAmount.uiAmount ?? 0),
             lamports: item.account.lamports,
             rentSol: item.account.lamports / LAMPORTS_PER_SOL,
+            frozen: isFrozen,
+            closeable: canClose,
           };
         }),
       ];
@@ -544,12 +566,13 @@ const BlackHole = () => {
         }
 
         const actualRent = token.rentSol;
+        const rentAfterCommission = actualRent * (1 - COMMISSION_RATE);
         if (token.valueSol !== null && token.valueSol !== undefined) {
-          token.netGainSol = actualRent - token.valueSol;
+          token.netGainSol = rentAfterCommission - token.valueSol;
         } else if (token.uiAmount === 0) {
-          token.netGainSol = actualRent;
+          token.netGainSol = rentAfterCommission;
         } else {
-          token.netGainSol = actualRent;
+          token.netGainSol = rentAfterCommission;
         }
 
         const classification = classifyAsset(token);
@@ -573,9 +596,9 @@ const BlackHole = () => {
               token.isCandidate = (!hasCollection && (netGainPositive || !valueKnown)) || valueLow;
             }
           } else {
-            if (token.uiAmount === 0 && actualRent > 0.0001) {
+            if (token.uiAmount === 0 && rentAfterCommission > 0.0001) {
               token.isCandidate = true;
-            } else if (token.uiAmount === 0 && actualRent <= 0.0001) {
+            } else if (token.uiAmount === 0 && rentAfterCommission <= 0.0001) {
               token.isCandidate = false;
             } else if (valueKnown) {
               token.isCandidate = netGainPositive || valueLow;
@@ -665,7 +688,7 @@ const BlackHole = () => {
       let instructionCount = 0;
       
       const targets = tokens.filter(t => selectedTokens.has(t.pubkey.toBase58()));
-      const safeTargets = targets.filter(t => t.assetStatus !== 'protected');
+      const safeTargets = targets.filter(t => t.assetStatus !== 'protected' && t.closeable !== false);
       if (safeTargets.length < targets.length) {
         const blocked = targets.length - safeTargets.length;
         toast.warning(`${blocked} protected asset(s) excluded from burn`);
