@@ -32,33 +32,12 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-three': ['three', '@react-three/fiber', '@react-three/drei', '@react-three/postprocessing', 'postprocessing'],
-          'vendor-wallet': [
-            '@solana/wallet-adapter-react',
-            '@solana/wallet-adapter-react-ui',
-            '@solana/wallet-adapter-wallets',
-            '@solana/wallet-adapter-base',
-            '@solana-mobile/wallet-adapter-mobile',
-          ],
-          'vendor-solana': ['@solana/web3.js', '@solana/spl-token'],
-          'vendor-metaplex': [
-            '@metaplex-foundation/umi',
-            '@metaplex-foundation/umi-bundle-defaults',
-            '@metaplex-foundation/mpl-bubblegum',
-            '@metaplex-foundation/mpl-token-metadata',
-          ],
-          'vendor-ui': [
-            '@radix-ui/react-tabs',
-            '@radix-ui/react-checkbox',
-            '@radix-ui/react-tooltip',
-            '@radix-ui/react-dialog',
-            '@radix-ui/react-toast',
-            '@radix-ui/react-select',
-            '@radix-ui/react-popover',
-            'framer-motion',
-            'lucide-react',
-          ],
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (/three|@react-three|postprocessing/.test(id)) return 'vendor-three';
+            if (/@solana|@solana-mobile|@metaplex-foundation|bn\.js|borsh|bs58|buffer-layout|superstruct/.test(id)) return 'vendor-solana';
+            if (/@radix-ui|framer-motion|lucide-react/.test(id)) return 'vendor-ui';
+          }
         },
       },
     },
