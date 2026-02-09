@@ -447,11 +447,12 @@ const Index = () => {
     };
 
     let readyTimer: ReturnType<typeof setTimeout> | null = null;
-    const maxTimer = setTimeout(fadeAndClear, 9000);
+    // Max 800ms — page backgrounds are painted by then, don't keep dark screen longer
+    const maxTimer = setTimeout(fadeAndClear, 800);
 
     if (!isLoading && traits) {
-      // Data loaded — small delay for paint, then fade veil
-      readyTimer = setTimeout(fadeAndClear, 300);
+      // Data already loaded — fade almost immediately
+      readyTimer = setTimeout(fadeAndClear, 150);
     }
 
     return () => {
@@ -811,10 +812,6 @@ const Index = () => {
           <div className="nebula-layer nebula-two" />
           <div className="nebula-layer nebula-three" />
           <div className="identity-gradient" />
-
-          {fromBlackHole && (
-            <div className="bh-return-veil" />
-          )}
 
           {!showReadyView ? (
             <LandingOverlay
