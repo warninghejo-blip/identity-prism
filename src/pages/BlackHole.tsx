@@ -265,6 +265,8 @@ const BlackHole = () => {
   publicKeyRef.current = publicKey;
   const addressParam = searchParams.get('address');
   const [ownerPublicKey, setOwnerPublicKey] = useState<PublicKey | null>(publicKey ?? null);
+  const [sortField, setSortField] = useState<'value' | 'return' | 'status' | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     if (addressParam) {
@@ -836,8 +838,6 @@ const BlackHole = () => {
   }, []);
 
   const [returning, setReturning] = useState(false);
-  const [sortField, setSortField] = useState<'value' | 'return' | 'status' | null>(null);
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const handleReturnToCard = useCallback(() => {
     if (returning) return;
