@@ -177,45 +177,42 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
   const prices = new Map<string, number>();
   if (mints.length === 0) return prices;
 
-  // 1) Jupiter Price API v2 — most reliable for Solana tokens
+  // 1) DexScreener — free, no auth, max ~30 addresses per request
   try {
-    const JUPITER_BATCH = 100;
-    for (let i = 0; i < mints.length; i += JUPITER_BATCH) {
-      const batch = mints.slice(i, i + JUPITER_BATCH);
-      const url = `https://api.jup.ag/price/v2?ids=${batch.join(',')}`;
+    for (let i = 0; i < mints.length; i += 30) {
+      const batch = mints.slice(i, i + 30);
+      const url = `https://api.dexscreener.com/tokens/v1/solana/${batch.join(',')}`;
       const res = await fetch(url);
       if (!res.ok) continue;
-      const json = await res.json();
-      const data = json?.data;
-      if (data && typeof data === 'object') {
-        for (const [mint, info] of Object.entries(data) as [string, any][]) {
-          const p = parseFloat(info?.price);
-          if (!isNaN(p) && p > 0) prices.set(mint, p);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        for (const pair of data) {
+          const mint = pair.baseToken?.address;
+          const p = parseFloat(pair.priceUsd);
+          if (mint && !isNaN(p) && p > 0 && !prices.has(mint)) {
+            prices.set(mint, p);
+          }
         }
       }
     }
   } catch {}
 
-  // 2) DexScreener fallback for anything Jupiter missed
+  // 2) Raydium fallback for anything DexScreener missed
   const remaining = mints.filter(m => !prices.has(m));
   if (remaining.length > 0) {
     try {
-      const batches: string[][] = [];
-      for (let i = 0; i < remaining.length; i += 30) {
-        batches.push(remaining.slice(i, i + 30));
-      }
-      for (const batch of batches) {
-        const url = `https://api.dexscreener.com/tokens/v1/solana/${batch.join(',')}`;
+      const RAYDIUM_BATCH = 100;
+      for (let i = 0; i < remaining.length; i += RAYDIUM_BATCH) {
+        const batch = remaining.slice(i, i + RAYDIUM_BATCH);
+        const url = `https://api-v3.raydium.io/mint/price?mints=${batch.join(',')}`;
         const res = await fetch(url);
         if (!res.ok) continue;
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          for (const pair of data) {
-            const mint = pair.baseToken?.address;
-            const p = parseFloat(pair.priceUsd);
-            if (mint && !isNaN(p) && p > 0 && !prices.has(mint)) {
-              prices.set(mint, p);
-            }
+        const json = await res.json();
+        const data = json?.data;
+        if (data && typeof data === 'object') {
+          for (const [mint, priceStr] of Object.entries(data) as [string, any][]) {
+            const p = parseFloat(priceStr);
+            if (!isNaN(p) && p > 0) prices.set(mint, p);
           }
         }
       }
