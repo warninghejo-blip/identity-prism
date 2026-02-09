@@ -416,12 +416,9 @@ const BlackHole = () => {
 
       const collectionLookups = new Map<string, { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }>();
       parsedTokens
-        .filter(token => token.isNft)
+        .filter(token => token.isNft && token.collectionId)
         .forEach(token => {
-          // Key by collection if available, otherwise by individual mint
-          const key = token.collectionId
-            ? `${token.collectionSymbol ?? ''}|${token.collectionId}`
-            : `mint|${token.mint}`;
+          const key = `${token.collectionSymbol ?? ''}|${token.collectionId}`;
           if (!collectionLookups.has(key)) {
             collectionLookups.set(key, {
               symbol: token.collectionSymbol,
@@ -444,10 +441,8 @@ const BlackHole = () => {
         );
         const statusMap = new Map(statuses);
         parsedTokens.forEach(token => {
-          if (!token.isNft) return;
-          const key = token.collectionId
-            ? `${token.collectionSymbol ?? ''}|${token.collectionId}`
-            : `mint|${token.mint}`;
+          if (!token.isNft || !token.collectionId) return;
+          const key = `${token.collectionSymbol ?? ''}|${token.collectionId}`;
           const stats = statusMap.get(key);
           token.marketStatus = stats?.status ?? 'unknown';
           token.marketFloorSol = stats?.floorSol ?? null;
@@ -979,7 +974,7 @@ const BlackHole = () => {
                         />
                       </div>
                     </TableHead>
-                    <TableHead className="text-center text-zinc-500 text-xs">Asset</TableHead>
+                    <TableHead className="text-left text-zinc-500 text-xs w-[180px] min-w-[180px]">Asset</TableHead>
                     <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Balance</TableHead>
                     <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Value</TableHead>
                     <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Return</TableHead>
@@ -1005,8 +1000,8 @@ const BlackHole = () => {
                             />
                           </div>
                         </TableCell>
-                        <TableCell className="align-middle text-center">
-                          <div className="flex items-center gap-2 justify-center">
+                        <TableCell className="align-middle text-left w-[180px] min-w-[180px]">
+                          <div className="flex items-center gap-2">
                             <div className="w-8 h-8 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
                               {token.image ? (
                                 <img
