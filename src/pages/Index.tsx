@@ -530,26 +530,33 @@ const Index = () => {
       return;
     }
     setSkrQuoteLoading(true);
-    try {
-      const response = await fetch(`${proxyBase}/api/market/mint-quote`);
-      if (!response.ok) {
-        throw new Error(`SKR quote unavailable (${response.status})`);
+    const MAX_RETRIES = 2;
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 2000));
+        const response = await fetch(`${proxyBase}/api/market/mint-quote`);
+        if (!response.ok) {
+          throw new Error(`SKR quote unavailable (${response.status})`);
+        }
+        const data = await response.json();
+        const skrAmount = Number(data?.skrAmount);
+        const discount = Number(data?.discount ?? SEEKER_TOKEN.DISCOUNT);
+        if (!Number.isFinite(skrAmount)) {
+          throw new Error("Invalid SKR quote");
+        }
+        setSkrQuote({ skrAmount, discount: Number.isFinite(discount) ? discount : SEEKER_TOKEN.DISCOUNT });
+        setSkrQuoteError(null);
+        setSkrQuoteLoading(false);
+        return;
+      } catch (error) {
+        lastError = error;
       }
-      const data = await response.json();
-      const skrAmount = Number(data?.skrAmount);
-      const discount = Number(data?.discount ?? SEEKER_TOKEN.DISCOUNT);
-      if (!Number.isFinite(skrAmount)) {
-        throw new Error("Invalid SKR quote");
-      }
-      setSkrQuote({ skrAmount, discount: Number.isFinite(discount) ? discount : SEEKER_TOKEN.DISCOUNT });
-      setSkrQuoteError(null);
-    } catch (error) {
-      console.warn("[mint] SKR quote fetch failed", error);
-      setSkrQuote(null);
-      setSkrQuoteError("SKR pricing unavailable");
-    } finally {
-      setSkrQuoteLoading(false);
     }
+    console.warn("[mint] SKR quote fetch failed after retries", lastError);
+    setSkrQuote(null);
+    setSkrQuoteError("SKR pricing unavailable");
+    setSkrQuoteLoading(false);
   }, [proxyBase]);
 
   useEffect(() => {
