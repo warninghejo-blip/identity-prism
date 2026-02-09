@@ -374,15 +374,15 @@ const BlackHole = () => {
                   parseNumber(priceInfo.floor_price ?? priceInfo.floorPrice ?? priceInfo.price) ??
                   null;
 
-                const hasVerifiedCollection = collectionGroup?.group_value && collectionMeta.name && collectionMeta.name !== metadata.name;
+                const hasCollection = !!collectionGroup?.group_value;
                 metadataMap.set(asset.id, {
                   name: metadata.name || content.json_uri?.split('/').pop(),
                   symbol: metadata.symbol,
                   image: content.links?.image || content.files?.[0]?.uri,
                   isNft,
-                  collectionId: hasVerifiedCollection ? collectionGroup.group_value : undefined,
-                  collectionName: hasVerifiedCollection ? collectionMeta.name : undefined,
-                  collectionSymbol: hasVerifiedCollection ? (collectionMeta.symbol || metadata.symbol) : undefined,
+                  collectionId: hasCollection ? collectionGroup.group_value : undefined,
+                  collectionName: hasCollection ? (collectionMeta.name || metadata.name) : undefined,
+                  collectionSymbol: hasCollection ? (collectionMeta.symbol || metadata.symbol) : undefined,
                   priceUsd,
                 });
               });
@@ -416,9 +416,12 @@ const BlackHole = () => {
 
       const collectionLookups = new Map<string, { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }>();
       parsedTokens
-        .filter(token => token.isNft && (token.collectionId || token.collectionSymbol))
+        .filter(token => token.isNft)
         .forEach(token => {
-          const key = `${token.collectionSymbol ?? ''}|${token.collectionId ?? ''}`;
+          // Key by collection if available, otherwise by individual mint
+          const key = token.collectionId
+            ? `${token.collectionSymbol ?? ''}|${token.collectionId}`
+            : `mint|${token.mint}`;
           if (!collectionLookups.has(key)) {
             collectionLookups.set(key, {
               symbol: token.collectionSymbol,
@@ -442,7 +445,9 @@ const BlackHole = () => {
         const statusMap = new Map(statuses);
         parsedTokens.forEach(token => {
           if (!token.isNft) return;
-          const key = `${token.collectionSymbol ?? ''}|${token.collectionId ?? ''}`;
+          const key = token.collectionId
+            ? `${token.collectionSymbol ?? ''}|${token.collectionId}`
+            : `mint|${token.mint}`;
           const stats = statusMap.get(key);
           token.marketStatus = stats?.status ?? 'unknown';
           token.marketFloorSol = stats?.floorSol ?? null;
