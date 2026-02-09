@@ -57,6 +57,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [shakeWarning, setShakeWarning] = useState(false);
   const [suckingIn, setSuckingIn] = useState(false);
   const [consuming, setConsuming] = useState(false);
+  const [blackout, setBlackout] = useState(false);
   const [unsucking, setUnsucking] = useState(fromBlackHole);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
@@ -132,16 +133,27 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
       });
     });
     const timer = setTimeout(() => {
-      // Explicitly clear animation-related styles to restore WebGL canvas
+      // Clear animation artifacts — be careful not to touch scene transforms (WebGL)
       const shell = shellRef.current;
       if (shell) {
         shell.querySelectorAll('[data-suck]').forEach((el) => {
           const h = el as HTMLElement;
           h.style.removeProperty('filter');
           h.style.removeProperty('animation');
-          h.style.removeProperty('transform');
           h.style.removeProperty('opacity');
+          // Only clear transform on non-scene elements (transforms break WebGL)
+          if (h.getAttribute('data-suck') !== 'scene') {
+            h.style.removeProperty('transform');
+          }
+          h.style.removeProperty('will-change');
         });
+        // Clear card-body clip-path from big-bang-reveal
+        const body = shell.querySelector('.celestial-card-body') as HTMLElement | null;
+        if (body) {
+          body.style.removeProperty('clip-path');
+          body.style.removeProperty('will-change');
+          body.style.removeProperty('animation');
+        }
         const stage = shell.closest('.card-stage');
         if (stage) {
           const mp = stage.querySelector('.mint-panel') as HTMLElement | null;
@@ -150,11 +162,12 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             mp.style.removeProperty('animation');
             mp.style.removeProperty('transform');
             mp.style.removeProperty('opacity');
+            mp.style.removeProperty('will-change');
           }
         }
       }
       setUnsucking(false);
-    }, 2400);
+    }, 2800);
     return () => { cancelAnimationFrame(raf1); clearTimeout(timer); };
   }, [unsucking, setSuckVars]);
 
@@ -246,6 +259,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     >
       <div className={`celestial-card-body relative w-full h-full ${unsucking ? 'big-bang-active' : ''}`}>
         <span className="big-bang-flash" aria-hidden="true" />
+      {/* Fullscreen blackout for forward transition */}
+      <div className={`bh-blackout-overlay ${blackout ? 'active' : ''}`} />
         <motion.div
           className="w-full h-full relative preserve-3d"
           initial={false}
@@ -299,17 +314,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 // Set CSS variables FIRST (synchronously) so animation has correct targets
                 setSuckVars();
                 setShakeWarning(true);
-                // Phase 2: Spaghettification
+                // Phase 2: Spaghettification (after 0.7s shake)
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setShakeWarning(false);
                   setSuckingIn(true);
-                }, 800));
-                // Phase 3: Event horizon consumes screen
+                }, 700));
+                // Phase 3: Event horizon consume (0.2s after spaghettify starts)
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setConsuming(true);
-                }, 1000));
+                }, 900));
+                // Phase 4: Fullscreen blackout
+                transitionTimersRef.current.push(window.setTimeout(() => {
+                  setBlackout(true);
+                }, 1600));
+                // Phase 5: Navigate
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 2500));
+                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 2200));
               }}
             >
               <span className="bh-card-portal__glow" />
