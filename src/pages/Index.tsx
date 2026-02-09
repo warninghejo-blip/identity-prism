@@ -78,7 +78,7 @@ const Index = () => {
 
   const [isWarping, setIsWarping] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
-    returningFromBH.current && urlAddress ? "ready" : (urlAddress ? "ready" : "landing")
+    returningFromBH.current && urlAddress ? "ready" : (urlAddress ? "scanning" : "landing")
   );
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
@@ -800,6 +800,10 @@ const Index = () => {
           <div className="nebula-layer nebula-two" />
           <div className="nebula-layer nebula-three" />
           <div className="identity-gradient" />
+
+          {fromBlackHole && (
+            <div className="bh-return-veil" />
+          )}
 
           {!showReadyView ? (
             <LandingOverlay

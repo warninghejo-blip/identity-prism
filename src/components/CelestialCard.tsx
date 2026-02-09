@@ -167,7 +167,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         }
       }
       setUnsucking(false);
-    }, 4500);
+    }, 3200);
     return () => { cancelAnimationFrame(raf1); clearTimeout(timer); };
   }, [unsucking, setSuckVars]);
 
