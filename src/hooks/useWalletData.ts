@@ -104,7 +104,7 @@ export function calculateScore(traits: WalletTraits): number {
   if (traits.isMemeLord) score += SCORING.MEME_LORD_BONUS;
   
   // Log breakdown for debugging
-  console.log(`%c[Scoring] Total: ${Math.round(score)} | SOL: ${sol} | Age: ${age}d | Tx: ${tx} | NFTs: ${nfts} | Seeker: ${traits.hasSeeker} | Preorder: ${traits.hasPreorder} | Combo: ${traits.hasCombo}`, "color: #a855f7; font-weight: bold;");
+  if (import.meta.env.DEV) console.log(`%c[Scoring] Total: ${Math.round(score)} | SOL: ${sol} | Age: ${age}d | Tx: ${tx} | NFTs: ${nfts} | Seeker: ${traits.hasSeeker} | Preorder: ${traits.hasPreorder} | Combo: ${traits.hasCombo}`, "color: #a855f7; font-weight: bold;");
   
   return Math.min(Math.round(score), 1400);
 }
@@ -557,7 +557,7 @@ export function useWalletData(address?: string) {
         const finalData: WalletData = { address, traits, score, isLoading: false, error: null };
         setWalletData(finalData);
         try { sessionStorage.setItem(`walletData_${address}`, JSON.stringify(finalData)); } catch { /* ignore */ }
-        console.log(`%c[Scan Final] NFTs: ${nftCount} | Tx: ${txCount} | Score: ${score}`, "color: #fff; background: #22d3ee; padding: 4px; border-radius: 4px;");
+        if (isDev) console.log(`%c[Scan Final] NFTs: ${nftCount} | Tx: ${txCount} | Score: ${score}`, "color: #fff; background: #22d3ee; padding: 4px; border-radius: 4px;");
 
       } catch (error) {
         console.error("Scan Error:", error);

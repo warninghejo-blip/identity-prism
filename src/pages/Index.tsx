@@ -15,7 +15,7 @@ import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2
 import { getAppBaseUrl, getHeliusProxyUrl, getMetadataBaseUrl, MINT_CONFIG, SEEKER_TOKEN } from "@/constants";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
-import html2canvas from "html2canvas";
+// html2canvas loaded dynamically in renderCardImage()
 
 type ViewState = "landing" | "scanning" | "ready";
 type PaymentToken = "SOL" | "SKR";
@@ -190,7 +190,7 @@ const Index = () => {
       if (!activeAddress) {
         const resolved = pubKey?.toBase58?.();
         if (resolved) {
-          console.log("[MobileConnect] Adapter connect event:", resolved);
+          if (import.meta.env.DEV) console.log("[MobileConnect] Adapter connect event:", resolved);
           setActiveAddress(resolved);
           setViewState("scanning");
         }
@@ -234,7 +234,7 @@ const Index = () => {
       return;
     }
 
-    console.log("[MobileConnect] Using wallet:", targetWallet.adapter.name);
+    if (import.meta.env.DEV) console.log("[MobileConnect] Using wallet:", targetWallet.adapter.name);
 
     const openPhantomDeepLink = () => {
       if (!isIosDevice) {
@@ -255,7 +255,7 @@ const Index = () => {
       }
 
       select(targetWallet.adapter.name);
-      console.log("[MobileConnect] Calling adapter.connect()...");
+      if (import.meta.env.DEV) console.log("[MobileConnect] Calling adapter.connect()...");
       const stopMwaNudge =
         targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName ? startMwaAssociationNudge() : undefined;
       try {
@@ -278,7 +278,7 @@ const Index = () => {
         throw new Error(`${targetWallet.adapter.name} connected but public key is missing.`);
       }
 
-      console.log("[MobileConnect] Adapter state after connect():", {
+      if (import.meta.env.DEV) console.log("[MobileConnect] Adapter state after connect():", {
         connected: targetWallet.adapter.connected,
         publicKey: targetWallet.adapter.publicKey?.toBase58(),
         readyState: targetWallet.readyState,
@@ -289,14 +289,14 @@ const Index = () => {
       const pollIntervalMs = 200;
       let resolvedAddress: string | undefined;
       while (!resolvedAddress && attempts < maxAttempts) {
-        console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
+        if (import.meta.env.DEV) console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
         resolvedAddress = targetWallet.adapter.publicKey?.toBase58();
 
         if (!resolvedAddress && targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
           const mwaAdapter = targetWallet.adapter as { _authorizationResult?: unknown };
           const internalAddress = extractMwaAddress(mwaAdapter._authorizationResult);
           if (internalAddress) {
-            console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
+            if (import.meta.env.DEV) console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
             resolvedAddress = internalAddress;
           }
         }
@@ -316,7 +316,7 @@ const Index = () => {
         if (!resolvedAddress) {
           const cachedAddress = await getCachedMwaAddress();
           if (cachedAddress) {
-            console.log("[MobileConnect] Using cached MWA address:", cachedAddress);
+            if (import.meta.env.DEV) console.log("[MobileConnect] Using cached MWA address:", cachedAddress);
             resolvedAddress = cachedAddress;
           }
         }
@@ -329,7 +329,7 @@ const Index = () => {
       }
 
       if (resolvedAddress) {
-        console.log("[MobileConnect] Success! Resolved Address:", resolvedAddress);
+        if (import.meta.env.DEV) console.log("[MobileConnect] Success! Resolved Address:", resolvedAddress);
         setActiveAddress(resolvedAddress);
         setViewState("scanning");
         toast.success("Wallet Connected");
@@ -338,7 +338,7 @@ const Index = () => {
         try {
           const cacheResult = await purgeInvalidMwaCache();
           if (cacheResult.cleared) {
-            console.log("[MobileConnect] Cleared invalid MWA cache:", cacheResult.reason);
+            if (import.meta.env.DEV) console.log("[MobileConnect] Cleared invalid MWA cache:", cacheResult.reason);
           }
         } catch {
           // ignore cache cleanup failures
@@ -549,6 +549,7 @@ const Index = () => {
 
     if (document?.fonts?.ready) await document.fonts.ready;
 
+    const { default: html2canvas } = await import('html2canvas');
     const canvas = await html2canvas(cardCaptureRef.current as HTMLDivElement, {
       backgroundColor: "#020408",
       scale,
@@ -628,7 +629,7 @@ const Index = () => {
         paymentToken,
       });
       
-      console.log("Mint success:", result);
+      if (import.meta.env.DEV) console.log("Mint success:", result);
       setMintState("success");
       toast.success("Identity Secured!", {
         description: `Tx: ${result.signature.slice(0, 8)}...`,

@@ -12,9 +12,10 @@ import {
 } from '@solana-mobile/wallet-adapter-mobile';
 import App from './App';
 import Index from './pages/Index';
-import PreviewDeck from './pages/PreviewDeck';
-import BlackHole from './pages/BlackHole';
 import NotFound from './pages/NotFound';
+
+const BlackHole = React.lazy(() => import('./pages/BlackHole'));
+const PreviewDeck = React.lazy(() => import('./pages/PreviewDeck'));
 import DebugConsole from './components/DebugConsole';
 import './index.css';
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -124,7 +125,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         localStorageKey="walletAdapter"
       >
         <WalletModalProvider>
-          <RouterProvider router={router} />
+          <React.Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+            <RouterProvider router={router} />
+          </React.Suspense>
         </WalletModalProvider>
       </WalletProvider>
     </ConnectionProvider>
