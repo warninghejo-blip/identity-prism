@@ -196,7 +196,11 @@ class TwitterClient:
         self._require_api_client()
         try:
             reply_id = await asyncio.to_thread(self.api_client.reply, tweet_id, text)
-            return ('ok', reply_id) if reply_id else ('error', None)
+            if reply_id is None:
+                # Reply likely created but no ID; treat as success
+                logging.warning('Reply likely created but no reply_id returned')
+                return 'ok', 'unknown'
+            return 'ok', reply_id
         except Exception as exc:
             if '429' in str(exc):
                 return '429', None
@@ -233,6 +237,10 @@ class TwitterClient:
                 None,
                 media_ids or None,
             )
+            if tweet_id is None:
+                # Tweet likely created but no ID returned; do NOT retry
+                logging.warning('Post likely created but no tweet_id returned; treating as success')
+                return 'unknown', None
             return tweet_id, None
         except Exception as exc:
             if media_ids:
@@ -244,6 +252,9 @@ class TwitterClient:
                         None,
                         None,
                     )
+                    if tweet_id is None:
+                        logging.warning('Text-only post likely created but no tweet_id; treating as success')
+                        return 'unknown', None
                     return tweet_id, None
                 except Exception as exc2:
                     logging.warning('Text-only fallback also failed: %s', exc2)

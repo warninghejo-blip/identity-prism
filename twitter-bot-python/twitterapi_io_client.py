@@ -179,7 +179,8 @@ class TwitterApiIoClient:
 
     _AUTH_ERROR_HINTS = ('unauthorized', '401', 'cookie expired', 'login failed', 'forbidden')
     _AUTOMATED_HINTS = ('automated', '226')
-    _TRANSIENT_HINTS = ('could not extract',)
+    _TRANSIENT_HINTS = ()  # intentionally empty; 'could not extract' = tweet was created
+    _CREATED_NO_ID_HINTS = ('could not extract tweet_id', 'could not extract')
 
     def _is_auth_error(self, error_msg: str) -> bool:
         lower = error_msg.lower()
@@ -204,6 +205,9 @@ class TwitterApiIoClient:
             return 'automated'
         if self._is_auth_error(err_str):
             return 'auth'
+        lower = err_str.lower()
+        if any(h in lower for h in self._CREATED_NO_ID_HINTS):
+            return 'created_no_id'
         if self._is_transient(err_str):
             return 'transient'
         return 'unknown'
@@ -247,6 +251,10 @@ class TwitterApiIoClient:
                     logging.warning('%s auth error (%s); re-login & retry', label, str(exc)[:80])
                     self._force_relogin()
                     continue
+                if kind == 'created_no_id':
+                    logging.warning('%s: tweet likely created but no ID returned; NOT retrying. err=%s',
+                                    label, str(exc)[:100])
+                    return None
                 if kind == 'transient':
                     wait = random.uniform(15, 45)
                     logging.warning('%s transient error (%s); wait %.0fs & retry', label, str(exc)[:60], wait)
@@ -305,7 +313,7 @@ class TwitterApiIoClient:
                 build_payload=lambda: build(True),
                 extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
                 label='create_tweet',
-                max_attempts=5,
+                max_attempts=2,
             )
         except Exception as exc:
             msg = str(exc).lower()
