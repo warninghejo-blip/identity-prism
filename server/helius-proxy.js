@@ -872,14 +872,22 @@ const server = http.createServer(async (req, res) => {
         magicStats = await fetchMagicEdenCollectionStats(meSlug).catch(() => null);
       }
 
+      // 4. Tensor fallback: if ME has no floor, try Tensor
+      let tensorStats = null;
+      if (collectionId) {
+        tensorStats = await fetchTensorCollectionStats(collectionId).catch(() => null);
+      }
+
       const tensorUrl = collectionId ? `https://www.tensor.trade/trade/${collectionId}` : null;
       const meUrl = meSlug ? `https://magiceden.io/marketplace/${meSlug}` : (mint ? `https://magiceden.io/item-details/${mint}` : null);
-      const floorSol = magicStats?.floorSol ?? null;
-      const status = magicStats?.status ?? 'unknown';
+      // Prefer ME floor, fall back to Tensor floor
+      const floorSol = magicStats?.floorSol ?? tensorStats?.floorSol ?? null;
+      const bestSource = magicStats?.floorSol ? magicStats.source : (tensorStats?.floorSol ? tensorStats.source : (magicStats?.source ?? tensorStats?.source ?? null));
+      const status = magicStats?.status === 'listed' ? 'listed' : (tensorStats?.status === 'listed' ? 'listed' : (magicStats?.status ?? tensorStats?.status ?? 'unknown'));
       respondJson(res, 200, {
         status,
         floorSol,
-        source: magicStats?.source ?? null,
+        source: bestSource,
         tensorUrl,
         meUrl,
         meSlug: meSlug ?? null,

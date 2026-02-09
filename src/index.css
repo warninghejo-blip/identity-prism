@@ -2376,61 +2376,61 @@
     filter: blur(0px);
   }
   /* Gentle drift — element starts to feel the pull */
-  15% {
+  18% {
     transform:
       translate(
-        calc(var(--tx, 0px) * 0.02 + var(--px, 0px) * 0.15),
-        calc(var(--ty, 0px) * 0.02 + var(--py, 0px) * 0.15)
+        calc(var(--tx, 0px) * 0.03 + var(--px, 0px) * 0.2),
+        calc(var(--ty, 0px) * 0.03 + var(--py, 0px) * 0.2)
       )
-      scale(1.04, 0.96)
-      rotate(15deg);
-    opacity: 0.95;
+      scale(0.92)
+      rotate(20deg);
+    opacity: 0.9;
     filter: blur(0px);
   }
   /* Spiral curve peaks — element swings wide on perpendicular */
-  35% {
+  38% {
     transform:
       translate(
-        calc(var(--tx, 0px) * 0.15 + var(--px, 0px) * 0.6),
-        calc(var(--ty, 0px) * 0.15 + var(--py, 0px) * 0.6)
+        calc(var(--tx, 0px) * 0.18 + var(--px, 0px) * 0.55),
+        calc(var(--ty, 0px) * 0.18 + var(--py, 0px) * 0.55)
       )
-      scale(0.7, 1.8)
-      rotate(80deg);
-    opacity: 0.8;
-    filter: blur(1.5px);
+      scale(0.65)
+      rotate(90deg);
+    opacity: 0.75;
+    filter: blur(1px);
   }
-  /* Spiral tightens — converging on portal, stretching */
-  55% {
+  /* Spiral tightens — converging on portal */
+  58% {
     transform:
       translate(
-        calc(var(--tx, 0px) * 0.45 + var(--px, 0px) * 0.35),
-        calc(var(--ty, 0px) * 0.45 + var(--py, 0px) * 0.35)
+        calc(var(--tx, 0px) * 0.5 + var(--px, 0px) * 0.3),
+        calc(var(--ty, 0px) * 0.5 + var(--py, 0px) * 0.3)
       )
-      scale(0.3, 4)
-      rotate(180deg);
-    opacity: 0.55;
-    filter: blur(4px);
+      scale(0.35)
+      rotate(200deg);
+    opacity: 0.5;
+    filter: blur(3px);
   }
-  /* Almost swallowed — thin filament wrapping around */
+  /* Almost swallowed — tight orbit */
   80% {
     transform:
       translate(
-        calc(var(--tx, 0px) * 0.85 + var(--px, 0px) * 0.08),
-        calc(var(--ty, 0px) * 0.85 + var(--py, 0px) * 0.08)
+        calc(var(--tx, 0px) * 0.88 + var(--px, 0px) * 0.06),
+        calc(var(--ty, 0px) * 0.88 + var(--py, 0px) * 0.06)
       )
-      scale(0.06, 10)
-      rotate(300deg);
+      scale(0.12)
+      rotate(340deg);
     opacity: 0.2;
-    filter: blur(8px);
+    filter: blur(6px);
   }
   /* Consumed into singularity */
   100% {
     transform:
       translate(var(--tx, 0px), var(--ty, 0px))
-      scale(0.01, 14)
-      rotate(400deg);
+      scale(0)
+      rotate(450deg);
     opacity: 0;
-    filter: blur(12px);
+    filter: blur(10px);
   }
 }
 

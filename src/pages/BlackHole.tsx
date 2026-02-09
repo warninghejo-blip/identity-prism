@@ -223,6 +223,10 @@ const BlackHole = () => {
   const collectionMarketCache = useRef(new Map<string, MarketStats>());
   const lastOwnerRef = useRef<string | null>(null);
   const addressErrorShown = useRef(false);
+  const connectionRef = useRef(connection);
+  const publicKeyRef = useRef(publicKey);
+  connectionRef.current = connection;
+  publicKeyRef.current = publicKey;
   const addressParam = searchParams.get('address');
   const [ownerPublicKey, setOwnerPublicKey] = useState<PublicKey | null>(publicKey ?? null);
 
@@ -267,17 +271,17 @@ const BlackHole = () => {
   );
 
   const fetchTokens = useCallback(async (owner?: PublicKey | null) => {
-    const targetOwner = owner ?? publicKey;
+    const targetOwner = owner ?? publicKeyRef.current;
     if (!targetOwner) return;
     
     setIsLoading(true);
-    setTokens([]);
     setSelectedTokens(new Set());
 
     try {
+      const conn = connectionRef.current;
       const [splTokens, token2022Tokens] = await Promise.all([
-        connection.getParsedTokenAccountsByOwner(targetOwner, { programId: TOKEN_PROGRAM_ID }),
-        connection.getParsedTokenAccountsByOwner(targetOwner, { programId: TOKEN_2022_PROGRAM_ID }),
+        conn.getParsedTokenAccountsByOwner(targetOwner, { programId: TOKEN_PROGRAM_ID }),
+        conn.getParsedTokenAccountsByOwner(targetOwner, { programId: TOKEN_2022_PROGRAM_ID }),
       ]);
 
       const parsedTokens: TokenAccount[] = [
@@ -538,7 +542,8 @@ const BlackHole = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [connection, publicKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const ownerBase58 = ownerPublicKey?.toBase58() ?? null;
@@ -1016,23 +1021,19 @@ const BlackHole = () => {
                               )}
                             </div>
                             <div className="flex flex-col min-w-0">
-                              <span className="font-medium text-zinc-200 text-[12px] leading-tight truncate max-w-[105px]">
-                                {token.name || 'Unknown'}
-                              </span>
+                              <div className="flex items-center gap-1">
+                                <span className="font-medium text-zinc-200 text-[12px] leading-tight truncate max-w-[100px]">
+                                  {token.name || 'Unknown'}
+                                </span>
+                                <a href={token.meUrl || `https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
+                                {token.tensorUrl && (
+                                  <a href={token.tensorUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-500/70 hover:text-blue-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Tensor">T</a>
+                                )}
+                              </div>
                               <span className="text-[10px] text-zinc-600 font-mono">
                                 {token.symbol ? `${token.symbol} · ` : ''}{token.mint.slice(0, 4)}...{token.mint.slice(-4)}
+                                {token.isNft && token.collectionName ? ` · ${token.collectionName}` : ''}
                               </span>
-                              {token.isNft && (
-                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                  {token.collectionId && token.collectionName && (
-                                    <span className="text-[10px] text-zinc-500 truncate max-w-[100px]">{token.collectionName}</span>
-                                  )}
-                                  {token.marketFloorSol != null && token.marketFloorSol > 0 && (
-                                    <span className="text-[9px] text-amber-500/80 font-mono whitespace-nowrap">{token.marketFloorSol.toFixed(2)} SOL</span>
-                                  )}
-                                  <a href={`https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
-                                </div>
-                              )}
                             </div>
                           </div>
                         </TableCell>
