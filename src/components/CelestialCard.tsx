@@ -316,9 +316,19 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setConsuming(true);
                 }, 1800));
-                // Phase 3: Navigate (blackout is CSS-driven with 1s delay from consume)
+                // Phase 3: Create persistent blackout + navigate
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 3500));
+                transitionTimersRef.current.push(window.setTimeout(() => {
+                  // Raw DOM overlay survives route change — no flash between pages
+                  let overlay = document.getElementById('bh-forward-blackout');
+                  if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'bh-forward-blackout';
+                    overlay.style.cssText = 'position:fixed;inset:0;background:#050505;z-index:999999;pointer-events:none;opacity:1;';
+                    document.body.appendChild(overlay);
+                  }
+                  navigate(target);
+                }, 2900));
               }}
             >
               <span className="bh-card-portal__glow" />

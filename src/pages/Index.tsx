@@ -67,7 +67,7 @@ const purgeInvalidMwaCache = async () => {
 };
 
 const Index = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
   const [fromBlackHole, setFromBlackHole] = useState(Boolean((location.state as any)?.fromBlackHole) || storedReturn);
@@ -919,6 +919,10 @@ const Index = () => {
                           onClick={() => {
                             setActiveAddress(undefined);
                             setViewState("landing");
+                            // Clear URL address param so the useEffect doesn't re-set it
+                            const next = new URLSearchParams(searchParams);
+                            next.delete('address');
+                            setSearchParams(next, { replace: true });
                           }}
                           className="mint-secondary-btn"
                         >

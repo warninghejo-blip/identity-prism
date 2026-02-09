@@ -266,8 +266,19 @@ const BlackHole = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  // Remove HTML preloader (BlackHole is outside App, so needs its own removal)
+  // Remove HTML preloader + forward blackout overlay
   useEffect(() => {
+    // Forward blackout: created by CelestialCard to bridge Card→BH route change
+    const fwdOverlay = document.getElementById('bh-forward-blackout');
+    if (fwdOverlay) {
+      // Small delay so BH void-intro is rendered behind it first
+      setTimeout(() => {
+        fwdOverlay.style.transition = 'opacity 0.5s ease-out';
+        fwdOverlay.style.opacity = '0';
+        setTimeout(() => fwdOverlay.remove(), 600);
+      }, 200);
+    }
+    // HTML preloader (BlackHole is outside App, so needs its own removal)
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         const preloader = document.getElementById('app-preloader');
