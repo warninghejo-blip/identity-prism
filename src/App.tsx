@@ -69,6 +69,10 @@ const App = () => {
                   alpha: true,
                 }}
                 dpr={isMobile ? [1, 1] : [1, 2]}
+                onCreated={({ gl }) => {
+                  const canvas = gl.domElement;
+                  canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); });
+                }}
               >
                 <Suspense fallback={null}>
                   <SceneContent />
