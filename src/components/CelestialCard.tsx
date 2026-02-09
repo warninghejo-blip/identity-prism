@@ -314,6 +314,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 setSuckingIn(true);
                 // Phase 2: Supernova explosion (portal implodes, flash erupts)
                 transitionTimersRef.current.push(window.setTimeout(() => {
+                  // Set supernova center to portal position
+                  const portal = shellRef.current?.querySelector('.bh-card-portal');
+                  const stage = shellRef.current?.closest('.card-stage') as HTMLElement | null;
+                  if (portal && stage) {
+                    const pr = portal.getBoundingClientRect();
+                    const cx = ((pr.left + pr.width / 2) / window.innerWidth * 100).toFixed(1);
+                    const cy = ((pr.top + pr.height / 2) / window.innerHeight * 100).toFixed(1);
+                    stage.style.setProperty('--bh-cx', `${cx}%`);
+                    stage.style.setProperty('--bh-cy', `${cy}%`);
+                  }
                   setConsuming(true);
                 }, 1800));
                 // Phase 3: Create persistent blackout + navigate
