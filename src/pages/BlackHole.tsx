@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, ComputeBudgetProgram } from '@solana/web3.js';
 import { 
   TOKEN_PROGRAM_ID, 
   TOKEN_2022_PROGRAM_ID,
@@ -204,6 +204,8 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
 const RENT_RECLAIM_SOL = 0.002;
 const VALUE_THRESHOLD_SOL = 0.0015;
 const COMMISSION_RATE = 0.10;
+const ESTIMATED_FEE_SOL = 0.00015; // conservative estimate for base + priority fee
+const MIN_NET_RETURN_SOL = 0.0005; // minimum net return to show as burnable
 const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
 
 const PROTECTED_MINTS = new Set<string>([
@@ -566,13 +568,13 @@ const BlackHole = () => {
         }
 
         const actualRent = token.rentSol;
-        const rentAfterCommission = actualRent * (1 - COMMISSION_RATE);
+        const rentAfterFees = actualRent * (1 - COMMISSION_RATE) - ESTIMATED_FEE_SOL;
         if (token.valueSol !== null && token.valueSol !== undefined) {
-          token.netGainSol = rentAfterCommission - token.valueSol;
+          token.netGainSol = rentAfterFees - token.valueSol;
         } else if (token.uiAmount === 0) {
-          token.netGainSol = rentAfterCommission;
+          token.netGainSol = rentAfterFees;
         } else {
-          token.netGainSol = rentAfterCommission;
+          token.netGainSol = rentAfterFees;
         }
 
         const classification = classifyAsset(token);
@@ -596,9 +598,9 @@ const BlackHole = () => {
               token.isCandidate = (!hasCollection && (netGainPositive || !valueKnown)) || valueLow;
             }
           } else {
-            if (token.uiAmount === 0 && rentAfterCommission > 0.0001) {
+            if (token.uiAmount === 0 && rentAfterFees >= MIN_NET_RETURN_SOL) {
               token.isCandidate = true;
-            } else if (token.uiAmount === 0 && rentAfterCommission <= 0.0001) {
+            } else if (token.uiAmount === 0 && rentAfterFees < MIN_NET_RETURN_SOL) {
               token.isCandidate = false;
             } else if (valueKnown) {
               token.isCandidate = netGainPositive || valueLow;
@@ -685,6 +687,11 @@ const BlackHole = () => {
     setIsBurning(true);
     try {
       const transaction = new Transaction();
+      // Set compute budget to prevent wallet from adding excessive priority fees
+      transaction.add(
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 })
+      );
       let instructionCount = 0;
       
       const targets = tokens.filter(t => selectedTokens.has(t.pubkey.toBase58()));
@@ -824,9 +831,7 @@ const BlackHole = () => {
           cmp = (a.valueSol ?? 0) - (b.valueSol ?? 0);
           break;
         case 'return': {
-          const aRet = a.rentSol * (1 - COMMISSION_RATE) - (a.valueSol ?? 0);
-          const bRet = b.rentSol * (1 - COMMISSION_RATE) - (b.valueSol ?? 0);
-          cmp = aRet - bRet;
+          cmp = (a.netGainSol ?? 0) - (b.netGainSol ?? 0);
           break;
         }
       }
@@ -840,7 +845,7 @@ const BlackHole = () => {
     const totalAccounts = burnable.length;
     const grossReclaim = burnable.reduce((sum, t) => sum + t.rentSol, 0);
     const commission = grossReclaim * COMMISSION_RATE;
-    const netReturn = grossReclaim - commission;
+    const netReturn = Math.max(0, grossReclaim - commission - ESTIMATED_FEE_SOL);
     const protectedCount = tokens.filter(t => t.assetStatus === 'protected').length;
     const valuableCount = tokens.filter(t => t.assetStatus === 'valuable').length;
     const burnableCount = tokens.filter(t => t.assetStatus === 'burnable').length;
@@ -1035,8 +1040,8 @@ const BlackHole = () => {
                     <div className="text-lg font-mono text-zinc-400 mt-1">-{summary.commission.toFixed(4)} <span className="text-xs text-zinc-500">SOL</span></div>
                   </div>
                   <div className="bg-emerald-950/30 rounded-lg p-2">
-                    <div className="text-[11px] text-emerald-500 uppercase tracking-wider">You Receive</div>
-                    <div className="text-xl font-black font-mono text-emerald-400 mt-1">{summary.netReturn.toFixed(4)} <span className="text-xs">SOL</span></div>
+                    <div className="text-[11px] text-emerald-500 uppercase tracking-wider">Est. Return</div>
+                    <div className="text-xl font-black font-mono text-emerald-400 mt-1">~{summary.netReturn.toFixed(4)} <span className="text-xs">SOL</span></div>
                     {solPriceUsd && (
                       <div className="text-[11px] text-emerald-600">{formatUsd(summary.netReturn * solPriceUsd)}</div>
                     )}
@@ -1049,7 +1054,7 @@ const BlackHole = () => {
                     className="bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-11 text-base shadow-lg shadow-red-900/30"
                   >
                     {isBurning ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Flame className="mr-2 h-5 w-5" />}
-                    Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr; +{summary.netReturn.toFixed(4)} SOL
+                    Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr; ~{summary.netReturn.toFixed(4)} SOL
                   </Button>
                 </div>
               </div>
@@ -1175,17 +1180,14 @@ const BlackHole = () => {
                         </TableCell>
                         <TableCell className="text-center text-sm font-mono">
                           {(() => {
-                            const rentReturn = token.rentSol * (1 - COMMISSION_RATE);
-                            const tokenValue = token.valueSol ?? (token.isNft && token.marketFloorSol ? token.marketFloorSol : 0);
-                            const netGain = rentReturn - (tokenValue || 0);
+                            const netEst = token.netGainSol ?? 0;
+                            if (netEst <= 0) {
+                              return <span className="text-zinc-600">—</span>;
+                            }
                             return (
                               <div className="flex flex-col items-center">
-                                <span className="text-emerald-400/80">+{rentReturn.toFixed(4)}</span>
-                                {tokenValue > 0 && (
-                                  <span className={`text-[10px] ${netGain >= 0 ? 'text-emerald-500/70' : 'text-red-400/70'}`}>
-                                    {netGain >= 0 ? '+' : ''}{netGain.toFixed(4)}
-                                  </span>
-                                )}
+                                <span className="text-emerald-400/80">~{netEst.toFixed(4)}</span>
+                                <span className="text-[9px] text-zinc-600">est. net</span>
                               </div>
                             );
                           })()}
