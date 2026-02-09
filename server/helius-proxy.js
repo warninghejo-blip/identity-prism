@@ -486,6 +486,33 @@ const fetchTensorCollectionStats = async (collectionId) => {
   return null;
 };
 
+const fetchMeTokenLastPrice = async (mint) => {
+  if (!mint) return null;
+  try {
+    const response = await fetch(
+      `https://api-mainnet.magiceden.dev/v2/tokens/${encodeURIComponent(mint)}/activities?offset=0&limit=5`
+    );
+    if (!response.ok) return null;
+    const activities = await response.json();
+    if (!Array.isArray(activities) || activities.length === 0) return null;
+    // Find most recent sale/listing with a price
+    for (const act of activities) {
+      if (act.price && act.price > 0 && ['buyNow', 'list', 'bid_won', 'mint'].includes(act.type)) {
+        return normalizeFloorSol(act.price);
+      }
+    }
+    // Fallback: any activity with a price
+    for (const act of activities) {
+      if (act.price && act.price > 0) {
+        return normalizeFloorSol(act.price);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 const fetchSolPriceUsd = async () => {
   try {
     const response = await fetch(
@@ -842,47 +869,59 @@ const server = http.createServer(async (req, res) => {
     const collName = String(url.searchParams.get('name') ?? '').trim();
     const mint = String(url.searchParams.get('mint') ?? '').trim();
     try {
-      // 1. Try to get correct ME slug from mint address (most reliable)
+      // 1. Try ME slug from mint, then collectionId as slug, then symbol/name derivation
       let meSlug = null;
       if (mint) {
         meSlug = await fetchMeSlugByMint(mint).catch(() => null);
       }
 
-      // 2. Fallback: derive slug candidates from name/symbol
-      if (!meSlug) {
-        const candidates = [];
-        if (symbol) candidates.push(symbol.toLowerCase());
-        if (collName) {
-          const derived = collName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-          if (derived && !candidates.includes(derived)) candidates.push(derived);
-        }
-        for (const slug of candidates) {
-          const test = await fetchMagicEdenCollectionStats(slug).catch(() => null);
-          if (test && test.status === 'listed') {
-            meSlug = slug;
-            break;
-          }
-        }
-        if (!meSlug && candidates.length > 0) meSlug = candidates[0];
+      // 2. Build candidate slugs
+      const candidates = [];
+      if (collectionId) candidates.push(collectionId);
+      if (symbol) candidates.push(symbol, symbol.toLowerCase());
+      if (collName) {
+        candidates.push(collName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''));
+        candidates.push(collName.toLowerCase().replace(/\s+/g, '_'));
       }
 
-      // 3. Fetch ME collection stats with the resolved slug
+      // 3. Fetch ME stats — try meSlug first, then candidates
       let magicStats = null;
       if (meSlug) {
         magicStats = await fetchMagicEdenCollectionStats(meSlug).catch(() => null);
       }
+      if (!magicStats?.floorSol) {
+        for (const slug of candidates) {
+          if (!slug || slug === meSlug) continue;
+          const test = await fetchMagicEdenCollectionStats(slug).catch(() => null);
+          if (test?.floorSol) {
+            magicStats = test;
+            meSlug = slug;
+            break;
+          }
+          if (test?.status === 'listed' && !magicStats) {
+            magicStats = test;
+            meSlug = slug;
+          }
+        }
+      }
+      if (!meSlug && candidates.length > 0) meSlug = candidates[0];
 
-      // 4. Tensor fallback: if ME has no floor, try Tensor
+      // 4. Tensor fallback
       let tensorStats = null;
-      if (collectionId) {
+      if (!magicStats?.floorSol && collectionId) {
         tensorStats = await fetchTensorCollectionStats(collectionId).catch(() => null);
+      }
+
+      // 5. Individual NFT last price as ultimate fallback
+      let tokenLastPrice = null;
+      if (!magicStats?.floorSol && !tensorStats?.floorSol && mint) {
+        tokenLastPrice = await fetchMeTokenLastPrice(mint).catch(() => null);
       }
 
       const tensorUrl = collectionId ? `https://www.tensor.trade/trade/${collectionId}` : null;
       const meUrl = meSlug ? `https://magiceden.io/marketplace/${meSlug}` : (mint ? `https://magiceden.io/item-details/${mint}` : null);
-      // Prefer ME floor, fall back to Tensor floor
-      const floorSol = magicStats?.floorSol ?? tensorStats?.floorSol ?? null;
-      const bestSource = magicStats?.floorSol ? magicStats.source : (tensorStats?.floorSol ? tensorStats.source : (magicStats?.source ?? tensorStats?.source ?? null));
+      const floorSol = magicStats?.floorSol ?? tensorStats?.floorSol ?? tokenLastPrice ?? null;
+      const bestSource = magicStats?.floorSol ? 'magic_eden' : (tensorStats?.floorSol ? 'tensor' : (tokenLastPrice ? 'magic_eden' : null));
       const status = magicStats?.status === 'listed' ? 'listed' : (tensorStats?.status === 'listed' ? 'listed' : (magicStats?.status ?? tensorStats?.status ?? 'unknown'));
       respondJson(res, 200, {
         status,
