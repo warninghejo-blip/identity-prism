@@ -2353,111 +2353,119 @@
   overflow: visible !important;
 }
 
-/* ────────── PHASE 0: Warning Shake ────────── */
-.card-shake-warning [data-suck],
-.card-shake-warning .mint-panel {
-  animation: shake-warning 0.06s linear infinite !important;
-  will-change: transform;
-}
-.card-shake-warning .bh-card-portal {
-  animation: suck-portal-charge 1.0s ease-out forwards !important;
-}
-
-@keyframes shake-warning {
-  0%   { transform: translate(0, 0) rotate(0deg); }
-  10%  { transform: translate(-3px, 2px) rotate(-0.5deg); }
-  20%  { transform: translate(4px, -2px) rotate(0.5deg); }
-  30%  { transform: translate(-4px, 3px) rotate(-0.8deg); }
-  40%  { transform: translate(5px, -3px) rotate(0.8deg); }
-  50%  { transform: translate(-3px, -2px) rotate(-0.3deg); }
-  60%  { transform: translate(3px, 2px) rotate(0.6deg); }
-  70%  { transform: translate(-2px, 4px) rotate(-0.6deg); }
-  80%  { transform: translate(2px, -3px) rotate(0.3deg); }
-  90%  { transform: translate(-1px, 2px) rotate(-0.2deg); }
-  100% { transform: translate(0, 0) rotate(0deg); }
+/* ────────── Portal charge: starts immediately with suck-in ────────── */
+.card-suckin-active .bh-card-portal {
+  animation: suck-portal-charge 2.0s ease-out forwards !important;
 }
 
 @keyframes suck-portal-charge {
   0%   { transform: scale(1); filter: brightness(1) drop-shadow(0 0 5px rgba(255,100,50,0.3)); }
-  25%  { transform: scale(1.4); filter: brightness(1.6) drop-shadow(0 0 25px rgba(255,100,50,0.8)); }
-  50%  { transform: scale(1.15); filter: brightness(2.0) drop-shadow(0 0 40px rgba(255,140,80,1)); }
-  75%  { transform: scale(1.5); filter: brightness(2.5) drop-shadow(0 0 55px rgba(255,180,100,1)); }
-  100% { transform: scale(1.6); filter: brightness(3.0) drop-shadow(0 0 70px rgba(255,200,120,1)); }
+  30%  { transform: scale(1.2); filter: brightness(1.5) drop-shadow(0 0 20px rgba(255,100,50,0.6)); }
+  60%  { transform: scale(1.4); filter: brightness(2.0) drop-shadow(0 0 40px rgba(255,140,80,0.9)); }
+  85%  { transform: scale(1.6); filter: brightness(2.5) drop-shadow(0 0 55px rgba(255,180,100,1)); }
+  100% { transform: scale(1.7); filter: brightness(3.0) drop-shadow(0 0 70px rgba(255,200,120,1)); }
 }
 
-/* ────────── PHASE 1: Spaghettification ────────── */
-@keyframes suck-piece {
+/* ────────── PHASE 1: Spiral Spaghettification ──────────
+   Elements curve toward the portal via --px/--py perpendicular offsets,
+   creating a swirl/spiral trajectory. Progressive rotation adds spin. */
+@keyframes suck-spiral {
   0% {
     transform: translate(0, 0) scale(1) rotate(0deg);
     opacity: 1;
     filter: blur(0px);
   }
+  /* Gentle drift — element starts to feel the pull */
   15% {
     transform:
-      translate(calc(var(--tx, 0px) * 0.03), calc(var(--ty, 0px) * 0.03))
-      scale(1.15, 0.85)
-      rotate(calc(var(--angle, 0deg) * 0.1));
+      translate(
+        calc(var(--tx, 0px) * 0.02 + var(--px, 0px) * 0.15),
+        calc(var(--ty, 0px) * 0.02 + var(--py, 0px) * 0.15)
+      )
+      scale(1.04, 0.96)
+      rotate(15deg);
     opacity: 0.95;
     filter: blur(0px);
   }
-  40% {
+  /* Spiral curve peaks — element swings wide on perpendicular */
+  35% {
     transform:
-      translate(calc(var(--tx, 0px) * 0.25), calc(var(--ty, 0px) * 0.25))
-      scale(0.5, 3)
-      rotate(calc(var(--angle, 0deg) * 0.4));
-    opacity: 0.7;
-    filter: blur(3px);
+      translate(
+        calc(var(--tx, 0px) * 0.15 + var(--px, 0px) * 0.6),
+        calc(var(--ty, 0px) * 0.15 + var(--py, 0px) * 0.6)
+      )
+      scale(0.7, 1.8)
+      rotate(80deg);
+    opacity: 0.8;
+    filter: blur(1.5px);
   }
-  70% {
+  /* Spiral tightens — converging on portal, stretching */
+  55% {
     transform:
-      translate(calc(var(--tx, 0px) * 0.7), calc(var(--ty, 0px) * 0.7))
-      scale(0.08, 10)
-      rotate(calc(var(--angle, 0deg) * 0.75));
-    opacity: 0.35;
-    filter: blur(7px);
+      translate(
+        calc(var(--tx, 0px) * 0.45 + var(--px, 0px) * 0.35),
+        calc(var(--ty, 0px) * 0.45 + var(--py, 0px) * 0.35)
+      )
+      scale(0.3, 4)
+      rotate(180deg);
+    opacity: 0.55;
+    filter: blur(4px);
   }
+  /* Almost swallowed — thin filament wrapping around */
+  80% {
+    transform:
+      translate(
+        calc(var(--tx, 0px) * 0.85 + var(--px, 0px) * 0.08),
+        calc(var(--ty, 0px) * 0.85 + var(--py, 0px) * 0.08)
+      )
+      scale(0.06, 10)
+      rotate(300deg);
+    opacity: 0.2;
+    filter: blur(8px);
+  }
+  /* Consumed into singularity */
   100% {
     transform:
       translate(var(--tx, 0px), var(--ty, 0px))
-      scale(0.01, 18)
-      rotate(var(--angle, 0deg));
+      scale(0.01, 14)
+      rotate(400deg);
     opacity: 0;
     filter: blur(12px);
   }
 }
 
-/* Scene: dramatic zoom toward portal + fade (no CSS transform — WebGL safe, use opacity + filter only) */
+/* Scene: brightness flare + blur (no CSS transform — WebGL safe) */
 @keyframes suck-scene-fade {
   0%   { opacity: 1; filter: blur(0px) brightness(1); }
-  30%  { opacity: 0.8; filter: blur(1px) brightness(1.3); }
-  60%  { opacity: 0.4; filter: blur(4px) brightness(1.8); }
-  100% { opacity: 0; filter: blur(12px) brightness(3); }
+  40%  { opacity: 0.7; filter: blur(1px) brightness(1.2); }
+  70%  { opacity: 0.3; filter: blur(5px) brightness(1.8); }
+  100% { opacity: 0; filter: blur(14px) brightness(3); }
 }
 
-/* Staggered suck: footer first (closest to portal), then header, bg, mint-panel */
+/* Staggered spiral: elements get pulled at different times */
 .card-suckin-active [data-suck="footer"] {
-  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
-  animation-delay: 0s !important;
-  will-change: transform, opacity, filter;
-}
-.card-suckin-active [data-suck="header"] {
-  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
-  animation-delay: 0.15s !important;
-  will-change: transform, opacity, filter;
-}
-.card-suckin-active [data-suck="bg"] {
-  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
-  animation-delay: 0.3s !important;
-  will-change: transform, opacity, filter;
-}
-.card-stage:has(.card-suckin-active) .mint-panel {
-  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
+  animation: suck-spiral 2.4s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
   animation-delay: 0.1s !important;
   will-change: transform, opacity, filter;
 }
-.card-suckin-active [data-suck="scene"] {
-  animation: suck-scene-fade 1.4s cubic-bezier(0.3, 0, 0.8, 0.15) forwards !important;
+.card-suckin-active [data-suck="header"] {
+  animation: suck-spiral 2.4s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
+  animation-delay: 0.3s !important;
+  will-change: transform, opacity, filter;
+}
+.card-suckin-active [data-suck="bg"] {
+  animation: suck-spiral 2.4s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
+  animation-delay: 0.5s !important;
+  will-change: transform, opacity, filter;
+}
+.card-stage:has(.card-suckin-active) .mint-panel {
+  animation: suck-spiral 2.4s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
   animation-delay: 0.2s !important;
+  will-change: transform, opacity, filter;
+}
+.card-suckin-active [data-suck="scene"] {
+  animation: suck-scene-fade 2.0s cubic-bezier(0.2, 0, 0.6, 0.1) forwards !important;
+  animation-delay: 0.3s !important;
   will-change: opacity, filter;
 }
 
