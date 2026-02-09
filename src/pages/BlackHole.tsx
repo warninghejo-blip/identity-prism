@@ -171,18 +171,28 @@ const fetchSolPriceUsd = async (proxyBase: string | null) => {
   }
 };
 
-const fetchJupiterPrices = async (mints: string[]): Promise<Map<string, number>> => {
+const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>> => {
   const prices = new Map<string, number>();
   if (mints.length === 0) return prices;
   try {
-    const url = `https://api.jup.ag/price/v2?ids=${mints.join(',')}`;
-    const res = await fetch(url);
-    if (!res.ok) return prices;
-    const data = await res.json();
-    if (data?.data) {
-      for (const [mint, info] of Object.entries(data.data)) {
-        const p = parseNumber((info as any)?.price);
-        if (p !== null && p > 0) prices.set(mint, p);
+    // DexScreener: free, no auth, max ~30 addresses per request
+    const batches: string[][] = [];
+    for (let i = 0; i < mints.length; i += 30) {
+      batches.push(mints.slice(i, i + 30));
+    }
+    for (const batch of batches) {
+      const url = `https://api.dexscreener.com/tokens/v1/solana/${batch.join(',')}`;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        for (const pair of data) {
+          const mint = pair.baseToken?.address;
+          const p = parseFloat(pair.priceUsd);
+          if (mint && !isNaN(p) && p > 0 && !prices.has(mint)) {
+            prices.set(mint, p);
+          }
+        }
       }
     }
   } catch {}
@@ -457,7 +467,7 @@ const BlackHole = () => {
         .filter(t => !t.isNft && t.priceUsd == null && t.uiAmount > 0)
         .map(t => t.mint);
       if (noPriceMints.length > 0) {
-        const jupPrices = await fetchJupiterPrices([...new Set(noPriceMints)]);
+        const jupPrices = await fetchFallbackPrices([...new Set(noPriceMints)]);
         parsedTokens.forEach(t => {
           if (!t.isNft && t.priceUsd == null) {
             const p = jupPrices.get(t.mint);

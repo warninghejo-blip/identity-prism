@@ -2638,38 +2638,38 @@
 
 /* Staggered unsuck: scene+bg first, then header, footer, portal, mint-panel */
 .card-unsuck-active [data-suck="bg"] {
-  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.1s !important;
+  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.08s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active [data-suck="scene"] {
-  animation: unsuck-scene-fade 2.8s ease-out both !important;
-  animation-delay: 0.05s !important;
+  animation: unsuck-scene-fade 2.0s ease-out both !important;
+  animation-delay: 0.04s !important;
   will-change: opacity;
 }
 .card-unsuck-active [data-suck="header"] {
-  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.35s !important;
+  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.22s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active [data-suck="footer"] {
-  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.55s !important;
+  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.36s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active [data-suck="label"] {
-  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.7s !important;
+  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.46s !important;
   will-change: transform, opacity, filter;
 }
 .card-stage:has(.card-unsuck-active) .mint-panel {
-  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.75s !important;
+  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.52s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active .bh-card-portal {
-  animation: unsuck-portal-appear 2.2s ease-out both !important;
-  animation-delay: 0.2s !important;
+  animation: unsuck-portal-appear 1.6s ease-out both !important;
+  animation-delay: 0.12s !important;
 }
 
 @keyframes unsuck-portal-appear {
@@ -2677,6 +2677,20 @@
   30%  { transform: scale(1.8); opacity: 0.5; filter: brightness(2) drop-shadow(0 0 40px rgba(255,120,60,0.4)); }
   70%  { transform: scale(0.9); opacity: 0.9; filter: brightness(1.2) drop-shadow(0 0 10px rgba(255,80,40,0.2)); }
   100% { transform: scale(1); opacity: 1; filter: brightness(1) drop-shadow(0 0 0px transparent); }
+}
+
+/* Dark veil that masks BH→main transition flicker */
+.bh-return-veil {
+  position: fixed;
+  inset: 0;
+  background: #050505;
+  z-index: 100;
+  pointer-events: none;
+  animation: bh-veil-fade 1.2s ease-out 0.3s both;
+}
+@keyframes bh-veil-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 /* Subtle white flash for return — delayed so content is already appearing */
