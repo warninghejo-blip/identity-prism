@@ -115,17 +115,6 @@ const debugEnabled =
     searchParams.has('debug') ||
     window.localStorage?.getItem('debug') === 'true');
 
-// Remove HTML preloader after React paints
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    const preloader = document.getElementById('app-preloader');
-    if (preloader) {
-      preloader.style.opacity = '0';
-      setTimeout(() => preloader.remove(), 350);
-    }
-  });
-});
-
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConnectionProvider endpoint={endpoint}>

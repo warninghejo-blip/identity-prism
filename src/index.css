@@ -2515,6 +2515,34 @@
   100% { transform: scale(120); opacity: 0; }
 }
 
+/* ── Explosion white flash overlay ── */
+.bh-explosion-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 99997;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 45%,
+    rgba(255,255,255,1) 0%,
+    rgba(255,240,200,0.95) 15%,
+    rgba(255,200,140,0.7) 30%,
+    rgba(255,140,60,0.3) 50%,
+    transparent 70%);
+  will-change: opacity;
+}
+.card-consume-active .bh-explosion-flash,
+.card-stage:has(.card-consume-active) .bh-explosion-flash {
+  animation: bh-explosion-flash 1.4s cubic-bezier(0.22, 1, 0.36, 1) forwards !important;
+}
+@keyframes bh-explosion-flash {
+  0%   { opacity: 0; }
+  6%   { opacity: 1; }
+  15%  { opacity: 0.95; }
+  35%  { opacity: 0.6; }
+  60%  { opacity: 0.2; }
+  100% { opacity: 0; }
+}
+
 /* Explosion shockwave ring — on the portal itself so it's auto-centered */
 .card-consume-active .bh-card-portal::after {
   content: '';
@@ -2548,7 +2576,7 @@
   opacity: 0;
 }
 .bh-blackout-overlay.active {
-  animation: bh-blackout 0.8s cubic-bezier(0.4, 0, 1, 1) forwards !important;
+  animation: bh-blackout 0.6s cubic-bezier(0.4, 0, 1, 1) forwards !important;
 }
 @keyframes bh-blackout {
   0%   { opacity: 0; }
@@ -2685,17 +2713,35 @@
   100% { transform: scale(1); opacity: 1; }
 }
 
+/* Return blackout: goes opaque BEFORE navigation so no flash between BH→main pages */
+.bh-return-blackout {
+  position: fixed;
+  inset: 0;
+  background: #050505;
+  z-index: 100000;
+  pointer-events: none;
+  opacity: 0;
+  animation: bh-return-blackout 1.8s ease-in forwards;
+}
+@keyframes bh-return-blackout {
+  0%   { opacity: 0; }
+  55%  { opacity: 0; }
+  85%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+
 /* Dark veil that masks BH→main transition flicker */
 .bh-return-veil {
   position: fixed;
   inset: 0;
   background: #050505;
-  z-index: 100;
+  z-index: 100000;
   pointer-events: none;
-  animation: bh-veil-fade 1.2s ease-out 0.3s both;
+  animation: bh-veil-fade 1.8s ease-out 0.1s both;
 }
 @keyframes bh-veil-fade {
   0%   { opacity: 1; }
+  60%  { opacity: 1; }
   100% { opacity: 0; }
 }
 
