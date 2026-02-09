@@ -25,15 +25,17 @@ const App = () => {
   useEffect(() => {
     setIsMounted(true);
     // Remove HTML preloader after React has painted content
-    requestAnimationFrame(() => {
+    // Small delay ensures first meaningful paint is visible behind preloader
+    const t = setTimeout(() => {
       requestAnimationFrame(() => {
         const preloader = document.getElementById('app-preloader');
         if (preloader) {
           preloader.style.opacity = '0';
-          setTimeout(() => preloader.remove(), 400);
+          setTimeout(() => preloader.remove(), 500);
         }
       });
-    });
+    }, 120);
+    return () => clearTimeout(t);
   }, []);
 
   const isMobile = useMemo(

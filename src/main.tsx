@@ -125,7 +125,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         localStorageKey="walletAdapter"
       >
         <WalletModalProvider>
-          <React.Suspense fallback={<div className="fixed inset-0 bg-black" />}>
+          <React.Suspense fallback={<div className="fixed inset-0 bg-[#050505]" />}>
             <RouterProvider router={router} />
           </React.Suspense>
         </WalletModalProvider>

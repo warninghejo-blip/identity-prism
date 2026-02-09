@@ -57,7 +57,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [shakeWarning, setShakeWarning] = useState(false);
   const [suckingIn, setSuckingIn] = useState(false);
   const [consuming, setConsuming] = useState(false);
-  const [blackout, setBlackout] = useState(false);
   const [unsucking, setUnsucking] = useState(fromBlackHole);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
@@ -259,9 +258,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     >
       <div className={`celestial-card-body relative w-full h-full ${unsucking ? 'big-bang-active' : ''}`}>
         <span className="big-bang-flash" aria-hidden="true" />
-      {/* Fullscreen explosion flash + blackout for forward transition */}
-      <div className="bh-explosion-flash" />
-      <div className={`bh-blackout-overlay ${blackout ? 'active' : ''}`} />
         <motion.div
           className="w-full h-full relative preserve-3d"
           initial={false}
@@ -316,15 +312,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 setSuckVars();
                 // Immediately start spiral pull (no shake)
                 setSuckingIn(true);
-                // Phase 2: Event horizon consume (portal expands after elements are mostly gone)
+                // Phase 2: Supernova explosion (portal implodes, flash erupts)
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setConsuming(true);
                 }, 1800));
-                // Phase 3: Fullscreen blackout
-                transitionTimersRef.current.push(window.setTimeout(() => {
-                  setBlackout(true);
-                }, 2800));
-                // Phase 4: Navigate
+                // Phase 3: Navigate (blackout is CSS-driven with 1s delay from consume)
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
                 transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 3500));
               }}

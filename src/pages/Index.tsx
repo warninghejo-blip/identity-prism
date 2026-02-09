@@ -427,6 +427,20 @@ const Index = () => {
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
 
+  // Fade out persistent DOM transition veil created by BlackHole
+  useEffect(() => {
+    const veil = document.getElementById('bh-transition-veil');
+    if (veil) {
+      // Small delay so content is painted behind the veil first
+      const t = setTimeout(() => {
+        veil.style.transition = 'opacity 0.8s ease-out';
+        veil.style.opacity = '0';
+        setTimeout(() => veil.remove(), 900);
+      }, 200);
+      return () => clearTimeout(t);
+    }
+  }, []);
+
   // Clear fromBlackHole only after data is ready to avoid loading overlay flashes
   useEffect(() => {
     if (!fromBlackHole) return;
@@ -826,6 +840,9 @@ const Index = () => {
                 <PreviewGallery />
               ) : (
                 <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}`}>
+                  {/* Supernova + blackout overlays — outside card shell to escape transform containment */}
+                  <div className="bh-supernova" />
+                  <div className="bh-blackout-overlay" />
                   <CelestialCard data={walletData} fromBlackHole={fromBlackHole} />
                   {!previewMode && (
                     <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
