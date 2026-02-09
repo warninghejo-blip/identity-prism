@@ -256,6 +256,13 @@ class TwitterApiIoClient:
             result = extract_result(data)
             if result:
                 return result
+            # Response was accepted (status=success/ok) — tweet may already exist
+            status_val = str(data.get('status', '')).lower()
+            if status_val in ('success', 'ok'):
+                # Don't retry: the action likely succeeded but response format is unexpected
+                logging.warning('%s: status=%s but no result extracted; NOT retrying to avoid duplicates. data=%s',
+                                label, status_val, str(data)[:200])
+                return None
             error_msg = str(data.get('msg') or data.get('message') or data)
             kind = self._classify_error(error_msg)
             if kind == 'automated':

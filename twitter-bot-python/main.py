@@ -336,9 +336,15 @@ async def main():
             await asyncio.sleep(random.uniform(10, 60))
 
             if slot == 0:
-                logging.info('=== POST ===')
-                ok = await do_post(client, ai_engine, state)
-                logging.info('Post result: %s', 'OK' if ok else 'FAIL')
+                # Safety: skip POST if we posted less than 1h ago
+                last_post = state.get('last_post_at') or 0
+                if time.time() - last_post < 3600:
+                    logging.info('=== POST skipped (last post %.0f min ago) ===',
+                                 (time.time() - last_post) / 60)
+                else:
+                    logging.info('=== POST ===')
+                    ok = await do_post(client, ai_engine, state)
+                    logging.info('Post result: %s', 'OK' if ok else 'FAIL')
             else:
                 if state.get('skip_next_engage'):
                     logging.info('=== ENGAGE skipped (previous 429) ===')
@@ -351,15 +357,17 @@ async def main():
                         state['skip_next_engage'] = True
                         logging.warning('Next engage will be skipped due to 429')
 
-            slot = 1 - slot
-            last_slot_at = time.time()
-            state['slot'] = slot
-            state['last_slot_at'] = last_slot_at
-            save_state(state, state['state_path'])
-
         except Exception as exc:
             logging.warning('Cycle error: %s', exc)
-            save_state(state, state['state_path'])
+
+        # ALWAYS advance slot after action (or error) — prevents POST spam loops
+        # This is outside try/except so it runs after both success and failure,
+        # but NOT after 'continue' (waiting branch).
+        slot = 1 - slot
+        last_slot_at = time.time()
+        state['slot'] = slot
+        state['last_slot_at'] = last_slot_at
+        save_state(state, state['state_path'])
 
         await asyncio.sleep(random.uniform(30, 90))
 
