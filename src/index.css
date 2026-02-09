@@ -2520,7 +2520,7 @@
   z-index: 99999;
   pointer-events: none;
   opacity: 0;
-  background: radial-gradient(circle at 50% 45%,
+  background: radial-gradient(circle at var(--bh-cx, 50%) var(--bh-cy, 45%),
     rgba(255,255,255,1) 0%,
     rgba(255,250,230,0.95) 8%,
     rgba(255,200,120,0.6) 20%,
@@ -2545,7 +2545,7 @@
 .bh-supernova::before {
   content: '';
   position: absolute;
-  top: 50%; left: 50%;
+  top: var(--bh-cy, 50%); left: var(--bh-cx, 50%);
   width: 30px; height: 30px;
   border-radius: 50%;
   transform: translate(-50%, -50%) scale(0);
@@ -2573,22 +2573,21 @@
 .bh-supernova::after {
   content: '';
   position: absolute;
-  top: 50%; left: 50%;
+  top: var(--bh-cy, 50%); left: var(--bh-cx, 50%);
   width: 50px; height: 50px;
-  margin: -25px 0 0 -25px;
   border-radius: 50%;
   border: 3px solid rgba(200, 220, 255, 0.9);
-  transform: scale(0);
+  transform: translate(-50%, -50%) scale(0);
   will-change: transform, opacity;
 }
 .card-stage:has(.card-consume-active) .bh-supernova::after {
   animation: supernova-shockwave 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 @keyframes supernova-shockwave {
-  0%   { transform: scale(0); opacity: 1; }
+  0%   { transform: translate(-50%, -50%) scale(0); opacity: 1; }
   25%  { opacity: 0.8; }
   50%  { opacity: 0.4; }
-  100% { transform: scale(100); opacity: 0; }
+  100% { transform: translate(-50%, -50%) scale(100); opacity: 0; }
 }
 
 /* Explosion shockwave ring — on the portal itself so it's auto-centered */

@@ -14,7 +14,7 @@ const queryClient = new QueryClient();
 const SceneContent = () => {
   return (
     <>
-      <color attach="background" args={["#000000"]} />
+      <color attach="background" args={["#050505"]} />
       <ambientLight intensity={0.2} />
     </>
   );
@@ -46,7 +46,7 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30">
+        <div className="min-h-screen bg-[#050505] text-white selection:bg-cyan-500/30">
           <Outlet />
           <Toaster />
           <Sonner
