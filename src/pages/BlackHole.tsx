@@ -895,12 +895,24 @@ const BlackHole = () => {
   const handleReturnToCard = useCallback(() => {
     if (returning) return;
     setReturning(true);
+
+    // Create a persistent DOM overlay that survives the route change
+    let veil = document.getElementById('bh-transition-veil');
+    if (!veil) {
+      veil = document.createElement('div');
+      veil.id = 'bh-transition-veil';
+      veil.style.cssText = 'position:fixed;inset:0;background:#050505;z-index:999999;pointer-events:none;opacity:0;transition:opacity 0.6s ease-in;';
+      document.body.appendChild(veil);
+    }
+    // Start fading to opaque midway through the implode animation
+    setTimeout(() => { veil!.style.opacity = '1'; }, 900);
+
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
-    // Let suck animation play, then navigate
+    // Navigate after implode + blackout, use replace to fix back button
     setTimeout(() => {
       sessionStorage.setItem('fromBlackHole', '1');
-      navigate(target, { state: { fromBlackHole: true } });
+      navigate(target, { state: { fromBlackHole: true }, replace: true });
     }, 1800);
   }, [returning, ownerPublicKey, addressParam, navigate]);
 
@@ -910,8 +922,6 @@ const BlackHole = () => {
       <div className="blackhole-void-overlay bh-void-intro" />
       {/* Wormhole return: massive void implodes when leaving */}
       {returning && <div className="blackhole-void-overlay bh-void-outro" />}
-      {/* Return blackout: covers screen BEFORE navigation so no flash between pages */}
-      {returning && <div className="bh-return-blackout" />}
       {/* Same background layers as card page */}
       <div className="absolute inset-0 bg-[#050505] background-base" />
       <div className="nebula-layer nebula-one" />
@@ -1241,7 +1251,14 @@ const BlackHole = () => {
         )}
       </div>
 
-      <Toaster position="bottom-center" theme="dark" />
+      <Toaster
+        position="bottom-center"
+        theme="dark"
+        expand={false}
+        richColors
+        closeButton
+        offset={16}
+      />
     </div>
   );
 };
