@@ -490,6 +490,7 @@ const Index = () => {
     if (connectedAddress) {
       setActiveAddress(connectedAddress.toBase58());
       setIsWarping(true);
+      setViewState("scanning"); // Immediate — prevents one-frame flash
       setTimeout(() => setIsWarping(false), 1400);
     }
   };

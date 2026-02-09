@@ -311,14 +311,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 event.stopPropagation();
                 if (suckingIn || consuming) return;
                 clearTransitionTimers();
-                // Set portal center position for explosion effects
-                const portalEl = event.currentTarget;
-                const pr = portalEl.getBoundingClientRect();
-                const shell = shellRef.current;
-                if (shell) {
-                  shell.style.setProperty('--portal-cx', `${pr.left + pr.width / 2}px`);
-                  shell.style.setProperty('--portal-cy', `${pr.top + pr.height / 2}px`);
-                }
                 // Set CSS variables FIRST (synchronously) so animation has correct targets
                 setSuckVars();
                 // Immediately start spiral pull (no shake)

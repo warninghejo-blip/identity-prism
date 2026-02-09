@@ -838,6 +838,8 @@
 
 .scanning-overlay {
   background: linear-gradient(180deg, #05070a 0%, #0a0f1a 50%, #05070a 100%);
+  transition: none !important;
+  opacity: 1 !important;
 }
 
 .warp-content { 
@@ -1545,10 +1547,9 @@
   isolation: isolate;
   overflow-y: auto !important;
   overflow-x: hidden !important;
-  height: auto !important;
+  height: 100vh !important;
+  height: 100svh !important;
   max-height: none !important;
-  min-height: 100vh;
-  min-height: 100svh;
   scrollbar-width: none;
   -ms-overflow-style: none;
   -webkit-overflow-scrolling: touch;
@@ -2488,12 +2489,7 @@
   animation: event-horizon-consume 1.8s cubic-bezier(0.3, 0, 0.7, 0.1) forwards !important;
   z-index: 9999 !important;
   will-change: transform, filter;
-  /* Stay at portal's original position */
-  position: fixed !important;
-  top: var(--portal-cy, 50%) !important;
-  left: var(--portal-cx, 50%) !important;
   transform-origin: center center !important;
-  margin: -25px 0 0 -25px !important;
 }
 
 @keyframes event-horizon-consume {
@@ -2507,12 +2503,12 @@
   100% { transform: scale(120); filter: brightness(0) drop-shadow(0 0 0px transparent); }
 }
 
-/* Explosion shockwave ring — centered on portal via CSS vars */
-.card-consume-active::after {
+/* Explosion shockwave ring — on the portal itself so it's auto-centered */
+.card-consume-active .bh-card-portal::after {
   content: '';
-  position: fixed;
-  top: var(--portal-cy, 50%);
-  left: var(--portal-cx, 50%);
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 20px;
   height: 20px;
   margin: -10px 0 0 -10px;
