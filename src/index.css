@@ -15,8 +15,12 @@
 
 @layer base {
   * { @apply border-border; }
+  html {
+    background: #050505;
+  }
   body {
-    @apply bg-black text-white font-sans;
+    @apply text-white font-sans;
+    background: #050505;
     letter-spacing: 0.02em;
     min-height: 100vh;
     margin: 0;
