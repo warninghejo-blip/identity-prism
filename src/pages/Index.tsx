@@ -427,41 +427,31 @@ const Index = () => {
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
 
-  // Fade out persistent DOM transition veil created by BlackHole
-  useEffect(() => {
-    const veil = document.getElementById('bh-transition-veil');
-    if (veil) {
-      // Small delay so content is painted behind the veil first
-      const t = setTimeout(() => {
-        veil.style.transition = 'opacity 0.8s ease-out';
-        veil.style.opacity = '0';
-        setTimeout(() => veil.remove(), 900);
-      }, 200);
-      return () => clearTimeout(t);
-    }
-  }, []);
-
-  // Clear fromBlackHole only after data is ready to avoid loading overlay flashes
+  // Fade DOM veil AND clear fromBlackHole only when data is actually ready
   useEffect(() => {
     if (!fromBlackHole) return;
     suppressLoadingRef.current = true;
-    let readyTimer: ReturnType<typeof setTimeout> | null = null;
-    const maxTimer = setTimeout(() => {
+
+    const fadeAndClear = () => {
+      const veil = document.getElementById('bh-transition-veil');
+      if (veil) {
+        veil.style.transition = 'opacity 0.6s ease-out';
+        veil.style.opacity = '0';
+        setTimeout(() => veil.remove(), 700);
+      }
       setFromBlackHole(false);
       returningFromBH.current = false;
       suppressLoadingRef.current = false;
       sessionStorage.removeItem('fromBlackHole');
       window.history.replaceState({}, '');
-    }, 9000);
+    };
+
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
+    const maxTimer = setTimeout(fadeAndClear, 9000);
 
     if (!isLoading && traits) {
-      readyTimer = setTimeout(() => {
-        setFromBlackHole(false);
-        returningFromBH.current = false;
-        suppressLoadingRef.current = false;
-        sessionStorage.removeItem('fromBlackHole');
-        window.history.replaceState({}, '');
-      }, 600);
+      // Data loaded — small delay for paint, then fade veil
+      readyTimer = setTimeout(fadeAndClear, 300);
     }
 
     return () => {
