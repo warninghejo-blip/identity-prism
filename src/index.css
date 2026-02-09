@@ -2517,7 +2517,7 @@
 .bh-supernova {
   position: fixed;
   inset: 0;
-  z-index: 99997;
+  z-index: 99999;
   pointer-events: none;
   opacity: 0;
   background: radial-gradient(circle at 50% 45%,
@@ -2619,13 +2619,13 @@
   position: fixed;
   inset: 0;
   background: #050505;
-  z-index: 99999;
+  z-index: 99998;
   pointer-events: none;
   opacity: 0;
   will-change: opacity;
 }
 .card-stage:has(.card-consume-active) .bh-blackout-overlay {
-  animation: bh-blackout 0.7s 1.0s cubic-bezier(0.4, 0, 1, 1) forwards !important;
+  animation: bh-blackout 0.7s 0.3s cubic-bezier(0.4, 0, 1, 1) forwards !important;
 }
 @keyframes bh-blackout {
   0%   { opacity: 0; }
