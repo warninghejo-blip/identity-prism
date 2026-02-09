@@ -259,7 +259,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     >
       <div className={`celestial-card-body relative w-full h-full ${unsucking ? 'big-bang-active' : ''}`}>
         <span className="big-bang-flash" aria-hidden="true" />
-      {/* Fullscreen blackout for forward transition */}
+      {/* Fullscreen explosion flash + blackout for forward transition */}
+      <div className="bh-explosion-flash" />
       <div className={`bh-blackout-overlay ${blackout ? 'active' : ''}`} />
         <motion.div
           className="w-full h-full relative preserve-3d"

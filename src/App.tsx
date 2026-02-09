@@ -24,6 +24,16 @@ const App = () => {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => {
     setIsMounted(true);
+    // Remove HTML preloader after React has painted content
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const preloader = document.getElementById('app-preloader');
+        if (preloader) {
+          preloader.style.opacity = '0';
+          setTimeout(() => preloader.remove(), 400);
+        }
+      });
+    });
   }, []);
 
   const isMobile = useMemo(

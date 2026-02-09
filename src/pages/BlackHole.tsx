@@ -265,6 +265,19 @@ const BlackHole = () => {
   const { publicKey, sendTransaction } = useWallet();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  // Remove HTML preloader (BlackHole is outside App, so needs its own removal)
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const preloader = document.getElementById('app-preloader');
+        if (preloader) {
+          preloader.style.opacity = '0';
+          setTimeout(() => preloader.remove(), 400);
+        }
+      });
+    });
+  }, []);
   const [tokens, setTokens] = useState<TokenAccount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
@@ -320,8 +333,10 @@ const BlackHole = () => {
   }, [incinerationTokens.length]);
 
   const getVisibleTokens = useCallback(
-    (list: TokenAccount[] = tokens, showAll = showAllAssets) =>
-      showAll ? list : list.filter(token => token.isCandidate),
+    (list: TokenAccount[] = tokens, showAll = showAllAssets) => {
+      const closeable = list.filter(token => token.closeable !== false);
+      return showAll ? closeable : closeable.filter(token => token.isCandidate);
+    },
     [showAllAssets, tokens]
   );
 
@@ -895,6 +910,8 @@ const BlackHole = () => {
       <div className="blackhole-void-overlay bh-void-intro" />
       {/* Wormhole return: massive void implodes when leaving */}
       {returning && <div className="blackhole-void-overlay bh-void-outro" />}
+      {/* Return blackout: covers screen BEFORE navigation so no flash between pages */}
+      {returning && <div className="bh-return-blackout" />}
       {/* Same background layers as card page */}
       <div className="absolute inset-0 bg-[#050505] background-base" />
       <div className="nebula-layer nebula-one" />
