@@ -232,20 +232,32 @@ class TwitterClient:
                         logging.info('twikit media upload OK: %s', mid)
                 except Exception as exc:
                     logging.warning('twikit media upload failed for %s: %s', path, exc)
-        try:
-            tweet = await self.client.create_tweet(
-                text=text,
-                media_ids=media_ids or None,
-            )
-            tweet_id = str(tweet.id) if hasattr(tweet, 'id') and tweet.id else None
-            if tweet_id:
-                logging.info('twikit tweet posted: %s (reply_settings=everyone by default)', tweet_id)
-                return tweet_id, None
-            logging.warning('twikit create_tweet returned no id: %s', tweet)
-            return 'unknown', None
-        except Exception as exc:
-            logging.warning('twikit create_tweet failed: %s', exc)
-            return None, str(exc)
+        last_err = None
+        for attempt in range(3):
+            if attempt > 0:
+                wait = random.uniform(30, 60) * attempt
+                logging.info('twikit retry %d/3 after %.0fs delay', attempt + 1, wait)
+                await asyncio.sleep(wait)
+            try:
+                tweet = await self.client.create_tweet(
+                    text=text,
+                    media_ids=media_ids or None,
+                )
+                tweet_id = str(tweet.id) if hasattr(tweet, 'id') and tweet.id else None
+                if tweet_id:
+                    logging.info('twikit tweet posted: %s (reply_settings=everyone by default)', tweet_id)
+                    return tweet_id, None
+                logging.warning('twikit create_tweet returned no id: %s', tweet)
+                return 'unknown', None
+            except Exception as exc:
+                last_err = str(exc)
+                if '226' in last_err or 'automated' in last_err.lower():
+                    logging.warning('twikit 226 automated (attempt %d/3): %s', attempt + 1, last_err[:120])
+                    continue
+                logging.warning('twikit create_tweet failed: %s', exc)
+                return None, last_err
+        logging.warning('twikit all 3 attempts got 226')
+        return None, last_err
 
     async def post_tweet(self, text, media_paths=None):
         # Try twikit first (cookie-based, defaults to everyone can reply)
