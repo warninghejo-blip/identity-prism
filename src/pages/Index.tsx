@@ -427,38 +427,55 @@ const Index = () => {
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
 
-  // Fade DOM veil AND clear fromBlackHole only when data is actually ready
+  // Phase 1: Fade DOM veil quickly (max 800ms) to reveal page backgrounds
   useEffect(() => {
     if (!fromBlackHole) return;
     suppressLoadingRef.current = true;
 
-    const fadeAndClear = () => {
+    const fadeVeil = () => {
       const veil = document.getElementById('bh-transition-veil');
       if (veil) {
         veil.style.transition = 'opacity 0.6s ease-out';
         veil.style.opacity = '0';
         setTimeout(() => veil.remove(), 700);
       }
-      setFromBlackHole(false);
-      returningFromBH.current = false;
-      suppressLoadingRef.current = false;
-      sessionStorage.removeItem('fromBlackHole');
-      window.history.replaceState({}, '');
     };
 
+    // Fade veil when data ready or max 800ms — but DON'T clear suppression yet
     let readyTimer: ReturnType<typeof setTimeout> | null = null;
-    // Max 800ms — page backgrounds are painted by then, don't keep dark screen longer
-    const maxTimer = setTimeout(fadeAndClear, 800);
-
+    const maxTimer = setTimeout(fadeVeil, 800);
     if (!isLoading && traits) {
-      // Data already loaded — fade almost immediately
-      readyTimer = setTimeout(fadeAndClear, 150);
+      readyTimer = setTimeout(fadeVeil, 150);
     }
 
     return () => {
       clearTimeout(maxTimer);
       if (readyTimer) clearTimeout(readyTimer);
     };
+  }, [fromBlackHole, isLoading, traits]);
+
+  // Phase 2: Clear suppression only when data IS loaded (prevents loading overlay flash)
+  useEffect(() => {
+    if (!fromBlackHole) return;
+    if (!isLoading && traits) {
+      const t = setTimeout(() => {
+        setFromBlackHole(false);
+        returningFromBH.current = false;
+        suppressLoadingRef.current = false;
+        sessionStorage.removeItem('fromBlackHole');
+        window.history.replaceState({}, '');
+      }, 400);
+      return () => clearTimeout(t);
+    }
+    // Safety: clear after 12s max if data never loads
+    const safety = setTimeout(() => {
+      setFromBlackHole(false);
+      returningFromBH.current = false;
+      suppressLoadingRef.current = false;
+      sessionStorage.removeItem('fromBlackHole');
+      window.history.replaceState({}, '');
+    }, 12000);
+    return () => clearTimeout(safety);
   }, [fromBlackHole, isLoading, traits]);
 
   // Unified State Machine for UI

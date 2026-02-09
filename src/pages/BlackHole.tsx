@@ -753,6 +753,10 @@ const BlackHole = () => {
         return;
       }
 
+      // Scroll to top so user sees tokens spiral into the BH visual
+      const shell = document.querySelector('.blackhole-shell');
+      if (shell) shell.scrollTo({ top: 0, behavior: 'smooth' });
+
       const animationTargets: IncinerationToken[] = safeTargets.map((token, index) => ({
         id: token.pubkey.toBase58(),
         image: token.image,
@@ -927,6 +931,10 @@ const BlackHole = () => {
   const handleReturnToCard = useCallback(() => {
     if (returning) return;
     setReturning(true);
+
+    // Scroll to top so the BH visual is visible during suck-in
+    const shell = document.querySelector('.blackhole-shell');
+    if (shell) shell.scrollTo({ top: 0, behavior: 'smooth' });
 
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
