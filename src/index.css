@@ -2360,7 +2360,7 @@
   will-change: transform;
 }
 .card-shake-warning .bh-card-portal {
-  animation: suck-portal-charge 0.7s ease-out forwards !important;
+  animation: suck-portal-charge 1.0s ease-out forwards !important;
 }
 
 @keyframes shake-warning {
@@ -2436,44 +2436,45 @@
 
 /* Staggered suck: footer first (closest to portal), then header, bg, mint-panel */
 .card-suckin-active [data-suck="footer"] {
-  animation: suck-piece 1.2s cubic-bezier(0.55, 0, 1, 0) forwards !important;
+  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
   animation-delay: 0s !important;
   will-change: transform, opacity, filter;
 }
 .card-suckin-active [data-suck="header"] {
-  animation: suck-piece 1.2s cubic-bezier(0.55, 0, 1, 0) forwards !important;
-  animation-delay: 0.12s !important;
+  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
+  animation-delay: 0.15s !important;
   will-change: transform, opacity, filter;
 }
 .card-suckin-active [data-suck="bg"] {
-  animation: suck-piece 1.2s cubic-bezier(0.55, 0, 1, 0) forwards !important;
-  animation-delay: 0.2s !important;
+  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
+  animation-delay: 0.3s !important;
   will-change: transform, opacity, filter;
 }
 .card-stage:has(.card-suckin-active) .mint-panel {
-  animation: suck-piece 1.2s cubic-bezier(0.55, 0, 1, 0) forwards !important;
-  animation-delay: 0.08s !important;
+  animation: suck-piece 1.8s cubic-bezier(0.45, 0, 0.9, 0.1) forwards !important;
+  animation-delay: 0.1s !important;
   will-change: transform, opacity, filter;
 }
 .card-suckin-active [data-suck="scene"] {
-  animation: suck-scene-fade 1.0s cubic-bezier(0.4, 0, 1, 0) forwards !important;
-  animation-delay: 0.1s !important;
+  animation: suck-scene-fade 1.4s cubic-bezier(0.3, 0, 0.8, 0.15) forwards !important;
+  animation-delay: 0.2s !important;
   will-change: opacity, filter;
 }
 
 /* ────────── PHASE 2: Event Horizon Consume ────────── */
 .card-consume-active .bh-card-portal {
-  animation: event-horizon-consume 1.4s cubic-bezier(0.55, 0, 1, 0) forwards !important;
+  animation: event-horizon-consume 1.8s cubic-bezier(0.3, 0, 0.7, 0.1) forwards !important;
   z-index: 9999 !important;
   will-change: transform, filter;
 }
 
 @keyframes event-horizon-consume {
-  0%   { transform: scale(1.6) rotate(0deg); filter: brightness(3) drop-shadow(0 0 70px rgba(255,200,120,1)); }
-  20%  { transform: scale(8) rotate(40deg); filter: brightness(2) drop-shadow(0 0 50px rgba(255,140,80,0.8)); }
-  50%  { transform: scale(25) rotate(90deg); filter: brightness(1.2) drop-shadow(0 0 30px rgba(255,100,60,0.5)); }
-  80%  { transform: scale(55) rotate(150deg); filter: brightness(0.6) drop-shadow(0 0 10px rgba(200,60,30,0.2)); }
-  100% { transform: scale(100) rotate(180deg); filter: brightness(0) drop-shadow(0 0 0px transparent); }
+  0%   { transform: scale(1.6); filter: brightness(3) drop-shadow(0 0 70px rgba(255,200,120,1)); }
+  15%  { transform: scale(5); filter: brightness(2.2) drop-shadow(0 0 50px rgba(255,160,90,0.9)); }
+  35%  { transform: scale(15); filter: brightness(1.5) drop-shadow(0 0 35px rgba(255,120,70,0.6)); }
+  60%  { transform: scale(40); filter: brightness(0.8) drop-shadow(0 0 15px rgba(200,80,40,0.3)); }
+  85%  { transform: scale(70); filter: brightness(0.3) drop-shadow(0 0 5px rgba(150,40,20,0.1)); }
+  100% { transform: scale(120); filter: brightness(0) drop-shadow(0 0 0px transparent); }
 }
 
 /* Fullscreen blackout overlay for forward transition */
@@ -2542,47 +2543,40 @@
   100% { opacity: 1; }
 }
 
-/* ── Big Bang reveal: clip-path expanding circle (does NOT affect canvas rendering) ── */
+/* Big Bang: no clip-path (it caused flash-before-content). Elements reveal via unsuck-piece. */
 .celestial-card-body.big-bang-active {
-  animation: big-bang-reveal 1.0s cubic-bezier(0.16, 1, 0.3, 1) both !important;
-  will-change: clip-path;
+  /* marker class only — individual elements animate via unsuck-piece */
 }
 
-@keyframes big-bang-reveal {
-  0%   { clip-path: circle(0% at 50% 65%); }
-  50%  { clip-path: circle(55% at 50% 55%); }
-  100% { clip-path: circle(100% at 50% 50%); }
-}
-
-/* Staggered unsuck: bg first, then scene, header, footer, mint-panel */
+/* Staggered unsuck: scene+bg first, then header, footer, portal, mint-panel */
 .card-unsuck-active [data-suck="bg"] {
-  animation: unsuck-piece 1.3s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.05s !important;
+  animation: unsuck-piece 1.6s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.1s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active [data-suck="scene"] {
-  animation: unsuck-scene-fade 1.4s ease-out both !important;
-  animation-delay: 0s !important;
+  animation: unsuck-scene-fade 1.8s ease-out both !important;
+  animation-delay: 0.05s !important;
   will-change: opacity;
 }
 .card-unsuck-active [data-suck="header"] {
-  animation: unsuck-piece 1.3s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.2s !important;
+  animation: unsuck-piece 1.6s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.3s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active [data-suck="footer"] {
-  animation: unsuck-piece 1.3s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.35s !important;
-  will-change: transform, opacity, filter;
-}
-.card-stage:has(.card-unsuck-active) .mint-panel {
-  animation: unsuck-piece 1.3s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation: unsuck-piece 1.6s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
   animation-delay: 0.5s !important;
   will-change: transform, opacity, filter;
 }
+.card-stage:has(.card-unsuck-active) .mint-panel {
+  animation: unsuck-piece 1.6s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.65s !important;
+  will-change: transform, opacity, filter;
+}
 .card-unsuck-active .bh-card-portal {
-  animation: unsuck-portal-appear 1.4s ease-out both !important;
-  animation-delay: 0.15s !important;
+  animation: unsuck-portal-appear 1.6s ease-out both !important;
+  animation-delay: 0.2s !important;
 }
 
 @keyframes unsuck-portal-appear {
@@ -2592,22 +2586,23 @@
   100% { transform: scale(1); opacity: 1; filter: brightness(1) drop-shadow(0 0 0px transparent); }
 }
 
-/* Fullscreen white flash for return transition */
+/* Subtle white flash for return — delayed so content is already appearing */
 .big-bang-flash {
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at 50% 60%, rgba(255,255,255,1) 0%, rgba(255,240,220,0.8) 25%, rgba(255,200,150,0.3) 50%, rgba(255,255,255,0) 75%);
+  background: radial-gradient(circle at 50% 55%, rgba(255,255,255,0.9) 0%, rgba(255,240,220,0.5) 20%, rgba(255,200,150,0.15) 45%, transparent 70%);
   opacity: 0;
   pointer-events: none;
   z-index: 99999;
 }
 .big-bang-active .big-bang-flash {
-  animation: big-bang-flash 0.6s ease-out both !important;
+  animation: big-bang-flash 0.8s ease-out 0.15s both !important;
 }
 
 @keyframes big-bang-flash {
-  0%   { opacity: 1; }
-  30%  { opacity: 0.7; }
+  0%   { opacity: 0; }
+  8%   { opacity: 0.85; }
+  25%  { opacity: 0.5; }
   100% { opacity: 0; }
 }
 

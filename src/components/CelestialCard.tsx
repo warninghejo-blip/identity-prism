@@ -167,7 +167,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         }
       }
       setUnsucking(false);
-    }, 2800);
+    }, 3200);
     return () => { cancelAnimationFrame(raf1); clearTimeout(timer); };
   }, [unsucking, setSuckVars]);
 
@@ -314,22 +314,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 // Set CSS variables FIRST (synchronously) so animation has correct targets
                 setSuckVars();
                 setShakeWarning(true);
-                // Phase 2: Spaghettification (after 0.7s shake)
+                // Phase 2: Spaghettification (after 1.0s shake)
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setShakeWarning(false);
                   setSuckingIn(true);
-                }, 700));
-                // Phase 3: Event horizon consume (0.2s after spaghettify starts)
+                }, 1000));
+                // Phase 3: Event horizon consume (0.4s after spaghettify starts)
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setConsuming(true);
-                }, 900));
+                }, 1400));
                 // Phase 4: Fullscreen blackout
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setBlackout(true);
-                }, 1600));
+                }, 2400));
                 // Phase 5: Navigate
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 2200));
+                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 3000));
               }}
             >
               <span className="bh-card-portal__glow" />
