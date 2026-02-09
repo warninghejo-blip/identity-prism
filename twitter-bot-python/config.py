@@ -117,6 +117,12 @@ TWITTERAPI_IO_TOTP_SECRET = os.getenv('TWITTERAPI_IO_TOTP_SECRET', '').strip()
 TWITTERAPI_IO_LOGIN_COOKIE = os.getenv('TWITTERAPI_IO_LOGIN_COOKIE', '').strip()
 TWITTERAPI_IO_TIMEOUT = int(os.getenv('TWITTERAPI_IO_TIMEOUT', '60'))
 
+# Official Twitter API v2 (for posting with reply_settings)
+TWITTER_CONSUMER_KEY = os.getenv('TWITTER_CONSUMER_KEY', '')
+TWITTER_CONSUMER_SECRET = os.getenv('TWITTER_CONSUMER_SECRET', '')
+TWITTER_ACCESS_TOKEN = os.getenv('TWITTER_ACCESS_TOKEN', '')
+TWITTER_ACCESS_TOKEN_SECRET = os.getenv('TWITTER_ACCESS_TOKEN_SECRET', '')
+
 MEDIA_DIR = os.getenv('MEDIA_DIR', str(BASE_DIR / 'media')).strip()
 MEDIA_FILES = [item.strip() for item in os.getenv('MEDIA_FILES', '').split(',') if item.strip()]
 POST_IMAGE_ENABLED = os.getenv('POST_IMAGE_ENABLED', 'true').lower() == 'true'

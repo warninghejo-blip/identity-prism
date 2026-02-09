@@ -220,7 +220,40 @@ class TwitterClient:
                     await asyncio.sleep(MEDIA_UPLOAD_RETRY_DELAY)
         return None
 
+    async def _post_tweet_twikit(self, text, media_paths=None):
+        """Post via twikit (cookie-based). No conversation_control = everyone can reply."""
+        media_ids = []
+        if media_paths:
+            for path in media_paths:
+                try:
+                    mid = await self.client.upload_media(source=path, wait_for_completion=True)
+                    if mid:
+                        media_ids.append(str(mid))
+                        logging.info('twikit media upload OK: %s', mid)
+                except Exception as exc:
+                    logging.warning('twikit media upload failed for %s: %s', path, exc)
+        try:
+            tweet = await self.client.create_tweet(
+                text=text,
+                media_ids=media_ids or None,
+            )
+            tweet_id = str(tweet.id) if hasattr(tweet, 'id') and tweet.id else None
+            if tweet_id:
+                logging.info('twikit tweet posted: %s (reply_settings=everyone by default)', tweet_id)
+                return tweet_id, None
+            logging.warning('twikit create_tweet returned no id: %s', tweet)
+            return 'unknown', None
+        except Exception as exc:
+            logging.warning('twikit create_tweet failed: %s', exc)
+            return None, str(exc)
+
     async def post_tweet(self, text, media_paths=None):
+        # Try twikit first (cookie-based, defaults to everyone can reply)
+        tweet_id, err = await self._post_tweet_twikit(text, media_paths)
+        if tweet_id:
+            return tweet_id, None
+        logging.warning('twikit post failed (%s); falling back to twitterapi.io', err)
+
         self._require_api_client()
         media_ids = []
         if media_paths:
@@ -238,7 +271,6 @@ class TwitterClient:
                 media_ids or None,
             )
             if tweet_id is None:
-                # Tweet likely created but no ID returned; do NOT retry
                 logging.warning('Post likely created but no tweet_id returned; treating as success')
                 return 'unknown', None
             return tweet_id, None
