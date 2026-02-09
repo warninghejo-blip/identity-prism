@@ -309,27 +309,23 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               className="bh-card-portal capture-hidden"
               onClick={(event) => {
                 event.stopPropagation();
-                if (shakeWarning || suckingIn || consuming) return;
+                if (suckingIn || consuming) return;
                 clearTransitionTimers();
                 // Set CSS variables FIRST (synchronously) so animation has correct targets
                 setSuckVars();
-                setShakeWarning(true);
-                // Phase 2: Spaghettification (after 1.0s shake)
-                transitionTimersRef.current.push(window.setTimeout(() => {
-                  setShakeWarning(false);
-                  setSuckingIn(true);
-                }, 1000));
-                // Phase 3: Event horizon consume (0.4s after spaghettify starts)
+                // Immediately start spiral pull (no shake)
+                setSuckingIn(true);
+                // Phase 2: Event horizon consume (portal expands after elements are mostly gone)
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setConsuming(true);
-                }, 1400));
-                // Phase 4: Fullscreen blackout
+                }, 1800));
+                // Phase 3: Fullscreen blackout
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   setBlackout(true);
-                }, 2400));
-                // Phase 5: Navigate
+                }, 2800));
+                // Phase 4: Navigate
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 3000));
+                transitionTimersRef.current.push(window.setTimeout(() => navigate(target), 3500));
               }}
             >
               <span className="bh-card-portal__glow" />

@@ -453,16 +453,20 @@ const BlackHole = () => {
       }
 
       parsedTokens.forEach(token => {
-        // For NFTs: only trust marketFloorSol from verified collections
-        // priceUsd from DAS token_info is unreliable for NFTs
+        // For NFTs: prefer marketFloorSol, fall back to DAS priceUsd
         if (token.isNft) {
-          if (token.marketFloorSol !== null && token.marketFloorSol !== undefined) {
+          if (token.marketFloorSol !== null && token.marketFloorSol !== undefined && token.marketFloorSol > 0) {
             token.valueSol = token.marketFloorSol;
             if (solUsd) {
               token.valueUsd = token.marketFloorSol * solUsd;
             }
+          } else if (token.priceUsd !== null && token.priceUsd !== undefined && token.priceUsd > 0) {
+            // Fallback: use DAS price_info when no floor data available
+            token.valueUsd = token.priceUsd;
+            if (solUsd) {
+              token.valueSol = token.priceUsd / solUsd;
+            }
           }
-          // Don't derive price from priceUsd for NFTs — it's not meaningful
         } else {
           const priceKnown = token.priceUsd !== null && token.priceUsd !== undefined;
           if (priceKnown) {
@@ -956,8 +960,8 @@ const BlackHole = () => {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-zinc-800/50">
-                    <TableHead className="w-10 text-center align-middle">
-                      <div className="flex items-center justify-center">
+                    <TableHead className="w-12 min-w-[48px] max-w-[48px] text-center align-middle px-0">
+                      <div className="flex items-center justify-center w-full">
                         <Checkbox
                           checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
                           onCheckedChange={selectAll}
@@ -982,8 +986,8 @@ const BlackHole = () => {
                   ) : (
                     visibleTokens.map((token) => (
                       <TableRow key={token.pubkey.toBase58()} className="hover:bg-zinc-900/40 border-zinc-800/40">
-                        <TableCell className="align-middle text-center w-10">
-                          <div className="flex items-center justify-center">
+                        <TableCell className="align-middle text-center w-12 min-w-[48px] max-w-[48px] px-0">
+                          <div className="flex items-center justify-center w-full">
                             <Checkbox
                               checked={selectedTokens.has(token.pubkey.toBase58())}
                               onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
@@ -991,8 +995,8 @@ const BlackHole = () => {
                             />
                           </div>
                         </TableCell>
-                        <TableCell className="align-middle">
-                          <div className="flex items-center gap-2">
+                        <TableCell className="align-middle text-center">
+                          <div className="flex items-center gap-2 justify-center">
                             <div className="w-8 h-8 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
                               {token.image ? (
                                 <img
