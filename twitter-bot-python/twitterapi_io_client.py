@@ -242,10 +242,10 @@ class TwitterApiIoClient:
                     logging.warning('%s 429 (attempt %d/%d)', label, attempt + 1, max_attempts)
                     continue  # _handle_429_backoff already set cooldown
                 if kind == 'automated':
-                    wait = random.uniform(120, 300)
-                    logging.warning('%s automated-reject (attempt %d/%d); backoff %.0fs', label, attempt + 1, max_attempts, wait)
-                    self._rate_limited_until = time.time() + wait
+                    wait = random.uniform(10, 30)
+                    logging.warning('%s automated-reject (attempt %d/%d); rotate proxy, wait %.0fs', label, attempt + 1, max_attempts, wait)
                     self.rotate_proxy()
+                    time.sleep(wait)
                     continue
                 if kind == 'auth':
                     logging.warning('%s auth error (%s); re-login & retry', label, str(exc)[:80])
@@ -274,10 +274,10 @@ class TwitterApiIoClient:
             error_msg = str(data.get('msg') or data.get('message') or data)
             kind = self._classify_error(error_msg)
             if kind == 'automated':
-                wait = random.uniform(120, 300)
-                logging.warning('%s automated-reject in response (attempt %d/%d); backoff %.0fs', label, attempt + 1, max_attempts, wait)
-                self._rate_limited_until = time.time() + wait
+                wait = random.uniform(10, 30)
+                logging.warning('%s automated-reject in response (attempt %d/%d); rotate proxy, wait %.0fs', label, attempt + 1, max_attempts, wait)
                 self.rotate_proxy()
+                time.sleep(wait)
                 continue
             if kind == 'auth':
                 logging.warning('%s auth error in response (%s); re-login & retry', label, error_msg[:80])
@@ -313,7 +313,7 @@ class TwitterApiIoClient:
                 build_payload=lambda: build(True),
                 extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
                 label='create_tweet',
-                max_attempts=2,
+                max_attempts=5,
             )
         except Exception as exc:
             msg = str(exc).lower()
