@@ -9,7 +9,7 @@ import {
 } from '@solana/spl-token';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { toast } from 'sonner';
-import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLeft, ExternalLink } from 'lucide-react';
+import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLeft, ExternalLink, ArrowUpDown } from 'lucide-react';
 import { getHeliusProxyUrl, getHeliusRpcUrl, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 
@@ -171,6 +171,24 @@ const fetchSolPriceUsd = async (proxyBase: string | null) => {
   }
 };
 
+const fetchJupiterPrices = async (mints: string[]): Promise<Map<string, number>> => {
+  const prices = new Map<string, number>();
+  if (mints.length === 0) return prices;
+  try {
+    const url = `https://api.jup.ag/price/v2?ids=${mints.join(',')}`;
+    const res = await fetch(url);
+    if (!res.ok) return prices;
+    const data = await res.json();
+    if (data?.data) {
+      for (const [mint, info] of Object.entries(data.data)) {
+        const p = parseNumber((info as any)?.price);
+        if (p !== null && p > 0) prices.set(mint, p);
+      }
+    }
+  } catch {}
+  return prices;
+};
+
 const RENT_RECLAIM_SOL = 0.002;
 const VALUE_THRESHOLD_SOL = 0.0015;
 const COMMISSION_RATE = 0.10;
@@ -188,12 +206,30 @@ const PROTECTED_COLLECTIONS = new Set<string>([
   ...BLUE_CHIP_COLLECTIONS,
 ]);
 
+const PROTECTED_SYMBOLS = new Set<string>([
+  'SKR', 'SeekerGT', 'SAGA',
+]);
+
+const PROTECTED_NAME_PATTERNS = [
+  /seeker\s*genesis/i,
+  /saga\s*(genesis|token)/i,
+  /chapter\s*2/i,
+  /solana\s*mobile/i,
+  /identity\s*prism/i,
+];
+
 const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: string } => {
   if (PROTECTED_MINTS.has(token.mint)) {
     return { status: 'protected', reason: 'Core ecosystem token' };
   }
   if (token.collectionId && PROTECTED_COLLECTIONS.has(token.collectionId)) {
     return { status: 'protected', reason: 'Valuable collection NFT' };
+  }
+  if (token.symbol && PROTECTED_SYMBOLS.has(token.symbol)) {
+    return { status: 'protected', reason: 'Ecosystem token' };
+  }
+  if (token.name && PROTECTED_NAME_PATTERNS.some(p => p.test(token.name!))) {
+    return { status: 'protected', reason: 'Ecosystem asset' };
   }
   if (token.isNft && token.marketStatus === 'listed') {
     return { status: 'protected', reason: 'Listed on marketplace' };
@@ -413,6 +449,20 @@ const BlackHole = () => {
           token.isNft = isMaybeNft;
         }
       });
+
+      // Jupiter price fallback for fungible tokens without DAS price
+      const noPriceMints = parsedTokens
+        .filter(t => !t.isNft && t.priceUsd == null && t.uiAmount > 0)
+        .map(t => t.mint);
+      if (noPriceMints.length > 0) {
+        const jupPrices = await fetchJupiterPrices([...new Set(noPriceMints)]);
+        parsedTokens.forEach(t => {
+          if (!t.isNft && t.priceUsd == null) {
+            const p = jupPrices.get(t.mint);
+            if (p) t.priceUsd = p;
+          }
+        });
+      }
 
       const collectionLookups = new Map<string, { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }>();
       parsedTokens
@@ -716,6 +766,39 @@ const BlackHole = () => {
 
   const visibleTokens = getVisibleTokens();
 
+  const handleSort = useCallback((field: 'value' | 'return' | 'status') => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('desc');
+    }
+  }, [sortField]);
+
+  const sortedTokens = useMemo(() => {
+    if (!sortField) return visibleTokens;
+    return [...visibleTokens].sort((a, b) => {
+      let cmp = 0;
+      switch (sortField) {
+        case 'status': {
+          const order: Record<string, number> = { protected: 0, valuable: 1, burnable: 2 };
+          cmp = (order[a.assetStatus ?? 'burnable'] ?? 2) - (order[b.assetStatus ?? 'burnable'] ?? 2);
+          break;
+        }
+        case 'value':
+          cmp = (a.valueSol ?? 0) - (b.valueSol ?? 0);
+          break;
+        case 'return': {
+          const aRet = a.rentSol * (1 - COMMISSION_RATE) - (a.valueSol ?? 0);
+          const bRet = b.rentSol * (1 - COMMISSION_RATE) - (b.valueSol ?? 0);
+          cmp = aRet - bRet;
+          break;
+        }
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [visibleTokens, sortField, sortDir]);
+
   const summary = useMemo(() => {
     const selected = tokens.filter(t => selectedTokens.has(t.pubkey.toBase58()));
     const burnable = selected.filter(t => t.assetStatus !== 'protected');
@@ -753,6 +836,8 @@ const BlackHole = () => {
   }, []);
 
   const [returning, setReturning] = useState(false);
+  const [sortField, setSortField] = useState<'value' | 'return' | 'status' | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const handleReturnToCard = useCallback(() => {
     if (returning) return;
@@ -976,9 +1061,9 @@ const BlackHole = () => {
                     </TableHead>
                     <TableHead className="text-left text-zinc-500 text-xs w-[180px] min-w-[180px]">Asset</TableHead>
                     <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Balance</TableHead>
-                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Value</TableHead>
-                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Return</TableHead>
-                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Status</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors" onClick={() => handleSort('value')}>Value {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors" onClick={() => handleSort('return')}>Return {sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</TableHead>
+                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors" onClick={() => handleSort('status')}>Status {sortField === 'status' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -989,7 +1074,7 @@ const BlackHole = () => {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    visibleTokens.map((token) => (
+                    sortedTokens.map((token) => (
                       <TableRow key={token.pubkey.toBase58()} className="hover:bg-zinc-900/40 border-zinc-800/40">
                         <TableCell className="align-middle text-center w-12 min-w-[48px] max-w-[48px] px-0">
                           <div className="flex items-center justify-center w-full">
@@ -1022,12 +1107,19 @@ const BlackHole = () => {
                             </div>
                             <div className="flex flex-col min-w-0">
                               <div className="flex items-center gap-1">
-                                <span className="font-medium text-zinc-200 text-[12px] leading-tight truncate max-w-[100px]">
+                                <span className="font-medium text-zinc-200 text-[12px] leading-tight truncate max-w-[90px]">
                                   {token.name || 'Unknown'}
                                 </span>
-                                <a href={token.meUrl || `https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
-                                {token.tensorUrl && (
-                                  <a href={token.tensorUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-500/70 hover:text-blue-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Tensor">T</a>
+                                <span className={`text-[8px] px-1 py-px rounded leading-none shrink-0 ${token.isNft ? 'bg-purple-900/30 text-purple-400' : 'bg-zinc-800/60 text-zinc-500'}`}>
+                                  {token.isNft ? 'NFT' : 'TKN'}
+                                </span>
+                                {token.isNft && (
+                                  <>
+                                    <a href={token.meUrl || `https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
+                                    {token.tensorUrl && (
+                                      <a href={token.tensorUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-500/70 hover:text-blue-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Tensor">T</a>
+                                    )}
+                                  </>
                                 )}
                               </div>
                               <span className="text-[10px] text-zinc-600 font-mono">

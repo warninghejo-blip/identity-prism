@@ -739,6 +739,13 @@ const Index = () => {
   const showReadyView = previewMode || viewState === "ready" || returningFromBH.current || suppressLoadingRef.current;
   const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
 
+  // Prevent accidental auto-scroll on main page
+  useEffect(() => {
+    if (shellRef.current && !isScrollEnabled) {
+      shellRef.current.scrollTop = 0;
+    }
+  }, [viewState, isScrollEnabled]);
+
   useEffect(() => {
     const updateScrollbarWidth = () => {
       const shell = shellRef.current;

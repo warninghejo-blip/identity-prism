@@ -836,10 +836,17 @@
   backdrop-filter: blur(20px);
 }
 
+/* Smooth fade-out when scanning → ready */
+.scanning-overlay.fade-out {
+  transition: opacity 0.5s ease-out !important;
+  opacity: 0 !important;
+}
+
 .scanning-overlay {
   background: linear-gradient(180deg, #05070a 0%, #0a0f1a 50%, #05070a 100%);
   transition: none !important;
   opacity: 1 !important;
+  animation: none !important;
 }
 
 .warp-content { 
@@ -2563,56 +2570,50 @@
     transform:
       translate(var(--tx, 0px), var(--ty, 0px))
       scale(0)
-      rotate(450deg);
+      rotate(360deg);
     opacity: 0;
-    filter: blur(10px);
+    filter: blur(8px);
   }
-  15% {
+  20% {
     transform:
       translate(
-        calc(var(--tx, 0px) * 0.88 + var(--px, 0px) * 0.06),
-        calc(var(--ty, 0px) * 0.88 + var(--py, 0px) * 0.06)
+        calc(var(--tx, 0px) * 0.7 + var(--px, 0px) * 0.1),
+        calc(var(--ty, 0px) * 0.7 + var(--py, 0px) * 0.1)
       )
-      scale(0.12)
-      rotate(340deg);
-    opacity: 0.2;
-    filter: blur(6px);
+      scale(0.2)
+      rotate(240deg);
+    opacity: 0.3;
+    filter: blur(4px);
   }
-  35% {
+  45% {
     transform:
       translate(
-        calc(var(--tx, 0px) * 0.5 + var(--px, 0px) * 0.3),
-        calc(var(--ty, 0px) * 0.5 + var(--py, 0px) * 0.3)
+        calc(var(--tx, 0px) * 0.3 + var(--px, 0px) * 0.35),
+        calc(var(--ty, 0px) * 0.3 + var(--py, 0px) * 0.35)
       )
-      scale(0.35)
-      rotate(200deg);
-    opacity: 0.5;
-    filter: blur(3px);
+      scale(0.5)
+      rotate(120deg);
+    opacity: 0.6;
+    filter: blur(2px);
   }
-  55% {
+  65% {
     transform:
       translate(
-        calc(var(--tx, 0px) * 0.18 + var(--px, 0px) * 0.55),
-        calc(var(--ty, 0px) * 0.18 + var(--py, 0px) * 0.55)
+        calc(var(--tx, 0px) * 0.08 + var(--px, 0px) * 0.15),
+        calc(var(--ty, 0px) * 0.08 + var(--py, 0px) * 0.15)
       )
-      scale(0.65)
-      rotate(90deg);
-    opacity: 0.75;
-    filter: blur(1px);
+      scale(0.82)
+      rotate(40deg);
+    opacity: 0.85;
+    filter: blur(0.5px);
   }
-  78% {
-    transform:
-      translate(
-        calc(var(--tx, 0px) * 0.03 + var(--px, 0px) * 0.2),
-        calc(var(--ty, 0px) * 0.03 + var(--py, 0px) * 0.2)
-      )
-      scale(0.92)
-      rotate(20deg);
-    opacity: 0.9;
+  82% {
+    transform: translate(0, 0) scale(0.96) rotate(8deg);
+    opacity: 0.95;
     filter: blur(0px);
   }
-  92% {
-    transform: translate(0, 0) scale(1.04) rotate(-5deg);
+  93% {
+    transform: translate(0, 0) scale(1.015) rotate(-2deg);
     opacity: 1;
     filter: blur(0px);
   }
@@ -2637,32 +2638,37 @@
 
 /* Staggered unsuck: scene+bg first, then header, footer, portal, mint-panel */
 .card-unsuck-active [data-suck="bg"] {
-  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
   animation-delay: 0.1s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active [data-suck="scene"] {
-  animation: unsuck-scene-fade 2.0s ease-out both !important;
+  animation: unsuck-scene-fade 2.8s ease-out both !important;
   animation-delay: 0.05s !important;
   will-change: opacity;
 }
 .card-unsuck-active [data-suck="header"] {
-  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.3s !important;
+  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.35s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active [data-suck="footer"] {
-  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.5s !important;
+  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.55s !important;
+  will-change: transform, opacity, filter;
+}
+.card-unsuck-active [data-suck="label"] {
+  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.7s !important;
   will-change: transform, opacity, filter;
 }
 .card-stage:has(.card-unsuck-active) .mint-panel {
-  animation: unsuck-spiral 2.0s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
-  animation-delay: 0.65s !important;
+  animation: unsuck-spiral 2.8s cubic-bezier(0.08, 0.82, 0.17, 1) both !important;
+  animation-delay: 0.75s !important;
   will-change: transform, opacity, filter;
 }
 .card-unsuck-active .bh-card-portal {
-  animation: unsuck-portal-appear 1.6s ease-out both !important;
+  animation: unsuck-portal-appear 2.2s ease-out both !important;
   animation-delay: 0.2s !important;
 }
 
