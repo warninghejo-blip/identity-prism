@@ -2194,64 +2194,67 @@
 .blackhole-void-overlay.bh-void-outro {
   animation: bh-void-implode 0.9s cubic-bezier(0.7, 0, 0.84, 0) forwards;
 }
-/* Background layers collapse inward first */
+/* Background layers spiral-suck toward BH center */
 .bh-returning .background-base,
 .bh-returning .nebula-layer,
 .bh-returning .identity-gradient {
-  animation: bh-implode-bg 1.2s 0.1s cubic-bezier(0.7, 0, 0.84, 0) forwards !important;
-  transform-origin: 50% 30%;
+  animation: bh-spiral-suck 1.2s 0.05s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
+  will-change: transform, opacity;
 }
-/* Title & subtitle get sucked in fast */
+/* Title & subtitle spiral in fast */
 .bh-returning .blackhole-hero__title {
-  animation: bh-implode-element 0.9s 0.2s cubic-bezier(0.7, 0, 0.84, 0) forwards !important;
-  transform-origin: 50% 100%;
+  animation: bh-spiral-suck 1.0s 0.15s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
 }
 .bh-returning .blackhole-hero__sub {
-  animation: bh-implode-element 0.8s 0.3s cubic-bezier(0.7, 0, 0.84, 0) forwards !important;
-  transform-origin: 50% 100%;
+  animation: bh-spiral-suck 0.9s 0.25s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
 }
-/* Content panel collapses toward BH center with spaghettification */
+/* Content panel spirals toward BH center */
 .bh-returning .blackhole-content {
-  animation: bh-implode-content 1.3s 0.15s cubic-bezier(0.7, 0, 0.84, 0) forwards !important;
-  transform-origin: 50% 0%;
+  animation: bh-spiral-suck 1.2s 0.1s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
 }
 /* Return hint disappears instantly */
 .bh-returning .bh-return-hint,
 .bh-returning .bh-return-overlay {
-  animation: bh-implode-element 0.6s 0s cubic-bezier(0.7, 0, 0.84, 0) forwards !important;
+  animation: bh-spiral-suck 0.6s 0s cubic-bezier(0.25, 0, 0.7, 0.1) forwards !important;
 }
-/* Black hole visual: THE HERO — grows, intensifies, absorbs everything */
+/* Black hole visual: barely grows then implodes (matches main card portal) */
 .bh-returning .blackhole-visual {
-  animation: bh-hero-absorb 1.8s ease-in-out forwards !important;
+  animation: bh-hero-absorb 1.3s ease-in-out forwards !important;
   cursor: default !important;
   z-index: 100 !important;
 }
 
-@keyframes bh-implode-bg {
-  0%   { transform: scale(1); opacity: 1; }
-  40%  { transform: scale(0.85); opacity: 0.6; }
-  100% { transform: scale(0.3); opacity: 0; }
+/* Spiral suck animation matching main card style */
+@keyframes bh-spiral-suck {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  20% {
+    transform: translate3d(2%, -3%, 0) scale(0.88) rotate(8deg);
+    opacity: 0.85;
+  }
+  45% {
+    transform: translate3d(-3%, -10%, 0) scale(0.55) rotate(45deg);
+    opacity: 0.6;
+  }
+  70% {
+    transform: translate3d(1%, -18%, 0) scale(0.2) rotate(150deg);
+    opacity: 0.25;
+  }
+  100% {
+    transform: translate3d(0, -25%, 0) scale(0) rotate(360deg);
+    opacity: 0;
+  }
 }
-@keyframes bh-implode-element {
-  0%   { transform: translateY(0) scale(1); opacity: 1; }
-  30%  { transform: translateY(-20px) scaleX(0.7) scaleY(1.2); opacity: 0.7; }
-  100% { transform: translateY(-80px) scale(0); opacity: 0; }
-}
-@keyframes bh-implode-content {
-  0%   { transform: translateY(0) scale(1); opacity: 1; }
-  20%  { transform: translateY(-30px) scaleX(0.8) scaleY(1.1); opacity: 0.8; }
-  50%  { transform: translateY(-100px) scaleX(0.3) scaleY(1.6); opacity: 0.5; }
-  80%  { transform: translateY(-180px) scaleX(0.05) scaleY(2.5); opacity: 0.15; }
-  100% { transform: translateY(-220px) scale(0); opacity: 0; }
-}
-/* Hero black hole: grows dramatically, fades out */
+/* Hero black hole: barely grows, then implodes to zero */
 @keyframes bh-hero-absorb {
   0%   { transform: scale(1); opacity: 1; }
-  20%  { transform: scale(1.15); opacity: 1; }
-  40%  { transform: scale(1.5); opacity: 1; }
-  60%  { transform: scale(2.2); opacity: 0.9; }
-  80%  { transform: scale(4.0); opacity: 0.5; }
-  100% { transform: scale(8.0); opacity: 0; }
+  30%  { transform: scale(1.08); opacity: 1; }
+  55%  { transform: scale(1.15); opacity: 1; }
+  75%  { transform: scale(0.6); opacity: 0.7; }
+  90%  { transform: scale(0.15); opacity: 0.3; }
+  100% { transform: scale(0); opacity: 0; }
 }
 
 @keyframes bh-void-reveal {

@@ -176,28 +176,52 @@ const fetchSolPriceUsd = async (proxyBase: string | null) => {
 const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>> => {
   const prices = new Map<string, number>();
   if (mints.length === 0) return prices;
+
+  // 1) Jupiter Price API v2 — most reliable for Solana tokens
   try {
-    // DexScreener: free, no auth, max ~30 addresses per request
-    const batches: string[][] = [];
-    for (let i = 0; i < mints.length; i += 30) {
-      batches.push(mints.slice(i, i + 30));
-    }
-    for (const batch of batches) {
-      const url = `https://api.dexscreener.com/tokens/v1/solana/${batch.join(',')}`;
+    const JUPITER_BATCH = 100;
+    for (let i = 0; i < mints.length; i += JUPITER_BATCH) {
+      const batch = mints.slice(i, i + JUPITER_BATCH);
+      const url = `https://api.jup.ag/price/v2?ids=${batch.join(',')}`;
       const res = await fetch(url);
       if (!res.ok) continue;
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        for (const pair of data) {
-          const mint = pair.baseToken?.address;
-          const p = parseFloat(pair.priceUsd);
-          if (mint && !isNaN(p) && p > 0 && !prices.has(mint)) {
-            prices.set(mint, p);
-          }
+      const json = await res.json();
+      const data = json?.data;
+      if (data && typeof data === 'object') {
+        for (const [mint, info] of Object.entries(data) as [string, any][]) {
+          const p = parseFloat(info?.price);
+          if (!isNaN(p) && p > 0) prices.set(mint, p);
         }
       }
     }
   } catch {}
+
+  // 2) DexScreener fallback for anything Jupiter missed
+  const remaining = mints.filter(m => !prices.has(m));
+  if (remaining.length > 0) {
+    try {
+      const batches: string[][] = [];
+      for (let i = 0; i < remaining.length; i += 30) {
+        batches.push(remaining.slice(i, i + 30));
+      }
+      for (const batch of batches) {
+        const url = `https://api.dexscreener.com/tokens/v1/solana/${batch.join(',')}`;
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          for (const pair of data) {
+            const mint = pair.baseToken?.address;
+            const p = parseFloat(pair.priceUsd);
+            if (mint && !isNaN(p) && p > 0 && !prices.has(mint)) {
+              prices.set(mint, p);
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
   return prices;
 };
 
@@ -907,24 +931,24 @@ const BlackHole = () => {
     if (returning) return;
     setReturning(true);
 
-    // Create a persistent DOM overlay that survives the route change
-    let veil = document.getElementById('bh-transition-veil');
-    if (!veil) {
-      veil = document.createElement('div');
-      veil.id = 'bh-transition-veil';
-      veil.style.cssText = 'position:fixed;inset:0;background:#050505;z-index:999999;pointer-events:none;opacity:0;transition:opacity 0.6s ease-in;';
-      document.body.appendChild(veil);
-    }
-    // Start fading to opaque midway through the implode animation
-    setTimeout(() => { veil!.style.opacity = '1'; }, 900);
-
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
-    // Navigate after implode + blackout, use replace to fix back button
+
+    // After suck-in animations finish (~1.3s), screen is already dark.
+    // Create opaque veil at that moment (no transition = no flash), then navigate.
     setTimeout(() => {
+      let veil = document.getElementById('bh-transition-veil');
+      if (!veil) {
+        veil = document.createElement('div');
+        veil.id = 'bh-transition-veil';
+        veil.style.cssText = 'position:fixed;inset:0;background:#050505;z-index:999999;pointer-events:none;opacity:1;';
+        document.body.appendChild(veil);
+      } else {
+        veil.style.opacity = '1';
+      }
       sessionStorage.setItem('fromBlackHole', '1');
       navigate(target, { state: { fromBlackHole: true }, replace: true });
-    }, 1800);
+    }, 1400);
   }, [returning, ownerPublicKey, addressParam, navigate]);
 
   return (
