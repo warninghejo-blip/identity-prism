@@ -81,11 +81,25 @@ class AIEngine:
     def _clean_text(self, text):
         if not text:
             return ''
+        import re
         cleaned = text.strip().strip('"').strip("'")
         cleaned = ' '.join(cleaned.split())
         cleaned = trim_hashtags(cleaned, MAX_HASHTAGS)
-        cleaned = self._format_tags(cleaned)
-        cleaned = self._fit_twitter_limit(cleaned)
+        # Extract trailing tags (#hashtag, $TICKER) before truncation
+        words = cleaned.split()
+        tags = []
+        while words and re.match(r'^[#$]\w+$', words[-1]):
+            tags.append(words.pop())
+        tags.reverse()
+        body = ' '.join(words).rstrip()
+        tag_str = ' '.join(tags)
+        # Truncate body to leave room for tags on a new line
+        if tag_str:
+            max_body = 280 - len(tag_str) - 1  # -1 for newline
+            body = self._fit_twitter_limit(body, max_body)
+            cleaned = f'{body}\n{tag_str}'
+        else:
+            cleaned = self._fit_twitter_limit(body)
         return cleaned
 
     def _append_cta(self, text):
