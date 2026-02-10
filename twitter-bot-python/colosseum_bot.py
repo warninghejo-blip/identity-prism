@@ -645,4 +645,14 @@ async def main():
         await asyncio.sleep(sleep_time)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    _backoff = 5
+    while True:
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            break
+        except Exception as exc:
+            logging.error('FATAL: %s', exc, exc_info=True)
+        logging.warning('Bot exited — restarting in %ds', _backoff)
+        time.sleep(_backoff)
+        _backoff = min(_backoff * 2, 300)
