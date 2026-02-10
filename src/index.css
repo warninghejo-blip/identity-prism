@@ -156,6 +156,12 @@
   padding-bottom: clamp(160px, 28vh, 320px);
   box-sizing: border-box;
   pointer-events: none;
+  animation: card-stage-fadein 0.4s ease-out both;
+}
+
+@keyframes card-stage-fadein {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .is-nft-view .card-stage {
