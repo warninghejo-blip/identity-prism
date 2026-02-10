@@ -285,7 +285,7 @@ const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: str
 
 const BlackHole = () => {
   const { connection } = useConnection();
-  const { publicKey, sendTransaction } = useWallet();
+  const { publicKey, signTransaction, sendTransaction } = useWallet();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -796,8 +796,10 @@ const BlackHole = () => {
       }
 
       // 10% commission to treasury (based on actual rent in each account)
+      // Skip commission if the connected wallet IS the treasury (avoid self-transfer signature issue)
       const totalReclaimLamports = safeTargets.reduce((sum, t) => sum + t.lamports, 0);
-      const commissionLamports = Math.round(totalReclaimLamports * COMMISSION_RATE);
+      const isTreasury = publicKey.toBase58() === TREASURY_ADDRESS;
+      const commissionLamports = isTreasury ? 0 : Math.round(totalReclaimLamports * COMMISSION_RATE);
       if (commissionLamports > 0) {
         transaction.add(
           SystemProgram.transfer({
@@ -820,7 +822,18 @@ const BlackHole = () => {
       transaction.lastValidBlockHeight = lastValidBlockHeight;
       transaction.feePayer = publicKey;
 
-      const signature = await sendTransaction(transaction, connection);
+      // Use signTransaction + sendRawTransaction (same pattern as mint)
+      // sendTransaction alone fails on some mobile wallets with missing signature
+      let signature: string;
+      if (signTransaction) {
+        const signed = await signTransaction(transaction);
+        signature = await connection.sendRawTransaction(signed.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        });
+      } else {
+        signature = await sendTransaction(transaction, connection);
+      }
       
       const netReclaim = (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL;
       toast.info("Incineration started...", {
@@ -1160,7 +1173,7 @@ const BlackHole = () => {
           {/* ═══ Mobile Token List (< 640px) ═══ */}
           <div className="sm:hidden">
             {/* Header row — CSS grid for perfect alignment */}
-            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px minmax(0, 0.8fr) 58px 64px 56px' }}>
+            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px minmax(0, 1fr) 52px 72px 42px' }}>
               <div className="flex justify-center">
                 <Checkbox
                   checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
@@ -1169,8 +1182,8 @@ const BlackHole = () => {
                 />
               </div>
               <span className="text-center">Asset</span>
-              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return {sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
               <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>Status</span>
             </div>
 
@@ -1192,7 +1205,7 @@ const BlackHole = () => {
                         ? 'bg-cyan-950/15 border-cyan-900/30'
                         : 'bg-zinc-900/20 border-zinc-800/30'
                     }`}
-                    style={{ gridTemplateColumns: '24px minmax(0, 0.8fr) 58px 64px 56px' }}
+                    style={{ gridTemplateColumns: '24px minmax(0, 1fr) 52px 72px 42px' }}
                     onClick={() => toggleSelection(token.pubkey.toBase58())}
                   >
                     <div className="flex justify-center">
