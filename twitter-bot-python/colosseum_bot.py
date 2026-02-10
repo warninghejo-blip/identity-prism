@@ -126,6 +126,12 @@ def generate_text(prompt, max_tokens=1024):
             contents=prompt,
             config={'max_output_tokens': max_tokens, 'temperature': 0.9},
         )
+        # Detect truncation via finish_reason
+        if resp.candidates:
+            fr = getattr(resp.candidates[0], 'finish_reason', None)
+            if fr and str(fr).upper() in ('MAX_TOKENS', 'STOP_CANDIDATE_MAX_TOKENS', '2'):
+                logging.warning('Gemini response truncated (finish_reason=%s)', fr)
+                return None
         text = resp.text.strip() if resp.text else None
         if not text:
             return None
@@ -136,12 +142,25 @@ def generate_text(prompt, max_tokens=1024):
         logging.warning('Gemini generation failed: %s', e)
         return None
 
-def is_quality(text):
+def is_quality(text, min_len=40):
     """Reject truncated or too-short text."""
-    if not text or len(text) < 40:
+    if not text or len(text) < min_len:
         return False
-    last = text.rstrip()[-1]
-    return last in '.!?)"' or ord(last) > 127
+    stripped = text.rstrip()
+    if not stripped:
+        return False
+    last = stripped[-1]
+    # Must end with sentence-ending punctuation or quote or unicode
+    if last not in '.!?)"' and ord(last) <= 127:
+        return False
+    # Reject if it ends mid-phrase (common truncation patterns)
+    lower_end = stripped[-30:].lower()
+    truncation_markers = [' and ', ' the ', ' we ', ' at ', ' to ', ' in ', ' a ', ' an ',
+                          ' or ', ' but ', ' with ', ' for ', ' of ', ' is ', ' are ']
+    for marker in truncation_markers:
+        if lower_end.endswith(marker.rstrip()):
+            return False
+    return True
 
 # ---------------------------------------------------------------------------
 # Actions (each does exactly ONE forum write)
@@ -164,13 +183,23 @@ Topics to cover (pick 2-3):
 Format: title on first line, then blank line, then body (3-6 paragraphs, ~200-400 words).
 Be genuine and interesting. Show real technical depth.
 Do NOT start with "Progress Update Day X" — be creative with the title."""
-    text = generate_text(prompt, max_tokens=800)
+    text = None
+    for attempt in range(3):
+        text = generate_text(prompt, max_tokens=2048)
+        if text and is_quality(text, min_len=100):
+            break
+        logging.warning('Post generation attempt %d/3 failed quality check (len=%d)',
+                        attempt + 1, len(text) if text else 0)
+        text = None
     if not text:
-        logging.warning('Post generation failed')
+        logging.warning('Post generation failed after 3 attempts')
         return False
     lines = text.strip().split('\n', 1)
     title = lines[0].strip().strip('#').strip()[:200]
     body = lines[1].strip() if len(lines) > 1 else text
+    if not is_quality(body, min_len=80):
+        logging.warning('Post body failed quality check: %s...', body[:60])
+        return False
     if len(title) < 3:
         title = f'Identity Prism — Day {day} update'
     result = api_post('/forum/posts', api_key, {
