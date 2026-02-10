@@ -814,6 +814,12 @@ const BlackHole = () => {
         return;
       }
 
+      // Explicitly set blockhash + feePayer (some mobile wallets don't auto-fill)
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      transaction.lastValidBlockHeight = lastValidBlockHeight;
+      transaction.feePayer = publicKey;
+
       const signature = await sendTransaction(transaction, connection);
       
       const netReclaim = (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL;
@@ -1160,10 +1166,10 @@ const BlackHole = () => {
                 onCheckedChange={selectAll}
                 className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-1"
               />
-              <span className="flex-1 min-w-0">Asset</span>
-              <span className="w-[46px] text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="w-[54px] text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="w-[22px] text-center border-l border-zinc-800/40 cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>St</span>
+              <span className="min-w-0" style={{ width: '38%' }}>Asset</span>
+              <span className="text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" style={{ width: '18%' }} onClick={() => handleSort('value')}>Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" style={{ width: '22%' }} onClick={() => handleSort('return')}>Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="text-center border-l border-zinc-800/40 cursor-pointer hover:text-zinc-300" style={{ width: '22px' }} onClick={() => handleSort('status')}>⚡</span>
             </div>
 
             {visibleTokens.length === 0 ? (
@@ -1191,7 +1197,7 @@ const BlackHole = () => {
                       className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-1"
                     />
                     {/* Asset: icon + name + type */}
-                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0 overflow-hidden" style={{ width: '38%', flexShrink: 0 }}>
                       <div className="w-7 h-7 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
                         {token.image ? (
                           <img src={token.image} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
@@ -1208,13 +1214,13 @@ const BlackHole = () => {
                       </div>
                     </div>
                     {/* Balance */}
-                    <span className="text-[11px] font-mono text-zinc-400 w-[46px] text-right shrink-0 border-l border-zinc-800/30 pl-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
+                    <span className="text-[11px] font-mono text-zinc-400 text-right shrink-0 border-l border-zinc-800/30 pl-1" style={{ width: '18%' }}>{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
                     {/* Return */}
-                    <span className="text-[10px] font-mono text-emerald-400/80 w-[54px] text-right shrink-0 border-l border-zinc-800/30 pl-1">
+                    <span className="text-[10px] font-mono text-emerald-400/80 text-right shrink-0 border-l border-zinc-800/30 pl-1" style={{ width: '22%' }}>
                       {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
                     </span>
                     {/* Status */}
-                    <div className="shrink-0 w-[22px] flex justify-center border-l border-zinc-800/30">
+                    <div className="shrink-0 flex justify-center border-l border-zinc-800/30" style={{ width: 22 }}>
                       {token.assetStatus === 'protected' ? (
                         <Shield className="h-3.5 w-3.5 text-emerald-400" />
                       ) : token.assetStatus === 'valuable' ? (

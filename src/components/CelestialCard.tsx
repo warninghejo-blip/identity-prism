@@ -262,7 +262,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           className="w-full h-full relative preserve-3d"
           initial={false}
           animate={{ rotateY: isFlipped ? 180 : 0 }}
-          transition={{ type: 'spring', stiffness: 60, damping: 12, mass: 0.8 }}
+          transition={{ type: 'tween', duration: 0.6, ease: 'easeInOut' }}
           style={{ transformStyle: 'preserve-3d' }}
         >
         {/* FRONT */}

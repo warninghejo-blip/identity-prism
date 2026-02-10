@@ -204,7 +204,7 @@
     width: 100vw;
     height: 100vh;
     height: 100svh;
-    border-radius: 28px;
+    border-radius: 40px;
     overflow: hidden;
     background: #020408;
   }
@@ -214,7 +214,7 @@
   }
 
   .celestial-card-body {
-    border-radius: 28px;
+    border-radius: 40px;
     overflow: hidden;
   }
 }

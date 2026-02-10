@@ -500,9 +500,7 @@ const Index = () => {
     if (isLoading || !traits) {
       setViewState("scanning");
     } else {
-      // Delay to ensure smooth transition
-      const timer = setTimeout(() => setViewState("ready"), 300);
-      return () => clearTimeout(timer);
+      setViewState("ready");
     }
   }, [resolvedAddress, isWarping, isLoading, traits, fromBlackHole]);
 
