@@ -75,8 +75,18 @@ Share your Identity Prism card directly in any Blink-compatible client (wallets,
 https://identityprism.xyz/api/actions/share?address=<YOUR_WALLET>
 ```
 
+### ⛓️ On-Chain Attestation
+Record your reputation score permanently on the Solana blockchain via the **Memo Program**. The attestation is co-signed by our authority, creating a verifiable, immutable proof that any smart contract or dApp can verify.
+
+```
+https://identityprism.xyz/api/actions/attest?address=<YOUR_WALLET>
+```
+
+Also works as a **Solana Blink** — attest your reputation from any Blink-compatible wallet.
+
 ### 🤖 AI-Powered Social Agent
 An autonomous Twitter bot ([@Identity_Prism](https://x.com/Identity_Prism)) that:
+- **Auto-replies with real reputation data** when mentioned with a Solana address
 - **Posts threads** about on-chain identity, Solana ecosystem trends, and wallet analysis
 - **Engages** with relevant Solana accounts (replies, likes, retweets)
 - **Creates trend-reactive content** based on current crypto topics
@@ -179,6 +189,7 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 | `/api/reputation/compare?a=&b=` | GET | Compare two wallets |
 | `/api/actions/share?address=` | GET/POST | Blink: share identity card |
 | `/api/actions/mint-blink` | GET/POST | Blink: mint identity NFT |
+| `/api/actions/attest?address=` | GET/POST | Blink: on-chain reputation attestation |
 | `/api/market/sol-price` | GET | Current SOL price |
 | `/api/market/jupiter-prices` | POST | Token prices via Jupiter |
 

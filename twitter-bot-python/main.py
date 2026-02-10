@@ -3,8 +3,10 @@ import asyncio
 import datetime
 import logging
 import random
+import re
 import time
 
+from curl_cffi import requests as cffi_requests
 from dotenv import load_dotenv
 
 from ai_engine import AIEngine
@@ -12,6 +14,7 @@ from config import (
     ACTION_WEIGHTS,
     ACTIVE_HOURS_UTC,
     BOT_USERNAME,
+    CTA_DOMAIN,
     LIKE_RATE,
     MAX_STORED_TWEETS,
     PEAK_HOURS_UTC,
@@ -26,6 +29,58 @@ from config import (
 )
 from twitter_client import TwitterClient
 from utils import async_sleep_random, load_state, save_state, setup_logging
+
+REPUTATION_API_URL = f'https://{CTA_DOMAIN}/api/reputation'
+_SOLANA_ADDR_RE = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
+
+TIER_EMOJI = {
+    'mercury': '☿️', 'mars': '🔴', 'venus': '🌋', 'earth': '🌍',
+    'neptune': '🔵', 'uranus': '💎', 'saturn': '🪐', 'jupiter': '🟠',
+    'sun': '☀️', 'binary_sun': '🌟🌟',
+}
+
+
+def _extract_solana_addresses(text):
+    """Find Solana-like base58 addresses in text."""
+    candidates = _SOLANA_ADDR_RE.findall(text)
+    # Filter out common English words and short tokens
+    return [c for c in candidates if len(c) >= 32 and not c.isalpha()]
+
+
+def _fetch_reputation(address):
+    """Call our Reputation API and return dict or None."""
+    try:
+        resp = cffi_requests.get(
+            REPUTATION_API_URL,
+            params={'address': address},
+            impersonate='chrome131',
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as exc:
+        logging.warning('Reputation API call failed for %s: %s', address[:8], exc)
+    return None
+
+
+def _format_reputation_reply(data, address):
+    """Format reputation data into a tweet reply."""
+    score = data.get('score', 0)
+    tier = data.get('tier', 'mercury')
+    badges = data.get('badges', [])
+    stats = data.get('stats', {})
+    emoji = TIER_EMOJI.get(tier, '🌑')
+    badge_str = ', '.join(badges) if badges else 'none yet'
+    short_addr = f'{address[:4]}...{address[-4:]}'
+    lines = [
+        f'{emoji} Wallet {short_addr} — Reputation Score: {score}/1400',
+        f'Tier: {tier.replace("_", " ").title()} {emoji}',
+        f'Badges: {badge_str}',
+        f'SOL: {stats.get("solBalance", 0)} | Txns: {stats.get("txCount", 0)} | NFTs: {stats.get("nftCount", 0)} | Age: {stats.get("walletAgeDays", 0)}d',
+        f'',
+        f'Full card: https://{CTA_DOMAIN}/?address={address}',
+    ]
+    return '\n'.join(lines)
 
 
 def should_shill():
@@ -227,25 +282,37 @@ async def _try_mention_reply(client, ai_engine, state):
         mention_id = client._extract_tweet_id(mention)
         if not mention_id or mention_id in replied_mentions:
             continue
-        reply_to = (getattr(mention, 'in_reply_to_tweet_id', None)
-                    or getattr(mention, 'in_reply_to_status_id_str', None))
-        if not reply_to:
-            continue
         author = getattr(mention, 'user_screen_name', '') or ''
         if author.lower() == our_name:
             continue
         mention_text = client.get_tweet_text(mention)
         if not mention_text:
             continue
-        is_wallet = any(kw in mention_text.lower() for kw in WALLET_CHECK_KEYWORDS)
-        if is_wallet:
+
+        # --- Wallet address auto-reply (Reputation API) ---
+        addresses = _extract_solana_addresses(mention_text)
+        if addresses:
+            addr = addresses[0]
+            logging.info('Wallet address detected in mention %s: %s', mention_id, addr[:8])
+            rep = await asyncio.to_thread(_fetch_reputation, addr)
+            if rep and 'score' in rep:
+                reply_back = _format_reputation_reply(rep, addr)
+                logging.info('Reputation reply for %s: score=%d tier=%s', addr[:8], rep['score'], rep.get('tier'))
+            else:
+                reply_back = ai_engine.generate_wallet_roast(mention_text)
+        elif any(kw in mention_text.lower() for kw in WALLET_CHECK_KEYWORDS):
             reply_back = ai_engine.generate_wallet_roast(mention_text)
         else:
+            reply_to = (getattr(mention, 'in_reply_to_tweet_id', None)
+                        or getattr(mention, 'in_reply_to_status_id_str', None))
+            if not reply_to:
+                continue
             our_text = '[our earlier reply]' if str(reply_to) in state['replied_tweets'] else ''
             reply_back = ai_engine.generate_reply_back(our_text, mention_text)
+
         if not reply_back:
             continue
-        logging.info('Replying to mention %s: %.80s', mention_id, reply_back)
+        logging.info('Replying to mention %s: %.120s', mention_id, reply_back)
         status, reply_id = await client.try_reply(str(mention_id), reply_back)
         if status == 'ok' and reply_id:
             replied_mentions.append(mention_id)
@@ -253,6 +320,7 @@ async def _try_mention_reply(client, ai_engine, state):
                 replied_mentions = replied_mentions[-MAX_STORED_TWEETS:]
             state['replied_mentions'] = replied_mentions
             state['last_engagement_at'] = time.time()
+            _track_action(state, 'wallet_check' if addresses else 'mention_reply')
             save_state(state, state['state_path'])
             logging.info('Mention reply posted: %s', reply_id)
             return 'replied'
