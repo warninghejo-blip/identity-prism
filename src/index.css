@@ -204,20 +204,18 @@
     width: 100vw;
     height: 100vh;
     height: 100svh;
+    border-radius: 28px;
+    overflow: hidden;
+    background: #020408;
   }
 
   .card-stage.controls-open .celestial-card-shell {
     height: 74vh;
   }
-  .celestial-card-face {
-    border-radius: 0 !important;
-  }
-  .celestial-card-face [data-suck="bg"],
-  .celestial-card-face [data-suck="bg"] > div {
-    border-radius: 0 !important;
-  }
-  .celestial-card-shell {
-    background: #020408;
+
+  .celestial-card-body {
+    border-radius: 28px;
+    overflow: hidden;
   }
 }
 
