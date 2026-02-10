@@ -43,6 +43,13 @@ const isCapacitorNative = Boolean(
 );
 const isMobileUserAgent = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? "");
 
+// On fresh app launch (not in-app navigation), clear stored wallet so user must reconnect
+if (!sessionStorage.getItem('__app_session_active')) {
+  sessionStorage.setItem('__app_session_active', '1');
+  // Clear the wallet adapter localStorage key — forces fresh connection on reopen
+  try { localStorage.removeItem('walletAdapter'); } catch {}
+}
+
 if (isCapacitorNative && typeof document !== 'undefined') {
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
