@@ -262,13 +262,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           className="w-full h-full relative preserve-3d"
           initial={false}
           animate={{ rotateY: isFlipped ? 180 : 0 }}
-          transition={{ type: 'tween', duration: 0.6, ease: 'easeInOut' }}
-          style={{ transformStyle: 'preserve-3d' }}
+          transition={{ type: 'tween', duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+          style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}
         >
         {/* FRONT */}
         <div
-          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border border-white/10 bg-[#020408] shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] backface-hidden flex flex-col transition-opacity duration-300 ${isFlipped ? 'pointer-events-none opacity-0' : 'pointer-events-auto cursor-pointer opacity-100'}`}
-          style={{ backfaceVisibility: 'hidden', zIndex: isFlipped ? 0 : 20 }}
+          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border border-white/10 bg-[#020408] shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] backface-hidden flex flex-col ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto cursor-pointer'}`}
+          style={{ backfaceVisibility: 'hidden', zIndex: isFlipped ? 0 : 20, willChange: 'transform' }}
           onClick={() => {
             if (!isCapture) {
               setIsFlipped(true);
@@ -452,7 +452,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
         {/* BACK */}
         <div
-          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] border border-white/10 bg-[#050505] backdrop-blur-xl shadow-2xl backface-hidden flex flex-col overflow-hidden transition-opacity duration-300 ${!isFlipped ? 'pointer-events-none opacity-0' : 'pointer-events-auto opacity-100'}`}
+          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] border border-white/10 bg-[#020408] shadow-2xl backface-hidden flex flex-col overflow-hidden ${!isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
           style={{ transform: 'rotateY(180deg)', backfaceVisibility: 'hidden', pointerEvents: isFlipped ? 'auto' : 'none', zIndex: isFlipped ? 20 : 0 }}
           onClick={(event) => event.stopPropagation()}
         >

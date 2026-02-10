@@ -1158,18 +1158,20 @@ const BlackHole = () => {
           </div>
 
           {/* ═══ Mobile Token List (< 640px) ═══ */}
-          <div className="sm:hidden space-y-0.5">
-            {/* Header */}
-            <div className="flex items-center px-1.5 py-1.5 rounded-lg bg-zinc-900/30 text-[10px] text-zinc-600">
-              <Checkbox
-                checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
-                onCheckedChange={selectAll}
-                className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-1"
-              />
-              <span className="min-w-0" style={{ width: '38%' }}>Asset</span>
-              <span className="text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" style={{ width: '18%' }} onClick={() => handleSort('value')}>Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" style={{ width: '22%' }} onClick={() => handleSort('return')}>Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="text-center border-l border-zinc-800/40 cursor-pointer hover:text-zinc-300" style={{ width: '22px' }} onClick={() => handleSort('status')}>⚡</span>
+          <div className="sm:hidden">
+            {/* Header row — CSS grid for perfect alignment */}
+            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px 1fr 56px 64px 28px' }}>
+              <div className="flex justify-center">
+                <Checkbox
+                  checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
+                  onCheckedChange={selectAll}
+                  className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                />
+              </div>
+              <span className="text-center">Asset</span>
+              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return {sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>St</span>
             </div>
 
             {visibleTokens.length === 0 ? (
@@ -1177,27 +1179,31 @@ const BlackHole = () => {
                 {isLoading ? 'Scanning event horizon...' : 'No burn candidates found. Toggle "Show all" to review.'}
               </div>
             ) : (
-              sortedTokens.map((token) => {
+              <div className="space-y-0.5">
+              {sortedTokens.map((token) => {
                 const netEst = token.netGainSol ?? 0;
                 const rawName = token.name || token.symbol || '???';
                 const displayName = rawName.length > 10 ? rawName.slice(0, 9) + '…' : rawName;
                 return (
                   <div
                     key={token.pubkey.toBase58()}
-                    className={`flex items-center px-1.5 py-1 rounded-md border transition-colors ${
+                    className={`grid items-center py-1 rounded-md border transition-colors ${
                       selectedTokens.has(token.pubkey.toBase58())
                         ? 'bg-cyan-950/15 border-cyan-900/30'
                         : 'bg-zinc-900/20 border-zinc-800/30'
                     }`}
+                    style={{ gridTemplateColumns: '24px 1fr 56px 64px 28px' }}
                     onClick={() => toggleSelection(token.pubkey.toBase58())}
                   >
-                    <Checkbox
-                      checked={selectedTokens.has(token.pubkey.toBase58())}
-                      onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
-                      className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-1"
-                    />
-                    {/* Asset: icon + name + type */}
-                    <div className="flex items-center gap-1.5 min-w-0 overflow-hidden" style={{ width: '38%', flexShrink: 0 }}>
+                    <div className="flex justify-center">
+                      <Checkbox
+                        checked={selectedTokens.has(token.pubkey.toBase58())}
+                        onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
+                        className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                      />
+                    </div>
+                    {/* Asset */}
+                    <div className="flex items-center gap-1.5 min-w-0 overflow-hidden px-1">
                       <div className="w-7 h-7 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
                         {token.image ? (
                           <img src={token.image} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
@@ -1214,13 +1220,13 @@ const BlackHole = () => {
                       </div>
                     </div>
                     {/* Balance */}
-                    <span className="text-[11px] font-mono text-zinc-400 text-right shrink-0 border-l border-zinc-800/30 pl-1" style={{ width: '18%' }}>{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
+                    <span className="text-[11px] font-mono text-zinc-400 text-right pr-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
                     {/* Return */}
-                    <span className="text-[10px] font-mono text-emerald-400/80 text-right shrink-0 border-l border-zinc-800/30 pl-1" style={{ width: '22%' }}>
+                    <span className="text-[10px] font-mono text-emerald-400/80 text-right pr-1">
                       {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
                     </span>
                     {/* Status */}
-                    <div className="shrink-0 flex justify-center border-l border-zinc-800/30" style={{ width: 22 }}>
+                    <div className="flex justify-center">
                       {token.assetStatus === 'protected' ? (
                         <Shield className="h-3.5 w-3.5 text-emerald-400" />
                       ) : token.assetStatus === 'valuable' ? (
@@ -1231,7 +1237,8 @@ const BlackHole = () => {
                     </div>
                   </div>
                 );
-              })
+              })}
+              </div>
             )}
           </div>
 
