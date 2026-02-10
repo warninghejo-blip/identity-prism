@@ -39,6 +39,10 @@ tokens.json
 .tmp.driveupload/
 .tmp.ssh_identity_prism
 temp/
+twitter-bot-python/test_*.py
+twitter-bot-python/check_tweets*.py
+twitter-bot-python/reset_slot.py
+twitter-bot-python/fix_nginx.sh
 
 # Python
 .venv/

@@ -48,6 +48,34 @@ SEARCH_QUERIES = [
     '#Solana -filter:retweets',
 ]
 
+TREND_QUERIES = [
+    'solana ecosystem -filter:retweets min_faves:50',
+    'solana AI agent -filter:retweets',
+    'web3 identity -filter:retweets',
+    'on-chain reputation -filter:retweets',
+    'solana hackathon -filter:retweets',
+    'DePIN solana -filter:retweets',
+    'solana gaming -filter:retweets',
+]
+
+HASHTAG_SETS = [
+    ['#Solana', '#IdentityPrism'],
+    ['#Solana', '#Web3'],
+    ['#Solana', '#OnChain'],
+    ['#Web3Identity', '#Solana'],
+    ['#SolanaAI', '#IdentityPrism'],
+    ['#DeFi', '#Solana'],
+    ['#Solana', '#cNFT'],
+]
+
+ACTION_WEIGHTS = {
+    'post': 25,
+    'thread': 12,
+    'trend_post': 18,
+    'quote': 15,
+    'engage': 30,
+}
+
 SHILL_RATE = 0.4
 LIKE_RATE = 0.6
 RETWEET_RATE = 0.08
@@ -91,12 +119,28 @@ MENTION_REPLY_MAX_AGE = int(os.getenv('MENTION_REPLY_MAX_AGE', str(6 * 60 * 60))
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '').strip()
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash').strip()
+GEMINI_PROXY = os.getenv('GEMINI_PROXY', '').strip()
 GEMINI_IMAGE_MODEL = os.getenv('GEMINI_IMAGE_MODEL', 'imagen-4.0-fast-generate-001').strip()
 GEMINI_IMAGE_PROMPT = os.getenv(
     'GEMINI_IMAGE_PROMPT',
     'Create a clean, futuristic visual for Identity Prism on Solana. '
     'Cosmic gradients, neon accents, subtle blockchain motifs, dark background, no text.',
 ).strip()
+
+IMAGE_PROMPT_VARIANTS = [
+    'Create a clean, futuristic visual for Identity Prism on Solana. '
+    'Cosmic gradients, neon accents, subtle blockchain motifs, dark background, no text.',
+    'A cosmic 3D solar system where planets represent crypto tokens and moons are NFTs. '
+    'Deep space background with neon purple and blue gradients, Solana-inspired. No text.',
+    'Abstract digital identity visualization: glowing fingerprint made of blockchain nodes '
+    'and transaction paths, cosmic dark background with teal and magenta accents. No text.',
+    'Futuristic holographic wallet card floating in space, showing a reputation score '
+    'and cosmic badges, dark background with stars and nebula colors. No text.',
+    'A cosmic black hole consuming small token icons, with rent SOL particles escaping '
+    'back outward. Dark space background, neon green and purple accents. No text.',
+    'Digital soul portrait: abstract face made of on-chain data streams, transaction '
+    'histories forming neural patterns, Solana purple-blue palette. No text.',
+]
 
 COOKIES_PATH = os.getenv('COOKIES_PATH', str(BASE_DIR / 'cookies.json')).strip()
 STATE_PATH = os.getenv('STATE_PATH', str(BASE_DIR / 'state.json')).strip()
@@ -131,7 +175,7 @@ IMAGE_KEEP_COUNT = int(os.getenv('IMAGE_KEEP_COUNT', '20'))
 MAX_IMAGE_BYTES = int(os.getenv('MAX_IMAGE_BYTES', str(1_500_000)))
 MAX_IMAGE_DIM = int(os.getenv('MAX_IMAGE_DIM', '1024'))
 
-RATE_LIMIT_BACKOFF_RANGE = (30 * 60, 60 * 60)
+RATE_LIMIT_BACKOFF_RANGE = (60 * 60, 120 * 60)  # 1-2h backoff on twikit rate limits
 ENGAGEMENT_COOLDOWN_SECONDS = int(os.getenv('ENGAGEMENT_COOLDOWN_SECONDS', str(60 * 60)))
 POST_HOUR_BLOCK_SECONDS = int(os.getenv('POST_HOUR_BLOCK_SECONDS', str(10 * 60)))
 MIN_POST_INTERVAL_SECONDS = int(os.getenv('MIN_POST_INTERVAL_SECONDS', str(150 * 60)))
@@ -194,9 +238,51 @@ POST_PROMPT = (
     'reveals about your on-chain identity on Solana. Be creative and varied — '
     'talk about badges, wallet scores, on-chain reputation, cosmic vibes, etc. '
     'You MUST always finish every sentence — NEVER stop mid-sentence. '
-    'MUST include 1-2 hashtags like #Solana #IdentityPrism #Web3 and a $SOL ticker. '
+    'MUST include 1-2 of these exact hashtags: {hashtags} and a $SOL ticker. '
     'Do NOT include any website link or "check my profile" — that part is handled separately. '
     'One emoji max. {shill}'
+)
+
+THREAD_PROMPT = (
+    'Write a Twitter thread (exactly 3 tweets) about {topic}. '
+    'Format: tweet 1 on first line, tweet 2 on second line, tweet 3 on third line. '
+    'Each tweet MUST be under 270 characters and a COMPLETE thought. '
+    'Tweet 1: hook/bold statement that makes people want to read more. End with a thread emoji 🧵. '
+    'Tweet 2: the meat — explain/elaborate with specific details or insights. '
+    'Tweet 3: conclusion with a takeaway. Include {hashtags}. '
+    'Be conversational, opinionated, and genuine — NOT generic or salesy. '
+    'Do NOT include any website link. {shill}'
+)
+
+THREAD_TOPICS = [
+    'why on-chain identity will matter more than ENS domains',
+    'what your Solana wallet says about your degen personality',
+    'the difference between on-chain reputation and credit scores',
+    'why most people have no idea what their wallet reveals about them',
+    'how Identity Prism turns raw on-chain data into a cosmic identity card',
+    'the future of AI agents that can verify your on-chain reputation',
+    'why wallet scoring is the next big thing in Solana DeFi',
+    'how we built a 3D solar system from on-chain data',
+    'what makes a Mythic-tier wallet on Solana',
+    'burning tokens to reclaim rent SOL — the Black Hole feature explained',
+]
+
+TREND_POST_PROMPT = (
+    'You just saw this trending tweet in the Solana ecosystem:\n'
+    'Author: @{user}\nTweet: "{tweet_text}"\n\n'
+    'Write your own original tweet (NOT a reply) inspired by or reacting to this trend/topic. '
+    'Add your unique perspective as an on-chain identity builder. '
+    '2-3 short but COMPLETE sentences, under 260 characters. '
+    'Include {hashtags}. One emoji max. '
+    'Do NOT mention the original author. Do NOT include any link. {shill}'
+)
+
+QUOTE_PROMPT = (
+    'You are quote-tweeting this:\n@{user}: "{tweet_text}"\n\n'
+    'Write a short, sharp comment (1-2 COMPLETE sentences, under 200 characters) '
+    'that adds genuine value — an insight, hot take, or connection to on-chain identity. '
+    'Be conversational and opinionated. One emoji max. '
+    'Do NOT include any link or hashtag — those are added separately. {shill}'
 )
 
 WALLET_ROAST_PROMPT = (
@@ -213,3 +299,6 @@ WALLET_CHECK_KEYWORDS = [
     'look at my wallet', 'roast my wallet', 'what does my wallet', 'my on-chain',
     'check my address', 'check this wallet', 'identity prism me',
 ]
+
+PEAK_HOURS_UTC = list(range(14, 19))  # 14:00-18:00 UTC = prime crypto twitter
+ACTIVE_HOURS_UTC = list(range(11, 23))  # broader active window

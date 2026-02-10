@@ -1,0 +1,21 @@
+[Unit]
+Description=Identity Prism Twitter Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/identityprism-bot
+EnvironmentFile=/opt/identityprism-bot/.env
+ExecStartPre=/bin/bash -c "rm -f /opt/identityprism-bot/twitter_bot.lock /opt/identityprism-bot/twitter_bot_child.pid"
+ExecStart=/opt/identityprism-bot/.venv/bin/python -u /opt/identityprism-bot/run_twitter_bot.py
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

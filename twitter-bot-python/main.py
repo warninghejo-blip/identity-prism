@@ -9,14 +9,19 @@ from dotenv import load_dotenv
 
 from ai_engine import AIEngine
 from config import (
+    ACTION_WEIGHTS,
+    ACTIVE_HOURS_UTC,
     BOT_USERNAME,
     LIKE_RATE,
     MAX_STORED_TWEETS,
+    PEAK_HOURS_UTC,
     POST_IMAGE_ENABLED,
     POST_IMAGE_RATE,
     STATE_PATH,
+    SEARCH_QUERIES,
     SHILL_RATE,
     TARGET_USERS,
+    TREND_QUERIES,
     WALLET_CHECK_KEYWORDS,
 )
 from twitter_client import TwitterClient
@@ -127,7 +132,7 @@ async def do_engage(client, ai_engine, state):
         status, reply_id = await client.try_reply(deferred['tweet_id'], deferred['text'])
         if status == '429':
             state['deferred_comment'] = deferred
-            state['comment_rate_limit_until'] = now + random.uniform(3600, 5400)
+            state['comment_rate_limit_until'] = now + random.uniform(7200, 10800)
             save_state(state, state['state_path'])
             logging.warning('429 on deferred comment; rate-limited for ~1h')
             return '429'
@@ -189,7 +194,7 @@ async def do_engage(client, ai_engine, state):
                 'tweet_id': target_tweet_id,
                 'text': target_text,
             }
-            state['comment_rate_limit_until'] = now + random.uniform(3600, 5400)
+            state['comment_rate_limit_until'] = now + random.uniform(7200, 10800)
             save_state(state, state['state_path'])
             logging.warning('429 on comment @%s; deferred to next cycle', handle)
             return '429'
@@ -259,8 +264,158 @@ async def _try_mention_reply(client, ai_engine, state):
 
 # ── Main loop ──
 
-SLOT_INTERVAL = 2 * 3600   # 2 hours between slots
+SLOT_INTERVAL_MIN = 3600    # minimum 1 hour between actions
+SLOT_INTERVAL_MAX = 5400    # up to 1.5 hours
 SLEEP_CHECK = 300           # poll every 5 min
+MAX_POSTS_PER_DAY = 8       # total write actions (posts + threads + trends + quotes)
+MAX_ENGAGEMENTS_PER_DAY = 8
+
+
+def _pick_action(state):
+    """Weighted random action selection from ACTION_WEIGHTS."""
+    weights = dict(ACTION_WEIGHTS)
+    # Reduce thread weight if we already did one today
+    if state.get('daily_threads', 0) >= 2:
+        weights['thread'] = 0
+    # Reduce quote if already done 3 today
+    if state.get('daily_quotes', 0) >= 3:
+        weights['quote'] = 0
+    total = sum(weights.values())
+    if total == 0:
+        return 'engage'
+    r = random.uniform(0, total)
+    cumulative = 0
+    for action, w in weights.items():
+        cumulative += w
+        if r <= cumulative:
+            return action
+    return 'engage'
+
+
+def _is_peak_hour():
+    return datetime.datetime.now(datetime.UTC).hour in PEAK_HOURS_UTC
+
+
+def _is_active_hour():
+    return datetime.datetime.now(datetime.UTC).hour in ACTIVE_HOURS_UTC
+
+
+# ── Thread action ──
+
+async def do_thread(client, ai_engine, state):
+    tweets = ai_engine.generate_thread(include_shill=should_shill())
+    if not tweets:
+        logging.warning('Thread generation failed')
+        return False
+    media_paths = await build_media_paths(ai_engine, tweets[0])
+    logging.info('Thread [%d tweets]: %s ...', len(tweets), tweets[0][:80])
+    results = await client.post_thread(tweets, media_paths=media_paths)
+    if results and results[0][0]:
+        state['last_post_at'] = time.time()
+        state['last_post_id'] = results[0][0]
+        state['daily_threads'] = state.get('daily_threads', 0) + 1
+        _track_action(state, 'thread')
+        save_state(state, state['state_path'])
+        logging.info('Thread posted: %s', results[0][0])
+        return True
+    return False
+
+
+# ── Trend post action ──
+
+async def do_trend_post(client, ai_engine, state):
+    query = random.choice(TREND_QUERIES)
+    try:
+        tweets = await client.search_tweets(query, count=10)
+    except Exception as exc:
+        logging.warning('Trend search failed: %s', exc)
+        return False
+    if not tweets:
+        logging.info('No trending tweets found for: %s', query)
+        return False
+    # Pick a popular tweet we haven't reacted to
+    reacted = set(state.get('reacted_trend_ids', []))
+    for tweet in tweets:
+        tid = client._extract_tweet_id(tweet)
+        if not tid or tid in reacted:
+            continue
+        text = client.get_tweet_text(tweet)
+        user = getattr(tweet, 'user_screen_name', '') or 'anon'
+        if not text or len(text) < 30:
+            continue
+        post_text = ai_engine.generate_trend_post(text, user, include_shill=should_shill())
+        if not post_text:
+            continue
+        media_paths = await build_media_paths(ai_engine, post_text)
+        tweet_id, err = await client.post_tweet(post_text, media_paths=media_paths)
+        if tweet_id:
+            reacted.add(tid)
+            state['reacted_trend_ids'] = list(reacted)[-200:]
+            state['last_post_at'] = time.time()
+            state['last_post_id'] = tweet_id
+            _track_action(state, 'trend_post')
+            save_state(state, state['state_path'])
+            logging.info('Trend post: %s (inspired by %s)', tweet_id, tid)
+            return True
+        logging.warning('Trend post failed: %s', err)
+        return False
+    logging.info('No fresh trend tweets to react to')
+    return False
+
+
+# ── Quote tweet action ──
+
+async def do_quote(client, ai_engine, state):
+    query = random.choice(SEARCH_QUERIES)
+    try:
+        tweets = await client.search_tweets(query, count=10)
+    except Exception as exc:
+        logging.warning('Quote search failed: %s', exc)
+        return False
+    if not tweets:
+        return False
+    quoted = set(state.get('quoted_tweet_ids', []))
+    for tweet in tweets:
+        tid = client._extract_tweet_id(tweet)
+        if not tid or tid in quoted:
+            continue
+        text = client.get_tweet_text(tweet)
+        user = getattr(tweet, 'user_screen_name', '') or 'anon'
+        if not text or len(text) < 30:
+            continue
+        likes = client.get_like_count(tweet)
+        if likes < 5:
+            continue
+        quote_text = ai_engine.generate_quote_text(text, user, include_shill=should_shill())
+        if not quote_text:
+            continue
+        tweet_url = f'https://x.com/{user}/status/{tid}'
+        qt_id, err = await client.quote_tweet(quote_text, tweet_url)
+        if qt_id:
+            quoted.add(tid)
+            state['quoted_tweet_ids'] = list(quoted)[-200:]
+            state['last_post_at'] = time.time()
+            state['daily_quotes'] = state.get('daily_quotes', 0) + 1
+            _track_action(state, 'quote')
+            save_state(state, state['state_path'])
+            logging.info('Quote tweet: %s (quoted %s)', qt_id, tid)
+            return True
+        logging.warning('Quote tweet failed: %s', err)
+        return False
+    return False
+
+
+# ── Engagement tracking ──
+
+def _track_action(state, action_type):
+    stats = state.setdefault('action_stats', {})
+    today = today_str()
+    day_stats = stats.setdefault(today, {})
+    day_stats[action_type] = day_stats.get(action_type, 0) + 1
+    # Prune old days (keep 7)
+    all_days = sorted(stats.keys())
+    while len(all_days) > 7:
+        del stats[all_days.pop(0)]
 
 
 async def main():
@@ -280,6 +435,14 @@ async def main():
     state.setdefault('deferred_comment', None)
     state.setdefault('comment_rate_limit_until', 0)
     state.setdefault('skip_next_engage', False)
+    state.setdefault('daily_posts', 0)
+    state.setdefault('daily_engagements', 0)
+    state.setdefault('daily_threads', 0)
+    state.setdefault('daily_quotes', 0)
+    state.setdefault('daily_reset_date', today_str())
+    state.setdefault('reacted_trend_ids', [])
+    state.setdefault('quoted_tweet_ids', [])
+    state.setdefault('action_stats', {})
 
     client = TwitterClient()
     try:
@@ -302,41 +465,98 @@ async def main():
         logging.info('Test post: %s (err=%s)', tweet_id, err)
         return
 
-    # Slot 0 = POST, Slot 1 = ENGAGE; alternating every 2h
-    # → posts happen every 4h, engagements every 4h offset by 2h
-    slot = state.get('slot', 0)
-    last_slot_at = state.get('last_slot_at', 0)
+    def reset_daily_counters_if_needed():
+        if state.get('daily_reset_date') != today_str():
+            state['daily_posts'] = 0
+            state['daily_engagements'] = 0
+            state['daily_threads'] = 0
+            state['daily_quotes'] = 0
+            state['daily_reset_date'] = today_str()
+            logging.info('Daily counters reset')
 
-    # On fresh start: don't immediately post — derive timing from last_post_at
-    if last_slot_at == 0 and state.get('last_post_at'):
-        last_slot_at = state['last_post_at']
-        slot = 1  # next action is ENGAGE, not another POST
-        state['slot'] = slot
-        state['last_slot_at'] = last_slot_at
+    last_action_at = state.get('last_slot_at', 0)
+
+    # On fresh start: don't immediately act
+    if last_action_at == 0 and state.get('last_post_at'):
+        last_action_at = state['last_post_at']
+        state['last_slot_at'] = last_action_at
         save_state(state, state['state_path'])
-        logging.info('Resuming from last_post_at=%.0f; next slot=ENGAGE', last_slot_at)
+        logging.info('Resuming from last_post_at=%.0f', last_action_at)
 
     cleanup_old_comments(state)
     commented_count = sum(1 for d in state['commented_today'].values() if d == today_str())
-    logging.info('Bot started. slot=%s, accounts=%d, commented_today=%d',
-                 'POST' if slot == 0 else 'ENGAGE', len(TARGET_USERS), commented_count)
+    logging.info('Bot started. accounts=%d, commented_today=%d, stats=%s',
+                 len(TARGET_USERS), commented_count,
+                 state.get('action_stats', {}).get(today_str(), {}))
 
     while True:
         now = time.time()
         try:
             cleanup_old_comments(state)
 
-            wait_left = SLOT_INTERVAL - (now - last_slot_at)
+            slot_interval = random.uniform(SLOT_INTERVAL_MIN, SLOT_INTERVAL_MAX)
+            # During quiet hours, increase interval
+            if not _is_active_hour():
+                slot_interval *= 1.5
+
+            wait_left = slot_interval - (now - last_action_at)
             if wait_left > 0:
-                slot_name = 'POST' if slot == 0 else 'ENGAGE'
-                logging.info('Next %s in %.0f min', slot_name, wait_left / 60)
+                logging.info('Next action in %.0f min', wait_left / 60)
                 await asyncio.sleep(min(wait_left, SLEEP_CHECK) + random.uniform(5, 30))
                 continue
 
-            await asyncio.sleep(random.uniform(10, 60))
+            # Pre-action jitter
+            await asyncio.sleep(random.uniform(15, 90))
 
-            if slot == 0:
-                # Safety: skip POST if we posted less than 1h ago
+            reset_daily_counters_if_needed()
+
+            # Pick action
+            action = _pick_action(state)
+            total_writes = state.get('daily_posts', 0)
+
+            if action == 'engage':
+                if state.get('skip_next_engage'):
+                    logging.info('=== ENGAGE skipped (previous 429) ===')
+                    state['skip_next_engage'] = False
+                elif state.get('daily_engagements', 0) >= MAX_ENGAGEMENTS_PER_DAY:
+                    logging.info('=== ENGAGE skipped (daily cap %d/%d) ===',
+                                 state['daily_engagements'], MAX_ENGAGEMENTS_PER_DAY)
+                else:
+                    logging.info('=== ENGAGE ===')
+                    result = await do_engage(client, ai_engine, state)
+                    logging.info('Engage result: %s', result)
+                    if result in ('commented', 'replied'):
+                        state['daily_engagements'] = state.get('daily_engagements', 0) + 1
+                        _track_action(state, 'engage')
+                    if result == '429':
+                        state['skip_next_engage'] = True
+
+            elif total_writes >= MAX_POSTS_PER_DAY:
+                logging.info('=== %s skipped (daily write cap %d/%d) ===',
+                             action.upper(), total_writes, MAX_POSTS_PER_DAY)
+
+            elif action == 'thread':
+                logging.info('=== THREAD ===')
+                ok = await do_thread(client, ai_engine, state)
+                logging.info('Thread result: %s', 'OK' if ok else 'FAIL')
+                if ok:
+                    state['daily_posts'] = total_writes + 1
+
+            elif action == 'trend_post':
+                logging.info('=== TREND POST ===')
+                ok = await do_trend_post(client, ai_engine, state)
+                logging.info('Trend post result: %s', 'OK' if ok else 'FAIL')
+                if ok:
+                    state['daily_posts'] = total_writes + 1
+
+            elif action == 'quote':
+                logging.info('=== QUOTE ===')
+                ok = await do_quote(client, ai_engine, state)
+                logging.info('Quote result: %s', 'OK' if ok else 'FAIL')
+                if ok:
+                    state['daily_posts'] = total_writes + 1
+
+            else:  # 'post'
                 last_post = state.get('last_post_at') or 0
                 if time.time() - last_post < 3600:
                     logging.info('=== POST skipped (last post %.0f min ago) ===',
@@ -345,28 +565,15 @@ async def main():
                     logging.info('=== POST ===')
                     ok = await do_post(client, ai_engine, state)
                     logging.info('Post result: %s', 'OK' if ok else 'FAIL')
-            else:
-                if state.get('skip_next_engage'):
-                    logging.info('=== ENGAGE skipped (previous 429) ===')
-                    state['skip_next_engage'] = False
-                else:
-                    logging.info('=== ENGAGE ===')
-                    result = await do_engage(client, ai_engine, state)
-                    logging.info('Engage result: %s', result)
-                    if result == '429':
-                        state['skip_next_engage'] = True
-                        logging.warning('Next engage will be skipped due to 429')
+                    if ok:
+                        state['daily_posts'] = total_writes + 1
+                        _track_action(state, 'post')
 
         except Exception as exc:
             logging.warning('Cycle error: %s', exc)
 
-        # ALWAYS advance slot after action (or error) — prevents POST spam loops
-        # This is outside try/except so it runs after both success and failure,
-        # but NOT after 'continue' (waiting branch).
-        slot = 1 - slot
-        last_slot_at = time.time()
-        state['slot'] = slot
-        state['last_slot_at'] = last_slot_at
+        last_action_at = time.time()
+        state['last_slot_at'] = last_action_at
         save_state(state, state['state_path'])
 
         await asyncio.sleep(random.uniform(30, 90))

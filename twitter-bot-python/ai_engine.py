@@ -5,6 +5,7 @@ import random
 import time
 from io import BytesIO
 
+from curl_cffi import requests as cffi_requests
 from google import genai
 from google.genai import types as genai_types
 
@@ -13,9 +14,12 @@ from config import (
     SOFT_CTAS,
     GEMINI_API_KEY,
     GEMINI_IMAGE_MODEL,
+    GEMINI_PROXY,
     GEMINI_IMAGE_PROMPT,
     GEMINI_MODEL,
+    HASHTAG_SETS,
     IMAGE_KEEP_COUNT,
+    IMAGE_PROMPT_VARIANTS,
     MAX_IMAGE_BYTES,
     MAX_IMAGE_DIM,
     MAX_HASHTAGS,
@@ -25,23 +29,41 @@ from config import (
     MICRO_REPLIES,
     MICRO_REPLY_RATE,
     POST_PROMPT,
+    QUOTE_PROMPT,
     REPLY_BACK_PROMPT,
     SHILL_INSTRUCTION,
     SHILL_PHRASES,
     SNIPER_PROMPT,
     SYSTEM_PROMPT,
+    THREAD_PROMPT,
+    THREAD_TOPICS,
+    TREND_POST_PROMPT,
     TREND_PROMPT,
     WALLET_ROAST_PROMPT,
 )
 from utils import clamp_text, trim_hashtags
+
+_GEMINI_REST_URL = f'https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent'
+
+
+def _human_delay(lo=1.0, hi=4.0):
+    time.sleep(random.uniform(lo, hi))
+
+
+def _apply_gemini_proxy():
+    if GEMINI_PROXY:
+        os.environ.setdefault('HTTPS_PROXY', GEMINI_PROXY)
+        os.environ.setdefault('HTTP_PROXY', GEMINI_PROXY)
 
 
 class AIEngine:
     def __init__(self):
         if not GEMINI_API_KEY:
             raise RuntimeError('Missing GEMINI_API_KEY in environment.')
+        _apply_gemini_proxy()
         self._client = genai.Client(api_key=GEMINI_API_KEY)
         self._model_name = GEMINI_MODEL
+        self._rest_url = f'{_GEMINI_REST_URL}?key={GEMINI_API_KEY}'
 
     @staticmethod
     def _fit_twitter_limit(text, limit=280):
@@ -119,27 +141,36 @@ class AIEngine:
             shill = SHILL_INSTRUCTION.format(phrase=phrase)
         return template.format(user=user, tweet_text=tweet_text, shill=shill)
 
+    @staticmethod
+    def _random_hashtags():
+        return ' '.join(random.choice(HASHTAG_SETS))
+
     def _build_post_prompt(self, include_shill):
         shill = ''
         if include_shill:
             phrase = random.choice(SHILL_PHRASES)
             shill = SHILL_INSTRUCTION.format(phrase=phrase)
-        return POST_PROMPT.format(shill=shill)
+        return POST_PROMPT.format(shill=shill, hashtags=self._random_hashtags())
 
     def _generate(self, prompt):
+        _human_delay(1.5, 5.0)
+        payload = {
+            'contents': [{'parts': [{'text': f'{SYSTEM_PROMPT}\n\n{prompt}'}]}],
+            'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 8192},
+        }
         try:
-            response = self._client.models.generate_content(
-                model=self._model_name,
-                contents=f'{SYSTEM_PROMPT}\n\n{prompt}',
-                config=genai_types.GenerateContentConfig(
-                    temperature=0.7,
-                    max_output_tokens=8192,
-                ),
+            resp = cffi_requests.post(
+                self._rest_url, json=payload,
+                impersonate='chrome131', timeout=30,
             )
+            if resp.status_code != 200:
+                logging.warning('LLM request failed: HTTP %d %s', resp.status_code, resp.text[:200])
+                return ''
+            data = resp.json()
+            content = data['candidates'][0]['content']['parts'][0]['text']
         except Exception as exc:
             logging.warning('LLM request failed: %s', exc)
             return ''
-        content = getattr(response, 'text', '')
         return self._clean_text(content)
 
     def generate_sniper_reply(self, tweet_text, user, include_shill=False):
@@ -162,6 +193,67 @@ class AIEngine:
 
     def should_micro_reply(self):
         return random.random() < MICRO_REPLY_RATE
+
+    def generate_thread(self, include_shill=False):
+        topic = random.choice(THREAD_TOPICS)
+        shill = ''
+        if include_shill:
+            phrase = random.choice(SHILL_PHRASES)
+            shill = SHILL_INSTRUCTION.format(phrase=phrase)
+        prompt = THREAD_PROMPT.format(
+            topic=topic, hashtags=self._random_hashtags(), shill=shill,
+        )
+        _human_delay(2.0, 6.0)
+        payload = {
+            'contents': [{'parts': [{'text': f'{SYSTEM_PROMPT}\n\n{prompt}'}]}],
+            'generationConfig': {'temperature': 0.8, 'maxOutputTokens': 4096},
+        }
+        try:
+            resp = cffi_requests.post(
+                self._rest_url, json=payload,
+                impersonate='chrome131', timeout=30,
+            )
+            if resp.status_code != 200:
+                logging.warning('Thread generation failed: HTTP %d', resp.status_code)
+                return []
+            data = resp.json()
+            raw = data['candidates'][0]['content']['parts'][0]['text']
+        except Exception as exc:
+            logging.warning('Thread generation failed: %s', exc)
+            return []
+        lines = [l.strip() for l in raw.strip().split('\n') if l.strip()]
+        tweets = []
+        for line in lines:
+            cleaned = self._clean_text(line)
+            if cleaned and len(cleaned) > 20:
+                tweets.append(cleaned)
+            if len(tweets) >= 3:
+                break
+        if len(tweets) < 2:
+            logging.warning('Thread generation returned too few tweets (%d)', len(tweets))
+            return []
+        return tweets
+
+    def generate_trend_post(self, tweet_text, user, include_shill=False):
+        shill = ''
+        if include_shill:
+            phrase = random.choice(SHILL_PHRASES)
+            shill = SHILL_INSTRUCTION.format(phrase=phrase)
+        prompt = TREND_POST_PROMPT.format(
+            tweet_text=tweet_text[:300], user=user,
+            hashtags=self._random_hashtags(), shill=shill,
+        )
+        return self._generate(prompt)
+
+    def generate_quote_text(self, tweet_text, user, include_shill=False):
+        shill = ''
+        if include_shill:
+            phrase = random.choice(SHILL_PHRASES)
+            shill = SHILL_INSTRUCTION.format(phrase=phrase)
+        prompt = QUOTE_PROMPT.format(
+            tweet_text=tweet_text[:300], user=user, shill=shill,
+        )
+        return self._generate(prompt)
 
     def generate_reply_back(self, our_text, reply_text):
         prompt = REPLY_BACK_PROMPT.format(our_text=our_text[:200], reply_text=reply_text[:200])
@@ -267,7 +359,7 @@ class AIEngine:
         if not GEMINI_IMAGE_MODEL:
             logging.warning('Missing GEMINI_IMAGE_MODEL; skipping image generation.')
             return None
-        prompt = GEMINI_IMAGE_PROMPT
+        prompt = random.choice(IMAGE_PROMPT_VARIANTS) if IMAGE_PROMPT_VARIANTS else GEMINI_IMAGE_PROMPT
         if post_text:
             trimmed = post_text[:120].strip()
             prompt = f'{prompt} Inspired by: {trimmed}'

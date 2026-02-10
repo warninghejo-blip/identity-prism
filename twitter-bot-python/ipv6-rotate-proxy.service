@@ -1,0 +1,17 @@
+[Unit]
+Description=Rotating IPv6 HTTP/HTTPS Proxy
+After=network.target ndppd.service
+
+[Service]
+Type=simple
+User=root
+Environment=PROXY_LISTEN=127.0.0.1
+Environment=PROXY_PORT=9595
+Environment=IPV6_PREFIX=2a13:4ac0:20:16
+Environment=PROXY_LOG_LEVEL=INFO
+ExecStart=/usr/bin/python3 /opt/ipv6-proxy/ipv6_rotate_proxy.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

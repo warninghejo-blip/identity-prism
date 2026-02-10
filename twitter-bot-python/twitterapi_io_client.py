@@ -3,11 +3,11 @@ import random
 import time
 from typing import List, Optional
 
-import requests
+from curl_cffi import requests as cffi_requests
 
 
 class TwitterApiIoClient:
-    _RATE_LIMIT_BACKOFFS = [60, 120, 300, 600]  # escalating 429 waits
+    _RATE_LIMIT_BACKOFFS = [120, 300, 900, 1800]  # escalating 429 waits (2m → 5m → 15m → 30m)
 
     def __init__(
         self,
@@ -71,6 +71,8 @@ class TwitterApiIoClient:
             wait = self._rate_limited_until - now
             logging.info('Rate-limit cooldown: sleeping %.0fs', wait)
             time.sleep(wait)
+        # Human-like jitter before every API call
+        time.sleep(random.uniform(1.5, 5.0))
 
     def _handle_response(self, response):
         if self._is_429(response=response):
@@ -103,10 +105,11 @@ class TwitterApiIoClient:
             }
             try:
                 logging.info('Login attempt #%d via proxy #%d', i + 1, self.proxy_index)
-                resp = requests.post(
+                resp = cffi_requests.post(
                     'https://api.twitterapi.io/twitter/user_login_v2',
                     json=payload,
                     headers=self._headers(),
+                    impersonate='chrome131',
                     timeout=self.timeout,
                 )
                 data = self._handle_response(resp)
@@ -148,18 +151,19 @@ class TwitterApiIoClient:
             self.ensure_login()
             try:
                 with open(media_path, 'rb') as handle:
-                    files = {'file': (filename, handle, mime_type)}
-                    form = {
-                        'proxy': self.proxy,
-                        'login_cookies': self.login_cookie,
-                    }
-                    resp = requests.post(
-                        'https://api.twitterapi.io/twitter/upload_media_v2',
-                        files=files,
-                        data=form,
-                        headers=self._headers(),
-                        timeout=self.timeout,
-                    )
+                    file_bytes = handle.read()
+                multipart = {
+                    'file': (filename, file_bytes, mime_type),
+                    'proxy': self.proxy,
+                    'login_cookies': self.login_cookie,
+                }
+                resp = cffi_requests.post(
+                    'https://api.twitterapi.io/twitter/upload_media_v2',
+                    multipart=multipart,
+                    headers=self._headers(),
+                    impersonate='chrome131',
+                    timeout=self.timeout,
+                )
                 data = self._handle_response(resp)
             except Exception as exc:
                 kind = self._classify_error(str(exc))
@@ -228,10 +232,11 @@ class TwitterApiIoClient:
             payload['login_cookies'] = self.login_cookie
             payload['proxy'] = self.proxy
             try:
-                resp = requests.post(
+                resp = cffi_requests.post(
                     'https://api.twitterapi.io/twitter/create_tweet_v2',
                     json=payload,
                     headers=self._headers(),
+                    impersonate='chrome131',
                     timeout=self.timeout,
                 )
                 data = self._handle_response(resp)
@@ -242,8 +247,8 @@ class TwitterApiIoClient:
                     logging.warning('%s 429 (attempt %d/%d)', label, attempt + 1, max_attempts)
                     continue  # _handle_429_backoff already set cooldown
                 if kind == 'automated':
-                    wait = random.uniform(10, 30)
-                    logging.warning('%s automated-reject (attempt %d/%d); rotate proxy, wait %.0fs', label, attempt + 1, max_attempts, wait)
+                    wait = random.uniform(300, 900)
+                    logging.warning('%s automated-reject/226 (attempt %d/%d); rotate proxy, wait %.0fs', label, attempt + 1, max_attempts, wait)
                     self.rotate_proxy()
                     time.sleep(wait)
                     continue
@@ -274,8 +279,8 @@ class TwitterApiIoClient:
             error_msg = str(data.get('msg') or data.get('message') or data)
             kind = self._classify_error(error_msg)
             if kind == 'automated':
-                wait = random.uniform(10, 30)
-                logging.warning('%s automated-reject in response (attempt %d/%d); rotate proxy, wait %.0fs', label, attempt + 1, max_attempts, wait)
+                wait = random.uniform(300, 900)
+                logging.warning('%s automated-reject/226 in response (attempt %d/%d); rotate proxy, wait %.0fs', label, attempt + 1, max_attempts, wait)
                 self.rotate_proxy()
                 time.sleep(wait)
                 continue
@@ -341,10 +346,11 @@ class TwitterApiIoClient:
                 **extra,
             }
             try:
-                resp = requests.post(
+                resp = cffi_requests.post(
                     endpoint,
                     json=payload,
                     headers=self._headers(),
+                    impersonate='chrome131',
                     timeout=self.timeout,
                 )
                 self._handle_response(resp)
@@ -379,10 +385,12 @@ class TwitterApiIoClient:
             'query': query,
             'queryType': 'Top',
         }
-        resp = requests.get(
+        self._wait_if_rate_limited()
+        resp = cffi_requests.get(
             'https://api.twitterapi.io/twitter/tweet/advanced_search',
             params=params,
             headers=self._headers(),
+            impersonate='chrome131',
             timeout=self.timeout,
         )
         resp.raise_for_status()
