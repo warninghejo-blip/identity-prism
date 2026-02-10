@@ -1160,7 +1160,7 @@ const BlackHole = () => {
           {/* ═══ Mobile Token List (< 640px) ═══ */}
           <div className="sm:hidden">
             {/* Header row — CSS grid for perfect alignment */}
-            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px 1fr 56px 64px 28px' }}>
+            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px minmax(0, 0.8fr) 58px 64px 56px' }}>
               <div className="flex justify-center">
                 <Checkbox
                   checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
@@ -1171,7 +1171,7 @@ const BlackHole = () => {
               <span className="text-center">Asset</span>
               <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
               <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return {sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>St</span>
+              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>Status</span>
             </div>
 
             {visibleTokens.length === 0 ? (
@@ -1192,7 +1192,7 @@ const BlackHole = () => {
                         ? 'bg-cyan-950/15 border-cyan-900/30'
                         : 'bg-zinc-900/20 border-zinc-800/30'
                     }`}
-                    style={{ gridTemplateColumns: '24px 1fr 56px 64px 28px' }}
+                    style={{ gridTemplateColumns: '24px minmax(0, 0.8fr) 58px 64px 56px' }}
                     onClick={() => toggleSelection(token.pubkey.toBase58())}
                   >
                     <div className="flex justify-center">
@@ -1203,7 +1203,7 @@ const BlackHole = () => {
                       />
                     </div>
                     {/* Asset */}
-                    <div className="flex items-center gap-1.5 min-w-0 overflow-hidden px-1">
+                    <div className="flex items-center gap-1.5 min-w-0 overflow-hidden pr-1">
                       <div className="w-7 h-7 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
                         {token.image ? (
                           <img src={token.image} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
@@ -1220,7 +1220,7 @@ const BlackHole = () => {
                       </div>
                     </div>
                     {/* Balance */}
-                    <span className="text-[11px] font-mono text-zinc-400 text-right pr-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
+                    <span className="text-[11px] font-mono text-zinc-400 text-center pr-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
                     {/* Return */}
                     <span className="text-[10px] font-mono text-emerald-400/80 text-right pr-1">
                       {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
