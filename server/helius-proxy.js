@@ -1073,6 +1073,136 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ── Reputation Attestation (Blink-compatible Solana Action) ──
+  if (pathname === '/api/actions/attest' || pathname === '/api/reputation/attest') {
+    const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+    const baseUrl = getBaseUrl(req) || PUBLIC_BASE_URL;
+
+    if (req.method === 'GET' || req.method === 'OPTIONS') {
+      const address = String(url.searchParams.get('address') ?? '').trim();
+      if (!address) {
+        respondJson(res, 200, {
+          type: 'action',
+          icon: `${baseUrl}/assets/identity-prism.png`,
+          title: 'Attest Your On-Chain Reputation',
+          description: 'Record your Identity Prism reputation score permanently on the Solana blockchain. This creates a verifiable, immutable attestation signed by both you and our authority.',
+          label: 'Attest Reputation',
+          links: {
+            actions: [
+              {
+                label: 'Attest My Wallet',
+                href: `${baseUrl}/api/actions/attest?address={address}`,
+                parameters: [
+                  { name: 'address', label: 'Enter your Solana wallet address', required: true },
+                ],
+              },
+            ],
+          },
+        });
+        return;
+      }
+      // Address provided — show score preview
+      try {
+        new PublicKey(address);
+        const snapshot = await fetchIdentitySnapshot(address);
+        const { identity } = snapshot;
+        respondJson(res, 200, {
+          type: 'action',
+          icon: `${baseUrl}/api/actions/render?address=${address}&side=front`,
+          title: `Attest Score: ${identity.score}/1400 — ${identity.tier.replace('_', ' ').toUpperCase()}`,
+          description: `Badges: ${identity.badges.join(', ') || 'none'}. Click to record this reputation permanently on the Solana blockchain.`,
+          label: `Attest ${identity.score} pts`,
+          links: {
+            actions: [
+              { label: `Attest Score ${identity.score}`, href: `${baseUrl}/api/actions/attest?address=${address}` },
+            ],
+          },
+        });
+        return;
+      } catch (error) {
+        respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid address' });
+        return;
+      }
+    }
+
+    if (req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        let payload = {};
+        try { payload = body ? JSON.parse(body) : {}; } catch { respondJson(res, 400, { error: 'Invalid JSON' }); return; }
+
+        const account = String(payload.account ?? '').trim();
+        const addressParam = String(url.searchParams.get('address') ?? '').trim();
+        const address = addressParam || account;
+
+        if (!account) { respondJson(res, 400, { error: 'account is required' }); return; }
+        if (!address) { respondJson(res, 400, { error: 'address parameter is required' }); return; }
+
+        let payerKey, walletKey;
+        try { payerKey = new PublicKey(account); } catch { respondJson(res, 400, { error: 'Invalid account' }); return; }
+        try { walletKey = new PublicKey(address); } catch { respondJson(res, 400, { error: 'Invalid address' }); return; }
+
+        // Fetch reputation
+        const snapshot = await fetchIdentitySnapshot(address);
+        const { identity, walletAgeDays, solBalance, txCount, tokenCount, nftCount } = snapshot;
+
+        // Build attestation memo
+        const attestation = JSON.stringify({
+          protocol: 'identity-prism-v1',
+          wallet: address,
+          score: identity.score,
+          tier: identity.tier,
+          badges: identity.badges,
+          stats: { walletAgeDays, solBalance: Math.round(solBalance * 1000) / 1000, txCount, tokenCount, nftCount },
+          timestamp: Math.floor(Date.now() / 1000),
+          authority: TREASURY_ADDRESS,
+        });
+
+        // Load treasury for co-signing
+        const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
+        if (!treasurySecret) {
+          respondJson(res, 500, { error: 'Attestation authority not configured' });
+          return;
+        }
+        const treasuryKeypair = Keypair.fromSecretKey(treasurySecret);
+
+        // Build Memo instruction — signed by both payer and treasury
+        const memoInstruction = new TransactionInstruction({
+          keys: [
+            { pubkey: payerKey, isSigner: true, isWritable: true },
+            { pubkey: treasuryKeypair.publicKey, isSigner: true, isWritable: false },
+          ],
+          programId: MEMO_PROGRAM_ID,
+          data: Buffer.from(attestation, 'utf-8'),
+        });
+
+        const apiKey = pickHeliusKey(address);
+        const rpcUrl = buildRpcUrl(apiKey);
+        const connection = new Connection(rpcUrl, 'confirmed');
+        const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+
+        const transaction = new Transaction().add(memoInstruction);
+        transaction.feePayer = payerKey;
+        transaction.recentBlockhash = latestBlockhash.blockhash;
+
+        // Treasury co-signs
+        transaction.partialSign(treasuryKeypair);
+
+        const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+
+        respondJson(res, 200, {
+          transaction: serialized,
+          message: `Reputation attestation: Score ${identity.score}/1400, Tier ${identity.tier.replace('_', ' ').toUpperCase()}. This will be permanently recorded on Solana.`,
+        });
+        return;
+      } catch (error) {
+        console.error('[attest] failed', error);
+        respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+    }
+  }
+
   if (pathname === '/api/market/sol-price' && req.method === 'GET') {
     try {
       const price = await getCachedSolPriceUsd();
