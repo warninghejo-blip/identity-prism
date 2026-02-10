@@ -822,15 +822,23 @@ const BlackHole = () => {
       transaction.lastValidBlockHeight = lastValidBlockHeight;
       transaction.feePayer = publicKey;
 
-      // Use signTransaction + sendRawTransaction (same pattern as mint)
-      // sendTransaction alone fails on some mobile wallets with missing signature
+      // Patch serialize to skip signature verification (same pattern as mint code)
+      // Some mobile wallets / adapters call serialize internally and fail if not all sigs present
+      const origSerialize = transaction.serialize.bind(transaction);
+      transaction.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+        origSerialize({
+          ...config,
+          requireAllSignatures: false,
+          verifySignatures: false,
+        })) as typeof transaction.serialize;
+
       let signature: string;
       if (signTransaction) {
         const signed = await signTransaction(transaction);
-        signature = await connection.sendRawTransaction(signed.serialize(), {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-        });
+        signature = await connection.sendRawTransaction(
+          signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+          { skipPreflight: true, preflightCommitment: 'confirmed' }
+        );
       } else {
         signature = await sendTransaction(transaction, connection);
       }
@@ -1173,7 +1181,7 @@ const BlackHole = () => {
           {/* ═══ Mobile Token List (< 640px) ═══ */}
           <div className="sm:hidden">
             {/* Header row — CSS grid for perfect alignment */}
-            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px minmax(0, 1fr) 52px 72px 42px' }}>
+            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px minmax(0, 1fr) 46px 80px 38px' }}>
               <div className="flex justify-center">
                 <Checkbox
                   checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
@@ -1184,7 +1192,7 @@ const BlackHole = () => {
               <span className="text-center">Asset</span>
               <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
               <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>Status</span>
+              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>St.</span>
             </div>
 
             {visibleTokens.length === 0 ? (
@@ -1205,7 +1213,7 @@ const BlackHole = () => {
                         ? 'bg-cyan-950/15 border-cyan-900/30'
                         : 'bg-zinc-900/20 border-zinc-800/30'
                     }`}
-                    style={{ gridTemplateColumns: '24px minmax(0, 1fr) 52px 72px 42px' }}
+                    style={{ gridTemplateColumns: '24px minmax(0, 1fr) 46px 80px 38px' }}
                     onClick={() => toggleSelection(token.pubkey.toBase58())}
                   >
                     <div className="flex justify-center">

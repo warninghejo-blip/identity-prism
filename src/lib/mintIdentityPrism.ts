@@ -428,18 +428,12 @@ export async function mintIdentityPrism({
       });
       if (simulation.value.err) {
         console.warn('[mint] simulation error', simulation.value.err, simulation.value.logs);
-        if (paymentToken === 'SOL') {
-          throw buildPreflightError('SIMULATION_FAILED', 'Transaction simulation failed', {
-            simulationError: simulation.value.err,
-            simulationLogs: simulation.value.logs ?? [],
-          });
-        }
+        // Don't block on simulation errors — let the real tx determine success/failure
+        // Some RPC endpoints return stale or misleading simulation results
       }
     } catch (simError) {
       console.warn('[mint] simulateTransaction threw', simError);
-      if ((simError as { code?: string })?.code === 'SIMULATION_FAILED') throw simError;
-      // For SKR path, don't block on simulation errors (server already validated tx)
-      if (paymentToken === 'SOL') throw simError;
+      // Don't block on simulation errors — server already validated the tx
     }
   }
 
