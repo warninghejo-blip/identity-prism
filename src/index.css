@@ -206,7 +206,6 @@
     height: 100svh;
     border-radius: 40px;
     overflow: hidden;
-    background: #020408;
   }
 
   .card-stage.controls-open .celestial-card-shell {
@@ -216,6 +215,7 @@
   .celestial-card-body {
     border-radius: 40px;
     overflow: hidden;
+    will-change: transform;
   }
 }
 
