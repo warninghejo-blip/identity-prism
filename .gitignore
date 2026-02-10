@@ -43,6 +43,9 @@ twitter-bot-python/test_*.py
 twitter-bot-python/check_tweets*.py
 twitter-bot-python/reset_slot.py
 twitter-bot-python/fix_nginx.sh
+twitter-bot-python/post_*.py
+twitter-bot-python/check_*.py
+twitter-bot-python/colosseum_state.json
 
 # Python
 .venv/
