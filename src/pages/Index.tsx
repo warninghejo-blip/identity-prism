@@ -702,11 +702,14 @@ const Index = () => {
         return;
       }
       console.error("Mint error:", err);
-      setMintState("error");
-      toast.error("Deployment failed", {
-        description: err instanceof Error ? err.message : "Unknown error",
-      });
-      setTimeout(() => setMintState("idle"), 3000);
+      const msg = err instanceof Error ? err.message : String(err);
+      const isUserCancel = /reject|cancel|denied|abort|dismiss/i.test(msg);
+      if (isUserCancel) {
+        toast.info("Transaction cancelled");
+      } else {
+        toast.error("Deployment failed", { description: msg });
+      }
+      setMintState("idle");
     }
   }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
 
