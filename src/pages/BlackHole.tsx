@@ -1049,13 +1049,12 @@ const BlackHole = () => {
         ) : (
         <div className="blackhole-panel space-y-6">
 
-          {/* Wallet row */}
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-white/6">
-            <p className="text-zinc-500 text-sm max-w-lg leading-relaxed">
-              Burn dust tokens and abandoned NFTs to reclaim locked SOL rent.
-              Valuable assets are automatically protected.
+          {/* Description + wallet */}
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pb-4 border-b border-white/6">
+            <p className="text-zinc-500 text-sm max-w-lg leading-relaxed text-center sm:text-left">
+              Burn dust tokens and abandoned NFTs to reclaim locked SOL rent. Valuable assets are automatically protected.
             </p>
-            <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0" />
+            <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0 hidden sm:inline-flex" />
           </div>
 
           {/* Asset Summary Stats */}
@@ -1153,18 +1152,18 @@ const BlackHole = () => {
           </div>
 
           {/* ═══ Mobile Token List (< 640px) ═══ */}
-          <div className="sm:hidden space-y-1">
-            {/* Select-all header */}
-            <div className="flex items-center px-2 py-2 rounded-lg bg-zinc-900/30">
+          <div className="sm:hidden space-y-0.5">
+            {/* Header */}
+            <div className="flex items-center px-1.5 py-1.5 rounded-lg bg-zinc-900/30 text-[10px] text-zinc-600">
               <Checkbox
                 checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
                 onCheckedChange={selectAll}
-                className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-2"
+                className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-1"
               />
-              <span className="text-[11px] text-zinc-500 mr-auto">Select all</span>
-              <span className="text-[10px] text-zinc-600 w-[52px] text-right cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
-              <span className="text-[10px] text-zinc-600 w-[58px] text-right cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return {sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
-              <span className="text-[10px] text-zinc-600 w-[24px] text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}></span>
+              <span className="flex-1 min-w-0">Asset</span>
+              <span className="w-[46px] text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="w-[54px] text-right border-l border-zinc-800/40 pl-1 cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
+              <span className="w-[22px] text-center border-l border-zinc-800/40 cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>St</span>
             </div>
 
             {visibleTokens.length === 0 ? (
@@ -1174,12 +1173,12 @@ const BlackHole = () => {
             ) : (
               sortedTokens.map((token) => {
                 const netEst = token.netGainSol ?? 0;
-                const shortName = (token.name || token.symbol || 'Unknown');
-                const displayName = shortName.length > 14 ? shortName.slice(0, 13) + '…' : shortName;
+                const rawName = token.name || token.symbol || '???';
+                const displayName = rawName.length > 10 ? rawName.slice(0, 9) + '…' : rawName;
                 return (
                   <div
                     key={token.pubkey.toBase58()}
-                    className={`flex items-center px-2 py-1.5 rounded-lg border transition-colors ${
+                    className={`flex items-center px-1.5 py-1 rounded-md border transition-colors ${
                       selectedTokens.has(token.pubkey.toBase58())
                         ? 'bg-cyan-950/15 border-cyan-900/30'
                         : 'bg-zinc-900/20 border-zinc-800/30'
@@ -1189,34 +1188,33 @@ const BlackHole = () => {
                     <Checkbox
                       checked={selectedTokens.has(token.pubkey.toBase58())}
                       onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
-                      className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-2"
+                      className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0 mr-1"
                     />
-                    {/* Icon with name above and badge below */}
-                    <div className="flex flex-col items-center shrink-0 mr-2" style={{ width: 52 }}>
-                      <span className="text-[9px] font-medium text-zinc-300 leading-tight truncate w-full text-center mb-0.5">{displayName}</span>
-                      <div className="w-8 h-8 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden">
+                    {/* Asset: icon + name + type */}
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                      <div className="w-7 h-7 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
                         {token.image ? (
                           <img src={token.image} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                         ) : (
                           <div className="w-3 h-3 rounded-full bg-zinc-800" />
                         )}
                       </div>
-                      <span className={`text-[7px] mt-px uppercase font-bold tracking-wider ${token.isNft ? 'text-purple-400' : 'text-zinc-600'}`}>
-                        {token.isNft ? 'NFT' : 'TKN'}
-                      </span>
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-medium text-zinc-200 leading-none truncate">{displayName}</div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className={`text-[7px] uppercase font-bold ${token.isNft ? 'text-purple-400' : 'text-zinc-600'}`}>{token.isNft ? 'NFT' : 'TKN'}</span>
+                          <span className="text-[8px] text-zinc-600 font-mono">{formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)}◎` : ''}</span>
+                        </div>
+                      </div>
                     </div>
-                    {/* Value info */}
-                    <span className="text-[10px] text-zinc-600 font-mono mr-auto truncate" style={{ maxWidth: 64 }}>
-                      {formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)} SOL` : (token.priceUsd != null ? `$${formatCompact(token.priceUsd)}` : '')}
-                    </span>
                     {/* Balance */}
-                    <span className="text-[12px] font-mono text-zinc-400 w-[52px] text-right shrink-0">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
-                    {/* Net return */}
-                    <span className="text-[10px] font-mono text-emerald-400/80 w-[58px] text-right shrink-0">
+                    <span className="text-[11px] font-mono text-zinc-400 w-[46px] text-right shrink-0 border-l border-zinc-800/30 pl-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
+                    {/* Return */}
+                    <span className="text-[10px] font-mono text-emerald-400/80 w-[54px] text-right shrink-0 border-l border-zinc-800/30 pl-1">
                       {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
                     </span>
                     {/* Status */}
-                    <div className="shrink-0 w-[24px] flex justify-center">
+                    <div className="shrink-0 w-[22px] flex justify-center border-l border-zinc-800/30">
                       {token.assetStatus === 'protected' ? (
                         <Shield className="h-3.5 w-3.5 text-emerald-400" />
                       ) : token.assetStatus === 'valuable' ? (
