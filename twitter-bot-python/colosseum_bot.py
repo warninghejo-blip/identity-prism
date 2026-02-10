@@ -185,7 +185,7 @@ Be genuine and interesting. Show real technical depth.
 Do NOT start with "Progress Update Day X" — be creative with the title."""
     text = None
     for attempt in range(3):
-        text = generate_text(prompt, max_tokens=2048)
+        text = generate_text(prompt)
         if text and is_quality(text, min_len=100):
             break
         logging.warning('Post generation attempt %d/3 failed quality check (len=%d)',
