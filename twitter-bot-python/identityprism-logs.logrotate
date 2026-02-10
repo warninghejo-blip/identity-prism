@@ -1,0 +1,13 @@
+/opt/identityprism-bot/bot.err.log
+/opt/identityprism-bot/colosseum.err.log
+/opt/identityprism-bot/puppeteer_run.log
+{
+    daily
+    rotate 1
+    maxage 1
+    missingok
+    notifempty
+    copytruncate
+    compress
+    delaycompress
+}

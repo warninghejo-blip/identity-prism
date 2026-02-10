@@ -261,6 +261,55 @@ class TwitterClient:
             logging.warning('Post failed (twitterapi.io): %s', exc)
             return None, str(exc)
 
+    async def post_thread(self, tweets, media_paths=None):
+        """Post a thread: first tweet is standalone, rest are self-replies.
+        Returns list of (tweet_id, error) tuples."""
+        self._require_api_client()
+        results = []
+        parent_id = None
+        for i, text in enumerate(tweets):
+            m_ids = None
+            if i == 0 and media_paths:
+                for mp in media_paths:
+                    mid = await self.upload_media(mp)
+                    if mid:
+                        m_ids = [mid]
+                        break
+            try:
+                tweet_id = await asyncio.to_thread(
+                    self.api_client.create_tweet,
+                    text,
+                    parent_id,
+                    m_ids,
+                )
+                if tweet_id is None:
+                    tweet_id = 'unknown'
+                results.append((tweet_id, None))
+                parent_id = tweet_id if tweet_id != 'unknown' else parent_id
+                logging.info('Thread tweet %d/%d posted: %s', i + 1, len(tweets), tweet_id)
+            except Exception as exc:
+                logging.warning('Thread tweet %d/%d failed: %s', i + 1, len(tweets), exc)
+                results.append((None, str(exc)))
+                break
+            if i < len(tweets) - 1:
+                await asyncio.sleep(random.uniform(8, 20))
+        return results
+
+    async def quote_tweet(self, text, tweet_url):
+        """Quote-tweet the given URL with commentary text."""
+        self._require_api_client()
+        try:
+            tweet_id = await asyncio.to_thread(
+                self.api_client.quote, text, tweet_url,
+            )
+            if tweet_id is None:
+                logging.warning('Quote tweet likely created but no ID returned')
+                return 'unknown', None
+            return tweet_id, None
+        except Exception as exc:
+            logging.warning('Quote tweet failed: %s', exc)
+            return None, str(exc)
+
     async def like_tweet(self, tweet):
         tweet_id = self._extract_tweet_id(tweet)
         if not tweet_id:

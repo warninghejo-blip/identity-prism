@@ -942,6 +942,137 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ── Reputation API ──
+  if (pathname === '/api/reputation' && req.method === 'GET') {
+    const address = String(url.searchParams.get('address') ?? '').trim();
+    if (!address) {
+      respondJson(res, 400, { error: 'address query parameter is required' });
+      return;
+    }
+    try {
+      new PublicKey(address);
+    } catch {
+      respondJson(res, 400, { error: 'Invalid Solana address' });
+      return;
+    }
+    try {
+      const snapshot = await fetchIdentitySnapshot(address);
+      const { identity, stats, walletAgeDays, solBalance, txCount, tokenCount, nftCount } = snapshot;
+      respondJson(res, 200, {
+        address,
+        score: identity.score,
+        tier: identity.tier,
+        badges: identity.badges,
+        stats: {
+          walletAgeDays,
+          solBalance: Math.round(solBalance * 1000) / 1000,
+          txCount,
+          tokenCount,
+          nftCount,
+        },
+      });
+      return;
+    } catch (error) {
+      console.error('[reputation] failed for', address, error);
+      respondJson(res, 500, {
+        error: 'Failed to compute reputation',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  // ── Reputation API — batch (up to 5 addresses) ──
+  if (pathname === '/api/reputation/batch' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      let payload = {};
+      try {
+        payload = body ? JSON.parse(body) : {};
+      } catch {
+        respondJson(res, 400, { error: 'Invalid JSON' });
+        return;
+      }
+      const addresses = Array.isArray(payload.addresses) ? payload.addresses : [];
+      if (!addresses.length || addresses.length > 5) {
+        respondJson(res, 400, { error: 'Provide 1-5 addresses in { "addresses": [...] }' });
+        return;
+      }
+      const results = [];
+      for (const addr of addresses) {
+        const trimmed = String(addr).trim();
+        try {
+          new PublicKey(trimmed);
+          const snapshot = await fetchIdentitySnapshot(trimmed);
+          const { identity, walletAgeDays, solBalance, txCount, tokenCount, nftCount } = snapshot;
+          results.push({
+            address: trimmed,
+            score: identity.score,
+            tier: identity.tier,
+            badges: identity.badges,
+            stats: { walletAgeDays, solBalance: Math.round(solBalance * 1000) / 1000, txCount, tokenCount, nftCount },
+          });
+        } catch (error) {
+          results.push({ address: trimmed, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      respondJson(res, 200, { results });
+      return;
+    } catch (error) {
+      respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
+
+  // ── Reputation API — compare two wallets ──
+  if (pathname === '/api/reputation/compare' && req.method === 'GET') {
+    const a = String(url.searchParams.get('a') ?? '').trim();
+    const b = String(url.searchParams.get('b') ?? '').trim();
+    if (!a || !b) {
+      respondJson(res, 400, { error: 'Both ?a= and ?b= address parameters are required' });
+      return;
+    }
+    try {
+      new PublicKey(a);
+      new PublicKey(b);
+    } catch {
+      respondJson(res, 400, { error: 'Invalid Solana address' });
+      return;
+    }
+    try {
+      const [snapA, snapB] = await Promise.all([
+        fetchIdentitySnapshot(a),
+        fetchIdentitySnapshot(b),
+      ]);
+      const format = (snap, addr) => ({
+        address: addr,
+        score: snap.identity.score,
+        tier: snap.identity.tier,
+        badges: snap.identity.badges,
+        stats: {
+          walletAgeDays: snap.walletAgeDays,
+          solBalance: Math.round(snap.solBalance * 1000) / 1000,
+          txCount: snap.txCount,
+          tokenCount: snap.tokenCount,
+          nftCount: snap.nftCount,
+        },
+      });
+      const resultA = format(snapA, a);
+      const resultB = format(snapB, b);
+      const diff = resultA.score - resultB.score;
+      respondJson(res, 200, {
+        wallets: [resultA, resultB],
+        scoreDiff: diff,
+        winner: diff > 0 ? a : diff < 0 ? b : 'tie',
+      });
+      return;
+    } catch (error) {
+      console.error('[reputation/compare] failed', error);
+      respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
+
   if (pathname === '/api/market/sol-price' && req.method === 'GET') {
     try {
       const price = await getCachedSolPriceUsd();

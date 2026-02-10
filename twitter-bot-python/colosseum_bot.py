@@ -12,8 +12,7 @@ import random
 import time
 from pathlib import Path
 
-import requests
-from google import genai
+from curl_cffi import requests as cffi_requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,7 +21,7 @@ load_dotenv()
 # Config
 # ---------------------------------------------------------------------------
 BASE_URL = 'https://agents.colosseum.com/api'
-SECRETS_PATH = Path(__file__).parent.parent / 'secrets' / 'colosseum-hackathon.json'
+SECRETS_PATH = Path(os.getenv('COLOSSEUM_SECRETS_PATH', str(Path(__file__).parent / 'secrets' / 'colosseum-hackathon.json')))
 STATE_PATH = Path(__file__).parent / 'colosseum_state.json'
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
@@ -81,8 +80,10 @@ def hdrs(api_key):
 
 def api_get(path, api_key=None, params=None):
     h = hdrs(api_key) if api_key else {'Content-Type': 'application/json'}
+    time.sleep(random.uniform(1.0, 3.0))
     try:
-        r = requests.get(f'{BASE_URL}{path}', headers=h, params=params, timeout=30)
+        r = cffi_requests.get(f'{BASE_URL}{path}', headers=h, params=params,
+                              impersonate='chrome131', timeout=30)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -92,9 +93,10 @@ def api_get(path, api_key=None, params=None):
 RATE_LIMITED = 'RATE_LIMITED'
 
 def api_post(path, api_key, payload=None):
+    time.sleep(random.uniform(2.0, 5.0))
     try:
-        r = requests.post(f'{BASE_URL}{path}', headers=hdrs(api_key),
-                          json=payload or {}, timeout=30)
+        r = cffi_requests.post(f'{BASE_URL}{path}', headers=hdrs(api_key),
+                               json=payload or {}, impersonate='chrome131', timeout=30)
         if r.status_code == 429:
             logging.warning('429 on POST %s — rate limited', path)
             return RATE_LIMITED
@@ -108,31 +110,31 @@ def api_post(path, api_key, payload=None):
 # Gemini
 # ---------------------------------------------------------------------------
 
-_gemini_client = None
-
-def get_gemini():
-    global _gemini_client
-    if not _gemini_client and GEMINI_API_KEY:
-        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    return _gemini_client
+_GEMINI_REST_URL = f'https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}'
 
 def generate_text(prompt, max_tokens=1024):
-    client = get_gemini()
-    if not client:
+    if not GEMINI_API_KEY:
         return None
+    time.sleep(random.uniform(1.5, 4.0))
+    payload = {
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': 0.9, 'maxOutputTokens': max_tokens},
+    }
     try:
-        resp = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config={'max_output_tokens': max_tokens, 'temperature': 0.9},
+        resp = cffi_requests.post(
+            _GEMINI_REST_URL, json=payload,
+            impersonate='chrome131', timeout=30,
         )
-        # Detect truncation via finish_reason
-        if resp.candidates:
-            fr = getattr(resp.candidates[0], 'finish_reason', None)
-            if fr and str(fr).upper() in ('MAX_TOKENS', 'STOP_CANDIDATE_MAX_TOKENS', '2'):
-                logging.warning('Gemini response truncated (finish_reason=%s)', fr)
-                return None
-        text = resp.text.strip() if resp.text else None
+        if resp.status_code != 200:
+            logging.warning('Gemini generation failed: HTTP %d %s', resp.status_code, resp.text[:200])
+            return None
+        data = resp.json()
+        candidate = data.get('candidates', [{}])[0]
+        finish = candidate.get('finishReason', '')
+        if finish in ('MAX_TOKENS', 'STOP_CANDIDATE_MAX_TOKENS'):
+            logging.warning('Gemini response truncated (finish_reason=%s)', finish)
+            return None
+        text = candidate.get('content', {}).get('parts', [{}])[0].get('text', '').strip()
         if not text:
             return None
         if text.startswith('"') and text.endswith('"'):
