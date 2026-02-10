@@ -109,10 +109,12 @@ const formatCompact = (value: number): string => {
   if (value === 0) return '0';
   const abs = Math.abs(value);
   if (abs < 0.0001 && abs > 0) return '~0';
-  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  if (abs >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return value.toFixed(4);
+  if (abs >= 1_000_000) return `${parseFloat((value / 1_000_000).toFixed(1))}M`;
+  if (abs >= 1_000) return `${parseFloat((value / 1_000).toFixed(1))}K`;
+  if (abs >= 100) return `${Math.round(value)}`;
+  if (abs >= 1) return `${parseFloat(value.toFixed(2))}`;
+  if (abs >= 0.01) return `${parseFloat(value.toFixed(4))}`;
+  return `${parseFloat(value.toFixed(6))}`;
 };
 
 const formatSolCompact = (value?: number | null): string | null => {
@@ -121,9 +123,9 @@ const formatSolCompact = (value?: number | null): string | null => {
   const abs = Math.abs(value);
   if (abs < 0.00005) return '~0';
   if (abs >= 1000) return `${formatCompact(value)}`;
-  if (abs >= 1) return value.toFixed(2);
-  if (abs >= 0.01) return value.toFixed(4);
-  return value.toFixed(4);
+  if (abs >= 1) return `${parseFloat(value.toFixed(2))}`;
+  if (abs >= 0.01) return `${parseFloat(value.toFixed(4))}`;
+  return `${parseFloat(value.toFixed(6))}`;
 };
 
 const fetchCollectionMarketStats = async (
@@ -1098,15 +1100,15 @@ const BlackHole = () => {
                   </div>
                   <div>
                     <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Rent Reclaim</div>
-                    <div className="text-lg font-bold font-mono text-zinc-200 mt-1">{summary.grossReclaim.toFixed(4)} <span className="text-xs text-zinc-500">SOL</span></div>
+                    <div className="text-lg font-bold font-mono text-zinc-200 mt-1">{parseFloat(summary.grossReclaim.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
                   </div>
                   <div>
                     <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Fee ({(COMMISSION_RATE * 100).toFixed(0)}%)</div>
-                    <div className="text-lg font-mono text-zinc-400 mt-1">-{summary.commission.toFixed(4)} <span className="text-xs text-zinc-500">SOL</span></div>
+                    <div className="text-lg font-mono text-zinc-400 mt-1">-{parseFloat(summary.commission.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
                   </div>
                   <div className="bg-emerald-950/30 rounded-lg p-2">
                     <div className="text-[11px] text-emerald-500 uppercase tracking-wider">Est. Return</div>
-                    <div className="text-xl font-black font-mono text-emerald-400 mt-1">~{summary.netReturn.toFixed(4)} <span className="text-xs">SOL</span></div>
+                    <div className="text-xl font-black font-mono text-emerald-400 mt-1">~{parseFloat(summary.netReturn.toFixed(4))} <span className="text-xs">SOL</span></div>
                     {solPriceUsd && (
                       <div className="text-[11px] text-emerald-600">{formatUsd(summary.netReturn * solPriceUsd)}</div>
                     )}
@@ -1119,7 +1121,9 @@ const BlackHole = () => {
                     className="bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-11 text-base shadow-lg shadow-red-900/30"
                   >
                     {isBurning ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Flame className="mr-2 h-5 w-5" />}
-                    Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr; ~{summary.netReturn.toFixed(4)} SOL
+                    <span className="hidden sm:inline">Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr; </span>
+                    <span className="sm:hidden">Burn {summary.totalAccounts} &rarr; </span>
+                    ~{parseFloat(summary.netReturn.toFixed(4))} SOL
                   </Button>
                 </div>
               </div>
@@ -1148,8 +1152,90 @@ const BlackHole = () => {
             </label>
           </div>
 
-          {/* Token List */}
-            <div className="rounded-xl border border-zinc-800/50 bg-zinc-950/40 overflow-x-auto">
+          {/* ═══ Mobile Token List (< 640px) ═══ */}
+          <div className="sm:hidden space-y-1">
+            {/* Select-all row */}
+            <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-zinc-900/30">
+              <Checkbox
+                checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
+                onCheckedChange={selectAll}
+                className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0"
+              />
+              <span className="text-[11px] text-zinc-500">Select all</span>
+              <div className="ml-auto flex gap-3 text-[10px] text-zinc-600">
+                <span className="cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>Status {sortField === 'status' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+                <span className="cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Value {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+              </div>
+            </div>
+
+            {visibleTokens.length === 0 ? (
+              <div className="py-10 text-center text-zinc-600 text-sm">
+                {isLoading ? 'Scanning event horizon...' : 'No burn candidates found. Toggle "Show all" to review.'}
+              </div>
+            ) : (
+              sortedTokens.map((token) => {
+                const netEst = token.netGainSol ?? 0;
+                return (
+                  <div
+                    key={token.pubkey.toBase58()}
+                    className={`flex items-center gap-2 px-2 py-2 rounded-lg border transition-colors ${
+                      selectedTokens.has(token.pubkey.toBase58())
+                        ? 'bg-cyan-950/15 border-cyan-900/30'
+                        : 'bg-zinc-900/20 border-zinc-800/30'
+                    }`}
+                    onClick={() => toggleSelection(token.pubkey.toBase58())}
+                  >
+                    <Checkbox
+                      checked={selectedTokens.has(token.pubkey.toBase58())}
+                      onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
+                      className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 shrink-0"
+                    />
+                    {/* Icon + type badge */}
+                    <div className="flex flex-col items-center w-10 shrink-0">
+                      <div className="w-9 h-9 rounded-lg bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden">
+                        {token.image ? (
+                          <img src={token.image} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                        ) : (
+                          <div className="w-4 h-4 rounded-full bg-zinc-800" />
+                        )}
+                      </div>
+                      <span className={`text-[7px] mt-0.5 uppercase font-bold tracking-wider ${token.isNft ? 'text-purple-400' : 'text-zinc-600'}`}>
+                        {token.isNft ? 'NFT' : 'TKN'}
+                      </span>
+                    </div>
+                    {/* Name + balance + value */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[12px] font-medium text-zinc-200 truncate">{token.name || token.symbol || 'Unknown'}</span>
+                        <span className="text-[12px] font-mono text-zinc-400 shrink-0">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                        <span className="text-[10px] text-zinc-600 font-mono">
+                          {formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)} SOL` : (token.priceUsd != null ? `$${formatCompact(token.priceUsd)}` : '')}
+                        </span>
+                        {netEst > 0 && (
+                          <span className="text-[10px] font-mono text-emerald-400/80">+{parseFloat(netEst.toFixed(4))}</span>
+                        )}
+                      </div>
+                    </div>
+                    {/* Status indicator */}
+                    <div className="shrink-0 w-6 flex justify-center">
+                      {token.assetStatus === 'protected' ? (
+                        <Shield className="h-4 w-4 text-emerald-400" />
+                      ) : token.assetStatus === 'valuable' ? (
+                        <AlertTriangle className="h-4 w-4 text-amber-400" />
+                      ) : (
+                        <Flame className="h-4 w-4 text-red-400/70" />
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* ═══ Desktop Token Table (≥ 640px) ═══ */}
+          <div className="hidden sm:block rounded-xl border border-zinc-800/50 bg-zinc-950/40 overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-zinc-800/50">
@@ -1251,7 +1337,7 @@ const BlackHole = () => {
                             }
                             return (
                               <div className="flex flex-col items-center">
-                                <span className="text-emerald-400/80">~{netEst.toFixed(4)}</span>
+                                <span className="text-emerald-400/80">~{parseFloat(netEst.toFixed(4))}</span>
                                 <span className="text-[9px] text-zinc-600">est. net</span>
                               </div>
                             );

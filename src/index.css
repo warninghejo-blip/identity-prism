@@ -1861,11 +1861,14 @@
 .blackhole-content table td:nth-child(6) { width: 110px; }
 
 @media (max-width: 640px) {
-  .blackhole-hero__title { font-size: 1.6rem; letter-spacing: 0.1em; }
-  .blackhole-hero__sub { font-size: 0.65rem; letter-spacing: 0.12em; margin-bottom: 12px; }
-  .blackhole-visual { height: 200px; }
+  .blackhole-hero__title { font-size: 1.4rem; letter-spacing: 0.08em; }
+  .blackhole-hero__sub { font-size: 0.6rem; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .blackhole-visual { height: 180px; }
+  .blackhole-hero { padding-top: clamp(16px, 3vh, 32px); }
   .blackhole-panel { padding: 10px; border-radius: 14px; }
-  .blackhole-content { padding: 0 4px 60px; max-width: 100vw; }
+  .blackhole-content { padding: 0 4px 80px; max-width: 100vw; overflow-x: hidden; }
+  .blackhole-shell { overflow-x: hidden; }
+  .blackhole-content table { min-width: unset; font-size: 10px; }
 }
 
 .blackhole-panel {
