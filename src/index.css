@@ -212,6 +212,13 @@
   .celestial-card-face {
     border-radius: 0 !important;
   }
+  .celestial-card-face [data-suck="bg"],
+  .celestial-card-face [data-suck="bg"] > div {
+    border-radius: 0 !important;
+  }
+  .celestial-card-shell {
+    background: #020408;
+  }
 }
 
 .card-stage > * {
