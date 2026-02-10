@@ -66,22 +66,8 @@ class AIEngine:
         self._rest_url = f'{_GEMINI_REST_URL}?key={GEMINI_API_KEY}'
 
     @staticmethod
-    def _fit_twitter_limit(text, limit=280):
-        if len(text) <= limit:
-            return text
-        truncated = text[:limit]
-        for end_char in ['. ', '! ', '? ']:
-            idx = truncated.rfind(end_char)
-            if idx > limit // 3:
-                return truncated[:idx + 1].strip()
-        for end_char in ['.', '!', '?']:
-            idx = truncated.rfind(end_char)
-            if idx > limit // 3:
-                return truncated[:idx + 1].strip()
-        last_space = truncated.rfind(' ')
-        if last_space > limit // 3:
-            return truncated[:last_space].rstrip(' ,;:')
-        return truncated.rstrip()
+    def _fit_twitter_limit(text, limit=25000):
+        return text
 
     @staticmethod
     def _format_tags(text):
@@ -115,13 +101,10 @@ class AIEngine:
         tags.reverse()
         body = ' '.join(words).rstrip()
         tag_str = ' '.join(tags)
-        # Truncate body to leave room for tags on a new line
         if tag_str:
-            max_body = 280 - len(tag_str) - 1  # -1 for newline
-            body = self._fit_twitter_limit(body, max_body)
             cleaned = f'{body}\n{tag_str}'
         else:
-            cleaned = self._fit_twitter_limit(body)
+            cleaned = body
         return cleaned
 
     def _append_cta(self, text):
@@ -130,7 +113,7 @@ class AIEngine:
         cta = random.choice(SOFT_CTAS)
         body = text.strip()
         combined = f'{body}\n{cta}'
-        if len(combined) > 280:
+        if len(combined) > 25000:
             return body
         return combined
 

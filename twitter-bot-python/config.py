@@ -92,8 +92,8 @@ SHILL_PHRASES = [
 ]
 
 MAX_HASHTAGS = 2
-MAX_REPLY_CHARS = int(os.getenv('MAX_REPLY_CHARS', '280'))
-MAX_POST_CHARS = int(os.getenv('MAX_POST_CHARS', '280'))
+MAX_REPLY_CHARS = int(os.getenv('MAX_REPLY_CHARS', '25000'))
+MAX_POST_CHARS = int(os.getenv('MAX_POST_CHARS', '25000'))
 MAX_STORED_TWEETS = 2000
 CTA_DOMAIN = os.getenv('CTA_DOMAIN', 'identityprism.xyz').strip()
 CTA_LINK = os.getenv('CTA_LINK', f'https://{CTA_DOMAIN}').strip()
@@ -207,7 +207,7 @@ SHILL_INSTRUCTION = (
 )
 
 SNIPER_PROMPT = (
-    'Reply to @{user} in 1-3 short but COMPLETE sentences (aim for under 280 characters). '
+    'Reply to @{user} in 1-3 short but COMPLETE sentences. '
     'Be context-aware, add value to the conversation, show you understand the topic. '
     'You may use $SOL or one hashtag like #Solana if it fits naturally. '
     'You MUST always finish every sentence — NEVER stop mid-sentence. '
@@ -224,7 +224,7 @@ REPLY_BACK_PROMPT = (
 )
 
 TREND_PROMPT = (
-    'Write a sharp, engaging comment (1-3 short but COMPLETE sentences, aim for under 280 characters) for this Solana tweet. '
+    'Write a sharp, engaging comment (1-3 short but COMPLETE sentences) for this Solana tweet. '
     'Show genuine interest, add an insight or opinion, not just agreement. '
     'You may use $SOL or one hashtag like #Solana if it fits naturally. '
     'You MUST always finish every sentence — NEVER stop mid-sentence. '
@@ -234,7 +234,7 @@ TREND_PROMPT = (
 )
 
 POST_PROMPT = (
-    'Write a tweet (2-3 short but COMPLETE sentences, aim for under 250 characters) about Identity Prism and what it '
+    'Write a tweet (2-4 COMPLETE sentences) about Identity Prism and what it '
     'reveals about your on-chain identity on Solana. Be creative and varied — '
     'talk about badges, wallet scores, on-chain reputation, cosmic vibes, etc. '
     'You MUST always finish every sentence — NEVER stop mid-sentence. '
@@ -246,7 +246,7 @@ POST_PROMPT = (
 THREAD_PROMPT = (
     'Write a Twitter thread (exactly 3 tweets) about {topic}. '
     'Format: tweet 1 on first line, tweet 2 on second line, tweet 3 on third line. '
-    'Each tweet MUST be under 270 characters and a COMPLETE thought. '
+    'Each tweet MUST be a COMPLETE thought — never cut off mid-sentence. '
     'Tweet 1: hook/bold statement that makes people want to read more. End with a thread emoji 🧵. '
     'Tweet 2: the meat — explain/elaborate with specific details or insights. '
     'Tweet 3: conclusion with a takeaway. Include {hashtags}. '
@@ -272,14 +272,14 @@ TREND_POST_PROMPT = (
     'Author: @{user}\nTweet: "{tweet_text}"\n\n'
     'Write your own original tweet (NOT a reply) inspired by or reacting to this trend/topic. '
     'Add your unique perspective as an on-chain identity builder. '
-    '2-3 short but COMPLETE sentences, under 260 characters. '
+    '2-3 COMPLETE sentences. '
     'Include {hashtags}. One emoji max. '
     'Do NOT mention the original author. Do NOT include any link. {shill}'
 )
 
 QUOTE_PROMPT = (
     'You are quote-tweeting this:\n@{user}: "{tweet_text}"\n\n'
-    'Write a short, sharp comment (1-2 COMPLETE sentences, under 200 characters) '
+    'Write a short, sharp comment (1-2 COMPLETE sentences) '
     'that adds genuine value — an insight, hot take, or connection to on-chain identity. '
     'Be conversational and opinionated. One emoji max. '
     'Do NOT include any link or hashtag — those are added separately. {shill}'
