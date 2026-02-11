@@ -427,12 +427,20 @@ const Index = () => {
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
 
-  // Phase 1: Fade DOM veil quickly (max 800ms) to reveal page backgrounds
+  // Phase 1: Fade wormhole tunnel (max 800ms) to reveal page
   useEffect(() => {
     if (!fromBlackHole) return;
     suppressLoadingRef.current = true;
 
-    const fadeVeil = () => {
+    const fadeTunnel = () => {
+      // Wormhole tunnel overlay
+      const tunnel = document.getElementById('wormhole-tunnel');
+      if (tunnel) {
+        tunnel.style.transition = 'opacity 0.8s ease-out';
+        tunnel.style.opacity = '0';
+        setTimeout(() => tunnel.remove(), 900);
+      }
+      // Legacy veil fallback
       const veil = document.getElementById('bh-transition-veil');
       if (veil) {
         veil.style.transition = 'opacity 0.6s ease-out';
@@ -441,11 +449,11 @@ const Index = () => {
       }
     };
 
-    // Fade veil when data ready or max 800ms — but DON'T clear suppression yet
+    // Fade when data ready (with buffer for WebGL init) or max 1800ms
     let readyTimer: ReturnType<typeof setTimeout> | null = null;
-    const maxTimer = setTimeout(fadeVeil, 800);
+    const maxTimer = setTimeout(fadeTunnel, 1800);
     if (!isLoading && traits) {
-      readyTimer = setTimeout(fadeVeil, 150);
+      readyTimer = setTimeout(fadeTunnel, 600);
     }
 
     return () => {
@@ -511,7 +519,7 @@ const Index = () => {
       setActiveAddress(connectedAddress.toBase58());
       setIsWarping(true);
       setViewState("scanning"); // Immediate — prevents one-frame flash
-      setTimeout(() => setIsWarping(false), 1400);
+      setTimeout(() => setIsWarping(false), 900);
     }
   };
 
@@ -767,19 +775,23 @@ const Index = () => {
   }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);
 
   const showReadyView = previewMode || viewState === "ready" || returningFromBH.current || suppressLoadingRef.current;
-  const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
+  const cardDataReady = !!traits;
+  const isScrollEnabled = showReadyView && !previewMode && !isNftMode;
 
-  // Delayed overlay removal — keeps scanning overlay mounted for 150ms after card-stage mounts
-  // so the card has time to paint before the overlay disappears (prevents black flash)
-  const [overlayMounted, setOverlayMounted] = useState(true);
+  // Wait for Three.js canvas to paint before hiding overlay (prevents black flash)
+  const [cardRendered, setCardRendered] = useState(false);
   useEffect(() => {
-    if (showReadyView) {
-      const timer = setTimeout(() => setOverlayMounted(false), 150);
-      return () => clearTimeout(timer);
-    } else {
-      setOverlayMounted(true);
-    }
+    if (!showReadyView) { setCardRendered(false); return; }
+    let cancelled = false;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { if (!cancelled) setCardRendered(true); });
+    });
+    return () => { cancelled = true; };
   }, [showReadyView]);
+
+  // Overlay stays mounted always — toggled via CSS class (no DOM removal = no flash)
+  const overlayMounted = true;
+  const overlayFading = showReadyView && cardRendered;
 
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
@@ -843,13 +855,13 @@ const Index = () => {
           <div className="nebula-layer nebula-three" />
           <div className="identity-gradient" />
 
-          {/* Card stage — renders when ready */}
-          {showReadyView && (
+          {/* Card stage — pre-renders when data available, revealed when ready */}
+          {(showReadyView || cardDataReady) && (
             <>
               {previewMode ? (
                 <PreviewGallery />
               ) : (
-                <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}`}>
+                <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' card-stage-hidden' : ''}`}>
                   {/* Supernova + blackout overlays — outside card shell to escape transform containment */}
                   <div className="bh-supernova" />
                   <div className="bh-blackout-overlay" />
@@ -947,9 +959,11 @@ const Index = () => {
             </>
           )}
 
-          {/* Scanning/Landing overlay — stays mounted briefly after card to prevent black flash */}
+          {/* Scanning/Landing overlay — fades out smoothly after card renders */}
           {(!showReadyView || overlayMounted) && (
             <LandingOverlay
+              fadeOut={overlayFading && showReadyView}
+              passthrough={showReadyView}
               isScanning={viewState === "scanning"}
               isConnected={isConnected}
               onEnter={handleEnter}
@@ -977,6 +991,8 @@ const Index = () => {
 };
 
 function LandingOverlay({ 
+  fadeOut,
+  passthrough,
   isScanning,
   isConnected,
   onEnter,
@@ -989,6 +1005,8 @@ function LandingOverlay({
   desktopWalletReady,
   scanningMessageIndex
 }: { 
+  fadeOut?: boolean;
+  passthrough?: boolean;
   isScanning: boolean;
   isConnected?: boolean;
   onEnter?: () => void;
@@ -1001,10 +1019,12 @@ function LandingOverlay({
   desktopWalletReady?: boolean;
   scanningMessageIndex?: number;
 }) {
-  if (isScanning) {
-    const activeMessage = SCANNING_MESSAGES[scanningMessageIndex ?? 0] ?? SCANNING_MESSAGES[0];
-    return (
-      <div className="warp-overlay scanning-overlay">
+  const activeMessage = SCANNING_MESSAGES[scanningMessageIndex ?? 0] ?? SCANNING_MESSAGES[0];
+
+  return (
+    <div className={`landing-persistent-shell${passthrough ? ' passthrough' : ''}${fadeOut ? ' fade-out' : ''}`}>
+      {/* Scanning overlay — absolutely positioned on top */}
+      <div className={`warp-overlay scanning-overlay scanning-layer${isScanning ? ' visible' : ''}`}>
         <div className="warp-content">
           <img src="/phav.png" alt="Identity Prism" className="scanning-logo" />
           <div className="scanning-progress">
@@ -1017,11 +1037,9 @@ function LandingOverlay({
           </div>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="landing-wrap-v2">
+      {/* Landing content — underneath, hidden when scanning */}
+      <div className={`landing-wrap-v2${isScanning ? ' landing-hidden' : ''}`}>
       <div className="landing-main">
         <div className="landing-card-v2 glass-panel">
         <div className="landing-header-v2">
@@ -1118,6 +1136,7 @@ function LandingOverlay({
             </a>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

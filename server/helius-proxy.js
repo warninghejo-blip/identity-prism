@@ -2471,22 +2471,14 @@ const server = http.createServer(async (req, res) => {
       targetUrl.searchParams.set('api-key', apiKey);
     }
 
-    const headers = {
-      'Content-Type': req.headers['content-type'] ?? 'application/json',
-    };
-    if (req.headers['content-length']) {
-      headers['Content-Length'] = req.headers['content-length'];
-    }
-    if (req.headers['content-encoding']) {
-      headers['Content-Encoding'] = req.headers['content-encoding'];
-    }
+    const rpcBody = await readBody(req);
 
     const transport = targetUrl.protocol === 'https:' ? https : http;
     const upstreamReq = transport.request(
       targetUrl,
       {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
       },
       (upstreamRes) => {
         res.writeHead(upstreamRes.statusCode ?? 502, {
@@ -2505,9 +2497,8 @@ const server = http.createServer(async (req, res) => {
       }
     });
 
-    req.on('aborted', () => upstreamReq.destroy());
-    req.on('error', (error) => upstreamReq.destroy(error));
-    req.pipe(upstreamReq);
+    upstreamReq.write(rpcBody);
+    upstreamReq.end();
     return;
   } catch (error) {
     console.error('[helius-proxy] upstream error', error);
