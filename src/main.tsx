@@ -16,6 +16,7 @@ import NotFound from './pages/NotFound';
 
 const BlackHole = React.lazy(() => import('./pages/BlackHole'));
 const PreviewDeck = React.lazy(() => import('./pages/PreviewDeck'));
+const Verify = React.lazy(() => import('./pages/Verify'));
 import DebugConsole from './components/DebugConsole';
 import './index.css';
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -81,6 +82,7 @@ const router = createBrowserRouter([
       { path: 'share', element: <Index /> },
       { path: 'preview', element: <PreviewDeck /> },
       { path: 'preview/:tier', element: <PreviewDeck /> },
+      { path: 'verify', element: <Verify /> },
       { path: '*', element: <NotFound /> },
     ],
   },
