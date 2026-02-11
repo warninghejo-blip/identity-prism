@@ -155,13 +155,11 @@
   justify-content: center;
   padding-bottom: clamp(160px, 28vh, 320px);
   box-sizing: border-box;
-  pointer-events: none;
 }
 
-/* Pre-render card behind overlay — opacity:0 keeps it invisible,
-   pointer-events:none prevents it from blocking the overlay. */
+/* Pre-render card behind opaque overlay — pointer-events:none prevents
+   it from blocking the overlay. No opacity:0 so Three.js canvas paints. */
 .card-stage.card-stage-hidden {
-  opacity: 0;
   pointer-events: none;
 }
 
@@ -231,9 +229,6 @@
   }
 }
 
-.card-stage > * {
-  pointer-events: auto;
-}
 
 .preview-grid {
   display: grid;
