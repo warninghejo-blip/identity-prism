@@ -12,6 +12,7 @@ import type { WalletData, WalletTraits } from '@/hooks/useWalletData';
 
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { BLACKHOLE_ENABLED } from '@/constants';
+import { createWormholeTunnel } from '@/lib/wormholeTunnel';
 
 interface CelestialCardProps {
   data: WalletData;
@@ -57,7 +58,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [shakeWarning, setShakeWarning] = useState(false);
   const [suckingIn, setSuckingIn] = useState(false);
   const [consuming, setConsuming] = useState(false);
-  const [unsucking, setUnsucking] = useState(fromBlackHole);
+  const [unsucking, setUnsucking] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
   const { traits, score, address } = data;
@@ -308,37 +309,25 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 event.stopPropagation();
                 if (suckingIn || consuming) return;
                 clearTransitionTimers();
-                // Set CSS variables FIRST (synchronously) so animation has correct targets
-                setSuckVars();
-                // Immediately start spiral pull (no shake)
                 setSuckingIn(true);
-                // Phase 2: Supernova explosion (portal implodes, flash erupts)
+
+                // Phase 1: Portal grows
+                const portal = shellRef.current?.querySelector('.bh-card-portal') as HTMLElement | null;
+                if (portal) {
+                  portal.style.animation = 'wt-portal-grow 0.45s ease-out forwards';
+                  portal.style.zIndex = '100';
+                }
+
+                // Phase 2: Wormhole tunnel
                 transitionTimersRef.current.push(window.setTimeout(() => {
-                  // Set supernova center to portal position
-                  const portal = shellRef.current?.querySelector('.bh-card-portal');
-                  const stage = shellRef.current?.closest('.card-stage') as HTMLElement | null;
-                  if (portal && stage) {
-                    const pr = portal.getBoundingClientRect();
-                    const cx = ((pr.left + pr.width / 2) / window.innerWidth * 100).toFixed(1);
-                    const cy = ((pr.top + pr.height / 2) / window.innerHeight * 100).toFixed(1);
-                    stage.style.setProperty('--bh-cx', `${cx}%`);
-                    stage.style.setProperty('--bh-cy', `${cy}%`);
-                  }
-                  setConsuming(true);
-                }, 1800));
-                // Phase 3: Create persistent blackout + navigate
+                  createWormholeTunnel();
+                }, 350));
+
+                // Phase 3: Navigate (tunnel persists across route change)
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
                 transitionTimersRef.current.push(window.setTimeout(() => {
-                  // Raw DOM overlay survives route change — no flash between pages
-                  let overlay = document.getElementById('bh-forward-blackout');
-                  if (!overlay) {
-                    overlay = document.createElement('div');
-                    overlay.id = 'bh-forward-blackout';
-                    overlay.style.cssText = 'position:fixed;inset:0;background:#050505;z-index:999999;pointer-events:none;opacity:1;';
-                    document.body.appendChild(overlay);
-                  }
                   navigate(target);
-                }, 2900));
+                }, 1650));
               }}
             >
               <span className="bh-card-portal__glow" />
@@ -456,7 +445,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           style={{ transform: 'rotateY(180deg)', backfaceVisibility: 'hidden', pointerEvents: isFlipped ? 'auto' : 'none', zIndex: isFlipped ? 20 : 0 }}
           onClick={(event) => event.stopPropagation()}
         >
-          <div className="relative z-10 flex flex-col h-full">
+          <div className="relative z-10 flex flex-col h-full" style={{ transformStyle: 'flat', transform: 'translateZ(0)', willChange: 'auto' }}>
             {/* Flip Button (Back) */}
             {/* Back Header */}
             <div className="text-center pt-8 pb-4 border-b border-white/5 bg-black/20 relative z-20">

@@ -10,8 +10,9 @@ import {
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { toast } from 'sonner';
 import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLeft, ExternalLink, ArrowUpDown } from 'lucide-react';
-import { getHeliusProxyUrl, getHeliusRpcUrl, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
+import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { createWormholeTunnel, fadeOutWormholeTunnel } from '@/lib/wormholeTunnel';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -226,7 +227,8 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
 
 const RENT_RECLAIM_SOL = 0.002;
 const VALUE_THRESHOLD_SOL = 0.0015;
-const COMMISSION_RATE = 0.10;
+const COMMISSION_RATE_DEFAULT = 0.10;
+const COMMISSION_RATE_MINTED = 0.02;
 const ESTIMATED_FEE_SOL = 0.00015; // conservative estimate for base + priority fee
 const MIN_NET_RETURN_SOL = 0.0005; // minimum net return to show as burnable
 const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
@@ -289,12 +291,12 @@ const BlackHole = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  // Remove HTML preloader + forward blackout overlay
+  // Fade out wormhole tunnel (from Card→BH transition) + remove preloader
   useEffect(() => {
-    // Forward blackout: created by CelestialCard to bridge Card→BH route change
+    fadeOutWormholeTunnel(400);
+    // Also handle legacy forward-blackout overlay
     const fwdOverlay = document.getElementById('bh-forward-blackout');
     if (fwdOverlay) {
-      // Small delay so BH void-intro is rendered behind it first
       setTimeout(() => {
         fwdOverlay.style.transition = 'opacity 0.5s ease-out';
         fwdOverlay.style.opacity = '0';
@@ -316,6 +318,7 @@ const BlackHole = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
   const [isBurning, setIsBurning] = useState(false);
+  const [hasMintedCard, setHasMintedCard] = useState(false);
   const [showAllAssets, setShowAllAssets] = useState(false);
   const [incinerationTokens, setIncinerationTokens] = useState<IncinerationToken[]>([]);
   const [wormholeBack, setWormholeBack] = useState(false);
@@ -381,7 +384,9 @@ const BlackHole = () => {
     setIsLoading(true);
     setSelectedTokens(new Set());
 
+    let fetchStep = 'init';
     try {
+      fetchStep = 'getParsedTokenAccounts';
       const conn = connectionRef.current;
       const [splTokens, token2022Tokens] = await Promise.all([
         conn.getParsedTokenAccountsByOwner(targetOwner, { programId: TOKEN_PROGRAM_ID }),
@@ -396,9 +401,9 @@ const BlackHole = () => {
             pubkey: item.pubkey,
             programId: TOKEN_PROGRAM_ID,
             mint: info.mint,
-            amount: BigInt(info.tokenAmount.amount),
-            decimals: info.tokenAmount.decimals,
-            uiAmount: Number(info.tokenAmount.uiAmount ?? 0),
+            amount: BigInt(info.tokenAmount?.amount ?? '0'),
+            decimals: info.tokenAmount?.decimals ?? 0,
+            uiAmount: Number(info.tokenAmount?.uiAmount ?? 0),
             lamports: item.account.lamports,
             rentSol: item.account.lamports / LAMPORTS_PER_SOL,
             frozen: isFrozen,
@@ -410,22 +415,28 @@ const BlackHole = () => {
           const isFrozen = info.state === 'frozen';
           // Check Token-2022 extensions that prevent closing
           const exts: any[] = info.extensions ?? [];
-          const hasWithheldFees = exts.some(
-            (e: any) => e.extension === 'transferFeeAmount' &&
-              e.state?.withheldAmount && BigInt(e.state.withheldAmount) > 0n
-          );
-          const hasConfidentialPending = exts.some(
-            (e: any) => e.extension === 'confidentialTransferAccount' &&
-              (e.state?.pending_balance_lo > 0 || e.state?.pending_balance_hi > 0)
-          );
+          let hasWithheldFees = false;
+          try {
+            hasWithheldFees = exts.some(
+              (e: any) => e.extension === 'transferFeeAmount' &&
+                e.state?.withheldAmount && BigInt(e.state.withheldAmount) > 0n
+            );
+          } catch {}
+          let hasConfidentialPending = false;
+          try {
+            hasConfidentialPending = exts.some(
+              (e: any) => e.extension === 'confidentialTransferAccount' &&
+                (e.state?.pending_balance_lo > 0 || e.state?.pending_balance_hi > 0)
+            );
+          } catch {}
           const canClose = !isFrozen && !hasWithheldFees && !hasConfidentialPending;
           return {
             pubkey: item.pubkey,
             programId: TOKEN_2022_PROGRAM_ID,
             mint: info.mint,
-            amount: BigInt(info.tokenAmount.amount),
-            decimals: info.tokenAmount.decimals,
-            uiAmount: Number(info.tokenAmount.uiAmount ?? 0),
+            amount: BigInt(info.tokenAmount?.amount ?? '0'),
+            decimals: info.tokenAmount?.decimals ?? 0,
+            uiAmount: Number(info.tokenAmount?.uiAmount ?? 0),
             lamports: item.account.lamports,
             rentSol: item.account.lamports / LAMPORTS_PER_SOL,
             frozen: isFrozen,
@@ -434,10 +445,12 @@ const BlackHole = () => {
         }),
       ];
 
+      fetchStep = 'fetchSolPrice';
       const proxyBase = getHeliusProxyUrl();
       const solUsd = await fetchSolPriceUsd(proxyBase);
       setSolPriceUsd(solUsd);
 
+      fetchStep = 'getAssetBatch';
       const heliusUrl = getHeliusRpcUrl(targetOwner.toBase58());
       if (heliusUrl && parsedTokens.length > 0) {
         const mints = [...new Set(parsedTokens.map(t => t.mint))];
@@ -525,6 +538,38 @@ const BlackHole = () => {
           t.collectionSymbol = meta.collectionSymbol;
           t.priceUsd = meta.priceUsd ?? null;
         });
+
+        // Check if user owns an Identity Prism cNFT (compressed — not in token accounts)
+        const ourCollection = getCollectionMint();
+        if (ourCollection && heliusUrl) {
+          // First check regular tokens
+          let ownsCard = parsedTokens.some(t => t.collectionId === ourCollection);
+          // If not found, check compressed NFTs via DAS searchAssets
+          if (!ownsCard) {
+            try {
+              const dasSearch = await fetch(heliusUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: 'check-prism-card',
+                  method: 'searchAssets',
+                  params: {
+                    ownerAddress: targetOwner.toBase58(),
+                    grouping: ['collection', ourCollection],
+                    page: 1,
+                    limit: 1,
+                  },
+                }),
+              });
+              const dasData = await dasSearch.json();
+              ownsCard = (dasData?.result?.total ?? 0) > 0;
+            } catch {
+              // silently ignore — default to 10% if check fails
+            }
+          }
+          setHasMintedCard(ownsCard);
+        }
       }
 
       // Tokens without Helius DAS price data are treated as zero-value dust
@@ -535,6 +580,7 @@ const BlackHole = () => {
         }
       });
 
+      fetchStep = 'jupiterPriceFallback';
       // Jupiter price fallback for fungible tokens without DAS price
       const noPriceMints = parsedTokens
         .filter(t => !t.isNft && t.priceUsd == null && t.uiAmount > 0)
@@ -549,6 +595,7 @@ const BlackHole = () => {
         });
       }
 
+      fetchStep = 'collectionMarketStats';
       const collectionLookups = new Map<string, { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }>();
       parsedTokens
         .filter(token => token.isNft && token.collectionId)
@@ -591,6 +638,7 @@ const BlackHole = () => {
         });
       }
 
+      fetchStep = 'valueCalculation';
       parsedTokens.forEach(token => {
         // For NFTs: prefer marketFloorSol, fall back to DAS priceUsd
         if (token.isNft) {
@@ -617,7 +665,7 @@ const BlackHole = () => {
         }
 
         const actualRent = token.rentSol;
-        const rentAfterFees = actualRent * (1 - COMMISSION_RATE) - ESTIMATED_FEE_SOL;
+        const rentAfterFees = actualRent * (1 - COMMISSION_RATE_DEFAULT) - ESTIMATED_FEE_SOL;
         if (token.valueSol !== null && token.valueSol !== undefined) {
           token.netGainSol = rentAfterFees - token.valueSol;
         } else if (token.uiAmount === 0) {
@@ -673,8 +721,9 @@ const BlackHole = () => {
 
       setTokens(parsedTokens);
       toast.success(`Found ${parsedTokens.length} token accounts`);
-    } catch {
-      toast.error('Failed to fetch tokens');
+    } catch (err: any) {
+      console.error(`[BlackHole] fetchTokens error at step "${fetchStep}":`, err);
+      toast.error(`Failed to fetch tokens (${fetchStep}): ${err?.message ?? String(err)}`);
     } finally {
       setIsLoading(false);
     }
@@ -795,11 +844,12 @@ const BlackHole = () => {
         instructionCount++;
       }
 
-      // 10% commission to treasury (based on actual rent in each account)
+      // Commission: 2% for Identity Prism holders, 10% otherwise
       // Skip commission if the connected wallet IS the treasury (avoid self-transfer signature issue)
       const totalReclaimLamports = safeTargets.reduce((sum, t) => sum + t.lamports, 0);
       const isTreasury = publicKey.toBase58() === TREASURY_ADDRESS;
-      const commissionLamports = isTreasury ? 0 : Math.round(totalReclaimLamports * COMMISSION_RATE);
+      const commissionRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
+      const commissionLamports = isTreasury ? 0 : Math.round(totalReclaimLamports * commissionRate);
       if (commissionLamports > 0) {
         transaction.add(
           SystemProgram.transfer({
@@ -870,7 +920,7 @@ const BlackHole = () => {
         toast.warning("Transaction sent but confirmation timed out. Check your wallet.");
       } else {
         toast.success("Incineration complete!", {
-          description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(COMMISSION_RATE * 100).toFixed(0)}% fee)`
+          description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee)`
         });
       }
       
@@ -924,13 +974,14 @@ const BlackHole = () => {
     const burnable = selected.filter(t => t.assetStatus !== 'protected');
     const totalAccounts = burnable.length;
     const grossReclaim = burnable.reduce((sum, t) => sum + t.rentSol, 0);
-    const commission = grossReclaim * COMMISSION_RATE;
+    const commissionRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
+    const commission = grossReclaim * commissionRate;
     const netReturn = Math.max(0, grossReclaim - commission - ESTIMATED_FEE_SOL);
     const protectedCount = tokens.filter(t => t.assetStatus === 'protected').length;
     const valuableCount = tokens.filter(t => t.assetStatus === 'valuable').length;
     const burnableCount = tokens.filter(t => t.assetStatus === 'burnable').length;
     return { totalAccounts, grossReclaim, commission, netReturn, protectedCount, valuableCount, burnableCount };
-  }, [tokens, selectedTokens]);
+  }, [tokens, selectedTokens, hasMintedCard]);
 
   const debrisParticles = useMemo(() => {
     const particles: { key: number; style: React.CSSProperties }[] = [];
@@ -961,39 +1012,38 @@ const BlackHole = () => {
     if (returning) return;
     setReturning(true);
 
-    // Scroll to top so the BH visual is visible during suck-in
+    // Scroll to top so the BH visual is visible during grow animation
     const shell = document.querySelector('.blackhole-shell');
     if (shell) shell.scrollTo({ top: 0, behavior: 'smooth' });
 
+    // Phase 1: BH visual grows slightly
+    const visual = document.querySelector('.blackhole-visual') as HTMLElement;
+    if (visual) {
+      visual.style.animation = 'wt-bh-grow 0.5s ease-out forwards';
+    }
+
+    // Phase 2: Wormhole tunnel
+    setTimeout(() => {
+      createWormholeTunnel();
+    }, 350);
+
+    // Phase 3: Navigate (tunnel persists across route change)
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
-
-    // After suck-in animations finish (~1.3s), screen is already dark.
-    // Create opaque veil at that moment (no transition = no flash), then navigate.
     setTimeout(() => {
-      let veil = document.getElementById('bh-transition-veil');
-      if (!veil) {
-        veil = document.createElement('div');
-        veil.id = 'bh-transition-veil';
-        veil.style.cssText = 'position:fixed;inset:0;background:#050505;z-index:999999;pointer-events:none;opacity:1;';
-        document.body.appendChild(veil);
-      } else {
-        veil.style.opacity = '1';
-      }
       sessionStorage.setItem('fromBlackHole', '1');
       navigate(target, { state: { fromBlackHole: true }, replace: true });
-    }, 1400);
+    }, 1650);
   }, [returning, ownerPublicKey, addressParam, navigate]);
 
   return (
     <div className={`identity-shell blackhole-shell ${returning ? 'bh-returning' : ''}`}>
-      {/* Wormhole exit: start in darkness then fade out */}
-      <div className="blackhole-void-overlay bh-void-intro" />
-      {/* Same background layers as card page */}
-      <div className="absolute inset-0 bg-[#050505] background-base" />
-      <div className="nebula-layer nebula-one" />
-      <div className="nebula-layer nebula-two" />
-      <div className="nebula-layer nebula-three" />
+      {/* Wormhole tunnel handles transition — no void overlay needed */}
+      {/* Background layers */}
+      <div className="absolute inset-0 background-base" style={{ background: 'transparent' }} />
+      <div className="constellation-bg" />
+      <div className="nebula-layer nebula-one" style={{ opacity: 0.25 }} />
+      <div className="nebula-layer nebula-two" style={{ opacity: 0.15 }} />
       <div className="identity-gradient" />
 
       {/* Incineration animation overlay */}
@@ -1061,8 +1111,8 @@ const BlackHole = () => {
 
       {/* ══ Content below the black hole ══ */}
       <div className="blackhole-content">
-        {/* If wallet not connected — prominent connect prompt */}
-        {!publicKey ? (
+        {/* If no wallet and no address param — show connect prompt */}
+        {!ownerPublicKey ? (
           <div className="blackhole-panel flex flex-col items-center gap-6 py-12 text-center">
             <p className="text-zinc-400 text-sm max-w-md leading-relaxed">
               Connect your wallet to scan for dust tokens and abandoned NFTs.<br />
@@ -1129,7 +1179,7 @@ const BlackHole = () => {
                     <div className="text-lg font-bold font-mono text-zinc-200 mt-1">{parseFloat(summary.grossReclaim.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
                   </div>
                   <div>
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Fee ({(COMMISSION_RATE * 100).toFixed(0)}%)</div>
+                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Fee ({((hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT) * 100).toFixed(0)}%)</div>
                     <div className="text-lg font-mono text-zinc-400 mt-1">-{parseFloat(summary.commission.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
                   </div>
                   <div className="bg-emerald-950/30 rounded-lg p-2">

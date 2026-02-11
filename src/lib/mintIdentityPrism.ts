@@ -128,7 +128,8 @@ const logSendTransactionError = async (error: unknown) => {
   const candidate = error as { getLogs?: () => Promise<string[] | null> };
   if (candidate?.getLogs) {
     try {
-      const logs = await candidate.getLogs();
+      const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+      const logs = await Promise.race([candidate.getLogs(), timeout]);
       if (logs?.length) {
         console.error('[mint] transaction logs', logs);
       }

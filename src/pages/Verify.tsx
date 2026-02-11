@@ -102,7 +102,7 @@ const Verify: React.FC = () => {
         throw new Error('Memo data is not valid Identity Prism attestation JSON.');
       }
 
-      if (parsed.protocol !== 'identity-prism') {
+      if (!parsed.protocol || !parsed.protocol.startsWith('identity-prism')) {
         throw new Error(`Not an Identity Prism attestation. Protocol: ${parsed.protocol || 'unknown'}`);
       }
 
@@ -163,7 +163,7 @@ const Verify: React.FC = () => {
     <div className="relative z-10 min-h-screen flex flex-col items-center px-4 py-12">
       {/* Header */}
       <Link to="/" className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity">
-        <img src="/assets/identity-prism.png" alt="Identity Prism" className="w-10 h-10 rounded-lg" />
+        <img src="/assets/icon.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />
         <span className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
           Identity Prism
         </span>

@@ -124,7 +124,9 @@ const debugEnabled =
     searchParams.has('debug') ||
     window.localStorage?.getItem('debug') === 'true');
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+console.log("[IdentityPrism] v2.0.1");
+const root = document.getElementById("root");
+ReactDOM.createRoot(root!).render(
   <React.StrictMode>
     <ConnectionProvider endpoint={endpoint}>
       {debugEnabled && <DebugConsole />}
