@@ -61,9 +61,14 @@ class AIEngine:
         if not GEMINI_API_KEY:
             raise RuntimeError('Missing GEMINI_API_KEY in environment.')
         _apply_gemini_proxy()
-        self._client = genai.Client(api_key=GEMINI_API_KEY)
+        http_opts = None
+        if GEMINI_PROXY:
+            from google.genai import types as _t
+            http_opts = _t.HttpOptions(api_version='v1beta')
+        self._client = genai.Client(api_key=GEMINI_API_KEY, http_options=http_opts)
         self._model_name = GEMINI_MODEL
         self._rest_url = f'{_GEMINI_REST_URL}?key={GEMINI_API_KEY}'
+        self._proxy = GEMINI_PROXY
 
     @staticmethod
     def _fit_twitter_limit(text, limit=25000):
@@ -158,9 +163,10 @@ class AIEngine:
             'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 8192},
         }
         try:
+            proxy_kw = {'proxy': self._proxy} if self._proxy else {}
             resp = cffi_requests.post(
                 self._rest_url, json=payload,
-                impersonate='chrome131', timeout=30,
+                impersonate='chrome131', timeout=30, **proxy_kw,
             )
             if resp.status_code != 200:
                 logging.warning('LLM request failed: HTTP %d %s', resp.status_code, resp.text[:200])
@@ -208,9 +214,10 @@ class AIEngine:
             'generationConfig': {'temperature': 0.8, 'maxOutputTokens': 4096},
         }
         try:
+            proxy_kw = {'proxy': self._proxy} if self._proxy else {}
             resp = cffi_requests.post(
                 self._rest_url, json=payload,
-                impersonate='chrome131', timeout=30,
+                impersonate='chrome131', timeout=30, **proxy_kw,
             )
             if resp.status_code != 200:
                 logging.warning('Thread generation failed: HTTP %d', resp.status_code)
