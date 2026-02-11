@@ -152,14 +152,13 @@ class TwitterApiIoClient:
             try:
                 with open(media_path, 'rb') as handle:
                     file_bytes = handle.read()
-                multipart = {
-                    'file': (filename, file_bytes, mime_type),
-                    'proxy': self.proxy,
-                    'login_cookies': self.login_cookie,
-                }
                 resp = cffi_requests.post(
                     'https://api.twitterapi.io/twitter/upload_media_v2',
-                    multipart=multipart,
+                    files={'file': (filename, file_bytes, mime_type)},
+                    data={
+                        'proxy': self.proxy,
+                        'login_cookies': self.login_cookie,
+                    },
                     headers=self._headers(),
                     impersonate='chrome131',
                     timeout=self.timeout,
