@@ -778,20 +778,10 @@ const Index = () => {
   const cardDataReady = !!traits;
   const isScrollEnabled = showReadyView && !previewMode && !isNftMode;
 
-  // Wait for Three.js canvas to paint before hiding overlay (prevents black flash)
-  const [cardRendered, setCardRendered] = useState(false);
-  useEffect(() => {
-    if (!showReadyView) { setCardRendered(false); return; }
-    let cancelled = false;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => { if (!cancelled) setCardRendered(true); });
-    });
-    return () => { cancelled = true; };
-  }, [showReadyView]);
-
   // Overlay stays mounted always — toggled via CSS class (no DOM removal = no flash)
+  // Card renders at full opacity behind the opaque overlay, so no black flash when overlay hides.
   const overlayMounted = true;
-  const overlayFading = showReadyView && cardRendered;
+  const overlayFading = showReadyView;
 
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
