@@ -769,6 +769,18 @@ const Index = () => {
   const showReadyView = previewMode || viewState === "ready" || returningFromBH.current || suppressLoadingRef.current;
   const isScrollEnabled = showReadyView && !previewMode && isMintPanelOpen && !isNftMode;
 
+  // Delayed overlay removal — keeps scanning overlay mounted for 150ms after card-stage mounts
+  // so the card has time to paint before the overlay disappears (prevents black flash)
+  const [overlayMounted, setOverlayMounted] = useState(true);
+  useEffect(() => {
+    if (showReadyView) {
+      const timer = setTimeout(() => setOverlayMounted(false), 150);
+      return () => clearTimeout(timer);
+    } else {
+      setOverlayMounted(true);
+    }
+  }, [showReadyView]);
+
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
     if (shellRef.current && !isScrollEnabled) {
@@ -831,23 +843,9 @@ const Index = () => {
           <div className="nebula-layer nebula-three" />
           <div className="identity-gradient" />
 
-          {!showReadyView ? (
-            <LandingOverlay
-              isScanning={viewState === "scanning"}
-              isConnected={isConnected}
-              onEnter={handleEnter}
-              onDisconnect={handleDisconnect}
-              connectedAddress={connectedAddress?.toBase58()}
-              useMobileWallet={useMobileWallet}
-              onMobileConnect={handleMobileConnect}
-              mobileWalletReady={mobileConnectReady}
-              onDesktopConnect={handleDesktopConnect}
-              desktopWalletReady={desktopWalletReady}
-              scanningMessageIndex={scanningMessageIndex}
-            />
-          ) : (
+          {/* Card stage — renders when ready */}
+          {showReadyView && (
             <>
-              {/* Celestial Card - Center of Screen */}
               {previewMode ? (
                 <PreviewGallery />
               ) : (
@@ -947,6 +945,23 @@ const Index = () => {
                 </div>
               )}
             </>
+          )}
+
+          {/* Scanning/Landing overlay — stays mounted briefly after card to prevent black flash */}
+          {(!showReadyView || overlayMounted) && (
+            <LandingOverlay
+              isScanning={viewState === "scanning"}
+              isConnected={isConnected}
+              onEnter={handleEnter}
+              onDisconnect={handleDisconnect}
+              connectedAddress={connectedAddress?.toBase58()}
+              useMobileWallet={useMobileWallet}
+              onMobileConnect={handleMobileConnect}
+              mobileWalletReady={mobileConnectReady}
+              onDesktopConnect={handleDesktopConnect}
+              desktopWalletReady={desktopWalletReady}
+              scanningMessageIndex={scanningMessageIndex}
+            />
           )}
 
           {walletData?.error && !showReadyView && (
