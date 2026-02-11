@@ -263,12 +263,12 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           initial={false}
           animate={{ rotateY: isFlipped ? 180 : 0 }}
           transition={{ type: 'tween', duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-          style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}
+          style={{ transformStyle: 'preserve-3d' }}
         >
         {/* FRONT */}
         <div
           className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border border-white/10 bg-[#020408] shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] backface-hidden flex flex-col ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto cursor-pointer'}`}
-          style={{ backfaceVisibility: 'hidden', zIndex: isFlipped ? 0 : 20, willChange: 'transform' }}
+          style={{ backfaceVisibility: 'hidden', zIndex: isFlipped ? 0 : 20 }}
           onClick={() => {
             if (!isCapture) {
               setIsFlipped(true);

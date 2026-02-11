@@ -1631,15 +1631,19 @@
 
 .bh-return-hint {
   position: absolute;
-  bottom: 34px;
-  font-size: 11px;
-  letter-spacing: 0.35em;
+  bottom: -32px;
+  font-size: 13px;
+  letter-spacing: 0.4em;
   text-transform: uppercase;
-  color: rgba(255, 200, 160, 0.9);
-  text-shadow: 0 0 14px rgba(255, 140, 80, 0.7), 0 0 30px rgba(255, 100, 60, 0.4);
+  color: rgba(255, 220, 180, 1);
+  text-shadow: 0 0 18px rgba(255, 140, 80, 0.9), 0 0 40px rgba(255, 100, 60, 0.5), 0 0 60px rgba(255, 80, 40, 0.3);
   opacity: 1;
   pointer-events: none;
-  font-weight: 600;
+  font-weight: 700;
+  padding: 6px 18px;
+  border: 1px solid rgba(255, 160, 100, 0.25);
+  border-radius: 20px;
+  background: rgba(255, 100, 50, 0.08);
 }
 
 .blackhole-warp {
@@ -2011,18 +2015,19 @@
 
 .bh-card-portal__label {
   position: absolute;
-  bottom: -14px;
-  font-size: 6px;
-  letter-spacing: 0.35em;
+  bottom: -18px;
+  font-size: 8px;
+  letter-spacing: 0.4em;
   text-transform: uppercase;
-  color: rgba(255,170,130,0.6);
+  color: rgba(255, 190, 150, 0.95);
   white-space: nowrap;
   z-index: 3;
-  text-shadow: 0 0 6px rgba(255,100,50,0.3);
-  opacity: 0.7;
-  transition: opacity 0.3s ease;
+  text-shadow: 0 0 10px rgba(255, 120, 60, 0.7), 0 0 20px rgba(255, 80, 40, 0.4);
+  opacity: 1;
+  font-weight: 700;
+  transition: opacity 0.3s ease, text-shadow 0.3s ease;
 }
-.bh-card-portal:hover .bh-card-portal__label { opacity: 1; }
+.bh-card-portal:hover .bh-card-portal__label { text-shadow: 0 0 14px rgba(255, 120, 60, 0.9), 0 0 30px rgba(255, 80, 40, 0.6); }
 
 @keyframes bh-card-ring-pulse {
   0%, 100% { opacity: 0.4; }

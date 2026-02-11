@@ -1243,7 +1243,7 @@ const BlackHole = () => {
                     {/* Balance */}
                     <span className="text-[11px] font-mono text-zinc-400 text-center pr-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
                     {/* Return */}
-                    <span className="text-[10px] font-mono text-emerald-400/80 text-right pr-1">
+                    <span className="text-[10px] font-mono text-emerald-400/80 text-center">
                       {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
                     </span>
                     {/* Status */}
