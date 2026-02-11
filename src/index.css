@@ -79,7 +79,7 @@
 }
 
 .nebula-layer {
-  position: absolute;
+  position: fixed;
   inset: -20%;
   pointer-events: none;
   mix-blend-mode: screen;
@@ -115,7 +115,7 @@
 }
 
 .identity-gradient {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: radial-gradient(circle at center, transparent, rgba(2, 6, 23, 0.7));
   pointer-events: none;
@@ -602,6 +602,7 @@
 }
 .landing-persistent-shell.fade-out {
   opacity: 0;
+  visibility: hidden;
 }
 
 /* Scanning layer — stacked on top, instant show/hide (no transition = no black flash) */
