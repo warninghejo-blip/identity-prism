@@ -302,35 +302,21 @@ class TwitterApiIoClient:
         text: str,
         reply_to_tweet_id: Optional[str] = None,
         media_ids: Optional[List[str]] = None,
-        reply_settings: Optional[str] = 'everyone',
+        reply_settings: Optional[str] = None,
     ) -> str:
-        def build(with_reply_settings: bool = True):
+        def build():
             p = {'tweet_text': text}
             if reply_to_tweet_id:
                 p['reply_to_tweet_id'] = reply_to_tweet_id
             if media_ids:
                 p['media_ids'] = media_ids
-            if with_reply_settings and reply_settings:
-                p['reply_settings'] = reply_settings
             return p
-        try:
-            return self._call_with_retry(
-                build_payload=lambda: build(True),
-                extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
-                label='create_tweet',
-                max_attempts=5,
-            )
-        except Exception as exc:
-            msg = str(exc).lower()
-            if reply_settings and any(key in msg for key in ('reply_settings', 'reply setting', 'replysetting')):
-                logging.warning('reply_settings unsupported by twitterapi.io; retrying without')
-                return self._call_with_retry(
-                    build_payload=lambda: build(False),
-                    extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
-                    label='create_tweet',
-                    max_attempts=3,
-                )
-            raise
+        return self._call_with_retry(
+            build_payload=build,
+            extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
+            label='create_tweet',
+            max_attempts=5,
+        )
 
     def reply(self, tweet_id: str, text: str) -> str:
         return self.create_tweet(text=text, reply_to_tweet_id=tweet_id, reply_settings=None)
@@ -399,24 +385,11 @@ class TwitterApiIoClient:
         return tweets[:count]
 
     def quote(self, text: str, attachment_url: str) -> str:
-        def build(with_reply_settings: bool = True):
-            payload = {'tweet_text': text, 'attachment_url': attachment_url}
-            if with_reply_settings:
-                payload['reply_settings'] = 'everyone'
-            return payload
-        try:
-            return self._call_with_retry(
-                build_payload=lambda: build(True),
-                extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
-                label='quote',
-            )
-        except Exception as exc:
-            msg = str(exc).lower()
-            if any(key in msg for key in ('reply_settings', 'reply setting', 'replysetting')):
-                logging.warning('reply_settings unsupported for quote; retrying without')
-                return self._call_with_retry(
-                    build_payload=lambda: build(False),
-                    extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
-                    label='quote',
-                )
-            raise
+        def build():
+            return {'tweet_text': text, 'attachment_url': attachment_url}
+        return self._call_with_retry(
+            build_payload=build,
+            extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,
+            label='quote',
+            max_attempts=5,
+        )
