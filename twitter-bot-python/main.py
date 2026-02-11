@@ -335,8 +335,10 @@ async def _try_mention_reply(client, ai_engine, state):
 SLOT_INTERVAL_MIN = 3600    # minimum 1 hour between actions
 SLOT_INTERVAL_MAX = 5400    # up to 1.5 hours
 SLEEP_CHECK = 300           # poll every 5 min
-MAX_POSTS_PER_DAY = 8       # total write actions (posts + threads + trends + quotes)
-MAX_ENGAGEMENTS_PER_DAY = 8
+POST_COOLDOWN_MIN = 14400   # minimum 4 hours between ANY write action
+POST_COOLDOWN_MAX = 18000   # up to 5 hours
+MAX_POSTS_PER_DAY = 5       # total write actions (posts + threads + trends + quotes)
+MAX_ENGAGEMENTS_PER_DAY = 12
 
 
 def _pick_action(state):
@@ -582,6 +584,18 @@ async def main():
             action = _pick_action(state)
             total_writes = state.get('daily_posts', 0)
 
+            # Enforce 4h+ cooldown for ALL write actions
+            last_post = state.get('last_post_at') or 0
+            post_cooldown = random.uniform(POST_COOLDOWN_MIN, POST_COOLDOWN_MAX)
+            since_last_post = time.time() - last_post
+            write_on_cooldown = since_last_post < post_cooldown
+
+            # If write action picked but on cooldown → force engage instead
+            if action != 'engage' and write_on_cooldown:
+                logging.info('=== %s → ENGAGE (post cooldown: %.0f min left) ===',
+                             action.upper(), (post_cooldown - since_last_post) / 60)
+                action = 'engage'
+
             if action == 'engage':
                 if state.get('skip_next_engage'):
                     logging.info('=== ENGAGE skipped (previous 429) ===')
@@ -625,17 +639,12 @@ async def main():
                     state['daily_posts'] = total_writes + 1
 
             else:  # 'post'
-                last_post = state.get('last_post_at') or 0
-                if time.time() - last_post < 3600:
-                    logging.info('=== POST skipped (last post %.0f min ago) ===',
-                                 (time.time() - last_post) / 60)
-                else:
-                    logging.info('=== POST ===')
-                    ok = await do_post(client, ai_engine, state)
-                    logging.info('Post result: %s', 'OK' if ok else 'FAIL')
-                    if ok:
-                        state['daily_posts'] = total_writes + 1
-                        _track_action(state, 'post')
+                logging.info('=== POST ===')
+                ok = await do_post(client, ai_engine, state)
+                logging.info('Post result: %s', 'OK' if ok else 'FAIL')
+                if ok:
+                    state['daily_posts'] = total_writes + 1
+                    _track_action(state, 'post')
 
         except Exception as exc:
             logging.warning('Cycle error: %s', exc)

@@ -107,6 +107,22 @@ class AIEngine:
             cleaned = body
         return cleaned
 
+    def _ensure_hashtags(self, text):
+        """Append hashtags and $SOL if the AI didn't include them."""
+        if not text:
+            return text
+        has_hashtag = '#' in text
+        has_cashtag = '$' in text
+        if has_hashtag and has_cashtag:
+            return text
+        additions = []
+        if not has_cashtag:
+            additions.append('$SOL')
+        if not has_hashtag:
+            tags = random.choice(HASHTAG_SETS)
+            additions.extend(tags)
+        return f'{text.rstrip()}\n{" ".join(additions)}'
+
     def _append_cta(self, text):
         if not text or not SOFT_CTAS:
             return text
@@ -167,7 +183,7 @@ class AIEngine:
     def generate_post_text(self, include_shill=False):
         prompt = self._build_post_prompt(include_shill)
         post = self._generate(prompt)
-        return post
+        return self._ensure_hashtags(post)
 
     def generate_micro_reply(self):
         if not MICRO_REPLIES:
@@ -215,6 +231,8 @@ class AIEngine:
         if len(tweets) < 2:
             logging.warning('Thread generation returned too few tweets (%d)', len(tweets))
             return []
+        # Ensure last tweet has hashtags/$SOL
+        tweets[-1] = self._ensure_hashtags(tweets[-1])
         return tweets
 
     def generate_trend_post(self, tweet_text, user, include_shill=False):
@@ -226,7 +244,7 @@ class AIEngine:
             tweet_text=tweet_text[:300], user=user,
             hashtags=self._random_hashtags(), shill=shill,
         )
-        return self._generate(prompt)
+        return self._ensure_hashtags(self._generate(prompt))
 
     def generate_quote_text(self, tweet_text, user, include_shill=False):
         shill = ''
@@ -236,7 +254,7 @@ class AIEngine:
         prompt = QUOTE_PROMPT.format(
             tweet_text=tweet_text[:300], user=user, shill=shill,
         )
-        return self._generate(prompt)
+        return self._ensure_hashtags(self._generate(prompt))
 
     def generate_reply_back(self, our_text, reply_text):
         prompt = REPLY_BACK_PROMPT.format(our_text=our_text[:200], reply_text=reply_text[:200])
