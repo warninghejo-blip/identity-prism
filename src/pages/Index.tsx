@@ -654,6 +654,7 @@ const Index = () => {
     }
     
     setMintState("minting");
+    let succeeded = false;
     try {
       const cardImageUrl = await captureCardImage();
       const result = await mintIdentityPrism({
@@ -666,6 +667,7 @@ const Index = () => {
       });
       
       if (import.meta.env.DEV) console.log("Mint success:", result);
+      succeeded = true;
       setMintState("success");
       toast.success("Identity Secured!", {
         description: `Tx: ${result.signature.slice(0, 8)}...`,
@@ -692,32 +694,28 @@ const Index = () => {
               ? `Need ~${requiredSol.toFixed(4)} SOL (including fee). Available ${balanceSol.toFixed(4)} SOL.`
               : "Please top up your wallet and try again.",
         });
-        setMintState("idle");
-        return;
-      }
-      if (error?.code === "INSUFFICIENT_SKR") {
+      } else if (error?.code === "INSUFFICIENT_SKR") {
         toast.error(`Insufficient ${SEEKER_TOKEN.SYMBOL} tokens`, {
           description: `You need ${SEEKER_TOKEN.SYMBOL} tokens in your wallet to mint with this option. Buy ${SEEKER_TOKEN.SYMBOL} or switch to SOL payment.`,
         });
-        setMintState("idle");
-        return;
-      }
-      if (error?.code === "SIMULATION_FAILED") {
+      } else if (error?.code === "SIMULATION_FAILED") {
         toast.error("Transaction simulation failed", {
           description: "Try again later or switch RPC.",
         });
-        setMintState("idle");
-        return;
-      }
-      console.error("Mint error:", err);
-      const msg = err instanceof Error ? err.message : String(err);
-      const isUserCancel = /reject|cancel|denied|abort|dismiss/i.test(msg);
-      if (isUserCancel) {
-        toast.info("Transaction cancelled");
       } else {
-        toast.error("Deployment failed", { description: msg });
+        console.error("Mint error:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        const code = (err as { code?: string })?.code ?? "";
+        const isUserCancel = /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline/i.test(msg + " " + code);
+        if (isUserCancel) {
+          toast.info("Transaction cancelled");
+        } else {
+          toast.error("Deployment failed", { description: msg });
+        }
       }
-      setMintState("idle");
+    } finally {
+      // Guarantee spinner always stops (handles hung promises, unexpected errors)
+      if (!succeeded) setMintState("idle");
     }
   }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
 
