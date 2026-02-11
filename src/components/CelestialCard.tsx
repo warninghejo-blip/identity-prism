@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, forwardRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Canvas } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
 import { Activity, Clock, Info, Trophy, Wallet, Sparkles as SparklesIcon, Zap, Skull, Shield, Gem, Flame, Hourglass, RotateCw, RotateCcw } from 'lucide-react';
@@ -173,26 +173,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
   useEffect(() => () => clearTransitionTimers(), [clearTransitionTimers]);
 
-  // 3D Tilt Logic
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
-  const rotateX = useSpring(useTransform(y, [-300, 300], [5, -5]), { stiffness: 150, damping: 20 });
-  const rotateY = useSpring(useTransform(x, [-300, 300], [-5, 5]), { stiffness: 150, damping: 20 });
-
-  function handleMouseMove(event: React.MouseEvent<HTMLDivElement>) {
-    if (isCapture || isInteracting || isFlipped) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    x.set(event.clientX - centerX);
-    y.set(event.clientY - centerY);
-  }
-
-  function handleMouseLeave() {
-    if (isCapture || isFlipped) return;
-    x.set(0);
-    y.set(0);
-  }
+  // 3D Tilt removed — card stays flat
 
   useEffect(() => {
     if (!isCapture) return;
@@ -245,12 +226,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const funFact = useMemo(() => getRandomFunnyFact(safeTraits), [safeTraits]);
 
   return (
-    <motion.div 
+    <div 
       className={`celestial-card-shell relative w-full perspective-1000 mx-auto group ${shakeWarning ? 'card-shake-warning' : ''} ${suckingIn ? 'card-suckin-active' : ''} ${consuming ? 'card-consume-active' : ''} ${unsucking ? 'card-unsuck-active' : ''}`}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      style={{ rotateX: isCapture ? 0 : rotateX, rotateY: isCapture ? 0 : rotateY, transformStyle: 'preserve-3d' }}
-      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+      style={{ transformStyle: 'preserve-3d' }}
       ref={(node) => {
         shellRef.current = node;
         if (typeof ref === 'function') ref(node);
@@ -582,7 +560,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         </div>
         </motion.div>
       </div>
-    </motion.div>
+    </div>
   );
 });
 

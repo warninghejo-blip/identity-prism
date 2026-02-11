@@ -597,7 +597,6 @@
 }
 .landing-persistent-shell.fade-out {
   opacity: 0;
-  visibility: hidden;
 }
 
 /* Scanning layer — stacked on top, instant show/hide (no transition = no black flash) */

@@ -778,10 +778,14 @@ const Index = () => {
   const cardDataReady = !!traits;
   const isScrollEnabled = showReadyView && !previewMode && !isNftMode;
 
-  // Overlay stays mounted always — toggled via CSS class (no DOM removal = no flash)
-  // Card renders at full opacity behind the opaque overlay, so no black flash when overlay hides.
+  // Latch: once overlay is dismissed, it stays dismissed until user disconnects.
+  // Prevents any single-frame state flicker from causing a black screen flash.
+  const overlayDismissedRef = useRef(false);
+  if (viewState === "landing") overlayDismissedRef.current = false;
+  else if (showReadyView) overlayDismissedRef.current = true;
+
   const overlayMounted = true;
-  const overlayFading = showReadyView;
+  const overlayFading = overlayDismissedRef.current;
 
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
