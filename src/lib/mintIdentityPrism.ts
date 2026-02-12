@@ -124,6 +124,79 @@ const isAdminModeEnabled = () => {
   return params.get('admin') === 'true' || params.has('admin');
 };
 
+/**
+ * Wraps wallet.signTransaction with dismiss detection for mobile wallets (Seeker/MWA).
+ * When user swipes away the wallet approval dialog, the app returns to foreground
+ * (visibilitychange fires). After a short grace period, we reject if sign hasn't resolved.
+ * Also includes a hard timeout as fallback.
+ */
+async function signWithDismissDetection(
+  wallet: { signTransaction?: (tx: Transaction) => Promise<Transaction> },
+  transaction: Transaction,
+): Promise<Transaction> {
+  if (!wallet.signTransaction) {
+    throw new Error('Wallet does not support signTransaction');
+  }
+
+  const HARD_TIMEOUT_MS = 120_000;
+  const DISMISS_GRACE_MS = 3_000;
+
+  return new Promise<Transaction>((resolve, reject) => {
+    let settled = false;
+    let wentToBackground = false;
+    let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+    let hardTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (dismissTimer) clearTimeout(dismissTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
+    };
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+
+    const startDismissTimer = () => {
+      if (settled || dismissTimer) return;
+      dismissTimer = setTimeout(() => {
+        settle(() => reject(new Error('USER_REJECTED: Wallet dialog dismissed')));
+      }, DISMISS_GRACE_MS);
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        wentToBackground = true;
+      }
+      if (document.visibilityState === 'visible' && wentToBackground && !settled) {
+        startDismissTimer();
+      }
+    };
+
+    const onFocus = () => {
+      if (wentToBackground && !settled) {
+        startDismissTimer();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
+
+    hardTimer = setTimeout(() => {
+      settle(() => reject(new Error('USER_REJECTED: Signing timed out')));
+    }, HARD_TIMEOUT_MS);
+
+    wallet.signTransaction!(transaction).then(
+      (signed) => settle(() => resolve(signed)),
+      (err) => settle(() => reject(err)),
+    );
+  });
+}
+
 const logSendTransactionError = async (error: unknown) => {
   const candidate = error as { getLogs?: () => Promise<string[] | null> };
   if (candidate?.getLogs) {
@@ -447,7 +520,7 @@ export async function mintIdentityPrism({
         requireAllSignatures: false,
         verifySignatures: false,
       })) as typeof transaction.serialize;
-    const signedTransaction = await wallet.signTransaction(transaction);
+    const signedTransaction = await signWithDismissDetection(wallet, transaction);
     const walletSigner = wallet.publicKey?.toBase58();
     if (walletSigner) {
       const walletSignature = signedTransaction.signatures.find(

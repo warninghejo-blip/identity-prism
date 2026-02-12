@@ -20,6 +20,7 @@ interface CelestialCardProps {
   captureView?: 'front' | 'back';
   captureTab?: 'stats' | 'badges';
   fromBlackHole?: boolean;
+  onSceneReady?: () => void;
 }
 
 const TIER_COLORS: Record<string, string> = {
@@ -49,7 +50,7 @@ const TIER_LABELS: Record<string, string> = {
 };
 
 export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(function CelestialCard(
-  { data, captureMode = false, captureView = 'front', captureTab = 'stats', fromBlackHole = false },
+  { data, captureMode = false, captureView = 'front', captureTab = 'stats', fromBlackHole = false, onSceneReady },
   ref
 ) {
   const [isFlipped, setIsFlipped] = useState(captureView === 'back');
@@ -360,6 +361,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 const canvas = gl.domElement;
                 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); });
                 canvas.addEventListener('webglcontextrestored', () => { gl.forceContextRestore?.(); });
+                if (onSceneReady) requestAnimationFrame(() => requestAnimationFrame(() => onSceneReady()));
               }}
             >
               <ambientLight intensity={0.6} />

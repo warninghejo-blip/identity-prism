@@ -583,6 +583,66 @@
   margin-top: 0.35rem;
 }
 
+/* Space curtain — two panels slide apart to reveal the card */
+.space-curtain {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  z-index: 55;
+  background: #05070a;
+  pointer-events: none;
+}
+.space-curtain--left {
+  left: 0;
+}
+.space-curtain--right {
+  right: 0;
+}
+/* Glowing edge where curtains meet */
+.space-curtain::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(
+    to bottom,
+    transparent 5%,
+    rgba(76, 201, 240, 0.6) 20%,
+    rgba(167, 139, 250, 0.8) 50%,
+    rgba(76, 201, 240, 0.6) 80%,
+    transparent 95%
+  );
+  box-shadow:
+    0 0 15px 4px rgba(76, 201, 240, 0.4),
+    0 0 40px 8px rgba(167, 139, 250, 0.2);
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+.space-curtain--left::after { right: 0; }
+.space-curtain--right::after { left: 0; }
+.space-curtain.open::after { opacity: 1; }
+
+/* Slide animation */
+.space-curtain.open {
+  animation: curtain-slide 0.85s cubic-bezier(0.77, 0, 0.175, 1) forwards;
+}
+.space-curtain--left.open {
+  animation-name: curtain-slide-left;
+}
+.space-curtain--right.open {
+  animation-name: curtain-slide-right;
+}
+@keyframes curtain-slide-left {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+@keyframes curtain-slide-right {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(100%); }
+}
+
 /* Persistent shell — never swaps DOM, prevents black flash */
 .landing-persistent-shell {
   position: fixed;
@@ -597,7 +657,7 @@
 }
 .landing-persistent-shell.fade-out {
   opacity: 0;
-  transition: opacity 0.2s ease-out;
+  transition: opacity 0.6s ease-out;
 }
 
 /* Scanning layer — stacked on top, instant show/hide (no transition = no black flash) */
@@ -2652,23 +2712,8 @@
   100% { transform: scale(80); opacity: 0; border-width: 0.5px; }
 }
 
-/* Fullscreen blackout overlay for forward transition — CSS-driven via :has */
-.bh-blackout-overlay {
-  position: fixed;
-  inset: 0;
-  background: #050505;
-  z-index: 99998;
-  pointer-events: none;
-  opacity: 0;
-  will-change: opacity;
-}
-.card-stage:has(.card-consume-active) .bh-blackout-overlay {
-  animation: bh-blackout 0.7s 0.3s cubic-bezier(0.4, 0, 1, 1) forwards !important;
-}
-@keyframes bh-blackout {
-  0%   { opacity: 0; }
-  100% { opacity: 1; }
-}
+/* REMOVED: bh-blackout-overlay — caused persistent black screen. Wormhole tunnel handles transition. */
+.bh-blackout-overlay { display: none !important; }
 
 .card-suckin-active { /* marker */ }
 
@@ -2800,20 +2845,8 @@
   100% { transform: scale(1); opacity: 1; }
 }
 
-/* Dark veil that masks BH→main transition flicker (CSS backup for DOM veil) */
-.bh-return-veil {
-  position: fixed;
-  inset: 0;
-  background: #050505;
-  z-index: 100000;
-  pointer-events: none;
-  animation: bh-veil-fade 1.8s ease-out 0.1s both;
-}
-@keyframes bh-veil-fade {
-  0%   { opacity: 1; }
-  60%  { opacity: 1; }
-  100% { opacity: 0; }
-}
+/* REMOVED: bh-return-veil — caused black screen flash on return. */
+.bh-return-veil { display: none !important; }
 
 /* Subtle white flash for return — delayed so content is already appearing */
 .big-bang-flash {
@@ -2892,7 +2925,7 @@
   inset: 0;
   z-index: 999999;
   overflow: hidden;
-  background: #000;
+  background: #020108;
   pointer-events: all;
 }
 
@@ -2900,177 +2933,91 @@
 .wt-nebula {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at center,
-    rgba(20, 12, 50, 1) 0%,
-    rgba(10, 6, 30, 1) 30%,
-    rgba(3, 2, 12, 1) 60%,
-    #000 100%
+  background: radial-gradient(ellipse 120% 100% at 50% 50%,
+    rgba(18, 10, 45, 1) 0%,
+    rgba(8, 4, 25, 1) 35%,
+    rgba(2, 1, 8, 1) 70%,
+    #020108 100%
   );
   opacity: 0;
-  animation: wt-nebula-in 2.4s ease-in-out forwards;
+  animation: wt-nebula-in 1.4s ease-in-out forwards;
 }
 @keyframes wt-nebula-in {
   0%   { opacity: 0; }
   10%  { opacity: 1; }
-  80%  { opacity: 1; }
-  100% { opacity: 0.5; }
-}
-
-/* Tunnel vignette — dark edges create depth/corridor feeling */
-.wt-vignette {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at center,
-    transparent 0%,
-    transparent 15%,
-    rgba(0, 0, 0, 0.3) 40%,
-    rgba(0, 0, 0, 0.7) 65%,
-    rgba(0, 0, 0, 0.9) 100%
-  );
-  opacity: 0;
-  animation: wt-vignette-in 2s ease-in-out forwards;
-}
-@keyframes wt-vignette-in {
-  0%   { opacity: 0; }
-  15%  { opacity: 1; }
   70%  { opacity: 1; }
-  100% { opacity: 0; }
+  100% { opacity: 0.3; }
 }
 
-/* Radial speed lines — the overall tunnel texture */
+/* Radial speed lines — conic-gradient hyperspace streaks */
 .wt-streaks {
   position: absolute;
   top: 50%; left: 50%;
-  width: 300vmax; height: 300vmax;
+  width: 200vmax; height: 200vmax;
   transform: translate(-50%, -50%);
   background: repeating-conic-gradient(
     from 0deg at 50% 50%,
     transparent 0deg,
-    rgba(160, 200, 255, 0.06) 0.15deg,
-    transparent 0.8deg
+    rgba(140, 180, 255, 0.05) 0.12deg,
+    transparent 0.7deg
   );
   opacity: 0;
-  animation: wt-streaks 2.2s ease-in-out forwards;
+  animation: wt-streaks 1.8s ease-in-out forwards;
 }
 @keyframes wt-streaks {
-  0%   { transform: translate(-50%, -50%) scale(0.1) rotate(0deg); opacity: 0; }
-  8%   { opacity: 0.8; }
-  35%  { opacity: 0.7; transform: translate(-50%, -50%) scale(0.6) rotate(5deg); }
-  70%  { opacity: 0.3; }
-  100% { transform: translate(-50%, -50%) scale(4) rotate(20deg); opacity: 0; }
+  0%   { transform: translate(-50%, -50%) scale(0.08) rotate(0deg); opacity: 0; }
+  6%   { opacity: 0.9; }
+  30%  { opacity: 0.7; transform: translate(-50%, -50%) scale(0.5) rotate(4deg); }
+  65%  { opacity: 0.25; }
+  100% { transform: translate(-50%, -50%) scale(3.5) rotate(15deg); opacity: 0; }
 }
 
-/* Depth layers — concentric glow pulses rushing outward (tunnel walls) */
-.wt-depth {
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 70vmax; height: 70vmax;
-  transform: translate(-50%, -50%) scale(0.05);
-  border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
-  filter: blur(6px);
-}
-@keyframes wt-depth-rush {
-  0%   { transform: translate(-50%, -50%) scale(0.05); opacity: 0; filter: blur(6px); }
-  15%  { opacity: 0.5; transform: translate(-50%, -50%) scale(0.3); filter: blur(8px); }
-  40%  { opacity: 0.35; transform: translate(-50%, -50%) scale(0.8); filter: blur(10px); }
-  65%  { opacity: 0.18; transform: translate(-50%, -50%) scale(1.8); filter: blur(14px); }
-  100% { transform: translate(-50%, -50%) scale(4); opacity: 0; filter: blur(18px); }
-}
-
-/* Nebula color wash — shifts cool→warm as you travel */
-.wt-glow {
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 90vmax; height: 90vmax;
-  transform: translate(-50%, -50%);
-  background: radial-gradient(ellipse at center,
-    rgba(180, 160, 255, 0.25) 0%,
-    rgba(120, 180, 255, 0.15) 18%,
-    rgba(60, 100, 200, 0.06) 42%,
-    transparent 62%
-  );
-  opacity: 0;
-  animation: wt-glow 3s ease-in-out forwards;
-}
-.wt-glow-warm {
-  background: radial-gradient(ellipse at center,
-    rgba(255, 180, 140, 0.12) 0%,
-    rgba(255, 140, 200, 0.08) 22%,
-    transparent 48%
-  );
-  animation: wt-glow 3s 0.4s ease-in-out forwards;
-}
-@keyframes wt-glow {
-  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
-  20%  { opacity: 0.7; transform: translate(-50%, -50%) scale(0.6); }
-  45%  { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
-  75%  { opacity: 0.2; transform: translate(-50%, -50%) scale(1.6); }
-  100% { opacity: 0; transform: translate(-50%, -50%) scale(2.2); }
-}
-
-/* Stardust particles flying outward from center */
-.wt-dust {
-  position: absolute;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.85);
-  box-shadow: 0 0 3px rgba(180, 210, 255, 0.6);
-  opacity: 0;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-@keyframes wt-dust-fly {
-  0%   { opacity: 0; transform: translate(-50%, -50%) rotate(var(--angle)) translateX(0); }
-  12%  { opacity: 0.9; }
-  100% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--angle)) translateX(var(--dist)); }
-}
-
-/* Central vanishing point — where the tunnel converges */
+/* Central vanishing point — bright core expanding outward */
 .wt-core {
   position: absolute;
   top: 50%; left: 50%;
-  width: 30px; height: 30px;
+  width: 24px; height: 24px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
   background: radial-gradient(circle,
     rgba(255, 255, 255, 0.95) 0%,
-    rgba(200, 220, 255, 0.5) 30%,
-    rgba(140, 180, 255, 0.2) 55%,
-    transparent 75%
+    rgba(180, 210, 255, 0.5) 35%,
+    rgba(120, 160, 255, 0.15) 60%,
+    transparent 80%
   );
-  filter: blur(2px);
   opacity: 0;
-  animation: wt-core 2.4s ease-in-out forwards;
+  animation: wt-core 1.6s ease-in-out forwards;
 }
 @keyframes wt-core {
   0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
   8%   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-  25%  { opacity: 0.8; transform: translate(-50%, -50%) scale(1.5); filter: blur(3px); }
-  50%  { opacity: 0.5; transform: translate(-50%, -50%) scale(5); filter: blur(8px); }
-  75%  { opacity: 0.25; transform: translate(-50%, -50%) scale(15); filter: blur(12px); }
-  100% { opacity: 0; transform: translate(-50%, -50%) scale(40); filter: blur(16px); }
+  25%  { opacity: 0.8; transform: translate(-50%, -50%) scale(2.5); filter: blur(1px); }
+  55%  { opacity: 0.3; transform: translate(-50%, -50%) scale(10); filter: blur(3px); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(40); filter: blur(6px); }
 }
 
-/* Exit bloom — bright wash as you emerge from the tunnel */
+/* Exit bloom — soft white wash as you emerge */
 .wt-flash {
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at center,
-    rgba(255, 255, 255, 0.8) 0%,
-    rgba(200, 220, 255, 0.4) 15%,
-    rgba(140, 180, 255, 0.15) 35%,
+  background: radial-gradient(ellipse 80% 70% at 50% 50%,
+    rgba(255, 255, 255, 0.7) 0%,
+    rgba(200, 220, 255, 0.35) 15%,
+    rgba(140, 180, 255, 0.1) 35%,
     transparent 55%
   );
   opacity: 0;
   pointer-events: none;
-  animation: wt-exit-flash 0.8s ease-out 1.5s forwards;
+  animation: wt-exit-flash 0.5s ease-out 1.0s forwards;
 }
 @keyframes wt-exit-flash {
-  0%   { opacity: 0; transform: scale(0.3); }
-  25%  { opacity: 0.7; }
-  100% { opacity: 0; transform: scale(3); }
+  0%   { opacity: 0; transform: scale(0.4); }
+  30%  { opacity: 0.6; }
+  100% { opacity: 0; transform: scale(2.5); }
 }
+
+/* Legacy classes — kept as no-ops to avoid errors */
+.wt-vignette, .wt-depth, .wt-glow, .wt-glow-warm, .wt-dust { display: none; }
 
 /* ── Forward: portal grows before tunnel ── */
 @keyframes wt-portal-grow {
