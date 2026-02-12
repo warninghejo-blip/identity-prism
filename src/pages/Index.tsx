@@ -433,27 +433,25 @@ const Index = () => {
     suppressLoadingRef.current = true;
 
     const fadeTunnel = () => {
-      // Wormhole tunnel overlay
       const tunnel = document.getElementById('wormhole-tunnel');
       if (tunnel) {
-        tunnel.style.transition = 'opacity 0.8s ease-out';
+        tunnel.style.transition = 'opacity 0.5s ease-out';
         tunnel.style.opacity = '0';
-        setTimeout(() => tunnel.remove(), 900);
+        setTimeout(() => tunnel.remove(), 600);
       }
-      // Legacy veil fallback
       const veil = document.getElementById('bh-transition-veil');
       if (veil) {
-        veil.style.transition = 'opacity 0.6s ease-out';
+        veil.style.transition = 'opacity 0.4s ease-out';
         veil.style.opacity = '0';
-        setTimeout(() => veil.remove(), 700);
+        setTimeout(() => veil.remove(), 500);
       }
     };
 
-    // Fade when data ready (with buffer for WebGL init) or max 1800ms
+    // Fade when data ready or max 1400ms
     let readyTimer: ReturnType<typeof setTimeout> | null = null;
-    const maxTimer = setTimeout(fadeTunnel, 1800);
+    const maxTimer = setTimeout(fadeTunnel, 1400);
     if (!isLoading && traits) {
-      readyTimer = setTimeout(fadeTunnel, 600);
+      readyTimer = setTimeout(fadeTunnel, 400);
     }
 
     return () => {
@@ -655,6 +653,13 @@ const Index = () => {
     
     setMintState("minting");
     let succeeded = false;
+    // Safety: auto-reset spinner if wallet promise hangs (e.g. Seeker silently drops request)
+    const safetyTimer = setTimeout(() => {
+      if (!succeeded) {
+        setMintState("idle");
+        toast.info("Transaction timed out — please try again");
+      }
+    }, 5_000);
     try {
       const cardImageUrl = await captureCardImage();
       const result = await mintIdentityPrism({
@@ -703,17 +708,24 @@ const Index = () => {
           description: "Try again later or switch RPC.",
         });
       } else {
-        console.error("Mint error:", err);
         const msg = err instanceof Error ? err.message : String(err);
         const code = (err as { code?: string })?.code ?? "";
-        const isUserCancel = /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline/i.test(msg + " " + code);
+        const errName = (err as { name?: string })?.name ?? "";
+        console.error("Mint error:", { message: msg, code, name: errName, raw: err });
+        const isUserCancel =
+          /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(msg + " " + code) ||
+          errName === "WalletSignTransactionError" ||
+          errName === "WalletSendTransactionError" ||
+          msg === "Unknown error" ||
+          msg === "";
         if (isUserCancel) {
           toast.info("Transaction cancelled");
         } else {
-          toast.error("Deployment failed", { description: msg });
+          toast.error("Mint failed", { description: msg });
         }
       }
     } finally {
+      clearTimeout(safetyTimer);
       // Guarantee spinner always stops (handles hung promises, unexpected errors)
       if (!succeeded) setMintState("idle");
     }
@@ -776,14 +788,33 @@ const Index = () => {
   const cardDataReady = !!traits;
   const isScrollEnabled = showReadyView && !previewMode && !isNftMode;
 
-  // Latch: once overlay is dismissed, it stays dismissed until user disconnects.
-  // Prevents any single-frame state flicker from causing a black screen flash.
-  const overlayDismissedRef = useRef(false);
-  if (viewState === "landing") overlayDismissedRef.current = false;
-  else if (showReadyView) overlayDismissedRef.current = true;
+  // sceneReady: true once CelestialCard's Canvas has painted its first frame.
+  const [sceneReady, setSceneReady] = useState(false);
+  const handleSceneReady = useCallback(() => setSceneReady(true), []);
 
-  const overlayMounted = true;
-  const overlayFading = overlayDismissedRef.current;
+  // Reset when going back to landing
+  useEffect(() => {
+    if (viewState === "landing") setSceneReady(false);
+  }, [viewState]);
+
+  // Curtain transition: scanning overlay → curtain panels slide apart → unmount.
+  const everythingReady = showReadyView && sceneReady;
+  const [curtainOpen, setCurtainOpen] = useState(false);
+  const [curtainDone, setCurtainDone] = useState(false);
+
+  useEffect(() => {
+    if (everythingReady && !curtainOpen) {
+      setCurtainOpen(true);
+      const t = setTimeout(() => setCurtainDone(true), 1000);
+      return () => clearTimeout(t);
+    }
+    if (!everythingReady) {
+      setCurtainOpen(false);
+      setCurtainDone(false);
+    }
+  }, [everythingReady, curtainOpen]);
+
+  const showOverlay = !curtainDone;
 
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
@@ -854,10 +885,8 @@ const Index = () => {
                 <PreviewGallery />
               ) : (
                 <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' card-stage-hidden' : ''}`}>
-                  {/* Supernova + blackout overlays — outside card shell to escape transform containment */}
-                  <div className="bh-supernova" />
-                  <div className="bh-blackout-overlay" />
-                  <CelestialCard data={walletData} fromBlackHole={fromBlackHole} />
+                  {/* Transition handled by wormhole tunnel — no black overlays */}
+                  <CelestialCard data={walletData} fromBlackHole={fromBlackHole} onSceneReady={handleSceneReady} />
                   {!previewMode && (
                     <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
                       <button
@@ -951,12 +980,10 @@ const Index = () => {
             </>
           )}
 
-          {/* Scanning/Landing overlay — fades out smoothly after card renders */}
-          {(!showReadyView || overlayMounted) && (
+          {/* Scanning overlay — visible while loading, hidden once curtain starts */}
+          {showOverlay && !curtainOpen && (
             <LandingOverlay
-              fadeOut={overlayFading && showReadyView}
-              passthrough={showReadyView}
-              isScanning={viewState === "scanning"}
+              isScanning={viewState !== "landing"}
               isConnected={isConnected}
               onEnter={handleEnter}
               onDisconnect={handleDisconnect}
@@ -968,6 +995,14 @@ const Index = () => {
               desktopWalletReady={desktopWalletReady}
               scanningMessageIndex={scanningMessageIndex}
             />
+          )}
+
+          {/* Space curtain — slides apart to reveal the card */}
+          {showOverlay && curtainOpen && (
+            <>
+              <div className={`space-curtain space-curtain--left${curtainOpen ? ' open' : ''}`} />
+              <div className={`space-curtain space-curtain--right${curtainOpen ? ' open' : ''}`} />
+            </>
           )}
 
           {walletData?.error && !showReadyView && (
