@@ -24,18 +24,16 @@ const App = () => {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => {
     setIsMounted(true);
-    // Remove HTML preloader after React has painted content
-    // Small delay ensures first meaningful paint is visible behind preloader
-    const t = setTimeout(() => {
-      requestAnimationFrame(() => {
-        const preloader = document.getElementById('app-preloader');
-        if (preloader) {
-          preloader.style.opacity = '0';
-          setTimeout(() => preloader.remove(), 500);
-        }
-      });
-    }, 120);
-    return () => clearTimeout(t);
+    // Dismiss preloader after first paint (double-rAF).
+    // Index.tsx has its own earlier dismissal for the main page;
+    // this covers other pages like /verify that don't mount Index.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const preloader = document.getElementById('app-preloader');
+      if (preloader) {
+        preloader.style.opacity = '0';
+        setTimeout(() => preloader.remove(), 400);
+      }
+    }));
   }, []);
 
   const isMobile = useMemo(

@@ -21,7 +21,19 @@ twitter-bot/.env
 twitter-bot/oauth2_tokens.json
 twitter-bot/.code_verifier.tmp
 twitter-bot/cookies.json
+twitter-bot/cookies_new.json
 twitter-bot/agent_bot_state.json
+twitter-bot/test_*.mjs
+twitter-bot/test_*.js
+twitter-bot/patch_*.js
+twitter-bot/fix_*.sh
+twitter-bot/_update_*.py
+twitter-bot/_test_*.sh
+twitter-bot/_test_*.mjs
+twitter-bot/patch_upload.mjs
+twitter-bot/post_bot.mjs
+twitter-bot/_list_models.mjs
+twitter-bot/_start_daemon.sh
 twitter-bot-python/.env
 twitter-bot-python/cookies*.json
 twitter-bot-python/state*.json
@@ -39,6 +51,11 @@ tokens.json
 .tmp.driveupload/
 .tmp.ssh_identity_prism
 temp/
+homepage/
+DEMO*.mp4
+demo_frames/
+demo_temp/
+edit_demo.py
 twitter-bot-python/test_*.py
 twitter-bot-python/check_tweets*.py
 twitter-bot-python/reset_slot.py
@@ -46,14 +63,20 @@ twitter-bot-python/fix_nginx.sh
 twitter-bot-python/post_*.py
 twitter-bot-python/check_*.py
 twitter-bot-python/colosseum_state.json
+twitter-bot-python/colosseum_*.py
+twitter-bot-python/colosseum_*.js
+twitter-bot-python/update_*.py
+twitter-bot-python/*.lock
+twitter-bot-python/.venv*/
 
 # Python
-.venv/
+.venv*/
 __pycache__/
 *.pyc
 
 # Build artifacts
 dapp-store/files/*.apk
+*.apk
 
 # Editor directories and files
 .vscode/*

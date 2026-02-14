@@ -25,20 +25,32 @@ from config import (
     TWITTERAPI_IO_USERNAME,
     USE_TWITTERAPI_IO,
 )
+from official_twitter_client import OfficialTwitterClient, is_configured as official_is_configured
 from twitterapi_io_client import TwitterApiIoClient
 from utils import async_sleep_random, is_rate_limit_error
 
 
 class TwitterClient:
     """twikit = read-only (search, get tweets, mentions).
-    twitterapi.io = ALL writes (reply, post, like, retweet, media upload)."""
+    Official Twitter API = primary writes (post, reply, like, retweet, media upload).
+    twitterapi.io = fallback for writes."""
 
     def __init__(self, cookies_path=COOKIES_PATH):
         self.cookies_path = cookies_path
         self.client = Client(language=TWITTER_LANG)
         self.rate_limit_until = 0
         self.api_client = None
+        self.official = None
         self.api_proxies = []
+
+        # Primary: Official Twitter API
+        if official_is_configured():
+            try:
+                self.official = OfficialTwitterClient()
+                logging.info('Official Twitter API client ready (primary for writes)')
+            except Exception as exc:
+                logging.warning('Failed to init official Twitter API: %s', exc)
+
         if USE_TWITTERAPI_IO:
             if TWITTERAPI_IO_PROXIES:
                 self.api_proxies = TWITTERAPI_IO_PROXIES
@@ -65,9 +77,9 @@ class TwitterClient:
         if self.api_client:
             self.api_client.rotate_proxy()
 
-    def _require_api_client(self):
-        if not self.api_client:
-            raise RuntimeError('twitterapi.io client not configured; cannot perform write operations.')
+    def _require_write_client(self):
+        if not self.official and not self.api_client:
+            raise RuntimeError('No write client configured (neither official API nor twitterapi.io).')
 
     def load_cookies(self):
         if not os.path.exists(self.cookies_path):
@@ -177,51 +189,84 @@ class TwitterClient:
                 wrapped.append(item)
         return wrapped
 
-    # ── WRITE operations (twitterapi.io ONLY) ──
+    # ── WRITE operations (Official API primary, twitterapi.io fallback) ──
 
     async def reply_to_tweet(self, tweet, text):
-        self._require_api_client()
+        self._require_write_client()
         tweet_id = self._extract_tweet_id(tweet)
         if not tweet_id:
             return None
-        try:
-            reply_id = await asyncio.to_thread(self.api_client.reply, tweet_id, text)
-            return reply_id
-        except Exception as exc:
-            logging.warning('Reply failed (twitterapi.io): %s', exc)
-            return None
+        # Try official API first
+        if self.official:
+            try:
+                reply_id = await asyncio.to_thread(self.official.reply, tweet_id, text)
+                return reply_id
+            except Exception as exc:
+                logging.warning('Reply failed (official API): %s; trying fallback', exc)
+        # Fallback to twitterapi.io
+        if self.api_client:
+            try:
+                reply_id = await asyncio.to_thread(self.api_client.reply, tweet_id, text)
+                return reply_id
+            except Exception as exc:
+                logging.warning('Reply failed (twitterapi.io fallback): %s', exc)
+        return None
 
     async def try_reply(self, tweet_id: str, text: str):
         """Reply returning (status, reply_id). status: 'ok', '429', 'error'."""
-        self._require_api_client()
-        try:
-            reply_id = await asyncio.to_thread(self.api_client.reply, tweet_id, text)
-            if reply_id is None:
-                # Reply likely created but no ID; treat as success
-                logging.warning('Reply likely created but no reply_id returned')
-                return 'ok', 'unknown'
-            return 'ok', reply_id
-        except Exception as exc:
-            if '429' in str(exc):
-                return '429', None
-            logging.warning('Reply error: %s', exc)
-            return 'error', None
+        self._require_write_client()
+        # Try official API first
+        if self.official:
+            try:
+                reply_id = await asyncio.to_thread(self.official.reply, tweet_id, text)
+                if reply_id is None:
+                    logging.warning('Reply likely created but no reply_id returned (official)')
+                    return 'ok', 'unknown'
+                return 'ok', reply_id
+            except Exception as exc:
+                if '429' in str(exc):
+                    logging.warning('Official API rate limited on reply; trying fallback')
+                else:
+                    logging.warning('Reply failed (official API): %s; trying fallback', exc)
+        # Fallback
+        if self.api_client:
+            try:
+                reply_id = await asyncio.to_thread(self.api_client.reply, tweet_id, text)
+                if reply_id is None:
+                    return 'ok', 'unknown'
+                return 'ok', reply_id
+            except Exception as exc:
+                if '429' in str(exc):
+                    return '429', None
+                logging.warning('Reply error (fallback): %s', exc)
+                return 'error', None
+        return 'error', None
 
     async def upload_media(self, media_path):
-        self._require_api_client()
-        for attempt in range(1, MEDIA_UPLOAD_RETRIES + 1):
-            self._rotate_api_proxy()
+        self._require_write_client()
+        # Try official API first (v1.1 media upload)
+        if self.official:
             try:
-                result = await asyncio.to_thread(self.api_client.upload_media, media_path)
-                return result
+                result = await asyncio.to_thread(self.official.upload_media, media_path)
+                if result:
+                    return result
             except Exception as exc:
-                logging.warning('Media upload attempt %d/%d failed (twitterapi.io): %s', attempt, MEDIA_UPLOAD_RETRIES, exc)
-                if attempt < MEDIA_UPLOAD_RETRIES:
-                    await asyncio.sleep(MEDIA_UPLOAD_RETRY_DELAY)
+                logging.warning('Media upload failed (official API): %s; trying fallback', exc)
+        # Fallback to twitterapi.io
+        if self.api_client:
+            for attempt in range(1, MEDIA_UPLOAD_RETRIES + 1):
+                self._rotate_api_proxy()
+                try:
+                    result = await asyncio.to_thread(self.api_client.upload_media, media_path)
+                    return result
+                except Exception as exc:
+                    logging.warning('Media upload attempt %d/%d failed (twitterapi.io): %s', attempt, MEDIA_UPLOAD_RETRIES, exc)
+                    if attempt < MEDIA_UPLOAD_RETRIES:
+                        await asyncio.sleep(MEDIA_UPLOAD_RETRY_DELAY)
         return None
 
     async def post_tweet(self, text, media_paths=None):
-        self._require_api_client()
+        self._require_write_client()
         media_ids = []
         if media_paths:
             for media_path in media_paths:
@@ -230,41 +275,70 @@ class TwitterClient:
                     media_ids.append(media_id)
             if not media_ids:
                 logging.warning('All media uploads failed; posting text-only.')
-        try:
+
+        # Try official API first
+        if self.official:
+            try:
+                tweet_id = await asyncio.to_thread(
+                    self.official.create_tweet, text, None, media_ids or None,
+                )
+                return tweet_id, None
+            except Exception as exc:
+                logging.warning('Post failed (official API): %s; trying fallback', exc)
+                if media_ids:
+                    try:
+                        tweet_id = await asyncio.to_thread(
+                            self.official.create_tweet, text, None, None,
+                        )
+                        return tweet_id, None
+                    except Exception as exc2:
+                        logging.warning('Official text-only also failed: %s; trying twitterapi.io', exc2)
+
+        # Fallback to twitterapi.io
+        if self.api_client:
+            try:
+                tweet_id = await asyncio.to_thread(
+                    self.api_client.create_tweet, text, None, media_ids or None,
+                )
+                if tweet_id is None:
+                    return 'unknown', None
+                return tweet_id, None
+            except Exception as exc:
+                if media_ids:
+                    logging.warning('Post with media failed (fallback): %s; retrying text-only', exc)
+                    try:
+                        tweet_id = await asyncio.to_thread(
+                            self.api_client.create_tweet, text, None, None,
+                        )
+                        if tweet_id is None:
+                            return 'unknown', None
+                        return tweet_id, None
+                    except Exception as exc2:
+                        return None, str(exc2)
+                return None, str(exc)
+        return None, 'No write client available'
+
+    async def _create_tweet_with_fallback(self, text, reply_to=None, media_ids=None, quote_tweet_id=None):
+        """Try official API, then twitterapi.io fallback."""
+        if self.official:
+            try:
+                tweet_id = await asyncio.to_thread(
+                    self.official.create_tweet, text, reply_to, media_ids, quote_tweet_id,
+                )
+                return tweet_id
+            except Exception as exc:
+                logging.warning('create_tweet failed (official): %s; trying fallback', exc)
+        if self.api_client:
             tweet_id = await asyncio.to_thread(
-                self.api_client.create_tweet,
-                text,
-                None,
-                media_ids or None,
+                self.api_client.create_tweet, text, reply_to, media_ids,
             )
-            if tweet_id is None:
-                logging.warning('Post likely created but no tweet_id returned; treating as success')
-                return 'unknown', None
-            return tweet_id, None
-        except Exception as exc:
-            if media_ids:
-                logging.warning('Post with media failed (%s); retrying text-only', exc)
-                try:
-                    tweet_id = await asyncio.to_thread(
-                        self.api_client.create_tweet,
-                        text,
-                        None,
-                        None,
-                    )
-                    if tweet_id is None:
-                        logging.warning('Text-only post likely created but no tweet_id; treating as success')
-                        return 'unknown', None
-                    return tweet_id, None
-                except Exception as exc2:
-                    logging.warning('Text-only fallback also failed: %s', exc2)
-                    return None, str(exc2)
-            logging.warning('Post failed (twitterapi.io): %s', exc)
-            return None, str(exc)
+            return tweet_id
+        return None
 
     async def post_thread(self, tweets, media_paths=None):
         """Post a thread: first tweet is standalone, rest are self-replies.
         Returns list of (tweet_id, error) tuples."""
-        self._require_api_client()
+        self._require_write_client()
         results = []
         parent_id = None
         for i, text in enumerate(tweets):
@@ -276,12 +350,7 @@ class TwitterClient:
                         m_ids = [mid]
                         break
             try:
-                tweet_id = await asyncio.to_thread(
-                    self.api_client.create_tweet,
-                    text,
-                    parent_id,
-                    m_ids,
-                )
+                tweet_id = await self._create_tweet_with_fallback(text, parent_id, m_ids)
                 if tweet_id is None:
                     tweet_id = 'unknown'
                 results.append((tweet_id, None))
@@ -295,46 +364,81 @@ class TwitterClient:
                 await asyncio.sleep(random.uniform(8, 20))
         return results
 
-    async def quote_tweet(self, text, tweet_url):
+    async def quote_tweet(self, text, tweet_url, media_paths=None):
         """Quote-tweet the given URL with commentary text."""
-        self._require_api_client()
-        try:
-            tweet_id = await asyncio.to_thread(
-                self.api_client.quote, text, tweet_url,
-            )
-            if tweet_id is None:
-                logging.warning('Quote tweet likely created but no ID returned')
-                return 'unknown', None
-            return tweet_id, None
-        except Exception as exc:
-            logging.warning('Quote tweet failed: %s', exc)
-            return None, str(exc)
+        self._require_write_client()
+        media_ids = []
+        if media_paths:
+            for media_path in media_paths:
+                media_id = await self.upload_media(media_path)
+                if media_id:
+                    media_ids.append(media_id)
+            if not media_ids:
+                logging.warning('All media uploads failed for quote; posting text-only.')
+
+        # Try official API first
+        if self.official:
+            try:
+                tweet_id = await asyncio.to_thread(
+                    self.official.quote, text, tweet_url, media_ids or None,
+                )
+                return tweet_id, None
+            except Exception as exc:
+                logging.warning('Quote failed (official API): %s; trying fallback', exc)
+
+        # Fallback
+        if self.api_client:
+            try:
+                tweet_id = await asyncio.to_thread(
+                    self.api_client.quote, text, tweet_url, media_ids or None,
+                )
+                if tweet_id is None:
+                    return 'unknown', None
+                return tweet_id, None
+            except Exception as exc:
+                logging.warning('Quote failed (fallback): %s', exc)
+                return None, str(exc)
+        return None, 'No write client available'
 
     async def like_tweet(self, tweet):
         tweet_id = self._extract_tweet_id(tweet)
         if not tweet_id:
             return False
-        if not self.api_client:
-            return False
-        try:
-            await asyncio.to_thread(self.api_client.like_tweet, tweet_id)
-            return True
-        except Exception as exc:
-            logging.warning('Like failed (twitterapi.io): %s', exc)
-            return False
+        # Official API first
+        if self.official:
+            try:
+                result = await asyncio.to_thread(self.official.like_tweet, tweet_id)
+                if result:
+                    return True
+            except Exception as exc:
+                logging.warning('Like failed (official API): %s; trying fallback', exc)
+        if self.api_client:
+            try:
+                await asyncio.to_thread(self.api_client.like_tweet, tweet_id)
+                return True
+            except Exception as exc:
+                logging.warning('Like failed (twitterapi.io fallback): %s', exc)
+        return False
 
     async def retweet(self, tweet):
         tweet_id = self._extract_tweet_id(tweet)
         if not tweet_id:
             return False
-        if not self.api_client:
-            return False
-        try:
-            await asyncio.to_thread(self.api_client.retweet, tweet_id)
-            return True
-        except Exception as exc:
-            logging.warning('Retweet failed (twitterapi.io): %s', exc)
-            return False
+        # Official API first
+        if self.official:
+            try:
+                result = await asyncio.to_thread(self.official.retweet, tweet_id)
+                if result:
+                    return True
+            except Exception as exc:
+                logging.warning('Retweet failed (official API): %s; trying fallback', exc)
+        if self.api_client:
+            try:
+                await asyncio.to_thread(self.api_client.retweet, tweet_id)
+                return True
+            except Exception as exc:
+                logging.warning('Retweet failed (twitterapi.io fallback): %s', exc)
+        return False
 
     # ── Helpers ──
 

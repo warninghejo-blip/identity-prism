@@ -25,7 +25,7 @@ export const getMetadataBaseUrl = () => (METADATA_BASE_URL ? normalizeProxyUrl(M
 export const getMetadataImageUrl = () => {
   if (METADATA_IMAGE_URL) return METADATA_IMAGE_URL;
   const baseUrl = getMetadataBaseUrl();
-  return baseUrl ? `${baseUrl}/assets/identity-prism.png` : null;
+  return baseUrl ? `${baseUrl}/phav.png` : null;
 };
 export const getAppBaseUrl = () => (APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : null);
 export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : null);

@@ -154,7 +154,7 @@ class TwitterApiIoClient:
                     file_bytes = handle.read()
                 resp = cffi_requests.post(
                     'https://api.twitterapi.io/twitter/upload_media_v2',
-                    files={'file': (filename, file_bytes, mime_type)},
+                    files=[('file', (filename, file_bytes, mime_type))],
                     data={
                         'proxy': self.proxy,
                         'login_cookies': self.login_cookie,
@@ -383,9 +383,12 @@ class TwitterApiIoClient:
         tweets = data.get('tweets') or data.get('data') or []
         return tweets[:count]
 
-    def quote(self, text: str, attachment_url: str) -> str:
+    def quote(self, text: str, attachment_url: str, media_ids: Optional[List[str]] = None) -> str:
         def build():
-            return {'tweet_text': text, 'attachment_url': attachment_url}
+            p = {'tweet_text': text, 'attachment_url': attachment_url}
+            if media_ids:
+                p['media_ids'] = media_ids
+            return p
         return self._call_with_retry(
             build_payload=build,
             extract_result=lambda d: str(d['tweet_id']) if d.get('tweet_id') else None,

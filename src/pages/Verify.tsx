@@ -25,7 +25,8 @@ const TIER_COLORS: Record<string, string> = {
   uranus: '#73C2FB',
   neptune: '#3F54BE',
   sun: '#FFD700',
-  'binary sun': '#FF6B35',
+  'binary sun': '#22D3EE',
+  binary_sun: '#22D3EE',
 };
 
 const TIER_EMOJI: Record<string, string> = {
@@ -39,6 +40,7 @@ const TIER_EMOJI: Record<string, string> = {
   neptune: '♆',
   sun: '☀️',
   'binary sun': '🌟',
+  binary_sun: '🌟',
 };
 
 type VerifyState =
@@ -160,7 +162,7 @@ const Verify: React.FC = () => {
   };
 
   return (
-    <div className="relative z-10 min-h-screen flex flex-col items-center px-4 py-12">
+    <div className="verify-page-scroll relative z-10 min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
       {/* Header */}
       <Link to="/" className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity">
         <img src="/assets/icon.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />
@@ -169,22 +171,22 @@ const Verify: React.FC = () => {
         </span>
       </Link>
 
-      <h1 className="text-3xl md:text-4xl font-bold text-center mb-2">
+      <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-center mb-2">
         Verify On-Chain Attestation
       </h1>
-      <p className="text-gray-400 text-center mb-8 max-w-lg">
+      <p className="text-gray-400 text-center mb-6 sm:mb-8 max-w-lg text-sm sm:text-base">
         Enter a Solana transaction signature to verify an Identity Prism reputation attestation recorded on-chain.
       </p>
 
       {/* Search form */}
-      <form onSubmit={handleSubmit} className="w-full max-w-2xl mb-10">
-        <div className="flex gap-2">
+      <form onSubmit={handleSubmit} className="w-full max-w-2xl mb-8 sm:mb-10">
+        <div className="flex flex-col sm:flex-row gap-2">
           <input
             type="text"
             value={inputSig}
             onChange={(e) => setInputSig(e.target.value)}
             placeholder="Transaction signature (e.g. 5K8s...)"
-            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 font-mono text-sm"
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-gray-500 focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/30 font-mono text-sm min-w-0"
           />
           <button
             type="submit"
@@ -192,7 +194,7 @@ const Verify: React.FC = () => {
             className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-purple-600 rounded-xl font-semibold text-white hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {state.status === 'loading' ? (
-              <span className="flex items-center gap-2">
+              <span className="flex items-center justify-center gap-2">
                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -232,23 +234,23 @@ const Verify: React.FC = () => {
           </div>
 
           {/* Score card */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
-            <div className="flex items-center justify-between mb-6">
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 sm:p-6 backdrop-blur-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
               <div>
                 <p className="text-gray-400 text-sm mb-1">Reputation Score</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-black" style={{ color: tierColor }}>
+                  <span className="text-3xl sm:text-5xl font-black" style={{ color: tierColor }}>
                     {state.data.score}
                   </span>
-                  <span className="text-gray-500 text-lg">/ {state.data.maxScore}</span>
+                  <span className="text-gray-500 text-base sm:text-lg">/ {state.data.maxScore}</span>
                 </div>
               </div>
-              <div className="text-right">
+              <div className="sm:text-right">
                 <p className="text-gray-400 text-sm mb-1">Tier</p>
                 <div className="flex items-center gap-2">
-                  <span className="text-3xl">{tierEmoji}</span>
-                  <span className="text-2xl font-bold uppercase" style={{ color: tierColor }}>
-                    {state.data.tier}
+                  <span className="text-2xl sm:text-3xl">{tierEmoji}</span>
+                  <span className="text-xl sm:text-2xl font-bold uppercase truncate max-w-[200px]" style={{ color: tierColor }}>
+                    {state.data.tier.replace(/_/g, ' ')}
                   </span>
                 </div>
               </div>
@@ -301,35 +303,35 @@ const Verify: React.FC = () => {
 
             {/* Wallet */}
             <div className="border-t border-white/5 pt-4 space-y-3">
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
                 <span className="text-gray-500 text-sm">Wallet</span>
-                <code className="text-cyan-400 text-sm font-mono">
-                  {state.data.wallet.slice(0, 8)}...{state.data.wallet.slice(-8)}
+                <code className="text-cyan-400 text-xs sm:text-sm font-mono break-all">
+                  {state.data.wallet.slice(0, 6)}...{state.data.wallet.slice(-6)}
                 </code>
               </div>
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
                 <span className="text-gray-500 text-sm">Authority</span>
-                <code className="text-purple-400 text-sm font-mono">
-                  {state.data.authority.slice(0, 8)}...{state.data.authority.slice(-8)}
+                <code className="text-purple-400 text-xs sm:text-sm font-mono break-all">
+                  {state.data.authority.slice(0, 6)}...{state.data.authority.slice(-6)}
                 </code>
               </div>
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
                 <span className="text-gray-500 text-sm">Attested At</span>
-                <span className="text-gray-300 text-sm">{formatDate(state.data.ts || state.blockTime)}</span>
+                <span className="text-gray-300 text-xs sm:text-sm">{formatDate(state.data.ts || state.blockTime)}</span>
               </div>
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
                 <span className="text-gray-500 text-sm">Solana Slot</span>
-                <span className="text-gray-300 text-sm font-mono">{state.slot.toLocaleString()}</span>
+                <span className="text-gray-300 text-xs sm:text-sm font-mono">{state.slot.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
                 <span className="text-gray-500 text-sm">Transaction</span>
                 <a
                   href={`https://solscan.io/tx/${state.signature}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-cyan-400 text-sm font-mono hover:underline"
+                  className="text-cyan-400 text-xs sm:text-sm font-mono hover:underline break-all"
                 >
-                  {state.signature.slice(0, 12)}...
+                  {state.signature.slice(0, 10)}...
                   <span className="ml-1 text-xs">↗</span>
                 </a>
               </div>

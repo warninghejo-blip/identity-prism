@@ -69,12 +69,14 @@ const purgeInvalidMwaCache = async () => {
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
-  const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
-  const [fromBlackHole, setFromBlackHole] = useState(Boolean((location.state as any)?.fromBlackHole) || storedReturn);
-  const returningFromBH = useRef(Boolean((location.state as any)?.fromBlackHole) || storedReturn);
-  const suppressLoadingRef = useRef(Boolean((location.state as any)?.fromBlackHole) || storedReturn);
   const isNftMode = searchParams.get("mode") === "nft";
   const urlAddress = searchParams.get("address");
+  const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
+  const locState = location.state as Record<string, unknown> | null;
+  const shouldResumeFromBlackHole = Boolean(urlAddress) && (Boolean(locState?.fromBlackHole) || storedReturn);
+  const [fromBlackHole, setFromBlackHole] = useState(shouldResumeFromBlackHole);
+  const returningFromBH = useRef(shouldResumeFromBlackHole);
+  const suppressLoadingRef = useRef(shouldResumeFromBlackHole);
 
   const [isWarping, setIsWarping] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
@@ -98,6 +100,42 @@ const Index = () => {
   const { setVisible: setWalletModalVisible } = useWalletModal();
 
   const [activeAddress, setActiveAddress] = useState<string | undefined>(urlAddress || undefined);
+  const didForceDisconnect = useRef(false);
+  const [walletStable, setWalletStable] = useState(Boolean(urlAddress) || returningFromBH.current);
+
+  // On fresh app open (no URL address, not returning from BlackHole),
+  // force-disconnect any auto-connected wallet so user must choose manually.
+  // Keep walletStable=false until disconnect settles to prevent connected UI flash.
+  useEffect(() => {
+    if (didForceDisconnect.current) return;
+    didForceDisconnect.current = true;
+    if (!urlAddress && !returningFromBH.current && isConnected) {
+      disconnect().catch(() => {}).finally(() => setTimeout(() => setWalletStable(true), 100));
+    } else {
+      setWalletStable(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // If app was reopened with a stale BlackHole flag but no address,
+  // clear it immediately so loading overlay is not suppressed.
+  useEffect(() => {
+    if (urlAddress) return;
+    if (sessionStorage.getItem('fromBlackHole') === '1') {
+      sessionStorage.removeItem('fromBlackHole');
+    }
+  }, [urlAddress]);
+
+  // Dismiss HTML preloader only after this component's first paint.
+  // Double-rAF guarantees the browser has composited our overlay pixels.
+  useEffect(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const preloader = document.getElementById('app-preloader');
+      if (preloader) {
+        preloader.style.opacity = '0';
+        setTimeout(() => preloader.remove(), 400);
+      }
+    }));
+  }, []);
 
   useEffect(() => {
     if (!urlAddress) return;
@@ -369,7 +407,7 @@ const Index = () => {
         description: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [preferredMobileWallet, preferredMobileWalletReady, select, isConnected, connectedAddress, disconnect, isIosDevice]);
+  }, [preferredMobileWallet, preferredMobileWalletReady, select, isConnected, connectedAddress, disconnect, isIosDevice, startMwaAssociationNudge]);
 
   const handleDesktopConnect = useCallback(async () => {
     const targetWallet = preferredDesktopWallet;
@@ -413,7 +451,7 @@ const Index = () => {
         description: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [preferredDesktopWallet, desktopWalletReady, isConnected, connectedAddress, select, connect, setWalletModalVisible, selectedWallet]);
+  }, [preferredDesktopWallet, desktopWalletReady, isConnected, connectedAddress, select, connect, setWalletModalVisible]);
 
   // Reset active address if wallet disconnects (keep this for cleanup)
   useEffect(() => {
@@ -523,6 +561,8 @@ const Index = () => {
 
   const handleDisconnect = async () => {
     await disconnect();
+    mwaAuthorizationCache.clear().catch(() => {});
+    try { localStorage.removeItem(MWA_AUTH_CACHE_KEY); } catch { /* ignore */ }
     setActiveAddress(undefined);
     setViewState("landing");
   };
@@ -537,16 +577,15 @@ const Index = () => {
 
   const fetchSkrQuote = useCallback(async () => {
     if (!proxyBase) {
-      setSkrQuote(null);
       setSkrQuoteError("SKR pricing unavailable");
       return;
     }
     setSkrQuoteLoading(true);
-    const MAX_RETRIES = 2;
+    const MAX_RETRIES = 3;
     let lastError: unknown;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 2000));
+        if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500));
         const response = await fetch(`${proxyBase}/api/market/mint-quote`);
         if (!response.ok) {
           throw new Error(`SKR quote unavailable (${response.status})`);
@@ -566,9 +605,11 @@ const Index = () => {
       }
     }
     console.warn("[mint] SKR quote fetch failed after retries", lastError);
-    setSkrQuote(null);
-    setSkrQuoteError("SKR pricing unavailable");
+    // Keep previous successful quote as fallback — only clear error text
+    setSkrQuoteError("SKR pricing unavailable — retrying...");
     setSkrQuoteLoading(false);
+    // Schedule one more background retry after 10s
+    setTimeout(() => { fetchSkrQuote(); }, 10_000);
   }, [proxyBase]);
 
   useEffect(() => {
@@ -576,6 +617,13 @@ const Index = () => {
     const interval = window.setInterval(fetchSkrQuote, 60_000);
     return () => window.clearInterval(interval);
   }, [fetchSkrQuote]);
+
+  // Re-fetch SKR quote when returning to ready state (e.g. after BlackHole)
+  useEffect(() => {
+    if (viewState === "ready" && !skrQuote) {
+      fetchSkrQuote();
+    }
+  }, [viewState, skrQuote, fetchSkrQuote]);
   const renderCardImage = useCallback(async (scale: number, quality: number) => {
     if (!cardCaptureRef.current) {
       throw new Error("Card preview is not ready yet");
@@ -788,33 +836,39 @@ const Index = () => {
   const cardDataReady = !!traits;
   const isScrollEnabled = showReadyView && !previewMode && !isNftMode;
 
-  // sceneReady: true once CelestialCard's Canvas has painted its first frame.
+  // sceneReady: true once CelestialCard's Canvas has rendered real frames.
   const [sceneReady, setSceneReady] = useState(false);
   const handleSceneReady = useCallback(() => setSceneReady(true), []);
 
-  // Reset when going back to landing
-  useEffect(() => {
-    if (viewState === "landing") setSceneReady(false);
-  }, [viewState]);
-
-  // Curtain transition: scanning overlay → curtain panels slide apart → unmount.
-  const everythingReady = showReadyView && sceneReady;
+  // Curtain transition — STICKY: once triggered, never resets (except back to landing).
   const [curtainOpen, setCurtainOpen] = useState(false);
   const [curtainDone, setCurtainDone] = useState(false);
 
+  const everythingReady = showReadyView && sceneReady;
+
   useEffect(() => {
-    if (everythingReady && !curtainOpen) {
+    // Once curtains have started, never reset them here
+    if (!curtainOpen && everythingReady) {
       setCurtainOpen(true);
-      const t = setTimeout(() => setCurtainDone(true), 1000);
-      return () => clearTimeout(t);
-    }
-    if (!everythingReady) {
-      setCurtainOpen(false);
-      setCurtainDone(false);
     }
   }, [everythingReady, curtainOpen]);
 
-  const showOverlay = !curtainDone;
+  useEffect(() => {
+    if (!curtainOpen || curtainDone) return;
+    const t = setTimeout(() => setCurtainDone(true), 1000);
+    return () => clearTimeout(t);
+  }, [curtainOpen, curtainDone]);
+
+  // Only reset everything when explicitly going back to landing
+  useEffect(() => {
+    if (viewState === "landing") {
+      setSceneReady(false);
+      setCurtainOpen(false);
+      setCurtainDone(false);
+    }
+  }, [viewState]);
+
+  const showOverlay = !curtainDone && !suppressLoadingRef.current;
 
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
@@ -980,14 +1034,16 @@ const Index = () => {
             </>
           )}
 
-          {/* Scanning overlay — visible while loading, hidden once curtain starts */}
-          {showOverlay && !curtainOpen && (
+          {/* Scanning overlay — stays mounted until curtainDone but hidden instantly behind curtains */}
+          {showOverlay && (
             <LandingOverlay
-              isScanning={viewState !== "landing"}
-              isConnected={isConnected}
+              isScanning={Boolean(resolvedAddress) || viewState !== "landing"}
+              fadeOut={curtainOpen}
+              passthrough={curtainOpen}
+              isConnected={walletStable && isConnected}
               onEnter={handleEnter}
               onDisconnect={handleDisconnect}
-              connectedAddress={connectedAddress?.toBase58()}
+              connectedAddress={walletStable ? connectedAddress?.toBase58() : undefined}
               useMobileWallet={useMobileWallet}
               onMobileConnect={handleMobileConnect}
               mobileWalletReady={mobileConnectReady}
@@ -997,11 +1053,11 @@ const Index = () => {
             />
           )}
 
-          {/* Space curtain — slides apart to reveal the card */}
-          {showOverlay && curtainOpen && (
+          {/* Space curtain — slides apart to reveal the card. Keep mounted after open (offscreen, no cost) to prevent unmount flash. */}
+          {curtainOpen && (
             <>
-              <div className={`space-curtain space-curtain--left${curtainOpen ? ' open' : ''}`} />
-              <div className={`space-curtain space-curtain--right${curtainOpen ? ' open' : ''}`} />
+              <div className="space-curtain space-curtain--left open" />
+              <div className="space-curtain space-curtain--right open" />
             </>
           )}
 

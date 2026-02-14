@@ -98,13 +98,17 @@ class AIEngine:
         cleaned = text.strip().strip('"').strip("'")
         cleaned = ' '.join(cleaned.split())
         cleaned = trim_hashtags(cleaned, MAX_HASHTAGS)
-        # Extract trailing tags (#hashtag, $TICKER) before truncation
+        # Extract ALL #hashtag and $TICKER tokens, place them on a new line
         words = cleaned.split()
         tags = []
-        while words and re.match(r'^[#$]\w+$', words[-1]):
-            tags.append(words.pop())
-        tags.reverse()
-        body = ' '.join(words).rstrip()
+        body_words = []
+        for w in words:
+            if re.match(r'^[#$]\w+$', w):
+                tags.append(w)
+            else:
+                body_words.append(w)
+        body = ' '.join(body_words).rstrip().rstrip('✨⚡🔥💎🚀🌟💫⭐🔮🌙')
+        body = body.rstrip()
         tag_str = ' '.join(tags)
         if tag_str:
             cleaned = f'{body}\n{tag_str}'
