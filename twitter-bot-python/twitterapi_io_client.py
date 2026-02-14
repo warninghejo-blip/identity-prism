@@ -3,6 +3,7 @@ import random
 import time
 from typing import List, Optional
 
+import curl_cffi
 from curl_cffi import requests as cffi_requests
 
 
@@ -152,17 +153,23 @@ class TwitterApiIoClient:
             try:
                 with open(media_path, 'rb') as handle:
                     file_bytes = handle.read()
+                mp = curl_cffi.CurlMime()
+                mp.addpart(
+                    name='file',
+                    content_type=mime_type,
+                    filename=filename,
+                    data=file_bytes,
+                )
+                mp.addpart(name='proxy', data=self.proxy.encode() if isinstance(self.proxy, str) else self.proxy)
+                mp.addpart(name='login_cookies', data=(self.login_cookie or '').encode())
                 resp = cffi_requests.post(
                     'https://api.twitterapi.io/twitter/upload_media_v2',
-                    files=[('file', (filename, file_bytes, mime_type))],
-                    data={
-                        'proxy': self.proxy,
-                        'login_cookies': self.login_cookie,
-                    },
+                    multipart=mp,
                     headers=self._headers(),
                     impersonate='chrome131',
                     timeout=self.timeout,
                 )
+                mp.close()
                 data = self._handle_response(resp)
             except Exception as exc:
                 kind = self._classify_error(str(exc))
