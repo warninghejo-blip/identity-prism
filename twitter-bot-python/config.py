@@ -246,9 +246,13 @@ POST_PROMPT = (
     'Be creative and varied — talk about badges, wallet scores, on-chain reputation, cosmic vibes, etc. '
     'Write as many sentences as you need to fully express the thought — there is NO character limit. '
     'You MUST always finish every sentence — NEVER stop mid-sentence. '
+    'FORMATTING RULES (CRITICAL): '
+    '- Use line breaks (blank lines) between logical thoughts/paragraphs for readability. '
+    '- Use 2-4 relevant emojis spread throughout the tweet (e.g. 🪐 🔮 ⭐ 🚀 💎 🌌 🛡️ 🏆 🔥 ✨). '
+    '- Do NOT write a wall of text — break it up so it looks beautiful on Twitter. '
     'MUST include 1-2 of these exact hashtags: {hashtags} and a $SOL ticker. '
     'Do NOT include any website link or "check my profile" — that part is handled separately. '
-    'One emoji max. {shill}'
+    '{shill}'
 )
 
 THREAD_PROMPT = (
@@ -281,7 +285,11 @@ TREND_POST_PROMPT = (
     'Write your own original tweet (NOT a reply) inspired by or reacting to this trend/topic. '
     'Add your unique perspective as an on-chain identity builder. '
     'Write as many sentences as you need to fully express the thought — there is NO character limit. '
-    'Include {hashtags}. One emoji max. '
+    'FORMATTING RULES (CRITICAL): '
+    '- Use line breaks (blank lines) between logical thoughts/paragraphs for readability. '
+    '- Use 2-4 relevant emojis spread throughout the tweet (e.g. 🪐 🔮 ⭐ 🚀 💎 🌌 🛡️ 🏆 🔥 ✨). '
+    '- Do NOT write a wall of text — break it up so it looks beautiful on Twitter. '
+    'Include {hashtags}. '
     'Do NOT mention the original author. Do NOT include any link. {shill}'
 )
 
