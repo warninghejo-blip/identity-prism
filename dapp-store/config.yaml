@@ -16,7 +16,7 @@ app:
     - purpose: icon
       uri: ./media/app_icon.png
 release:
-  address: HEn5KLiRtT5eywfDZwXnCw9ZL7WSJpvhf7vp9Bpao3wn
+  address: 7VASa6Q3z7Ux8ZRVQXcqwkCaDESHgRCQJVw11rd34UUf
   media:
     - purpose: icon
       uri: ./media/release_icon.png
@@ -36,31 +36,48 @@ release:
   catalog:
     en-US:
       name: Identity Prism
-      short_description: Wallet insights on Solana.
+      short_description: On-chain identity on Solana
       long_description: |
-        Identity Prism turns a Solana wallet into a cosmic identity card. Connect any
-        wallet to scan on-chain activity, reveal tiers and badges, and share a visual
-        identity powered by Solana Blinks. Built for collectors, degen explorers, and
-        anyone who wants a beautiful, shareable view of their Solana history.
-      new_in_version: v1.0.23 SKR payment (50% discount) + bottom notifications + scrollbar fix.
-      saga_features: Supports Solana Mobile Wallet Adapter for native signing.
+        Identity Prism scans any Solana wallet and builds a cosmic identity card with
+        real on-chain data. Your tier (Mercury → Binary Sun) is determined by SOL balance,
+        wallet age, transaction history, NFT holdings, and behavioral traits like Diamond
+        Hands, DeFi King, Meme Lord, and Hyperactive Degen.
+
+        Features:
+        - 3D interactive planet visualization matching your tier
+        - Mint your identity as a compressed NFT (cNFT) — pay with SOL or SKR (50% off)
+        - Black Hole token burner — warp into a 3D black hole and burn unwanted SPL tokens
+        - Solana Actions & Blinks — share your card as an interactive link
+        - Space curtain reveal transition after scanning
+        - OG badges for Seeker Genesis and Chapter 2 Preorder holders
+        - Share to Twitter with auto-generated card image
+        - Full Solana Mobile Wallet Adapter (MWA) support for Seeker
+
+        Built for the Solana community — collectors, degens, builders, and explorers.
+      new_in_version: |
+        v1.0.24: Black Hole token burner, space curtain transition, improved wallet
+        dismiss detection for Seeker MWA, faster mint flow, no more black screen flashes.
+      saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.23
-    version_code: 24
+    version: 1.0.24
+    version_code: 25
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
   google_store_package: com.identityprism.app
   testing_instructions: |
-    1. Open the app and connect any Solana wallet.
-    2. Wait for the scan to finish and verify the Identity Prism card renders.
-    3. Flip to the back to view stats and badges.
-    4. Optional: use Share to verify the Solana Blinks link is generated.
+    1. Open the app and connect any Solana wallet via MWA (Seeker recommended).
+    2. Wait for the scan — the space curtain should open to reveal the card.
+    3. Verify the 3D planet matches the wallet tier (e.g. high-score wallets get Sun/Jupiter).
+    4. Flip to back to view stats tab and badges tab.
+    5. Tap "Black Hole" portal on the card to enter the token burner — select any SPL token and burn it.
+    6. Tap Mint to mint a cNFT identity card. Try dismissing the wallet prompt to verify instant cancel detection.
+    7. Use Share to verify the Twitter share with card image works.
 lastSubmittedVersionOnChain:
-  address: HEn5KLiRtT5eywfDZwXnCw9ZL7WSJpvhf7vp9Bpao3wn
-  version_code: 12
-  apk_hash: 1vPWjt3mMGKWiLqB6DfJqmw2rHdzNAroejAMNd2PCig=
+  address: 7VASa6Q3z7Ux8ZRVQXcqwkCaDESHgRCQJVw11rd34UUf
+  version_code: 25
+  apk_hash: LMI4lv/ojrLXwayz7DinyLV85qWe5aqOwHxxmnUKyDU=
 lastUpdatedVersionOnStore:
-  address: HEn5KLiRtT5eywfDZwXnCw9ZL7WSJpvhf7vp9Bpao3wn
+  address: 7VASa6Q3z7Ux8ZRVQXcqwkCaDESHgRCQJVw11rd34UUf

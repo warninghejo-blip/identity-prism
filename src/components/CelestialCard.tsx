@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, forwardRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
 import { Activity, Clock, Info, Trophy, Wallet, Sparkles as SparklesIcon, Zap, Skull, Shield, Gem, Flame, Hourglass, RotateCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,22 @@ import type { WalletData, WalletTraits } from '@/hooks/useWalletData';
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { BLACKHOLE_ENABLED } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
+
+/** Waits for the Three.js render loop to produce real frames before signaling ready. */
+function FrameDetector({ onReady }: { onReady?: () => void }) {
+  const fired = useRef(false);
+  const frameCount = useRef(0);
+  useFrame(() => {
+    if (fired.current || !onReady) return;
+    frameCount.current += 1;
+    // Wait for 5 real rendered frames so shaders are compiled & GPU has composited
+    if (frameCount.current >= 5) {
+      fired.current = true;
+      onReady();
+    }
+  });
+  return null;
+}
 
 interface CelestialCardProps {
   data: WalletData;
@@ -361,9 +377,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 const canvas = gl.domElement;
                 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); });
                 canvas.addEventListener('webglcontextrestored', () => { gl.forceContextRestore?.(); });
-                if (onSceneReady) requestAnimationFrame(() => requestAnimationFrame(() => onSceneReady()));
               }}
             >
+              {!isCapture && <FrameDetector onReady={onSceneReady} />}
               <ambientLight intensity={0.6} />
               <pointLight position={[10, 5, 5]} intensity={1.5} color="#fff" />
               <pointLight position={[-8, -5, -5]} intensity={0.5} color="#4cc9f0" />

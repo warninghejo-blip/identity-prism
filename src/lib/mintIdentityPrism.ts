@@ -241,7 +241,7 @@ export async function mintIdentityPrism({
     if (cardImageUrl) return cardImageUrl;
     if (imageUrl) return imageUrl;
     const fallbackBase = resolveBaseUrl(appBaseUrl) ?? resolveBaseUrl(metadataBaseUrl) ?? 'https://identityprism.xyz';
-    return `${fallbackBase}/assets/identity-prism.png`;
+    return `${fallbackBase}/phav.png`;
   })();
   const resolvedAppBaseUrl = resolveBaseUrl(appBaseUrl);
   const resolvedExternalUrl = resolvedAppBaseUrl

@@ -337,7 +337,7 @@ SLOT_INTERVAL_MAX = 5400    # up to 1.5 hours
 SLEEP_CHECK = 300           # poll every 5 min
 POST_COOLDOWN_MIN = 14400   # minimum 4 hours between ANY write action
 POST_COOLDOWN_MAX = 18000   # up to 5 hours
-MAX_POSTS_PER_DAY = 5       # total write actions (posts + threads + trends + quotes)
+MAX_POSTS_PER_DAY = 8       # total write actions (posts + threads + trends + quotes)
 MAX_ENGAGEMENTS_PER_DAY = 12
 
 
@@ -417,6 +417,8 @@ async def do_trend_post(client, ai_engine, state):
         if not post_text:
             continue
         media_paths = await build_media_paths(ai_engine, post_text)
+        if media_paths:
+            logging.info('Attaching media to trend post: %s', ', '.join(media_paths))
         tweet_id, err = await client.post_tweet(post_text, media_paths=media_paths)
         if tweet_id:
             reacted.add(tid)
@@ -459,8 +461,11 @@ async def do_quote(client, ai_engine, state):
         quote_text = ai_engine.generate_quote_text(text, user, include_shill=should_shill())
         if not quote_text:
             continue
+        media_paths = await build_media_paths(ai_engine, quote_text)
+        if media_paths:
+            logging.info('Attaching media to quote: %s', ', '.join(media_paths))
         tweet_url = f'https://x.com/{user}/status/{tid}'
-        qt_id, err = await client.quote_tweet(quote_text, tweet_url)
+        qt_id, err = await client.quote_tweet(quote_text, tweet_url, media_paths=media_paths)
         if qt_id:
             quoted.add(tid)
             state['quoted_tweet_ids'] = list(quoted)[-200:]
