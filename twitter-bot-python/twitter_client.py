@@ -267,45 +267,72 @@ class TwitterClient:
 
     async def post_tweet(self, text, media_paths=None):
         self._require_write_client()
-        media_ids = []
-        if media_paths:
-            for media_path in media_paths:
-                media_id = await self.upload_media(media_path)
-                if media_id:
-                    media_ids.append(media_id)
-            if not media_ids:
-                logging.warning('All media uploads failed; posting text-only.')
 
-        # Try official API first
-        if self.official:
+        # --- Phase 1: Upload media via official API ---
+        official_media_ids = []
+        if media_paths and self.official:
+            for media_path in media_paths:
+                try:
+                    media_id = await asyncio.to_thread(self.official.upload_media, media_path)
+                    if media_id:
+                        official_media_ids.append(media_id)
+                        logging.info('Official media upload OK: %s -> %s', media_path, media_id)
+                    else:
+                        logging.warning('Official media upload returned None for %s', media_path)
+                except Exception as exc:
+                    logging.warning('Official media upload error for %s: %s', media_path, exc)
+
+        # --- Phase 2: Try official API with media ---
+        if self.official and official_media_ids:
             try:
                 tweet_id = await asyncio.to_thread(
-                    self.official.create_tweet, text, None, media_ids or None,
+                    self.official.create_tweet, text, None, official_media_ids,
+                )
+                logging.info('Official API: tweet with media OK -> %s', tweet_id)
+                return tweet_id, None
+            except Exception as exc:
+                logging.warning('Official API tweet WITH media failed: %s', exc)
+                # DO NOT strip media and retry text-only here.
+                # Fall through to twitterapi.io with fresh media upload.
+
+        # --- Phase 3: Try official API without media (only if no media was requested) ---
+        if self.official and not media_paths:
+            try:
+                tweet_id = await asyncio.to_thread(
+                    self.official.create_tweet, text, None, None,
                 )
                 return tweet_id, None
             except Exception as exc:
-                logging.warning('Post failed (official API): %s; trying fallback', exc)
-                if media_ids:
-                    try:
-                        tweet_id = await asyncio.to_thread(
-                            self.official.create_tweet, text, None, None,
-                        )
-                        return tweet_id, None
-                    except Exception as exc2:
-                        logging.warning('Official text-only also failed: %s; trying twitterapi.io', exc2)
+                logging.warning('Official API text-only failed: %s; trying fallback', exc)
 
-        # Fallback to twitterapi.io
+        # --- Phase 4: Fallback to twitterapi.io ---
         if self.api_client:
+            # Re-upload media via twitterapi.io (official media_ids won't work here)
+            fallback_media_ids = []
+            if media_paths:
+                for media_path in media_paths:
+                    try:
+                        media_id = await asyncio.to_thread(self.api_client.upload_media, media_path)
+                        if media_id:
+                            fallback_media_ids.append(media_id)
+                            logging.info('Fallback media upload OK: %s -> %s', media_path, media_id)
+                    except Exception as exc:
+                        logging.warning('Fallback media upload error for %s: %s', media_path, exc)
+
+            if media_paths and not fallback_media_ids:
+                logging.warning('All fallback media uploads failed; posting text-only via twitterapi.io')
+
             try:
                 tweet_id = await asyncio.to_thread(
-                    self.api_client.create_tweet, text, None, media_ids or None,
+                    self.api_client.create_tweet, text, None, fallback_media_ids or None,
                 )
                 if tweet_id is None:
                     return 'unknown', None
                 return tweet_id, None
             except Exception as exc:
-                if media_ids:
-                    logging.warning('Post with media failed (fallback): %s; retrying text-only', exc)
+                logging.warning('Fallback post failed: %s', exc)
+                # Last resort: text-only via fallback (only if we had media that failed)
+                if fallback_media_ids:
                     try:
                         tweet_id = await asyncio.to_thread(
                             self.api_client.create_tweet, text, None, None,
