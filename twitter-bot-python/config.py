@@ -31,6 +31,7 @@ TARGET_USERS = [
 SNIPER_INTERVAL_RANGE = (25 * 60, 40 * 60)
 TREND_INTERVAL_RANGE = (25 * 60, 40 * 60)
 LOOP_SLEEP_RANGE = (3 * 60, 8 * 60)
+MENTION_POLL_INTERVAL = int(os.getenv('MENTION_POLL_INTERVAL', str(30 * 60)))  # check mentions every 30 min
 
 WARMUP_HOURS = int(os.getenv('WARMUP_HOURS', '0'))
 WARMUP_ACTION_RATE = float(os.getenv('WARMUP_ACTION_RATE', '1.0'))
@@ -69,11 +70,11 @@ HASHTAG_SETS = [
 ]
 
 ACTION_WEIGHTS = {
-    'post': 25,
-    'thread': 12,
-    'trend_post': 18,
+    'post': 30,
+    'thread': 15,
+    'trend_post': 25,
     'quote': 15,
-    'engage': 30,
+    'engage': 15,
 }
 
 SHILL_RATE = 0.4
@@ -94,10 +95,17 @@ SHILL_PHRASES = [
 MAX_HASHTAGS = 2
 MAX_REPLY_CHARS = int(os.getenv('MAX_REPLY_CHARS', '25000'))
 MAX_POST_CHARS = int(os.getenv('MAX_POST_CHARS', '25000'))
+
 MAX_STORED_TWEETS = 2000
 CTA_DOMAIN = os.getenv('CTA_DOMAIN', 'identityprism.xyz').strip()
 CTA_LINK = os.getenv('CTA_LINK', f'https://{CTA_DOMAIN}').strip()
 BLINK_URL = os.getenv('BLINK_URL', f'https://dial.to/?action=solana-action:https://{CTA_DOMAIN}/api/actions/share').strip()
+
+# Link injection (max once per day each)
+BLINK_SHARE_URL = os.getenv('BLINK_SHARE_URL', f'https://dial.to/?action=solana-action:https://{CTA_DOMAIN}/api/actions/share').strip()
+ATTEST_URL = os.getenv('ATTEST_URL', f'https://dial.to/?action=solana-action:https://{CTA_DOMAIN}/api/actions/attest').strip()
+MINT_BLINK_URL = os.getenv('MINT_BLINK_URL', f'https://dial.to/?action=solana-action:https://{CTA_DOMAIN}/api/actions/mint-blink').strip()
+LINK_INJECT_RATE = float(os.getenv('LINK_INJECT_RATE', '0.35'))  # 35% chance to add a link to a post
 SOFT_CTAS = [
     'peep my profile if you wanna see your on-chain stats',
     'link in my bio if you want to check your wallet score',
@@ -234,9 +242,9 @@ TREND_PROMPT = (
 )
 
 POST_PROMPT = (
-    'Write a tweet (2-4 COMPLETE sentences) about Identity Prism and what it '
-    'reveals about your on-chain identity on Solana. Be creative and varied — '
-    'talk about badges, wallet scores, on-chain reputation, cosmic vibes, etc. '
+    'Write a tweet about Identity Prism and what it reveals about your on-chain identity on Solana. '
+    'Be creative and varied — talk about badges, wallet scores, on-chain reputation, cosmic vibes, etc. '
+    'Write as many sentences as you need to fully express the thought — there is NO character limit. '
     'You MUST always finish every sentence — NEVER stop mid-sentence. '
     'MUST include 1-2 of these exact hashtags: {hashtags} and a $SOL ticker. '
     'Do NOT include any website link or "check my profile" — that part is handled separately. '
@@ -272,7 +280,7 @@ TREND_POST_PROMPT = (
     'Author: @{user}\nTweet: "{tweet_text}"\n\n'
     'Write your own original tweet (NOT a reply) inspired by or reacting to this trend/topic. '
     'Add your unique perspective as an on-chain identity builder. '
-    '2-3 COMPLETE sentences. '
+    'Write as many sentences as you need to fully express the thought — there is NO character limit. '
     'Include {hashtags}. One emoji max. '
     'Do NOT mention the original author. Do NOT include any link. {shill}'
 )
