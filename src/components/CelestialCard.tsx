@@ -14,15 +14,17 @@ import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { BLACKHOLE_ENABLED } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
 
-/** Waits for the Three.js render loop to produce real frames before signaling ready. */
-function FrameDetector({ onReady }: { onReady?: () => void }) {
+/** Waits for the Three.js render loop to produce real frames AND textures to load before signaling ready. */
+function FrameDetector({ onReady, texturesReady }: { onReady?: () => void; texturesReady: boolean }) {
   const fired = useRef(false);
   const frameCount = useRef(0);
   useFrame(() => {
     if (fired.current || !onReady) return;
+    // Only start counting frames once textures are loaded
+    if (!texturesReady) return;
     frameCount.current += 1;
-    // Wait for 5 real rendered frames so shaders are compiled & GPU has composited
-    if (frameCount.current >= 5) {
+    // Wait for 10 frames after textures load so GPU has composited the actual textured planet
+    if (frameCount.current >= 10) {
       fired.current = true;
       onReady();
     }
@@ -72,6 +74,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [isFlipped, setIsFlipped] = useState(captureView === 'back');
   const [isInteracting, setIsInteracting] = useState(false);
   const [wormholeActive, setWormholeActive] = useState(false);
+  const [texturesReady, setTexturesReady] = useState(false);
+  const handleTexturesReady = useCallback(() => setTexturesReady(true), []);
   const [shakeWarning, setShakeWarning] = useState(false);
   const [suckingIn, setSuckingIn] = useState(false);
   const [consuming, setConsuming] = useState(false);
@@ -379,7 +383,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 canvas.addEventListener('webglcontextrestored', () => { gl.forceContextRestore?.(); });
               }}
             >
-              {!isCapture && <FrameDetector onReady={onSceneReady} />}
+              {!isCapture && <FrameDetector onReady={onSceneReady} texturesReady={texturesReady} />}
               <ambientLight intensity={0.6} />
               <pointLight position={[10, 5, 5]} intensity={1.5} color="#fff" />
               <pointLight position={[-8, -5, -5]} intensity={0.5} color="#4cc9f0" />
@@ -399,7 +403,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 floatIntensity={isCapture ? 0 : 0.2}
               >
                 <Suspense fallback={null}>
-                  <Planet3D tier={safeTraits.planetTier} isCapture={isCapture} />
+                  <Planet3D tier={safeTraits.planetTier} isCapture={isCapture} onTexturesReady={handleTexturesReady} />
                 </Suspense>
               </Float>
 

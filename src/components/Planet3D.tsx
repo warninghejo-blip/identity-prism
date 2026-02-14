@@ -389,9 +389,10 @@ void main() {
 interface Planet3DProps {
   tier: PlanetTier;
   isCapture?: boolean;
+  onTexturesReady?: () => void;
 }
 
-export function Planet3D({ tier, isCapture = false }: Planet3DProps) {
+export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DProps) {
   const groupRef = useRef<Group>(null);
   const cloudsRef = useRef<Mesh>(null);
   const ringsRef = useRef<Group>(null);
@@ -482,12 +483,13 @@ export function Planet3D({ tier, isCapture = false }: Planet3DProps) {
         next[key] = texture;
       });
       setTextures(next);
+      onTexturesReady?.();
     });
 
     return () => {
       mounted = false;
     };
-  }, [textureKeys, fallbackTexture]);
+  }, [textureKeys, fallbackTexture, onTexturesReady]);
 
   const mapTexture = textures.map ?? fallbackTexture;
   const normalTexture = textures.normalMap !== fallbackTexture ? textures.normalMap : undefined;
