@@ -14,8 +14,6 @@ import App from './App';
 import Index from './pages/Index';
 import NotFound from './pages/NotFound';
 
-const Homepage = React.lazy(() => import('./pages/Homepage'));
-
 const BlackHole = React.lazy(() => import('./pages/BlackHole'));
 const PreviewDeck = React.lazy(() => import('./pages/PreviewDeck'));
 const Verify = React.lazy(() => import('./pages/Verify'));
@@ -78,7 +76,6 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <Index /> },
-      { path: 'home', element: <Homepage /> },
       { path: 'app', element: <Index /> },
       { path: 'app/*', element: <Index /> },
       { path: 'share', element: <Index /> },

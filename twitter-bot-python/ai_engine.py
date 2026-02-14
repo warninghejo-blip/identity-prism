@@ -398,4 +398,5 @@ class AIEngine:
             return None
         path = self._compress_image(path)
         self._cleanup_images()
+        logging.info('Image generated OK: %s (%d bytes)', path, os.path.getsize(path))
         return path
