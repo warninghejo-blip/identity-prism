@@ -2,7 +2,7 @@
 
 > **Your wallet tells a story. Identity Prism reads it.**
 
-**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk)
+**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
 
 ---
 
@@ -25,6 +25,7 @@ Identity Prism provides:
 2. **Celestial Tiers** — From Mercury (new wallets) through Mars, Earth, Saturn, Jupiter, to Sun (top-tier OGs). Holders of both Seeker Genesis + Chapter 2 Preorder earn the rare **Binary Sun** tier.
 3. **Achievement Badges** — OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early Adopter, and more.
 4. **API-first Design** — All reputation data is available via REST API for integration into any dApp.
+5. **Social Graph Integration** — Publish identity profiles to Tapestry protocol, making reputation composable across the Solana ecosystem.
 
 ---
 
@@ -84,14 +85,22 @@ https://identityprism.xyz/api/actions/attest?address=<YOUR_WALLET>
 
 Also works as a **Solana Blink** — attest your reputation from any Blink-compatible wallet.
 
+### 🌐 Tapestry Social Graph Integration
+Publish wallet identity profiles to the [Tapestry protocol](https://www.usetapestry.dev/) — Solana's leading social graph. This makes Identity Prism scores, tiers, and badges **composable** across the entire ecosystem:
+- **Profile creation** — Wallet address, score, tier, and badges are published as a Tapestry profile
+- **Content publishing** — Each scan generates content visible to other Tapestry-integrated apps
+- **Cross-app discovery** — Other dApps can read Identity Prism reputation data via Tapestry's API
+- **Social features** — Followers, following, likes, and comments on identity profiles
+
 ### 🤖 AI-Powered Social Agent
-An autonomous Twitter bot ([@Identity_Prism](https://x.com/Identity_Prism)) that:
+An autonomous Twitter bot ([@Identity_Prism](https://x.com/Identity_Prism)) powered by **Official Twitter API v2** + twitterapi.io fallback:
 - **Auto-replies with real reputation data** when mentioned with a Solana address
 - **Posts threads** about on-chain identity, Solana ecosystem trends, and wallet analysis
 - **Engages** with relevant Solana accounts (replies, likes, retweets)
 - **Creates trend-reactive content** based on current crypto topics
 - **Quote tweets** with identity-focused commentary
 - **Generates AI images** using Google Imagen for visual engagement
+- **Media upload** via Twitter API v1.1 (official) with automatic fallback
 - Uses **weighted random action selection** with human-like timing (1h+ intervals)
 
 ### 📱 Android App
@@ -123,9 +132,15 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 └─────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────┐
+│            Tapestry Social Graph                     │
+│  - Profile creation · Content publishing            │
+│  - Cross-app reputation discovery                   │
+└─────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────┐
 │              AI Agents (Python)                      │
-│  - Twitter Bot (twikit + twitterapi.io + Gemini)    │
-│  - Colosseum Forum Bot (Gemini + REST)              │
+│  - Twitter Bot (Official API v2 + twitterapi.io)    │
+│  - Gemini AI for content generation + Imagen        │
 │  - Content: threads, trends, quotes, engagement     │
 └─────────────────────────────────────────────────────┘
 ```
@@ -174,7 +189,8 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 | **Frontend** | React 18, TypeScript, Three.js (react-three-fiber), Tailwind CSS, shadcn/ui, Framer Motion |
 | **Backend** | Node.js, Helius DAS API, Metaplex Core/Umi, custom HTTP server |
 | **Blockchain** | Solana, SPL Tokens, Metaplex Core NFTs, Solana Actions (Blinks) |
-| **AI Agents** | Python, Google Gemini (text + Imagen), twikit, twitterapi.io, curl_cffi |
+| **Social Graph** | Tapestry Protocol (REST API), on-chain profile + content publishing |
+| **AI Agents** | Python, Google Gemini (text + Imagen), Official Twitter API v2 (tweepy), twikit, twitterapi.io |
 | **Mobile** | Capacitor, Solana Mobile Wallet Adapter |
 | **Infrastructure** | Nginx, systemd services, Squid proxy, logrotate |
 
@@ -225,8 +241,13 @@ See `.env.example` for all required variables. Key ones:
 | Variable | Description |
 |----------|-------------|
 | `HELIUS_API_KEYS` | Helius RPC API key(s) |
+| `VITE_TAPESTRY_API_KEY` | Tapestry social graph API key |
 | `GEMINI_API_KEY` | Google Gemini API key |
-| `TWITTERAPI_IO_API_KEY` | twitterapi.io key for write operations |
+| `TWITTER_CONSUMER_KEY` | Official Twitter API key |
+| `TWITTER_CONSUMER_SECRET` | Official Twitter API secret |
+| `TWITTER_ACCESS_TOKEN` | Twitter OAuth access token |
+| `TWITTER_ACCESS_TOKEN_SECRET` | Twitter OAuth access token secret |
+| `TWITTERAPI_IO_API_KEY` | twitterapi.io key (fallback) |
 | `TREASURY_ADDRESS` | SOL treasury for mint payments |
 | `PUBLIC_BASE_URL` | Public URL (https://identityprism.xyz) |
 
@@ -236,9 +257,11 @@ See `.env.example` for all required variables. Key ones:
 
 - **Live App:** [https://identityprism.xyz](https://identityprism.xyz)
 - **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism)
+- **Tapestry Explorer:** [https://explorer.usetapestry.dev/](https://explorer.usetapestry.dev/)
 - **Reputation API:** [https://identityprism.xyz/api/reputation?address=YOUR_WALLET](https://identityprism.xyz/api/reputation?address=vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg)
 - **Blink:** `solana-action:https://identityprism.xyz/api/actions/share`
 - **Android APK:** [https://identityprism.xyz/app-release.apk](https://identityprism.xyz/app-release.apk)
+- **Solana Mobile:** Built for Saga & Seeker with native Mobile Wallet Adapter support
 
 ---
 
