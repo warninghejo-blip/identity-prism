@@ -13,10 +13,15 @@ from ai_engine import AIEngine
 from config import (
     ACTION_WEIGHTS,
     ACTIVE_HOURS_UTC,
+    ATTEST_URL,
+    BLINK_SHARE_URL,
     BOT_USERNAME,
     CTA_DOMAIN,
     LIKE_RATE,
+    LINK_INJECT_RATE,
     MAX_STORED_TWEETS,
+    MENTION_POLL_INTERVAL,
+    MINT_BLINK_URL,
     PEAK_HOURS_UTC,
     POST_IMAGE_ENABLED,
     POST_IMAGE_RATE,
@@ -153,6 +158,7 @@ async def do_post(client, ai_engine, state):
     if not post_text:
         logging.warning('Failed to generate post text')
         return False
+    post_text = _maybe_inject_link(post_text, state)
     logging.info('Post [%d chars]: %s', len(post_text), post_text)
     media_paths = await build_media_paths(ai_engine, post_text)
     if media_paths:
@@ -330,15 +336,36 @@ async def _try_mention_reply(client, ai_engine, state):
     return 'skipped'
 
 
+# ── Link injection ──
+
+def _maybe_inject_link(post_text, state):
+    """Optionally append a blink/attest/mint link to a post (max once/day each)."""
+    if random.random() > LINK_INJECT_RATE:
+        return post_text
+    today = today_str()
+    link_options = []
+    if state.get('last_blink_link_date') != today:
+        link_options.append(('blink', BLINK_SHARE_URL, '\n\nCheck your on-chain identity \u2935\ufe0f'))
+    if state.get('last_attest_link_date') != today:
+        link_options.append(('attest', ATTEST_URL, '\n\nAttest your reputation on-chain \u2935\ufe0f'))
+    if state.get('last_mint_link_date') != today:
+        link_options.append(('mint', MINT_BLINK_URL, '\n\nMint your identity as an NFT \u2935\ufe0f'))
+    if not link_options:
+        return post_text
+    kind, url, prefix = random.choice(link_options)
+    state[f'last_{kind}_link_date'] = today
+    return f'{post_text}{prefix}\n{url}'
+
+
 # ── Main loop ──
 
-SLOT_INTERVAL_MIN = 3600    # minimum 1 hour between actions
-SLOT_INTERVAL_MAX = 5400    # up to 1.5 hours
-SLEEP_CHECK = 300           # poll every 5 min
-POST_COOLDOWN_MIN = 14400   # minimum 4 hours between ANY write action
+SLOT_INTERVAL_MIN = 7200    # 2 hours between actions
+SLOT_INTERVAL_MAX = 9000    # up to 2.5 hours
+SLEEP_CHECK = 120           # poll every 2 min (for faster mention detection)
+POST_COOLDOWN_MIN = 14400   # minimum 4 hours between posts
 POST_COOLDOWN_MAX = 18000   # up to 5 hours
-MAX_POSTS_PER_DAY = 8       # total write actions (posts + threads + trends + quotes)
-MAX_ENGAGEMENTS_PER_DAY = 12
+MAX_POSTS_PER_DAY = 6       # total write actions (posts + threads + trends + quotes)
+MAX_ENGAGEMENTS_PER_DAY = 6 # ~1 engage between each post
 
 
 def _pick_action(state):
@@ -416,6 +443,7 @@ async def do_trend_post(client, ai_engine, state):
         post_text = ai_engine.generate_trend_post(text, user, include_shill=should_shill())
         if not post_text:
             continue
+        post_text = _maybe_inject_link(post_text, state)
         media_paths = await build_media_paths(ai_engine, post_text)
         if media_paths:
             logging.info('Attaching media to trend post: %s', ', '.join(media_paths))
@@ -518,6 +546,11 @@ async def main():
     state.setdefault('reacted_trend_ids', [])
     state.setdefault('quoted_tweet_ids', [])
     state.setdefault('action_stats', {})
+    state.setdefault('last_mention_poll_at', 0)
+    state.setdefault('last_blink_link_date', '')
+    state.setdefault('last_attest_link_date', '')
+    state.setdefault('last_mint_link_date', '')
+    state.setdefault('last_action_type', 'engage')  # alternate: start with post next
 
     client = TwitterClient()
     try:
@@ -568,9 +601,21 @@ async def main():
         now = time.time()
         try:
             cleanup_old_comments(state)
+            reset_daily_counters_if_needed()
 
+            # ── Priority: check mentions for wallet requests every 30 min ──
+            since_last_mention_poll = now - state.get('last_mention_poll_at', 0)
+            if since_last_mention_poll >= MENTION_POLL_INTERVAL:
+                logging.info('=== MENTION POLL (priority wallet check) ===')
+                state['last_mention_poll_at'] = now
+                result = await _try_mention_reply(client, ai_engine, state)
+                if result == 'replied':
+                    logging.info('Priority mention reply sent')
+                    save_state(state, state['state_path'])
+                    # Don't count this as a main action slot
+
+            # ── Main action timer (2-2.5h between actions) ──
             slot_interval = random.uniform(SLOT_INTERVAL_MIN, SLOT_INTERVAL_MAX)
-            # During quiet hours, increase interval
             if not _is_active_hour():
                 slot_interval *= 1.5
 
@@ -583,22 +628,30 @@ async def main():
             # Pre-action jitter
             await asyncio.sleep(random.uniform(15, 90))
 
-            reset_daily_counters_if_needed()
-
-            # Pick action
-            action = _pick_action(state)
+            # ── Decide action: strict alternation post <-> engage ──
+            last_type = state.get('last_action_type', 'engage')
             total_writes = state.get('daily_posts', 0)
 
-            # Enforce 4h+ cooldown for ALL write actions
+            # Check if we CAN post (cooldown + daily cap)
             last_post = state.get('last_post_at') or 0
             post_cooldown = random.uniform(POST_COOLDOWN_MIN, POST_COOLDOWN_MAX)
             since_last_post = time.time() - last_post
-            write_on_cooldown = since_last_post < post_cooldown
+            can_post = since_last_post >= post_cooldown and total_writes < MAX_POSTS_PER_DAY
 
-            # If write action picked but on cooldown → force engage instead
-            if action != 'engage' and write_on_cooldown:
-                logging.info('=== %s → ENGAGE (post cooldown: %.0f min left) ===',
-                             action.upper(), (post_cooldown - since_last_post) / 60)
+            # Alternation logic: last was engage -> try post; last was post -> engage
+            if last_type == 'engage' and can_post:
+                # Time to post
+                action = _pick_action(state)
+                if action == 'engage':
+                    action = 'post'  # override: we need a post now
+            elif last_type != 'engage':
+                # Last was a post/thread/quote/trend -> engage now
+                action = 'engage'
+            elif can_post:
+                # Both conditions met, pick weighted
+                action = _pick_action(state)
+            else:
+                # Can't post yet -> engage
                 action = 'engage'
 
             if action == 'engage':
@@ -615,6 +668,7 @@ async def main():
                     if result in ('commented', 'replied'):
                         state['daily_engagements'] = state.get('daily_engagements', 0) + 1
                         _track_action(state, 'engage')
+                        state['last_action_type'] = 'engage'
                     if result == '429':
                         state['skip_next_engage'] = True
 
@@ -628,6 +682,7 @@ async def main():
                 logging.info('Thread result: %s', 'OK' if ok else 'FAIL')
                 if ok:
                     state['daily_posts'] = total_writes + 1
+                    state['last_action_type'] = 'thread'
 
             elif action == 'trend_post':
                 logging.info('=== TREND POST ===')
@@ -635,6 +690,7 @@ async def main():
                 logging.info('Trend post result: %s', 'OK' if ok else 'FAIL')
                 if ok:
                     state['daily_posts'] = total_writes + 1
+                    state['last_action_type'] = 'trend_post'
 
             elif action == 'quote':
                 logging.info('=== QUOTE ===')
@@ -642,6 +698,7 @@ async def main():
                 logging.info('Quote result: %s', 'OK' if ok else 'FAIL')
                 if ok:
                     state['daily_posts'] = total_writes + 1
+                    state['last_action_type'] = 'quote'
 
             else:  # 'post'
                 logging.info('=== POST ===')
@@ -649,6 +706,7 @@ async def main():
                 logging.info('Post result: %s', 'OK' if ok else 'FAIL')
                 if ok:
                     state['daily_posts'] = total_writes + 1
+                    state['last_action_type'] = 'post'
                     _track_action(state, 'post')
 
         except Exception as exc:
