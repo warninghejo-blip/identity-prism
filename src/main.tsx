@@ -16,6 +16,7 @@ import NotFound from './pages/NotFound';
 
 const BlackHole = React.lazy(() => import('./pages/BlackHole'));
 const PreviewDeck = React.lazy(() => import('./pages/PreviewDeck'));
+const PrismLeague = React.lazy(() => import('./pages/PrismLeague'));
 const Verify = React.lazy(() => import('./pages/Verify'));
 import DebugConsole from './components/DebugConsole';
 import './index.css';
@@ -79,6 +80,7 @@ const router = createBrowserRouter([
       { path: 'app', element: <Index /> },
       { path: 'app/*', element: <Index /> },
       { path: 'share', element: <Index /> },
+      { path: 'game', element: <PrismLeague /> },
       { path: 'preview', element: <PreviewDeck /> },
       { path: 'preview/:tier', element: <PreviewDeck /> },
       { path: 'verify', element: <Verify /> },

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useSearchParams, useLocation } from "react-router-dom";
+import { useSearchParams, useLocation, Link } from "react-router-dom";
 import { CelestialCard } from "@/components/CelestialCard";
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { useWalletData } from "@/hooks/useWalletData";
@@ -1041,6 +1041,9 @@ const Index = () => {
                             {mintState === "success" && <span>IDENTITY SECURED</span>}
                           </Button>
                         </div>
+                        <Button asChild variant="ghost" className="mint-share-btn">
+                          <Link to="/game">PLAY PRISM LEAGUE</Link>
+                        </Button>
                         <div className="mint-meta">
                           {paymentToken === "SKR" ? (
                             <>

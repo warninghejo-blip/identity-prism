@@ -637,7 +637,14 @@ async function fetchWalletStats(wallet) {
 
 function sanitizeText(text) {
   if (!text) return '';
-  return text.replace(/\s+/g, ' ').trim();
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function parseActionDescription(description) {
@@ -668,8 +675,26 @@ function parseWalletStatsPayload(data) {
 }
 
 function clampText(text, maxLength) {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+  if (!text || text.length <= maxLength) return text || '';
+  const truncated = text.slice(0, maxLength);
+  const threshold = Math.floor(maxLength * 0.6);
+  const candidates = ['. ', '! ', '? ', '\n'];
+  let cutIndex = -1;
+  for (const token of candidates) {
+    const idx = truncated.lastIndexOf(token);
+    if (idx >= threshold) {
+      cutIndex = token === '\n' ? idx : idx + 1;
+      break;
+    }
+  }
+  if (cutIndex === -1) {
+    const lastSpace = truncated.lastIndexOf(' ');
+    if (lastSpace >= threshold) {
+      cutIndex = lastSpace;
+    }
+  }
+  const result = cutIndex > 0 ? truncated.slice(0, cutIndex) : truncated;
+  return result.trim();
 }
 
 const BOT_MENTION_VARIANTS = Array.from(
@@ -758,12 +783,7 @@ const buildThreadTokens = () => {
   return [...tickers, ...hashtags].filter(Boolean);
 };
 
-const joinParts = (parts) =>
-  parts
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+const joinParts = (parts) => sanitizeText(parts.filter(Boolean).join(' '));
 
 const composeTweet = (baseText, { tokens = [], link = '' } = {}) => {
   const initial = joinParts([baseText, ...tokens, link]);
