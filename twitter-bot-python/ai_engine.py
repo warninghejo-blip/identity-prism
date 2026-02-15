@@ -41,7 +41,7 @@ from config import (
     TREND_PROMPT,
     WALLET_ROAST_PROMPT,
 )
-from utils import clamp_text, trim_hashtags
+from utils import clamp_text
 
 _GEMINI_REST_URL = f'https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent'
 
@@ -96,25 +96,36 @@ class AIEngine:
             return ''
         import re
         cleaned = text.strip().strip('"').strip("'")
-        cleaned = ' '.join(cleaned.split())
-        cleaned = trim_hashtags(cleaned, MAX_HASHTAGS)
-        # Extract ALL #hashtag and $TICKER tokens, place them on a new line
-        words = cleaned.split()
+        cleaned = cleaned.replace('\r\n', '\n').replace('\r', '\n')
+
+        paragraphs = [p.strip() for p in re.split(r'\n\s*\n', cleaned) if p.strip()]
         tags = []
-        body_words = []
-        for w in words:
-            if re.match(r'^[#$]\w+$', w):
-                tags.append(w)
-            else:
-                body_words.append(w)
-        body = ' '.join(body_words).rstrip().rstrip('✨⚡🔥💎🚀🌟💫⭐🔮🌙')
-        body = body.rstrip()
-        tag_str = ' '.join(tags)
+        body_paragraphs = []
+        for paragraph in paragraphs:
+            words = paragraph.split()
+            kept_words = []
+            for word in words:
+                if re.match(r'^[#$]\w+$', word):
+                    tags.append(word)
+                else:
+                    kept_words.append(word)
+            if kept_words:
+                body_paragraphs.append(' '.join(kept_words))
+
+        limited_tags = []
+        hashtag_count = 0
+        for tag in tags:
+            if tag.startswith('#'):
+                if hashtag_count >= MAX_HASHTAGS:
+                    continue
+                hashtag_count += 1
+            limited_tags.append(tag)
+
+        body = '\n\n'.join(body_paragraphs).rstrip().rstrip('✨⚡🔥💎🚀🌟💫⭐🔮🌙').rstrip()
+        tag_str = ' '.join(limited_tags)
         if tag_str:
-            cleaned = f'{body}\n{tag_str}'
-        else:
-            cleaned = body
-        return cleaned
+            return f'{body}\n{tag_str}' if body else tag_str
+        return body
 
     def _ensure_hashtags(self, text):
         """Append hashtags and $SOL if the AI didn't include them."""
