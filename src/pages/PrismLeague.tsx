@@ -2,72 +2,28 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { Button } from "@/components/ui/button";
-import { getHeliusRpcUrl } from "@/constants";
 import { useWalletData } from "@/hooks/useWalletData";
-import {
-  LEAGUE_DIFFICULTIES,
-  STRATEGY_CARDS,
-  buildSeasonId,
-  evaluateLeagueStanding,
-  getUnlockedStrategies,
-  resolveLeagueRound,
-  rollLeagueEvents,
-  type LeagueDifficulty,
-  type LeagueRoundResult,
-  type LeagueStanding,
-} from "@/lib/prismLeagueEngine";
 import { toast } from "sonner";
 import {
   ArrowLeft,
-  BadgeCheck,
-  Loader2,
-  Shield,
-  Share2,
-  Sparkles,
   Trophy,
   Wallet,
-  Zap,
+  Play,
+  RotateCcw,
+  Share2,
+  Gamepad2
 } from "lucide-react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import "./PrismLeague.css";
+import CosmicRunnerScene from "@/components/game/CosmicRunnerScene";
 
-const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
-const LEADERBOARD_STORAGE_KEY = "identity_prism_league_board_v1";
-
-interface LeagueSeasonState {
-  id: string;
-  difficulty: LeagueDifficulty;
-  initialCapital: number;
-  capital: number;
-  peakCapital: number;
-  roundIndex: number;
-  events: ReturnType<typeof rollLeagueEvents>;
-  history: LeagueRoundResult[];
-  standing: LeagueStanding | null;
-  committedTx: string | null;
-  createdAt: string;
-}
+const LEADERBOARD_STORAGE_KEY = "identity_prism_runner_board_v1";
 
 interface LeaderboardEntry {
-  seasonId: string;
+  id: string;
   address: string;
-  difficulty: LeagueDifficulty;
-  rank: LeagueStanding["rank"];
-  leaguePoints: number;
-  roi: number;
-  finalCapital: number;
+  score: number;
   playedAt: string;
-  txSignature?: string;
 }
 
 const formatAddress = (address?: string) => {
@@ -75,16 +31,11 @@ const formatAddress = (address?: string) => {
   return `${address.slice(0, 4)}...${address.slice(-4)}`;
 };
 
-const formatCredits = (value: number) => `${Math.round(value).toLocaleString("en-US")} CR`;
-const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
-
 const readLeaderboard = (): LeaderboardEntry[] => {
   try {
     const raw = window.localStorage.getItem(LEADERBOARD_STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed as LeaderboardEntry[];
+    return JSON.parse(raw) as LeaderboardEntry[];
   } catch {
     return [];
   }
@@ -94,656 +45,211 @@ const writeLeaderboard = (entries: LeaderboardEntry[]) => {
   try {
     window.localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(entries));
   } catch {
-    // Ignore storage write failures.
+    // Ignore storage write failures
   }
 };
 
-const upsertLeaderboard = (
-  previous: LeaderboardEntry[],
-  entry: LeaderboardEntry,
-  keep = 12,
-) => {
-  const merged = [entry, ...previous.filter((item) => item.seasonId !== entry.seasonId)]
-    .sort((a, b) => b.leaguePoints - a.leaguePoints || b.roi - a.roi)
-    .slice(0, keep);
-  writeLeaderboard(merged);
-  return merged;
-};
-
-const buildTraitTags = (traits: ReturnType<typeof useWalletData>["traits"]) => {
-  if (!traits) return [];
-  const tags: string[] = [];
-  if (traits.isDeFiKing) tags.push("DeFi King");
-  if (traits.diamondHands) tags.push("Diamond Hands");
-  if (traits.isWhale) tags.push("Liquidity Whale");
-  if (traits.isTxTitan) tags.push("Tx Titan");
-  if (traits.isBlueChip) tags.push("Blue Chip");
-  if (traits.hasCombo) tags.push("Binary Signal");
-  if (tags.length === 0) tags.push("Rising Trader");
-  return tags.slice(0, 5);
-};
-
 const PrismLeague = () => {
-  const { publicKey, connected, sendTransaction } = useWallet();
+  const { publicKey, connected } = useWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const address = publicKey?.toBase58();
-  const walletData = useWalletData(address);
-  const { traits, score, isLoading } = walletData;
+  const { traits } = useWalletData(address);
 
-  const [difficulty, setDifficulty] = useState<LeagueDifficulty>("pro");
-  const [selectedStrategyId, setSelectedStrategyId] = useState(STRATEGY_CARDS[0].id);
-  const [stakePercent, setStakePercent] = useState(36);
-  const [season, setSeason] = useState<LeagueSeasonState | null>(null);
+  const [gameState, setGameState] = useState<"start" | "playing" | "gameover">("start");
+  const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
-  const [commitPending, setCommitPending] = useState(false);
 
-  const isMobile = /android|iphone|ipad|ipod/i.test(globalThis.navigator?.userAgent ?? "");
-
-  const unlockedStrategies = useMemo(() => {
-    const unlocked = getUnlockedStrategies(score);
-    return unlocked.length ? unlocked : [STRATEGY_CARDS[0]];
-  }, [score]);
-
+  // Load user's high score from leaderboard
   useEffect(() => {
-    if (!unlockedStrategies.some((strategy) => strategy.id === selectedStrategyId)) {
-      setSelectedStrategyId(unlockedStrategies[0].id);
+    if (address) {
+      const userBest = leaderboard.find(e => e.address === address)?.score || 0;
+      setHighScore(userBest);
     }
-  }, [selectedStrategyId, unlockedStrategies]);
+  }, [address, leaderboard]);
 
-  const selectedStrategy =
-    unlockedStrategies.find((strategy) => strategy.id === selectedStrategyId) ?? unlockedStrategies[0];
-
-  const seasonLocked = Boolean(season && !season.standing);
-  const currentEvent = seasonLocked && season ? season.events[season.roundIndex] : null;
-
-  const seasonProgress = season
-    ? Math.round((season.roundIndex / Math.max(season.events.length, 1)) * 100)
-    : 0;
-
-  const traitTags = useMemo(() => buildTraitTags(traits), [traits]);
-
-  const equitySeries = useMemo(() => {
-    if (!season) return [];
-    const points = [{ round: 0, capital: season.initialCapital }];
-    season.history.forEach((entry, index) => {
-      points.push({ round: index + 1, capital: Math.round(entry.capitalAfter) });
-    });
-    return points;
-  }, [season]);
-
-  const recentRounds = useMemo(() => {
-    if (!season) return [];
-    return [...season.history].reverse().slice(0, 7);
-  }, [season]);
-
-  const persistSeasonResult = useCallback(
-    (finishedSeason: LeagueSeasonState) => {
-      if (!address || !finishedSeason.standing) return;
-      const entry: LeaderboardEntry = {
-        seasonId: finishedSeason.id,
-        address,
-        difficulty: finishedSeason.difficulty,
-        rank: finishedSeason.standing.rank,
-        leaguePoints: finishedSeason.standing.leaguePoints,
-        roi: finishedSeason.standing.roi,
-        finalCapital: finishedSeason.capital,
-        playedAt: finishedSeason.createdAt,
-      };
-      setLeaderboard((prev) => upsertLeaderboard(prev, entry));
-    },
-    [address],
-  );
-
-  const startSeason = useCallback(() => {
-    if (!connected || !address) {
+  const handleStart = () => {
+    if (!connected) {
       setWalletModalVisible(true);
-      toast.info("Connect wallet to launch Prism League.");
       return;
     }
+    setScore(0);
+    setGameState("playing");
+  };
 
-    if (isLoading || !traits) {
-      toast.info("Wallet telemetry still syncing. Try again in a moment.");
-      return;
-    }
+  const handleGameOver = useCallback((finalScore: number) => {
+    setGameState("gameover");
+    setScore(finalScore);
 
-    const difficultyConfig = LEAGUE_DIFFICULTIES[difficulty];
-    const seasonCore = buildSeasonId(address);
-    const seasonId = `${seasonCore}-${difficulty}-${Date.now().toString(36)}`;
-    const events = rollLeagueEvents(seasonId, difficultyConfig.rounds);
-    const walletBoost = Math.min(score * 0.32, 480);
-    const initialCapital = Math.round(difficultyConfig.startingCapital + walletBoost);
+    if (address) {
+      const newEntry: LeaderboardEntry = {
+        id: Date.now().toString(),
+        address,
+        score: finalScore,
+        playedAt: new Date().toISOString()
+      };
 
-    setSeason({
-      id: seasonId,
-      difficulty,
-      initialCapital,
-      capital: initialCapital,
-      peakCapital: initialCapital,
-      roundIndex: 0,
-      events,
-      history: [],
-      standing: null,
-      committedTx: null,
-      createdAt: new Date().toISOString(),
-    });
-
-    setStakePercent(36);
-    toast.success(`${difficultyConfig.label} initialized. Pilot ready.`);
-  }, [connected, address, isLoading, traits, difficulty, score, setWalletModalVisible]);
-
-  const playRound = useCallback(() => {
-    if (!season || season.standing || !currentEvent || !selectedStrategy) return;
-
-    const outcome = resolveLeagueRound({
-      seed: season.id,
-      difficulty: season.difficulty,
-      round: season.roundIndex + 1,
-      capital: season.capital,
-      peakCapital: season.peakCapital,
-      stakePercent,
-      strategy: selectedStrategy,
-      event: currentEvent,
-      traits,
-      score,
-    });
-
-    const history = [...season.history, outcome];
-    const nextRoundIndex = season.roundIndex + 1;
-    const isFinished =
-      nextRoundIndex >= season.events.length || outcome.capitalAfter <= Math.max(200, season.initialCapital * 0.22);
-
-    const standing = isFinished
-      ? evaluateLeagueStanding({
-          initialCapital: season.initialCapital,
-          finalCapital: outcome.capitalAfter,
-          history,
-          difficulty: season.difficulty,
-          traits,
-          score,
-        })
-      : null;
-
-    const nextSeason: LeagueSeasonState = {
-      ...season,
-      history,
-      roundIndex: nextRoundIndex,
-      capital: outcome.capitalAfter,
-      peakCapital: outcome.peakCapitalAfter,
-      standing,
-    };
-
-    setSeason(nextSeason);
-
-    if (isFinished && standing) {
-      persistSeasonResult(nextSeason);
-      toast.success(`Season completed: ${standing.rank} (${standing.leaguePoints} pts)`);
-      return;
-    }
-
-    if (outcome.verdict === "jackpot") {
-      toast.success(`Jackpot round: +${formatCredits(outcome.pnl)}`);
-    } else if (outcome.verdict === "loss") {
-      toast.error(`Drawdown hit: ${formatCredits(outcome.pnl)}`);
-    } else {
-      toast.message(`Round ${outcome.round} closed: ${formatCredits(outcome.pnl)}`);
-    }
-  }, [season, currentEvent, selectedStrategy, stakePercent, traits, score, persistSeasonResult]);
-
-  const resetSeason = useCallback(() => {
-    setSeason(null);
-  }, []);
-
-  const updateLeaderboardTx = useCallback((seasonId: string, signature: string) => {
-    setLeaderboard((prev) => {
-      const next = prev.map((entry) =>
-        entry.seasonId === seasonId
-          ? {
-              ...entry,
-              txSignature: signature,
-            }
-          : entry,
-      );
-      writeLeaderboard(next);
-      return next;
-    });
-  }, []);
-
-  const commitSeasonOnChain = useCallback(async () => {
-    if (!season?.standing || !publicKey || !connected) {
-      toast.error("Finish a season with a connected wallet first.");
-      return;
-    }
-
-    if (season.committedTx) {
-      toast.info("This season is already committed on-chain.");
-      return;
-    }
-
-    if (!sendTransaction) {
-      toast.error("Wallet cannot sign transactions right now.");
-      return;
-    }
-
-    setCommitPending(true);
-
-    try {
-      const rpcUrl = getHeliusRpcUrl(publicKey.toBase58()) ?? "https://api.mainnet-beta.solana.com";
-      const connection = new Connection(rpcUrl, "confirmed");
-      const payload = JSON.stringify({
-        protocol: "identity-prism-league",
-        version: 1,
-        seasonId: season.id,
-        wallet: publicKey.toBase58(),
-        difficulty: season.difficulty,
-        leaguePoints: season.standing.leaguePoints,
-        roi: Number((season.standing.roi * 100).toFixed(2)),
-        rank: season.standing.rank,
-        ts: new Date().toISOString(),
+      setLeaderboard(prev => {
+        const existing = prev.findIndex(e => e.address === address);
+        let next = [...prev];
+        
+        if (existing !== -1) {
+          if (finalScore > next[existing].score) {
+            next[existing] = newEntry; // Update if better
+          }
+        } else {
+          next.push(newEntry);
+        }
+        
+        // Sort by score desc
+        next.sort((a, b) => b.score - a.score);
+        writeLeaderboard(next);
+        return next;
       });
 
-      const memoInstruction = new TransactionInstruction({
-        keys: [],
-        programId: new PublicKey(MEMO_PROGRAM_ID),
-        data: new TextEncoder().encode(payload),
-      });
-
-      const transaction = new Transaction().add(memoInstruction);
-      const signature = await sendTransaction(transaction, connection, {
-        skipPreflight: false,
-        maxRetries: 3,
-      });
-
-      await connection.confirmTransaction(signature, "confirmed");
-
-      setSeason((prev) => (prev ? { ...prev, committedTx: signature } : prev));
-      updateLeaderboardTx(season.id, signature);
-
-      toast.success("Season committed on-chain", {
-        description: `${signature.slice(0, 8)}...${signature.slice(-6)}`,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error("On-chain commit failed", { description: message });
-    } finally {
-      setCommitPending(false);
+      if (finalScore > highScore) {
+        setHighScore(finalScore);
+        toast.success(`New High Score: ${finalScore}!`);
+      }
     }
-  }, [season, publicKey, connected, sendTransaction, updateLeaderboardTx]);
+  }, [address, highScore]);
 
-  const shareSeason = useCallback(() => {
-    if (!season?.standing || !address) {
-      toast.error("Complete a season first.");
-      return;
-    }
-
-    const shareText = [
-      "Prism League - Identity Prism",
-      `Rank: ${season.standing.rank}`,
-      `League points: ${season.standing.leaguePoints}`,
-      `ROI: ${(season.standing.roi * 100).toFixed(1)}%`,
-      `Final capital: ${formatCredits(season.capital)}`,
-      "Built on Solana.",
-      "https://identityprism.xyz/game",
-    ].join("\n");
-
-    const intentUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
-
-    if (isMobile) {
-      window.location.href = intentUrl;
-      return;
-    }
-
-    const popup = window.open(intentUrl, "_blank", "noopener,noreferrer");
-    if (!popup) {
-      toast.error("Popup blocked. Allow popups to share your run.");
-    }
-  }, [season, address, isMobile]);
-
-  const roundHint = currentEvent
-    ? `${currentEvent.name} - trend ${(currentEvent.trend * 100).toFixed(0)} bps`
-    : "Start a season to receive your first market pulse.";
+  const handleShare = () => {
+    const text = `I just scored ${score} in Prism League! 🚀\n\nCan you beat my high score of ${highScore}?\n\nPlay now on Identity Prism.`;
+    const url = "https://identityprism.xyz/game";
+    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`, "_blank");
+  };
 
   return (
-    <div className="prism-league-page">
-      <div className="league-aurora league-aurora--a" aria-hidden="true" />
-      <div className="league-aurora league-aurora--b" aria-hidden="true" />
+    <div className="prism-league-page relative w-full h-screen overflow-hidden bg-black">
+      {/* 3D Game Background/Foreground */}
+      <CosmicRunnerScene 
+        gameState={gameState} 
+        onScore={setScore} 
+        onGameOver={handleGameOver} 
+        traits={traits}
+        walletScore={score}
+      />
 
-      <div className="league-shell">
-        <header className="league-topbar">
-          <Link to="/app" className="league-back-link">
-            <ArrowLeft className="h-4 w-4" /> Back to Prism
+      {/* UI Overlay */}
+      <div className="absolute inset-0 pointer-events-none z-10 flex flex-col">
+        {/* Top Bar */}
+        <header className="flex items-center justify-between p-4 md:p-6 bg-gradient-to-b from-black/80 to-transparent pointer-events-auto">
+          <Link to="/app" className="flex items-center gap-2 text-cyan-400 hover:text-cyan-300 transition-colors uppercase text-sm font-bold tracking-widest">
+            <ArrowLeft className="w-4 h-4" /> Back to Base
           </Link>
 
-          <div className="league-brand">
-            <span className="league-brand-eyebrow">Season Arena</span>
-            <h1 className="league-brand-title">Prism League</h1>
+          <div className="flex flex-col items-center">
+             <h1 className="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-500 uppercase tracking-tighter filter drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]">
+               Prism League
+             </h1>
+             <span className="text-xs text-cyan-200/60 tracking-[0.2em] uppercase">Cosmic Runner</span>
           </div>
 
-          <div className="league-wallet-actions">
-            {connected && address && (
-              <div className="league-wallet-chip">
-                <span>Pilot Wallet</span>
-                <strong>{formatAddress(address)}</strong>
-              </div>
+          <div className="flex items-center gap-3">
+            {connected && (
+               <div className="hidden md:flex flex-col items-end mr-2">
+                 <span className="text-[10px] uppercase tracking-wider text-cyan-500/80">Current Pilot</span>
+                 <span className="text-xs font-bold text-cyan-100 font-mono">{formatAddress(address)}</span>
+               </div>
             )}
-            <Button
-              className="bg-cyan-400 text-black hover:bg-cyan-300"
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="bg-cyan-950/50 border-cyan-800 text-cyan-400 hover:bg-cyan-900/80 hover:text-cyan-200 backdrop-blur-md"
               onClick={() => setWalletModalVisible(true)}
             >
-              <Wallet className="h-4 w-4" />
-              {connected ? "Switch Wallet" : "Connect Wallet"}
+              <Wallet className="w-4 h-4 mr-2" />
+              {connected ? "Wallet" : "Connect"}
             </Button>
           </div>
         </header>
 
-        <div className="league-grid">
-          <section className="league-panel">
-            <div className="league-panel-header">
-              <h2 className="league-panel-title">
-                <Sparkles className="h-4 w-4" /> Command Deck
-              </h2>
-              <p className="league-muted">{roundHint}</p>
+        {/* HUD (Heads Up Display) */}
+        <div className="flex-1 relative">
+          {/* Score Display (Top Center) */}
+          {(gameState === "playing" || gameState === "gameover") && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 flex flex-col items-center">
+              <span className="text-4xl md:text-6xl font-black text-white italic tracking-tighter drop-shadow-[0_0_15px_rgba(255,255,255,0.6)]">
+                {score.toLocaleString()}
+              </span>
+              <span className="text-xs text-cyan-300/80 uppercase tracking-widest font-bold">Current Score</span>
             </div>
+          )}
 
-            <div className="league-divider" />
-
-            <div className="league-difficulty-grid">
-              {(Object.keys(LEAGUE_DIFFICULTIES) as LeagueDifficulty[]).map((difficultyKey) => {
-                const config = LEAGUE_DIFFICULTIES[difficultyKey];
-                return (
-                  <button
-                    key={difficultyKey}
-                    type="button"
-                    className={`league-difficulty-btn ${difficultyKey === difficulty ? "is-active" : ""}`}
-                    onClick={() => setDifficulty(difficultyKey)}
-                    disabled={seasonLocked}
-                  >
-                    <strong>{config.label}</strong>
-                    <div className="league-difficulty-meta">
-                      {config.rounds} rounds | x{config.leverage.toFixed(2)} leverage
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="league-divider" />
-
-            <div className="league-signal-grid">
-              <div className="league-signal">
-                <span className="league-signal-label">Prism score</span>
-                <span className="league-signal-value">{score}</span>
-              </div>
-              <div className="league-signal">
-                <span className="league-signal-label">Planet tier</span>
-                <span className="league-signal-value">{traits?.planetTier ?? "pending"}</span>
-              </div>
-              <div className="league-signal">
-                <span className="league-signal-label">Capital</span>
-                <span className="league-signal-value">
-                  {season ? formatCredits(season.capital) : formatCredits(LEAGUE_DIFFICULTIES[difficulty].startingCapital)}
-                </span>
-              </div>
-              <div className="league-signal">
-                <span className="league-signal-label">Status</span>
-                <span className="league-signal-value">
-                  {isLoading ? "Scanning" : season?.standing ? "Season done" : season ? "Live" : "Ready"}
-                </span>
-              </div>
-            </div>
-
-            <div className="league-tag-row">
-              {traitTags.map((tag) => (
-                <span className="league-tag" key={tag}>
-                  {tag}
-                </span>
-              ))}
-            </div>
-
-            <div className="league-divider" />
-
-            <div className="league-event-card">
-              <div className="league-event-head">
-                <div>
-                  <p className="league-event-title">{currentEvent?.name ?? "Awaiting season start"}</p>
-                  <p className="league-muted">{currentEvent?.narrative ?? "Select difficulty and ignite your season."}</p>
-                </div>
-                <span className="league-event-pill">
-                  Round {season ? Math.min(season.roundIndex + 1, season.events.length) : 1}
-                </span>
-              </div>
-            </div>
-
-            <div className="league-strategy-grid">
-              {STRATEGY_CARDS.map((strategy) => {
-                const unlocked = strategy.unlockScore <= score;
-                const active = selectedStrategyId === strategy.id;
-                return (
-                  <button
-                    key={strategy.id}
-                    type="button"
-                    className={`league-strategy-card ${active ? "is-active" : ""} ${unlocked ? "" : "is-locked"}`}
-                    onClick={() => {
-                      if (unlocked) setSelectedStrategyId(strategy.id);
-                    }}
-                  >
-                    <p className="league-strategy-name">{strategy.name}</p>
-                    <p className="league-strategy-summary">
-                      {unlocked ? strategy.summary : `Unlock at score ${strategy.unlockScore}`}
-                    </p>
-                    <div className="league-strategy-stats">
-                      <span>Edge {(strategy.edge * 100).toFixed(0)}</span>
-                      <span>Risk {(strategy.risk * 100).toFixed(0)}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="league-stake-row">
-              <div className="league-stake-label">
-                <span>Risk allocation</span>
-                <span className="league-stake-value">{stakePercent}%</span>
-              </div>
-              <input
-                type="range"
-                min={10}
-                max={90}
-                value={stakePercent}
-                onChange={(event) => setStakePercent(Number(event.target.value))}
-                className="league-stake-slider"
-                disabled={!seasonLocked}
-              />
-              <div className="league-progress-bar" aria-hidden="true">
-                <div className="league-progress-fill" style={{ width: `${seasonProgress}%` }} />
-              </div>
-            </div>
-
-            <div className="league-action-row">
-              <Button
-                className="bg-amber-400 text-black hover:bg-amber-300"
-                onClick={startSeason}
-                disabled={isLoading || Boolean(season && !season.standing)}
-              >
-                <Zap className="h-4 w-4" />
-                {season ? "Start new season" : "Launch season"}
-              </Button>
-              <Button
-                className="bg-cyan-500 text-black hover:bg-cyan-400"
-                onClick={playRound}
-                disabled={!seasonLocked || !selectedStrategy}
-              >
-                <Shield className="h-4 w-4" />
-                Execute round
-              </Button>
-              {season && (
-                <Button variant="ghost" onClick={resetSeason}>
-                  Reset board
+          {/* Start Screen */}
+          {gameState === "start" && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-auto bg-black/40 backdrop-blur-[2px]">
+              <div className="max-w-md w-full p-8 rounded-2xl border border-cyan-500/30 bg-black/80 backdrop-blur-xl shadow-[0_0_50px_rgba(6,182,212,0.15)] flex flex-col items-center text-center">
+                <Gamepad2 className="w-16 h-16 text-cyan-400 mb-6 animate-pulse" />
+                <h2 className="text-3xl font-bold text-white mb-2">Ready to Fly?</h2>
+                <p className="text-cyan-200/70 mb-8">
+                  Navigate the quantum tunnels, collect data prisms, and avoid the void glitches.
+                  <br/>
+                  <span className="text-xs opacity-50 mt-2 block">(Connect wallet to save high scores)</span>
+                </p>
+                
+                <Button 
+                  size="lg" 
+                  className="w-full h-14 text-lg bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-widest shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all transform hover:scale-105"
+                  onClick={handleStart}
+                >
+                  <Play className="w-5 h-5 mr-2 fill-current" />
+                  Launch Ship
                 </Button>
-              )}
-            </div>
-          </section>
 
-          <section className="league-panel">
-            <div className="league-panel-header">
-              <h2 className="league-panel-title">
-                <Trophy className="h-4 w-4" /> Telemetry + Ranking
-              </h2>
-              <p className="league-muted">
-                {season
-                  ? `Round ${Math.min(season.roundIndex, season.events.length)}/${season.events.length}`
-                  : "No active season yet"}
-              </p>
-            </div>
-
-            <div className="league-chart-wrap">
-              {equitySeries.length >= 2 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={equitySeries}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(126, 177, 205, 0.25)" />
-                    <XAxis dataKey="round" tick={{ fill: "#8bb6ce", fontSize: 11 }} />
-                    <YAxis
-                      tick={{ fill: "#8bb6ce", fontSize: 11 }}
-                      tickFormatter={(value: number) => `${Math.round(value / 100) / 10}k`}
-                    />
-                    <Tooltip
-                      formatter={(value: number) => [formatCredits(Number(value)), "Capital"]}
-                      contentStyle={{
-                        background: "rgba(6, 20, 34, 0.95)",
-                        border: "1px solid rgba(117,177,210,0.35)",
-                        borderRadius: "10px",
-                      }}
-                      labelStyle={{ color: "#bce6ff" }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="capital"
-                      stroke="#f59e0b"
-                      strokeWidth={2.4}
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="league-empty-state">Play your first two rounds to reveal the capital curve.</div>
-              )}
-            </div>
-
-            <div className="league-divider" />
-
-            {season?.standing && (
-              <>
-                <div className="league-summary-grid">
-                  <div className="league-summary-tile">
-                    <span className="league-summary-label">League points</span>
-                    <span className="league-summary-value">{season.standing.leaguePoints}</span>
+                <div className="mt-8 w-full">
+                  <div className="flex items-center justify-between text-xs text-cyan-500/50 uppercase tracking-widest mb-4">
+                    <span>Local Aces</span>
+                    <Trophy className="w-3 h-3" />
                   </div>
-                  <div className="league-summary-tile">
-                    <span className="league-summary-label">Rank</span>
-                    <span className="league-summary-value">{season.standing.rank}</span>
-                  </div>
-                  <div className="league-summary-tile">
-                    <span className="league-summary-label">ROI</span>
-                    <span className="league-summary-value">{formatPercent(season.standing.roi)}</span>
-                  </div>
-                  <div className="league-summary-tile">
-                    <span className="league-summary-label">Max drawdown</span>
-                    <span className="league-summary-value">{formatPercent(season.standing.maxDrawdown)}</span>
+                  <div className="space-y-2">
+                    {leaderboard.slice(0, 3).map((entry, i) => (
+                      <div key={entry.id} className="flex justify-between items-center text-sm p-2 rounded bg-white/5 border border-white/5">
+                        <span className="font-mono text-cyan-300">{formatAddress(entry.address)}</span>
+                        <span className="font-bold text-white">{entry.score.toLocaleString()}</span>
+                      </div>
+                    ))}
+                    {leaderboard.length === 0 && (
+                      <div className="text-xs text-white/20 italic">No records yet. Be the first.</div>
+                    )}
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
 
-                <div className="league-cta-row">
-                  <Button
-                    className="bg-emerald-400 text-black hover:bg-emerald-300"
-                    onClick={commitSeasonOnChain}
-                    disabled={commitPending || Boolean(season.committedTx)}
-                  >
-                    {commitPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <BadgeCheck className="h-4 w-4" />}
-                    {season.committedTx ? "Committed" : "Commit on-chain"}
-                  </Button>
-                  <Button variant="ghost" onClick={shareSeason}>
-                    <Share2 className="h-4 w-4" /> Share result
-                  </Button>
+          {/* Game Over Screen */}
+          {gameState === "gameover" && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-auto bg-red-950/10 backdrop-blur-sm">
+              <div className="max-w-sm w-full p-8 rounded-2xl border border-red-500/30 bg-black/90 backdrop-blur-xl shadow-[0_0_60px_rgba(239,68,68,0.2)] flex flex-col items-center text-center">
+                <div className="text-red-500 font-black text-5xl mb-2 tracking-tighter uppercase drop-shadow-[0_0_10px_rgba(239,68,68,0.8)]">
+                  Crashed
+                </div>
+                <div className="text-lg text-white mb-6 font-mono">
+                  Final Score: <span className="text-yellow-400 font-bold">{score.toLocaleString()}</span>
                 </div>
 
-                {season.committedTx && (
-                  <p className="league-muted">
-                    Memo signature: {season.committedTx.slice(0, 12)}...{season.committedTx.slice(-8)}
-                  </p>
-                )}
-
-                <div className="league-divider" />
-              </>
-            )}
-
-            <h3 className="league-panel-title">
-              <Shield className="h-4 w-4" /> Recent rounds
-            </h3>
-            <div className="league-log-list">
-              {recentRounds.length > 0 ? (
-                recentRounds.map((entry) => (
-                  <div
-                    key={`${entry.eventKey}-${entry.round}`}
-                    className={`league-log-row ${
-                      entry.verdict === "jackpot"
-                        ? "is-jackpot"
-                        : entry.verdict === "win"
-                          ? "is-win"
-                          : entry.verdict === "loss"
-                            ? "is-loss"
-                            : ""
-                    }`}
+                <div className="flex gap-3 w-full">
+                  <Button 
+                    className="flex-1 bg-white text-black hover:bg-gray-200 font-bold"
+                    onClick={() => setGameState("start")}
                   >
-                    <div>
-                      <p className="league-log-title">R{entry.round} - {entry.eventName}</p>
-                      <p className="league-log-sub">
-                        {entry.strategyName} | stake {entry.stakePercent}% | capital {formatCredits(entry.capitalAfter)}
-                      </p>
-                    </div>
-                    <span
-                      className={`league-pill ${
-                        entry.verdict === "jackpot"
-                          ? "jackpot"
-                          : entry.verdict === "win"
-                            ? "win"
-                            : entry.verdict === "loss"
-                              ? "loss"
-                              : ""
-                      }`}
-                    >
-                      {entry.pnl >= 0 ? "+" : ""}
-                      {formatCredits(entry.pnl)}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <div className="league-empty-state">No executed rounds yet.</div>
-              )}
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    Retry
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    className="flex-1 border-cyan-800 text-cyan-400 hover:bg-cyan-950"
+                    onClick={handleShare}
+                  >
+                    <Share2 className="w-4 h-4 mr-2" />
+                    Share
+                  </Button>
+                </div>
+              </div>
             </div>
-
-            <div className="league-divider" />
-
-            <h3 className="league-panel-title">
-              <Trophy className="h-4 w-4" /> Local leaderboard
-            </h3>
-            <div className="league-leaderboard">
-              {leaderboard.length > 0 ? (
-                leaderboard.map((entry, index) => (
-                  <div className="league-leaderboard-row" key={entry.seasonId}>
-                    <span className="league-leaderboard-rank">{index + 1}</span>
-                    <div className="league-leaderboard-main">
-                      <strong>{entry.rank} - {formatAddress(entry.address)}</strong>
-                      <span className="league-leaderboard-meta">
-                        {entry.difficulty} | ROI {(entry.roi * 100).toFixed(1)}% | {formatCredits(entry.finalCapital)}
-                      </span>
-                    </div>
-                    <span className="league-pill">{entry.leaguePoints} pts</span>
-                  </div>
-                ))
-              ) : (
-                <div className="league-empty-state">Complete your first season to seed the leaderboard.</div>
-              )}
-            </div>
-          </section>
+          )}
         </div>
       </div>
     </div>
