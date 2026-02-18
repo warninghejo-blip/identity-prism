@@ -4,11 +4,40 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 
+const prodApiTarget =
+  process.env.VITE_HELIUS_PROXY_URL ||
+  process.env.VITE_APP_BASE_URL ||
+  "https://identityprism.xyz";
+
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  // In dev, route /api and /rpc to the local backend (helius-proxy.js on port 3000)
+  const apiProxyTarget =
+    mode === "development"
+      ? process.env.VITE_LOCAL_API_TARGET || "http://localhost:3000"
+      : prodApiTarget;
+
+  return {
   server: {
     host: "::",
     port: 8080,
+    proxy: {
+      "/api": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+      "/rpc": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+      "/metadata": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
   plugins: [
     react(),
@@ -30,13 +59,18 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
+    modulePreload: false,
+    cssCodeSplit: false,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (/three|@react-three|postprocessing/.test(id)) return 'vendor-three';
-            if (/@solana|@solana-mobile|@metaplex-foundation|bn\.js|borsh|bs58|buffer-layout|superstruct/.test(id)) return 'vendor-solana';
-            if (/@radix-ui|framer-motion|lucide-react/.test(id)) return 'vendor-ui';
+            // React core — tiny critical-path chunk (~150KB), loaded by bootstrapper
+            if (/\/react\/|\/react-dom\/|\/scheduler\/|\/buffer\//.test(id)) return 'vendor-react';
+            if (/three|@react-three|postprocessing|framer-motion/.test(id)) return 'vendor-three';
+            if (/@metaplex-foundation/.test(id)) return; // stays with lazy mintIdentityPrism
+            if (/@solana|@solana-mobile|bn\.js|borsh|bs58|buffer-layout|superstruct/.test(id)) return 'vendor-solana';
+            if (/@radix-ui|lucide-react|@tanstack/.test(id)) return 'vendor-ui';
           }
         },
       },
@@ -48,4 +82,5 @@ export default defineConfig(({ mode }) => ({
   define: {
     global: "globalThis",
   },
-}));
+};
+});

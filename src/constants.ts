@@ -12,8 +12,16 @@ const HELIUS_KEYS = (import.meta.env.VITE_HELIUS_API_KEYS ?? import.meta.env.VIT
   .filter(Boolean);
 
 const normalizeProxyUrl = (url: string) => url.replace(/\/+$/, '');
+const isLocalDevHost = (host: string) => /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(host);
 
 export const getHeliusProxyUrl = () => {
+  if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.origin) {
+    const devHost = window.location.hostname ?? '';
+    if (isLocalDevHost(devHost)) {
+      // In local dev, force same-origin so local proxy (/api, /rpc) is used without CORS.
+      return normalizeProxyUrl(window.location.origin);
+    }
+  }
   if (HELIUS_PROXY_URL) return normalizeProxyUrl(HELIUS_PROXY_URL);
   if (APP_BASE_URL) return normalizeProxyUrl(APP_BASE_URL);
   if (typeof window !== 'undefined' && window.location?.origin) {

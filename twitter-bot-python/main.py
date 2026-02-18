@@ -33,7 +33,7 @@ from config import (
     WALLET_CHECK_KEYWORDS,
 )
 from twitter_client import TwitterClient
-from utils import async_sleep_random, load_state, save_state, setup_logging
+from utils import async_sleep_random, load_state, save_state, setup_logging, check_single_instance
 
 REPUTATION_API_URL = f'https://{CTA_DOMAIN}/api/reputation'
 _SOLANA_ADDR_RE = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
@@ -359,13 +359,15 @@ def _maybe_inject_link(post_text, state):
 
 # ── Main loop ──
 
-SLOT_INTERVAL_MIN = 7200    # 2 hours between actions
-SLOT_INTERVAL_MAX = 9000    # up to 2.5 hours
-SLEEP_CHECK = 120           # poll every 2 min (for faster mention detection)
-POST_COOLDOWN_MIN = 14400   # minimum 4 hours between posts
-POST_COOLDOWN_MAX = 18000   # up to 5 hours
-MAX_POSTS_PER_DAY = 6       # total write actions (posts + threads + trends + quotes)
-MAX_ENGAGEMENTS_PER_DAY = 6 # ~1 engage between each post
+SLOT_INTERVAL_MIN = 2700    # 45 min between actions
+SLOT_INTERVAL_MAX = 4500    # up to 75 min
+SLEEP_CHECK = 90            # poll every 1.5 min
+POST_COOLDOWN_MIN = 5400    # minimum 90 min between posts
+POST_COOLDOWN_MAX = 9000    # up to 150 min
+MAX_POSTS_PER_DAY = 12      # total write actions (posts + threads + trends + quotes)
+MAX_ENGAGEMENTS_PER_DAY = 14 # comments/replies between posts
+SKIPPED_RETRY_MIN = 600     # if engage skipped, retry in 10 min
+SKIPPED_RETRY_MAX = 900     # ... up to 15 min
 
 
 def _pick_action(state):
@@ -522,6 +524,9 @@ def _track_action(state, action_type):
 
 
 async def main():
+    if not check_single_instance('twitter_bot.lock'):
+        return
+
     load_dotenv()
     setup_logging()
 
@@ -614,10 +619,10 @@ async def main():
                     save_state(state, state['state_path'])
                     # Don't count this as a main action slot
 
-            # ── Main action timer (2-2.5h between actions) ──
+            # ── Main action timer ──
             slot_interval = random.uniform(SLOT_INTERVAL_MIN, SLOT_INTERVAL_MAX)
             if not _is_active_hour():
-                slot_interval *= 1.5
+                slot_interval *= 1.2
 
             wait_left = slot_interval - (now - last_action_at)
             if wait_left > 0:
@@ -654,6 +659,8 @@ async def main():
                 # Can't post yet -> engage
                 action = 'engage'
 
+            action_productive = False
+
             if action == 'engage':
                 if state.get('skip_next_engage'):
                     logging.info('=== ENGAGE skipped (previous 429) ===')
@@ -669,6 +676,7 @@ async def main():
                         state['daily_engagements'] = state.get('daily_engagements', 0) + 1
                         _track_action(state, 'engage')
                         state['last_action_type'] = 'engage'
+                        action_productive = True
                     if result == '429':
                         state['skip_next_engage'] = True
 
@@ -683,6 +691,7 @@ async def main():
                 if ok:
                     state['daily_posts'] = total_writes + 1
                     state['last_action_type'] = 'thread'
+                    action_productive = True
 
             elif action == 'trend_post':
                 logging.info('=== TREND POST ===')
@@ -691,6 +700,7 @@ async def main():
                 if ok:
                     state['daily_posts'] = total_writes + 1
                     state['last_action_type'] = 'trend_post'
+                    action_productive = True
 
             elif action == 'quote':
                 logging.info('=== QUOTE ===')
@@ -699,6 +709,7 @@ async def main():
                 if ok:
                     state['daily_posts'] = total_writes + 1
                     state['last_action_type'] = 'quote'
+                    action_productive = True
 
             else:  # 'post'
                 logging.info('=== POST ===')
@@ -708,11 +719,19 @@ async def main():
                     state['daily_posts'] = total_writes + 1
                     state['last_action_type'] = 'post'
                     _track_action(state, 'post')
+                    action_productive = True
 
         except Exception as exc:
             logging.warning('Cycle error: %s', exc)
+            action_productive = False
 
-        last_action_at = time.time()
+        if action_productive:
+            last_action_at = time.time()
+        else:
+            # Failed/skipped action: retry much sooner instead of wasting a full slot
+            retry_in = random.uniform(SKIPPED_RETRY_MIN, SKIPPED_RETRY_MAX)
+            last_action_at = time.time() - (random.uniform(SLOT_INTERVAL_MIN, SLOT_INTERVAL_MAX) - retry_in)
+            logging.info('Action unproductive; retrying in ~%.0f min', retry_in / 60)
         state['last_slot_at'] = last_action_at
         save_state(state, state['state_path'])
 

@@ -106,3 +106,66 @@ def trim_hashtags(text, max_tags):
 def is_rate_limit_error(error):
     message = str(error).lower()
     return any(key in message for key in ['rate limit', '429', '344', '403'])
+
+
+def check_single_instance(lock_name: str):
+    """
+    Ensure only one instance is running.
+    Uses fcntl.flock on Linux (robust, handles crashes).
+    Uses file existence/locking on Windows (fallback).
+    """
+    import sys
+    lock_file = os.path.join(os.path.dirname(__file__), lock_name)
+    global _lock_fd
+
+    try:
+        # Unix/Linux (Server)
+        import fcntl
+        try:
+            # Open the file (create if missing)
+            fd = os.open(lock_file, os.O_RDWR | os.O_CREAT, 0o666)
+            # Try to acquire an exclusive lock without blocking
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Lock acquired! Keep fd open.
+            _lock_fd = fd
+            # Write PID for info
+            os.ftruncate(fd, 0)
+            os.write(fd, str(os.getpid()).encode())
+            return True
+        except (IOError, OSError):
+            # Failed to acquire lock
+            if 'fd' in locals():
+                os.close(fd)
+            logging.error("Another instance is already running (flock %s)", lock_name)
+            return False
+
+    except ImportError:
+        # Windows Fallback
+        try:
+            if os.path.exists(lock_file):
+                try:
+                    # On Windows, unlinking an open file usually fails.
+                    # If we succeed, the previous lock was stale.
+                    os.unlink(lock_file)
+                except OSError:
+                    logging.error("Another instance is already running (win lock %s)", lock_name)
+                    return False
+            
+            # Open with exclusive creation
+            fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            _lock_fd = fd
+            
+            # Register cleanup
+            import atexit
+            def _cleanup_lock():
+                try:
+                    os.close(fd)
+                    os.unlink(lock_file)
+                except OSError:
+                    pass
+            atexit.register(_cleanup_lock)
+            return True
+        except OSError as e:
+            logging.error("Could not acquire lock %s: %s", lock_name, e)
+            return False

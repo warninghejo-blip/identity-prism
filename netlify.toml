@@ -1,0 +1,26 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://identityprism.xyz/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/rpc/*"
+  to = "https://identityprism.xyz/rpc/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/metadata/*"
+  to = "https://identityprism.xyz/metadata/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

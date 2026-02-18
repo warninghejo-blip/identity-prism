@@ -3,6 +3,7 @@ import https from 'node:https';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { URL } from 'node:url';
 import {
   Connection,
@@ -115,6 +116,14 @@ const SKR_DISCOUNT_RATE = Number.isFinite(SKR_DISCOUNT) && SKR_DISCOUNT > 0 ? SK
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const MAX_SIGNATURE_PAGES = Number(process.env.MAX_SIGNATURE_PAGES ?? '10');
 const SIGNATURE_PAGE_LIMIT = 1000;
+const MAGICBLOCK_RPC = (process.env.MAGICBLOCK_RPC ?? 'https://devnet.magicblock.app/api').trim();
+const GAME_SESSION_TTL_RAW = Number(process.env.GAME_SESSION_TTL_MS ?? String(7 * 24 * 60 * 60 * 1000));
+const GAME_SESSION_TTL_MS = Number.isFinite(GAME_SESSION_TTL_RAW) && GAME_SESSION_TTL_RAW > 0
+  ? GAME_SESSION_TTL_RAW
+  : 7 * 24 * 60 * 60 * 1000;
+const GAME_SESSION_STORE_FILE = process.env.GAME_SESSION_STORE_FILE
+  ? path.resolve(process.env.GAME_SESSION_STORE_FILE)
+  : path.join(METADATA_DIR, 'game-session-proofs.json');
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
@@ -173,6 +182,7 @@ const BLUE_CHIP_COLLECTIONS = [
 
 const PENDING_MINT_TTL_MS = 10 * 60 * 1000;
 const pendingMintSigners = new Map();
+const gameSessionProofs = new Map();
 
 const prunePendingMints = () => {
   const now = Date.now();
@@ -202,12 +212,149 @@ const consumePendingMint = (requestId) => {
   return entry;
 };
 
+const normalizeStoredGameSessionEntry = (raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+
+  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+  const hash = typeof raw.hash === 'string' ? raw.hash.trim() : '';
+  const seed = typeof raw.seed === 'string' ? raw.seed.trim() : '';
+  const slot = Number(raw.slot);
+  if (!id || !hash || !seed || !Number.isInteger(slot) || slot <= 0) return null;
+
+  const startedAtMs = Number(raw.startedAtMs);
+  const endedAtMs = Number(raw.endedAtMs);
+  const safeStartedAtMs = Number.isFinite(startedAtMs) ? Math.floor(startedAtMs) : 0;
+  const safeEndedAtMs = Number.isFinite(endedAtMs) ? Math.floor(endedAtMs) : safeStartedAtMs;
+
+  const durationCandidate = Number(raw.durationMs);
+  const durationMs = Number.isFinite(durationCandidate)
+    ? Math.max(0, Math.floor(durationCandidate))
+    : Math.max(0, safeEndedAtMs - safeStartedAtMs);
+
+  const score = Number(raw.score);
+  const scoreDeltaCandidate = Number(raw.scoreDelta);
+  const scoreDelta = Number.isFinite(scoreDeltaCandidate)
+    ? Math.max(0, Math.floor(scoreDeltaCandidate))
+    : 0;
+
+  const createdAtMsCandidate = Number(raw.createdAtMs);
+  const createdAtFromIso = Date.parse(String(raw.createdAt ?? ''));
+  const createdAtMs = Number.isFinite(createdAtMsCandidate) && createdAtMsCandidate > 0
+    ? Math.floor(createdAtMsCandidate)
+    : (Number.isFinite(createdAtFromIso) ? createdAtFromIso : Date.now());
+
+  const createdAt = typeof raw.createdAt === 'string' && raw.createdAt.trim()
+    ? raw.createdAt
+    : new Date(createdAtMs).toISOString();
+
+  const lastVerifiedAt = typeof raw.lastVerifiedAt === 'string' && raw.lastVerifiedAt.trim()
+    ? raw.lastVerifiedAt
+    : createdAt;
+
+  return {
+    id,
+    hash,
+    walletAddress: typeof raw.walletAddress === 'string' && raw.walletAddress.trim()
+      ? raw.walletAddress.trim()
+      : null,
+    score: Number.isFinite(score) ? Math.max(0, Math.floor(score)) : 0,
+    survivalTime: typeof raw.survivalTime === 'string' && raw.survivalTime.trim()
+      ? raw.survivalTime.trim()
+      : '0:00',
+    seed,
+    slot,
+    startedAtMs: safeStartedAtMs,
+    endedAtMs: safeEndedAtMs,
+    durationMs,
+    scoreDelta,
+    verified: Boolean(raw.verified),
+    proofUrl: typeof raw.proofUrl === 'string' && raw.proofUrl.trim() ? raw.proofUrl.trim() : null,
+    verification: {
+      rpcHealthy: Boolean(raw?.verification?.rpcHealthy),
+      slotFound: Boolean(raw?.verification?.slotFound),
+      seedMatchesSlot: Boolean(raw?.verification?.seedMatchesSlot),
+      slotBlockhash:
+        typeof raw?.verification?.slotBlockhash === 'string' && raw.verification.slotBlockhash.trim()
+          ? raw.verification.slotBlockhash.trim()
+          : null,
+      reason:
+        typeof raw?.verification?.reason === 'string' && raw.verification.reason.trim()
+          ? raw.verification.reason.trim()
+          : 'Unknown',
+    },
+    createdAt,
+    lastVerifiedAt,
+    createdAtMs,
+  };
+};
+
+const persistGameSessionProofs = () => {
+  try {
+    const payload = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      sessions: Array.from(gameSessionProofs.values()),
+    };
+    fs.writeFileSync(GAME_SESSION_STORE_FILE, JSON.stringify(payload, null, 2));
+  } catch (error) {
+    console.warn('[game-session] Failed to persist proofs', error);
+  }
+};
+
+const loadGameSessionProofs = () => {
+  try {
+    if (!fs.existsSync(GAME_SESSION_STORE_FILE)) return;
+    const raw = fs.readFileSync(GAME_SESSION_STORE_FILE, 'utf8');
+    if (!raw.trim()) return;
+
+    const parsed = JSON.parse(raw);
+    const sessions = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.sessions) ? parsed.sessions : []);
+
+    let loaded = 0;
+    for (const item of sessions) {
+      const normalized = normalizeStoredGameSessionEntry(item);
+      if (!normalized) continue;
+      gameSessionProofs.set(normalized.id, normalized);
+      loaded += 1;
+    }
+
+    if (loaded > 0) {
+      console.log(`[game-session] Loaded ${loaded} persisted proof(s)`);
+    }
+  } catch (error) {
+    console.warn('[game-session] Failed to load persisted proofs', error);
+  }
+};
+
+const pruneGameSessionProofs = () => {
+  const cutoff = Date.now() - GAME_SESSION_TTL_MS;
+  let removed = 0;
+  for (const [id, entry] of gameSessionProofs.entries()) {
+    if (!entry || Number(entry.createdAtMs ?? 0) < cutoff) {
+      gameSessionProofs.delete(id);
+      removed += 1;
+    }
+  }
+  if (removed > 0) {
+    persistGameSessionProofs();
+  }
+};
+
 if (!fs.existsSync(METADATA_DIR)) {
   fs.mkdirSync(METADATA_DIR, { recursive: true });
 }
 if (!fs.existsSync(ASSETS_DIR)) {
   fs.mkdirSync(ASSETS_DIR, { recursive: true });
 }
+
+const gameSessionStoreDir = path.dirname(GAME_SESSION_STORE_FILE);
+if (!fs.existsSync(gameSessionStoreDir)) {
+  fs.mkdirSync(gameSessionStoreDir, { recursive: true });
+}
+loadGameSessionProofs();
+pruneGameSessionProofs();
 
 const getHeliusKeyIndex = (seed = '') => {
   if (!HELIUS_KEYS.length) return -1;
@@ -368,8 +515,169 @@ const getBaseUrl = (req) => {
 };
 
 const respondJson = (res, status, payload) => {
+  const body = JSON.stringify(payload);
+  const acceptEncoding = String(res.req?.headers?.['accept-encoding'] ?? '');
+  if (body.length > 256 && acceptEncoding.includes('gzip')) {
+    zlib.gzip(Buffer.from(body), (err, compressed) => {
+      if (err || !compressed) {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(body);
+        return;
+      }
+      res.writeHead(status, {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip',
+        'Content-Length': compressed.length,
+      });
+      res.end(compressed);
+    });
+    return;
+  }
   res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(payload));
+  res.end(body);
+};
+
+const safeParseJson = (raw) => {
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const createGameSessionProofId = (slot, hash) => `mb-${slot}-${String(hash).slice(0, 16)}`;
+
+const toPublicGameSessionProof = (entry) => ({
+  id: entry.id,
+  hash: entry.hash,
+  walletAddress: entry.walletAddress,
+  score: entry.score,
+  survivalTime: entry.survivalTime,
+  seed: entry.seed,
+  slot: entry.slot,
+  startedAtMs: entry.startedAtMs,
+  endedAtMs: entry.endedAtMs,
+  durationMs: entry.durationMs,
+  scoreDelta: entry.scoreDelta,
+  verified: entry.verified,
+  proofUrl: entry.proofUrl,
+  verification: entry.verification,
+  createdAt: entry.createdAt,
+  lastVerifiedAt: entry.lastVerifiedAt,
+});
+
+const callMagicBlockRpc = async (method, params = []) => {
+  if (!MAGICBLOCK_RPC) throw new Error('MagicBlock RPC URL is not configured');
+  const response = await fetch(MAGICBLOCK_RPC, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: `identity-prism-${Date.now()}`,
+      method,
+      params,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`MagicBlock RPC ${response.status}`);
+  }
+  const payload = await response.json();
+  if (payload?.error) {
+    throw new Error(payload?.error?.message ?? 'MagicBlock RPC error');
+  }
+  return payload?.result;
+};
+
+const verifyMagicBlockSeedSlot = async (seed, slot) => {
+  const verification = {
+    rpcHealthy: false,
+    slotFound: false,
+    seedMatchesSlot: false,
+    slotBlockhash: null,
+    reason: 'unverified',
+  };
+
+  try {
+    const health = await callMagicBlockRpc('getHealth', []);
+    verification.rpcHealthy = health === 'ok';
+  } catch {
+    verification.rpcHealthy = false;
+  }
+
+  try {
+    const block = await callMagicBlockRpc('getBlock', [
+      slot,
+      {
+        commitment: 'confirmed',
+        transactionDetails: 'none',
+        rewards: false,
+        maxSupportedTransactionVersion: 0,
+      },
+    ]);
+    const blockhash = typeof block?.blockhash === 'string' ? block.blockhash : '';
+    verification.slotFound = Boolean(blockhash);
+    verification.slotBlockhash = blockhash || null;
+    verification.seedMatchesSlot = Boolean(blockhash) && blockhash === seed;
+  } catch {
+    verification.slotFound = false;
+    verification.seedMatchesSlot = false;
+    verification.slotBlockhash = null;
+  }
+
+  if (!verification.rpcHealthy && !verification.slotFound) {
+    verification.reason = 'MagicBlock RPC unavailable';
+  } else if (!verification.slotFound) {
+    verification.reason = 'Slot not found on MagicBlock RPC';
+  } else if (!verification.seedMatchesSlot) {
+    verification.reason = 'Seed does not match slot blockhash';
+  } else {
+    verification.reason = 'Seed matches MagicBlock slot blockhash';
+  }
+
+  return verification;
+};
+
+const normalizeGameSessionPayload = (payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Invalid session payload');
+  }
+
+  const walletAddress = typeof payload.walletAddress === 'string' && payload.walletAddress.trim()
+    ? payload.walletAddress.trim()
+    : null;
+  const score = Number(payload.score);
+  const survivalTimeRaw = typeof payload.survivalTime === 'string' ? payload.survivalTime.trim() : '';
+  const seed = String(payload.seed ?? '').trim();
+  const slot = Number(payload.slot);
+  const startedAtMs = Number(payload.startedAtMs);
+  const endedAtMs = Number(payload.endedAtMs);
+  const txSignature = typeof payload.txSignature === 'string' && payload.txSignature.trim()
+    ? payload.txSignature.trim()
+    : null;
+
+  if (!Number.isFinite(score) || score < 0) {
+    throw new Error('score must be a non-negative number');
+  }
+  if (!seed || seed.length < 16) {
+    throw new Error('seed is required');
+  }
+  if (!Number.isInteger(slot) || slot <= 0) {
+    throw new Error('slot must be a positive integer');
+  }
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs) || endedAtMs < startedAtMs) {
+    throw new Error('startedAtMs/endedAtMs are invalid');
+  }
+
+  return {
+    walletAddress,
+    score: Math.floor(score),
+    survivalTime: survivalTimeRaw || '0:00',
+    seed,
+    slot,
+    startedAtMs: Math.floor(startedAtMs),
+    endedAtMs: Math.floor(endedAtMs),
+    txSignature,
+  };
 };
 
 const resolveMetadataFile = (rawName) => {
@@ -514,33 +822,53 @@ const fetchMeTokenLastPrice = async (mint) => {
 };
 
 const fetchSolPriceUsd = async () => {
+  // Try CoinGecko first
   try {
     const response = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
     );
-    if (!response.ok) return null;
-    const data = await response.json();
-    const price = Number(data?.solana?.usd ?? data?.usd ?? data?.price);
-    return Number.isFinite(price) ? price : null;
-  } catch (error) {
-    console.warn('[market] SOL price fetch failed', error);
-    return null;
-  }
+    if (response.ok) {
+      const data = await response.json();
+      const price = Number(data?.solana?.usd ?? data?.usd ?? data?.price);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+  } catch {}
+  // Fallback: DexScreener (free, no auth)
+  try {
+    const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
+    if (res.ok) {
+      const j = await res.json();
+      const pair = j?.pairs?.find(p => p?.priceUsd);
+      const price = Number(pair?.priceUsd);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+  } catch {}
+  return null;
 };
 
 const fetchSkrPriceUsd = async () => {
+  // Try CoinGecko first
   try {
     const response = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=seeker&vs_currencies=usd'
     );
-    if (!response.ok) return null;
-    const data = await response.json();
-    const price = Number(data?.seeker?.usd ?? data?.usd ?? data?.price);
-    return Number.isFinite(price) ? price : null;
-  } catch (error) {
-    console.warn('[market] SKR price fetch failed', error);
-    return null;
-  }
+    if (response.ok) {
+      const data = await response.json();
+      const price = Number(data?.seeker?.usd ?? data?.usd ?? data?.price);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+  } catch {}
+  // Fallback: DexScreener (free, no auth)
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${SKR_MINT}`);
+    if (res.ok) {
+      const j = await res.json();
+      const pair = j?.pairs?.find(p => p?.priceUsd);
+      const price = Number(pair?.priceUsd);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+  } catch {}
+  return null;
 };
 
 const computeSkrQuote = (solUsd, skrUsd) => {
@@ -1267,6 +1595,164 @@ const server = http.createServer(async (req, res) => {
       respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
       return;
     }
+  }
+
+  // ── MagicBlock game-session proof API ──
+  if (pathname === '/api/game/session' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const parsed = safeParseJson(raw);
+      if (!parsed) {
+        respondJson(res, 400, { error: 'Invalid JSON' });
+        return;
+      }
+
+      let payload;
+      try {
+        payload = normalizeGameSessionPayload(parsed);
+      } catch (error) {
+        respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+
+      pruneGameSessionProofs();
+
+      const canonical = JSON.stringify({
+        walletAddress: payload.walletAddress,
+        score: payload.score,
+        survivalTime: payload.survivalTime,
+        seed: payload.seed,
+        slot: payload.slot,
+        startedAtMs: payload.startedAtMs,
+        endedAtMs: payload.endedAtMs,
+        txSignature: payload.txSignature,
+      });
+      const hash = crypto.createHash('sha256').update(canonical).digest('hex');
+      const id = createGameSessionProofId(payload.slot, hash);
+      const durationMs = Math.max(0, payload.endedAtMs - payload.startedAtMs);
+      const expectedScore = Math.floor(durationMs / 1000);
+      const scoreDelta = Math.abs(expectedScore - payload.score);
+      const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
+      const verified = verification.seedMatchesSlot && scoreDelta <= 5;
+      const nowIso = new Date().toISOString();
+      const baseUrl = getBaseUrl(req);
+      const proofUrl = baseUrl ? `${baseUrl}/api/game/session/${encodeURIComponent(id)}` : null;
+
+      const reason = verified
+        ? 'Seed matches MagicBlock slot and score delta is within tolerance'
+        : `${verification.reason}; score delta=${scoreDelta}s`;
+
+      const entry = {
+        id,
+        hash,
+        walletAddress: payload.walletAddress,
+        score: payload.score,
+        survivalTime: payload.survivalTime,
+        seed: payload.seed,
+        slot: payload.slot,
+        startedAtMs: payload.startedAtMs,
+        endedAtMs: payload.endedAtMs,
+        durationMs,
+        scoreDelta,
+        verified,
+        proofUrl,
+        verification: {
+          ...verification,
+          reason,
+        },
+        createdAt: nowIso,
+        lastVerifiedAt: nowIso,
+        createdAtMs: Date.now(),
+      };
+
+      gameSessionProofs.set(id, entry);
+      persistGameSessionProofs();
+      respondJson(res, 200, { session: toPublicGameSessionProof(entry) });
+      return;
+    } catch (error) {
+      respondJson(res, 500, {
+        error: 'Failed to register game session',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  if (pathname.startsWith('/api/game/session/') && req.method === 'GET') {
+    pruneGameSessionProofs();
+    const rawId = pathname.slice('/api/game/session/'.length);
+    let sessionId = '';
+    try {
+      sessionId = decodeURIComponent(rawId).trim();
+    } catch {
+      sessionId = rawId.trim();
+    }
+    if (!sessionId) {
+      respondJson(res, 400, { error: 'Session id is required' });
+      return;
+    }
+
+    const existing = gameSessionProofs.get(sessionId);
+    if (!existing) {
+      respondJson(res, 404, { error: 'Session proof not found' });
+      return;
+    }
+
+    try {
+      const verification = await verifyMagicBlockSeedSlot(existing.seed, existing.slot);
+      const verified = verification.seedMatchesSlot && existing.scoreDelta <= 5;
+      const reason = verified
+        ? 'Seed matches MagicBlock slot and score delta is within tolerance'
+        : `${verification.reason}; score delta=${existing.scoreDelta}s`;
+
+      const refreshed = {
+        ...existing,
+        verified,
+        verification: {
+          ...verification,
+          reason,
+        },
+        lastVerifiedAt: new Date().toISOString(),
+      };
+      gameSessionProofs.set(sessionId, refreshed);
+      persistGameSessionProofs();
+      respondJson(res, 200, { session: toPublicGameSessionProof(refreshed) });
+      return;
+    } catch (error) {
+      respondJson(res, 200, {
+        session: toPublicGameSessionProof(existing),
+        verificationWarning: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  // ── Tapestry proxy — avoids CORS issues with direct browser calls ──
+  if (pathname.startsWith('/api/tapestry/') && (req.method === 'POST' || req.method === 'GET')) {
+    const tapestryKey = process.env.TAPESTRY_API_KEY || process.env.VITE_TAPESTRY_API_KEY || '';
+    if (!tapestryKey) {
+      respondJson(res, 503, { error: 'Tapestry API key not configured on server' });
+      return;
+    }
+    const tapestryPath = pathname.replace('/api/tapestry', '');
+    const tapestryUrl = `https://api.usetapestry.dev/v1${tapestryPath}?apiKey=${tapestryKey}`;
+    try {
+      const body = req.method === 'POST' ? await readBody(req) : null;
+      const upstream = await fetch(tapestryUrl, {
+        method: req.method,
+        headers: { 'Content-Type': 'application/json' },
+        ...(body ? { body } : {}),
+      });
+      const text = await upstream.text();
+      res.writeHead(upstream.status, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(text);
+    } catch (error) {
+      respondJson(res, 502, { error: 'Tapestry upstream error', detail: error instanceof Error ? error.message : String(error) });
+    }
+    return;
   }
 
   if (pathname === '/api/actions/render') {
@@ -2506,6 +2992,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
 server.listen(PORT, HOST, () => {
-  console.log(`[helius-proxy] listening on ${HOST}:${PORT}`);
+  console.log(`[helius-proxy] listening on ${HOST}:${PORT} (gzip enabled, keep-alive 65s)`);
 });

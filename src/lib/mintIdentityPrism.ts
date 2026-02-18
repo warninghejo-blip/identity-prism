@@ -79,8 +79,8 @@ function encodeBase64(value: string): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const TX_FEE_BUFFER_SOL = 0.001;
-const MIN_REQUIRED_SOL = 0.015;
+const TX_FEE_BUFFER_SOL = 0.003;
+const MIN_REQUIRED_SOL = 0.02;
 
 const buildPreflightError = (
   code: 'INSUFFICIENT_SOL' | 'INSUFFICIENT_SKR' | 'SIMULATION_FAILED',
@@ -474,6 +474,14 @@ export async function mintIdentityPrism({
           const decoded = SystemInstruction.decodeTransferWithSeed(instruction);
           return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
         }
+        if (type === 'CreateAccount') {
+          const decoded = SystemInstruction.decodeCreateAccount(instruction);
+          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+        }
+        if (type === 'CreateAccountWithSeed') {
+          const decoded = SystemInstruction.decodeCreateAccountWithSeed(instruction);
+          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+        }
       } catch {
         return total;
       }
@@ -501,13 +509,19 @@ export async function mintIdentityPrism({
         replaceRecentBlockhash: true,
       });
       if (simulation.value.err) {
-        console.warn('[mint] simulation error', simulation.value.err, simulation.value.logs);
-        // Don't block on simulation errors — let the real tx determine success/failure
-        // Some RPC endpoints return stale or misleading simulation results
+        console.error('[mint] simulation failed', simulation.value.err, simulation.value.logs);
+        throw buildPreflightError('SIMULATION_FAILED',
+          `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`,
+          { simulationError: simulation.value.err, logs: simulation.value.logs },
+        );
       }
     } catch (simError) {
-      console.warn('[mint] simulateTransaction threw', simError);
-      // Don't block on simulation errors — server already validated the tx
+      // Re-throw our own preflight errors (simulation failed)
+      if (simError instanceof Error && (simError as any).code === 'SIMULATION_FAILED') {
+        throw simError;
+      }
+      // Network / RPC errors — log but allow through (server already validated the tx)
+      console.warn('[mint] simulateTransaction network error', simError);
     }
   }
 

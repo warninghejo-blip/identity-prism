@@ -1,60 +1,72 @@
 publisher:
-  name: <<[REQUIRED] YOUR_PUBLISHER_NAME>>
-  website: <<[REQUIRED] URL_OF_PUBLISHER_WEBSITE>>
-  email: <<[REQUIRED] EMAIL_ADDRESS_TO_CONTACT_PUBLISHER>>
-  support_email: <<[Optional] SUPPORT_EMAIL_ADDRESS_FOR_END_USERS>>
+  name: Identity Prism
+  website: https://identityprism.xyz
+  email: support@identityprism.xyz
+  support_email: support@identityprism.xyz
 app:
-  name: <<[REQUIRED] APP_NAME>>
-  address: ''
-  android_package: <<[REQUIRED] ANDROID_PACKAGE_NAME>>
+  name: Identity Prism
+  address: 7KUb51b8CRYm6vkxFkXFv6ijyiMGi9TQganqDj3LYihB
+  android_package: com.identityprism.app
   urls:
-    license_url: <<[REQUIRED] URL For App's T&C. Don't put placeholder urls.>>
-    copyright_url: <<[REQUIRED] URL For App's Copyright. Don't put placeholder urls.>>
-    privacy_policy_url: <<[REQUIRED] URL For App's Privacy Policy. Don't put placeholder urls.>>
-    website: <<[REQUIRED] URL_OF_APP_WEBSITE>>
+    license_url: https://identityprism.xyz/terms.html
+    copyright_url: https://identityprism.xyz/copyright.html
+    privacy_policy_url: https://identityprism.xyz/privacy.html
+    website: https://identityprism.xyz
   media:
     - purpose: icon
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_APP_ICON>>
+      uri: ../dapp-store/media/app_icon.png
 release:
-  address: ''
+  address: 8FhukmBa19nh6KhiNY5BvchhtpVumJyao3S6jZB6ucp9
   media:
     - purpose: icon
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_RELEASE_ICON>>
+      uri: ../dapp-store/media/release_icon.png
     - purpose: banner
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_BANNER>>
-    - purpose: featureGraphic
-      uri: <<[Optional] RELATIVE_PATH_TO_FEATURE_GRAPHIC>>
+      uri: ../dapp-store/media/banner.png
     - purpose: screenshot
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_SCREENSHOT1>>
+      uri: ../dapp-store/media/screenshot_1_landing.png
     - purpose: screenshot
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_SCREENSHOT2>>
+      uri: ../dapp-store/media/screenshot_2_front.png
     - purpose: screenshot
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_SCREENSHOT3>>
+      uri: ../dapp-store/media/screenshot_3_stats.png
     - purpose: screenshot
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_SCREENSHOT4>>
-    - purpose: video
-      uri: <<[Optional] RELATIVE_PATH_TO_VIDEO1>>
+      uri: ../dapp-store/media/screenshot_4_badges.png
   files:
     - purpose: install
-      uri: <<[REQUIRED] RELATIVE_PATH_TO_APK>>
+      uri: ../dapp-store/app-release.apk
   catalog:
     en-US:
-      name: <<[REQUIRED] APP_NAME>>
-      short_description: <<[REQUIRED] SHORT_APP_DESCRIPTION>>
-      long_description: <<[REQUIRED] LONG_APP_DESCRIPTION>>
-      new_in_version: <<[REQUIRED] WHATS_NEW_IN_THIS_VERSION>>
-      saga_features: <<[Optional.] ANY_FEATURES_ONLY_AVAILBLE_WHEN_RUNNING_ON_SAGA>>
+      name: Identity Prism
+      short_description: Solana wallet identity card
+      long_description: |-
+        Identity Prism transforms your Solana wallet activity into a living identity card. It analyzes transactions, holdings, NFTs, DeFi positions, and wallet age to produce a reputation score (0–1400), a celestial tier (Mercury → Binary Sun), and achievement badges that represent your true on-chain identity.
+        Features: • Reputation Score — composite score based on SOL balance, wallet age, transaction count,
+          NFT holdings, DeFi activity, and special assets.
+        • Celestial Tiers — from Mercury (new wallets) through Mars, Earth, Saturn, Jupiter,
+          to Sun (top-tier OGs). Holders of both Seeker Genesis + Chapter 2 Preorder earn
+          the rare Binary Sun tier.
+        • Achievement Badges — OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early
+          Adopter, and more.
+        • 3D Identity Card — stunning Three.js-powered celestial card with interactive planet
+          rendering based on your tier.
+        • Mint as NFT — mint your identity card as a Metaplex Core NFT on Solana. • Solana Blinks — share and attest your identity via Solana Actions. • Tapestry Social Graph — publish identity profiles for cross-app reputation discovery. • Reputation API — public REST API for any dApp to query wallet reputation. • AI Twitter Agent — autonomous bot analyzing on-chain identity and posting insights.
+      new_in_version: 'v3.2: Improved 3D card rendering, Tapestry social graph integration, on-chain attestation via Solana Actions, AI-powered Twitter agent, enhanced scoring algorithm.'
+      saga_features: Native Mobile Wallet Adapter support for seamless wallet connection on Saga and Seeker devices. Full MWA integration for signing and minting directly from the app.
   android_details:
+    cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
+    min_sdk: 24
+    version: 1.0.23
+    version_code: 24
     locales:
       - en-US
-      - <Add more supported locales>
 solana_mobile_dapp_publisher_portal:
-  google_store_package: <<[Optional] ANDROID_PACKAGE_NAME_OF_GOOGLE_PLAY_STORE_VERSION>>
-  testing_instructions: >-
-    <<[REQUIRED] TESTING_INSTRUCTIONS. Please provide any test account details
-    if applicable>>
-  alpha_testers:
-    - address: <<Optional. genesis token wallet address>>
-      comment: <<Optional. For internal use only>>
-    - address: <<Optional. genesis token wallet address>>
-      comment: <<Optional. For internal use only>>
+  google_store_package: ''
+  testing_instructions: |-
+    1. Open the app and tap 'Connect Wallet' to connect via Phantom or any Solana wallet. 2. The app will scan your wallet and display your Identity Prism card with tier, score,
+       and badges.
+    3. Flip the card to see detailed stats (SOL balance, wallet age, transaction count, NFTs). 4. Tap 'MINT IDENTITY' to mint your card as an on-chain NFT (requires ~0.01 SOL). 5. Use 'SHARE TO TWITTER' to post your identity on X. 6. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
+lastSubmittedVersionOnChain:
+  address: 8FhukmBa19nh6KhiNY5BvchhtpVumJyao3S6jZB6ucp9
+  version_code: 24
+  apk_hash: CjkIgySfpPonYFg+V/2Aeolo3M/X0o0caVnDjh1KpW4=
+lastUpdatedVersionOnStore:
+  address: 8FhukmBa19nh6KhiNY5BvchhtpVumJyao3S6jZB6ucp9

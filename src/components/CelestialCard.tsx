@@ -14,17 +14,22 @@ import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { BLACKHOLE_ENABLED } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
 
+const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+
 /** Waits for the Three.js render loop to produce real frames AND textures to load before signaling ready. */
 function FrameDetector({ onReady, texturesReady }: { onReady?: () => void; texturesReady: boolean }) {
   const fired = useRef(false);
   const frameCount = useRef(0);
-  useFrame(() => {
+  const readyTime = useRef(0);
+  useFrame((_, delta) => {
     if (fired.current || !onReady) return;
     // Only start counting frames once textures are loaded
     if (!texturesReady) return;
     frameCount.current += 1;
-    // Wait for 10 frames after textures load so GPU has composited the actual textured planet
-    if (frameCount.current >= 10) {
+    readyTime.current += delta;
+    // Wait for 25 frames AND at least 400ms after textures load so GPU has
+    // fully composited the textured planet (heavier tiers like binary_sun need more time)
+    if (frameCount.current >= 25 && readyTime.current >= 0.4) {
       fired.current = true;
       onReady();
     }
@@ -77,6 +82,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [texturesReady, setTexturesReady] = useState(false);
   const handleTexturesReady = useCallback(() => setTexturesReady(true), []);
   const [shakeWarning, setShakeWarning] = useState(false);
+  const [jumpingToGame, setJumpingToGame] = useState(false);
   const [suckingIn, setSuckingIn] = useState(false);
   const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(false);
@@ -300,6 +306,53 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             </h1>
           </div>
 
+          {!isCapture && (
+            <button
+              type="button"
+              className={`game-card-portal capture-hidden ${jumpingToGame ? 'is-jumping' : ''}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (jumpingToGame || suckingIn || consuming) return;
+                clearTransitionTimers();
+                setJumpingToGame(true);
+
+                const portal = shellRef.current?.querySelector('.game-card-portal') as HTMLElement | null;
+                if (portal) {
+                  portal.style.animation = 'wt-portal-grow 0.45s ease-out forwards';
+                  portal.style.zIndex = '100';
+                }
+
+                transitionTimersRef.current.push(window.setTimeout(() => {
+                  createWormholeTunnel();
+                }, 280));
+
+                const returnAddress = address ? { returnAddress: address } : {};
+                transitionTimersRef.current.push(window.setTimeout(() => {
+                  navigate('/game', { state: { fromAppJump: true, ...returnAddress } });
+                }, 1500));
+              }}
+            >
+              <span className="game-card-portal__glow" />
+              <svg className="game-card-portal__ship" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2C12 2 8 6 8 12C8 16 9.5 19 10 20L12 22L14 20C14.5 19 16 16 16 12C16 6 12 2 12 2Z" fill="url(#shipGrad)" stroke="rgba(6,182,212,0.6)" strokeWidth="0.5"/>
+                <path d="M8 12L4 15L8 14Z" fill="rgba(6,182,212,0.5)"/>
+                <path d="M16 12L20 15L16 14Z" fill="rgba(6,182,212,0.5)"/>
+                <circle cx="12" cy="9" r="1.8" fill="rgba(34,211,238,0.9)"/>
+                <circle cx="12" cy="9" r="1" fill="rgba(255,255,255,0.6)"/>
+                <path d="M10.5 18L12 21L13.5 18" fill="rgba(251,146,60,0.9)"/>
+                <path d="M11 18.5L12 20.5L13 18.5" fill="rgba(253,186,116,0.8)"/>
+                <defs>
+                  <linearGradient id="shipGrad" x1="12" y1="2" x2="12" y2="22" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stopColor="rgba(6,182,212,0.9)"/>
+                    <stop offset="0.5" stopColor="rgba(148,163,184,0.95)"/>
+                    <stop offset="1" stopColor="rgba(100,116,139,0.9)"/>
+                  </linearGradient>
+                </defs>
+              </svg>
+              <span className="game-card-portal__label">Prism League</span>
+            </button>
+          )}
+
           {!isCapture && BLACKHOLE_ENABLED && (
             <button
               type="button"
@@ -375,8 +428,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           >
             <Canvas
               camera={{ position: [0, 0, 8.5], fov: 35 }}
-              gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
-              dpr={[1, 1.5]}
+              gl={{ antialias: !IS_MOBILE, alpha: true, preserveDrawingBuffer: isCapture }}
+              dpr={IS_MOBILE ? [1, 1.3] : [1, 1.5]}
               onCreated={({ gl }) => {
                 const canvas = gl.domElement;
                 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); });
@@ -389,7 +442,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               <pointLight position={[-8, -5, -5]} intensity={0.5} color="#4cc9f0" />
               
               <StarField
-                count={560}
+                count={IS_MOBILE ? 250 : 560}
                 radius={[9, 18]}
                 sizeRange={[0.45, 1.35]}
                 intensityRange={[0.4, 0.85]}

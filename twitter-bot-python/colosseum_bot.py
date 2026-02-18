@@ -12,6 +12,8 @@ import random
 import time
 from pathlib import Path
 
+from utils import check_single_instance
+
 from curl_cffi import requests as cffi_requests
 from dotenv import load_dotenv
 
@@ -635,7 +637,11 @@ def post_progress_update(api_key, state):
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
+if not check_single_instance('colosseum_bot.lock'):
+    import sys
+    sys.exit(0)
 
+    
 async def main():
     logging.info('Colosseum engagement bot starting')
     secrets = load_secrets()
