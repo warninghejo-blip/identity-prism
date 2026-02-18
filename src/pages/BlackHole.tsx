@@ -872,6 +872,25 @@ const BlackHole = () => {
       transaction.lastValidBlockHeight = lastValidBlockHeight;
       transaction.feePayer = publicKey;
 
+      // Simulate transaction before prompting user to sign (dApp Store requirement)
+      try {
+        const simulation = await connection.simulateTransaction(transaction, {
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+        });
+        if (simulation.value.err) {
+          console.error('[BlackHole] simulation failed', simulation.value.err, simulation.value.logs);
+          throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
+        }
+      } catch (simError) {
+        // Re-throw simulation failures
+        if (simError instanceof Error && simError.message.startsWith('Transaction simulation failed')) {
+          throw simError;
+        }
+        // Network / RPC errors — log but allow through
+        console.warn('[BlackHole] simulateTransaction network error', simError);
+      }
+
       // Patch serialize to skip signature verification (same pattern as mint code)
       // Some mobile wallets / adapters call serialize internally and fail if not all sigs present
       const origSerialize = transaction.serialize.bind(transaction);
@@ -1032,8 +1051,22 @@ const BlackHole = () => {
     const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
     setTimeout(() => {
       sessionStorage.setItem('fromBlackHole', '1');
-      navigate(target, { state: { fromBlackHole: true }, replace: true });
+      try {
+        navigate(target, { state: { fromBlackHole: true }, replace: true });
+      } catch {
+        // Fallback for environments where navigate() throws
+      }
+      // Safety: if still on /blackhole after 600ms, force a full redirect
+      // (Capacitor WebView can silently drop react-router navigate between route trees)
+      setTimeout(() => {
+        if (window.location.pathname.includes('blackhole')) {
+          window.location.replace(target);
+        }
+      }, 600);
     }, 1650);
+
+    // Safety: reset returning flag after generous timeout so user can retry
+    setTimeout(() => { setReturning(false); }, 4000);
   }, [returning, ownerPublicKey, addressParam, navigate]);
 
   return (

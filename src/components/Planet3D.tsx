@@ -11,13 +11,17 @@ import {
   Group,
   LinearFilter,
   Mesh,
-  NormalBlending,
   Points,
   ShaderMaterial,
   Texture,
   TextureLoader,
 } from 'three';
 import type { PlanetTier } from '@/hooks/useWalletData';
+
+const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+// Restore high quality segments as requested
+const SEGMENTS = 96; 
+const SEGMENTS_LOW = 64;
 
 type PlanetTextureConfig = {
   map: string;
@@ -672,7 +676,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
     );
   }, [size, tier]);
 
-  if (isBinary) {
+    if (isBinary) {
     return (
       <group ref={groupRef} scale={captureScale}>
         <pointLight intensity={5} color="#ffb703" distance={25} />
@@ -680,7 +684,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
         
         {/* Sun 1 - Yellow/Orange (Pulsing Shader) */}
         <mesh position={[-1.0, 0, 0]}>
-          <sphereGeometry args={[0.65, 64, 64]} />
+          <sphereGeometry args={[0.65, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
             vertexShader={starSurfaceVertexShader}
             fragmentShader={starSurfaceFragmentShader}
@@ -701,7 +705,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
         <mesh position={[-1.0, 0, 0]} scale={[1.08, 1.08, 1.08]}>
-          <sphereGeometry args={[0.65, 48, 48]} />
+          <sphereGeometry args={[0.65, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
             vertexShader={prominenceVertexShader}
             fragmentShader={prominenceFragmentShader}
@@ -716,7 +720,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
         
         {/* Sun 2 - Blue/Cyan (Pulsing Shader) */}
         <mesh position={[1.0, 0, 0]}>
-          <sphereGeometry args={[0.6, 64, 64]} />
+          <sphereGeometry args={[0.6, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
             vertexShader={starSurfaceVertexShader}
             fragmentShader={starSurfaceFragmentShader}
@@ -737,7 +741,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
         <mesh position={[1.0, 0, 0]} scale={[1.07, 1.07, 1.07]}>
-          <sphereGeometry args={[0.6, 48, 48]} />
+          <sphereGeometry args={[0.6, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
             vertexShader={prominenceVertexShader}
             fragmentShader={prominenceFragmentShader}
@@ -750,9 +754,9 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
 
-        {/* Energy Bridge (Hyper Beam) */}
+        {/* Energy Bridge (Hyper Beam) - Reduced segments */}
         <mesh position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.055, 0.055, 2.0, 64, 1, true]} /> 
+          <cylinderGeometry args={[0.055, 0.055, 2.0, SEGMENTS_LOW, 1, true]} /> 
           <shaderMaterial
             vertexShader={bridgeVertexShader}
             fragmentShader={bridgeFragmentShader}
@@ -764,9 +768,9 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
             depthWrite={false}
           />
         </mesh>
-        {/* Filament overlays */}
+        {/* Filament overlays - Reduced segments */}
         <mesh position={[0, 0.035, 0.02]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.02, 0.02, 2.0, 48, 1, true]} />
+          <cylinderGeometry args={[0.02, 0.02, 2.0, 16, 1, true]} />
           <shaderMaterial
             vertexShader={bridgeVertexShader}
             fragmentShader={bridgeFragmentShader}
@@ -779,7 +783,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
         <mesh position={[0, -0.03, -0.02]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.016, 0.016, 2.0, 48, 1, true]} />
+          <cylinderGeometry args={[0.016, 0.016, 2.0, 16, 1, true]} />
           <shaderMaterial
             vertexShader={bridgeVertexShader}
             fragmentShader={bridgeFragmentShader}
@@ -792,7 +796,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
         <mesh position={[0, 0.01, -0.04]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.014, 0.014, 2.0, 48, 1, true]} />
+          <cylinderGeometry args={[0.014, 0.014, 2.0, 16, 1, true]} />
           <shaderMaterial
             vertexShader={bridgeVertexShader}
             fragmentShader={bridgeFragmentShader}
@@ -805,7 +809,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
         <mesh position={[0, -0.05, 0.05]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.012, 0.012, 2.0, 48, 1, true]} />
+          <cylinderGeometry args={[0.012, 0.012, 2.0, 16, 1, true]} />
           <shaderMaterial
             vertexShader={bridgeVertexShader}
             fragmentShader={bridgeFragmentShader}
@@ -818,7 +822,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
         <mesh position={[0, 0.06, -0.06]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.011, 0.011, 2.0, 48, 1, true]} />
+          <cylinderGeometry args={[0.011, 0.011, 2.0, 16, 1, true]} />
           <shaderMaterial
             vertexShader={bridgeVertexShader}
             fragmentShader={bridgeFragmentShader}
@@ -842,7 +846,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
         
         {/* Sun Surface */}
         <mesh>
-          <sphereGeometry args={[size, 96, 96]} />
+          <sphereGeometry args={[size, SEGMENTS, SEGMENTS]} />
           <shaderMaterial
             vertexShader={starSurfaceVertexShader}
             fragmentShader={starSurfaceFragmentShader}
@@ -852,7 +856,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
 
         {/* Sun Prominences */}
         <mesh scale={[1.06, 1.06, 1.06]}>
-          <sphereGeometry args={[size, 64, 64]} />
+          <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
             vertexShader={prominenceVertexShader}
             fragmentShader={prominenceFragmentShader}
@@ -865,7 +869,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
         <mesh scale={[1.12, 1.12, 1.12]}>
-          <sphereGeometry args={[size, 64, 64]} />
+          <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
             vertexShader={atmosphereVertexShader}
             fragmentShader={atmosphereFragmentShader}
@@ -886,7 +890,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
       {tier === 'saturn' ? (
         <group ref={saturnCoreRef}>
           <mesh>
-            <sphereGeometry args={[size, 96, 96]} />
+            <sphereGeometry args={[size, SEGMENTS, SEGMENTS]} />
             <meshStandardMaterial
               map={mapTexture}
               normalMap={normalTexture}
@@ -899,7 +903,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           </mesh>
 
           <mesh scale={[1.2, 1.2, 1.2]}>
-            <sphereGeometry args={[size, 64, 64]} />
+            <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
             <shaderMaterial
               vertexShader={atmosphereVertexShader}
               fragmentShader={atmosphereFragmentShader}
@@ -913,7 +917,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
 
           {paths.atmosphere && atmosphereTexture && (
             <mesh scale={[1.2, 1.2, 1.2]}>
-              <sphereGeometry args={[size, 64, 64]} />
+              <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
               <shaderMaterial
                 vertexShader={atmosphereVertexShader}
                 fragmentShader={atmosphereFragmentShader}
@@ -929,7 +933,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
       ) : (
         <>
           <mesh>
-            <sphereGeometry args={[size, 96, 96]} />
+            <sphereGeometry args={[size, SEGMENTS, SEGMENTS]} />
             <meshStandardMaterial
               map={mapTexture}
               normalMap={normalTexture}
@@ -942,7 +946,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           </mesh>
 
           <mesh scale={[1.2, 1.2, 1.2]}>
-            <sphereGeometry args={[size, 64, 64]} />
+            <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
             <shaderMaterial
               vertexShader={atmosphereVertexShader}
               fragmentShader={atmosphereFragmentShader}
@@ -956,7 +960,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
 
           {paths.atmosphere && atmosphereTexture && (
             <mesh scale={[1.2, 1.2, 1.2]}>
-              <sphereGeometry args={[size, 64, 64]} />
+              <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
               <shaderMaterial
                 vertexShader={atmosphereVertexShader}
                 fragmentShader={atmosphereFragmentShader}
@@ -973,7 +977,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
 
       {tier === 'earth' && cloudsTexture && (
         <mesh ref={cloudsRef} scale={[1.02, 1.02, 1.02]}>
-          <sphereGeometry args={[size, 64, 64]} />
+          <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <meshStandardMaterial
             map={cloudsTexture}
             transparent

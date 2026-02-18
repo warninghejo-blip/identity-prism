@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 
 const DEFAULT_PALETTE = ['#ffffff', '#dfeefe', '#ffe5b5'];
+const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
 type StarFieldProps = {
   count?: number;
@@ -62,6 +63,10 @@ export function StarField({
 }: StarFieldProps) {
   const mesh = useRef<THREE.Points>(null);
   const palette = useMemo(() => (colors && colors.length ? colors : DEFAULT_PALETTE), [colors]);
+  
+  // Mobile optimization: significantly reduce star count
+  const effectiveCount = IS_MOBILE && count === 1500 ? 400 : count;
+
   const radiusMin = radius[0];
   const radiusMax = radius[1];
   const sizeMin = sizeRange[0];

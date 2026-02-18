@@ -1,34 +1,12 @@
-import React, { useRef, useState, useMemo, useEffect, Suspense } from "react";
+import React, { useRef, useMemo, useEffect, Suspense } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Text, Float, Trail, Stars, Instance, Instances, Environment, Html } from "@react-three/drei";
 import * as THREE from "three";
-import { EffectComposer, Bloom, ChromaticAberration, Vignette, Noise } from "@react-three/postprocessing";
-import { Button } from "@/components/ui/button";
 import { WalletTraits } from "@/hooks/useWalletData";
 
-// --- Constants ---
-const LANE_WIDTH = 3;
-const WORLD_SPEED_BASE = 0.4;
-const SPAWN_RATE_OBSTACLE = 0.05;
-const SPAWN_RATE_COIN = 0.1;
-const GAME_BOUNDS_X = 8;
+const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+const MAX_ASTEROIDS = IS_MOBILE ? 120 : 200;
 
-const TIER_COLORS: Record<string, string> = {
-  mercury: "#94a3b8", // Slate 400
-  mars: "#ef4444",    // Red 500
-  venus: "#f97316",   // Orange 500
-  earth: "#10b981",   // Emerald 500
-  neptune: "#3b82f6", // Blue 500
-  uranus: "#06b6d4",  // Cyan 500
-  saturn: "#eab308",  // Yellow 500
-  jupiter: "#f59e0b", // Amber 500
-  sun: "#facc15",     // Yellow 400
-  binary_sun: "#ffffff" // White
-};
-
-// --- Types ---
 type GameState = "start" | "playing" | "gameover";
-
 interface GameProps {
   onScore: (score: number) => void;
   onGameOver: (finalScore: number) => void;
@@ -37,282 +15,524 @@ interface GameProps {
   walletScore: number;
 }
 
-// --- Utils ---
-const randomRange = (min: number, max: number) => Math.random() * (max - min) + min;
+const TIER_COLORS: Record<string, string> = {
+  mercury: "#94a3b8", mars: "#ef4444", venus: "#f97316", earth: "#10b981",
+  neptune: "#3b82f6", uranus: "#06b6d4", saturn: "#eab308", jupiter: "#f59e0b",
+  sun: "#facc15", binary_sun: "#ffffff",
+};
 
-// --- Components ---
+const rand = (a: number, b: number) => Math.random() * (b - a) + a;
+const FIELD = 14;
+const HIT_R = 0.5;
+const WELL_GRAV = 26;
+const ASTEROID_R_MIN = 0.3;
+const ASTEROID_R_MAX = 0.8;
+const WELL_COLORS = ["#22d3ee", "#a855f7", "#f59e0b", "#f43f5e"];
 
-function Ship({ position, targetX, traits }: { position: React.MutableRefObject<THREE.Vector3>, targetX: number, traits: WalletTraits | null }) {
-  const meshRef = useRef<THREE.Group>(null);
-  
-  // Visual traits
-  const tierColor = traits?.planetTier ? TIER_COLORS[traits.planetTier] : "#00ffff";
-  const isWhale = traits?.isWhale || false;
-  const scale = isWhale ? 1.2 : 1.0;
-  
-  useFrame((state, delta) => {
-    if (!meshRef.current) return;
-    
-    // Smooth horizontal movement
-    meshRef.current.position.x = THREE.MathUtils.lerp(meshRef.current.position.x, targetX, 0.15);
-    
-    // Update ref position for collision detection
-    position.current.copy(meshRef.current.position);
-    
-    // Banking animation
-    const tilt = (meshRef.current.position.x - targetX) * 2;
-    meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, tilt, 0.1);
-    
-    // Bobbing
-    meshRef.current.position.y = Math.sin(state.clock.elapsedTime * 5) * 0.1;
+interface Well { x: number; y: number; color: string; }
+interface AsteroidData { x: number; y: number; vx: number; vy: number; r: number; rot: number; rotSpeed: number; alive: boolean; }
+
+// ─── Reusable geometry + material (created once, shared) ─────
+const _asteroidGeo = new THREE.DodecahedronGeometry(1, 0);
+const _asteroidMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.45, 0.38, 0.32) });
+const _dummy = new THREE.Object3D();
+
+// ─── Instanced Asteroids — single draw call for all asteroids ──
+function AsteroidInstances({ asteroidsRef }: { asteroidsRef: React.MutableRefObject<AsteroidData[]> }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  useFrame(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const list = asteroidsRef.current;
+    let count = 0;
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (!a.alive) continue;
+      _dummy.position.set(a.x, a.y, 0);
+      _dummy.rotation.set(a.rot * 0.7, 0, a.rot);
+      _dummy.scale.setScalar(a.r);
+      _dummy.updateMatrix();
+      mesh.setMatrixAt(count, _dummy.matrix);
+      count++;
+    }
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
   });
-
   return (
-    <group ref={meshRef} scale={[scale, scale, scale]}>
-      <Float speed={5} rotationIntensity={0.2} floatIntensity={0.2}>
-        <Trail width={1.2 * scale} length={6} color={tierColor} attenuation={(t) => t * t}>
-          <group rotation={[0, Math.PI, 0]}>
-            {/* Main Hull */}
-            <mesh>
-              <coneGeometry args={[0.6, 2.5, 3]} />
-              <meshStandardMaterial color={tierColor} emissive={tierColor} emissiveIntensity={2} toneMapped={false} />
-            </mesh>
-            {/* Wings */}
-            <mesh position={[0, -0.2, 0.5]} rotation={[Math.PI / 2, 0, 0]}>
-              <boxGeometry args={[2.5, 0.1, 1]} />
-              <meshStandardMaterial color={tierColor} emissive={tierColor} emissiveIntensity={1} wireframe />
-            </mesh>
-            {/* Engine Glow */}
-            <pointLight position={[0, 0, 1.5]} intensity={2} color={tierColor} distance={5} />
-          </group>
-        </Trail>
-      </Float>
-    </group>
+    <instancedMesh ref={meshRef} args={[_asteroidGeo, _asteroidMat, MAX_ASTEROIDS]} frustumCulled={false} />
   );
 }
 
-function Obstacle({ position, onHit }: { position: THREE.Vector3, onHit: () => void }) {
-  const ref = useRef<THREE.Mesh>(null);
-  
-  useFrame((state, delta) => {
-    if (ref.current) {
-        ref.current.rotation.x += delta;
-        ref.current.rotation.y += delta * 0.5;
-    }
+// ─── Ship visual (reads from refs, zero re-renders) ──
+const ShipMesh = React.memo(function ShipMesh({ posRef, angleRef, color }: {
+  posRef: React.MutableRefObject<{ x: number; y: number }>;
+  angleRef: React.MutableRefObject<number>;
+  color: string;
+}) {
+  const ref = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!ref.current) return;
+    ref.current.position.set(posRef.current.x, posRef.current.y, 0);
+    ref.current.rotation.z = angleRef.current - Math.PI / 2;
   });
-
   return (
-    <mesh ref={ref} position={position}>
-      <dodecahedronGeometry args={[0.8, 0]} />
-      <meshStandardMaterial color="#ff0055" emissive="#ff0055" emissiveIntensity={2} wireframe />
+    <group ref={ref}>
+      <mesh>
+        <coneGeometry args={[0.2, 0.7, 3]} />
+        <meshBasicMaterial color={color} />
+      </mesh>
+      <mesh position={[0, -0.45, 0]}>
+        <sphereGeometry args={[0.12, 4, 4]} />
+        <meshBasicMaterial color="#ff6b00" />
+      </mesh>
+      <mesh position={[0.3, -0.15, 0]} rotation={[0, 0, -0.3]}>
+        <boxGeometry args={[0.4, 0.06, 0.12]} />
+        <meshBasicMaterial color={color} />
+      </mesh>
+      <mesh position={[-0.3, -0.15, 0]} rotation={[0, 0, 0.3]}>
+        <boxGeometry args={[0.4, 0.06, 0.12]} />
+        <meshBasicMaterial color={color} />
+      </mesh>
+    </group>
+  );
+});
+
+// ─── Boundary ring with warning ─────────────────────────────
+function BoundaryRing({ shipPosRef }: { shipPosRef: React.MutableRefObject<{ x: number; y: number }> }) {
+  const matRef = useRef<THREE.MeshBasicMaterial>(null);
+  useFrame(() => {
+    if (!matRef.current) return;
+    const d = Math.sqrt(shipPosRef.current.x ** 2 + shipPosRef.current.y ** 2);
+    const danger = Math.max(0, (d - FIELD * 0.65) / (FIELD * 0.35));
+    matRef.current.opacity = 0.15 + danger * 0.5;
+    matRef.current.color.setStyle(danger > 0.5 ? "#ff2244" : "#1e3a5f");
+  });
+  return (
+    <mesh>
+      <ringGeometry args={[FIELD - 0.08, FIELD + 0.08, IS_MOBILE ? 24 : 64]} />
+      <meshBasicMaterial ref={matRef} color="#1e3a5f" transparent opacity={0.15} />
     </mesh>
   );
 }
 
-function Coin({ position }: { position: THREE.Vector3 }) {
-  const ref = useRef<THREE.Group>(null);
-  
-  useFrame((state, delta) => {
-    if (ref.current) {
-      ref.current.rotation.y += delta * 3;
-    }
+// ─── Gravity tether (line from ship to active well) ──
+function GravityTether({ shipPosRef, wellsRef, activeWellRef }: {
+  shipPosRef: React.MutableRefObject<{ x: number; y: number }>;
+  wellsRef: React.MutableRefObject<Well[]>;
+  activeWellRef: React.MutableRefObject<number>;
+}) {
+  const posAttr = useRef<THREE.BufferAttribute>(null);
+  const matRef = useRef<THREE.LineBasicMaterial>(null);
+  const positions = useMemo(() => new Float32Array(6), []);
+  useFrame(() => {
+    if (!posAttr.current || !matRef.current) return;
+    const w = wellsRef.current[activeWellRef.current];
+    if (!w) return;
+    const arr = posAttr.current.array as Float32Array;
+    arr[0] = shipPosRef.current.x; arr[1] = shipPosRef.current.y; arr[2] = 0;
+    arr[3] = w.x; arr[4] = w.y; arr[5] = 0;
+    posAttr.current.needsUpdate = true;
+    matRef.current.color.setStyle(w.color);
   });
-
   return (
-    <group ref={ref} position={position}>
-      <mesh rotation={[Math.PI / 4, Math.PI / 4, 0]}>
-        <octahedronGeometry args={[0.5, 0]} />
-        <meshStandardMaterial color="#ffd700" emissive="#ffaa00" emissiveIntensity={2} toneMapped={false} />
-      </mesh>
-    </group>
+    // @ts-expect-error – R3F line primitive
+    <line>
+      <bufferGeometry>
+        <bufferAttribute ref={posAttr} attach="attributes-position" args={[positions, 3]} count={2} />
+      </bufferGeometry>
+      <lineBasicMaterial ref={matRef} color="#22d3ee" transparent opacity={0.12} />
+    </line>
   );
 }
 
-function MovingGrid({ speed }: { speed: number }) {
-    const materialRef = useRef<THREE.ShaderMaterial>(null);
-    useFrame((state, delta) => {
-        if (materialRef.current) {
-            materialRef.current.uniforms.uTime.value += delta * speed * 5;
-        }
-    });
+// ─── Gravity Well visual (simplified for mobile) ─────────────
+function WellVisuals({ wellsRef, activeWellRef }: {
+  wellsRef: React.MutableRefObject<Well[]>;
+  activeWellRef: React.MutableRefObject<number>;
+}) {
+  const MAX_WELLS = 4;
+  const groupRefs = useRef<(THREE.Group | null)[]>([]);
+  const ringRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const coreMats = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
+  const ringMats = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
+  const outerMats = useRef<(THREE.MeshBasicMaterial | null)[]>([]);
 
-    const shaderArgs = useMemo(() => ({
-        uniforms: {
-            uTime: { value: 0 },
-            uColor: { value: new THREE.Color("#00ffff") }
-        },
-        vertexShader: `
-            varying vec2 vUv;
-            void main() {
-                vUv = uv;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }
-        `,
-        fragmentShader: `
-            uniform float uTime;
-            uniform vec3 uColor;
-            varying vec2 vUv;
-            
-            void main() {
-                float grid = step(0.98, fract(vUv.x * 20.0)) + step(0.98, fract(vUv.y * 20.0 + uTime));
-                float fade = 1.0 - vUv.y;
-                vec3 color = uColor * grid * fade;
-                gl_FragColor = vec4(color, grid * fade * 0.5);
-            }
-        `,
-        transparent: true,
-    }), []);
-
-    return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2, -10]}>
-            <planeGeometry args={[40, 60]} />
-            <shaderMaterial ref={materialRef} {...shaderArgs} />
-        </mesh>
-    );
-}
-
-function GameWorld({ gameState, onGameOver, onScore, traits, walletScore }: GameProps) {
-  const { viewport, mouse } = useThree();
-  const shipPos = useRef(new THREE.Vector3(0, 0, 5));
-  
-  // Game Entities
-  const [obstacles, setObstacles] = useState<{ id: number, pos: THREE.Vector3 }[]>([]);
-  const [coins, setCoins] = useState<{ id: number, pos: THREE.Vector3 }[]>([]);
-  
-  // Gameplay modifiers from traits
-  const baseSpeed = useMemo(() => {
-    let speed = WORLD_SPEED_BASE;
-    if (traits?.hyperactiveDegen) speed *= 1.2; // Faster start for degens
-    return speed;
-  }, [traits]);
-
-  const scoreMultiplier = useMemo(() => {
-    let mult = 1.0;
-    if (traits?.isWhale) mult += 0.2;
-    if (traits?.isBlueChip) mult += 0.1;
-    if (traits?.planetTier === 'binary_sun') mult += 0.5;
-    return mult;
-  }, [traits]);
-  
-  // Refs for logic loop
-  const stateRef = useRef({
-    score: 0,
-    speed: baseSpeed,
-    lastSpawn: 0,
-    gameOver: false
+  useFrame((state) => {
+    const wells = wellsRef.current;
+    const active = activeWellRef.current;
+    for (let i = 0; i < MAX_WELLS; i++) {
+      const g = groupRefs.current[i];
+      if (!g) continue;
+      if (i >= wells.length) { g.visible = false; continue; }
+      g.visible = true;
+      const w = wells[i];
+      const isActive = i === active;
+      g.position.set(w.x, w.y, 0);
+      const s = isActive ? 1.0 + Math.sin(state.clock.elapsedTime * 5) * 0.12 : 0.5;
+      g.scale.setScalar(s);
+      const ring = ringRefs.current[i];
+      if (ring) ring.rotation.z += isActive ? 0.03 : 0.005;
+      const cm = coreMats.current[i];
+      if (cm) { cm.color.setStyle(w.color); cm.opacity = isActive ? 1.0 : 0.2; }
+      const rm = ringMats.current[i];
+      if (rm) { rm.color.setStyle(w.color); rm.opacity = isActive ? 0.6 : 0.1; }
+      const om = outerMats.current[i];
+      if (om) { om.color.setStyle(w.color); om.opacity = isActive ? 0.25 : 0.05; }
+    }
   });
 
-  // Reset logic
-  useEffect(() => {
-    if (gameState === "start") {
-      setObstacles([]);
-      setCoins([]);
-      stateRef.current = { score: 0, speed: baseSpeed, lastSpawn: 0, gameOver: false };
-      onScore(0);
-    }
-  }, [gameState, baseSpeed]);
-
-  useFrame((state, delta) => {
-    if (gameState !== "playing") return;
-
-    const time = state.clock.getElapsedTime();
-    const s = stateRef.current;
-    
-    // Increase speed over time (difficulty curve)
-    s.speed = baseSpeed + (s.score * 0.00005);
-
-    // Spawn Logic
-    // Faster speed = faster spawning to keep density consistent-ish
-    if (time - s.lastSpawn > (1.0 / s.speed) * 0.6) {
-      s.lastSpawn = time;
-      
-      const spawnX = randomRange(-GAME_BOUNDS_X, GAME_BOUNDS_X);
-      const spawnZ = -30;
-      
-      // Coin spawn rate increases slightly with wallet score (luck)
-      const luckBonus = Math.min((walletScore || 0) / 5000, 0.1); 
-      if (Math.random() < (0.3 + luckBonus)) {
-        // Spawn Coin
-        setCoins(prev => [...prev, { id: Date.now(), pos: new THREE.Vector3(spawnX, 0, spawnZ) }]);
-      } else {
-        // Spawn Obstacle
-        setObstacles(prev => [...prev, { id: Date.now(), pos: new THREE.Vector3(spawnX, 0, spawnZ) }]);
-      }
-    }
-
-    // Move Entities & Collision Detection
-    setObstacles(prev => prev.map(o => {
-      o.pos.z += s.speed * 20 * delta;
-      return o;
-    }).filter(o => {
-      // Collision
-      if (o.pos.z > 3 && o.pos.z < 7) {
-        if (Math.abs(o.pos.x - shipPos.current.x) < 1.2) {
-          if (!s.gameOver) {
-            s.gameOver = true;
-            onGameOver(Math.floor(s.score));
-          }
-        }
-      }
-      return o.pos.z < 10;
-    }));
-
-    setCoins(prev => prev.map(c => {
-      c.pos.z += s.speed * 20 * delta;
-      return c;
-    }).filter(c => {
-      // Collection
-      if (c.pos.z > 3 && c.pos.z < 7) {
-        if (Math.abs(c.pos.x - shipPos.current.x) < 1.5) {
-            // Score calculation
-            const basePoints = 100;
-            s.score += basePoints * scoreMultiplier;
-            onScore(Math.floor(s.score));
-            return false; // Remove
-        }
-      }
-      return c.pos.z < 10;
-    }));
-    
-    // Passive score accumulation for surviving
-    s.score += s.speed * 10 * delta * scoreMultiplier;
-    onScore(Math.floor(s.score));
-  });
-
-  const targetX = (mouse.x * viewport.width) / 2;
-
+  const segs = IS_MOBILE ? 12 : 32;
   return (
     <>
-      <color attach="background" args={["#050505"]} />
-      <fog attach="fog" args={["#050505", 5, 40]} />
-      
-      <ambientLight intensity={0.5} />
-      <pointLight position={[10, 10, 10]} intensity={1} />
-      
-      <MovingGrid speed={stateRef.current.speed} />
-      <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
-
-      <Ship position={shipPos} targetX={targetX} traits={traits} />
-      
-      {obstacles.map(o => <Obstacle key={o.id} position={o.pos} onHit={() => {}} />)}
-      {coins.map(c => <Coin key={c.id} position={c.pos} />)}
-      
-      <EffectComposer disableNormalPass>
-        <Bloom luminanceThreshold={0.2} mipmapBlur intensity={1.5} radius={0.5} />
-        <ChromaticAberration offset={new THREE.Vector2(0.002, 0.002)} />
-        <Noise opacity={0.05} />
-        <Vignette eskil={false} offset={0.1} darkness={1.1} />
-      </EffectComposer>
+      {Array.from({ length: MAX_WELLS }, (_, i) => (
+        <group key={i} ref={el => { groupRefs.current[i] = el; }} visible={false}>
+          <mesh>
+            <circleGeometry args={[0.4, segs]} />
+            <meshBasicMaterial ref={el => { coreMats.current[i] = el; }} transparent />
+          </mesh>
+          <mesh ref={el => { ringRefs.current[i] = el; }}>
+            <ringGeometry args={[0.6, 0.75, 6]} />
+            <meshBasicMaterial ref={el => { ringMats.current[i] = el; }} transparent wireframe />
+          </mesh>
+          <mesh>
+            <ringGeometry args={[1.0, 1.15, segs]} />
+            <meshBasicMaterial ref={el => { outerMats.current[i] = el; }} transparent />
+          </mesh>
+        </group>
+      ))}
     </>
   );
 }
 
-export default function CosmicRunnerScene(props: GameProps) {
+// ─── Static star field (simple points, no drei Stars overhead) ──
+function SimpleStars({ count }: { count: number }) {
+  const positions = useMemo(() => {
+    const arr = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const r = 20 + Math.random() * 40;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      arr[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      arr[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      arr[i * 3 + 2] = -5 - Math.random() * 25;
+    }
+    return arr;
+  }, [count]);
   return (
-    <div className="absolute inset-0 w-full h-full">
-      <Canvas shadows camera={{ position: [0, 2, 10], fov: 45 }}>
-        <GameWorld {...props} />
-      </Canvas>
-    </div>
+    <points>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} count={count} />
+      </bufferGeometry>
+      <pointsMaterial color="#aaccff" size={IS_MOBILE ? 0.15 : 0.1} transparent opacity={0.5} sizeAttenuation />
+    </points>
   );
 }
+
+// ─── Background nebula grid (desktop only) ───────────────────
+function NebulaGrid() {
+  const matRef = useRef<THREE.ShaderMaterial>(null);
+  useFrame((state) => { if (matRef.current) matRef.current.uniforms.uTime.value = state.clock.elapsedTime; });
+  const args = useMemo(() => ({
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `
+      uniform float uTime; varying vec2 vUv;
+      void main(){
+        vec2 p = vUv * 20.0;
+        float gx = step(0.95, fract(p.x));
+        float gy = step(0.95, fract(p.y));
+        float grid = max(gx, gy);
+        float d = length(vUv - 0.5) * 2.0;
+        float fade = 1.0 - smoothstep(0.3, 1.0, d);
+        float pulse = 0.5 + 0.5 * sin(uTime * 0.3 + d * 3.0);
+        float alpha = grid * fade * 0.06 * pulse;
+        gl_FragColor = vec4(0.2, 0.5, 0.8, alpha);
+      }`,
+    transparent: true,
+  }), []);
+  return (
+    <mesh position={[0, 0, -1]}>
+      <planeGeometry args={[40, 40]} />
+      <shaderMaterial ref={matRef} {...args} depthWrite={false} />
+    </mesh>
+  );
+}
+
+// ─── Main Game World (all physics in ONE useFrame, zero React state for per-frame data) ──
+function GameWorld({ gameState, onGameOver, onScore, traits }: GameProps) {
+  const shipPos = useRef({ x: 4, y: 0 });
+  const shipVel = useRef({ x: 0, y: 6 });
+  const shipAngle = useRef(Math.PI / 2);
+
+  // Object Pool for asteroids to prevent GC
+  // We allocate a fixed array of objects once and toggle 'alive' flag
+  const poolSize = MAX_ASTEROIDS;
+  const asteroidPool = useRef<AsteroidData[]>([]);
+  // Initialize pool once
+  useMemo(() => {
+    asteroidPool.current = Array.from({ length: poolSize }, () => ({
+      x: 0, y: 0, vx: 0, vy: 0, r: 0, rot: 0, rotSpeed: 0, alive: false
+    }));
+  }, [poolSize]);
+
+  // Wells also in refs
+  const wellsRef = useRef<Well[]>([
+    { x: -3.5, y: 0, color: WELL_COLORS[0] },
+    { x: 4, y: 3, color: WELL_COLORS[1] },
+  ]);
+  const activeWellRef = useRef(0);
+
+  const tierColor = traits?.planetTier ? TIER_COLORS[traits.planetTier] || "#06b6d4" : "#06b6d4";
+  const scoreMult = useMemo(() => {
+    let m = 1.0;
+    if (traits?.isWhale) m += 0.15;
+    if (traits?.isBlueChip) m += 0.1;
+    if (traits?.planetTier === "binary_sun") m += 0.3;
+    return m;
+  }, [traits]);
+
+  const gs = useRef({
+    score: 0, elapsed: 0, gameOver: false,
+    spawnTimer: 0, wellTimer: 0, difficulty: 1,
+    wellMoveCount: 0, lastReportedScore: -1,
+  });
+
+  // Click/tap/space to switch gravity well
+  useEffect(() => {
+    if (gameState !== "playing") return;
+    const handler = () => {
+      activeWellRef.current = (activeWellRef.current + 1) % wellsRef.current.length;
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.code === "Space" || e.key === " ") { e.preventDefault(); handler(); } };
+    const onMouse = () => handler();
+    const onTouch = () => handler();
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onMouse);
+    window.addEventListener("touchstart", onTouch, { passive: true });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onMouse);
+      window.removeEventListener("touchstart", onTouch);
+    };
+  }, [gameState]);
+
+  // Reset
+  useEffect(() => {
+    if (gameState === "playing") {
+      shipPos.current = { x: 4, y: 0 };
+      shipVel.current = { x: 0, y: 6 };
+      shipAngle.current = Math.PI / 2;
+      
+      // Reset pool
+      for (const a of asteroidPool.current) a.alive = false;
+      
+      activeWellRef.current = 0;
+      wellsRef.current = [
+        { x: -3.5, y: 0, color: WELL_COLORS[0] },
+        { x: 4, y: 3, color: WELL_COLORS[1] },
+      ];
+      gs.current = {
+        score: 0, elapsed: 0, gameOver: false,
+        spawnTimer: 0, wellTimer: 0, difficulty: 1,
+        wellMoveCount: 0, lastReportedScore: -1,
+      };
+      onScore(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState]);
+
+  // Store callbacks in refs to avoid stale closures
+  const onScoreRef = useRef(onScore);
+  onScoreRef.current = onScore;
+  const onGameOverRef = useRef(onGameOver);
+  onGameOverRef.current = onGameOver;
+
+  // ─── SINGLE useFrame for ALL physics + asteroid management ───
+  useFrame((_, delta) => {
+    if (gameState !== "playing" || gs.current.gameOver) return;
+    const dt = Math.min(delta, 0.033);
+    const s = gs.current;
+    s.elapsed += dt;
+    s.difficulty = 1 + s.elapsed * 0.018;
+
+    // Score = survival time (throttle reporting to ~4x/sec)
+    s.score += dt * 10 * s.difficulty * scoreMult;
+    const flooredScore = Math.floor(s.score);
+    if (flooredScore !== s.lastReportedScore) {
+      s.lastReportedScore = flooredScore;
+      onScoreRef.current(flooredScore);
+    }
+
+    // Gravity pull toward active well
+    const w = wellsRef.current[activeWellRef.current];
+    if (w) {
+      const dx = w.x - shipPos.current.x;
+      const dy = w.y - shipPos.current.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0.15) {
+        const force = WELL_GRAV / Math.max(dist * dist, 0.8);
+        shipVel.current.x += (dx / dist) * force * dt;
+        shipVel.current.y += (dy / dist) * force * dt;
+      }
+    }
+
+    // Damping + speed cap
+    const damp = 0.9985;
+    shipVel.current.x *= damp;
+    shipVel.current.y *= damp;
+    const spd = Math.sqrt(shipVel.current.x ** 2 + shipVel.current.y ** 2);
+    const maxSpd = 15 + s.elapsed * 0.05;
+    if (spd > maxSpd) {
+      const ratio = maxSpd / spd;
+      shipVel.current.x *= ratio;
+      shipVel.current.y *= ratio;
+    }
+
+    // Move ship
+    shipPos.current.x += shipVel.current.x * dt;
+    shipPos.current.y += shipVel.current.y * dt;
+    shipAngle.current = Math.atan2(shipVel.current.y, shipVel.current.x);
+
+    // Boundary check
+    const shipDist = Math.sqrt(shipPos.current.x ** 2 + shipPos.current.y ** 2);
+    if (shipDist > FIELD) {
+      s.gameOver = true;
+      onGameOverRef.current(Math.floor(s.score));
+      return;
+    }
+
+    // Spawn asteroids (using Object Pool)
+    s.spawnTimer += dt;
+    const spawnRate = Math.max(0.3, 1.8 - s.elapsed * 0.012);
+    if (s.spawnTimer > spawnRate) {
+      s.spawnTimer = 0;
+      const count = s.elapsed > 40 ? (Math.random() < 0.3 ? 2 : 1) : 1;
+      const pool = asteroidPool.current;
+      let spawned = 0;
+      for (let i = 0; i < pool.length && spawned < count; i++) {
+        if (!pool[i].alive) {
+          const angle = rand(0, Math.PI * 2);
+          const spawnDist = FIELD + 2;
+          const speed = rand(1.5, 3.5) * Math.sqrt(s.difficulty);
+          const targetAngle = angle + Math.PI + rand(-0.6, 0.6);
+          
+          // Re-hydrate object in place
+          const a = pool[i];
+          a.x = Math.cos(angle) * spawnDist;
+          a.y = Math.sin(angle) * spawnDist;
+          a.vx = Math.cos(targetAngle) * speed;
+          a.vy = Math.sin(targetAngle) * speed;
+          a.r = rand(ASTEROID_R_MIN, ASTEROID_R_MAX);
+          a.rot = 0;
+          a.rotSpeed = rand(1, 4);
+          a.alive = true;
+          
+          spawned++;
+        }
+      }
+    }
+
+    // Move wells periodically
+    s.wellTimer += dt;
+    const wellInterval = Math.max(5, 10 - s.elapsed * 0.04);
+    if (s.wellTimer > wellInterval) {
+      s.wellTimer = 0;
+      s.wellMoveCount++;
+      const safeRange = FIELD * 0.55;
+      const wls = wellsRef.current;
+      for (let i = 0; i < wls.length; i++) {
+        wls[i].x = rand(-safeRange, safeRange);
+        wls[i].y = rand(-safeRange, safeRange);
+      }
+      if (s.wellMoveCount >= 3 && wls.length < 3) {
+        wls.push({ x: rand(-safeRange, safeRange), y: rand(-safeRange, safeRange), color: WELL_COLORS[2] });
+      }
+      if (s.wellMoveCount >= 6 && wls.length < 4) {
+        wls.push({ x: rand(-safeRange, safeRange), y: rand(-safeRange, safeRange), color: WELL_COLORS[3] });
+      }
+    }
+
+    // Move asteroids & check collisions
+    const pool = asteroidPool.current;
+    for (let i = 0; i < pool.length; i++) {
+      const a = pool[i];
+      if (!a.alive) continue;
+      
+      a.x += a.vx * dt;
+      a.y += a.vy * dt;
+      a.rot += dt * a.rotSpeed;
+      
+      // Cull out-of-bounds (deactivate)
+      if (a.x * a.x + a.y * a.y > (FIELD + 5) * (FIELD + 5)) {
+        a.alive = false;
+        continue;
+      }
+      
+      // Collision check
+      const cdx = a.x - shipPos.current.x;
+      const cdy = a.y - shipPos.current.y;
+      if (cdx * cdx + cdy * cdy < (HIT_R + a.r) * (HIT_R + a.r)) {
+        s.gameOver = true;
+        onGameOverRef.current(Math.floor(s.score));
+        return;
+      }
+    }
+  });
+
+  return (
+    <>
+      <color attach="background" args={["#050510"]} />
+      <ambientLight intensity={0.4} />
+      <SimpleStars count={IS_MOBILE ? 150 : 2000} />
+      {!IS_MOBILE && <NebulaGrid />}
+      <BoundaryRing shipPosRef={shipPos} />
+      <WellVisuals wellsRef={wellsRef} activeWellRef={activeWellRef} />
+      <GravityTether shipPosRef={shipPos} wellsRef={wellsRef} activeWellRef={activeWellRef} />
+      <ShipMesh posRef={shipPos} angleRef={shipAngle} color={tierColor} />
+      <AsteroidInstances asteroidsRef={asteroidPool} />
+    </>
+  );
+}
+
+// ─── Limit frame rate on mobile to save battery & reduce heat ──
+function FrameLimiter() {
+  const { invalidate, gl } = useThree();
+  useEffect(() => {
+    if (!IS_MOBILE) return;
+    // On mobile, cap to 30fps by using manual frame loop
+    gl.setAnimationLoop(null);
+    let raf = 0;
+    let last = 0;
+    const FPS = 30;
+    const interval = 1000 / FPS;
+    const loop = (time: number) => {
+      raf = requestAnimationFrame(loop);
+      if (time - last < interval) return;
+      last = time - ((time - last) % interval);
+      invalidate();
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [gl, invalidate]);
+  return null;
+}
+
+const CosmicRunnerScene = React.memo(function CosmicRunnerScene(props: GameProps) {
+  return (
+    <div className="absolute inset-0 w-full h-full">
+      <Suspense fallback={null}>
+        <Canvas
+          orthographic
+          camera={{ zoom: 28, position: [0, 0, 50], near: 0.1, far: 100 }}
+          gl={{ antialias: false, powerPreference: "high-performance", alpha: false }}
+          dpr={IS_MOBILE ? [1, 1] : [1, 1.5]}
+          frameloop="always"
+        >
+          <GameWorld {...props} />
+        </Canvas>
+      </Suspense>
+    </div>
+  );
+});
+
+export default CosmicRunnerScene;

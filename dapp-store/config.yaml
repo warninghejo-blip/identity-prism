@@ -16,7 +16,7 @@ app:
     - purpose: icon
       uri: ./media/app_icon.png
 release:
-  address: 7VASa6Q3z7Ux8ZRVQXcqwkCaDESHgRCQJVw11rd34UUf
+  address: BnZZMG7LUNuMNkTKFPdwGU4PLqKZ4oBc7y13wQR6QcsK
   media:
     - purpose: icon
       uri: ./media/release_icon.png
@@ -45,6 +45,8 @@ release:
 
         Features:
         - 3D interactive planet visualization matching your tier
+        - Orbit Survival — dodge asteroids and black holes in a skill-based arcade game,
+          commit high scores on-chain via Memo transactions with MagicBlock session proofs
         - Mint your identity as a compressed NFT (cNFT) — pay with SOL or SKR (50% off)
         - Black Hole token burner — warp into a 3D black hole and burn unwanted SPL tokens
         - Solana Actions & Blinks — share your card as an interactive link
@@ -52,17 +54,19 @@ release:
         - OG badges for Seeker Genesis and Chapter 2 Preorder holders
         - Share to Twitter with auto-generated card image
         - Full Solana Mobile Wallet Adapter (MWA) support for Seeker
+        - All transactions simulate before prompting to sign — no wasted approvals
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
-        v1.0.24: Black Hole token burner, space curtain transition, improved wallet
-        dismiss detection for Seeker MWA, faster mint flow, no more black screen flashes.
+        v1.0.26: Optimized boot time — app loads to usable state in under 5 seconds.
+        Lazy-loaded heavy components (Three.js, wallet infrastructure). Instant visual
+        preloader matching landing page. Non-blocking font loading.
       saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.24
-    version_code: 25
+    version: 1.0.26
+    version_code: 37
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
@@ -75,9 +79,12 @@ solana_mobile_dapp_publisher_portal:
     5. Tap "Black Hole" portal on the card to enter the token burner — select any SPL token and burn it.
     6. Tap Mint to mint a cNFT identity card. Try dismissing the wallet prompt to verify instant cancel detection.
     7. Use Share to verify the Twitter share with card image works.
+    8. Tap the game icon to enter Orbit Survival — tap/space to reverse orbit direction.
+    9. After game over, try "Save Score On-Chain" with zero balance — verify insufficient SOL warning appears.
+    10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
 lastSubmittedVersionOnChain:
-  address: 7VASa6Q3z7Ux8ZRVQXcqwkCaDESHgRCQJVw11rd34UUf
-  version_code: 25
-  apk_hash: LMI4lv/ojrLXwayz7DinyLV85qWe5aqOwHxxmnUKyDU=
+  address: BnZZMG7LUNuMNkTKFPdwGU4PLqKZ4oBc7y13wQR6QcsK
+  version_code: 37
+  apk_hash: Y9kSM8DjAi8VU2F2T5ANgTCTwMtuVmkgjdHTtaYraJc=
 lastUpdatedVersionOnStore:
-  address: 7VASa6Q3z7Ux8ZRVQXcqwkCaDESHgRCQJVw11rd34UUf
+  address: BnZZMG7LUNuMNkTKFPdwGU4PLqKZ4oBc7y13wQR6QcsK

@@ -31,7 +31,7 @@ TARGET_USERS = [
 SNIPER_INTERVAL_RANGE = (25 * 60, 40 * 60)
 TREND_INTERVAL_RANGE = (25 * 60, 40 * 60)
 LOOP_SLEEP_RANGE = (3 * 60, 8 * 60)
-MENTION_POLL_INTERVAL = int(os.getenv('MENTION_POLL_INTERVAL', str(30 * 60)))  # check mentions every 30 min
+MENTION_POLL_INTERVAL = int(os.getenv('MENTION_POLL_INTERVAL', str(15 * 60)))  # check mentions every 15 min
 
 WARMUP_HOURS = int(os.getenv('WARMUP_HOURS', '0'))
 WARMUP_ACTION_RATE = float(os.getenv('WARMUP_ACTION_RATE', '1.0'))
@@ -186,7 +186,7 @@ MAX_IMAGE_DIM = int(os.getenv('MAX_IMAGE_DIM', '1024'))
 RATE_LIMIT_BACKOFF_RANGE = (60 * 60, 120 * 60)  # 1-2h backoff on twikit rate limits
 ENGAGEMENT_COOLDOWN_SECONDS = int(os.getenv('ENGAGEMENT_COOLDOWN_SECONDS', str(60 * 60)))
 POST_HOUR_BLOCK_SECONDS = int(os.getenv('POST_HOUR_BLOCK_SECONDS', str(10 * 60)))
-MIN_POST_INTERVAL_SECONDS = int(os.getenv('MIN_POST_INTERVAL_SECONDS', str(150 * 60)))
+MIN_POST_INTERVAL_SECONDS = int(os.getenv('MIN_POST_INTERVAL_SECONDS', str(60 * 60)))
 
 POST_RETRY_ENABLED = os.getenv('POST_RETRY_ENABLED', 'true').lower() == 'true'
 POST_RETRY_INTERVAL_RANGE = (

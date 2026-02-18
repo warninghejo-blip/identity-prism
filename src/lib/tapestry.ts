@@ -6,11 +6,58 @@
  * Docs: https://docs.usetapestry.dev/
  */
 
-const TAPESTRY_API_URL = 'https://api.usetapestry.dev/v1';
+import { getAppBaseUrl, getHeliusProxyUrl } from '@/constants';
+
 const TAPESTRY_API_KEY = (import.meta.env.VITE_TAPESTRY_API_KEY ?? '').trim();
 const TAPESTRY_NAMESPACE = 'identity_prism';
 
 export const isTapestryEnabled = () => Boolean(TAPESTRY_API_KEY);
+
+/**
+ * Resolve Tapestry base URL. Prefer server proxy to avoid CORS.
+ * Falls back to direct API if no proxy is available.
+ */
+type TapestryBaseCandidate = {
+  baseUrl: string;
+  isProxy: boolean;
+};
+
+function normalizeBase(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+function buildTapestryBaseCandidates(): TapestryBaseCandidate[] {
+  const out: TapestryBaseCandidate[] = [];
+  const seen = new Set<string>();
+
+  const push = (url: string, isProxy: boolean) => {
+    const normalized = normalizeBase(url);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push({ baseUrl: normalized, isProxy });
+  };
+
+  // Only use server-side proxy to avoid CORS issues.
+  // Direct calls to api.usetapestry.dev are blocked by CORS from browser.
+  const proxy = getHeliusProxyUrl();
+  if (proxy) push(`${proxy}/api/tapestry`, true);
+
+  const appBase = getAppBaseUrl();
+  if (appBase) push(`${appBase}/api/tapestry`, true);
+
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    push(`${window.location.origin}/api/tapestry`, true);
+  }
+
+  return out;
+}
+
+function shouldRetryWithNextCandidate(status: number, bodyPreview: string, isProxy: boolean): boolean {
+  if (!isProxy) return false;
+  // Don't retry on 500 — that's the upstream Tapestry error, retrying won't help
+  if ([404, 405, 408, 429, 502, 503, 504].includes(status)) return true;
+  return /^\s*</.test(bodyPreview);
+}
 
 // ── Types ──
 
@@ -49,20 +96,71 @@ export interface IdentityData {
 // ── API helpers ──
 
 async function tapestryFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const separator = path.includes('?') ? '&' : '?';
-  const url = `${TAPESTRY_API_URL}${path}${separator}apiKey=${TAPESTRY_API_KEY}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`Tapestry API ${res.status}: ${text}`);
+  const method = String(options?.method ?? 'GET').toUpperCase();
+  const candidates = buildTapestryBaseCandidates();
+  let lastError: Error | null = null;
+
+  for (let idx = 0; idx < candidates.length; idx += 1) {
+    const candidate = candidates[idx];
+    const isLast = idx === candidates.length - 1;
+    const url = candidate.isProxy
+      ? `${candidate.baseUrl}${path}`
+      : `${candidate.baseUrl}${path}${path.includes('?') ? '&' : '?'}apiKey=${TAPESTRY_API_KEY}`;
+
+    const hasBody = options?.body !== undefined && options?.body !== null;
+    const requestHeaders = new Headers(options?.headers ?? undefined);
+    if (hasBody && !requestHeaders.has('Content-Type')) {
+      requestHeaders.set('Content-Type', 'application/json');
+    }
+    if (!hasBody && requestHeaders.has('Content-Type')) {
+      requestHeaders.delete('Content-Type');
+    }
+
+    let requestOptions: RequestInit = {
+      ...options,
+      method,
+      headers: requestHeaders,
+    };
+
+    // If a local build is calling a remote proxy URL, make POST a simple CORS request
+    // (text/plain) to avoid brittle OPTIONS preflight failures in edge deploy setups.
+    if (candidate.isProxy && method === 'POST' && typeof window !== 'undefined') {
+      const requestOrigin = new URL(url, window.location.origin).origin;
+      const isCrossOrigin = requestOrigin !== window.location.origin;
+      if (isCrossOrigin) {
+        requestOptions = {
+          ...requestOptions,
+          headers: {
+            'Content-Type': 'text/plain;charset=UTF-8',
+          },
+          body: typeof options?.body === 'string' ? options.body : JSON.stringify(options?.body ?? {}),
+        };
+      }
+    }
+
+    try {
+      const res = await fetch(url, requestOptions);
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        const preview = text.slice(0, 240);
+        if (!isLast && shouldRetryWithNextCandidate(res.status, preview, candidate.isProxy)) {
+          lastError = new Error(`Tapestry API ${res.status}: ${preview}`);
+          continue;
+        }
+        throw new Error(`Tapestry API ${res.status}: ${text}`);
+      }
+      return res.json() as Promise<T>;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      if (!isLast) {
+        lastError = err;
+        continue;
+      }
+      throw err;
+    }
   }
-  return res.json();
+
+  throw lastError ?? new Error('Tapestry request failed');
 }
 
 // ── Profile ──
@@ -175,4 +273,125 @@ export async function publishIdentityToTapestry(data: IdentityData): Promise<{
   const profileId = profile.profile?.id ?? profile.profile?.username;
   const { id: contentId } = await publishScanContent(profileId, data);
   return { profile, contentId };
+}
+
+// ── Game Score Publishing (Orbit Survival) ──
+
+export interface GameScoreData {
+  walletAddress: string;
+  score: number;
+  survivalTime: string;
+  txSignature?: string;
+  sessionProofId?: string;
+  sessionProofHash?: string;
+  sessionSeed?: string;
+  sessionSlot?: number;
+  sessionProofUrl?: string;
+}
+
+/**
+ * Publish a game high score to Tapestry social graph.
+ */
+export async function publishGameScore(data: GameScoreData): Promise<{ contentId: string }> {
+  if (!isTapestryEnabled()) throw new Error('Tapestry API key not configured');
+
+  const username = `prism_${data.walletAddress.slice(0, 8).toLowerCase()}`;
+
+  let profile: TapestryProfile;
+  try {
+    profile = await tapestryFetch<TapestryProfile>('/profiles/findOrCreate', {
+      method: 'POST',
+      body: JSON.stringify({
+        walletAddress: data.walletAddress,
+        username,
+        bio: `Orbit Survival pilot | Best: ${data.survivalTime}`,
+        blockchain: 'SOLANA',
+        execution: 'FAST_UNCONFIRMED',
+      }),
+    });
+  } catch {
+    throw new Error('Failed to create Tapestry profile');
+  }
+
+  const profileId = profile.profile?.id ?? profile.profile?.username;
+  const content = `🛸 Survived ${data.survivalTime} in Orbit Survival! Score: ${data.score}s${data.txSignature ? ` | Verified on-chain ✅` : ''}${data.sessionProofId ? ' | MagicBlock session proof 🔐' : ''} | Can you beat me? #OrbitSurvival #IdentityPrism`;
+
+  const properties = [
+    { key: 'type', value: 'game_score' },
+    { key: 'game', value: 'orbit_survival' },
+    { key: 'walletAddress', value: data.walletAddress },
+    { key: 'score', value: String(data.score) },
+    { key: 'survivalTime', value: data.survivalTime },
+    ...(data.txSignature ? [{ key: 'txSignature', value: data.txSignature }] : []),
+    ...(data.sessionProofId ? [{ key: 'sessionProofId', value: data.sessionProofId }] : []),
+    ...(data.sessionProofHash ? [{ key: 'sessionProofHash', value: data.sessionProofHash }] : []),
+    ...(data.sessionSeed ? [{ key: 'sessionSeed', value: data.sessionSeed }] : []),
+    ...(data.sessionSlot != null ? [{ key: 'sessionSlot', value: String(data.sessionSlot) }] : []),
+    ...(data.sessionProofUrl ? [{ key: 'sessionProofUrl', value: data.sessionProofUrl }] : []),
+    { key: 'appUrl', value: 'https://identityprism.xyz/game' },
+  ];
+
+  const result = await tapestryFetch<{ content: { id: string } }>('/contents/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      profileId,
+      content,
+      contentType: 'text',
+      blockchain: 'SOLANA',
+      execution: 'FAST_UNCONFIRMED',
+      customProperties: properties,
+    }),
+  });
+
+  return { contentId: result.content?.id ?? 'unknown' };
+}
+
+/**
+ * Challenge a friend by posting a score and tagging another wallet.
+ */
+export async function challengeFriend(
+  senderAddress: string,
+  friendAddress: string,
+  score: number,
+  survivalTime: string,
+): Promise<{ contentId: string }> {
+  if (!isTapestryEnabled()) throw new Error('Tapestry API key not configured');
+
+  const username = `prism_${senderAddress.slice(0, 8).toLowerCase()}`;
+  const friendShort = `${friendAddress.slice(0, 4)}...${friendAddress.slice(-4)}`;
+
+  const profile = await tapestryFetch<TapestryProfile>('/profiles/findOrCreate', {
+    method: 'POST',
+    body: JSON.stringify({
+      walletAddress: senderAddress,
+      username,
+      bio: `Orbit Survival pilot`,
+      blockchain: 'SOLANA',
+      execution: 'FAST_UNCONFIRMED',
+    }),
+  });
+
+  const profileId = profile.profile?.id ?? profile.profile?.username;
+  const content = `🎯 I challenge ${friendShort} to beat my ${survivalTime} in Orbit Survival! Think you can survive longer? #OrbitSurvival #Challenge`;
+
+  const result = await tapestryFetch<{ content: { id: string } }>('/contents/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      profileId,
+      content,
+      contentType: 'text',
+      blockchain: 'SOLANA',
+      execution: 'FAST_UNCONFIRMED',
+      customProperties: [
+        { key: 'type', value: 'game_challenge' },
+        { key: 'game', value: 'orbit_survival' },
+        { key: 'challenger', value: senderAddress },
+        { key: 'challenged', value: friendAddress },
+        { key: 'score', value: String(score) },
+        { key: 'survivalTime', value: survivalTime },
+      ],
+    }),
+  });
+
+  return { contentId: result.content?.id ?? 'unknown' };
 }

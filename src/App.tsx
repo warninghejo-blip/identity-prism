@@ -1,45 +1,13 @@
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
-import { Canvas } from '@react-three/fiber';
-import { EffectComposer, Bloom, ChromaticAberration, Vignette, Noise } from '@react-three/postprocessing';
-import * as THREE from 'three';
-import { VISUAL_CONFIG as GLOBAL_VISUAL_CONFIG } from "@/constants";
 
 const queryClient = new QueryClient();
 
-const SceneContent = () => {
-  return (
-    <>
-      <color attach="background" args={["#050505"]} />
-      <ambientLight intensity={0.2} />
-    </>
-  );
-};
-
 const App = () => {
-  const [isMounted, setIsMounted] = useState(false);
-  useEffect(() => {
-    setIsMounted(true);
-    // Dismiss preloader after first paint (double-rAF).
-    // Index.tsx has its own earlier dismissal for the main page;
-    // this covers other pages like /verify that don't mount Index.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const preloader = document.getElementById('app-preloader');
-      if (preloader) {
-        preloader.style.opacity = '0';
-        setTimeout(() => preloader.remove(), 400);
-      }
-    }));
-  }, []);
-
-  const isMobile = useMemo(
-    () => /android|iphone|ipad|ipod/i.test(navigator.userAgent.toLowerCase()),
-    []
-  );
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -55,50 +23,6 @@ const App = () => {
             offset={{ bottom: 16 }}
             mobileOffset={{ bottom: 12, left: 16, right: 16 }}
           />
-
-          {isMounted && (
-            <div className="fixed inset-0 pointer-events-none z-0">
-              <Canvas
-                shadows
-                camera={{ position: [0, 0, 20], fov: 45 }}
-                gl={{
-                  antialias: !isMobile,
-                  powerPreference: "high-performance",
-                  alpha: true,
-                }}
-                dpr={isMobile ? [1, 1] : [1, 2]}
-                onCreated={({ gl }) => {
-                  const canvas = gl.domElement;
-                  canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); });
-                }}
-              >
-                <Suspense fallback={null}>
-                  <SceneContent />
-                  {!isMobile && (
-                    <EffectComposer disableNormalPass multisampling={0}>
-                      <Bloom
-                        intensity={GLOBAL_VISUAL_CONFIG.POST_PROCESSING.BLOOM_INTENSITY}
-                        luminanceThreshold={GLOBAL_VISUAL_CONFIG.POST_PROCESSING.BLOOM_LUMINANCE_THRESHOLD}
-                        luminanceSmoothing={GLOBAL_VISUAL_CONFIG.POST_PROCESSING.BLOOM_LUMINANCE_SMOOTHING}
-                      />
-                      <ChromaticAberration
-                        offset={new THREE.Vector2(
-                          GLOBAL_VISUAL_CONFIG.POST_PROCESSING.CHROMATIC_ABERRATION,
-                          0
-                        )}
-                      />
-                      <Vignette
-                        eskil={false}
-                        offset={0.1}
-                        darkness={GLOBAL_VISUAL_CONFIG.POST_PROCESSING.VIGNETTE_DARKNESS}
-                      />
-                      <Noise opacity={GLOBAL_VISUAL_CONFIG.POST_PROCESSING.NOISE_OPACITY} />
-                    </EffectComposer>
-                  )}
-                </Suspense>
-              </Canvas>
-            </div>
-          )}
         </div>
       </TooltipProvider>
     </QueryClientProvider>

@@ -378,6 +378,19 @@ class AIEngine:
             return path
         return path
 
+    def _select_cached_image(self):
+        if not os.path.isdir(MEDIA_DIR):
+            return None
+        candidates = [
+            os.path.join(MEDIA_DIR, name)
+            for name in os.listdir(MEDIA_DIR)
+            if name.startswith('gemini_') and name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+        return candidates[0]
+
     def generate_post_image(self, post_text=None):
         if not GEMINI_IMAGE_MODEL:
             logging.warning('Missing GEMINI_IMAGE_MODEL; skipping image generation.')
@@ -386,17 +399,51 @@ class AIEngine:
         if post_text:
             trimmed = post_text[:120].strip()
             prompt = f'{prompt} Inspired by: {trimmed}'
-        try:
-            response = self._client.models.generate_images(
-                model=GEMINI_IMAGE_MODEL,
-                prompt=prompt,
-            )
-        except Exception as exc:
-            logging.warning('Gemini image generation failed: %s', exc)
+        
+        response = None
+        # Robust retry loop for 503s
+        max_retries = 6
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self._client.models.generate_images(
+                    model=GEMINI_IMAGE_MODEL,
+                    prompt=prompt,
+                )
+                # Google GenAI library might return a response object even on partial failure,
+                # but usually raises exceptions for 500s.
+                if response:
+                    break
+            except Exception as exc:
+                error_str = str(exc)
+                is_503 = '503' in error_str or 'Service Unavailable' in error_str or 'ResourceExhausted' in error_str
+                
+                # Longer backoff for server errors
+                if is_503:
+                    delay = 10 * attempt + random.uniform(1, 5) # 10s, 20s, 30s...
+                else:
+                    delay = 5 * attempt # 5s, 10s...
+                
+                logging.warning(f'Gemini image generation failed (attempt {attempt}/{max_retries}): {exc}. Waiting {delay:.1f}s...')
+                
+                if attempt < max_retries:
+                    time.sleep(delay)
+                else:
+                    logging.error(f'Gemini image generation gave up after {max_retries} attempts.')
+
+        if response is None:
+            cached = self._select_cached_image()
+            if cached:
+                logging.warning('Gemini image unavailable after retries; using cached image: %s', cached)
+                return cached
             return None
+            
         image_bytes = self._extract_image_bytes(response)
         if not image_bytes:
-            logging.warning('Gemini image generation returned no data.')
+            logging.warning('Gemini image generation returned no data (empty bytes).')
+            cached = self._select_cached_image()
+            if cached:
+                logging.warning('Gemini image returned no data; using cached image: %s', cached)
+                return cached
             return None
         os.makedirs(MEDIA_DIR, exist_ok=True)
         filename = f'gemini_{int(time.time())}.png'

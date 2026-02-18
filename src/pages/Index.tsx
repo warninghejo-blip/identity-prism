@@ -1,13 +1,13 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useLocation, Link } from "react-router-dom";
-import { CelestialCard } from "@/components/CelestialCard";
+const CelestialCard = React.lazy(() => import("@/components/CelestialCard").then(m => ({ default: m.CelestialCard })));
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { useWalletData } from "@/hooks/useWalletData";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletReadyState } from "@solana/wallet-adapter-base";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { SolanaMobileWalletAdapterWalletName } from "@solana-mobile/wallet-adapter-mobile";
-import { mintIdentityPrism } from "@/lib/mintIdentityPrism";
+// mintIdentityPrism loaded dynamically in handleMint()
 import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorizationCache";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -76,13 +76,17 @@ const Index = () => {
   const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
   const locState = location.state as Record<string, unknown> | null;
   const shouldResumeFromBlackHole = Boolean(urlAddress) && (Boolean(locState?.fromBlackHole) || storedReturn);
+  const shouldResumeFromGameJump = Boolean(locState?.fromGameJump);
   const [fromBlackHole, setFromBlackHole] = useState(shouldResumeFromBlackHole);
   const returningFromBH = useRef(shouldResumeFromBlackHole);
-  const suppressLoadingRef = useRef(shouldResumeFromBlackHole);
+  const returningFromGameJump = useRef(shouldResumeFromGameJump);
+  const suppressLoadingRef = useRef(shouldResumeFromBlackHole || shouldResumeFromGameJump);
 
   const [isWarping, setIsWarping] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
-    returningFromBH.current && urlAddress ? "ready" : (urlAddress ? "scanning" : "landing")
+    (returningFromBH.current || returningFromGameJump.current) && urlAddress
+      ? "ready"
+      : (urlAddress ? "scanning" : "landing")
   );
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
@@ -103,7 +107,7 @@ const Index = () => {
 
   const [activeAddress, setActiveAddress] = useState<string | undefined>(urlAddress || undefined);
   const didForceDisconnect = useRef(false);
-  const [walletStable, setWalletStable] = useState(Boolean(urlAddress) || returningFromBH.current);
+  const [walletStable, setWalletStable] = useState(Boolean(urlAddress) || returningFromBH.current || returningFromGameJump.current);
 
   // On fresh app open (no URL address, not returning from BlackHole),
   // force-disconnect any auto-connected wallet so user must choose manually.
@@ -111,7 +115,7 @@ const Index = () => {
   useEffect(() => {
     if (didForceDisconnect.current) return;
     didForceDisconnect.current = true;
-    if (!urlAddress && !returningFromBH.current && isConnected) {
+    if (!urlAddress && !returningFromBH.current && !returningFromGameJump.current && isConnected) {
       disconnect().catch(() => {}).finally(() => setTimeout(() => setWalletStable(true), 100));
     } else {
       setWalletStable(true);
@@ -127,17 +131,53 @@ const Index = () => {
     }
   }, [urlAddress]);
 
-  // Dismiss HTML preloader only after this component's first paint.
-  // Double-rAF guarantees the browser has composited our overlay pixels.
-  useEffect(() => {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const preloader = document.getElementById('app-preloader');
-      if (preloader) {
-        preloader.style.opacity = '0';
-        setTimeout(() => preloader.remove(), 400);
-      }
-    }));
+  // Dismiss HTML preloader. For scanning flow (address exists), keep preloader
+  // visible until curtains are ready — it has its own scanning animation.
+  // For landing flow (no address), dismiss after React overlay paints.
+  const preloaderDismissed = useRef(false);
+  const dismissPreloader = useCallback(() => {
+    if (preloaderDismissed.current) return;
+    preloaderDismissed.current = true;
+    const el = document.getElementById('app-preloader');
+    if (!el) return;
+    // Instant removal — no opacity fade. Both preloader and React overlay share
+    // the same #05070a background, so removing the preloader instantly reveals
+    // the overlay underneath with zero visible gap (no black flash).
+    el.style.transition = 'none';
+    el.remove();
   }, []);
+
+  // Dismiss preloader once React overlay is painted on screen.
+  // We wait 3 rAF frames (guarantees at least one real paint) + a small
+  // safety timeout to ensure the overlay is fully composited, even on
+  // slow Seeker GPUs. Only then we remove the preloader instantly.
+  useEffect(() => {
+    if (preloaderDismissed.current) return;
+    if (returningFromBH.current || returningFromGameJump.current) return;
+    if (suppressLoadingRef.current) return;
+    if (!shellRef.current) return;
+    if (viewState !== "landing" && viewState !== "scanning") return;
+
+    let cancelled = false;
+    requestAnimationFrame(() => {
+      if (cancelled) return;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          // Extra 80ms ensures the overlay is composited on slow devices
+          setTimeout(() => { if (!cancelled) dismissPreloader(); }, 80);
+        });
+      });
+    });
+
+    return () => { cancelled = true; };
+  }, [dismissPreloader, viewState]);
+  // Safety: always dismiss preloader after 20s max
+  useEffect(() => {
+    const t = setTimeout(dismissPreloader, 20_000);
+    return () => clearTimeout(t);
+  }, [dismissPreloader]);
 
   useEffect(() => {
     if (!urlAddress) return;
@@ -187,16 +227,24 @@ const Index = () => {
     candidate?.readyState === WalletReadyState.Installed ||
     candidate?.readyState === WalletReadyState.Loadable;
   const preferredMobileWallet = useMemo(() => {
+    if (mobileWallet) return mobileWallet;
     const installed = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Installed);
     if (installed) return installed;
     const loadable = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Loadable);
     if (loadable) return loadable;
-    return mobileWallet;
+    return undefined;
   }, [nonMwaWallets, mobileWallet]);
   const mobileWalletReady = isWalletUsable(mobileWallet);
   const preferredMobileWalletReady = isWalletUsable(preferredMobileWallet);
-  const mobileConnectReady = preferredMobileWalletReady || mobileWalletReady;
-  const preferredDesktopWallet = phantomWallet ?? availableWallets[0];
+  // On Capacitor Android (including Seeker), always allow mobile wallet connect.
+  // MWA adapter may start as Unsupported in WebView and change later.
+  const mobileConnectReady = (isCapacitor && isAndroidDevice) || preferredMobileWalletReady || mobileWalletReady;
+  const preferredDesktopWallet = useMemo(() => {
+    if (phantomWallet?.readyState === WalletReadyState.Installed) return phantomWallet;
+    const installed = nonMwaWallets.find((w) => w.readyState === WalletReadyState.Installed);
+    if (installed) return installed;
+    return phantomWallet ?? nonMwaWallets[0];
+  }, [phantomWallet, nonMwaWallets]);
   const desktopWalletReady = isWalletUsable(preferredDesktopWallet);
   const shouldNudgeMwaAssociation = isCapacitor && isAndroidDevice && !isSeekerDevice;
 
@@ -266,8 +314,17 @@ const Index = () => {
   }, [viewState]);
 
   const handleMobileConnect = useCallback(async () => {
-    const targetWallet = preferredMobileWallet;
-    const targetReady = preferredMobileWalletReady;
+    let targetWallet = preferredMobileWallet;
+    let targetReady = preferredMobileWalletReady;
+
+    // On Capacitor Android (Seeker), fallback to raw MWA adapter even if not detected as ready
+    if ((!targetWallet || !targetReady) && isCapacitor && isAndroidDevice) {
+      const rawMwa = availableWallets.find((w) => w.adapter.name === SolanaMobileWalletAdapterWalletName);
+      if (rawMwa) {
+        targetWallet = rawMwa;
+        targetReady = true;
+      }
+    }
 
     if (!targetWallet || !targetReady) {
       toast.error("Wallet not detected");
@@ -409,7 +466,7 @@ const Index = () => {
         description: err instanceof Error ? err.message : String(err),
       });
     }
-  }, [preferredMobileWallet, preferredMobileWalletReady, select, isConnected, connectedAddress, disconnect, isIosDevice, startMwaAssociationNudge]);
+  }, [preferredMobileWallet, preferredMobileWalletReady, availableWallets, isCapacitor, isAndroidDevice, select, isConnected, connectedAddress, disconnect, isIosDevice, startMwaAssociationNudge]);
 
   const handleDesktopConnect = useCallback(async () => {
     const targetWallet = preferredDesktopWallet;
@@ -426,11 +483,7 @@ const Index = () => {
       }
 
       if (!desktopWalletReady) {
-        if (targetWallet.adapter.name === "Phantom") {
-          window.open("https://phantom.app/", "_blank", "noopener,noreferrer");
-        } else {
-          setWalletModalVisible(true);
-        }
+        setWalletModalVisible(true);
         return;
       }
 
@@ -467,10 +520,63 @@ const Index = () => {
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
 
+  // Phase 0: Return from Prism League via wormhole jump
+  useEffect(() => {
+    if (!returningFromGameJump.current) return;
+    suppressLoadingRef.current = true;
+    dismissPreloader();
+
+    const fadeTunnel = () => {
+      const tunnel = document.getElementById('wormhole-tunnel');
+      if (tunnel) {
+        tunnel.style.transition = 'opacity 0.45s ease-out';
+        tunnel.style.opacity = '0';
+        setTimeout(() => tunnel.remove(), 520);
+      }
+    };
+
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
+    const maxTimer = setTimeout(fadeTunnel, 1300);
+    if (!isLoading && traits) {
+      readyTimer = setTimeout(fadeTunnel, 280);
+    } else {
+      readyTimer = setTimeout(fadeTunnel, 760);
+    }
+
+    return () => {
+      clearTimeout(maxTimer);
+      if (readyTimer) clearTimeout(readyTimer);
+    };
+  }, [isLoading, traits, dismissPreloader]);
+
+  useEffect(() => {
+    if (!returningFromGameJump.current) return;
+
+    const releaseTransitionState = () => {
+      returningFromGameJump.current = false;
+      suppressLoadingRef.current = false;
+      window.history.replaceState({}, '');
+    };
+
+    if (!resolvedAddress) {
+      const t = setTimeout(releaseTransitionState, 280);
+      return () => clearTimeout(t);
+    }
+
+    if (!isLoading && traits) {
+      const t = setTimeout(releaseTransitionState, 260);
+      return () => clearTimeout(t);
+    }
+
+    const safety = setTimeout(releaseTransitionState, 8000);
+    return () => clearTimeout(safety);
+  }, [isLoading, traits, resolvedAddress]);
+
   // Phase 1: Fade wormhole tunnel (max 800ms) to reveal page
   useEffect(() => {
     if (!fromBlackHole) return;
     suppressLoadingRef.current = true;
+    dismissPreloader();
 
     const fadeTunnel = () => {
       const tunnel = document.getElementById('wormhole-tunnel');
@@ -498,7 +604,7 @@ const Index = () => {
       clearTimeout(maxTimer);
       if (readyTimer) clearTimeout(readyTimer);
     };
-  }, [fromBlackHole, isLoading, traits]);
+  }, [fromBlackHole, isLoading, traits, dismissPreloader]);
 
   // Phase 2: Clear suppression only when data IS loaded (prevents loading overlay flash)
   useEffect(() => {
@@ -635,7 +741,7 @@ const Index = () => {
 
     const { default: html2canvas } = await import('html2canvas');
     const canvas = await html2canvas(cardCaptureRef.current as HTMLDivElement, {
-      backgroundColor: "#020408",
+      backgroundColor: "#0a1420",
       scale,
       useCORS: true,
       allowTaint: true,
@@ -709,9 +815,10 @@ const Index = () => {
         setMintState("idle");
         toast.info("Transaction timed out — please try again");
       }
-    }, 5_000);
+    }, 10_000);
     try {
       const cardImageUrl = await captureCardImage();
+      const { mintIdentityPrism } = await import("@/lib/mintIdentityPrism");
       const result = await mintIdentityPrism({
         wallet,
         address: wallet.publicKey.toBase58(),
@@ -870,38 +977,56 @@ const Index = () => {
       await publishIdentityToTapestry(identityData);
       setTapestryPublished(true);
       toast.success('Identity published to Tapestry social graph!');
-    } catch (err: any) {
-      console.error('Tapestry publish error:', err);
-      toast.error('Failed to publish to Tapestry', { description: err?.message });
+    } catch (err: unknown) {
+      console.warn('Tapestry publish error:', err);
+      toast.error('Tapestry service unavailable', { description: 'Please try again later.' });
     } finally {
       setTapestryPublishing(false);
     }
   }, [traits, address, score]);
 
-  const showReadyView = previewMode || viewState === "ready" || returningFromBH.current || suppressLoadingRef.current;
+  const showReadyView =
+    previewMode ||
+    viewState === "ready" ||
+    returningFromBH.current ||
+    (suppressLoadingRef.current && Boolean(resolvedAddress));
   const cardDataReady = !!traits;
   const isScrollEnabled = showReadyView && !previewMode && !isNftMode;
 
   // sceneReady: true once CelestialCard's Canvas has rendered real frames.
   const [sceneReady, setSceneReady] = useState(false);
+  // Minimum delay after data loads before allowing curtain open (prevents black flash on slow GPUs)
+  const [minDelayPassed, setMinDelayPassed] = useState(false);
   const handleSceneReady = useCallback(() => setSceneReady(true), []);
 
-  // Curtain transition — STICKY: once triggered, never resets (except back to landing).
-  const [curtainOpen, setCurtainOpen] = useState(false);
-  const [curtainDone, setCurtainDone] = useState(false);
+  useEffect(() => {
+    if (!showReadyView) { setMinDelayPassed(false); return; }
+    // Longer delay ensures 3D scene has frames rendered before curtain opens
+    const t = setTimeout(() => setMinDelayPassed(true), 500);
+    return () => clearTimeout(t);
+  }, [showReadyView]);
 
-  const everythingReady = showReadyView && sceneReady;
+  // Curtain transition — STICKY: once triggered, never resets (except back to landing).
+  // When returning from BlackHole/Game, skip curtains entirely — show card immediately.
+  const isReturning = returningFromBH.current || returningFromGameJump.current;
+  const [curtainOpen, setCurtainOpen] = useState(isReturning);
+  const [curtainDone, setCurtainDone] = useState(isReturning);
+
+  const everythingReady = showReadyView && sceneReady && minDelayPassed;
 
   useEffect(() => {
     // Once curtains have started, never reset them here
     if (!curtainOpen && everythingReady) {
       setCurtainOpen(true);
+      // Dismiss HTML preloader AFTER curtains mount (next frames) so they cover the gap
+      requestAnimationFrame(() => requestAnimationFrame(() => dismissPreloader()));
     }
-  }, [everythingReady, curtainOpen]);
+  }, [everythingReady, curtainOpen, dismissPreloader]);
 
   useEffect(() => {
     if (!curtainOpen || curtainDone) return;
-    const t = setTimeout(() => setCurtainDone(true), 1000);
+    // Match curtain CSS animation (0.85s) + overlay fade-out (0.4s + 0.15s delay)
+    const t = setTimeout(() => setCurtainDone(true), 1200);
     return () => clearTimeout(t);
   }, [curtainOpen, curtainDone]);
 
@@ -909,6 +1034,7 @@ const Index = () => {
   useEffect(() => {
     if (viewState === "landing") {
       setSceneReady(false);
+      setMinDelayPassed(false);
       setCurtainOpen(false);
       setCurtainDone(false);
     }
@@ -949,12 +1075,14 @@ const Index = () => {
     >
       {isNftMode ? (
         <>
-          <div className="absolute inset-0 bg-[#050505] background-base" />
+          <div className="absolute inset-0 bg-[#05070a] background-base" />
           <div className="nebula-layer nebula-one" />
           <div className="identity-gradient" />
           <div className="flex items-center justify-center w-full h-screen p-0 overflow-hidden relative z-10">
             {walletData.traits ? (
-              <CelestialCard data={walletData} />
+              <React.Suspense fallback={<div className="flex flex-col items-center gap-4"><img src="/phav.png" className="w-16 h-16 animate-pulse opacity-50" alt="" /><div className="text-cyan-500/50 text-xs font-bold tracking-[0.3em] uppercase animate-pulse">Loading...</div></div>}>
+                <CelestialCard data={walletData} />
+              </React.Suspense>
             ) : (
               <div className="flex flex-col items-center gap-4">
                 <img src="/phav.png" className="w-16 h-16 animate-pulse opacity-50" alt="Identity Prism" />
@@ -969,10 +1097,12 @@ const Index = () => {
         <>
           {traits && (
             <div className="nft-capture" aria-hidden="true">
-              <CelestialCard ref={cardCaptureRef} data={walletData} captureMode />
+              <React.Suspense fallback={null}>
+                <CelestialCard ref={cardCaptureRef} data={walletData} captureMode />
+              </React.Suspense>
             </div>
           )}
-          <div className="absolute inset-0 bg-[#050505] background-base" />
+          <div className="absolute inset-0 bg-[#05070a] background-base" />
           <div className="nebula-layer nebula-one" />
           <div className="nebula-layer nebula-two" />
           <div className="nebula-layer nebula-three" />
@@ -986,7 +1116,9 @@ const Index = () => {
               ) : (
                 <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' card-stage-hidden' : ''}`}>
                   {/* Transition handled by wormhole tunnel — no black overlays */}
+                  <React.Suspense fallback={<div style={{position:'absolute',inset:0,background:'#05070a'}} />}>
                   <CelestialCard data={walletData} fromBlackHole={fromBlackHole} onSceneReady={handleSceneReady} />
+                </React.Suspense>
                   {!previewMode && (
                     <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
                       <button
@@ -1041,9 +1173,6 @@ const Index = () => {
                             {mintState === "success" && <span>IDENTITY SECURED</span>}
                           </Button>
                         </div>
-                        <Button asChild variant="ghost" className="mint-share-btn">
-                          <Link to="/game">PLAY PRISM LEAGUE</Link>
-                        </Button>
                         <div className="mint-meta">
                           {paymentToken === "SKR" ? (
                             <>
@@ -1060,22 +1189,21 @@ const Index = () => {
                           <Share2 className="h-4 w-4 mr-2" />
                           SHARE TO TWITTER
                         </Button>
-                        {isTapestryEnabled() && (
-                          <Button
-                            variant="ghost"
-                            onClick={handlePublishTapestry}
-                            disabled={tapestryPublishing || tapestryPublished}
-                            className="mint-share-btn"
-                          >
-                            {tapestryPublishing ? (
-                              <><Loader2 className="h-4 w-4 mr-2 animate-spin" />PUBLISHING...</>
-                            ) : tapestryPublished ? (
-                              <>✓ PUBLISHED TO TAPESTRY</>
-                            ) : (
-                              <>🌐 PUBLISH TO TAPESTRY</>
-                            )}
-                          </Button>
-                        )}
+                        <Button
+                          variant="ghost"
+                          onClick={handlePublishTapestry}
+                          disabled={tapestryPublishing || tapestryPublished || !isTapestryEnabled()}
+                          className="mint-share-btn"
+                          title={!isTapestryEnabled() ? 'Tapestry API key not configured' : undefined}
+                        >
+                          {tapestryPublishing ? (
+                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" />PUBLISHING...</>
+                          ) : tapestryPublished ? (
+                            <>✓ PUBLISHED TO TAPESTRY</>
+                          ) : (
+                            <>🌐 PUBLISH TO TAPESTRY</>
+                          )}
+                        </Button>
                         <Button
                           variant="ghost"
                           onClick={() => {
@@ -1118,7 +1246,9 @@ const Index = () => {
             />
           )}
 
-          {/* Space curtain — slides apart to reveal the card. Keep mounted after open (offscreen, no cost) to prevent unmount flash. */}
+          {/* Space curtain — mount when ready to open. Animation starts from
+              translateX(0) (fully closed/opaque) and slides apart. The overlay
+              (z-50) is behind curtains (z-60) so the transition is seamless. */}
           {curtainOpen && (
             <>
               <div className="space-curtain space-curtain--left open" />
@@ -1377,7 +1507,9 @@ function PreviewGallery() {
       <div className="preview-grid">
         {PREVIEW_TIERS.map((tier) => (
           <div key={tier} className="preview-card">
-            <CelestialCard data={buildPreviewWalletData(tier)} />
+            <React.Suspense fallback={<div style={{height:400,background:'#05070a'}} />}>
+              <CelestialCard data={buildPreviewWalletData(tier)} />
+            </React.Suspense>
           </div>
         ))}
       </div>

@@ -77,6 +77,24 @@ __pycache__/
 # Build artifacts
 dapp-store/files/*.apk
 *.apk
+deploy_bundle.tar.gz
+deploy_full.sh
+
+# Raw achievement images (only public/achievements/ is needed)
+game_achive/
+game_achive_centered/
+game_achive_framed/
+
+# Metadata (generated)
+metadata/
+
+# Keys directory (NEVER push private keys)
+keys/
+*.keypair
+
+# Misc sensitive
+.env.scraper
+twitter-bot-python/.env.server
 
 # Editor directories and files
 .vscode/*

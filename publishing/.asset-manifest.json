@@ -1,0 +1,44 @@
+{
+  "assets": {
+    "../dapp-store/media/app_icon.png": {
+      "path": "../dapp-store/media/app_icon.png",
+      "sha256": "cBLe4xAgpAfl2PWj+JTL0M8LhWf0VUj55a4XwRldWUs=",
+      "uri": "https://arweave.net/GNtoltrYVcCrPbCo_Ed4Mr2nEdVYD_T_S_E7imFA7XM"
+    },
+    "../dapp-store/app-release.apk": {
+      "path": "../dapp-store/app-release.apk",
+      "sha256": "CjkIgySfpPonYFg+V/2Aeolo3M/X0o0caVnDjh1KpW4=",
+      "uri": "https://arweave.net/fTdH-PGh4KVC89tmN-uhMVK310cKwXcfbRTGyqRVNKM"
+    },
+    "../dapp-store/media/release_icon.png": {
+      "path": "../dapp-store/media/release_icon.png",
+      "sha256": "cBLe4xAgpAfl2PWj+JTL0M8LhWf0VUj55a4XwRldWUs=",
+      "uri": "https://arweave.net/GNtoltrYVcCrPbCo_Ed4Mr2nEdVYD_T_S_E7imFA7XM"
+    },
+    "../dapp-store/media/banner.png": {
+      "path": "../dapp-store/media/banner.png",
+      "sha256": "WPkGquoYkc/8TBEAT1I3n364CZSOx5drqEH0gpbI3e0=",
+      "uri": "https://arweave.net/j47H_eXKg5JGgeYK9IUxg1wc85ZQgBTs67PllQns_ZY"
+    },
+    "../dapp-store/media/screenshot_1_landing.png": {
+      "path": "../dapp-store/media/screenshot_1_landing.png",
+      "sha256": "eidQcTEXyMDqn+DTNxy38KYdJzJOG9KEuNc0YDAMvMM=",
+      "uri": "https://arweave.net/ZiIA_QDpjxYwdAczX5CPD3_Da4iZ6gobp_B0hExWDAM"
+    },
+    "../dapp-store/media/screenshot_2_front.png": {
+      "path": "../dapp-store/media/screenshot_2_front.png",
+      "sha256": "XSIbEFNMWm5fOO9EUXgU43nnfFQtcZ9Hxfk6f7dwLPs=",
+      "uri": "https://arweave.net/HuZvmQXp0Y8CnVGZKCPzC9MP3lcofsDf520fR17BQ1w"
+    },
+    "../dapp-store/media/screenshot_3_stats.png": {
+      "path": "../dapp-store/media/screenshot_3_stats.png",
+      "sha256": "t0U3VFv31Hb0+SUr5r8tA9iJvwlQBogAOegzBNTbVYc=",
+      "uri": "https://arweave.net/CVa8Qkq_P-3_j7B0MLUbSxl3qck-0V5RwIWSJ_PFBjo"
+    },
+    "../dapp-store/media/screenshot_4_badges.png": {
+      "path": "../dapp-store/media/screenshot_4_badges.png",
+      "sha256": "KxerTtelMyIVVuz+sXfDVdjt4j2+tHjRAQmbERb5vf0=",
+      "uri": "https://arweave.net/Zrwr1HaIb91ewTIxOjErWWwK88ERceedH92ixQKSHAw"
+    }
+  }
+}

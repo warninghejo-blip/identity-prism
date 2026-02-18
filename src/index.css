@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+/* Orbitron font loaded via non-blocking <link> in index.html */
 
 @tailwind base;
 @tailwind components;
@@ -181,13 +181,20 @@ body:has(.prism-league-page) #root > * {
   justify-content: center;
   padding-bottom: clamp(160px, 28vh, 320px);
   box-sizing: border-box;
-  background: #050505;
+  background: #05070a;
 }
 
 /* Pre-render card behind opaque overlay — pointer-events:none prevents
-   it from blocking the overlay. No opacity:0 so Three.js canvas paints. */
+   it from blocking the overlay. opacity:0 prevents GPU compositing load
+   while Three.js still renders to the off-screen canvas. */
 .card-stage.card-stage-hidden {
   pointer-events: none;
+  /* Keep z-index below overlay+curtain so it's invisible but Three.js still renders */
+  z-index: 0;
+  opacity: 0;
+}
+.card-stage {
+  z-index: 1;
 }
 
 /* Card stage — no transition, instant reveal */
@@ -678,13 +685,19 @@ body:has(.prism-league-page) #root > * {
   height: 100vh;
   z-index: 50;
   background: #05070a;
+  /* GPU-composited layer — prevents WebGL canvas init from causing overlay flicker */
+  will-change: transform, z-index;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 .landing-persistent-shell.passthrough {
   pointer-events: none;
 }
 .landing-persistent-shell.fade-out {
-  opacity: 0;
-  transition: opacity 0.6s ease-out;
+  /* Drop below card-stage (z:1) so curtains reveal card, not overlay.
+     No opacity/visibility change — avoids compositor artifacts on mobile. */
+  z-index: -1 !important;
+  pointer-events: none;
 }
 
 /* Scanning layer — stacked on top, instant show/hide (no transition = no black flash) */
@@ -695,6 +708,14 @@ body:has(.prism-league-page) #root > * {
 .scanning-layer.visible {
   opacity: 1;
   pointer-events: auto;
+}
+/* Force the shell background to ALWAYS be opaque — prevents any black flash between layers */
+.landing-persistent-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #05070a;
+  z-index: -1;
 }
 
 /* Landing content — hidden instantly when scanning starts */
@@ -2035,6 +2056,82 @@ body:has(.prism-league-page) #root > * {
 }
 .incineration-dot {
   background: radial-gradient(circle, rgba(255, 160, 120, 0.8), rgba(40, 10, 5, 0.9));
+}
+
+/* ── Card portal: game ship link ── */
+.game-card-portal {
+  position: absolute;
+  left: 14px;
+  bottom: 125px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 20;
+  border: none;
+  background: transparent;
+  padding: 0;
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.35));
+}
+.game-card-portal:hover { transform: scale(1.15); }
+.game-card-portal:hover .game-card-portal__glow { opacity: 1; }
+.game-card-portal.is-jumping {
+  pointer-events: none;
+  animation: game-portal-jump 0.45s ease-out forwards;
+}
+
+.game-card-portal__glow {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(6, 182, 212, 0.35) 0%, transparent 70%);
+  opacity: 0.6;
+  animation: game-portal-breathe 3s ease-in-out infinite;
+}
+
+.game-card-portal__ship {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  z-index: 2;
+  filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.6));
+  animation: game-ship-bob 2.5s ease-in-out infinite;
+}
+
+.game-card-portal__label {
+  position: absolute;
+  bottom: -18px;
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(6, 182, 212, 0.6);
+  white-space: nowrap;
+  font-weight: 700;
+  transition: opacity 0.3s ease, text-shadow 0.3s ease;
+}
+.game-card-portal:hover .game-card-portal__label {
+  text-shadow: 0 0 12px rgba(6, 182, 212, 0.8), 0 0 24px rgba(6, 182, 212, 0.4);
+}
+
+@keyframes game-portal-breathe {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.08); }
+}
+
+@keyframes game-portal-jump {
+  0% { transform: scale(1); filter: brightness(1); }
+  70% { transform: scale(1.32); filter: brightness(1.7); }
+  100% { transform: scale(1.48); filter: brightness(2.2); opacity: 0.35; }
+}
+
+@keyframes game-ship-bob {
+  0%, 100% { transform: translateY(0) rotate(-25deg); }
+  50% { transform: translateY(-3px) rotate(-25deg); }
 }
 
 /* ── Card portal: compact mini black hole ── */
