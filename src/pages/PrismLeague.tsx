@@ -744,7 +744,7 @@ const PrismLeague = () => {
                   </div>
                 )}
 
-                {/* Leaderboard toggle */}
+                {/* On-Chain Leaderboard */}
                 {leaderboard.length > 0 && (
                   <>
                     <button
@@ -752,48 +752,70 @@ const PrismLeague = () => {
                       onClick={() => setShowLeaderboard(!showLeaderboard)}
                     >
                       <Trophy className="w-3.5 h-3.5" />
-                      Top Pilots ({leaderboard.length})
+                      On-Chain Leaderboard ({leaderboard.length})
                       {showLeaderboard ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                     </button>
-                    <div className={`w-full mt-2 space-y-1.5 ${showLeaderboard ? "" : "hidden"}`}>
-                      {leaderboard.slice(0, 10).map((entry, i) => (
-                        <div
-                          key={entry.id}
-                          className="flex justify-between items-center text-xs px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.05]"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border ${
-                                i === 0
-                                  ? "border-yellow-500/60 text-yellow-400"
-                                  : i === 1
-                                  ? "border-gray-400/40 text-gray-300"
-                                  : i === 2
-                                  ? "border-orange-500/40 text-orange-400"
-                                  : "border-white/10 text-white/30"
-                              }`}
-                            >
-                              {i + 1}
-                            </span>
-                            <span className="font-mono text-cyan-300/70">{formatAddress(entry.address)}</span>
-                            {entry.txSignature && (
-                              <a
-                                href={`https://solscan.io/tx/${entry.txSignature}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-green-400/60 hover:text-green-300"
-                                title="Verified on-chain"
-                              >
-                                <ExternalLink className="w-2.5 h-2.5" />
-                              </a>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-white/80 tabular-nums">{formatTime(entry.score)}</span>
-                            <span className="text-[9px] text-yellow-400/50">{calculateRewardCredits(entry.score)} pts</span>
+                    <div className={`w-full mt-2 ${showLeaderboard ? "" : "hidden"}`}>
+                      <div className="rounded-xl border border-cyan-500/10 bg-gradient-to-b from-white/[0.03] to-transparent overflow-hidden">
+                        <div className="px-3 py-2 border-b border-white/[0.05] flex items-center justify-between">
+                          <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold">Rank</span>
+                          <div className="flex items-center gap-4">
+                            <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold">Time</span>
+                            <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold w-12 text-right">Status</span>
                           </div>
                         </div>
-                      ))}
+                        <div className="divide-y divide-white/[0.03]">
+                          {leaderboard.slice(0, 10).map((entry, i) => {
+                            const isCurrentPlayer = entry.address === (address || "anonymous");
+                            const rankMedal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+                            return (
+                              <div
+                                key={entry.id}
+                                className={`flex justify-between items-center text-xs px-3 py-2 transition-colors ${
+                                  isCurrentPlayer ? "bg-cyan-500/[0.06]" : "hover:bg-white/[0.02]"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  {rankMedal ? (
+                                    <span className="w-5 text-center text-sm leading-none">{rankMedal}</span>
+                                  ) : (
+                                    <span className="w-5 text-center text-[10px] font-bold text-white/30">{i + 1}</span>
+                                  )}
+                                  <span className={`font-mono ${isCurrentPlayer ? "text-cyan-300" : "text-cyan-300/70"}`}>
+                                    {formatAddress(entry.address)}
+                                  </span>
+                                  {isCurrentPlayer && (
+                                    <span className="text-[8px] px-1 py-px rounded bg-cyan-500/20 text-cyan-300 font-bold uppercase">you</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="font-bold text-white/80 tabular-nums">{formatTime(entry.score)}</span>
+                                  {entry.txSignature ? (
+                                    <a
+                                      href={`https://solscan.io/tx/${entry.txSignature}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-[9px] text-green-400/80 hover:text-green-300 transition-colors w-12 justify-end"
+                                      title="View on Solscan"
+                                    >
+                                      <Shield className="w-3 h-3" />
+                                      <span className="font-bold">Chain</span>
+                                    </a>
+                                  ) : (
+                                    <span className="text-[9px] text-white/20 w-12 text-right">Local</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {leaderboard.some((e) => e.txSignature) && (
+                          <div className="px-3 py-1.5 border-t border-white/[0.05] flex items-center gap-1 text-[9px] text-green-400/40">
+                            <Shield className="w-2.5 h-2.5" />
+                            Scores verified via Solana Memo transactions
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </>
                 )}
