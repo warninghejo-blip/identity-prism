@@ -296,7 +296,7 @@ const PrismLeague = () => {
   const [highScore, setHighScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [showAchievements, setShowAchievements] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(true);
   const [isJumpingBack, setIsJumpingBack] = useState(false);
   const transitionTimersRef = useRef<number[]>([]);
   const runStartedAtRef = useRef<number>(Date.now());
@@ -749,19 +749,24 @@ const PrismLeague = () => {
           </div>
         </header>
 
-        {/* Title below header */}
-        <div
-          className="w-full flex items-center justify-center py-2 pointer-events-none"
-          onMouseDown={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-        >
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 uppercase tracking-[0.25em] leading-none drop-shadow-[0_0_20px_rgba(168,85,247,0.4)]">
-            Prism League
-          </h1>
-        </div>
+        {/* Main content area (title + game area) */}
+        <div className="flex-1 flex flex-col min-h-0">
 
-        {/* In-Game HUD */}
-        <div className="flex-1 relative">
+        {/* Title — centered in the gap above the card, hidden during play */}
+        {gameState !== "playing" && (
+          <div
+            className="flex-none flex items-center justify-center py-3 pointer-events-none"
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 uppercase tracking-[0.25em] leading-none drop-shadow-[0_0_20px_rgba(168,85,247,0.4)]">
+              Prism League
+            </h1>
+          </div>
+        )}
+
+        {/* In-Game HUD + screens */}
+        <div className="flex-1 relative min-h-0">
           {gameState === "playing" && (
             <div className="absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center">
               <span className="text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]">
@@ -808,7 +813,8 @@ const PrismLeague = () => {
           {/* ═══ START SCREEN ═══ */}
           {gameState === "start" && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
-              <div className="league-scroll max-w-md w-full mx-4 p-6 md:p-8 rounded-2xl border border-cyan-500/20 bg-black/85 backdrop-blur-xl shadow-[0_0_80px_rgba(6,182,212,0.1)] flex flex-col items-center text-center max-h-[85vh] overflow-y-auto league-menu-shell">
+              <div className="max-w-md w-full mx-4 rounded-2xl overflow-hidden border border-cyan-500/20 bg-black/85 backdrop-blur-xl shadow-[0_0_80px_rgba(6,182,212,0.1)]">
+              <div className="league-scroll p-6 md:p-8 flex flex-col items-center text-center max-h-[80vh] overflow-y-auto league-menu-shell">
                 {/* Hero Title */}
                 <div className="relative mb-4 w-full">
                   <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/10 via-purple-500/5 to-transparent blur-2xl rounded-3xl" />
@@ -905,8 +911,8 @@ const PrismLeague = () => {
                   </button>
                 )}
 
-                {/* Achievements toggle */}
-                {achievements.some((a) => a.unlocked) && (() => {
+                {/* Achievements toggle — always visible */}
+                {(() => {
                   const claimable = achievements.filter((a) => a.unlocked && !a.claimed).length;
                   return (
                     <button
@@ -1063,6 +1069,7 @@ const PrismLeague = () => {
                     </div>
                   </>
                 )}
+              </div>
               </div>
             </div>
           )}
@@ -1264,6 +1271,7 @@ const PrismLeague = () => {
               </div>
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>
