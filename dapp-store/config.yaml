@@ -58,15 +58,15 @@ release:
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
-        v1.0.26: Optimized boot time — app loads to usable state in under 5 seconds.
-        Lazy-loaded heavy components (Three.js, wallet infrastructure). Instant visual
-        preloader matching landing page. Non-blocking font loading.
+        v1.0.27: Fixed Tapestry social graph integration — profile and content publishing
+        now work correctly. Added persistent server-side leaderboard — Top Pilots scores
+        sync across devices and survive cache clears. Backfilled historical game results.
       saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.26
-    version_code: 37
+    version: 1.0.27
+    version_code: 38
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
