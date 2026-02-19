@@ -5,7 +5,6 @@
  */
 
 export function createWormholeTunnel(): HTMLElement {
-  // Remove any existing tunnel / legacy overlays
   for (const id of ['wormhole-tunnel', 'bh-forward-blackout', 'bh-transition-veil']) {
     document.getElementById(id)?.remove();
   }
@@ -14,22 +13,38 @@ export function createWormholeTunnel(): HTMLElement {
   tunnel.id = 'wormhole-tunnel';
   tunnel.className = 'wormhole-tunnel';
 
-  // Layer 1: Deep space backdrop with subtle nebula
+  // Layer 1: Deep space nebula
   const nebula = document.createElement('div');
   nebula.className = 'wt-nebula';
   tunnel.appendChild(nebula);
 
-  // Layer 2: Radial light streaks — the "hyperspace lines" effect
+  // Layer 2: Staggered tunnel rings — 12 rings rushing from center outward
+  const rings = document.createElement('div');
+  rings.className = 'wt-rings';
+  for (let i = 0; i < 12; i++) {
+    const ring = document.createElement('div');
+    ring.className = 'wt-ring';
+    ring.style.animationDelay = `${i * 65}ms`;
+    rings.appendChild(ring);
+  }
+  tunnel.appendChild(rings);
+
+  // Layer 3: Speed streaks (conic-gradient, persistent rotation after rush)
   const streaks = document.createElement('div');
   streaks.className = 'wt-streaks';
   tunnel.appendChild(streaks);
 
-  // Layer 3: Central bright core that expands outward
+  // Layer 4: Central vanishing-point core
   const core = document.createElement('div');
   core.className = 'wt-core';
   tunnel.appendChild(core);
 
-  // Layer 4: Exit flash — bright bloom as you arrive
+  // Layer 5: Sustained cruise glow (visible if page takes time to load)
+  const cruise = document.createElement('div');
+  cruise.className = 'wt-cruise';
+  tunnel.appendChild(cruise);
+
+  // Layer 6: Exit flash bloom
   const flash = document.createElement('div');
   flash.className = 'wt-flash';
   tunnel.appendChild(flash);
