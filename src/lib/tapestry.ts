@@ -224,9 +224,10 @@ export async function publishScanContent(
   const tier = data.planetTier.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
   const content = `🔮 Identity Prism scan: ${tier} tier wallet (Score: ${data.score}) with ${data.badges.length} badges. Rarity: ${data.rarity}.`;
 
-  const result = await tapestryFetch<{ content: { id: string } }>('/contents/create', {
+  const result = await tapestryFetch<{ content: { id: string } }>('/contents/findOrCreate', {
     method: 'POST',
     body: JSON.stringify({
+      id: `scan_${data.walletAddress}`,
       profileId,
       content,
       contentType: 'text',
@@ -333,9 +334,10 @@ export async function publishGameScore(data: GameScoreData): Promise<{ contentId
     { key: 'appUrl', value: 'https://identityprism.xyz/game' },
   ];
 
-  const result = await tapestryFetch<{ content: { id: string } }>('/contents/create', {
+  const result = await tapestryFetch<{ content: { id: string } }>('/contents/findOrCreate', {
     method: 'POST',
     body: JSON.stringify({
+      id: `game_${data.walletAddress}_${data.score}`,
       profileId,
       content,
       contentType: 'text',
@@ -377,9 +379,10 @@ export async function challengeFriend(
   const profileId = profile.profile?.id ?? profile.profile?.username;
   const content = `🎯 I challenge ${friendShort} to beat my ${survivalTime} in Orbit Survival! Think you can survive longer? #OrbitSurvival #Challenge`;
 
-  const result = await tapestryFetch<{ content: { id: string } }>('/contents/create', {
+  const result = await tapestryFetch<{ content: { id: string } }>('/contents/findOrCreate', {
     method: 'POST',
     body: JSON.stringify({
+      id: `challenge_${senderAddress}_${friendAddress}_${score}`,
       profileId,
       content,
       contentType: 'text',
