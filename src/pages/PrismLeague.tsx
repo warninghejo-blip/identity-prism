@@ -161,28 +161,43 @@ async function fetchServerCoins(walletAddress: string): Promise<number | null> {
 async function claimAchievementOnServer(walletAddress: string, achievementId: string, reward: number): Promise<{ ok: boolean; coins?: number }> {
   try {
     const base = getServerBase();
-    if (!base) return { ok: true }; // no server = allow locally
+    if (!base) return { ok: true };
     const res = await fetch(`${base}/api/game/achievements`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address: walletAddress, achievementId, reward }),
     });
-    if (res.status === 409) return { ok: false }; // already claimed on server
-    if (!res.ok) return { ok: true }; // server error = allow locally
+    if (res.status === 409) return { ok: false };
+    if (!res.ok) return { ok: true };
     const data = await res.json();
     return { ok: true, coins: data?.coins };
   } catch { return { ok: true }; }
 }
 
-async function fetchServerClaimedAchievements(walletAddress: string): Promise<string[]> {
+async function syncUnlockedToServer(walletAddress: string, unlockedIds: string[]): Promise<void> {
   try {
     const base = getServerBase();
-    if (!base) return [];
+    if (!base || !unlockedIds.length) return;
+    await fetch(`${base}/api/game/achievements`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: walletAddress, unlocked: unlockedIds }),
+    });
+  } catch { /* silent */ }
+}
+
+async function fetchServerAchievements(walletAddress: string): Promise<{ unlocked: string[]; claimed: string[] }> {
+  try {
+    const base = getServerBase();
+    if (!base) return { unlocked: [], claimed: [] };
     const res = await fetch(`${base}/api/game/achievements?address=${encodeURIComponent(walletAddress)}`);
-    if (!res.ok) return [];
+    if (!res.ok) return { unlocked: [], claimed: [] };
     const data = await res.json();
-    return Array.isArray(data?.claimed) ? data.claimed : [];
-  } catch { return []; }
+    return {
+      unlocked: Array.isArray(data?.unlocked) ? data.unlocked : [],
+      claimed: Array.isArray(data?.claimed) ? data.claimed : [],
+    };
+  } catch { return { unlocked: [], claimed: [] }; }
 }
 
 const formatAddress = (address?: string) => {
@@ -317,22 +332,33 @@ const PrismLeague = () => {
       if (best !== local) writeWalletCoins(address, best);
       setTotalCoins(best);
     });
-    // Sync claimed achievements from server
-    fetchServerClaimedAchievements(address).then((serverClaimed) => {
-      if (!serverClaimed.length) return;
+    // Sync unlocked + claimed achievements from server
+    fetchServerAchievements(address).then(({ unlocked: srvUnlocked, claimed: srvClaimed }) => {
+      if (!srvUnlocked.length && !srvClaimed.length) return;
       const current = getAchievements();
       let changed = false;
-      for (const id of serverClaimed) {
+      const now = new Date().toISOString();
+      for (const id of srvUnlocked) {
         const ach = current.find((a) => a.id === id);
-        if (ach && ach.unlocked && !ach.claimed) {
+        if (ach && !ach.unlocked) {
+          ach.unlocked = true;
+          ach.unlockedAt = ach.unlockedAt || now;
+          changed = true;
+        }
+      }
+      for (const id of srvClaimed) {
+        const ach = current.find((a) => a.id === id);
+        if (ach && !ach.claimed) {
+          ach.unlocked = true;
+          ach.unlockedAt = ach.unlockedAt || now;
           ach.claimed = true;
-          ach.claimedAt = ach.claimedAt || new Date().toISOString();
+          ach.claimedAt = ach.claimedAt || now;
           changed = true;
         }
       }
       if (changed) {
         const key = 'orbit_survival_achievements_v1';
-        localStorage.setItem(key, JSON.stringify(current.filter((a) => a.unlocked)));
+        localStorage.setItem(key, JSON.stringify(current));
         setAchievements([...current]);
       }
     });
@@ -509,6 +535,10 @@ const PrismLeague = () => {
         newlyUnlocked.forEach((a) => {
           toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
         });
+        // Push all currently unlocked achievements to server (idempotent)
+        const walletAddr = address || "anonymous";
+        const allUnlockedIds = all.filter((a) => a.unlocked).map((a) => a.id);
+        syncUnlockedToServer(walletAddr, allUnlockedIds);
       }
 
       const playerAddr = address || "anonymous";
@@ -812,9 +842,9 @@ const PrismLeague = () => {
 
           {/* ═══ START SCREEN ═══ */}
           {gameState === "start" && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
+            <div className="absolute inset-0 overflow-y-auto pointer-events-auto flex flex-col items-center pt-2 pb-4">
               <div className="max-w-md w-full mx-4 rounded-2xl overflow-hidden border border-cyan-500/20 bg-black/85 backdrop-blur-xl shadow-[0_0_80px_rgba(6,182,212,0.1)]">
-              <div className="league-scroll p-6 md:p-8 flex flex-col items-center text-center max-h-[80vh] overflow-y-auto league-menu-shell">
+              <div className="league-scroll p-6 md:p-8 flex flex-col items-center text-center league-menu-shell">
                 {/* Hero Title */}
                 <div className="relative mb-4 w-full">
                   <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/10 via-purple-500/5 to-transparent blur-2xl rounded-3xl" />
