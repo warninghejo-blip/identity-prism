@@ -311,7 +311,7 @@ const PrismLeague = () => {
   const [highScore, setHighScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [showAchievements, setShowAchievements] = useState(true);
+  const [showAchievements, setShowAchievements] = useState(false);
   const [isJumpingBack, setIsJumpingBack] = useState(false);
   const transitionTimersRef = useRef<number[]>([]);
   const runStartedAtRef = useRef<number>(Date.now());
@@ -440,7 +440,7 @@ const PrismLeague = () => {
     setHighScore(userBest);
   }, [address, leaderboard]);
 
-  const handleStart = async () => {
+  const handleStart = () => {
     setScore(0);
     setCoins(0);
     setLastTxSignature(null);
@@ -448,19 +448,22 @@ const PrismLeague = () => {
     setSessionProof(null);
     setNewAchievements([]);
     setMbVerified(false);
+    setMbSeed(null);
+    setMbSlot(0);
     runStartedAtRef.current = Date.now();
 
-    /* Fetch provably fair seed from MagicBlock Ephemeral Rollup */
-    const seedResult = await generateFairSeed();
-    if (seedResult) {
-      setMbSeed(seedResult.seed);
-      setMbSlot(seedResult.slot);
-    } else {
-      setMbSeed(null);
-      setMbSlot(0);
-    }
-
+    /* Start game immediately — fetch MagicBlock seed in background (non-blocking) */
     setGameState("playing");
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    generateFairSeed().then((seedResult) => {
+      clearTimeout(timeout);
+      if (seedResult) {
+        setMbSeed(seedResult.seed);
+        setMbSlot(seedResult.slot);
+      }
+    }).catch(() => { clearTimeout(timeout); });
   };
 
   const handleGameOver = useCallback(
