@@ -103,67 +103,162 @@ const normAng = (a: number) => { let v = a % (Math.PI * 2); if (v > Math.PI) v -
 const seededRng = (seed: number) => { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; };
 
 /* ═══════════════════════════════════════════════════
-   Rock texture — 512px canvas, 4 palette variants
+   Rock texture — realistic asteroid surface
+   4 spectral types: C (dark), S (rocky), M (metallic), V (basaltic)
    ═══════════════════════════════════════════════════ */
 
-function makeRockTex(seed: number, hue: number, sat: number, lBase: number): THREE.CanvasTexture {
+function makeRockTex(seed: number, paletteIdx: number): THREE.CanvasTexture {
   if (typeof document === "undefined") return new THREE.CanvasTexture(document.createElement("canvas"));
-  const S = IS_MOBILE ? 256 : 512, c = document.createElement("canvas");
+  const S = IS_MOBILE ? 256 : 512;
+  const c = document.createElement("canvas");
   c.width = S; c.height = S;
   const g = c.getContext("2d")!;
   const R = seededRng(seed);
 
-  g.fillStyle = `hsl(${hue},${sat}%,${lBase}%)`;
+  // Realistic asteroid spectral palettes
+  const pals = [
+    { hue: 210, sat: 5, lBase: 9, accent: 22, huV: 8 },   // C-type: dark carbonaceous
+    { hue: 28, sat: 18, lBase: 22, accent: 40, huV: 15 },  // S-type: rocky silicaceous
+    { hue: 215, sat: 9, lBase: 34, accent: 55, huV: 6 },   // M-type: metallic
+    { hue: 8, sat: 25, lBase: 18, accent: 36, huV: 12 },   // V-type: basaltic reddish
+  ];
+  const p = pals[paletteIdx % pals.length];
+  const { hue: h, sat, lBase, accent, huV } = p;
+
+  // 1. Base fill
+  g.fillStyle = `hsl(${h},${sat}%,${lBase}%)`;
   g.fillRect(0, 0, S, S);
 
-  const grd = g.createRadialGradient(S * .35, S * .28, S * .04, S * .5, S * .5, S * .72);
-  grd.addColorStop(0, `hsla(${hue},${sat + 5}%,${lBase + 14}%,.5)`);
-  grd.addColorStop(.5, `hsla(${hue},${sat}%,${lBase}%,.12)`);
-  grd.addColorStop(1, `hsla(${hue},${sat}%,${lBase - 12}%,.55)`);
-  g.fillStyle = grd; g.fillRect(0, 0, S, S);
+  // 2. Large-scale surface variation blobs
+  for (let i = 0; i < 14; i++) {
+    const bx = R() * S, by = R() * S, br = S * (.18 + R() * .38);
+    const dl = (R() - .5) * 14;
+    const bg = g.createRadialGradient(bx, by, 0, bx, by, br);
+    bg.addColorStop(0, `hsla(${h + (R()-.5)*huV},${sat}%,${lBase + dl}%,${.1 + R()*.14})`);
+    bg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = bg; g.fillRect(0, 0, S, S);
+  }
 
-  // Surface noise dots
-  const dotCount = IS_MOBILE ? 8000 : 22000;
-  for (let i = 0; i < dotCount; i++) {
-    const x = R() * S, y = R() * S;
-    const l = lBase - 15 + R() * 30, a = .02 + R() * .07, r = .3 + R() * 1.5;
-    g.fillStyle = `hsla(${hue + (R() - .5) * 20},${sat * .5}%,${l}%,${a})`;
+  // 3. Regolith — dense fine granules
+  const gran = IS_MOBILE ? 14000 : 48000;
+  for (let i = 0; i < gran; i++) {
+    const x = R() * S, y = R() * S, r = .15 + R() * .85;
+    const l = lBase - 10 + R() * 20, a = .03 + R() * .09;
+    g.fillStyle = `hsla(${h + (R()-.5)*huV},${sat*.6}%,${l}%,${a})`;
     g.beginPath(); g.arc(x, y, r, 0, 6.28); g.fill();
   }
-  // Surface veins / cracks
-  const veinCount = IS_MOBILE ? 80 : 240;
-  for (let i = 0; i < veinCount; i++) {
+
+  // 4. Surface cracks and fractures
+  const cracks = IS_MOBILE ? 50 : 160;
+  for (let i = 0; i < cracks; i++) {
     let x = R() * S, y = R() * S;
-    g.strokeStyle = `hsla(${hue},${sat * .3}%,${lBase - 22}%,${.06 + R() * .18})`;
-    g.lineWidth = .3 + R() * 1.3;
+    g.strokeStyle = `hsla(${h},${sat*.25}%,${lBase - 8 + R()*6}%,${.06 + R()*.15})`;
+    g.lineWidth = .25 + R() * .9;
     g.beginPath(); g.moveTo(x, y);
-    for (let s = 0; s < 4 + Math.floor(R() * 8); s++) { x += (R() - .5) * 30; y += (R() - .5) * 30; g.lineTo(x, y); }
+    for (let s = 0; s < 3 + Math.floor(R() * 7); s++) {
+      x += (R()-.5)*26; y += (R()-.5)*26; g.lineTo(x, y);
+    }
     g.stroke();
   }
-  // Craters with bright rims and dark interiors
-  const craterCount = IS_MOBILE ? 8 : 14 + Math.floor(R() * 8);
-  for (let i = 0; i < craterCount; i++) {
-    const cx = R() * S, cy = R() * S, cr = 4 + R() * (S * .06);
-    // Dark crater interior
-    const crG = g.createRadialGradient(cx, cy, cr * .05, cx, cy, cr);
-    crG.addColorStop(0, `hsla(${hue},${sat * .5}%,${lBase - 25}%,${.25 + R() * .2})`);
-    crG.addColorStop(.6, `hsla(${hue},${sat * .4}%,${lBase - 15}%,${.12 + R() * .08})`);
-    crG.addColorStop(1, "rgba(0,0,0,0)");
-    g.fillStyle = crG; g.beginPath(); g.arc(cx, cy, cr, 0, 6.28); g.fill();
-    // Bright rim (top-left lit)
-    g.strokeStyle = `hsla(${hue},${sat + 10}%,${lBase + 18}%,${.12 + R() * .15})`;
-    g.lineWidth = .8 + R() * 1.5;
-    g.beginPath(); g.arc(cx - cr * .15, cy - cr * .15, cr * .85, Math.PI * .8, Math.PI * 1.8); g.stroke();
+
+  // 5. Large primary craters with ejecta rays
+  const bigN = 2 + Math.floor(R() * 4);
+  for (let i = 0; i < bigN; i++) {
+    const cx = R() * S, cy = R() * S;
+    const cr = S * (.065 + R() * .13);
+    // Ejecta blanket
+    const ejG = g.createRadialGradient(cx, cy, cr * .7, cx, cy, cr * 2.8);
+    ejG.addColorStop(0, `hsla(${h},${sat}%,${lBase+9}%,.09)`);
+    ejG.addColorStop(.5, `hsla(${h},${sat}%,${lBase+4}%,.04)`);
+    ejG.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = ejG;
+    g.beginPath(); g.arc(cx, cy, cr * 2.8, 0, 6.28); g.fill();
+    // Ejecta rays (bright streaks)
+    const rayN = 4 + Math.floor(R() * 7);
+    for (let ri = 0; ri < rayN; ri++) {
+      const ra = R() * 6.28, rlen = cr * (1.3 + R() * 2.2), rw = cr * (.08 + R() * .18);
+      g.save(); g.translate(cx, cy); g.rotate(ra);
+      const rayG = g.createLinearGradient(cr * .85, 0, cr * .85 + rlen, 0);
+      rayG.addColorStop(0, `hsla(${h},${sat}%,${lBase+12}%,.13)`);
+      rayG.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rayG;
+      g.fillRect(cr * .85, -rw / 2, rlen, rw);
+      g.restore();
+    }
+    // Dark floor
+    const flG = g.createRadialGradient(cx + cr*.06, cy + cr*.06, 0, cx, cy, cr * .9);
+    flG.addColorStop(0, `hsla(${h},${sat*.35}%,${lBase-12}%,.72)`);
+    flG.addColorStop(.65, `hsla(${h},${sat*.35}%,${lBase-7}%,.38)`);
+    flG.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = flG; g.beginPath(); g.arc(cx, cy, cr, 0, 6.28); g.fill();
+    // Bright lit rim (light from top-left)
+    const rimA = -Math.PI * .72;
+    g.strokeStyle = `hsla(${h},${sat+6}%,${accent}%,${.28 + R()*.18})`;
+    g.lineWidth = 1.5 + R() * 2.8;
+    g.beginPath(); g.arc(cx, cy, cr * .9, rimA - .9, rimA + 1.3); g.stroke();
+    // Shadow rim (opposite)
+    g.strokeStyle = `hsla(${h},${sat*.2}%,${lBase-14}%,.28)`;
+    g.lineWidth = 1.0 + R() * 1.8;
+    g.beginPath(); g.arc(cx, cy, cr * .88, rimA + Math.PI - .7, rimA + Math.PI + .7); g.stroke();
+    // Central peak for large craters
+    if (cr > S * .09) {
+      const pkG = g.createRadialGradient(cx, cy, 0, cx, cy, cr * .18);
+      pkG.addColorStop(0, `hsla(${h},${sat}%,${lBase+10}%,.3)`);
+      pkG.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = pkG; g.beginPath(); g.arc(cx, cy, cr * .18, 0, 6.28); g.fill();
+    }
   }
-  // Specular highlight (top-left)
-  const specG = g.createRadialGradient(S * .28, S * .22, S * .02, S * .4, S * .35, S * .55);
-  specG.addColorStop(0, `hsla(${hue},${sat + 15}%,${lBase + 28}%,.18)`);
-  specG.addColorStop(.5, `hsla(${hue},${sat}%,${lBase + 10}%,.04)`);
-  specG.addColorStop(1, "rgba(0,0,0,0)");
-  g.fillStyle = specG; g.fillRect(0, 0, S, S);
+
+  // 6. Medium secondary craters
+  const midN = IS_MOBILE ? 9 : 16 + Math.floor(R() * 9);
+  for (let i = 0; i < midN; i++) {
+    const cx = R() * S, cy = R() * S, cr = S * (.013 + R() * .038);
+    const crG = g.createRadialGradient(cx + cr*.05, cy + cr*.05, 0, cx, cy, cr);
+    crG.addColorStop(0, `hsla(${h},${sat*.3}%,${lBase-13}%,.52)`);
+    crG.addColorStop(.7, `hsla(${h},${sat*.3}%,${lBase-6}%,.22)`);
+    crG.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = crG; g.beginPath(); g.arc(cx, cy, cr, 0, 6.28); g.fill();
+    g.strokeStyle = `hsla(${h},${sat+5}%,${accent}%,${.16 + R()*.12})`;
+    g.lineWidth = .5 + R() * 1.1;
+    g.beginPath(); g.arc(cx - cr*.1, cy - cr*.12, cr * .88, Math.PI * .7, Math.PI * 1.85); g.stroke();
+  }
+
+  // 7. Micro-pits
+  const microN = IS_MOBILE ? 25 : 65;
+  for (let i = 0; i < microN; i++) {
+    const cx = R() * S, cy = R() * S, cr = 1.2 + R() * S * .008;
+    g.fillStyle = `hsla(${h},${sat*.3}%,${lBase-9}%,${.32+R()*.28})`;
+    g.beginPath(); g.arc(cx, cy, cr, 0, 6.28); g.fill();
+    g.strokeStyle = `hsla(${h},${sat}%,${accent}%,.1)`;
+    g.lineWidth = .35;
+    g.beginPath(); g.arc(cx-.1, cy-.14, cr*.85, Math.PI*.65, Math.PI*1.75); g.stroke();
+  }
+
+  // 8. Limb darkening — edges go dark like a real sphere
+  const limbG = g.createRadialGradient(S*.5, S*.5, S*.22, S*.5, S*.5, S*.73);
+  limbG.addColorStop(0, 'rgba(0,0,0,0)');
+  limbG.addColorStop(.55, 'rgba(0,0,0,0)');
+  limbG.addColorStop(1, 'rgba(0,0,0,0.68)');
+  g.fillStyle = limbG; g.fillRect(0, 0, S, S);
+
+  // 9. Primary illumination (top-left sunlit)
+  const illG = g.createRadialGradient(S*.3, S*.25, S*.01, S*.5, S*.5, S*.66);
+  illG.addColorStop(0, `hsla(${h},${sat+5}%,${lBase+18}%,.22)`);
+  illG.addColorStop(.42, `hsla(${h},${sat}%,${lBase}%,.04)`);
+  illG.addColorStop(1, `hsla(${h},${sat}%,${lBase-14}%,.28)`);
+  g.fillStyle = illG; g.fillRect(0, 0, S, S);
+
+  // 10. Specular highlight
+  const spG = g.createRadialGradient(S*.25, S*.2, 0, S*.34, S*.28, S*.2);
+  spG.addColorStop(0, `hsla(${h+8},${sat+10}%,${accent+22}%,.2)`);
+  spG.addColorStop(.5, `hsla(${h},${sat}%,${accent}%,.06)`);
+  spG.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = spG; g.fillRect(0, 0, S, S);
 
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = IS_MOBILE ? 2 : 8; t.needsUpdate = true;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = IS_MOBILE ? 2 : 8;
+  t.needsUpdate = true;
   return t;
 }
 
@@ -624,11 +719,12 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
    Asteroid mesh
    ═══════════════════════════════════════════════════ */
 
+// Match palette order: C-type, S-type, M-type, V-type, + 2 extras
 const AST_M = [
-  { col: "#b0b0c8", met: .35, rou: .5 },
-  { col: "#ddd0c0", met: .06, rou: .8 },
-  { col: "#b8b8d0", met: .4, rou: .35 },
-  { col: "#c0dde8", met: .1, rou: .5 },
+  { met: .08, rou: .92 },  // C-type: very matte, dark
+  { met: .12, rou: .82 },  // S-type: rocky
+  { met: .55, rou: .38 },  // M-type: metallic
+  { met: .10, rou: .86 },  // V-type: basaltic
 ];
 
 function AstMesh({ a, texs, geos }: { a: AsteroidData; texs: THREE.Texture[]; geos: THREE.SphereGeometry[] }) {
@@ -637,7 +733,7 @@ function AstMesh({ a, texs, geos }: { a: AsteroidData; texs: THREE.Texture[]; ge
   const m = AST_M[a.mi % AST_M.length];
   return (
     <mesh geometry={geo} position={[a.x, a.y, 0]} rotation={[a.rx, a.ry, a.rz]} scale={[a.r * a.sx, a.r * a.sy, a.r * a.sz]}>
-      <meshStandardMaterial map={tex} color={m.col} emissive="#444466" emissiveIntensity={.5} roughness={m.rou} metalness={m.met} />
+      <meshStandardMaterial map={tex} roughness={m.rou} metalness={m.met} envMapIntensity={0.4} />
     </mesh>
   );
 }
@@ -884,8 +980,12 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
   const sSc = traits?.planetTier === "binary_sun" ? 1.08 : 1;
 
   const texs = useMemo(() => [
-    makeRockTex(17, 220, 14, 58), makeRockTex(29, 30, 16, 70),
-    makeRockTex(53, 240, 18, 62), makeRockTex(71, 195, 22, 68),
+    makeRockTex(17, 0),  // C-type
+    makeRockTex(29, 1),  // S-type
+    makeRockTex(53, 2),  // M-type
+    makeRockTex(71, 3),  // V-type
+    makeRockTex(97, 1),  // S-type variant
+    makeRockTex(113, 0), // C-type variant
   ], []);
   const geos = useMemo(() => {
     const s = IS_MOBILE ? 0.6 : 1;

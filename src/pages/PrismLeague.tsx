@@ -842,9 +842,9 @@ const PrismLeague = () => {
 
           {/* ═══ START SCREEN ═══ */}
           {gameState === "start" && (
-            <div className="absolute inset-0 overflow-y-auto pointer-events-auto flex flex-col items-center pt-2 pb-4">
+            <div className="absolute inset-0 pointer-events-auto flex flex-col items-center pt-2 pb-4">
               <div className="max-w-md w-full mx-4 rounded-2xl overflow-hidden border border-cyan-500/20 bg-black/85 backdrop-blur-xl shadow-[0_0_80px_rgba(6,182,212,0.1)]">
-              <div className="league-scroll p-6 md:p-8 flex flex-col items-center text-center league-menu-shell">
+              <div className="league-scroll p-6 md:p-8 flex flex-col items-center text-center league-menu-shell overflow-y-auto" style={{maxHeight:'calc(100svh - 112px)'}}>
                 {/* Hero Title */}
                 <div className="relative mb-4 w-full">
                   <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/10 via-purple-500/5 to-transparent blur-2xl rounded-3xl" />
