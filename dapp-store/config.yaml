@@ -16,7 +16,7 @@ app:
     - purpose: icon
       uri: ./media/app_icon.png
 release:
-  address: BnZZMG7LUNuMNkTKFPdwGU4PLqKZ4oBc7y13wQR6QcsK
+  address: 7px1vhBytFRVX4LLKVM4gzrshwpow3pzP4ZUcHnry8KR
   media:
     - purpose: icon
       uri: ./media/release_icon.png
@@ -83,8 +83,8 @@ solana_mobile_dapp_publisher_portal:
     9. After game over, try "Save Score On-Chain" with zero balance — verify insufficient SOL warning appears.
     10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
 lastSubmittedVersionOnChain:
-  address: BnZZMG7LUNuMNkTKFPdwGU4PLqKZ4oBc7y13wQR6QcsK
-  version_code: 37
-  apk_hash: Y9kSM8DjAi8VU2F2T5ANgTCTwMtuVmkgjdHTtaYraJc=
+  address: 7px1vhBytFRVX4LLKVM4gzrshwpow3pzP4ZUcHnry8KR
+  version_code: 38
+  apk_hash: gyKplD+jK6iJ5uKrOIE8Pwkm0LL6gL6y1cnlt4v8lB4=
 lastUpdatedVersionOnStore:
-  address: BnZZMG7LUNuMNkTKFPdwGU4PLqKZ4oBc7y13wQR6QcsK
+  address: 7px1vhBytFRVX4LLKVM4gzrshwpow3pzP4ZUcHnry8KR
