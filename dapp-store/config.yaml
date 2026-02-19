@@ -30,6 +30,12 @@ release:
       uri: ./media/screenshot_3_stats.png
     - purpose: screenshot
       uri: ./media/screenshot_4_badges.png
+    - purpose: screenshot
+      uri: ./media/screenshot_5_game_start.png
+    - purpose: screenshot
+      uri: ./media/screenshot_6_blackhole.png
+    - purpose: screenshot
+      uri: ./media/screenshot_7_home.png
   files:
     - purpose: install
       uri: ./files/app-release.apk
@@ -58,15 +64,15 @@ release:
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
-        v1.0.28: Fixed SKR mint price display (was showing 1 SKR due to broken SOL price
-        feed). Fixed on-chain score save failing with 'signature expired' on mobile MWA.
-        Persistent server-side Top Pilots leaderboard with cross-device sync.
+        v1.0.29: Smooth canvas-based wormhole tunnel transition (replaces laggy CSS layers).
+        New asteroid textures in Orbit Survival. Added game start, black hole, and home screenshots.
+        Performance optimizations for Seeker — 30fps capped transition, single compositor layer.
       saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.28
-    version_code: 39
+    version: 1.0.29
+    version_code: 40
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
@@ -84,7 +90,7 @@ solana_mobile_dapp_publisher_portal:
     10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
 lastSubmittedVersionOnChain:
   address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp
-  version_code: 39
+  version_code: 40
   apk_hash: AOXey0bEfkFK5Twirspegl58KL6+WPKVS9OtSlmLsts=
 lastUpdatedVersionOnStore:
   address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp
