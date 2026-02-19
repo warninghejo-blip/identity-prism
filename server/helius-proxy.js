@@ -881,27 +881,26 @@ const fetchMeTokenLastPrice = async (mint) => {
 };
 
 const fetchSolPriceUsd = async () => {
-  // Try Jupiter price API first (most reliable, no auth, no rate limits)
+  // 1. Binance public ticker (no auth, no rate limit for public data)
   try {
-    const response = await fetch('https://price.jup.ag/v4/price?ids=SOL');
+    const response = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT');
     if (response.ok) {
       const data = await response.json();
-      const price = Number(data?.data?.SOL?.price);
+      const price = Number(data?.price);
       if (Number.isFinite(price) && price > 1) return price;
     }
   } catch {}
-  // Fallback: CoinGecko
+  // 2. Kraken public ticker (no auth)
   try {
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
-    );
+    const response = await fetch('https://api.kraken.com/0/public/Ticker?pair=SOLUSD');
     if (response.ok) {
       const data = await response.json();
-      const price = Number(data?.solana?.usd ?? data?.usd ?? data?.price);
+      const key = data?.result && Object.keys(data.result)[0];
+      const price = Number(key && data.result[key]?.c?.[0]);
       if (Number.isFinite(price) && price > 1) return price;
     }
   } catch {}
-  // Fallback: DexScreener — only use pairs where wSOL is the BASE token
+  // 3. DexScreener — only use pairs where wSOL is the BASE token (not quote)
   try {
     const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
     if (res.ok) {
@@ -909,6 +908,15 @@ const fetchSolPriceUsd = async () => {
       const wSOL = 'So11111111111111111111111111111111111111112';
       const pair = j?.pairs?.find(p => p?.priceUsd && p?.baseToken?.address === wSOL && Number(p.priceUsd) > 1);
       const price = Number(pair?.priceUsd);
+      if (Number.isFinite(price) && price > 1) return price;
+    }
+  } catch {}
+  // 4. CoinGecko (free tier — may hit rate limits)
+  try {
+    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+    if (response.ok) {
+      const data = await response.json();
+      const price = Number(data?.solana?.usd);
       if (Number.isFinite(price) && price > 1) return price;
     }
   } catch {}
