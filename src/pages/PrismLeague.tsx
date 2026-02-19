@@ -103,11 +103,36 @@ async function submitToServerLeaderboard(entry: { address: string; score: number
 }
 
 /* ═══════════════════════════════════════════════════
+   Coin persistence (per wallet)
+   ═══════════════════════════════════════════════════ */
+
+const COINS_STORAGE_KEY = "identity_prism_orbit_coins_v1";
+
+function readWalletCoins(walletAddress: string): number {
+  try {
+    const raw = window.localStorage.getItem(COINS_STORAGE_KEY);
+    if (!raw) return 0;
+    const data = JSON.parse(raw) as Record<string, number>;
+    return data[walletAddress] ?? 0;
+  } catch { return 0; }
+}
+
+function writeWalletCoins(walletAddress: string, coins: number) {
+  try {
+    const raw = window.localStorage.getItem(COINS_STORAGE_KEY);
+    const data: Record<string, number> = raw ? JSON.parse(raw) : {};
+    data[walletAddress] = coins;
+    window.localStorage.setItem(COINS_STORAGE_KEY, JSON.stringify(data));
+  } catch { /* */ }
+}
+
+/* ═══════════════════════════════════════════════════
    Constants & types
    ═══════════════════════════════════════════════════ */
 
 const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
 const ONCHAIN_BONUS_MULTIPLIER = 1.5;
+const COIN_BONUS = 25;
 
 const formatAddress = (address?: string) => {
   if (!address || address === "anonymous") return "Anon";
@@ -228,6 +253,8 @@ const PrismLeague = () => {
   const [isCommitting, setIsCommitting] = useState(false);
   const [lastTxSignature, setLastTxSignature] = useState<string | null>(null);
   const [onchainBonusApplied, setOnchainBonusApplied] = useState(false);
+  const [coins, setCoins] = useState(0);
+  const [totalCoins, setTotalCoins] = useState(() => readWalletCoins(address || "anonymous"));
   const [sessionProof, setSessionProof] = useState<GameSessionProof | null>(null);
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStats>(() => getPlayerStats());
@@ -307,6 +334,7 @@ const PrismLeague = () => {
 
   const handleStart = async () => {
     setScore(0);
+    setCoins(0);
     setLastTxSignature(null);
     setOnchainBonusApplied(false);
     setSessionProof(null);
@@ -328,9 +356,20 @@ const PrismLeague = () => {
   };
 
   const handleGameOver = useCallback(
-    (finalScore: number) => {
+    (finalScore: number, finalCoins: number) => {
       setGameState("gameover");
       setScore(finalScore);
+      setCoins(finalCoins);
+
+      // Persist coins to wallet balance
+      const walletAddr = address || "anonymous";
+      const coinValue = finalCoins * COIN_BONUS;
+      if (coinValue > 0) {
+        const prev = readWalletCoins(walletAddr);
+        const next = prev + coinValue;
+        writeWalletCoins(walletAddr, next);
+        setTotalCoins(next);
+      }
       const startedAtMs = runStartedAtRef.current || Date.now();
       const endedAtMs = Date.now();
 
@@ -447,7 +486,17 @@ const PrismLeague = () => {
       if (result.success && result.txSignature) {
         setLastTxSignature(result.txSignature);
         setOnchainBonusApplied(true);
-        toast.success(`Score on-chain! +${Math.round((ONCHAIN_BONUS_MULTIPLIER - 1) * 100)}% bonus applied`);
+
+        // Apply on-chain bonus to coins and persist
+        const bonusCoins = Math.round(coins * COIN_BONUS * (ONCHAIN_BONUS_MULTIPLIER - 1));
+        if (bonusCoins > 0 && address) {
+          const prev = readWalletCoins(address);
+          const next = prev + bonusCoins;
+          writeWalletCoins(address, next);
+          setTotalCoins(next);
+        }
+
+        toast.success(`Score on-chain! +${bonusCoins} bonus coins (×${ONCHAIN_BONUS_MULTIPLIER})`);
 
         setLeaderboard((prev) => {
           const playerAddr = address!;
@@ -531,6 +580,7 @@ const PrismLeague = () => {
         <OrbitSurvivalScene
           gameState={gameState}
           onScore={setScore}
+          onCoins={setCoins}
           onGameOver={handleGameOver}
           traits={traits}
           walletScore={score}
@@ -625,14 +675,21 @@ const PrismLeague = () => {
                 </span>
               )}
 
-              {/* Speed / Reward HUD */}
+              {/* Coins + Score HUD */}
               <div className="flex items-center gap-3 mt-2">
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/40 backdrop-blur-sm border border-white/10">
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/40 backdrop-blur-sm border border-yellow-500/20">
                   <Coins className="w-3 h-3 text-yellow-400" />
                   <span className="text-[10px] text-yellow-400/80 font-bold tabular-nums">
-                    {calculateRewardCredits(score)} pts
+                    {coins * COIN_BONUS}
                   </span>
                 </div>
+                {totalCoins > 0 && (
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/40 backdrop-blur-sm border border-white/10">
+                    <span className="text-[10px] text-white/40 font-bold tabular-nums">
+                      Total: {totalCoins}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {mbSeed && (
@@ -654,89 +711,76 @@ const PrismLeague = () => {
           {gameState === "start" && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-auto">
               <div className="league-scroll max-w-md w-full mx-4 p-6 md:p-8 rounded-2xl border border-cyan-500/20 bg-black/85 backdrop-blur-xl shadow-[0_0_80px_rgba(6,182,212,0.1)] flex flex-col items-center text-center max-h-[85vh] overflow-y-auto league-menu-shell">
-                {/* Title */}
-                <div className="relative mb-5">
-                  <div className="absolute -inset-4 bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-pink-500/20 blur-xl rounded-full" />
-                  <Orbit className="w-12 h-12 text-cyan-400 relative animate-pulse" />
-                </div>
-                <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">Orbit Survival</h2>
-                <p className="text-cyan-200/50 text-sm mb-3">
-                  Dodge asteroid storms, earn PRISM tokens, and climb the on-chain leaderboard.
-                </p>
-
-                {/* Rewards */}
-                <div className="w-full mb-4 p-3 rounded-lg bg-gradient-to-r from-yellow-500/10 via-orange-500/10 to-yellow-500/10 border border-yellow-500/20">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <Coins className="w-3.5 h-3.5 text-yellow-400" />
-                    <span className="text-[10px] text-yellow-400 uppercase tracking-widest font-bold">Rewards</span>
-                  </div>
-                  <p className="text-xs text-white/70">
-                    Top users will be rewarded with the project token in the future.
-                  </p>
-                </div>
-
-                {/* How to play */}
-                <div className="w-full mb-4 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] text-left text-xs text-white/50 space-y-1.5">
-                  <div className="text-cyan-400/70 uppercase tracking-widest text-[10px] font-bold mb-2">
-                    How to play
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Target className="w-3 h-3 text-cyan-400 mt-0.5 flex-shrink-0" />
-                    <span className="text-white/70">{isMobile ? "Tap" : "Click / Space"} — reverse orbit</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Orbit className="w-3 h-3 text-cyan-400 mt-0.5 flex-shrink-0" />
-                    <span className="text-white/70">Dodge asteroids, collect power-ups</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Shield className="w-3 h-3 text-cyan-400 mt-0.5 flex-shrink-0" />
-                    <span className="text-white/70">Shield — blocks 1 hit. Clock — slowdown. Ghost — pass through. Coin — +25 pts</span>
+                {/* Hero Title */}
+                <div className="relative mb-4 w-full">
+                  <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/10 via-purple-500/5 to-transparent blur-2xl rounded-3xl" />
+                  <div className="relative flex flex-col items-center pt-2">
+                    <div className="relative mb-3">
+                      <div className="absolute -inset-6 bg-gradient-to-r from-cyan-500/30 via-purple-500/20 to-pink-500/30 blur-2xl rounded-full animate-pulse" />
+                      <Orbit className="w-14 h-14 text-cyan-400 relative drop-shadow-[0_0_12px_rgba(34,211,238,0.6)]" />
+                    </div>
+                    <h2 className="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-purple-300 tracking-tight mb-1">
+                      Orbit Survival
+                    </h2>
+                    <p className="text-cyan-200/40 text-xs max-w-[260px]">
+                      Dodge asteroids, collect coins, save on-chain for bonus rewards
+                    </p>
                   </div>
                 </div>
 
-                {/* MagicBlock integration badge */}
-                <div className="w-full mb-4 p-3 rounded-lg bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-purple-500/10 border border-purple-500/20">
-                  <div className="flex items-center justify-between">
+                {/* Coin Balance + Stats Row */}
+                <div className="w-full mb-4 grid grid-cols-2 gap-2">
+                  <div className="rounded-xl bg-gradient-to-br from-yellow-500/10 to-orange-500/5 border border-yellow-500/20 p-3 text-center">
+                    <div className="flex items-center justify-center gap-1.5 mb-1">
+                      <Coins className="w-4 h-4 text-yellow-400" />
+                      <span className="text-[10px] text-yellow-400/80 uppercase tracking-widest font-bold">Coins</span>
+                    </div>
+                    <div className="text-2xl font-black text-yellow-300 tabular-nums">{totalCoins}</div>
+                    {connected && (
+                      <div className="text-[9px] text-yellow-500/50 mt-0.5">On-chain = ×{ONCHAIN_BONUS_MULTIPLIER}</div>
+                    )}
+                  </div>
+                  <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-3 text-center">
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Stats</div>
+                    <div className="text-lg font-bold text-cyan-400 tabular-nums">{playerStats.gamesPlayed > 0 ? formatTime(playerStats.bestScore) : "--:--"}</div>
+                    <div className="text-[9px] text-white/30 mt-0.5">
+                      {playerStats.gamesPlayed > 0 ? `${playerStats.gamesPlayed} games` : "No games yet"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* How to play — compact */}
+                <div className="w-full mb-3 p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.05] text-left">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-sm">⚡</span>
-                      <span className="text-[10px] text-purple-400 uppercase tracking-widest font-bold">
-                        MagicBlock Powered
-                      </span>
+                      <Target className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                      <span className="text-white/60">{isMobile ? "Tap" : "Click"} — reverse orbit</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          mbHealthy ? "bg-green-400" : mbHealthy === false ? "bg-red-400" : "bg-yellow-400 animate-pulse"
-                        }`}
-                      />
-                      <span className="text-[10px] text-white/40">
-                        {mbHealthy ? "Connected" : mbHealthy === false ? "Offline" : "Checking..."}
-                      </span>
+                    <div className="flex items-center gap-1.5">
+                      <Shield className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                      <span className="text-white/60">Shield — block 1 hit</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+                      <span className="text-white/60">Clock — slow time</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Coins className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+                      <span className="text-white/60">Coin — +{COIN_BONUS} coins</span>
                     </div>
                   </div>
-                  <p className="text-[10px] text-purple-200/40 mt-1.5">
-                    Provably fair asteroid spawning via MagicBlock Ephemeral Rollups. 
-                    Each game session is seeded from on-chain entropy and verified after play.
-                  </p>
                 </div>
 
-                {/* Player stats */}
-                {playerStats.gamesPlayed > 0 && (
-                  <div className="w-full mb-4 grid grid-cols-3 gap-2">
-                    <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
-                      <div className="text-[10px] text-white/40 uppercase">Games</div>
-                      <div className="text-sm font-bold text-white">{playerStats.gamesPlayed}</div>
-                    </div>
-                    <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
-                      <div className="text-[10px] text-white/40 uppercase">Best</div>
-                      <div className="text-sm font-bold text-cyan-400">{formatTime(playerStats.bestScore)}</div>
-                    </div>
-                    <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-2 text-center">
-                      <div className="text-[10px] text-white/40 uppercase">Total Time</div>
-                      <div className="text-sm font-bold text-white">{formatTime(playerStats.totalSurvivalTime)}</div>
-                    </div>
-                  </div>
-                )}
+                {/* MagicBlock — minimal */}
+                <div className="w-full mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-500/5 border border-purple-500/15">
+                  <span className="text-sm">⚡</span>
+                  <span className="text-[10px] text-purple-300/60 flex-1">MagicBlock — provably fair seeds</span>
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      mbHealthy ? "bg-green-400" : mbHealthy === false ? "bg-red-400" : "bg-yellow-400 animate-pulse"
+                    }`}
+                  />
+                </div>
 
                 <Button
                   size="lg"
@@ -915,12 +959,12 @@ const PrismLeague = () => {
                   <div className="text-xs text-white/30 mb-2">Best: {formatTime(highScore)}</div>
                 )}
 
-                {/* Reward credits earned */}
+                {/* Coins earned this round + rank */}
                 <div className="flex items-center gap-3 mb-4">
                   <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-yellow-500/10 border border-yellow-500/25">
                     <Coins className="w-3.5 h-3.5 text-yellow-400" />
                     <span className="text-sm font-bold text-yellow-300">
-                      {onchainBonusApplied ? Math.round(rewardCredits * ONCHAIN_BONUS_MULTIPLIER) : rewardCredits} pts
+                      +{onchainBonusApplied ? Math.round(coins * COIN_BONUS * ONCHAIN_BONUS_MULTIPLIER) : coins * COIN_BONUS}
                     </span>
                     {onchainBonusApplied && (
                       <span className="text-[10px] font-bold text-green-400 animate-in fade-in slide-in-from-left-2 duration-500">×{ONCHAIN_BONUS_MULTIPLIER}</span>
@@ -932,6 +976,10 @@ const PrismLeague = () => {
                       <span className="text-sm font-bold text-cyan-300">#{playerRank}</span>
                     </div>
                   )}
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 border border-white/10">
+                    <span className="text-[10px] text-white/50">Total:</span>
+                    <span className="text-sm font-bold text-white/80 tabular-nums">{totalCoins}</span>
+                  </div>
                 </div>
 
                 {/* MagicBlock verification badge */}

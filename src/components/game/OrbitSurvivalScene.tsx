@@ -12,7 +12,8 @@ import { WalletTraits } from "@/hooks/useWalletData";
 type GameState = "start" | "playing" | "gameover";
 interface GameProps {
   onScore: (score: number) => void;
-  onGameOver: (finalScore: number) => void;
+  onCoins: (coins: number) => void;
+  onGameOver: (finalScore: number, finalCoins: number) => void;
   gameState: GameState;
   traits: WalletTraits | null;
   walletScore: number;
@@ -826,7 +827,7 @@ function PooledAsteroid({ index, texs, geos, meshRefs }: {
   );
 }
 
-function GameWorld({ gameState, onGameOver, onScore, traits }: GameProps) {
+function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProps) {
   const asteroidPool = useRef<AsteroidData[]>([]);
   const asteroidMeshRefs = useRef<(THREE.Mesh | null)[]>([]);
 
@@ -868,6 +869,7 @@ function GameWorld({ gameState, onGameOver, onScore, traits }: GameProps) {
   const explPos = useRef({ x: 0, y: 0 });
   const explAct = useRef(false);
   const bonusPoints = useRef(0);
+  const coinsCollected = useRef(0);
   const pickupEffect = useRef({ active: false, type: "shield" as PwrType, x: 0, y: 0, t: 0 });
 
   const sCol = traits?.planetTier ? TIER_COLORS[traits.planetTier] || "#22d3ee" : "#22d3ee";
@@ -921,6 +923,8 @@ function GameWorld({ gameState, onGameOver, onScore, traits }: GameProps) {
     pws.current = []; pwTimer.current = 0;
     shieldT.current = 0; slowmoT.current = 0; phaseT.current = 0;
     bonusPoints.current = 0;
+    coinsCollected.current = 0;
+    onCoins(0);
     elapsed.current = 0; spawnT.current = 0;
     overRef.current = false; scoreRef.current = -1; shake.current = 0; explAct.current = false;
     pickupEffect.current.active = false;
@@ -1028,6 +1032,8 @@ function GameWorld({ gameState, onGameOver, onScore, traits }: GameProps) {
         else if (pw.type === "phase") phaseT.current = PHASE_DUR;
         else if (pw.type === "coin") {
           bonusPoints.current += COIN_BONUS;
+          coinsCollected.current += 1;
+          onCoins(coinsCollected.current);
           const newSc = Math.floor(el) + bonusPoints.current;
           scoreRef.current = newSc;
           onScore(newSc);
@@ -1131,7 +1137,7 @@ function GameWorld({ gameState, onGameOver, onScore, traits }: GameProps) {
           shake.current = 2; 
           explPos.current = { x: sx, y: sy }; 
           explAct.current = true;
-          onGameOver(Math.floor(el) + bonusPoints.current); 
+          onGameOver(Math.floor(el) + bonusPoints.current, coinsCollected.current); 
           return;
         }
         const hd = Math.sqrt(dd2);
