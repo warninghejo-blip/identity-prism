@@ -415,6 +415,93 @@ const submitLeaderboardEntry = (entry) => {
 
 loadLeaderboard();
 
+// ── Server-side Coin balance persistence ──
+const COINS_STORE_FILE = process.env.COINS_STORE_FILE
+  ? path.resolve(process.env.COINS_STORE_FILE)
+  : path.join(METADATA_DIR, 'coin-balances.json');
+
+const coinBalances = new Map();
+
+const loadCoinBalances = () => {
+  try {
+    if (!fs.existsSync(COINS_STORE_FILE)) return;
+    const raw = fs.readFileSync(COINS_STORE_FILE, 'utf8');
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    const entries = parsed?.balances || parsed || {};
+    for (const [addr, bal] of Object.entries(entries)) {
+      if (typeof bal === 'number') coinBalances.set(addr, bal);
+    }
+    console.log(`[coins] Loaded ${coinBalances.size} balances`);
+  } catch (err) {
+    console.warn('[coins] Failed to load', err);
+  }
+};
+
+const persistCoinBalances = () => {
+  try {
+    const obj = {};
+    for (const [k, v] of coinBalances) obj[k] = v;
+    fs.writeFileSync(COINS_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), balances: obj }, null, 2));
+  } catch (err) {
+    console.warn('[coins] Failed to persist', err);
+  }
+};
+
+const getCoinBalance = (address) => coinBalances.get(address) || 0;
+
+const setCoinBalance = (address, coins) => {
+  coinBalances.set(address, coins);
+  persistCoinBalances();
+};
+
+loadCoinBalances();
+
+// ── Server-side Achievement claim tracking ──
+const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
+const achievementClaims = new Map(); // address -> Set of achievement IDs
+
+const loadAchievementClaims = () => {
+  try {
+    if (!fs.existsSync(ACHIEVEMENTS_STORE_FILE)) return;
+    const raw = fs.readFileSync(ACHIEVEMENTS_STORE_FILE, 'utf8');
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    const claims = parsed?.claims || parsed || {};
+    for (const [addr, ids] of Object.entries(claims)) {
+      if (Array.isArray(ids)) achievementClaims.set(addr, new Set(ids));
+    }
+    console.log(`[achievements] Loaded claims for ${achievementClaims.size} wallets`);
+  } catch (err) {
+    console.warn('[achievements] Failed to load', err);
+  }
+};
+
+const persistAchievementClaims = () => {
+  try {
+    const obj = {};
+    for (const [k, v] of achievementClaims) obj[k] = [...v];
+    fs.writeFileSync(ACHIEVEMENTS_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), claims: obj }, null, 2));
+  } catch (err) {
+    console.warn('[achievements] Failed to persist', err);
+  }
+};
+
+const getClaimedAchievements = (address) => {
+  return achievementClaims.get(address) || new Set();
+};
+
+const claimAchievement = (address, achievementId) => {
+  let claimed = achievementClaims.get(address);
+  if (!claimed) { claimed = new Set(); achievementClaims.set(address, claimed); }
+  if (claimed.has(achievementId)) return false; // already claimed
+  claimed.add(achievementId);
+  persistAchievementClaims();
+  return true;
+};
+
+loadAchievementClaims();
+
 const getHeliusKeyIndex = (seed = '') => {
   if (!HELIUS_KEYS.length) return -1;
   if (!seed) return 0;
@@ -1822,6 +1909,78 @@ const server = http.createServer(async (req, res) => {
       const result = submitLeaderboardEntry({ address, score, playedAt, txSignature });
       respondJson(res, 200, { entry: result, leaderboard: leaderboardEntries.slice(0, 50) });
     } catch (error) {
+      respondJson(res, 400, { error: 'Invalid JSON body' });
+    }
+    return;
+  }
+
+  // ── Coins API (per-wallet coin balance) ──
+  if (pathname === '/api/game/coins' && req.method === 'GET') {
+    const addr = url.searchParams.get('address') || '';
+    if (!addr) {
+      respondJson(res, 400, { error: 'address query param required' });
+      return;
+    }
+    const coins = getCoinBalance(addr);
+    respondJson(res, 200, { address: addr, coins });
+    return;
+  }
+
+  if (pathname === '/api/game/coins' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const parsed = JSON.parse(raw);
+      const { address: addr, coins, delta } = parsed;
+      if (!addr || typeof addr !== 'string') {
+        respondJson(res, 400, { error: 'address (string) required' });
+        return;
+      }
+      const current = getCoinBalance(addr);
+      // Accept the higher of client-reported total or server total
+      const newBalance = Math.max(current, typeof coins === 'number' ? coins : current + (typeof delta === 'number' ? delta : 0));
+      setCoinBalance(addr, newBalance);
+      respondJson(res, 200, { address: addr, coins: newBalance });
+    } catch {
+      respondJson(res, 400, { error: 'Invalid JSON body' });
+    }
+    return;
+  }
+
+  // ── Achievements API (per-wallet claimed achievements) ──
+  if (pathname === '/api/game/achievements' && req.method === 'GET') {
+    const addr = url.searchParams.get('address') || '';
+    if (!addr) {
+      respondJson(res, 400, { error: 'address query param required' });
+      return;
+    }
+    const claimed = [...getClaimedAchievements(addr)];
+    respondJson(res, 200, { address: addr, claimed });
+    return;
+  }
+
+  if (pathname === '/api/game/achievements' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const parsed = JSON.parse(raw);
+      const { address: addr, achievementId, reward } = parsed;
+      if (!addr || typeof addr !== 'string' || !achievementId || typeof achievementId !== 'string') {
+        respondJson(res, 400, { error: 'address (string) and achievementId (string) required' });
+        return;
+      }
+      const success = claimAchievement(addr, achievementId);
+      if (!success) {
+        respondJson(res, 409, { error: 'Achievement already claimed', achievementId });
+        return;
+      }
+      // Also add reward coins if provided
+      if (typeof reward === 'number' && reward > 0) {
+        const current = getCoinBalance(addr);
+        setCoinBalance(addr, current + reward);
+      }
+      const claimed = [...getClaimedAchievements(addr)];
+      const coins = getCoinBalance(addr);
+      respondJson(res, 200, { address: addr, achievementId, claimed, coins });
+    } catch {
       respondJson(res, 400, { error: 'Invalid JSON body' });
     }
     return;

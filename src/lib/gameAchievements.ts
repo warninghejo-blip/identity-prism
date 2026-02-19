@@ -14,8 +14,17 @@ export interface Achievement {
   tier: 'bronze' | 'silver' | 'gold' | 'diamond';
   unlocked: boolean;
   unlockedAt?: string;
+  claimed: boolean;
+  claimedAt?: string;
   mintTxSignature?: string;
 }
+
+export const ACHIEVEMENT_COIN_REWARDS: Record<string, number> = {
+  bronze: 20,
+  silver: 50,
+  gold: 100,
+  diamond: 200,
+};
 
 const ACHIEVEMENTS_KEY = 'orbit_survival_achievements_v1';
 const STATS_KEY = 'orbit_survival_stats_v1';
@@ -154,6 +163,8 @@ export function getAchievements(): Achievement[] {
       ...def,
       unlocked: saved?.unlocked ?? false,
       unlockedAt: saved?.unlockedAt,
+      claimed: saved?.claimed ?? false,
+      claimedAt: saved?.claimedAt,
       mintTxSignature: saved?.mintTxSignature,
     };
   });
@@ -202,6 +213,19 @@ export function checkAchievements(score: number): { newlyUnlocked: Achievement[]
   }
 
   return { newlyUnlocked, all: achievements };
+}
+
+/**
+ * Claim an achievement reward. Returns the coin reward amount, or 0 if already claimed.
+ */
+export function claimAchievementReward(achievementId: string): { reward: number; all: Achievement[] } {
+  const achievements = getAchievements();
+  const ach = achievements.find((a) => a.id === achievementId);
+  if (!ach || !ach.unlocked || ach.claimed) return { reward: 0, all: achievements };
+  ach.claimed = true;
+  ach.claimedAt = new Date().toISOString();
+  saveAchievements(achievements);
+  return { reward: ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0, all: achievements };
 }
 
 export function getAchievementProgress(achievement: Achievement): number {

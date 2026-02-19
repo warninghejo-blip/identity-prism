@@ -78,6 +78,7 @@ __pycache__/
 dapp-store/files/*.apk
 *.apk
 deploy_bundle.tar.gz
+deploy_dist.tar.gz
 deploy_full.sh
 
 # Raw achievement images (only public/achievements/ is needed)
