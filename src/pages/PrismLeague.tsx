@@ -107,6 +107,7 @@ async function submitToServerLeaderboard(entry: { address: string; score: number
    ═══════════════════════════════════════════════════ */
 
 const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
+const ONCHAIN_BONUS_MULTIPLIER = 1.5;
 
 const formatAddress = (address?: string) => {
   if (!address || address === "anonymous") return "Anon";
@@ -226,6 +227,7 @@ const PrismLeague = () => {
 
   const [isCommitting, setIsCommitting] = useState(false);
   const [lastTxSignature, setLastTxSignature] = useState<string | null>(null);
+  const [onchainBonusApplied, setOnchainBonusApplied] = useState(false);
   const [sessionProof, setSessionProof] = useState<GameSessionProof | null>(null);
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStats>(() => getPlayerStats());
@@ -306,6 +308,7 @@ const PrismLeague = () => {
   const handleStart = async () => {
     setScore(0);
     setLastTxSignature(null);
+    setOnchainBonusApplied(false);
     setSessionProof(null);
     setNewAchievements([]);
     setMbVerified(false);
@@ -443,7 +446,8 @@ const PrismLeague = () => {
       }
       if (result.success && result.txSignature) {
         setLastTxSignature(result.txSignature);
-        toast.success("Score committed on-chain!");
+        setOnchainBonusApplied(true);
+        toast.success(`Score on-chain! +${Math.round((ONCHAIN_BONUS_MULTIPLIER - 1) * 100)}% bonus applied`);
 
         setLeaderboard((prev) => {
           const playerAddr = address!;
@@ -915,7 +919,12 @@ const PrismLeague = () => {
                 <div className="flex items-center gap-3 mb-4">
                   <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-yellow-500/10 border border-yellow-500/25">
                     <Coins className="w-3.5 h-3.5 text-yellow-400" />
-                    <span className="text-sm font-bold text-yellow-300">{rewardCredits} pts</span>
+                    <span className="text-sm font-bold text-yellow-300">
+                      {onchainBonusApplied ? Math.round(rewardCredits * ONCHAIN_BONUS_MULTIPLIER) : rewardCredits} pts
+                    </span>
+                    {onchainBonusApplied && (
+                      <span className="text-[10px] font-bold text-green-400 animate-in fade-in slide-in-from-left-2 duration-500">×{ONCHAIN_BONUS_MULTIPLIER}</span>
+                    )}
                   </div>
                   {playerRank <= 20 && (
                     <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/25">
@@ -1005,22 +1014,29 @@ const PrismLeague = () => {
                     ) : (
                       <>
                         <Zap className="w-4 h-4 mr-1.5" />
-                        Save Score On-Chain
+                        Save On-Chain
+                        <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-green-500/30 text-green-300 font-black">+{Math.round((ONCHAIN_BONUS_MULTIPLIER - 1) * 100)}%</span>
                       </>
                     )}
                   </Button>
                 )}
 
                 {lastTxSignature && (
-                  <a
-                    href={`https://solscan.io/tx/${lastTxSignature}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 mb-3 text-xs text-green-400/80 hover:text-green-300 transition-colors"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    Score verified on-chain — View on Solscan
-                  </a>
+                  <div className="w-full mb-3 px-3 py-2 rounded-lg border border-green-500/25 bg-green-500/5 flex flex-col items-center gap-1">
+                    <div className="flex items-center gap-2 text-xs text-green-400 font-bold">
+                      <Shield className="w-3.5 h-3.5" />
+                      On-Chain Verified — {Math.round((ONCHAIN_BONUS_MULTIPLIER - 1) * 100)}% Bonus Applied
+                    </div>
+                    <a
+                      href={`https://solscan.io/tx/${lastTxSignature}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-[10px] text-green-400/60 hover:text-green-300 transition-colors"
+                    >
+                      <ExternalLink className="w-2.5 h-2.5" />
+                      View on Solscan
+                    </a>
+                  </div>
                 )}
 
                 <div className="flex gap-2.5 w-full mt-1">
