@@ -88,8 +88,6 @@ export async function commitScoreOnchain(
     });
 
     const tx = new Transaction().add(memoIx);
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
     tx.feePayer = wallet.publicKey;
 
     // ── Balance preflight — fail early with clear message ──
@@ -109,6 +107,9 @@ export async function commitScoreOnchain(
     }
 
     // ── Simulate BEFORE prompting user to sign (dApp Store requirement) ──
+    // Use a temporary blockhash for simulation (replaceRecentBlockhash: true handles it)
+    const { blockhash: simBlockhash } = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = simBlockhash;
     try {
       const simulation = await connection.simulateTransaction(tx, {
         sigVerify: false,
@@ -126,6 +127,10 @@ export async function commitScoreOnchain(
       console.warn('[score] simulateTransaction network error', simError);
     }
 
+    // ── Get FRESH blockhash right before signing — minimises expiry window on MWA ──
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+
     // Patch serialize to skip sig verification (same pattern as mint/BlackHole)
     const origSerialize = tx.serialize.bind(tx);
     tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
@@ -135,26 +140,42 @@ export async function commitScoreOnchain(
         verifySignatures: false,
       })) as typeof tx.serialize;
 
-    // Sign & send — prefer signTransaction + sendRaw, fallback to sendTransaction (MWA)
+    // Sign & send with retry — if blockhash expires during MWA approval, retry once
+    const sendSignedTx = async (): Promise<string> => {
+      if (wallet.signTransaction) {
+        const signed = await wallet.signTransaction(tx);
+        return connection.sendRawTransaction(
+          signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+          { skipPreflight: true, preflightCommitment: 'confirmed' },
+        );
+      } else if (wallet.sendTransaction) {
+        return wallet.sendTransaction(tx, connection);
+      }
+      throw new Error('Wallet does not support transaction signing');
+    };
+
     let txSignature: string;
-    if (wallet.signTransaction) {
-      const signed = await wallet.signTransaction(tx);
-      txSignature = await connection.sendRawTransaction(
-        signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-        { skipPreflight: true, preflightCommitment: 'confirmed' },
-      );
-    } else if (wallet.sendTransaction) {
-      txSignature = await wallet.sendTransaction(tx, connection);
-    } else {
-      return { success: false, error: 'Wallet does not support transaction signing' };
+    try {
+      txSignature = await sendSignedTx();
+    } catch (sendErr: any) {
+      const msg = sendErr?.message || '';
+      // If blockhash expired before network accepted, retry with fresh one
+      if (msg.includes('expired') || msg.includes('blockhash') || msg.includes('block height')) {
+        console.warn('[score] blockhash expired on first attempt, retrying with fresh blockhash');
+        const fresh = await connection.getLatestBlockhash('confirmed');
+        tx.recentBlockhash = fresh.blockhash;
+        tx.signatures = []; // clear stale signature
+        txSignature = await sendSignedTx();
+      } else {
+        throw sendErr;
+      }
     }
 
-    // Fetch a fresh blockhash window AFTER sending — the original one may have
-    // expired while the user was approving the transaction (especially on mobile MWA).
-    const { blockhash: confirmBlockhash, lastValidBlockHeight: confirmLastValid } =
+    // Confirm with a fresh blockhash window (the signing one may have aged)
+    const { blockhash: confirmBH, lastValidBlockHeight: confirmBHHeight } =
       await connection.getLatestBlockhash('confirmed');
     await connection.confirmTransaction(
-      { signature: txSignature, blockhash: confirmBlockhash, lastValidBlockHeight: confirmLastValid },
+      { signature: txSignature, blockhash: confirmBH, lastValidBlockHeight: confirmBHHeight },
       'confirmed',
     );
 
