@@ -925,7 +925,7 @@ const PrismLeague = () => {
 
                 <Button
                   size="lg"
-                  className="w-full h-14 text-lg bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-black font-bold uppercase tracking-widest shadow-[0_0_30px_rgba(6,182,212,0.3)] transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+                  className="w-full max-w-xs h-14 text-lg bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 text-black font-bold uppercase tracking-widest shadow-[0_0_30px_rgba(6,182,212,0.3)] transition-all transform hover:scale-[1.02] active:scale-[0.98]"
                   onClick={handleStart}
                 >
                   <Play className="w-5 h-5 mr-2 fill-current" />
