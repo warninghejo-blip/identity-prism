@@ -37,7 +37,7 @@ export function createWormholeTunnel(): HTMLElement {
 
   const cx = W / 2, cy = H / 2;
   const maxR = Math.hypot(cx, cy) * 1.18;
-  const DURATION  = 1200;
+  const DURATION  = 1800;
   const N_LINES   = mobile ? 30 : 52;
   const N_RINGS   = mobile ? 5  : 7;
   const N_PART    = mobile ? 12 : 22;
@@ -57,7 +57,7 @@ export function createWormholeTunnel(): HTMLElement {
   const pSpd = new Float32Array(N_PART);
   for (let i = 0; i < N_PART; i++) {
     pOff[i] = (i * 0.618034) % 1;
-    pSpd[i] = 0.65 + (i % 4) * 0.12;
+    pSpd[i] = 0.45 + (i % 4) * 0.10;
   }
 
   const START = performance.now();
@@ -72,7 +72,7 @@ export function createWormholeTunnel(): HTMLElement {
     const tRaw = Math.min(elapsed / DURATION, 1);
     const t    = eio(tRaw);              // eased t — smooth accel/decel
     const cruise = tRaw >= 1;
-    const ct   = cruise ? (elapsed - DURATION) / 10000 : 0;
+    const ct   = cruise ? (elapsed - DURATION) / 14000 : 0;
 
     // ── Background ──
     ctx.fillStyle = '#010108';
@@ -121,7 +121,7 @@ export function createWormholeTunnel(): HTMLElement {
         ctx.lineWidth = 0.8;
         ctx.beginPath();
         for (let i = 0; i < N_LINES; i++) {
-          const progress = ((t * 3 + i / N_LINES + b * 0.25) % 1);
+          const progress = ((t * 2.2 + i / N_LINES + b * 0.25) % 1);
           if (Math.floor(progress * 4) !== b) continue;
           // Lines get longer toward edges = depth illusion
           const len = maxR * (0.07 + progress * 0.2);
@@ -139,7 +139,7 @@ export function createWormholeTunnel(): HTMLElement {
     if (!cruise) {
       const fadeIn = Math.min(tRaw * 8, 1);
       for (let i = 0; i < N_RINGS; i++) {
-        const phase = ((t * 3.2 + i / N_RINGS) % 1);
+        const phase = ((t * 2.4 + i / N_RINGS) % 1);
         const r = phase * maxR;
         const a = (1 - phase) * 0.9 * fadeIn;
         if (a < 0.01 || r < 1) continue;
@@ -159,7 +159,7 @@ export function createWormholeTunnel(): HTMLElement {
     if (!cruise && tRaw > 0.04) {
       const fadeIn = Math.min(tRaw * 7, 1);
       for (let i = 0; i < N_PART; i++) {
-        const progress = ((t * pSpd[i] * 2 + pOff[i]) % 1);
+        const progress = ((t * pSpd[i] * 1.5 + pOff[i]) % 1);
         const r  = progress * maxR;
         const ai = (i / N_PART) * Math.PI * 2 + t * 0.25;
         const px = cx + Math.cos(ai) * r;
