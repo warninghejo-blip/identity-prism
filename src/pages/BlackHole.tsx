@@ -993,13 +993,14 @@ const BlackHole = () => {
     const burnable = selected.filter(t => t.assetStatus !== 'protected');
     const totalAccounts = burnable.length;
     const grossReclaim = burnable.reduce((sum, t) => sum + t.rentSol, 0);
+    const totalValueLost = burnable.reduce((sum, t) => sum + (t.valueSol && t.valueSol > 0.001 ? t.valueSol : 0), 0);
     const commissionRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
     const commission = grossReclaim * commissionRate;
     const netReturn = Math.max(0, grossReclaim - commission - ESTIMATED_FEE_SOL);
     const protectedCount = tokens.filter(t => t.assetStatus === 'protected').length;
     const valuableCount = tokens.filter(t => t.assetStatus === 'valuable').length;
     const burnableCount = tokens.filter(t => t.assetStatus === 'burnable').length;
-    return { totalAccounts, grossReclaim, commission, netReturn, protectedCount, valuableCount, burnableCount };
+    return { totalAccounts, grossReclaim, commission, netReturn, totalValueLost, protectedCount, valuableCount, burnableCount };
   }, [tokens, selectedTokens, hasMintedCard]);
 
   const debrisParticles = useMemo(() => {
@@ -1202,7 +1203,7 @@ const BlackHole = () => {
           {selectedTokens.size > 0 && (
             <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-5">
               <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
                   <div>
                     <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Accounts</div>
                     <div className="text-lg font-bold text-red-400 mt-1">{summary.totalAccounts}</div>
@@ -1211,6 +1212,17 @@ const BlackHole = () => {
                     <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Rent Reclaim</div>
                     <div className="text-lg font-bold font-mono text-zinc-200 mt-1">{parseFloat(summary.grossReclaim.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
                   </div>
+                  {summary.totalValueLost > 0.001 && (
+                    <div className="bg-red-950/30 rounded-lg p-2">
+                      <div className="text-[11px] text-red-400 uppercase tracking-wider flex items-center justify-center gap-1">
+                        <AlertTriangle className="h-3 w-3" /> Value Lost
+                      </div>
+                      <div className="text-lg font-bold font-mono text-red-400 mt-1">~{parseFloat(summary.totalValueLost.toFixed(4))} <span className="text-xs">SOL</span></div>
+                      {solPriceUsd && (
+                        <div className="text-[11px] text-red-500/70">{formatUsd(summary.totalValueLost * solPriceUsd)}</div>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Fee ({((hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT) * 100).toFixed(0)}%)</div>
                     <div className="text-lg font-mono text-zinc-400 mt-1">-{parseFloat(summary.commission.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
@@ -1326,9 +1338,14 @@ const BlackHole = () => {
                     {/* Balance */}
                     <span className="text-[11px] font-mono text-zinc-400 text-center pr-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
                     {/* Return */}
-                    <span className="text-[10px] font-mono text-emerald-400/80 text-center">
-                      {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
-                    </span>
+                    <div className="text-center">
+                      <span className="text-[10px] font-mono text-emerald-400/80 block">
+                        {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
+                      </span>
+                      {token.valueSol != null && token.valueSol > 0.001 && (
+                        <span className="text-[8px] font-mono text-red-400/70 block">-{formatSolCompact(token.valueSol)}</span>
+                      )}
+                    </div>
                     {/* Status */}
                     <div className="flex justify-center">
                       {token.assetStatus === 'protected' ? (
@@ -1444,13 +1461,22 @@ const BlackHole = () => {
                         <TableCell className="text-center text-sm font-mono">
                           {(() => {
                             const netEst = token.netGainSol ?? 0;
-                            if (netEst <= 0) {
-                              return <span className="text-zinc-600">—</span>;
-                            }
+                            const hasValue = token.valueSol != null && token.valueSol > 0.001;
                             return (
                               <div className="flex flex-col items-center">
-                                <span className="text-emerald-400/80">~{parseFloat(netEst.toFixed(4))}</span>
-                                <span className="text-[9px] text-zinc-600">est. net</span>
+                                {netEst > 0 ? (
+                                  <span className="text-emerald-400/80">+{parseFloat(netEst.toFixed(4))}</span>
+                                ) : (
+                                  <span className="text-zinc-600">—</span>
+                                )}
+                                {hasValue && (
+                                  <span className="text-[9px] text-red-400/70" title="Asset value lost if burned">
+                                    loses ~{formatSolCompact(token.valueSol)} SOL
+                                  </span>
+                                )}
+                                {!hasValue && netEst > 0 && (
+                                  <span className="text-[9px] text-zinc-600">rent only</span>
+                                )}
                               </div>
                             );
                           })()}
