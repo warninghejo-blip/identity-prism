@@ -80,7 +80,7 @@ async function fetchServerLeaderboard(): Promise<LeaderboardEntry[]> {
     const res = await fetch(`${base}/api/game/leaderboard`);
     if (!res.ok) return [];
     const data = await res.json();
-    return (data?.entries || []).map((e: any) => ({
+    return (data?.entries || []).map((e: { address: string; score: number; playedAt?: string; txSignature?: string }) => ({
       id: `srv-${e.address}-${e.score}`,
       address: e.address,
       score: e.score,
@@ -272,7 +272,7 @@ const PrismLeague = () => {
       );
       const installedNonMwa = availableWallets.find(
         (w) => w.adapter.name !== SolanaMobileWalletAdapterWalletName &&
-               (w.readyState === 1 || w.readyState === 2)
+               (w.readyState === "Installed" || w.readyState === "Loadable")
       );
       // On Capacitor Android (Seeker), always try MWA even if readyState not detected
       const target = mwaWallet || installedNonMwa;
@@ -646,8 +646,8 @@ const PrismLeague = () => {
       } else {
         toast.error(result.error || "Failed to commit score");
       }
-    } catch (err: any) {
-      toast.error(err?.message || "Transaction failed");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Transaction failed");
     } finally {
       setIsCommitting(false);
     }

@@ -120,14 +120,21 @@ const AST_TEX_PAIRS = [
 
 const AST_NORM_SCALE = new THREE.Vector2(1.6, 1.6);
 
+const AST_M = [
+  { met: .06, rou: .94 },  // rock_ground: dark rocky ground
+  { met: .10, rou: .85 },  // rock_boulder_dry: dry boulder
+  { met: .08, rou: .88 },  // brown_mud_rocks: brown rocky
+  { met: .14, rou: .78 },  // rock_face: exposed rock face
+];
+
 // Shared PBR materials — one per texture pair (avoids 200 duplicate materials)
 const AST_SHARED_MATS = AST_TEX_PAIRS.map((pair, i) => {
   const mat = new THREE.MeshStandardMaterial({
     map: pair.diffuse,
     normalMap: pair.normal,
     normalScale: AST_NORM_SCALE,
-    roughness: AST_M[i % AST_M.length].rou,
-    metalness: AST_M[i % AST_M.length].met,
+    roughness: AST_M[i].rou,
+    metalness: AST_M[i].met,
   });
   return mat;
 });
@@ -592,13 +599,6 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
 /* ═══════════════════════════════════════════════════
    Asteroid mesh
    ═══════════════════════════════════════════════════ */
-
-const AST_M = [
-  { met: .06, rou: .94 },  // rock_ground: dark rocky ground
-  { met: .10, rou: .85 },  // rock_boulder_dry: dry boulder
-  { met: .08, rou: .88 },  // brown_mud_rocks: brown rocky
-  { met: .14, rou: .78 },  // rock_face: exposed rock face
-];
 
 function AstMesh({ a, geos }: { a: AsteroidData; geos: THREE.SphereGeometry[] }) {
   const geo = geos[a.gi % geos.length];
