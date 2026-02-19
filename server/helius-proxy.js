@@ -924,7 +924,17 @@ const fetchSolPriceUsd = async () => {
 };
 
 const fetchSkrPriceUsd = async () => {
-  // Try CoinGecko first
+  // 1. DexScreener — SKR is base token in its pairs, so priceUsd is correct
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${SKR_MINT}`);
+    if (res.ok) {
+      const j = await res.json();
+      const pair = j?.pairs?.find(p => p?.priceUsd && Number(p.priceUsd) > 0);
+      const price = Number(pair?.priceUsd);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+  } catch {}
+  // 2. CoinGecko (free tier — may hit rate limits)
   try {
     const response = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=seeker&vs_currencies=usd'
@@ -932,16 +942,6 @@ const fetchSkrPriceUsd = async () => {
     if (response.ok) {
       const data = await response.json();
       const price = Number(data?.seeker?.usd ?? data?.usd ?? data?.price);
-      if (Number.isFinite(price) && price > 0) return price;
-    }
-  } catch {}
-  // Fallback: DexScreener (free, no auth)
-  try {
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${SKR_MINT}`);
-    if (res.ok) {
-      const j = await res.json();
-      const pair = j?.pairs?.find(p => p?.priceUsd);
-      const price = Number(pair?.priceUsd);
       if (Number.isFinite(price) && price > 0) return price;
     }
   } catch {}
