@@ -3041,158 +3041,16 @@ body:has(.prism-league-page) #root > * {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   WORMHOLE TUNNEL — Hyperspace corridor transition
-   GPU-composited: only transform + opacity animated (no repaints)
+   WORMHOLE TUNNEL — canvas-based (see wormholeTunnel.ts)
+   Only keyframes used by CelestialCard / Index are kept here.
    ═══════════════════════════════════════════════════════════ */
 
-.wormhole-tunnel {
-  position: fixed;
-  inset: 0;
-  z-index: 999999;
-  overflow: hidden;
-  background: #010108;
-  pointer-events: all;
-  will-change: opacity;
-}
+/* Legacy no-ops — prevent errors if old class names still exist */
+.wt-nebula, .wt-rings, .wt-ring, .wt-streaks, .wt-core,
+.wt-cruise, .wt-flash, .wt-vignette, .wt-depth,
+.wt-glow, .wt-glow-warm, .wt-dust { display: none; }
 
-/* ── Layer 1: Deep space nebula ── */
-.wt-nebula {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 55% 55% at 50% 50%, rgba(35, 12, 80, 0.95) 0%, transparent 65%),
-    radial-gradient(ellipse 120% 90% at 50% 50%, rgba(8, 3, 22, 1) 0%, #010108 100%);
-  animation: wt-nebula-in 0.12s ease-out forwards;
-}
-@keyframes wt-nebula-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-/* ── Layer 2: Tunnel rings ── */
-.wt-rings {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.wt-ring {
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 48px; height: 48px;
-  border-radius: 50%;
-  border: 1.5px solid rgba(120, 210, 255, 0.9);
-  box-shadow: 0 0 10px rgba(100, 190, 255, 0.45), inset 0 0 6px rgba(180, 230, 255, 0.15);
-  transform: translate(-50%, -50%) scale(0.01);
-  opacity: 0;
-  will-change: transform, opacity;
-  animation: wt-ring-rush 0.95s cubic-bezier(0.12, 0, 0.6, 1) forwards;
-}
-@keyframes wt-ring-rush {
-  0%   { transform: translate(-50%,-50%) scale(0.01); opacity: 1;
-         border-color: rgba(230,245,255,0.98); box-shadow: 0 0 24px rgba(180,220,255,0.9); }
-  35%  { opacity: 0.75; border-color: rgba(100,190,255,0.7); }
-  75%  { opacity: 0.2; }
-  100% { transform: translate(-50%,-50%) scale(160); opacity: 0;
-         border-color: rgba(60,110,240,0.05); }
-}
-
-/* ── Layer 3: Speed streaks — rush then slow cruise ── */
-.wt-streaks {
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 200vmax; height: 200vmax;
-  transform: translate(-50%, -50%);
-  background: repeating-conic-gradient(
-    from 0deg at 50% 50%,
-    transparent 0deg,
-    rgba(130, 210, 255, 0.08) 0.06deg,
-    rgba(170, 225, 255, 0.05) 0.12deg,
-    transparent 0.75deg
-  );
-  opacity: 0;
-  will-change: transform, opacity;
-  animation:
-    wt-streaks-rush 1.3s ease-out forwards,
-    wt-streaks-cruise 9s linear 1.3s infinite;
-}
-@keyframes wt-streaks-rush {
-  0%   { transform: translate(-50%,-50%) scale(0.04) rotate(0deg); opacity: 0; }
-  4%   { opacity: 0.95; }
-  100% { transform: translate(-50%,-50%) scale(2.2) rotate(9deg); opacity: 0.4; }
-}
-@keyframes wt-streaks-cruise {
-  from { transform: translate(-50%,-50%) scale(2.2) rotate(9deg); opacity: 0.4; }
-  to   { transform: translate(-50%,-50%) scale(2.2) rotate(369deg); opacity: 0.4; }
-}
-
-/* ── Layer 4: Vanishing-point core ── */
-.wt-core {
-  position: absolute;
-  top: 50%; left: 50%;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow:
-    0 0 18px 8px rgba(210, 235, 255, 0.95),
-    0 0 55px 18px rgba(150, 205, 255, 0.6),
-    0 0 110px 35px rgba(100, 165, 255, 0.25);
-  transform: translate(-50%, -50%) scale(0.1);
-  opacity: 0;
-  will-change: transform, opacity;
-  animation: wt-core-expand 1.4s ease-out forwards;
-}
-@keyframes wt-core-expand {
-  0%   { opacity: 0;   transform: translate(-50%,-50%) scale(0.1); }
-  4%   { opacity: 1;   transform: translate(-50%,-50%) scale(1);
-         box-shadow: 0 0 30px 12px rgba(220,240,255,1), 0 0 80px 30px rgba(150,210,255,0.7); }
-  28%  { opacity: 0.85; transform: translate(-50%,-50%) scale(4); }
-  65%  { opacity: 0.1;  transform: translate(-50%,-50%) scale(22); }
-  100% { opacity: 0;   transform: translate(-50%,-50%) scale(70); }
-}
-
-/* ── Layer 5: Cruise glow — visible during sustained travel ── */
-.wt-cruise {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse 45% 45% at 50% 50%,
-    rgba(50, 110, 210, 0.18) 0%,
-    rgba(30, 60, 140, 0.08) 45%,
-    transparent 70%
-  );
-  opacity: 0;
-  pointer-events: none;
-  animation: wt-cruise-appear 0.6s ease-in 1.3s forwards;
-}
-@keyframes wt-cruise-appear {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-/* ── Layer 6: Exit flash bloom ── */
-.wt-flash {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse 75% 65% at 50% 50%,
-    rgba(255, 255, 255, 0.88) 0%,
-    rgba(210, 235, 255, 0.45) 18%,
-    rgba(150, 200, 255, 0.15) 40%,
-    transparent 62%
-  );
-  opacity: 0;
-  pointer-events: none;
-  will-change: transform, opacity;
-  animation: wt-exit-flash 0.55s ease-out 0.78s forwards;
-}
-@keyframes wt-exit-flash {
-  0%   { opacity: 0; transform: scale(0.45); }
-  22%  { opacity: 0.72; }
-  100% { opacity: 0; transform: scale(2.2); }
-}
-
-/* Legacy no-ops */
-.wt-vignette, .wt-depth, .wt-glow, .wt-glow-warm, .wt-dust { display: none; }
-
-/* ── Forward: portal grows before tunnel ── */
+/* ── Forward: portal button grows before tunnel ── */
 @keyframes wt-portal-grow {
   0%   { transform: scale(1); filter: brightness(1); }
   60%  { transform: scale(1.4); filter: brightness(2); }
