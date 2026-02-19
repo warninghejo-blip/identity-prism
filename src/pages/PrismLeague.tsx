@@ -53,12 +53,11 @@ import {
   type GameSessionProof,
 } from "@/lib/magicblock";
 import { createWormholeTunnel, fadeOutWormholeTunnel } from "@/lib/wormholeTunnel";
+import { getHeliusProxyUrl, getAppBaseUrl } from "@/constants";
 
 /* ═══════════════════════════════════════════════════
-   Constants & types
+   Leaderboard types & server sync
    ═══════════════════════════════════════════════════ */
-
-const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
 
 interface LeaderboardEntry {
   id: string;
@@ -67,6 +66,47 @@ interface LeaderboardEntry {
   playedAt: string;
   txSignature?: string;
 }
+
+function getServerBase(): string {
+  return getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== "undefined" ? window.location.origin : "");
+}
+
+async function fetchServerLeaderboard(): Promise<LeaderboardEntry[]> {
+  try {
+    const base = getServerBase();
+    if (!base) return [];
+    const res = await fetch(`${base}/api/game/leaderboard`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data?.entries || []).map((e: any) => ({
+      id: `srv-${e.address}-${e.score}`,
+      address: e.address,
+      score: e.score,
+      playedAt: e.playedAt || new Date().toISOString(),
+      txSignature: e.txSignature,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function submitToServerLeaderboard(entry: { address: string; score: number; playedAt: string; txSignature?: string }): Promise<void> {
+  try {
+    const base = getServerBase();
+    if (!base) return;
+    await fetch(`${base}/api/game/leaderboard`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    });
+  } catch { /* silent */ }
+}
+
+/* ═══════════════════════════════════════════════════
+   Constants & types
+   ═══════════════════════════════════════════════════ */
+
+const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
 
 const formatAddress = (address?: string) => {
   if (!address || address === "anonymous") return "Anon";
@@ -198,6 +238,28 @@ const PrismLeague = () => {
   const [mbSeed, setMbSeed] = useState<string | null>(null);
   const [mbSlot, setMbSlot] = useState<number>(0);
   const [mbVerified, setMbVerified] = useState<boolean>(false);
+
+  /* Fetch server leaderboard on mount and merge with local */
+  useEffect(() => {
+    fetchServerLeaderboard().then((serverEntries) => {
+      if (!serverEntries.length) return;
+      setLeaderboard((prev) => {
+        const merged = new Map<string, LeaderboardEntry>();
+        for (const e of prev) merged.set(e.address, e);
+        for (const e of serverEntries) {
+          const existing = merged.get(e.address);
+          if (!existing || e.score > existing.score) {
+            merged.set(e.address, { ...e, txSignature: e.txSignature || existing?.txSignature });
+          } else if (e.txSignature && !existing.txSignature) {
+            merged.set(e.address, { ...existing, txSignature: e.txSignature });
+          }
+        }
+        const sorted = Array.from(merged.values()).sort((a, b) => b.score - a.score).slice(0, 20);
+        writeLeaderboard(sorted);
+        return sorted;
+      });
+    });
+  }, []);
 
   /* Check MagicBlock health on mount */
   useEffect(() => {
@@ -347,6 +409,9 @@ const PrismLeague = () => {
         return next;
       });
 
+      // Persist to server leaderboard
+      submitToServerLeaderboard({ address: playerAddr, score: finalScore, playedAt: newEntry.playedAt });
+
       if (finalScore > highScore) {
         setHighScore(finalScore);
         toast.success(`New High Score: ${formatTime(finalScore)}!`);
@@ -387,6 +452,8 @@ const PrismLeague = () => {
             prev[idx].txSignature = result.txSignature;
             const next = [...prev];
             writeLeaderboard(next);
+            // Sync txSignature to server
+            submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature });
             return next;
           }
           return prev;
