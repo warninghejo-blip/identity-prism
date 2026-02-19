@@ -7,8 +7,8 @@
     },
     "./files/app-release.apk": {
       "path": "./files/app-release.apk",
-      "sha256": "AOXey0bEfkFK5Twirspegl58KL6+WPKVS9OtSlmLsts=",
-      "uri": "https://arweave.net/GSXKbp9VpiLs25PSGtepKuXzTCjVqEYWfxXWCZQFgvg"
+      "sha256": "Gh4jKYKj4lRAvwGMsuONf+GnQLL8YxLS8UW6YM7vwIU=",
+      "uri": "https://arweave.net/u8-0ZSqzBBIaUcjDtveI2uGqhjhgCis2LqhGJRdKNUc"
     },
     "./media/release_icon.png": {
       "path": "./media/release_icon.png",
@@ -17,8 +17,8 @@
     },
     "./media/banner.png": {
       "path": "./media/banner.png",
-      "sha256": "WPkGquoYkc/8TBEAT1I3n364CZSOx5drqEH0gpbI3e0=",
-      "uri": "https://arweave.net/syDTC4vqc4tlLoc9ABRiL5UjM6rDbnO2sMX4KVkyo_o"
+      "sha256": "WuJlRAX+0dw/1qeC/Yodwb5UkZCDl8AvZFIufU2x+ig=",
+      "uri": "https://arweave.net/AUMM9DNwibyfzAkFpVzbGzWFHlIYW22KkzAKWqDxXpA"
     },
     "./media/screenshot_1_landing.png": {
       "path": "./media/screenshot_1_landing.png",
@@ -39,6 +39,21 @@
       "path": "./media/screenshot_4_badges.png",
       "sha256": "KxerTtelMyIVVuz+sXfDVdjt4j2+tHjRAQmbERb5vf0=",
       "uri": "https://arweave.net/TbK8NoXQ9Omvq1ksdgdMllW7n7D4_pwwdjPPS3FI6kE"
+    },
+    "./media/screenshot_5_game_start.png": {
+      "path": "./media/screenshot_5_game_start.png",
+      "sha256": "foUHUEvZez95p5UUo+/0jiW6Cxn6O4KvaaxM7tiFIM8=",
+      "uri": "https://arweave.net/DoOa_uUfFEHM8J261Vw_e99F_yjx0RzUshph7bJ_8ks"
+    },
+    "./media/screenshot_6_blackhole.png": {
+      "path": "./media/screenshot_6_blackhole.png",
+      "sha256": "KITKf7nyGQSyoDV2oYys+kZpAHwsjN7pMOweqNkTa40=",
+      "uri": "https://arweave.net/t0Aq5y4Hbv0sHcBWDQOq44kZD5Ae2X1i4P6TqLD8pYQ"
+    },
+    "./media/screenshot_7_home.png": {
+      "path": "./media/screenshot_7_home.png",
+      "sha256": "LbKq21ahlxrXh1jvt0fqDs2tHOklH4eZoa0AnKM09jM=",
+      "uri": "https://arweave.net/pA4GCK5nUvWi4pLV4nuqAMRTtY3y26ISj1cUxxka8bI"
     }
   }
 }
