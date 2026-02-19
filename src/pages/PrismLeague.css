@@ -165,26 +165,29 @@
 
 .league-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(34, 211, 238, 0.6) rgba(8, 15, 24, 0.7);
+  scrollbar-color: rgba(34, 211, 238, 0.35) transparent;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
 }
 
 .league-scroll::-webkit-scrollbar {
-  width: 9px;
+  width: 5px;
 }
 
 .league-scroll::-webkit-scrollbar-track {
-  background: rgba(8, 15, 24, 0.68);
-  border-radius: 999px;
+  background: transparent;
+  margin: 8px 0;
 }
 
 .league-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(34, 211, 238, 0.72), rgba(14, 165, 233, 0.42));
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(34, 211, 238, 0.3);
+  transition: background 0.2s ease;
 }
 
 .league-scroll::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgba(103, 232, 249, 0.82), rgba(56, 189, 248, 0.56));
+  background: rgba(34, 211, 238, 0.55);
 }
 
 .league-aurora {
