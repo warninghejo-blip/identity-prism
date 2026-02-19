@@ -87,7 +87,7 @@ const SHIELD_DUR = 999;
 const SLOWMO_DUR = 6;
 const PHASE_DUR = 4;
 const COIN_BONUS = 25;
-const MAX_ASTEROIDS = 200;
+const MAX_ASTEROIDS = IS_MOBILE ? 100 : 200;
 
 const TIER_COLORS: Record<string, string> = {
   mercury: "#9ca3af", mars: "#ef4444", venus: "#f59e0b", earth: "#22c55e",
@@ -119,6 +119,18 @@ const AST_TEX_PAIRS = [
 ];
 
 const AST_NORM_SCALE = new THREE.Vector2(1.6, 1.6);
+
+// Shared PBR materials — one per texture pair (avoids 200 duplicate materials)
+const AST_SHARED_MATS = AST_TEX_PAIRS.map((pair, i) => {
+  const mat = new THREE.MeshStandardMaterial({
+    map: pair.diffuse,
+    normalMap: pair.normal,
+    normalScale: AST_NORM_SCALE,
+    roughness: AST_M[i % AST_M.length].rou,
+    metalness: AST_M[i % AST_M.length].met,
+  });
+  return mat;
+});
 
 /* ═══════════════════════════════════════════════════
    Rock geometry — smooth sphere + gentle displacement
@@ -397,6 +409,11 @@ function Dust() {
    BLACK HOLES — clean black circle with rotating spiral arms
    ═══════════════════════════════════════════════════ */
 
+// Pre-created BH geometries to avoid GC spikes on spawn
+const _bhCircleGeo = new THREE.CircleGeometry(1, 48);
+const _bhRingGeo = new THREE.RingGeometry(.92, 1.05, 64);
+const _bhGlowGeo = new THREE.CircleGeometry(2, 32);
+
 const BH_SPIRAL_VS = `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`;
 const BH_SPIRAL_FS = `
   uniform float uTime;
@@ -455,10 +472,9 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
 
   return (<>{Array.from({ length: BH_N }).map((_, i) => (
     <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
-      <mesh><circleGeometry args={[1, 48]} /><meshBasicMaterial color="#000000" transparent opacity={0} /></mesh>
-      <mesh><ringGeometry args={[.92, 1.05, 64]} /><meshBasicMaterial color="#6633aa" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
-      <mesh position={[0, 0, .01]}>
-        <circleGeometry args={[1, 48]} />
+      <mesh geometry={_bhCircleGeo}><meshBasicMaterial color="#000000" transparent opacity={0} /></mesh>
+      <mesh geometry={_bhRingGeo}><meshBasicMaterial color="#6633aa" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
+      <mesh geometry={_bhCircleGeo} position={[0, 0, .01]}>
         <shaderMaterial
           ref={el => { spiralMats.current[i] = el; }}
           uniforms={{ uTime: { value: 0 }, uFade: { value: 0 } }}
@@ -468,7 +484,7 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
           depthWrite={false}
         />
       </mesh>
-      <mesh><circleGeometry args={[2, 32]} /><meshBasicMaterial color="#4422aa" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh geometry={_bhGlowGeo}><meshBasicMaterial color="#4422aa" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </group>
   ))}</>);
 }
@@ -771,24 +787,59 @@ function FX() {
   );
 }
 
-function PooledAsteroid({ index, geos, meshRefs }: { 
-  index: number; 
+/* ═══════════════════════════════════════════════════
+   Instanced asteroid renderer — 4 draw calls total
+   ═══════════════════════════════════════════════════ */
+
+const _dummy = new THREE.Object3D();
+
+function AsteroidInstances({ pool, geos }: {
+  pool: React.MutableRefObject<AsteroidData[]>;
   geos: THREE.SphereGeometry[];
-  meshRefs: React.MutableRefObject<(THREE.Mesh | null)[]>;
 }) {
-  const geo = geos[index % geos.length];
-  const pair = AST_TEX_PAIRS[index % AST_TEX_PAIRS.length];
-  const m = AST_M[index % AST_M.length];
+  const refs = useRef<(THREE.InstancedMesh | null)[]>([]);
+
+  useFrame(() => {
+    const counts = new Array(AST_TEX_PAIRS.length).fill(0);
+    const poolArr = pool.current;
+    for (let i = 0; i < poolArr.length; i++) {
+      const a = poolArr[i];
+      if (!a.active) continue;
+      const texIdx = a.mi % AST_TEX_PAIRS.length;
+      const im = refs.current[texIdx];
+      if (!im) continue;
+      const idx = counts[texIdx];
+      _dummy.position.set(a.x, a.y, 0);
+      _dummy.rotation.set(a.rx, a.ry, a.rz);
+      _dummy.scale.set(a.r * a.sx, a.r * a.sy, a.r * a.sz);
+      _dummy.updateMatrix();
+      im.setMatrixAt(idx, _dummy.matrix);
+      counts[texIdx]++;
+    }
+    for (let i = 0; i < refs.current.length; i++) {
+      const im = refs.current[i];
+      if (!im) continue;
+      im.count = counts[i];
+      im.instanceMatrix.needsUpdate = true;
+    }
+  });
+
   return (
-    <mesh ref={el => { meshRefs.current[index] = el; }} geometry={geo} visible={false}>
-      <meshStandardMaterial map={pair.diffuse} normalMap={pair.normal} normalScale={AST_NORM_SCALE} roughness={m.rou} metalness={m.met} />
-    </mesh>
+    <>
+      {AST_SHARED_MATS.map((mat, texIdx) => (
+        <instancedMesh
+          key={texIdx}
+          ref={(el: THREE.InstancedMesh | null) => { refs.current[texIdx] = el; }}
+          args={[geos[texIdx % geos.length], mat, MAX_ASTEROIDS]}
+          frustumCulled={false}
+        />
+      ))}
+    </>
   );
 }
 
 function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProps) {
   const asteroidPool = useRef<AsteroidData[]>([]);
-  const asteroidMeshRefs = useRef<(THREE.Mesh | null)[]>([]);
 
   useMemo(() => {
     asteroidPool.current = Array.from({ length: MAX_ASTEROIDS }, (_, i) => ({
@@ -871,7 +922,6 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
     
     // Reset pool
     asteroidPool.current.forEach(a => { a.active = false; });
-    asteroidMeshRefs.current.forEach(m => { if (m) m.visible = false; });
 
     shipPos.current = { x: 5, y: 0 }; shipHead.current = Math.PI / 2;
     orbDir.current = 1; curSpeed.current = INIT_SPEED; nearMiss.current = 0; headingBoost.current = 0;
@@ -1054,20 +1104,14 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
     const dtf = dt * timeFactor;
     const DESPAWN_R2 = DESPAWN_R * DESPAWN_R;
 
-    // PHYSICS & RENDER UPDATE LOOP
+    // PHYSICS & COLLISION LOOP (rendering handled by AsteroidInstances)
     const sx = shipPos.current.x, sy = shipPos.current.y;
     
     for (let i = 0; i < asteroidPool.current.length; i++) {
       const a = asteroidPool.current[i];
-      const mesh = asteroidMeshRefs.current[i];
-      if (!mesh) continue;
+      if (!a.active) continue;
 
-      if (!a.active) {
-        if (mesh.visible) mesh.visible = false;
-        continue;
-      }
-
-      // Physics
+      // Physics — BH gravity on asteroids
       let nvx = a.vx, nvy = a.vy;
       for (const bh of currentBHs) {
         const bdx = bh.x - a.x, bdy = bh.y - a.y;
@@ -1082,7 +1126,6 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
       }
 
       a.vx = nvx; a.vy = nvy;
-      // Wobble: sinusoidal perpendicular drift for unpredictable movement
       const age = el - a.spawnTime;
       const wob = a.wobbleAmp * Math.sin(age * a.wobbleFreq + a.wobblePhase);
       const spd2 = nvx * nvx + nvy * nvy;
@@ -1092,16 +1135,20 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
       const ny = a.y + (nvy + perpY * wob) * dtf;
       a.x = nx; a.y = ny;
 
+      // Rotation update
+      a.rx += a.rsx * dtf;
+      a.ry += a.rsy * dtf;
+      a.rz += a.rsz * dtf;
+
       // Despawn check (squared distance — no sqrt)
       const dsx = nx - sx, dsy = ny - sy;
       const dd2 = dsx * dsx + dsy * dsy;
       if (dd2 > DESPAWN_R2) {
         a.active = false;
-        mesh.visible = false;
         continue;
       }
 
-      // Collision + near-miss (squared distance — one sqrt only when close)
+      // Collision + near-miss
       const cd = HIT_R + a.r * .88;
       const cd2sq = cd * cd;
       const nmOuter = cd + NEAR_MISS_D;
@@ -1111,7 +1158,6 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
             shieldT.current = 0; 
             shake.current = Math.max(shake.current, 1); 
             a.active = false;
-            mesh.visible = false;
             continue; 
           }
           overRef.current = true; 
@@ -1125,15 +1171,6 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
         const inten = 1 - (hd - cd) / NEAR_MISS_D;
         nearMiss.current = Math.max(nearMiss.current, inten);
       }
-
-      // Update Mesh
-      mesh.visible = true;
-      mesh.position.set(a.x, a.y, 0);
-      mesh.rotation.set(a.rx, a.ry, a.rz);
-      mesh.scale.set(a.r * a.sx, a.r * a.sy, a.r * a.sz);
-      a.rx += a.rsx * dtf;
-      a.ry += a.rsy * dtf;
-      a.rz += a.rsz * dtf;
     }
   });
 
@@ -1153,14 +1190,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
       <PowerUpVisuals pwRef={pws} />
       <PickupEffect pickupRef={pickupEffect} />
 
-      {Array.from({ length: MAX_ASTEROIDS }).map((_, i) => (
-        <PooledAsteroid 
-          key={i} 
-          index={i} 
-          geos={geos} 
-          meshRefs={asteroidMeshRefs} 
-        />
-      ))}
+      <AsteroidInstances pool={asteroidPool} geos={geos} />
 
       <Explosion pRef={explPos} actRef={explAct} />
       <FX />
