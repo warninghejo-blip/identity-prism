@@ -39,6 +39,8 @@ import {
   getPlayerStats,
   getAchievements,
   getAchievementProgress,
+  claimAchievementReward,
+  ACHIEVEMENT_COIN_REWARDS,
   TIER_COLORS as ACH_TIER_COLORS,
   type Achievement,
   type PlayerStats,
@@ -133,6 +135,55 @@ function writeWalletCoins(walletAddress: string, coins: number) {
 const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
 const ONCHAIN_BONUS_MULTIPLIER = 1.5;
 const COIN_BONUS = 25;
+async function syncCoinsToServer(walletAddress: string, coins: number, delta: number): Promise<void> {
+  try {
+    const base = getServerBase();
+    if (!base) return;
+    await fetch(`${base}/api/game/coins`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: walletAddress, coins, delta }),
+    });
+  } catch { /* silent */ }
+}
+
+async function fetchServerCoins(walletAddress: string): Promise<number | null> {
+  try {
+    const base = getServerBase();
+    if (!base) return null;
+    const res = await fetch(`${base}/api/game/coins?address=${encodeURIComponent(walletAddress)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data?.coins === 'number' ? data.coins : null;
+  } catch { return null; }
+}
+
+async function claimAchievementOnServer(walletAddress: string, achievementId: string, reward: number): Promise<{ ok: boolean; coins?: number }> {
+  try {
+    const base = getServerBase();
+    if (!base) return { ok: true }; // no server = allow locally
+    const res = await fetch(`${base}/api/game/achievements`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: walletAddress, achievementId, reward }),
+    });
+    if (res.status === 409) return { ok: false }; // already claimed on server
+    if (!res.ok) return { ok: true }; // server error = allow locally
+    const data = await res.json();
+    return { ok: true, coins: data?.coins };
+  } catch { return { ok: true }; }
+}
+
+async function fetchServerClaimedAchievements(walletAddress: string): Promise<string[]> {
+  try {
+    const base = getServerBase();
+    if (!base) return [];
+    const res = await fetch(`${base}/api/game/achievements?address=${encodeURIComponent(walletAddress)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.claimed) ? data.claimed : [];
+  } catch { return []; }
+}
 
 const formatAddress = (address?: string) => {
   if (!address || address === "anonymous") return "Anon";
@@ -255,6 +306,37 @@ const PrismLeague = () => {
   const [onchainBonusApplied, setOnchainBonusApplied] = useState(false);
   const [coins, setCoins] = useState(0);
   const [totalCoins, setTotalCoins] = useState(() => readWalletCoins(address || "anonymous"));
+
+  // Sync coins & achievements from server when wallet connects
+  useEffect(() => {
+    if (!address) return;
+    fetchServerCoins(address).then((srv) => {
+      if (srv === null) return;
+      const local = readWalletCoins(address);
+      const best = Math.max(srv, local);
+      if (best !== local) writeWalletCoins(address, best);
+      setTotalCoins(best);
+    });
+    // Sync claimed achievements from server
+    fetchServerClaimedAchievements(address).then((serverClaimed) => {
+      if (!serverClaimed.length) return;
+      const current = getAchievements();
+      let changed = false;
+      for (const id of serverClaimed) {
+        const ach = current.find((a) => a.id === id);
+        if (ach && ach.unlocked && !ach.claimed) {
+          ach.claimed = true;
+          ach.claimedAt = ach.claimedAt || new Date().toISOString();
+          changed = true;
+        }
+      }
+      if (changed) {
+        const key = 'orbit_survival_achievements_v1';
+        localStorage.setItem(key, JSON.stringify(current.filter((a) => a.unlocked)));
+        setAchievements([...current]);
+      }
+    });
+  }, [address]);
   const [sessionProof, setSessionProof] = useState<GameSessionProof | null>(null);
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStats>(() => getPlayerStats());
@@ -361,14 +443,14 @@ const PrismLeague = () => {
       setScore(finalScore);
       setCoins(finalCoins);
 
-      // Persist coins to wallet balance
+      // Persist coins to wallet balance (achievement rewards are claimed separately)
       const walletAddr = address || "anonymous";
-      const coinValue = finalCoins * COIN_BONUS;
-      if (coinValue > 0) {
+      if (finalCoins > 0) {
         const prev = readWalletCoins(walletAddr);
-        const next = prev + coinValue;
+        const next = prev + finalCoins;
         writeWalletCoins(walletAddr, next);
         setTotalCoins(next);
+        syncCoinsToServer(walletAddr, next, finalCoins);
       }
       const startedAtMs = runStartedAtRef.current || Date.now();
       const endedAtMs = Date.now();
@@ -488,12 +570,13 @@ const PrismLeague = () => {
         setOnchainBonusApplied(true);
 
         // Apply on-chain bonus to coins and persist
-        const bonusCoins = Math.round(coins * COIN_BONUS * (ONCHAIN_BONUS_MULTIPLIER - 1));
+        const bonusCoins = Math.round(coins * (ONCHAIN_BONUS_MULTIPLIER - 1));
         if (bonusCoins > 0 && address) {
           const prev = readWalletCoins(address);
           const next = prev + bonusCoins;
           writeWalletCoins(address, next);
           setTotalCoins(next);
+          syncCoinsToServer(address, next, bonusCoins);
         }
 
         toast.success(`Score on-chain! +${bonusCoins} bonus coins (×${ONCHAIN_BONUS_MULTIPLIER})`);
@@ -535,6 +618,36 @@ const PrismLeague = () => {
     } finally {
       setIsCommitting(false);
     }
+  };
+
+  const handleClaimAchievement = async (achId: string) => {
+    const walletAddr = address || "anonymous";
+    // Validate with server first (prevents double-claiming across devices)
+    const ach = achievements.find((a) => a.id === achId);
+    if (!ach || !ach.unlocked || ach.claimed) return;
+    const reward = ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0;
+    if (reward <= 0) return;
+    const serverResult = await claimAchievementOnServer(walletAddr, achId, reward);
+    if (!serverResult.ok) {
+      // Already claimed on server — mark locally as claimed too
+      const { all } = claimAchievementReward(achId);
+      setAchievements(all);
+      toast.error('Achievement already claimed!');
+      return;
+    }
+    const { all } = claimAchievementReward(achId);
+    setAchievements(all);
+    // Use server coin balance if available, otherwise compute locally
+    if (typeof serverResult.coins === 'number') {
+      writeWalletCoins(walletAddr, serverResult.coins);
+      setTotalCoins(serverResult.coins);
+    } else {
+      const prev = readWalletCoins(walletAddr);
+      const next = prev + reward;
+      writeWalletCoins(walletAddr, next);
+      setTotalCoins(next);
+    }
+    toast.success(`Claimed +${reward} coins!`);
   };
 
   const handleShare = () => {
@@ -623,33 +736,7 @@ const PrismLeague = () => {
             </span>
           </button>
 
-          <h1 className="text-sm sm:text-xl md:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 uppercase tracking-tight leading-tight text-center min-w-0 shrink">
-            Prism<br className="sm:hidden" />{" "}League
-          </h1>
-
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* MagicBlock status indicator */}
-            <div
-              className="flex items-center gap-1 px-1.5 py-1 rounded-full bg-black/40 backdrop-blur-sm border border-white/10"
-              title={
-                mbHealthy === null
-                  ? "Checking MagicBlock..."
-                  : mbHealthy
-                  ? `MagicBlock connected (${mbLatency}ms)`
-                  : "MagicBlock offline"
-              }
-            >
-              <span className="text-[10px]">⚡</span>
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  mbHealthy === null
-                    ? "bg-yellow-400 animate-pulse"
-                    : mbHealthy
-                    ? "bg-green-400"
-                    : "bg-red-400"
-                }`}
-              />
-            </div>
             <Button
               size="sm"
               variant="outline"
@@ -661,6 +748,17 @@ const PrismLeague = () => {
             </Button>
           </div>
         </header>
+
+        {/* Title below header */}
+        <div
+          className="w-full flex items-center justify-center py-2 pointer-events-none"
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 uppercase tracking-[0.25em] leading-none drop-shadow-[0_0_20px_rgba(168,85,247,0.4)]">
+            Prism League
+          </h1>
+        </div>
 
         {/* In-Game HUD */}
         <div className="flex-1 relative">
@@ -680,7 +778,7 @@ const PrismLeague = () => {
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/40 backdrop-blur-sm border border-yellow-500/20">
                   <Coins className="w-3 h-3 text-yellow-400" />
                   <span className="text-[10px] text-yellow-400/80 font-bold tabular-nums">
-                    {coins * COIN_BONUS}
+                    {coins}
                   </span>
                 </div>
                 {totalCoins > 0 && (
@@ -736,9 +834,9 @@ const PrismLeague = () => {
                       <span className="text-[10px] text-yellow-400/80 uppercase tracking-widest font-bold">Coins</span>
                     </div>
                     <div className="text-2xl font-black text-yellow-300 tabular-nums">{totalCoins}</div>
-                    {connected && (
-                      <div className="text-[9px] text-yellow-500/50 mt-0.5">On-chain = ×{ONCHAIN_BONUS_MULTIPLIER}</div>
-                    )}
+                    <div className="text-[9px] text-yellow-500/50 mt-0.5">
+                      {connected ? `On-chain = ×${ONCHAIN_BONUS_MULTIPLIER}` : "Connect wallet to save"}
+                    </div>
                   </div>
                   <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-3 text-center">
                     <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Stats</div>
@@ -747,6 +845,13 @@ const PrismLeague = () => {
                       {playerStats.gamesPlayed > 0 ? `${playerStats.gamesPlayed} games` : "No games yet"}
                     </div>
                   </div>
+                </div>
+
+                {/* Token conversion hint */}
+                <div className="w-full mb-3 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-500/5 to-cyan-500/5 border border-purple-500/10 text-center">
+                  <span className="text-[10px] text-purple-300/60">
+                    Coins will convert to <strong className="text-purple-300/80">$PRISM</strong> tokens at TGE
+                  </span>
                 </div>
 
                 {/* How to play — compact */}
@@ -801,25 +906,37 @@ const PrismLeague = () => {
                 )}
 
                 {/* Achievements toggle */}
-                {achievements.some((a) => a.unlocked) && (
-                  <button
-                    className="mt-4 flex items-center gap-1.5 text-xs text-yellow-400/60 hover:text-yellow-300 transition-colors"
-                    onClick={() => setShowAchievements(!showAchievements)}
-                  >
-                    <Award className="w-3.5 h-3.5" />
-                    Achievements ({achievements.filter((a) => a.unlocked).length}/{achievements.length})
-                    {showAchievements ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                  </button>
-                )}
+                {achievements.some((a) => a.unlocked) && (() => {
+                  const claimable = achievements.filter((a) => a.unlocked && !a.claimed).length;
+                  return (
+                    <button
+                      className="mt-4 flex items-center gap-1.5 text-xs text-yellow-400/60 hover:text-yellow-300 transition-colors"
+                      onClick={() => setShowAchievements(!showAchievements)}
+                    >
+                      <Award className="w-3.5 h-3.5" />
+                      Achievements ({achievements.filter((a) => a.unlocked).length}/{achievements.length})
+                      {claimable > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300 text-[9px] font-bold animate-pulse">
+                          {claimable} to claim
+                        </span>
+                      )}
+                      {showAchievements ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                  );
+                })()}
                 {showAchievements && (
                   <div className="w-full mt-2 space-y-1.5">
                     {achievements.map((ach) => {
                       const progress = getAchievementProgress(ach);
+                      const reward = ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0;
+                      const canClaim = ach.unlocked && !ach.claimed;
                       return (
                         <div
                           key={ach.id}
                           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${
-                            ach.unlocked
+                            canClaim
+                              ? "bg-yellow-500/[0.06] border-yellow-500/25"
+                              : ach.unlocked
                               ? "bg-white/[0.04] border-white/[0.1]"
                               : "bg-white/[0.01] border-white/[0.04] opacity-50"
                           }`}
@@ -841,6 +958,9 @@ const PrismLeague = () => {
                               >
                                 {ach.tier}
                               </span>
+                              {reward > 0 && (
+                                <span className="text-[9px] text-yellow-400/60 ml-auto">+{reward}</span>
+                              )}
                             </div>
                             <div className="text-white/40">{ach.description}</div>
                             {!ach.unlocked && (
@@ -852,7 +972,16 @@ const PrismLeague = () => {
                               </div>
                             )}
                           </div>
-                          {ach.unlocked && <span className="text-green-400 text-[10px]">✓</span>}
+                          {canClaim ? (
+                            <button
+                              className="shrink-0 px-2.5 py-1 rounded-md bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors"
+                              onClick={() => handleClaimAchievement(ach.id)}
+                            >
+                              Claim
+                            </button>
+                          ) : ach.claimed ? (
+                            <span className="text-green-400 text-[10px] shrink-0">✓ Claimed</span>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -964,7 +1093,7 @@ const PrismLeague = () => {
                   <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-yellow-500/10 border border-yellow-500/25">
                     <Coins className="w-3.5 h-3.5 text-yellow-400" />
                     <span className="text-sm font-bold text-yellow-300">
-                      +{onchainBonusApplied ? Math.round(coins * COIN_BONUS * ONCHAIN_BONUS_MULTIPLIER) : coins * COIN_BONUS}
+                      +{onchainBonusApplied ? Math.round(coins * ONCHAIN_BONUS_MULTIPLIER) : coins}
                     </span>
                     {onchainBonusApplied && (
                       <span className="text-[10px] font-bold text-green-400 animate-in fade-in slide-in-from-left-2 duration-500">×{ONCHAIN_BONUS_MULTIPLIER}</span>
@@ -1024,26 +1153,40 @@ const PrismLeague = () => {
                   </div>
                 )}
 
-                {/* Newly unlocked achievements */}
+                {/* Newly unlocked achievements — claimable */}
                 {newAchievements.length > 0 && (
                   <div className="w-full mb-4 space-y-1.5">
-                    {newAchievements.map((ach) => (
-                      <div
-                        key={ach.id}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/25 animate-in slide-in-from-bottom duration-500"
-                      >
-                        <img
-                          src={ach.image}
-                          alt={ach.name}
-                          className="w-12 h-12 rounded-md object-cover border border-yellow-500/40"
-                        />
-                        <div className="text-left flex-1">
-                          <div className="text-xs font-bold text-yellow-300">{ach.name}</div>
-                          <div className="text-[10px] text-yellow-200/50">{ach.description}</div>
+                    {newAchievements.map((ach) => {
+                      const achState = achievements.find((a) => a.id === ach.id);
+                      const isClaimed = achState?.claimed ?? false;
+                      const reward = ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0;
+                      return (
+                        <div
+                          key={ach.id}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/25 animate-in slide-in-from-bottom duration-500"
+                        >
+                          <img
+                            src={ach.image}
+                            alt={ach.name}
+                            className="w-12 h-12 rounded-md object-cover border border-yellow-500/40"
+                          />
+                          <div className="text-left flex-1">
+                            <div className="text-xs font-bold text-yellow-300">{ach.name}</div>
+                            <div className="text-[10px] text-yellow-200/50">{ach.description}</div>
+                          </div>
+                          {!isClaimed ? (
+                            <button
+                              className="shrink-0 px-3 py-1.5 rounded-md bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors animate-pulse"
+                              onClick={() => handleClaimAchievement(ach.id)}
+                            >
+                              +{reward}
+                            </button>
+                          ) : (
+                            <span className="text-green-400 text-[10px] shrink-0">✓ +{reward}</span>
+                          )}
                         </div>
-                        <Award className="w-4 h-4 text-yellow-400 ml-auto" />
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 

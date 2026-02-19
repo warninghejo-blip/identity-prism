@@ -87,7 +87,7 @@ const SHIELD_DUR = 999;
 const SLOWMO_DUR = 6;
 const PHASE_DUR = 4;
 const COIN_BONUS = 25;
-const MAX_ASTEROIDS = 150;
+const MAX_ASTEROIDS = 200;
 
 const TIER_COLORS: Record<string, string> = {
   mercury: "#9ca3af", mars: "#ef4444", venus: "#f59e0b", earth: "#22c55e",
@@ -550,8 +550,15 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
     if (!gRef.current) return;
     const dt = Math.min(delta, .033);
     const t = s.clock.elapsedTime;
-    gRef.current.position.set(posRef.current.x, posRef.current.y, 0);
-    gRef.current.rotation.z = headRef.current - Math.PI / 2;
+    const tx = posRef.current.x, ty = posRef.current.y;
+    gRef.current.position.x = slerp(gRef.current.position.x, tx, 8, dt);
+    gRef.current.position.y = slerp(gRef.current.position.y, ty, 8, dt);
+    const targetRot = headRef.current - Math.PI / 2;
+    const curRot = gRef.current.rotation.z;
+    let rotDiff = targetRot - curRot;
+    while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+    while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+    gRef.current.rotation.z = curRot + rotDiff * (1 - Math.exp(-10 * dt));
     if (shRef.current) { const m = shRef.current.material as THREE.MeshBasicMaterial; m.opacity = slerp(m.opacity, nearRef.current > .1 ? .25 * nearRef.current : 0, 10, dt); }
     if (shieldBub.current) {
       const on = shieldRef.current > 0;
@@ -869,7 +876,8 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
   const explPos = useRef({ x: 0, y: 0 });
   const explAct = useRef(false);
   const bonusPoints = useRef(0);
-  const coinsCollected = useRef(0);
+  const coinBank = useRef(0);
+  const coinAccum = useRef(0);
   const pickupEffect = useRef({ active: false, type: "shield" as PwrType, x: 0, y: 0, t: 0 });
 
   const sCol = traits?.planetTier ? TIER_COLORS[traits.planetTier] || "#22d3ee" : "#22d3ee";
@@ -923,96 +931,121 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
     pws.current = []; pwTimer.current = 0;
     shieldT.current = 0; slowmoT.current = 0; phaseT.current = 0;
     bonusPoints.current = 0;
-    coinsCollected.current = 0;
+    coinBank.current = 0;
+    coinAccum.current = 0;
     onCoins(0);
-    elapsed.current = 0; spawnT.current = 0;
+    elapsed.current = 0; spawnT.current = 0; physAccum.current = 0;
     overRef.current = false; scoreRef.current = -1; shake.current = 0; explAct.current = false;
     pickupEffect.current.active = false;
     onScore(0);
   }, [gameState]);
 
+  const physAccum = useRef(0);
+  const PHYS_DT = 1 / 90; // fixed physics timestep
+
   useFrame((_, delta) => {
     if (gameState !== "playing" || overRef.current) return;
-    const dt = Math.min(delta, .033);
-    elapsed.current += dt;
-    const el = elapsed.current;
+    const frameDt = Math.min(delta, .1);
+    physAccum.current += frameDt;
+    // Cap max sub-steps to prevent spiral of death
+    if (physAccum.current > PHYS_DT * 6) physAccum.current = PHYS_DT * 6;
 
-    if (shieldT.current > 0) shieldT.current -= dt;
-    if (slowmoT.current > 0) slowmoT.current -= dt;
-    if (phaseT.current > 0) phaseT.current -= dt;
+    while (physAccum.current >= PHYS_DT) {
+      physAccum.current -= PHYS_DT;
+      const dt = PHYS_DT;
+      elapsed.current += dt;
+      const el = elapsed.current;
 
-    const tSpeed = clamp(INIT_SPEED + el * SPEED_GAIN, INIT_SPEED, MAX_SPEED);
-    curSpeed.current = slerp(curSpeed.current, tSpeed, 3, dt);
+      if (shieldT.current > 0) shieldT.current -= dt;
+      if (slowmoT.current > 0) slowmoT.current -= dt;
+      if (phaseT.current > 0) phaseT.current -= dt;
 
-    let heading = shipHead.current;
-    let px = shipPos.current.x;
-    let py = shipPos.current.y;
+      const tSpeed = clamp(INIT_SPEED + el * SPEED_GAIN, INIT_SPEED, MAX_SPEED);
+      curSpeed.current = slerp(curSpeed.current, tSpeed, 3, dt);
 
-    // Apply instant heading boost from tap, then continuous turn
-    if (headingBoost.current !== 0) {
-      heading += headingBoost.current;
-      headingBoost.current = 0;
-    }
-    heading += ANG_RATE * orbDir.current * dt;
+      let heading = shipHead.current;
+      let px = shipPos.current.x;
+      let py = shipPos.current.y;
 
-    bhTimer.current += dt;
-    if (bhTimer.current >= BH_SPAWN_INTERVAL && bhs.current.length < BH_N) {
-      bhs.current.push(spawnBH(px, py));
-      bhTimer.current = 0;
-    }
-
-    const nextBH: BHole[] = [];
-    for (const bh of bhs.current) {
-      bh.life += dt;
-      if (bh.life >= bh.maxLife) continue;
-      const fadeIn = Math.min(1, bh.life * 1.2);
-      const fadeOut = Math.min(1, (bh.maxLife - bh.life) * 1.2);
-      const fade = Math.min(fadeIn, fadeOut);
-
-      const dx = bh.x - px, dy = bh.y - py;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < BH_CORE_R) {
-        // Core: strong push-away + speed boost (slingshot exit)
-        const safeD = Math.max(0.05, dist);
-        const awayX = (px - bh.x) / safeD, awayY = (py - bh.y) / safeD;
-        const pushStr = BH_PUSH_STR * (1 - dist / BH_CORE_R) * dt;
-        px += awayX * pushStr;
-        py += awayY * pushStr;
-        const exitAng = Math.atan2(awayY, awayX);
-        const diff = normAng(exitAng - heading);
-        heading += diff * Math.min(1, 6 * dt);
-        curSpeed.current = Math.min(curSpeed.current + bh.str * .5 * dt, MAX_SPEED * 1.25);
-        shake.current = Math.max(shake.current, .4);
-      } else {
-        // Outside core: perpendicular deflection (gravitational slingshot)
-        // Instead of pulling toward BH, curve the trajectory around it
-        const angleToBH = Math.atan2(dy, dx);
-        const cross = Math.cos(heading) * dy - Math.sin(heading) * dx;
-        const deflectDir = cross >= 0 ? 1 : -1;
-        const perpAngle = angleToBH + deflectDir * Math.PI * 0.5;
-        const deflectDiff = normAng(perpAngle - heading);
-        const safeDist = Math.max(2, dist);
-        const deflectStr = bh.str * BH_DEFLECT_K / (safeDist * safeDist) * fade;
-        heading += deflectDiff * deflectStr * dt;
-        // Slight speed bump when near BH (gravity assist)
-        if (dist < 6) {
-          curSpeed.current = Math.min(curSpeed.current + bh.str * .08 * dt, MAX_SPEED * 1.1);
-        }
+      // Apply instant heading boost from tap, then continuous turn
+      if (headingBoost.current !== 0) {
+        heading += headingBoost.current;
+        headingBoost.current = 0;
       }
-      nextBH.push(bh);
+      heading += ANG_RATE * orbDir.current * dt;
+
+      bhTimer.current += dt;
+      if (bhTimer.current >= BH_SPAWN_INTERVAL && bhs.current.length < BH_N) {
+        bhs.current.push(spawnBH(px, py));
+        bhTimer.current = 0;
+      }
+
+      const nextBH: BHole[] = [];
+      for (const bh of bhs.current) {
+        bh.life += dt;
+        if (bh.life >= bh.maxLife) continue;
+        const fadeIn = Math.min(1, bh.life * 1.2);
+        const fadeOut = Math.min(1, (bh.maxLife - bh.life) * 1.2);
+        const fade = Math.min(fadeIn, fadeOut);
+
+        const dx = bh.x - px, dy = bh.y - py;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < BH_CORE_R) {
+          const safeD = Math.max(0.05, dist);
+          const awayX = (px - bh.x) / safeD, awayY = (py - bh.y) / safeD;
+          const pushStr = BH_PUSH_STR * (1 - dist / BH_CORE_R) * dt;
+          px += awayX * pushStr;
+          py += awayY * pushStr;
+          const exitAng = Math.atan2(awayY, awayX);
+          const diff = normAng(exitAng - heading);
+          heading += diff * Math.min(1, 6 * dt);
+          curSpeed.current = Math.min(curSpeed.current + bh.str * .5 * dt, MAX_SPEED * 1.25);
+          shake.current = Math.max(shake.current, .4);
+        } else {
+          const angleToBH = Math.atan2(dy, dx);
+          const cross = Math.cos(heading) * dy - Math.sin(heading) * dx;
+          const deflectDir = cross >= 0 ? 1 : -1;
+          const perpAngle = angleToBH + deflectDir * Math.PI * 0.5;
+          const deflectDiff = normAng(perpAngle - heading);
+          const safeDist = Math.max(2, dist);
+          const deflectStr = bh.str * BH_DEFLECT_K / (safeDist * safeDist) * fade;
+          heading += deflectDiff * deflectStr * dt;
+          if (dist < 6) {
+            curSpeed.current = Math.min(curSpeed.current + bh.str * .08 * dt, MAX_SPEED * 1.1);
+          }
+        }
+        nextBH.push(bh);
+      }
+      bhs.current = nextBH;
+
+      px += Math.cos(heading) * curSpeed.current * dt;
+      py += Math.sin(heading) * curSpeed.current * dt;
+
+      shipHead.current = heading;
+      shipPos.current.x = px;
+      shipPos.current.y = py;
     }
-    bhs.current = nextBH;
 
-    px += Math.cos(heading) * curSpeed.current * dt;
-    py += Math.sin(heading) * curSpeed.current * dt;
-
-    shipHead.current = heading;
-    shipPos.current.x = px;
-    shipPos.current.y = py;
+    const dt = frameDt;
+    const el = elapsed.current;
 
     const sc = Math.floor(el) + bonusPoints.current;
     if (sc !== scoreRef.current) { scoreRef.current = sc; onScore(sc); }
+
+    // Time-based coin accumulation: 1/sec base, +1/sec every 30s
+    const coinsPerSec = 1 + Math.floor(el / 30);
+    coinAccum.current += coinsPerSec * dt;
+    const wholeCoins = Math.floor(coinAccum.current);
+    if (wholeCoins > 0) {
+      coinBank.current += wholeCoins;
+      coinAccum.current -= wholeCoins;
+      onCoins(coinBank.current);
+    }
+
+    const px = shipPos.current.x, py = shipPos.current.y;
+    const heading = shipHead.current;
+
     nearMiss.current = Math.max(0, nearMiss.current - dt * 3);
 
     pwTimer.current += dt;
@@ -1032,8 +1065,8 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
         else if (pw.type === "phase") phaseT.current = PHASE_DUR;
         else if (pw.type === "coin") {
           bonusPoints.current += COIN_BONUS;
-          coinsCollected.current += 1;
-          onCoins(coinsCollected.current);
+          coinBank.current += COIN_BONUS;
+          onCoins(coinBank.current);
           const newSc = Math.floor(el) + bonusPoints.current;
           scoreRef.current = newSc;
           onScore(newSc);
@@ -1137,7 +1170,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
           shake.current = 2; 
           explPos.current = { x: sx, y: sy }; 
           explAct.current = true;
-          onGameOver(Math.floor(el) + bonusPoints.current, coinsCollected.current); 
+          onGameOver(Math.floor(el) + bonusPoints.current, coinBank.current); 
           return;
         }
         const hd = Math.sqrt(dd2);
