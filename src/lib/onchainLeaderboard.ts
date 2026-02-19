@@ -65,6 +65,45 @@ function buildMemoData(address: string, score: number, sessionProof?: SessionPro
 }
 
 /**
+ * Poll-based transaction confirmation using HTTP (getSignatureStatuses).
+ * Unlike connection.confirmTransaction() which relies on WebSocket subscriptions
+ * (unreliable on mobile/Capacitor), this polls via standard HTTP requests.
+ */
+async function pollForConfirmation(
+  connection: Connection,
+  signature: string,
+  maxAttempts = 12,
+  intervalMs = 2500,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const { value } = await connection.getSignatureStatuses([signature]);
+      const status = value?.[0];
+      if (status) {
+        if (status.err) {
+          console.error('[score] tx failed on-chain:', status.err);
+          return false;
+        }
+        // confirmed or finalized
+        if (
+          status.confirmationStatus === 'confirmed' ||
+          status.confirmationStatus === 'finalized'
+        ) {
+          console.log('[score] tx confirmed:', status.confirmationStatus);
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('[score] poll attempt', attempt, 'error:', e);
+    }
+    if (attempt < maxAttempts - 1) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+  return false;
+}
+
+/**
  * Commit a game score on-chain as a signed memo transaction.
  */
 export async function commitScoreOnchain(
@@ -106,10 +145,11 @@ export async function commitScoreOnchain(
       console.warn('[score] balance check failed', balErr);
     }
 
+    // ── Get blockhash — used for simulation and signing ──
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = blockhash;
+
     // ── Simulate BEFORE prompting user to sign (dApp Store requirement) ──
-    // Use a temporary blockhash for simulation (replaceRecentBlockhash: true handles it)
-    const { blockhash: simBlockhash } = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = simBlockhash;
     try {
       const simulation = await connection.simulateTransaction(tx, {
         sigVerify: false,
@@ -123,13 +163,12 @@ export async function commitScoreOnchain(
       if (simError instanceof Error && simError.message.startsWith('Transaction simulation failed')) {
         return { success: false, error: simError.message };
       }
-      // Network / RPC errors — log but allow through
       console.warn('[score] simulateTransaction network error', simError);
     }
 
-    // ── Get FRESH blockhash right before signing — minimises expiry window on MWA ──
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
+    // ── Refresh blockhash right before signing — minimises expiry on MWA ──
+    const freshBH = await connection.getLatestBlockhash('confirmed');
+    tx.recentBlockhash = freshBH.blockhash;
 
     // Patch serialize to skip sig verification (same pattern as mint/BlackHole)
     const origSerialize = tx.serialize.bind(tx);
@@ -140,53 +179,45 @@ export async function commitScoreOnchain(
         verifySignatures: false,
       })) as typeof tx.serialize;
 
-    // Sign & send with retry — if blockhash expires during MWA approval, retry once
-    const sendSignedTx = async (): Promise<string> => {
-      if (wallet.signTransaction) {
-        const signed = await wallet.signTransaction(tx);
-        return connection.sendRawTransaction(
-          signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-          { skipPreflight: true, preflightCommitment: 'confirmed' },
-        );
-      } else if (wallet.sendTransaction) {
-        return wallet.sendTransaction(tx, connection);
-      }
-      throw new Error('Wallet does not support transaction signing');
-    };
-
+    // ── Sign & send ──
     let txSignature: string;
-    try {
-      txSignature = await sendSignedTx();
-    } catch (sendErr: any) {
-      const msg = sendErr?.message || '';
-      // If blockhash expired before network accepted, retry with fresh one
-      if (msg.includes('expired') || msg.includes('blockhash') || msg.includes('block height')) {
-        console.warn('[score] blockhash expired on first attempt, retrying with fresh blockhash');
-        const fresh = await connection.getLatestBlockhash('confirmed');
-        tx.recentBlockhash = fresh.blockhash;
-        tx.signatures = []; // clear stale signature
-        txSignature = await sendSignedTx();
-      } else {
-        throw sendErr;
-      }
+    if (wallet.signTransaction) {
+      const signed = await wallet.signTransaction(tx);
+      txSignature = await connection.sendRawTransaction(
+        signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+        { skipPreflight: true, maxRetries: 3 },
+      );
+    } else if (wallet.sendTransaction) {
+      txSignature = await wallet.sendTransaction(tx, connection);
+    } else {
+      return { success: false, error: 'Wallet does not support transaction signing' };
     }
 
-    // Confirm with a fresh blockhash window (the signing one may have aged)
-    const { blockhash: confirmBH, lastValidBlockHeight: confirmBHHeight } =
-      await connection.getLatestBlockhash('confirmed');
-    await connection.confirmTransaction(
-      { signature: txSignature, blockhash: confirmBH, lastValidBlockHeight: confirmBHHeight },
-      'confirmed',
-    );
+    console.log('[score] tx sent:', txSignature);
 
+    // ── Save optimistically right after send succeeds ──
+    // Memo txs are near-guaranteed to land once accepted by the RPC node.
     const entry: OnchainScore = {
       address,
       score,
       timestamp: new Date().toISOString(),
       txSignature,
-      confirmed: true,
+      confirmed: false,
     };
     saveOnchainScore(entry);
+
+    // ── Confirm via HTTP polling (NOT WebSocket — WebSocket is broken on mobile) ──
+    // Poll getSignatureStatuses every 2.5s for up to 30s
+    const confirmed = await pollForConfirmation(connection, txSignature, 12, 2500);
+    if (confirmed) {
+      entry.confirmed = true;
+      saveOnchainScore(entry);
+    } else {
+      // Transaction was sent but confirmation timed out.
+      // This does NOT mean it failed — it's likely still processing.
+      // We already saved it optimistically, so return success with the signature.
+      console.warn('[score] confirmation poll timed out, but tx was sent successfully');
+    }
 
     const explorerUrl = `https://solscan.io/tx/${txSignature}`;
     return { success: true, txSignature, explorerUrl };
