@@ -149,8 +149,12 @@ export async function commitScoreOnchain(
       return { success: false, error: 'Wallet does not support transaction signing' };
     }
 
+    // Fetch a fresh blockhash window AFTER sending — the original one may have
+    // expired while the user was approving the transaction (especially on mobile MWA).
+    const { blockhash: confirmBlockhash, lastValidBlockHeight: confirmLastValid } =
+      await connection.getLatestBlockhash('confirmed');
     await connection.confirmTransaction(
-      { signature: txSignature, blockhash, lastValidBlockHeight },
+      { signature: txSignature, blockhash: confirmBlockhash, lastValidBlockHeight: confirmLastValid },
       'confirmed',
     );
 

@@ -16,7 +16,7 @@ app:
     - purpose: icon
       uri: ./media/app_icon.png
 release:
-  address: 7px1vhBytFRVX4LLKVM4gzrshwpow3pzP4ZUcHnry8KR
+  address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp
   media:
     - purpose: icon
       uri: ./media/release_icon.png
@@ -58,15 +58,15 @@ release:
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
-        v1.0.27: Fixed Tapestry social graph integration — profile and content publishing
-        now work correctly. Added persistent server-side leaderboard — Top Pilots scores
-        sync across devices and survive cache clears. Backfilled historical game results.
+        v1.0.28: Fixed SKR mint price display (was showing 1 SKR due to broken SOL price
+        feed). Fixed on-chain score save failing with 'signature expired' on mobile MWA.
+        Persistent server-side Top Pilots leaderboard with cross-device sync.
       saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.27
-    version_code: 38
+    version: 1.0.28
+    version_code: 39
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
@@ -83,8 +83,8 @@ solana_mobile_dapp_publisher_portal:
     9. After game over, try "Save Score On-Chain" with zero balance — verify insufficient SOL warning appears.
     10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
 lastSubmittedVersionOnChain:
-  address: 7px1vhBytFRVX4LLKVM4gzrshwpow3pzP4ZUcHnry8KR
-  version_code: 38
-  apk_hash: gyKplD+jK6iJ5uKrOIE8Pwkm0LL6gL6y1cnlt4v8lB4=
+  address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp
+  version_code: 39
+  apk_hash: AOXey0bEfkFK5Twirspegl58KL6+WPKVS9OtSlmLsts=
 lastUpdatedVersionOnStore:
-  address: 7px1vhBytFRVX4LLKVM4gzrshwpow3pzP4ZUcHnry8KR
+  address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp

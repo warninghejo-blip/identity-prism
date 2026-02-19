@@ -881,7 +881,16 @@ const fetchMeTokenLastPrice = async (mint) => {
 };
 
 const fetchSolPriceUsd = async () => {
-  // Try CoinGecko first
+  // Try Jupiter price API first (most reliable, no auth, no rate limits)
+  try {
+    const response = await fetch('https://price.jup.ag/v4/price?ids=SOL');
+    if (response.ok) {
+      const data = await response.json();
+      const price = Number(data?.data?.SOL?.price);
+      if (Number.isFinite(price) && price > 1) return price;
+    }
+  } catch {}
+  // Fallback: CoinGecko
   try {
     const response = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
@@ -889,17 +898,18 @@ const fetchSolPriceUsd = async () => {
     if (response.ok) {
       const data = await response.json();
       const price = Number(data?.solana?.usd ?? data?.usd ?? data?.price);
-      if (Number.isFinite(price) && price > 0) return price;
+      if (Number.isFinite(price) && price > 1) return price;
     }
   } catch {}
-  // Fallback: DexScreener (free, no auth)
+  // Fallback: DexScreener — only use pairs where wSOL is the BASE token
   try {
     const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
     if (res.ok) {
       const j = await res.json();
-      const pair = j?.pairs?.find(p => p?.priceUsd);
+      const wSOL = 'So11111111111111111111111111111111111111112';
+      const pair = j?.pairs?.find(p => p?.priceUsd && p?.baseToken?.address === wSOL && Number(p.priceUsd) > 1);
       const price = Number(pair?.priceUsd);
-      if (Number.isFinite(price) && price > 0) return price;
+      if (Number.isFinite(price) && price > 1) return price;
     }
   } catch {}
   return null;
