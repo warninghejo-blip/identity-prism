@@ -16,7 +16,7 @@ app:
     - purpose: icon
       uri: ./media/app_icon.png
 release:
-  address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp
+  address: 8LQEtTEKfzEp3LztiwXqfZHRpkM4UcNPMiaKjRfxxu3w
   media:
     - purpose: icon
       uri: ./media/release_icon.png
@@ -64,15 +64,15 @@ release:
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
-        v1.0.29: Smooth canvas-based wormhole tunnel transition (replaces laggy CSS layers).
+        v1.0.30: Smooth canvas-based wormhole tunnel transition (replaces laggy CSS layers).
         New asteroid textures in Orbit Survival. Added game start, black hole, and home screenshots.
         Performance optimizations for Seeker — 30fps capped transition, single compositor layer.
       saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.29
-    version_code: 40
+    version: 1.0.30
+    version_code: 41
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
@@ -89,8 +89,8 @@ solana_mobile_dapp_publisher_portal:
     9. After game over, try "Save Score On-Chain" with zero balance — verify insufficient SOL warning appears.
     10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
 lastSubmittedVersionOnChain:
-  address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp
-  version_code: 40
-  apk_hash: AOXey0bEfkFK5Twirspegl58KL6+WPKVS9OtSlmLsts=
+  address: 8LQEtTEKfzEp3LztiwXqfZHRpkM4UcNPMiaKjRfxxu3w
+  version_code: 41
+  apk_hash: Gh4jKYKj4lRAvwGMsuONf+GnQLL8YxLS8UW6YM7vwIU=
 lastUpdatedVersionOnStore:
-  address: Fr5RxUd7ghtxE2JbyvLstSEAdQoJ1TmpYeHPaaeh21vp
+  address: 8LQEtTEKfzEp3LztiwXqfZHRpkM4UcNPMiaKjRfxxu3w
