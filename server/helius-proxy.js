@@ -124,6 +124,10 @@ const GAME_SESSION_TTL_MS = Number.isFinite(GAME_SESSION_TTL_RAW) && GAME_SESSIO
 const GAME_SESSION_STORE_FILE = process.env.GAME_SESSION_STORE_FILE
   ? path.resolve(process.env.GAME_SESSION_STORE_FILE)
   : path.join(METADATA_DIR, 'game-session-proofs.json');
+const LEADERBOARD_STORE_FILE = process.env.LEADERBOARD_STORE_FILE
+  ? path.resolve(process.env.LEADERBOARD_STORE_FILE)
+  : path.join(METADATA_DIR, 'leaderboard.json');
+const LEADERBOARD_MAX_ENTRIES = 100;
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
@@ -355,6 +359,61 @@ if (!fs.existsSync(gameSessionStoreDir)) {
 }
 loadGameSessionProofs();
 pruneGameSessionProofs();
+
+// ── Server-side Leaderboard persistence ──
+const leaderboardEntries = [];
+
+const loadLeaderboard = () => {
+  try {
+    if (!fs.existsSync(LEADERBOARD_STORE_FILE)) return;
+    const raw = fs.readFileSync(LEADERBOARD_STORE_FILE, 'utf8');
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    const entries = Array.isArray(parsed?.entries) ? parsed.entries : (Array.isArray(parsed) ? parsed : []);
+    leaderboardEntries.length = 0;
+    for (const e of entries) {
+      if (e && typeof e.address === 'string' && typeof e.score === 'number') {
+        leaderboardEntries.push(e);
+      }
+    }
+    leaderboardEntries.sort((a, b) => b.score - a.score);
+    if (leaderboardEntries.length > LEADERBOARD_MAX_ENTRIES) leaderboardEntries.length = LEADERBOARD_MAX_ENTRIES;
+    console.log(`[leaderboard] Loaded ${leaderboardEntries.length} entries`);
+  } catch (err) {
+    console.warn('[leaderboard] Failed to load', err);
+  }
+};
+
+const persistLeaderboard = () => {
+  try {
+    fs.writeFileSync(LEADERBOARD_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), entries: leaderboardEntries }, null, 2));
+  } catch (err) {
+    console.warn('[leaderboard] Failed to persist', err);
+  }
+};
+
+const submitLeaderboardEntry = (entry) => {
+  const { address, score, playedAt, txSignature } = entry;
+  if (!address || typeof score !== 'number' || score <= 0) return null;
+  const existing = leaderboardEntries.findIndex((e) => e.address === address);
+  if (existing !== -1) {
+    if (score > leaderboardEntries[existing].score) {
+      leaderboardEntries[existing] = { address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || leaderboardEntries[existing].txSignature };
+    } else if (txSignature && !leaderboardEntries[existing].txSignature) {
+      leaderboardEntries[existing].txSignature = txSignature;
+    } else {
+      return leaderboardEntries[existing];
+    }
+  } else {
+    leaderboardEntries.push({ address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || undefined });
+  }
+  leaderboardEntries.sort((a, b) => b.score - a.score);
+  if (leaderboardEntries.length > LEADERBOARD_MAX_ENTRIES) leaderboardEntries.length = LEADERBOARD_MAX_ENTRIES;
+  persistLeaderboard();
+  return leaderboardEntries.find((e) => e.address === address) || null;
+};
+
+loadLeaderboard();
 
 const getHeliusKeyIndex = (seed = '') => {
   if (!HELIUS_KEYS.length) return -1;
@@ -1727,6 +1786,29 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ── Leaderboard API ──
+  if (pathname === '/api/game/leaderboard' && req.method === 'GET') {
+    respondJson(res, 200, { entries: leaderboardEntries.slice(0, 50) });
+    return;
+  }
+
+  if (pathname === '/api/game/leaderboard' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const parsed = JSON.parse(raw);
+      const { address, score, playedAt, txSignature } = parsed;
+      if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
+        respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
+        return;
+      }
+      const result = submitLeaderboardEntry({ address, score, playedAt, txSignature });
+      respondJson(res, 200, { entry: result, leaderboard: leaderboardEntries.slice(0, 50) });
+    } catch (error) {
+      respondJson(res, 400, { error: 'Invalid JSON body' });
+    }
+    return;
+  }
+
   // ── Tapestry proxy — avoids CORS issues with direct browser calls ──
   if (pathname.startsWith('/api/tapestry/') && (req.method === 'POST' || req.method === 'GET')) {
     const tapestryKey = process.env.TAPESTRY_API_KEY || process.env.VITE_TAPESTRY_API_KEY || '';
@@ -1735,7 +1817,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const tapestryPath = pathname.replace('/api/tapestry', '');
-    const tapestryUrl = `https://api.usetapestry.dev/v1${tapestryPath}?apiKey=${tapestryKey}`;
+    const tapestryUrl = `https://api.usetapestry.dev/api/v1${tapestryPath}?apiKey=${tapestryKey}`;
     try {
       const body = req.method === 'POST' ? await readBody(req) : null;
       const upstream = await fetch(tapestryUrl, {

@@ -199,12 +199,13 @@ export async function publishProfile(data: IdentityData): Promise<TapestryProfil
   const profile = await tapestryFetch<TapestryProfile>('/profiles/findOrCreate', {
     method: 'POST',
     body: JSON.stringify({
+      id: data.walletAddress,
       walletAddress: data.walletAddress,
       username,
       bio: buildBio(data),
       blockchain: 'SOLANA',
       execution: 'FAST_UNCONFIRMED',
-      customProperties: buildCustomProperties(data),
+      properties: buildCustomProperties(data),
     }),
   });
 
@@ -231,7 +232,7 @@ export async function publishScanContent(
       contentType: 'text',
       blockchain: 'SOLANA',
       execution: 'FAST_UNCONFIRMED',
-      customProperties: [
+      properties: [
         { key: 'type', value: 'wallet_scan' },
         { key: 'walletAddress', value: data.walletAddress },
         { key: 'score', value: String(data.score) },
@@ -302,6 +303,7 @@ export async function publishGameScore(data: GameScoreData): Promise<{ contentId
     profile = await tapestryFetch<TapestryProfile>('/profiles/findOrCreate', {
       method: 'POST',
       body: JSON.stringify({
+        id: data.walletAddress,
         walletAddress: data.walletAddress,
         username,
         bio: `Orbit Survival pilot | Best: ${data.survivalTime}`,
@@ -339,7 +341,7 @@ export async function publishGameScore(data: GameScoreData): Promise<{ contentId
       contentType: 'text',
       blockchain: 'SOLANA',
       execution: 'FAST_UNCONFIRMED',
-      customProperties: properties,
+      properties,
     }),
   });
 
@@ -363,6 +365,7 @@ export async function challengeFriend(
   const profile = await tapestryFetch<TapestryProfile>('/profiles/findOrCreate', {
     method: 'POST',
     body: JSON.stringify({
+      id: senderAddress,
       walletAddress: senderAddress,
       username,
       bio: `Orbit Survival pilot`,
@@ -382,7 +385,7 @@ export async function challengeFriend(
       contentType: 'text',
       blockchain: 'SOLANA',
       execution: 'FAST_UNCONFIRMED',
-      customProperties: [
+      properties: [
         { key: 'type', value: 'game_challenge' },
         { key: 'game', value: 'orbit_survival' },
         { key: 'challenger', value: senderAddress },
