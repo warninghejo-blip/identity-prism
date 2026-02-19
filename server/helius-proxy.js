@@ -457,50 +457,77 @@ const setCoinBalance = (address, coins) => {
 
 loadCoinBalances();
 
-// ── Server-side Achievement claim tracking ──
+// ── Server-side Achievement tracking (unlocked + claimed per wallet) ──
 const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
-const achievementClaims = new Map(); // address -> Set of achievement IDs
+// address -> { unlocked: Set<string>, claimed: Set<string> }
+const achievementData = new Map();
 
-const loadAchievementClaims = () => {
+const loadAchievementData = () => {
   try {
     if (!fs.existsSync(ACHIEVEMENTS_STORE_FILE)) return;
     const raw = fs.readFileSync(ACHIEVEMENTS_STORE_FILE, 'utf8');
     if (!raw.trim()) return;
     const parsed = JSON.parse(raw);
-    const claims = parsed?.claims || parsed || {};
-    for (const [addr, ids] of Object.entries(claims)) {
-      if (Array.isArray(ids)) achievementClaims.set(addr, new Set(ids));
+    // Support both old format (claims only) and new format
+    const data = parsed?.data || {};
+    const legacyClaims = parsed?.claims || {};
+    // Load new format
+    for (const [addr, entry] of Object.entries(data)) {
+      achievementData.set(addr, {
+        unlocked: new Set(Array.isArray(entry.unlocked) ? entry.unlocked : []),
+        claimed: new Set(Array.isArray(entry.claimed) ? entry.claimed : []),
+      });
     }
-    console.log(`[achievements] Loaded claims for ${achievementClaims.size} wallets`);
+    // Migrate old claims-only format
+    for (const [addr, ids] of Object.entries(legacyClaims)) {
+      if (!achievementData.has(addr) && Array.isArray(ids)) {
+        achievementData.set(addr, { unlocked: new Set(ids), claimed: new Set(ids) });
+      }
+    }
+    console.log(`[achievements] Loaded data for ${achievementData.size} wallets`);
   } catch (err) {
     console.warn('[achievements] Failed to load', err);
   }
 };
 
-const persistAchievementClaims = () => {
+const persistAchievementData = () => {
   try {
     const obj = {};
-    for (const [k, v] of achievementClaims) obj[k] = [...v];
-    fs.writeFileSync(ACHIEVEMENTS_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), claims: obj }, null, 2));
+    for (const [k, v] of achievementData) {
+      obj[k] = { unlocked: [...v.unlocked], claimed: [...v.claimed] };
+    }
+    fs.writeFileSync(ACHIEVEMENTS_STORE_FILE, JSON.stringify({ version: 2, updatedAt: new Date().toISOString(), data: obj }, null, 2));
   } catch (err) {
     console.warn('[achievements] Failed to persist', err);
   }
 };
 
-const getClaimedAchievements = (address) => {
-  return achievementClaims.get(address) || new Set();
+const getWalletAchievements = (address) => {
+  return achievementData.get(address) || { unlocked: new Set(), claimed: new Set() };
+};
+
+const markAchievementsUnlocked = (address, achievementIds) => {
+  let entry = achievementData.get(address);
+  if (!entry) { entry = { unlocked: new Set(), claimed: new Set() }; achievementData.set(address, entry); }
+  let changed = false;
+  for (const id of achievementIds) {
+    if (!entry.unlocked.has(id)) { entry.unlocked.add(id); changed = true; }
+  }
+  if (changed) persistAchievementData();
+  return changed;
 };
 
 const claimAchievement = (address, achievementId) => {
-  let claimed = achievementClaims.get(address);
-  if (!claimed) { claimed = new Set(); achievementClaims.set(address, claimed); }
-  if (claimed.has(achievementId)) return false; // already claimed
-  claimed.add(achievementId);
-  persistAchievementClaims();
+  let entry = achievementData.get(address);
+  if (!entry) { entry = { unlocked: new Set(), claimed: new Set() }; achievementData.set(address, entry); }
+  if (entry.claimed.has(achievementId)) return false;
+  entry.unlocked.add(achievementId); // ensure unlocked too
+  entry.claimed.add(achievementId);
+  persistAchievementData();
   return true;
 };
 
-loadAchievementClaims();
+loadAchievementData();
 
 const getHeliusKeyIndex = (seed = '') => {
   if (!HELIUS_KEYS.length) return -1;
@@ -1946,18 +1973,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Achievements API (per-wallet claimed achievements) ──
+  // ── Achievements API (per-wallet unlocked + claimed) ──
   if (pathname === '/api/game/achievements' && req.method === 'GET') {
     const addr = url.searchParams.get('address') || '';
     if (!addr) {
       respondJson(res, 400, { error: 'address query param required' });
       return;
     }
-    const claimed = [...getClaimedAchievements(addr)];
-    respondJson(res, 200, { address: addr, claimed });
+    const entry = getWalletAchievements(addr);
+    respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
     return;
   }
 
+  // POST: claim a single achievement
   if (pathname === '/api/game/achievements' && req.method === 'POST') {
     try {
       const raw = await readBody(req);
@@ -1972,14 +2000,32 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 409, { error: 'Achievement already claimed', achievementId });
         return;
       }
-      // Also add reward coins if provided
       if (typeof reward === 'number' && reward > 0) {
         const current = getCoinBalance(addr);
         setCoinBalance(addr, current + reward);
       }
-      const claimed = [...getClaimedAchievements(addr)];
+      const entry = getWalletAchievements(addr);
       const coins = getCoinBalance(addr);
-      respondJson(res, 200, { address: addr, achievementId, claimed, coins });
+      respondJson(res, 200, { address: addr, achievementId, unlocked: [...entry.unlocked], claimed: [...entry.claimed], coins });
+    } catch {
+      respondJson(res, 400, { error: 'Invalid JSON body' });
+    }
+    return;
+  }
+
+  // PUT: sync unlocked achievements (batch, idempotent)
+  if (pathname === '/api/game/achievements' && req.method === 'PUT') {
+    try {
+      const raw = await readBody(req);
+      const parsed = JSON.parse(raw);
+      const { address: addr, unlocked: ids } = parsed;
+      if (!addr || typeof addr !== 'string' || !Array.isArray(ids)) {
+        respondJson(res, 400, { error: 'address (string) and unlocked (array) required' });
+        return;
+      }
+      markAchievementsUnlocked(addr, ids);
+      const entry = getWalletAchievements(addr);
+      respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
     } catch {
       respondJson(res, 400, { error: 'Invalid JSON body' });
     }

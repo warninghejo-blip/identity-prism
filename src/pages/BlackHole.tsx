@@ -1339,12 +1339,9 @@ const BlackHole = () => {
                     <span className="text-[11px] font-mono text-zinc-400 text-center pr-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
                     {/* Return */}
                     <div className="text-center">
-                      <span className="text-[10px] font-mono text-emerald-400/80 block">
-                        {netEst > 0 ? `+${parseFloat(netEst.toFixed(4))}` : ''}
+                      <span className={`text-[10px] font-mono block ${netEst >= 0 ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
+                        {netEst >= 0 ? `+${parseFloat(netEst.toFixed(4))}` : parseFloat(netEst.toFixed(4))}
                       </span>
-                      {token.valueSol != null && token.valueSol > 0.001 && (
-                        <span className="text-[8px] font-mono text-red-400/70 block">-{formatSolCompact(token.valueSol)}</span>
-                      )}
                     </div>
                     {/* Status */}
                     <div className="flex justify-center">
@@ -1461,23 +1458,10 @@ const BlackHole = () => {
                         <TableCell className="text-center text-sm font-mono">
                           {(() => {
                             const netEst = token.netGainSol ?? 0;
-                            const hasValue = token.valueSol != null && token.valueSol > 0.001;
                             return (
-                              <div className="flex flex-col items-center">
-                                {netEst > 0 ? (
-                                  <span className="text-emerald-400/80">+{parseFloat(netEst.toFixed(4))}</span>
-                                ) : (
-                                  <span className="text-zinc-600">—</span>
-                                )}
-                                {hasValue && (
-                                  <span className="text-[9px] text-red-400/70" title="Asset value lost if burned">
-                                    loses ~{formatSolCompact(token.valueSol)} SOL
-                                  </span>
-                                )}
-                                {!hasValue && netEst > 0 && (
-                                  <span className="text-[9px] text-zinc-600">rent only</span>
-                                )}
-                              </div>
+                              <span className={netEst >= 0 ? 'text-emerald-400/80' : 'text-red-400/80'}>
+                                {netEst >= 0 ? `+${parseFloat(netEst.toFixed(4))}` : parseFloat(netEst.toFixed(4))}
+                              </span>
                             );
                           })()}
                         </TableCell>
