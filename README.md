@@ -10,7 +10,10 @@
 
 ---
 
-## 🚀 Hackathons
+<details>
+<summary><b>🏆 Hackathon Submissions (Graveyard & MONOLITH)</b></summary>
+
+<br/>
 We are proudly submitting Identity Prism to two major Solana hackathons simultaneously!
 
 ### 1. MONOLITH (Solana Mobile Hackathon)
@@ -23,6 +26,8 @@ We are proudly submitting Identity Prism to two major Solana hackathons simultan
     *   *How we use it:* Orbit Survival uses MagicBlock Ephemeral Rollups to cryptographically seed the game session and verify the final score. Players dodge asteroids off-chain (zero latency), and the backend validates the result against the on-chain session before committing the score via a Solana Memo transaction.
 *   **Track:** Onchain Social (Tapestry)
     *   *How we use it:* Your calculated tier (e.g., "Mars Tier") and behavioral badges are published to the Tapestry network under the `identity_prism` namespace. This turns an isolated app into a composable reputation layer.
+
+</details>
 
 ---
 
