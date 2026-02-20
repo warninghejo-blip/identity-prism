@@ -818,131 +818,160 @@ const BlackHole = () => {
       }));
       setIncinerationTokens(animationTargets);
       
-      for (const token of safeTargets) {
-        if (token.amount > 0n) {
-          transaction.add(
-            createBurnInstruction(
-              token.pubkey,
-              new PublicKey(token.mint),
-              publicKey,
-              token.amount,
-              undefined,
-              token.programId
-            )
-          );
-          instructionCount++;
-        }
-        transaction.add(
-          createCloseAccountInstruction(
-            token.pubkey,
-            publicKey,
-            publicKey,
-            undefined,
-            token.programId
-          )
-        );
-        instructionCount++;
-      }
-
-      // Commission: 2% for Identity Prism holders, 10% otherwise
-      // Skip commission if the connected wallet IS the treasury (avoid self-transfer signature issue)
+      // Commission setup
       const totalReclaimLamports = safeTargets.reduce((sum, t) => sum + t.lamports, 0);
       const isTreasury = publicKey.toBase58() === TREASURY_ADDRESS;
       const commissionRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
       const commissionLamports = isTreasury ? 0 : Math.round(totalReclaimLamports * commissionRate);
-      if (commissionLamports > 0) {
-        transaction.add(
-          SystemProgram.transfer({
-            fromPubkey: publicKey,
-            toPubkey: new PublicKey(TREASURY_ADDRESS),
-            lamports: commissionLamports,
-          })
-        );
-        instructionCount++;
+      const netReclaim = (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL;
+
+      // Chunk accounts into batches to stay within Solana tx size limit
+      // Each account needs 1-2 instructions (burn + close); ~8 accounts per tx is safe
+      const ACCOUNTS_PER_TX = 8;
+      const chunks: typeof safeTargets[] = [];
+      for (let i = 0; i < safeTargets.length; i += ACCOUNTS_PER_TX) {
+        chunks.push(safeTargets.slice(i, i + ACCOUNTS_PER_TX));
       }
 
-      if (instructionCount === 0) {
+      // Distribute commission into the last chunk's transaction
+      const transactions: Transaction[] = [];
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const tx = new Transaction();
+        tx.add(
+          ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 })
+        );
+
+        for (const token of chunks[ci]) {
+          if (token.amount > 0n) {
+            tx.add(
+              createBurnInstruction(
+                token.pubkey,
+                new PublicKey(token.mint),
+                publicKey,
+                token.amount,
+                undefined,
+                token.programId
+              )
+            );
+          }
+          tx.add(
+            createCloseAccountInstruction(
+              token.pubkey,
+              publicKey,
+              publicKey,
+              undefined,
+              token.programId
+            )
+          );
+        }
+
+        // Add commission transfer to the last chunk only
+        if (ci === chunks.length - 1 && commissionLamports > 0) {
+          tx.add(
+            SystemProgram.transfer({
+              fromPubkey: publicKey,
+              toPubkey: new PublicKey(TREASURY_ADDRESS),
+              lamports: commissionLamports,
+            })
+          );
+        }
+
+        transactions.push(tx);
+      }
+
+      if (transactions.length === 0) {
         toast.info("Nothing to do");
         return;
       }
 
-      // Explicitly set blockhash + feePayer (some mobile wallets don't auto-fill)
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-      transaction.recentBlockhash = blockhash;
-      transaction.lastValidBlockHeight = lastValidBlockHeight;
-      transaction.feePayer = publicKey;
-
-      // Simulate transaction before prompting user to sign (dApp Store requirement)
-      try {
-        const simulation = await connection.simulateTransaction(transaction, {
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-        });
-        if (simulation.value.err) {
-          console.error('[BlackHole] simulation failed', simulation.value.err, simulation.value.logs);
-          throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-        }
-      } catch (simError) {
-        // Re-throw simulation failures
-        if (simError instanceof Error && simError.message.startsWith('Transaction simulation failed')) {
-          throw simError;
-        }
-        // Network / RPC errors — log but allow through
-        console.warn('[BlackHole] simulateTransaction network error', simError);
-      }
-
-      // Patch serialize to skip signature verification (same pattern as mint code)
-      // Some mobile wallets / adapters call serialize internally and fail if not all sigs present
-      const origSerialize = transaction.serialize.bind(transaction);
-      transaction.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
-        origSerialize({
-          ...config,
-          requireAllSignatures: false,
-          verifySignatures: false,
-        })) as typeof transaction.serialize;
-
-      let signature: string;
-      if (signTransaction) {
-        const signed = await signTransaction(transaction);
-        signature = await connection.sendRawTransaction(
-          signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-          { skipPreflight: true, preflightCommitment: 'confirmed' }
-        );
-      } else {
-        signature = await sendTransaction(transaction, connection);
-      }
-      
-      const netReclaim = (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL;
-      toast.info("Incineration started...", {
+      toast.info(`Preparing ${transactions.length} transaction${transactions.length > 1 ? 's' : ''}...`, {
         description: `Burning ${safeTargets.length} accounts · returning ~${netReclaim.toFixed(4)} SOL`
       });
 
-      // Poll for confirmation instead of WebSocket to avoid WSS proxy issues
-      let confirmed = false;
-      for (let attempt = 0; attempt < 60; attempt++) {
-        await new Promise(r => setTimeout(r, 1500));
+      // Send all transaction chunks sequentially
+      const signatures: string[] = [];
+      for (let ti = 0; ti < transactions.length; ti++) {
+        const tx = transactions[ti];
+
+        // Explicitly set blockhash + feePayer (some mobile wallets don't auto-fill)
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+        tx.recentBlockhash = blockhash;
+        tx.lastValidBlockHeight = lastValidBlockHeight;
+        tx.feePayer = publicKey;
+
+        // Simulate transaction before prompting user to sign (dApp Store requirement)
         try {
-          const status = await connection.getSignatureStatus(signature);
-          const conf = status?.value?.confirmationStatus;
-          if (conf === 'confirmed' || conf === 'finalized') {
-            if (status.value?.err) {
-              throw new Error(`Transaction failed: ${JSON.stringify(status.value.err)}`);
-            }
-            confirmed = true;
-            break;
+          const simulation = await connection.simulateTransaction(tx, {
+            sigVerify: false,
+            replaceRecentBlockhash: true,
+          });
+          if (simulation.value.err) {
+            console.error(`[BlackHole] simulation failed for chunk ${ti + 1}`, simulation.value.err, simulation.value.logs);
+            throw new Error(`Transaction ${ti + 1}/${transactions.length} simulation failed: ${JSON.stringify(simulation.value.err)}`);
           }
-        } catch (e) {
-          if (e instanceof Error && e.message.startsWith('Transaction failed')) throw e;
+        } catch (simError) {
+          if (simError instanceof Error && simError.message.includes('simulation failed')) {
+            throw simError;
+          }
+          console.warn(`[BlackHole] simulateTransaction network error chunk ${ti + 1}`, simError);
+        }
+
+        // Patch serialize to skip signature verification
+        const origSerialize = tx.serialize.bind(tx);
+        tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+          origSerialize({
+            ...config,
+            requireAllSignatures: false,
+            verifySignatures: false,
+          })) as typeof tx.serialize;
+
+        let signature: string;
+        if (signTransaction) {
+          const signed = await signTransaction(tx);
+          signature = await connection.sendRawTransaction(
+            signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+            { skipPreflight: true, preflightCommitment: 'confirmed' }
+          );
+        } else {
+          signature = await sendTransaction(tx, connection);
+        }
+        signatures.push(signature);
+
+        if (transactions.length > 1) {
+          toast.info(`Transaction ${ti + 1}/${transactions.length} sent`, {
+            description: `Burning accounts ${ti * ACCOUNTS_PER_TX + 1}-${Math.min((ti + 1) * ACCOUNTS_PER_TX, safeTargets.length)}`
+          });
+        }
+
+        // Wait for confirmation before sending next chunk
+        let confirmed = false;
+        for (let attempt = 0; attempt < 60; attempt++) {
+          await new Promise(r => setTimeout(r, 1500));
+          try {
+            const status = await connection.getSignatureStatus(signature);
+            const conf = status?.value?.confirmationStatus;
+            if (conf === 'confirmed' || conf === 'finalized') {
+              if (status.value?.err) {
+                throw new Error(`Transaction ${ti + 1} failed: ${JSON.stringify(status.value.err)}`);
+              }
+              confirmed = true;
+              break;
+            }
+          } catch (e) {
+            if (e instanceof Error && e.message.includes('failed')) throw e;
+          }
+        }
+        if (!confirmed) {
+          toast.warning(`Transaction ${ti + 1} confirmation timed out. Remaining chunks skipped.`);
+          break;
         }
       }
-      if (!confirmed) {
-        toast.warning("Transaction sent but confirmation timed out. Check your wallet.");
-      } else {
-        toast.success("Incineration complete!", {
-          description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee)`
-        });
-      }
-      
+
+      toast.success("Incineration complete!", {
+        description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee) in ${signatures.length} tx${signatures.length > 1 ? 's' : ''}`
+      });
+
       // Refresh
       fetchTokens();
 

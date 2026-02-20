@@ -244,6 +244,24 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     : 'UNKNOWN';
   const tierLabel = TIER_LABELS[safeTraits.planetTier] || safeTraits.planetTier.toUpperCase();
   const tierColorClass = TIER_COLORS[safeTraits.planetTier] || 'text-white';
+
+  const TIER_THRESHOLDS = [
+    { min: 0, max: 100, tier: 'mercury', next: 'mars' },
+    { min: 101, max: 250, tier: 'mars', next: 'venus' },
+    { min: 251, max: 400, tier: 'venus', next: 'earth' },
+    { min: 401, max: 550, tier: 'earth', next: 'neptune' },
+    { min: 551, max: 700, tier: 'neptune', next: 'uranus' },
+    { min: 701, max: 850, tier: 'uranus', next: 'saturn' },
+    { min: 851, max: 950, tier: 'saturn', next: 'jupiter' },
+    { min: 951, max: 1050, tier: 'jupiter', next: 'sun' },
+    { min: 1051, max: 1400, tier: 'sun', next: null },
+  ];
+  const currentThreshold = TIER_THRESHOLDS.find(t => t.tier === safeTraits.planetTier) || TIER_THRESHOLDS[0];
+  const tierProgress = currentThreshold.max > currentThreshold.min
+    ? Math.min(1, (displayScore - currentThreshold.min) / (currentThreshold.max - currentThreshold.min))
+    : 1;
+  const nextTierLabel = currentThreshold.next ? (TIER_LABELS[currentThreshold.next] || '') : null;
+  const ptsToNext = currentThreshold.next ? Math.max(0, currentThreshold.max + 1 - displayScore) : 0;
   const badgeItems = getBadgeItems(safeTraits);
   const activeBadges = badgeItems.filter((badge) => badge.isActive);
   const inactiveBadges = badgeItems.filter((badge) => !badge.isActive);
@@ -514,13 +532,33 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </button>
               <h2 className="text-lg font-bold text-white uppercase tracking-widest">Data Prism</h2>
               <div className="flex flex-col gap-0.5 items-center mt-2 mb-1">
-                <span
-                  data-capture="score"
-                  className={`capture-value text-4xl font-mono font-bold tracking-tighter drop-shadow-lg ${tierColorClass}`}
-                >
-                  {displayScore}
-                </span>
+                {/* Progress Ring */}
+                <div className="relative w-[88px] h-[88px] flex items-center justify-center">
+                  <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 88 88">
+                    <circle cx="44" cy="44" r="38" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+                    <circle
+                      cx="44" cy="44" r="38" fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeDasharray={`${tierProgress * 238.76} 238.76`}
+                      className={`${tierColorClass} transition-all duration-1000 ease-out`}
+                      style={{ filter: 'drop-shadow(0 0 4px currentColor)' }}
+                    />
+                  </svg>
+                  <span
+                    data-capture="score"
+                    className={`capture-value text-3xl font-mono font-bold tracking-tighter drop-shadow-lg ${tierColorClass}`}
+                  >
+                    {displayScore}
+                  </span>
+                </div>
                 <span className="text-white/20 text-[8px] uppercase tracking-[0.3em]">Identity Score</span>
+                {nextTierLabel && ptsToNext > 0 && (
+                  <span className="text-white/15 text-[8px] mt-0.5">
+                    <span className="text-white/25">{ptsToNext}</span> pts to {nextTierLabel}
+                  </span>
+                )}
               </div>
               <p
                 data-capture="address"
