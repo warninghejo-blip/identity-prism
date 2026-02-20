@@ -381,13 +381,46 @@ body:has(.prism-league-page) #root > * {
   transform: scale(1.05);
 }
 
-.front-badges .badge-icon {
-  transition: transform 0.2s ease, filter 0.2s ease, opacity 0.2s ease;
+.front-badges .badge-icon-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-.front-badges .badge-icon:hover {
-  transform: scale(1.14);
-  filter: drop-shadow(0 0 10px rgba(148, 220, 255, 0.75));
+.front-badges .badge-icon {
+  transition: transform 0.25s cubic-bezier(.4,0,.2,1), filter 0.25s ease, opacity 0.25s ease;
+}
+
+.front-badges .badge-icon-wrap:hover .badge-icon {
+  transform: scale(1.35);
+  filter: drop-shadow(0 0 14px rgba(148, 220, 255, 0.85));
+}
+
+.front-badges .badge-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.85);
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.85);
+  background: rgba(0,0,0,0.75);
+  border: 1px solid rgba(255,255,255,0.12);
+  backdrop-filter: blur(8px);
+  padding: 3px 8px;
+  border-radius: 6px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.front-badges .badge-icon-wrap:hover .badge-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
 }
 
 /* === NFT KIOSK MODE FIXES === */

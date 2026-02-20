@@ -524,9 +524,12 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             <div className="flex justify-center items-center border-t border-white/5 pt-5 relative z-30">
                {/* Badges moved here */}
                {frontBadges.length > 0 ? (
-                <div className="front-badges flex gap-2 flex-wrap justify-center px-6 w-full">
+                <div className="front-badges flex gap-3 flex-wrap justify-center px-6 w-full">
                   {frontBadges.map((badge) => (
-                    <BadgeIcon key={badge.key} badge={badge} size="sm" />
+                    <div key={badge.key} className="badge-icon-wrap">
+                      <span className="badge-tooltip">{badge.label}</span>
+                      <BadgeIcon badge={badge} size="sm" />
+                    </div>
                   ))}
                 </div>
                ) : (
@@ -606,87 +609,140 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
               {/* STATS CONTENT */}
               <TabsContent value="stats" className="flex-1 overflow-y-auto px-6 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
-                <div className="grid grid-cols-2 gap-3 mb-6">
+                {/* Primary metrics */}
+                <div className="grid grid-cols-3 gap-2 mb-3">
                   <StatItem
-                    icon={<Wallet className="w-4 h-4" />}
-                    label="SOL Balance"
+                    icon={<Wallet className="w-3.5 h-3.5" />}
+                    label="SOL"
                     value={`${safeTraits.solBalance.toFixed(2)}`}
                     captureKey="sol"
+                    accent
                   />
                   <StatItem
-                    icon={<Clock className="w-4 h-4" />}
-                    label="Wallet Age"
+                    icon={<Clock className="w-3.5 h-3.5" />}
+                    label="Age"
                     value={`${safeTraits.walletAgeDays}d`}
                     captureKey="age"
                   />
                   <StatItem
-                    icon={<Activity className="w-4 h-4" />}
-                    label="Tx Count"
-                    value={safeTraits.txCount.toString()}
+                    icon={<Activity className="w-3.5 h-3.5" />}
+                    label="Txns"
+                    value={safeTraits.txCount > 999 ? `${(safeTraits.txCount / 1000).toFixed(1)}k` : safeTraits.txCount.toString()}
                     captureKey="tx"
                   />
+                </div>
+                {/* Secondary metrics */}
+                <div className="grid grid-cols-3 gap-2 mb-3">
                   <StatItem
-                    icon={<Trophy className="w-4 h-4" />}
-                    label="NFTs Held"
+                    icon={<Trophy className="w-3.5 h-3.5" />}
+                    label="NFTs"
                     value={safeTraits.nftCount.toString()}
                     captureKey="nfts"
                   />
                   <StatItem
-                    icon={<Flame className="w-4 h-4" />}
-                    label="Activity Idx"
-                    value={(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(2)}
-                    captureKey="activity"
+                    icon={<Gem className="w-3.5 h-3.5" />}
+                    label="Tokens"
+                    value={safeTraits.uniqueTokenCount.toString()}
+                    captureKey="tokens"
                   />
                   <StatItem
-                    icon={<Hourglass className="w-4 h-4" />}
+                    icon={<Flame className="w-3.5 h-3.5" />}
+                    label="Tx/Day"
+                    value={(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)}
+                    captureKey="activity"
+                  />
+                </div>
+                {/* Tertiary metrics */}
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <StatItem
+                    icon={<Hourglass className="w-3.5 h-3.5" />}
                     label="Dormancy"
                     value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d` : 'Active'}
                     captureKey="dormancy"
                   />
+                  <StatItem
+                    icon={<Shield className="w-3.5 h-3.5" />}
+                    label="Assets"
+                    value={safeTraits.totalAssetsCount > 999 ? `${(safeTraits.totalAssetsCount / 1000).toFixed(1)}k` : safeTraits.totalAssetsCount.toString()}
+                    captureKey="assets"
+                  />
+                  <StatItem
+                    icon={<Skull className="w-3.5 h-3.5" />}
+                    label="Memes"
+                    value={safeTraits.memeCoinsHeld?.length?.toString() ?? '0'}
+                    captureKey="memes"
+                  />
                 </div>
 
-                {/* Score History Sparkline */}
+                {/* Score History — premium sparkline */}
                 {scoreHistory.length >= 2 && (
-                  <div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase tracking-widest text-white/30 font-bold">Score History</span>
-                      <span className="text-[10px] text-white/20">{scoreHistory.length} scans</span>
+                  <div className="mb-4 rounded-2xl border border-cyan-500/10 bg-gradient-to-br from-cyan-950/20 via-transparent to-blue-950/15 p-3.5 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(34,211,238,0.04),transparent_70%)]" />
+                    <div className="relative z-10">
+                      <div className="flex items-center justify-between mb-2.5">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                          <span className="text-[9px] uppercase tracking-[0.15em] text-cyan-300/50 font-bold">Score History</span>
+                        </div>
+                        <span className="text-[9px] text-white/20 font-mono">{scoreHistory.length} scans</span>
+                      </div>
+                      <svg viewBox={`0 0 ${Math.max(scoreHistory.length - 1, 1) * 20} 48`} className="w-full h-12" preserveAspectRatio="none">
+                        <defs>
+                          <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="rgba(34,211,238,0.15)" />
+                            <stop offset="100%" stopColor="rgba(34,211,238,0)" />
+                          </linearGradient>
+                          <filter id="sparkGlow">
+                            <feGaussianBlur stdDeviation="1.5" result="blur" />
+                            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                          </filter>
+                        </defs>
+                        {(() => {
+                          const pts = [...scoreHistory].reverse();
+                          const maxS = Math.max(...pts.map(p => p.score), 1);
+                          const minS = Math.min(...pts.map(p => p.score), 0);
+                          const range = Math.max(maxS - minS, 1);
+                          const w = Math.max(pts.length - 1, 1) * 20;
+                          const points = pts.map((p, i) => {
+                            const x = (i / Math.max(pts.length - 1, 1)) * w;
+                            const y = 44 - ((p.score - minS) / range) * 38;
+                            return `${x},${y}`;
+                          }).join(' ');
+                          const areaPoints = `0,46 ${points} ${w},46`;
+                          const lastX = ((pts.length - 1) / Math.max(pts.length - 1, 1)) * w;
+                          const lastY = 44 - ((pts[pts.length - 1].score - minS) / range) * 38;
+                          return (
+                            <>
+                              <polyline points={areaPoints} fill="url(#sparkGrad)" stroke="none" />
+                              <polyline points={points} fill="none" stroke="rgba(34,211,238,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" filter="url(#sparkGlow)" />
+                              {pts.map((p, i) => {
+                                const cx = (i / Math.max(pts.length - 1, 1)) * w;
+                                const cy = 44 - ((p.score - minS) / range) * 38;
+                                return <circle key={i} cx={cx} cy={cy} r="1.8" fill="rgba(34,211,238,0.3)" stroke="rgba(34,211,238,0.6)" strokeWidth="0.5" />;
+                              })}
+                              <circle cx={lastX} cy={lastY} r="3" fill="#22d3ee" filter="url(#sparkGlow)" />
+                            </>
+                          );
+                        })()}
+                      </svg>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-[8px] text-white/15 font-mono">
+                          low {Math.min(...[...scoreHistory].map(p => p.score))}
+                        </span>
+                        <span className="text-[8px] text-cyan-300/30 font-mono font-bold">
+                          peak {Math.max(...[...scoreHistory].map(p => p.score))}
+                        </span>
+                      </div>
                     </div>
-                    <svg viewBox={`0 0 ${Math.max(scoreHistory.length - 1, 1) * 20} 40`} className="w-full h-10" preserveAspectRatio="none">
-                      {(() => {
-                        const pts = [...scoreHistory].reverse();
-                        const maxS = Math.max(...pts.map(p => p.score), 1);
-                        const minS = Math.min(...pts.map(p => p.score), 0);
-                        const range = Math.max(maxS - minS, 1);
-                        const w = Math.max(pts.length - 1, 1) * 20;
-                        const points = pts.map((p, i) => {
-                          const x = (i / Math.max(pts.length - 1, 1)) * w;
-                          const y = 38 - ((p.score - minS) / range) * 34;
-                          return `${x},${y}`;
-                        }).join(' ');
-                        const areaPoints = `0,38 ${points} ${w},38`;
-                        return (
-                          <>
-                            <polyline points={areaPoints} fill="rgba(34,211,238,0.06)" stroke="none" />
-                            <polyline points={points} fill="none" stroke="rgba(34,211,238,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                            {pts.length > 0 && (() => {
-                              const lastX = ((pts.length - 1) / Math.max(pts.length - 1, 1)) * w;
-                              const lastY = 38 - ((pts[pts.length - 1].score - minS) / range) * 34;
-                              return <circle cx={lastX} cy={lastY} r="2.5" fill="#22d3ee" />;
-                            })()}
-                          </>
-                        );
-                      })()}
-                    </svg>
                   </div>
                 )}
 
-                <div className="bg-gradient-to-br from-cyan-900/10 to-blue-900/10 border border-cyan-500/20 rounded-xl p-4 relative overflow-hidden text-center">
-                  <div className="absolute top-0 right-0 p-2 opacity-10">
-                    <SparklesIcon className="w-16 h-16 text-cyan-500" />
+                <div className="bg-gradient-to-br from-cyan-900/10 to-blue-900/10 border border-cyan-500/15 rounded-2xl p-4 relative overflow-hidden text-center">
+                  <div className="absolute top-0 right-0 p-2 opacity-8">
+                    <SparklesIcon className="w-14 h-14 text-cyan-500" />
                   </div>
-                  <p className="text-[10px] text-cyan-300/60 uppercase tracking-widest mb-2 font-bold">Cosmic Insight</p>
-                  <p className="text-sm text-cyan-100 font-medium leading-relaxed italic">
+                  <p className="text-[9px] text-cyan-300/50 uppercase tracking-[0.15em] mb-2 font-bold">Cosmic Insight</p>
+                  <p className="text-sm text-cyan-100/90 font-medium leading-relaxed italic">
                     "{funFact}"
                   </p>
                 </div>
@@ -744,19 +800,21 @@ function StatItem({
   label,
   value,
   captureKey,
+  accent,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   captureKey?: string;
+  accent?: boolean;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-white/5 border border-white/5 group hover:bg-white/10 transition-colors">
-      <div className="text-cyan-400/80 mb-2">{icon}</div>
-      <span className="text-[9px] text-white/30 uppercase tracking-wider mb-0.5">{label}</span>
+    <div className={`flex flex-col items-center justify-center p-2.5 rounded-xl border transition-colors ${accent ? 'bg-cyan-500/[0.06] border-cyan-500/15 hover:bg-cyan-500/10' : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.07]'}`}>
+      <div className={`${accent ? 'text-cyan-400/90' : 'text-white/30'} mb-1`}>{icon}</div>
+      <span className="text-[8px] text-white/25 uppercase tracking-wider mb-0.5 leading-none">{label}</span>
       <span
         data-stat-key={captureKey}
-        className="capture-value text-sm font-bold text-white font-mono"
+        className={`capture-value text-xs font-bold font-mono leading-none ${accent ? 'text-cyan-200' : 'text-white/90'}`}
       >
         {value}
       </span>

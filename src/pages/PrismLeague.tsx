@@ -27,16 +27,12 @@ import {
 import "./PrismLeague.css";
 import OrbitSurvivalScene from "@/components/game/OrbitSurvivalScene";
 import AsteroidDestroyerScene from "@/components/game/AsteroidDestroyerScene";
-import GravityWarsScene from "@/components/game/GravityWarsScene";
-import TerritoryControlScene from "@/components/game/TerritoryControlScene";
 
-type GameMode = "orbit" | "destroyer" | "gravity" | "territory";
+type GameMode = "orbit" | "destroyer";
 
 const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string }[] = [
   { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit" },
-  { id: "destroyer", name: "Asteroid Destroyer", icon: "💥", desc: "Shoot asteroids, chain combos for big scores", controls: "Tap/Click to fire, Double-tap/Right-click to turn" },
-  { id: "gravity", name: "Gravity Wars", icon: "🌀", desc: "Pulse gravity waves, smash asteroids into each other", controls: "Tap/Click to pulse, Double-tap/Right-click to turn" },
-  { id: "territory", name: "Territory Control", icon: "🎯", desc: "Capture zones for points while dodging threats", controls: "Tap/Click to reverse orbit" },
+  { id: "destroyer", name: "Cosmic Defender", icon: "💥", desc: "9 levels of UFOs & bosses. Auto-fire, collect powerups!", controls: "WASD/Arrows to move, auto-fire. Touch: drag to move" },
 ];
 import {
   commitScoreOnchain,
@@ -742,12 +738,7 @@ const PrismLeague = () => {
         {gameMode === "destroyer" && (
           <AsteroidDestroyerScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
         )}
-        {gameMode === "gravity" && (
-          <GravityWarsScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
-        )}
-        {gameMode === "territory" && (
-          <TerritoryControlScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
-        )}
+        {/* gravity and territory modes removed */}
       </div>
 
       {/* UI Overlay */}
