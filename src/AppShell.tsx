@@ -22,6 +22,7 @@ const BlackHole = React.lazy(() => import('./pages/BlackHole'));
 const PreviewDeck = React.lazy(() => import('./pages/PreviewDeck'));
 const PrismLeague = React.lazy(() => import('./pages/PrismLeague'));
 const Verify = React.lazy(() => import('./pages/Verify'));
+const Compare = React.lazy(() => import('./pages/Compare'));
 
 const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -66,6 +67,7 @@ const router = createBrowserRouter([
       { path: 'preview', element: <PreviewDeck /> },
       { path: 'preview/:tier', element: <PreviewDeck /> },
       { path: 'verify', element: <Verify /> },
+      { path: 'compare', element: <Compare /> },
       { path: '*', element: <NotFound /> },
     ],
   },
