@@ -42,7 +42,7 @@ from utils import async_sleep_random, load_state, save_state, setup_logging, che
 
 REPUTATION_API_URL = f'https://{CTA_DOMAIN}/api/reputation'
 _SOLANA_ADDR_RE = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
-MAX_TWEET_AGE_DAYS = 7
+MAX_TWEET_AGE_HOURS = 24
 
 TIER_EMOJI = {
     'mercury': '☿️', 'mars': '🔴', 'venus': '🌋', 'earth': '🌍',
@@ -55,8 +55,8 @@ _memory = None
 _news = None
 
 
-def _is_tweet_too_old(tweet, max_days=MAX_TWEET_AGE_DAYS):
-    """Return True if tweet is older than max_days. Skips if date unavailable."""
+def _is_tweet_too_old(tweet, max_hours=MAX_TWEET_AGE_HOURS):
+    """Return True if tweet is older than max_hours. Skips if date unavailable."""
     created = getattr(tweet, 'created_at', None)
     if not created:
         return False
@@ -68,9 +68,23 @@ def _is_tweet_too_old(tweet, max_days=MAX_TWEET_AGE_DAYS):
         else:
             return False
         age = datetime.datetime.now(datetime.timezone.utc) - dt
-        return age.days > max_days
+        return age.total_seconds() > max_hours * 3600
     except (ValueError, TypeError):
         return False
+
+
+def _already_replied(tweet_id, state):
+    """Double-check: state.json + SQLite memory. Prevents all duplicates."""
+    if not tweet_id:
+        return True
+    tid = str(tweet_id)
+    if tid in state.get('replied_tweets', []):
+        return True
+    if tid in state.get('replied_mentions', []):
+        return True
+    if _memory and _memory.has_interaction_with_tweet(tid):
+        return True
+    return False
 
 
 def _extract_solana_addresses(text):
@@ -257,15 +271,15 @@ async def do_engage(client, ai_engine, state):
     if tweets:
         for tweet in tweets[:3]:
             tid = client._extract_tweet_id(tweet)
-            if not tid or tid in state['replied_tweets']:
+            if not tid or _already_replied(tid, state):
                 continue
             if client.is_retweet(tweet):
                 continue
+            if _is_tweet_too_old(tweet):
+                logging.info('Skipping old tweet %s from @%s (>%dh)', tid, handle, MAX_TWEET_AGE_HOURS)
+                continue
             text = client.get_tweet_text(tweet)
             if not text:
-                continue
-            if _is_tweet_too_old(tweet):
-                logging.info('Skipping old tweet %s from @%s', tid, handle)
                 continue
             await maybe_like(client, tweet)
             await asyncio.sleep(random.uniform(2, 6))
@@ -340,10 +354,12 @@ async def _try_mention_reply(client, ai_engine, state):
     our_name = (BOT_USERNAME or '').lower().replace('@', '')
     for mention in mentions:
         mention_id = client._extract_tweet_id(mention)
-        if not mention_id or mention_id in replied_mentions:
+        if not mention_id or _already_replied(mention_id, state):
             continue
         author = getattr(mention, 'user_screen_name', '') or ''
         if author.lower() == our_name:
+            continue
+        if _is_tweet_too_old(mention):
             continue
         mention_text = client.get_tweet_text(mention)
         if not mention_text:
@@ -883,8 +899,9 @@ async def main():
                     action_productive = True
 
         except Exception as exc:
-            logging.warning('Cycle error: %s', exc)
+            logging.error('Cycle error: %s', exc, exc_info=True)
             action_productive = False
+            await asyncio.sleep(30)  # brief pause after errors
 
         if action_productive:
             last_action_at = time.time()

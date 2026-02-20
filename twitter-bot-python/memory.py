@@ -112,6 +112,17 @@ class AgentMemory:
         except Exception as exc:
             logging.warning('memory: record_interaction failed: %s', exc)
 
+    def has_interaction_with_tweet(self, tweet_id):
+        """Check if we already replied to this tweet (duplicate guard)."""
+        if not tweet_id:
+            return False
+        with self._conn() as conn:
+            row = conn.execute(
+                'SELECT 1 FROM interactions WHERE tweet_id = ? LIMIT 1',
+                (str(tweet_id),),
+            ).fetchone()
+        return row is not None
+
     def get_interaction_count(self, user_handle, days=7):
         cutoff = time.time() - days * 86400
         with self._conn() as conn:
