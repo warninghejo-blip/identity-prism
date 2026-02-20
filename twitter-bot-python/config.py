@@ -26,7 +26,7 @@ TARGET_USERS = [
     # Core Solana ecosystem
     'solana', 'toly', 'aeyakovenko', 'rajgokal',
     # Infra & tooling
-    'solanamobile', 'MagicBlock_', 'heliuslabs', 'dialectlabs',
+    'solanamobile', 'MagicBlock_', 'heliuslabs',
     # DEXes & DeFi
     'JupiterExchange', 'DriftProtocol', 'MarginFi', 'kamino_finance',
     # NFT / Consumer

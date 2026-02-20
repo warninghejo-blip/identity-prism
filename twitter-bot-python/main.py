@@ -42,6 +42,7 @@ from utils import async_sleep_random, load_state, save_state, setup_logging, che
 
 REPUTATION_API_URL = f'https://{CTA_DOMAIN}/api/reputation'
 _SOLANA_ADDR_RE = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
+MAX_TWEET_AGE_DAYS = 7
 
 TIER_EMOJI = {
     'mercury': '☿️', 'mars': '🔴', 'venus': '🌋', 'earth': '🌍',
@@ -52,6 +53,24 @@ TIER_EMOJI = {
 # ── Agent globals (initialized in main()) ──
 _memory = None
 _news = None
+
+
+def _is_tweet_too_old(tweet, max_days=MAX_TWEET_AGE_DAYS):
+    """Return True if tweet is older than max_days. Skips if date unavailable."""
+    created = getattr(tweet, 'created_at', None)
+    if not created:
+        return False
+    try:
+        if isinstance(created, str):
+            dt = datetime.datetime.strptime(created, '%a %b %d %H:%M:%S %z %Y')
+        elif isinstance(created, datetime.datetime):
+            dt = created
+        else:
+            return False
+        age = datetime.datetime.now(datetime.timezone.utc) - dt
+        return age.days > max_days
+    except (ValueError, TypeError):
+        return False
 
 
 def _extract_solana_addresses(text):
@@ -244,6 +263,9 @@ async def do_engage(client, ai_engine, state):
                 continue
             text = client.get_tweet_text(tweet)
             if not text:
+                continue
+            if _is_tweet_too_old(tweet):
+                logging.info('Skipping old tweet %s from @%s', tid, handle)
                 continue
             await maybe_like(client, tweet)
             await asyncio.sleep(random.uniform(2, 6))
