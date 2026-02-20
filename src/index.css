@@ -2040,22 +2040,38 @@ body:has(.prism-league-page) #root > * {
 @media (max-width: 640px) {
   .blackhole-hero__title { font-size: 1.4rem; letter-spacing: 0.08em; }
   .blackhole-hero__sub { font-size: 0.6rem; letter-spacing: 0.1em; margin-bottom: 8px; }
-  .blackhole-visual { height: 180px; margin-bottom: 48px; }
+  .blackhole-visual { height: 180px; margin-bottom: 40px; }
   .blackhole-hero { padding-top: clamp(16px, 3vh, 32px); }
-  .blackhole-panel { padding: 10px; border-radius: 14px; }
-  .blackhole-content { padding: 0 4px 80px; max-width: 100vw; overflow-x: hidden; }
+  .blackhole-panel { padding: 12px; border-radius: 16px; }
+  .blackhole-content { padding: 0 6px 80px; max-width: 100vw; overflow-x: hidden; }
   .blackhole-shell { overflow-x: hidden; }
   .blackhole-content table { min-width: unset; font-size: 10px; }
+  /* Keep visual effects on mobile — only simplify heavy blur */
+  .blackhole-warp { filter: blur(3px); }
+  .blackhole-accretion { filter: blur(7px); }
+  .blackhole-jet::after { filter: blur(8px); }
 }
 
 .blackhole-panel {
   position: relative;
-  background: linear-gradient(170deg, rgba(8, 10, 22, 0.85), rgba(4, 4, 12, 0.8));
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: linear-gradient(170deg, rgba(8, 10, 22, 0.88), rgba(4, 4, 12, 0.82));
+  border: 1px solid rgba(255, 120, 60, 0.06);
   border-radius: 24px;
   padding: clamp(16px, 3vw, 32px);
-  box-shadow: 0 0 80px rgba(0, 0, 0, 0.4);
+  box-shadow:
+    0 0 80px rgba(0, 0, 0, 0.4),
+    0 0 1px rgba(255, 120, 60, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
   backdrop-filter: blur(20px);
+}
+.blackhole-panel::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 25px;
+  background: linear-gradient(170deg, rgba(255, 120, 60, 0.08), transparent 40%, rgba(255, 80, 40, 0.04));
+  z-index: -1;
+  pointer-events: none;
 }
 
 /* ── Incineration animation overlay ── */
@@ -2107,10 +2123,10 @@ body:has(.prism-league-page) #root > * {
   border: none;
   background: transparent;
   padding: 0;
-  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease;
   filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.35));
 }
-.game-card-portal:hover { transform: scale(1.15); }
+.game-card-portal:hover { transform: scale(1.2); filter: drop-shadow(0 0 18px rgba(6, 182, 212, 0.55)); }
 .game-card-portal:hover .game-card-portal__glow { opacity: 1; }
 .game-card-portal.is-jumping {
   pointer-events: none;
@@ -2119,13 +2135,29 @@ body:has(.prism-league-page) #root > * {
 
 .game-card-portal__glow {
   position: absolute;
-  width: 64px;
-  height: 64px;
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(6, 182, 212, 0.35) 0%, transparent 70%);
-  opacity: 0.6;
+  background: radial-gradient(circle, rgba(6, 182, 212, 0.3) 0%, rgba(6, 182, 212, 0.08) 50%, transparent 70%);
+  opacity: 0.5;
   animation: game-portal-breathe 3s ease-in-out infinite;
 }
+/* Orbit trail connecting ship to BH */
+.game-card-portal::after {
+  content: '';
+  position: absolute;
+  width: 180px;
+  height: 60px;
+  left: 50%;
+  top: 50%;
+  border: 1px dashed rgba(6, 182, 212, 0.06);
+  border-radius: 50%;
+  transform: translate(-10%, -50%) rotate(-12deg);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.game-card-portal:hover::after { opacity: 1; }
 
 .game-card-portal__ship {
   position: relative;
@@ -2145,9 +2177,10 @@ body:has(.prism-league-page) #root > * {
   color: rgba(6, 182, 212, 0.6);
   white-space: nowrap;
   font-weight: 700;
-  transition: opacity 0.3s ease, text-shadow 0.3s ease;
+  transition: opacity 0.3s ease, text-shadow 0.3s ease, color 0.3s ease;
 }
 .game-card-portal:hover .game-card-portal__label {
+  color: rgba(6, 182, 212, 0.9);
   text-shadow: 0 0 12px rgba(6, 182, 212, 0.8), 0 0 24px rgba(6, 182, 212, 0.4);
 }
 
@@ -2186,9 +2219,23 @@ body:has(.prism-league-page) #root > * {
   transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
   filter: drop-shadow(0 0 12px rgba(255, 80, 40, 0.4));
 }
-.bh-card-portal:hover { transform: scale(1.2); }
+.bh-card-portal:hover { transform: scale(1.25); filter: drop-shadow(0 0 22px rgba(255, 80, 40, 0.5)); }
 .bh-card-portal:hover .bh-card-portal__glow { opacity: 1; }
 .bh-card-portal:hover .bh-card-portal__disk { opacity: 1; filter: blur(2px); }
+/* Gravity pull visual on hover */
+.bh-card-portal::after {
+  content: '';
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 100, 50, 0.04);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease, transform 0.6s ease;
+  transform: scale(0.8);
+}
+.bh-card-portal:hover::after { opacity: 1; transform: scale(1.1); border-color: rgba(255, 100, 50, 0.1); }
 
 .bh-card-portal__glow {
   position: absolute;

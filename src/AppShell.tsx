@@ -23,6 +23,7 @@ const PreviewDeck = React.lazy(() => import('./pages/PreviewDeck'));
 const PrismLeague = React.lazy(() => import('./pages/PrismLeague'));
 const Verify = React.lazy(() => import('./pages/Verify'));
 const Compare = React.lazy(() => import('./pages/Compare'));
+const HomePage = React.lazy(() => import('./pages/HomePage'));
 
 const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -59,7 +60,7 @@ const router = createBrowserRouter([
     path: '/',
     element: <App />,
     children: [
-      { index: true, element: <Index /> },
+      { index: true, element: <HomePage /> },
       { path: 'app', element: <Index /> },
       { path: 'app/*', element: <Index /> },
       { path: 'share', element: <Index /> },
