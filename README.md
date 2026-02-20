@@ -19,7 +19,7 @@ We are proudly submitting Identity Prism to two major Solana hackathons simultan
 ### 1. MONOLITH (Solana Mobile Hackathon)
 *   **Track:** Mobile Track
 *   **Why it fits:** Identity Prism is designed **Mobile-First**. It leverages the Solana Mobile Wallet Adapter (MWA) for seamless signing without constant app-switching. The UI, 3D Canvas rendering, and touch controls are highly optimized for the upcoming **Seeker** device, delivering smooth 60 FPS gameplay. It is already live on the Solana dApp Store.
-*   **Perks:** Seeker Genesis holders get a 50% discount on minting cNFTs when paying with SKR token.
+*   **Perks:** Seeker Genesis holders get a 50% discount on minting Identity Prism NFTs (Metaplex Core) when paying with SKR token.
 
 ### 2. Solana Graveyard Hackathon
 Identity Prism integrates multiple advanced Solana primitives, making it a strong contender across several tracks:
