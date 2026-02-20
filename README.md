@@ -22,10 +22,11 @@ We are proudly submitting Identity Prism to two major Solana hackathons simultan
 *   **Perks:** Seeker Genesis holders get a 50% discount on minting cNFTs when paying with SKR token.
 
 ### 2. Solana Graveyard Hackathon
-*   **Track:** Gaming (MagicBlock)
-    *   *How we use it:* Orbit Survival uses MagicBlock Ephemeral Rollups to cryptographically seed the game session and verify the final score. Players dodge asteroids off-chain (zero latency), and the backend validates the result against the on-chain session before committing the score via a Solana Memo transaction.
-*   **Track:** Onchain Social (Tapestry)
-    *   *How we use it:* Your calculated tier (e.g., "Mars Tier") and behavioral badges are published to the Tapestry network under the `identity_prism` namespace. This turns an isolated app into a composable reputation layer.
+Identity Prism integrates multiple advanced Solana primitives, making it a strong contender across several tracks:
+*   **Gaming (MagicBlock):** Orbit Survival uses MagicBlock Ephemeral Rollups to cryptographically seed the game session and verify the final score. Players dodge asteroids off-chain (zero latency), and the backend validates the result against the on-chain session before committing the score via a Solana Memo transaction.
+*   **Onchain Social (Tapestry):** Your calculated tier (e.g., "Mars Tier") and behavioral badges are published to the Tapestry network under the `identity_prism` namespace. This turns an isolated app into a composable reputation layer.
+*   **DeFi / Tooling:** The "Black Hole" feature acts as a smart asset management tool, allowing users to safely isolate and burn dust tokens to recover rent SOL while protecting valuable assets using real-time price feeds.
+*   **Mobile / Consumer:** The entire experience is fully native to Seeker and Saga, built as a PWA/APK with seamless Mobile Wallet Adapter integration and zero-friction transaction signing.
 
 </details>
 
