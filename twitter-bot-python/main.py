@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import datetime
 import logging
+import os
 import random
 import re
 import time
@@ -32,7 +33,10 @@ from config import (
     TARGET_USERS,
     TREND_QUERIES,
     WALLET_CHECK_KEYWORDS,
+    GEMINI_PROXY,
 )
+from memory import AgentMemory
+from news_fetcher import NewsFetcher
 from twitter_client import TwitterClient
 from utils import async_sleep_random, load_state, save_state, setup_logging, check_single_instance
 
@@ -44,6 +48,10 @@ TIER_EMOJI = {
     'neptune': '🔵', 'uranus': '💎', 'saturn': '🪐', 'jupiter': '🟠',
     'sun': '☀️', 'binary_sun': '🌟🌟',
 }
+
+# ── Agent globals (initialized in main()) ──
+_memory = None
+_news = None
 
 
 def _extract_solana_addresses(text):
@@ -168,6 +176,8 @@ async def do_post(client, ai_engine, state):
     if tweet_id:
         state['last_post_id'] = tweet_id
         state['last_post_at'] = time.time()
+        if _memory:
+            _memory.record_post(tweet_id, 'post', post_text)
         save_state(state, state['state_path'])
         logging.info('Posted: https://x.com/i/web/status/%s', tweet_id)
         return True
@@ -237,6 +247,25 @@ async def do_engage(client, ai_engine, state):
                 continue
             await maybe_like(client, tweet)
             await asyncio.sleep(random.uniform(2, 6))
+            # Auto wallet scoring: if tweet contains a Solana address, score it
+            addresses = _extract_solana_addresses(text)
+            if addresses and _memory:
+                addr = addresses[0]
+                logging.info('Wallet detected in @%s tweet: %s', handle, addr[:8])
+                rep = await asyncio.to_thread(_fetch_reputation, addr)
+                if rep and 'score' in rep:
+                    _memory.record_wallet_score(
+                        addr, rep['score'], rep.get('tier', ''),
+                        rep.get('badges', []),
+                    )
+                    reply_text = ai_engine.generate_wallet_score_reply(
+                        addr, rep['score'], rep.get('tier', 'mercury'),
+                        rep.get('badges', []), rep.get('stats', {}),
+                    )
+                    if reply_text:
+                        target_tweet_id = tid
+                        target_text = reply_text
+                        break
             if ai_engine.should_micro_reply():
                 reply_text = ai_engine.generate_micro_reply()
             else:
@@ -264,6 +293,8 @@ async def do_engage(client, ai_engine, state):
             remember_reply(state, target_tweet_id)
             mark_commented_today(state, handle)
             state['last_engagement_at'] = now
+            if _memory:
+                _memory.record_interaction(handle, target_tweet_id, reply_id, 'comment', target_text)
             save_state(state, state['state_path'])
             logging.info('Comment on @%s posted: %s', handle, reply_id)
             return 'commented'
@@ -415,6 +446,8 @@ async def do_thread(client, ai_engine, state):
         state['last_post_id'] = results[0][0]
         state['daily_threads'] = state.get('daily_threads', 0) + 1
         _track_action(state, 'thread')
+        if _memory:
+            _memory.record_post(results[0][0], 'thread', tweets[0] if tweets else '', topic=tweets[0][:80] if tweets else None)
         save_state(state, state['state_path'])
         logging.info('Thread posted: %s', results[0][0])
         return True
@@ -457,6 +490,8 @@ async def do_trend_post(client, ai_engine, state):
             state['last_post_at'] = time.time()
             state['last_post_id'] = tweet_id
             _track_action(state, 'trend_post')
+            if _memory:
+                _memory.record_post(tweet_id, 'trend_post', post_text)
             save_state(state, state['state_path'])
             logging.info('Trend post: %s (inspired by %s)', tweet_id, tid)
             return True
@@ -503,12 +538,81 @@ async def do_quote(client, ai_engine, state):
             state['last_post_at'] = time.time()
             state['daily_quotes'] = state.get('daily_quotes', 0) + 1
             _track_action(state, 'quote')
+            if _memory:
+                _memory.record_post(qt_id, 'quote', quote_text)
             save_state(state, state['state_path'])
             logging.info('Quote tweet: %s (quoted %s)', qt_id, tid)
             return True
         logging.warning('Quote tweet failed: %s', err)
         return False
     return False
+
+
+# ── News post action ──
+
+async def do_news_post(client, ai_engine, state):
+    """Post about a fresh news article, connecting it to Identity Prism."""
+    if not _news:
+        logging.info('News fetcher not available; falling back to regular post')
+        return await do_post(client, ai_engine, state)
+    _news.fetch_all()
+    news_items = _news.get_fresh_news(limit=5)
+    if not news_items:
+        logging.info('No fresh news available; falling back to regular post')
+        return await do_post(client, ai_engine, state)
+    news = random.choice(news_items)
+    post_text = ai_engine.generate_news_post(
+        news['title'], news['source'], news.get('summary', ''),
+        include_shill=should_shill(),
+    )
+    if not post_text:
+        logging.warning('Failed to generate news post')
+        return False
+    post_text = _maybe_inject_link(post_text, state)
+    logging.info('News post [%d chars] re: "%s": %s',
+                 len(post_text), news['title'][:60], post_text)
+    media_paths = await build_media_paths(ai_engine, post_text)
+    tweet_id, error_message = await client.post_tweet(post_text, media_paths=media_paths)
+    if tweet_id:
+        state['last_post_id'] = tweet_id
+        state['last_post_at'] = time.time()
+        if _memory:
+            _memory.record_post(tweet_id, 'news_post', post_text, topic=news['title'][:100])
+            _memory.mark_news_used(news['link'])
+        save_state(state, state['state_path'])
+        logging.info('News post published: https://x.com/i/web/status/%s', tweet_id)
+        return True
+    logging.warning('News post failed: %s', error_message)
+    return False
+
+
+# ── Daily reflection ──
+
+async def do_reflection(ai_engine, state):
+    """Run daily morning reflection on bot performance."""
+    if not _memory:
+        return None
+    today = today_str()
+    existing = _memory.get_today_reflection(today)
+    if existing:
+        return existing
+    recent = _memory.get_recent_posts(days=1, limit=10)
+    if not recent:
+        logging.info('No recent posts for reflection')
+        return None
+    posts_summary = '\n'.join(
+        f'- [{p["action_type"]}] {(p["content"] or "")[:100]}'
+        for p in recent
+    )
+    stats = state.get('action_stats', {}).get(today, {})
+    today_stats = ', '.join(f'{k}: {v}' for k, v in stats.items()) or 'no stats yet'
+    analysis, strategy = ai_engine.generate_reflection(posts_summary, today_stats)
+    if analysis:
+        _memory.save_reflection(today, analysis, strategy or '')
+        logging.info('Reflection: ANALYSIS=%s | STRATEGY=%s',
+                     analysis[:100], (strategy or '')[:100])
+        return {'analysis': analysis, 'strategy': strategy}
+    return None
 
 
 # ── Engagement tracking ──
@@ -569,6 +673,14 @@ async def main():
 
     ai_engine = AIEngine()
 
+    # ── Initialize agent memory & news fetcher ──
+    global _memory, _news
+    _memory_db = os.path.join(os.path.dirname(STATE_PATH), 'agent_memory.db')
+    _memory = AgentMemory(_memory_db)
+    _news = NewsFetcher(_memory, proxy=GEMINI_PROXY or None)
+    logging.info('Agent memory: %s | Wallets scored: %d',
+                 _memory_db, _memory.get_total_wallets_scored())
+
     if args.post_once:
         post_text = ai_engine.generate_post_text(include_shill=True)
         if not post_text:
@@ -586,6 +698,7 @@ async def main():
             state['daily_threads'] = 0
             state['daily_quotes'] = 0
             state['daily_reset_date'] = today_str()
+            state['_reflection_done'] = False
             logging.info('Daily counters reset')
 
     last_action_at = state.get('last_slot_at', 0)
@@ -608,6 +721,16 @@ async def main():
         try:
             cleanup_old_comments(state)
             reset_daily_counters_if_needed()
+
+            # ── Morning reflection (once per day) ──
+            if not state.get('_reflection_done'):
+                try:
+                    await do_reflection(ai_engine, state)
+                    _memory.cleanup_old(days=30)
+                    state['_reflection_done'] = True
+                except Exception as exc:
+                    logging.warning('Morning reflection failed: %s', exc)
+                    state['_reflection_done'] = True  # don't retry endlessly
 
             # ── Priority: check mentions for wallet requests every 30 min ──
             since_last_mention_poll = now - state.get('last_mention_poll_at', 0)
@@ -715,6 +838,16 @@ async def main():
                 if ok:
                     state['daily_posts'] = total_writes + 1
                     state['last_action_type'] = 'quote'
+                    action_productive = True
+
+            elif action == 'news_post':
+                logging.info('=== NEWS POST ===')
+                ok = await do_news_post(client, ai_engine, state)
+                logging.info('News post result: %s', 'OK' if ok else 'FAIL')
+                if ok:
+                    state['daily_posts'] = total_writes + 1
+                    state['last_action_type'] = 'news_post'
+                    _track_action(state, 'news_post')
                     action_productive = True
 
             else:  # 'post'
