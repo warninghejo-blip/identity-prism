@@ -457,6 +457,56 @@ const setCoinBalance = (address, coins) => {
 
 loadCoinBalances();
 
+// ── Server-side Score History (per wallet, last 20 scores) ──
+const SCORE_HISTORY_FILE = path.join(METADATA_DIR, 'score-history.json');
+const scoreHistory = new Map(); // address -> { scores: [{ score, tier, date }], lastUpdated }
+const SCORE_HISTORY_MAX = 20;
+
+const loadScoreHistory = () => {
+  try {
+    if (!fs.existsSync(SCORE_HISTORY_FILE)) return;
+    const raw = fs.readFileSync(SCORE_HISTORY_FILE, 'utf8');
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    const data = parsed?.data || {};
+    for (const [addr, entry] of Object.entries(data)) {
+      if (Array.isArray(entry.scores)) {
+        scoreHistory.set(addr, { scores: entry.scores.slice(0, SCORE_HISTORY_MAX), lastUpdated: entry.lastUpdated || null });
+      }
+    }
+    console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets`);
+  } catch (err) {
+    console.warn('[score-history] Failed to load', err);
+  }
+};
+
+const persistScoreHistory = () => {
+  try {
+    const obj = {};
+    for (const [k, v] of scoreHistory) obj[k] = v;
+    fs.writeFileSync(SCORE_HISTORY_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
+  } catch (err) {
+    console.warn('[score-history] Failed to persist', err);
+  }
+};
+
+const getScoreHistory = (address) => {
+  return scoreHistory.get(address) || { scores: [], lastUpdated: null };
+};
+
+const addScoreEntry = (address, score, tier) => {
+  const entry = scoreHistory.get(address) || { scores: [], lastUpdated: null };
+  const now = new Date().toISOString();
+  entry.scores.unshift({ score, tier, date: now });
+  if (entry.scores.length > SCORE_HISTORY_MAX) entry.scores.length = SCORE_HISTORY_MAX;
+  entry.lastUpdated = now;
+  scoreHistory.set(address, entry);
+  persistScoreHistory();
+  return entry;
+};
+
+loadScoreHistory();
+
 // ── Server-side Achievement tracking (unlocked + claimed per wallet) ──
 const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
 // address -> { unlocked: Set<string>, claimed: Set<string> }
@@ -2026,6 +2076,35 @@ const server = http.createServer(async (req, res) => {
       markAchievementsUnlocked(addr, ids);
       const entry = getWalletAchievements(addr);
       respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
+    } catch {
+      respondJson(res, 400, { error: 'Invalid JSON body' });
+    }
+    return;
+  }
+
+  // ── Score History API ──
+  if (pathname === '/api/score-history' && req.method === 'GET') {
+    const addr = url.searchParams.get('address') || '';
+    if (!addr) {
+      respondJson(res, 400, { error: 'address query param required' });
+      return;
+    }
+    const history = getScoreHistory(addr);
+    respondJson(res, 200, { address: addr, scores: history.scores, lastUpdated: history.lastUpdated });
+    return;
+  }
+
+  if (pathname === '/api/score-history' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const parsed = JSON.parse(raw);
+      const { address: addr, score, tier } = parsed;
+      if (!addr || typeof addr !== 'string' || typeof score !== 'number') {
+        respondJson(res, 400, { error: 'address (string) and score (number) required' });
+        return;
+      }
+      const entry = addScoreEntry(addr, score, tier || 'mercury');
+      respondJson(res, 200, { address: addr, scores: entry.scores, lastUpdated: entry.lastUpdated });
     } catch {
       respondJson(res, 400, { error: 'Invalid JSON body' });
     }

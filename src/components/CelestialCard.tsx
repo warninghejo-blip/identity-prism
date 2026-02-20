@@ -12,6 +12,7 @@ import type { WalletData, WalletTraits } from '@/hooks/useWalletData';
 
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { BLACKHOLE_ENABLED } from '@/constants';
+import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
@@ -86,6 +87,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [suckingIn, setSuckingIn] = useState(false);
   const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(false);
+  const [scoreHistory, setScoreHistory] = useState<{ score: number; tier: string; date: string }[]>([]);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
   const { traits, score, address } = data;
@@ -199,6 +201,30 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   }, [unsucking, setSuckVars]);
 
   useEffect(() => () => clearTransitionTimers(), [clearTransitionTimers]);
+
+  // Fetch score history from server
+  useEffect(() => {
+    if (!address || isCapture) return;
+    const base = getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    if (!base) return;
+    fetch(`${base}/api/score-history?address=${encodeURIComponent(address)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.scores?.length) setScoreHistory(data.scores); })
+      .catch(() => {});
+  }, [address, isCapture]);
+
+  // Auto-save current score to history when card loads with a real score
+  useEffect(() => {
+    if (!address || !score || score <= 0 || isCapture) return;
+    const base = getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    if (!base) return;
+    const tier = traits?.planetTier || 'mercury';
+    fetch(`${base}/api/score-history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, score, tier }),
+    }).catch(() => {});
+  }, [address, score, isCapture]);
 
   // 3D Tilt removed — card stays flat
 
@@ -618,6 +644,42 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     captureKey="dormancy"
                   />
                 </div>
+
+                {/* Score History Sparkline */}
+                {scoreHistory.length >= 2 && (
+                  <div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] uppercase tracking-widest text-white/30 font-bold">Score History</span>
+                      <span className="text-[10px] text-white/20">{scoreHistory.length} scans</span>
+                    </div>
+                    <svg viewBox={`0 0 ${Math.max(scoreHistory.length - 1, 1) * 20} 40`} className="w-full h-10" preserveAspectRatio="none">
+                      {(() => {
+                        const pts = [...scoreHistory].reverse();
+                        const maxS = Math.max(...pts.map(p => p.score), 1);
+                        const minS = Math.min(...pts.map(p => p.score), 0);
+                        const range = Math.max(maxS - minS, 1);
+                        const w = Math.max(pts.length - 1, 1) * 20;
+                        const points = pts.map((p, i) => {
+                          const x = (i / Math.max(pts.length - 1, 1)) * w;
+                          const y = 38 - ((p.score - minS) / range) * 34;
+                          return `${x},${y}`;
+                        }).join(' ');
+                        const areaPoints = `0,38 ${points} ${w},38`;
+                        return (
+                          <>
+                            <polyline points={areaPoints} fill="rgba(34,211,238,0.06)" stroke="none" />
+                            <polyline points={points} fill="none" stroke="rgba(34,211,238,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            {pts.length > 0 && (() => {
+                              const lastX = ((pts.length - 1) / Math.max(pts.length - 1, 1)) * w;
+                              const lastY = 38 - ((pts[pts.length - 1].score - minS) / range) * 34;
+                              return <circle cx={lastX} cy={lastY} r="2.5" fill="#22d3ee" />;
+                            })()}
+                          </>
+                        );
+                      })()}
+                    </svg>
+                  </div>
+                )}
 
                 <div className="bg-gradient-to-br from-cyan-900/10 to-blue-900/10 border border-cyan-500/20 rounded-xl p-4 relative overflow-hidden text-center">
                   <div className="absolute top-0 right-0 p-2 opacity-10">
