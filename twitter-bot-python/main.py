@@ -17,6 +17,7 @@ from config import (
     BLINK_SHARE_URL,
     BOT_USERNAME,
     CTA_DOMAIN,
+    ENGAGEMENT_COOLDOWN_SECONDS,
     LIKE_RATE,
     LINK_INJECT_RATE,
     MAX_STORED_TWEETS,
@@ -365,7 +366,7 @@ SLEEP_CHECK = 90            # poll every 1.5 min
 POST_COOLDOWN_MIN = 14400   # minimum 4h between posts
 POST_COOLDOWN_MAX = 21600   # up to 6h between posts
 MAX_POSTS_PER_DAY = 3       # total write actions (posts + threads + trends + quotes)
-MAX_ENGAGEMENTS_PER_DAY = 30 # comments/replies per day
+MAX_ENGAGEMENTS_PER_DAY = 6  # comments/replies per day (~1 per 2h over 12h active window)
 SKIPPED_RETRY_MIN = 600     # if engage skipped, retry in 10 min
 SKIPPED_RETRY_MAX = 900     # ... up to 15 min
 
@@ -662,9 +663,14 @@ async def main():
             action_productive = False
 
             if action == 'engage':
+                since_last_engage = time.time() - state.get('last_engagement_at', 0)
+                engage_cooldown_remaining = ENGAGEMENT_COOLDOWN_SECONDS - since_last_engage
                 if state.get('skip_next_engage'):
                     logging.info('=== ENGAGE skipped (previous 429) ===')
                     state['skip_next_engage'] = False
+                elif engage_cooldown_remaining > 0:
+                    logging.info('=== ENGAGE skipped (cooldown %.0f min remaining) ===',
+                                 engage_cooldown_remaining / 60)
                 elif state.get('daily_engagements', 0) >= MAX_ENGAGEMENTS_PER_DAY:
                     logging.info('=== ENGAGE skipped (daily cap %d/%d) ===',
                                  state['daily_engagements'], MAX_ENGAGEMENTS_PER_DAY)
