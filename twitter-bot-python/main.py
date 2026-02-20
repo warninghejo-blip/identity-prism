@@ -359,13 +359,13 @@ def _maybe_inject_link(post_text, state):
 
 # ── Main loop ──
 
-SLOT_INTERVAL_MIN = 2700    # 45 min between actions
-SLOT_INTERVAL_MAX = 4500    # up to 75 min
+SLOT_INTERVAL_MIN = 1800    # 30 min between actions
+SLOT_INTERVAL_MAX = 3600    # up to 60 min
 SLEEP_CHECK = 90            # poll every 1.5 min
-POST_COOLDOWN_MIN = 5400    # minimum 90 min between posts
-POST_COOLDOWN_MAX = 9000    # up to 150 min
-MAX_POSTS_PER_DAY = 12      # total write actions (posts + threads + trends + quotes)
-MAX_ENGAGEMENTS_PER_DAY = 14 # comments/replies between posts
+POST_COOLDOWN_MIN = 14400   # minimum 4h between posts
+POST_COOLDOWN_MAX = 21600   # up to 6h between posts
+MAX_POSTS_PER_DAY = 3       # total write actions (posts + threads + trends + quotes)
+MAX_ENGAGEMENTS_PER_DAY = 30 # comments/replies per day
 SKIPPED_RETRY_MIN = 600     # if engage skipped, retry in 10 min
 SKIPPED_RETRY_MAX = 900     # ... up to 15 min
 
