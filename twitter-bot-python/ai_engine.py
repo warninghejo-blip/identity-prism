@@ -28,8 +28,10 @@ from config import (
     MEDIA_DIR,
     MICRO_REPLIES,
     MICRO_REPLY_RATE,
+    NEWS_POST_PROMPT,
     POST_PROMPT,
     QUOTE_PROMPT,
+    REFLECTION_PROMPT,
     REPLY_BACK_PROMPT,
     SHILL_INSTRUCTION,
     SHILL_PHRASES,
@@ -40,6 +42,7 @@ from config import (
     TREND_POST_PROMPT,
     TREND_PROMPT,
     WALLET_ROAST_PROMPT,
+    WALLET_SCORE_REPLY_PROMPT,
 )
 from utils import clamp_text
 
@@ -390,6 +393,55 @@ class AIEngine:
             return None
         candidates.sort(key=lambda path: os.path.getmtime(path), reverse=True)
         return candidates[0]
+
+    def generate_news_post(self, headline, source, summary='', include_shill=False):
+        """Generate a tweet reacting to a news headline."""
+        shill = ''
+        if include_shill:
+            phrase = random.choice(SHILL_PHRASES)
+            shill = SHILL_INSTRUCTION.format(phrase=phrase)
+        prompt = NEWS_POST_PROMPT.format(
+            headline=headline[:200], source=source,
+            summary=(summary or 'N/A')[:300],
+            hashtags=self._random_hashtags(), shill=shill,
+        )
+        return self._ensure_hashtags(self._generate(prompt))
+
+    def generate_reflection(self, posts_summary, today_stats):
+        """Generate daily reflection on bot performance."""
+        prompt = REFLECTION_PROMPT.format(
+            posts_summary=posts_summary, today_stats=today_stats,
+        )
+        raw = self._generate(prompt)
+        if not raw:
+            return None, None
+        analysis, strategy = '', ''
+        for line in raw.split('\n'):
+            line = line.strip()
+            if line.upper().startswith('ANALYSIS:'):
+                analysis = line.split(':', 1)[1].strip()
+            elif line.upper().startswith('STRATEGY:'):
+                strategy = line.split(':', 1)[1].strip()
+        return analysis or raw, strategy
+
+    def generate_wallet_score_reply(self, address, score, tier, badges, stats):
+        """Generate a personalized reply based on wallet score data."""
+        short_addr = f'{address[:4]}...{address[-4:]}'
+        badge_str = ', '.join(badges) if badges else 'none yet'
+        stats_line = (
+            f'SOL: {stats.get("solBalance", 0)} | '
+            f'Txns: {stats.get("txCount", 0)} | '
+            f'NFTs: {stats.get("nftCount", 0)} | '
+            f'Age: {stats.get("walletAgeDays", 0)}d'
+        )
+        prompt = WALLET_SCORE_REPLY_PROMPT.format(
+            short_addr=short_addr, score=score, tier=tier.replace('_', ' ').title(),
+            badges=badge_str, stats_line=stats_line,
+        )
+        reply = self._generate(prompt)
+        if not reply:
+            return None
+        return reply
 
     def generate_post_image(self, post_text=None):
         if not GEMINI_IMAGE_MODEL:

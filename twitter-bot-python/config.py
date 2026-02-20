@@ -80,11 +80,12 @@ HASHTAG_SETS = [
 ]
 
 ACTION_WEIGHTS = {
-    'post': 8,
-    'thread': 8,
-    'trend_post': 12,
-    'quote': 10,
-    'engage': 62,
+    'post': 6,
+    'thread': 6,
+    'trend_post': 8,
+    'quote': 6,
+    'news_post': 14,
+    'engage': 60,
 }
 
 SHILL_RATE = 0.4
@@ -356,6 +357,42 @@ WALLET_CHECK_KEYWORDS = [
     'look at my wallet', 'roast my wallet', 'what does my wallet', 'my on-chain',
     'check my address', 'check this wallet', 'identity prism me',
 ]
+
+NEWS_POST_PROMPT = (
+    'You just read this crypto/Solana news headline:\n'
+    '"{headline}" (Source: {source})\n'
+    'Summary: {summary}\n\n'
+    'Write ONE short tweet (2-4 sentences) reacting to this news. '
+    'Connect it to on-chain identity, wallet reputation, Sybil resistance, '
+    'or your experience building on Solana — whichever angle fits best. '
+    'Be specific about what this news means for the ecosystem. '
+    'Sound like a dev who has a real take — not just resharing news. '
+    'ONE emoji max. Include {hashtags}. '
+    'Do NOT include any link. {shill}'
+)
+
+REFLECTION_PROMPT = (
+    'You are an AI agent managing a Twitter account for an indie Solana developer. '
+    'Analyze your recent activity and provide a brief strategy adjustment.\n\n'
+    'Recent posts (last 24h):\n{posts_summary}\n\n'
+    'Today\'s stats: {today_stats}\n\n'
+    'Provide EXACTLY two lines:\n'
+    'ANALYSIS: [1 sentence — what pattern do you see in the posts above]\n'
+    'STRATEGY: [1 sentence — what to adjust today, e.g. "more news reactions" '
+    'or "shorter hot takes" or "engage more with DeFi accounts"]'
+)
+
+WALLET_SCORE_REPLY_PROMPT = (
+    'You scored a Solana wallet and got these results:\n'
+    'Address: {short_addr}\n'
+    'Score: {score}/1400 | Tier: {tier} | Badges: {badges}\n'
+    'Stats: {stats_line}\n\n'
+    'Write a short, engaging reply (2-3 COMPLETE sentences) commenting on this wallet. '
+    'Be specific — mention something interesting about their score, tier, or activity. '
+    'If score is high, compliment genuinely. If low, be encouraging not mean. '
+    'ONE emoji max. End with a subtle nudge to check their full card at identityprism.xyz. '
+    'Do NOT include any raw link — just mention the site name naturally.'
+)
 
 PEAK_HOURS_UTC = list(range(14, 19))  # 14:00-18:00 UTC = prime crypto twitter
 ACTIVE_HOURS_UTC = list(range(11, 23))  # broader active window
