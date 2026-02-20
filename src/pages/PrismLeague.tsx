@@ -26,6 +26,18 @@ import {
 } from "lucide-react";
 import "./PrismLeague.css";
 import OrbitSurvivalScene from "@/components/game/OrbitSurvivalScene";
+import AsteroidDestroyerScene from "@/components/game/AsteroidDestroyerScene";
+import GravityWarsScene from "@/components/game/GravityWarsScene";
+import TerritoryControlScene from "@/components/game/TerritoryControlScene";
+
+type GameMode = "orbit" | "destroyer" | "gravity" | "territory";
+
+const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string }[] = [
+  { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit" },
+  { id: "destroyer", name: "Asteroid Destroyer", icon: "💥", desc: "Shoot asteroids, chain combos for big scores", controls: "Tap/Click to fire, Double-tap/Right-click to turn" },
+  { id: "gravity", name: "Gravity Wars", icon: "🌀", desc: "Pulse gravity waves, smash asteroids into each other", controls: "Tap/Click to pulse, Double-tap/Right-click to turn" },
+  { id: "territory", name: "Territory Control", icon: "🎯", desc: "Capture zones for points while dodging threats", controls: "Tap/Click to reverse orbit" },
+];
 import {
   commitScoreOnchain,
   calculateRewardCredits,
@@ -306,6 +318,7 @@ const PrismLeague = () => {
     }
   }, [connected, useMobileWallet, isCapacitor, isAndroid, availableWallets, select, connect, setWalletModalVisible]);
 
+  const [gameMode, setGameMode] = useState<GameMode>("orbit");
   const [gameState, setGameState] = useState<"start" | "playing" | "gameover">("start");
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
@@ -721,16 +734,20 @@ const PrismLeague = () => {
       <div className="league-aurora league-aurora--a" aria-hidden="true" />
       <div className="league-aurora league-aurora--b" aria-hidden="true" />
 
-      {/* 3D Scene */}
+      {/* 3D Scene — switches based on selected game mode */}
       <div className="absolute inset-0 z-0">
-        <OrbitSurvivalScene
-          gameState={gameState}
-          onScore={setScore}
-          onCoins={setCoins}
-          onGameOver={handleGameOver}
-          traits={traits}
-          walletScore={score}
-        />
+        {gameMode === "orbit" && (
+          <OrbitSurvivalScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
+        )}
+        {gameMode === "destroyer" && (
+          <AsteroidDestroyerScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
+        )}
+        {gameMode === "gravity" && (
+          <GravityWarsScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
+        )}
+        {gameMode === "territory" && (
+          <TerritoryControlScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
+        )}
       </div>
 
       {/* UI Overlay */}
@@ -838,7 +855,7 @@ const PrismLeague = () => {
               )}
 
               <span className="text-[10px] text-white/20 mt-2 uppercase tracking-widest">
-                {isMobile ? "Tap to reverse orbit" : "Click / Space to reverse orbit"}
+                {GAME_MODES.find(m => m.id === gameMode)?.controls ?? (isMobile ? "Tap to reverse orbit" : "Click / Space to reverse orbit")}
               </span>
             </div>
           )}
@@ -857,12 +874,34 @@ const PrismLeague = () => {
                       <Orbit className="w-14 h-14 text-cyan-400 relative drop-shadow-[0_0_12px_rgba(34,211,238,0.6)]" />
                     </div>
                     <h2 className="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-purple-300 tracking-tight mb-1">
-                      Orbit Survival
+                      {GAME_MODES.find(m => m.id === gameMode)?.name ?? "Orbit Survival"}
                     </h2>
                     <p className="text-cyan-200/40 text-xs max-w-[260px]">
-                      Dodge asteroids, collect coins, save on-chain for bonus rewards
+                      {GAME_MODES.find(m => m.id === gameMode)?.desc ?? "Dodge asteroids, collect coins, save on-chain for bonus rewards"}
                     </p>
                   </div>
+                </div>
+
+                {/* Game Mode Selector */}
+                <div className="w-full mb-4 grid grid-cols-2 gap-1.5">
+                  {GAME_MODES.map((mode) => (
+                    <button
+                      key={mode.id}
+                      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all ${
+                        gameMode === mode.id
+                          ? "bg-cyan-500/15 border-cyan-500/40 shadow-[0_0_12px_rgba(6,182,212,0.15)]"
+                          : "bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.05] hover:border-white/[0.12]"
+                      }`}
+                      onClick={() => setGameMode(mode.id)}
+                    >
+                      <span className="text-lg leading-none">{mode.icon}</span>
+                      <div className="min-w-0">
+                        <div className={`text-[11px] font-bold truncate ${gameMode === mode.id ? "text-cyan-300" : "text-white/60"}`}>
+                          {mode.name}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
                 </div>
 
                 {/* Coin Balance + Stats Row */}
