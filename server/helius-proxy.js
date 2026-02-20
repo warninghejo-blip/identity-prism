@@ -2692,6 +2692,8 @@ const server = http.createServer(async (req, res) => {
       const sellerFeeBasisPoints = Number(payload?.sellerFeeBasisPoints ?? 0);
       const collectionMintRaw = payload?.collectionMint ?? CORE_COLLECTION ?? '';
       const adminMode = Boolean(payload?.admin);
+      const remintMode = Boolean(payload?.remint);
+      const burnSignature = typeof payload?.burnSignature === 'string' ? payload.burnSignature.trim() : '';
       const paymentTokenRaw = typeof payload?.paymentToken === 'string' ? payload.paymentToken.trim() : '';
       const paymentToken = paymentTokenRaw.toUpperCase() === 'SKR' ? 'SKR' : 'SOL';
       const signedTransaction = typeof payload?.signedTransaction === 'string' ? payload.signedTransaction.trim() : '';
@@ -2846,7 +2848,20 @@ const server = http.createServer(async (req, res) => {
       }).setFeePayer(payerSigner);
 
       const paymentInstructions = [];
-      if (!adminMode) {
+      // Remint mode: verify burn signature exists, skip payment
+      if (remintMode && burnSignature) {
+        console.info('[mint-cnft] remint mode — skipping payment', { requestId, burnSignature: burnSignature.slice(0, 16) });
+        // Optionally verify burn tx on-chain (best-effort, don't block)
+        try {
+          const burnStatus = await connection.getSignatureStatus(burnSignature);
+          const conf = burnStatus?.value?.confirmationStatus;
+          if (conf !== 'confirmed' && conf !== 'finalized') {
+            console.warn('[mint-cnft] remint burn signature not yet confirmed', { requestId, burnSignature: burnSignature.slice(0, 16), status: conf });
+          }
+        } catch (e) {
+          console.warn('[mint-cnft] remint burn verification failed (non-blocking)', e);
+        }
+      } else if (!adminMode) {
         if (paymentToken === 'SKR') {
           const skrMintKey = parsePublicKey(SKR_MINT, 'SKR_MINT');
           if (!skrMintKey) {

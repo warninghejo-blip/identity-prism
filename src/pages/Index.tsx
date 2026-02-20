@@ -676,6 +676,7 @@ const Index = () => {
   };
 
   const [mintState, setMintState] = useState<"idle" | "minting" | "success" | "error">("idle");
+  const [remintState, setRemintState] = useState<"idle" | "burning" | "minting" | "success" | "error">("idle");
   const [isMintPanelOpen, setIsMintPanelOpen] = useState(true);
   const [paymentToken, setPaymentToken] = useState<PaymentToken>("SOL");
   const [skrQuote, setSkrQuote] = useState<{ skrAmount: number; discount: number } | null>(null);
@@ -887,6 +888,48 @@ const Index = () => {
       if (!succeeded) setMintState("idle");
     }
   }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
+
+  const handleRemint = useCallback(async () => {
+    if (!wallet || !wallet.publicKey || !traits) return;
+    setRemintState("burning");
+    let succeeded = false;
+    const safetyTimer = setTimeout(() => {
+      if (!succeeded) {
+        setRemintState("idle");
+        toast.info("Re-mint timed out — please try again");
+      }
+    }, 120_000);
+    try {
+      const cardImageUrl = await captureCardImage();
+      toast.info("Burning old card...");
+      const { remintIdentityPrism } = await import("@/lib/mintIdentityPrism");
+      setRemintState("burning");
+      const result = await remintIdentityPrism({
+        wallet,
+        address: wallet.publicKey.toBase58(),
+        traits,
+        score,
+        cardImageUrl,
+      });
+      succeeded = true;
+      setRemintState("success");
+      toast.success("Card re-minted!", {
+        description: `Old card burned, new card: ${result.signature.slice(0, 8)}...`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isUserCancel =
+        /reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(msg);
+      if (isUserCancel) {
+        toast.info("Re-mint cancelled");
+      } else {
+        toast.error("Re-mint failed", { description: msg });
+      }
+    } finally {
+      clearTimeout(safetyTimer);
+      if (!succeeded) setRemintState("idle");
+    }
+  }, [wallet, traits, score, captureCardImage]);
 
   const shareInsight = useMemo(() => {
     if (!traits) return "Cosmic insight pending... 🔮";
@@ -1184,6 +1227,28 @@ const Index = () => {
                           ) : (
                             <span>MINT COST {MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL</span>
                           )}
+                        </div>
+                        {isConnected && (
+                          <div className="mint-action-row" style={{ marginTop: '0.25rem' }}>
+                            <Button
+                              onClick={handleRemint}
+                              disabled={
+                                remintState === "burning" || remintState === "minting" ||
+                                mintState === "minting" || isLoading || !isConnected
+                              }
+                              variant="outline"
+                              className="mint-primary-btn"
+                              style={{ background: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.25)' }}
+                            >
+                              {remintState === "idle" && <span>♻ UPDATE CARD (FREE)</span>}
+                              {remintState === "burning" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />BURNING OLD...</>}
+                              {remintState === "minting" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />MINTING NEW...</>}
+                              {remintState === "success" && <span>✓ CARD UPDATED</span>}
+                            </Button>
+                          </div>
+                        )}
+                        <div className="mint-meta" style={{ fontSize: '9px', opacity: 0.4, marginTop: '0.25rem' }}>
+                          <span>Already have a card? Update burns old + mints new for free</span>
                         </div>
                         <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
                           <Share2 className="h-4 w-4 mr-2" />

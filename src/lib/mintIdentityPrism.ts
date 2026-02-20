@@ -60,6 +60,8 @@ export interface MintIdentityPrismArgs {
   score: number;
   cardImageUrl?: string;
   paymentToken?: 'SOL' | 'SKR';
+  remint?: boolean;
+  burnSignature?: string;
 }
 
 export interface MintIdentityPrismResult {
@@ -219,6 +221,8 @@ export async function mintIdentityPrism({
   score,
   cardImageUrl,
   paymentToken = 'SOL',
+  remint,
+  burnSignature,
 }: MintIdentityPrismArgs): Promise<MintIdentityPrismResult> {
   const wantsAdminMode = isAdminModeEnabled();
   const heliusRpcUrl = getHeliusRpcUrl(address);
@@ -397,6 +401,7 @@ export async function mintIdentityPrism({
       collectionMint: collectionMint.toBase58(),
       admin: adminMode,
       paymentToken,
+      ...(remint && burnSignature ? { remint: true, burnSignature } : {}),
     }),
   });
 
@@ -575,5 +580,115 @@ export async function mintIdentityPrism({
     metadataUri,
     metadata,
     metadataBase64: encodeBase64(JSON.stringify(metadata)),
+  };
+}
+
+/**
+ * Find and burn an existing Identity Prism NFT, then mint a new one for free.
+ * Steps:
+ * 1. Query DAS for existing Identity Prism in wallet (by collection)
+ * 2. Burn it via on-chain transaction (recovers ~0.0015 SOL rent)
+ * 3. Mint new card with `remint: true` (server skips payment)
+ */
+export async function remintIdentityPrism(
+  args: MintIdentityPrismArgs
+): Promise<MintIdentityPrismResult & { burnedAssetId: string }> {
+  const { wallet, address } = args;
+  if (!wallet.publicKey || !wallet.signTransaction) {
+    throw new Error('Wallet not connected or does not support signTransaction');
+  }
+
+  const heliusRpcUrl = getHeliusRpcUrl(address);
+  if (!heliusRpcUrl) throw new Error('Helius API key required');
+  const connection = new Connection(heliusRpcUrl, {
+    commitment: 'confirmed',
+    httpHeaders: getHeliusProxyHeaders(address),
+  });
+
+  const collectionMintAddress = getCollectionMint();
+  if (!collectionMintAddress) throw new Error('Collection mint not configured');
+
+  // 1. Find existing Identity Prism NFT via DAS
+  const dasResponse = await fetch(heliusRpcUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(getHeliusProxyHeaders(address) ?? {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'remint-find',
+      method: 'getAssetsByOwner',
+      params: { ownerAddress: address, page: 1, limit: 1000 },
+    }),
+  });
+  if (!dasResponse.ok) throw new Error(`DAS API error: ${dasResponse.status}`);
+  const dasData = (await dasResponse.json()) as {
+    result?: { items: Array<{ id: string; grouping?: Array<{ group_key: string; group_value: string }> }> };
+  };
+  const assets = dasData.result?.items ?? [];
+  const existingCard = assets.find((a) =>
+    a.grouping?.some(
+      (g) => g.group_key === 'collection' && g.group_value === collectionMintAddress
+    )
+  );
+  if (!existingCard) {
+    throw new Error('No existing Identity Prism card found in this wallet. Use regular mint instead.');
+  }
+
+  // 2. Burn the old card via Metaplex Core burnV1
+  const assetId = existingCard.id;
+  const { createUmi } = await import('@metaplex-foundation/umi-bundle-defaults');
+  const { publicKey: umiPublicKey, transactionBuilder, signTransaction: umiSignTx } = await import('@metaplex-foundation/umi');
+  const { burnV1 } = await import('@metaplex-foundation/mpl-core');
+  const { fromWeb3JsPublicKey, toWeb3JsTransaction } = await import('@metaplex-foundation/umi-web3js-adapters');
+
+  const umi = createUmi(heliusRpcUrl);
+  const ownerUmi = fromWeb3JsPublicKey(wallet.publicKey);
+  const collectionUmi = umiPublicKey(collectionMintAddress);
+
+  const burnIx = burnV1(umi, {
+    asset: umiPublicKey(assetId),
+    collection: collectionUmi,
+    authority: { publicKey: ownerUmi, signTransaction: umiSignTx, signMessage: async () => new Uint8Array(), signAllTransactions: async (txs: any[]) => txs },
+  });
+
+  // Convert UMI builder to web3.js Transaction for wallet signing
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+  const burnBuilder = burnIx.setFeePayer({ publicKey: ownerUmi, signTransaction: umiSignTx, signMessage: async () => new Uint8Array(), signAllTransactions: async (txs: any[]) => txs });
+  const umiTx = await burnBuilder.buildAndSign(umi);
+  const web3Tx = toWeb3JsTransaction(umiTx);
+  web3Tx.recentBlockhash = blockhash;
+  web3Tx.lastValidBlockHeight = lastValidBlockHeight;
+  web3Tx.feePayer = wallet.publicKey;
+
+  // Re-create as fresh Transaction since UMI tx may have wrong blockhash
+  const burnTransaction = new Transaction();
+  burnTransaction.recentBlockhash = blockhash;
+  burnTransaction.lastValidBlockHeight = lastValidBlockHeight;
+  burnTransaction.feePayer = wallet.publicKey;
+  for (const ix of web3Tx.instructions) {
+    burnTransaction.add(ix);
+  }
+
+  const signedBurn = await signWithDismissDetection(wallet, burnTransaction);
+  const burnSig = await connection.sendRawTransaction(
+    signedBurn.serialize({ requireAllSignatures: false, verifySignatures: false }),
+    { skipPreflight: true, preflightCommitment: 'confirmed' }
+  );
+
+  // Wait for burn confirmation
+  await confirmTransactionWithPolling(connection, burnSig, 30000);
+
+  // 3. Mint new card for free (remint mode)
+  const mintResult = await mintIdentityPrism({
+    ...args,
+    remint: true,
+    burnSignature: burnSig,
+  });
+
+  return {
+    ...mintResult,
+    burnedAssetId: assetId,
   };
 }
