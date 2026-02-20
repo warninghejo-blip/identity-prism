@@ -2,7 +2,27 @@
 
 > **Your wallet tells a story. Identity Prism reads it.**
 
-**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
+[![Solana Mobile](https://img.shields.io/badge/Platform-Solana%20Mobile-blue)](https://solanamobile.com/)
+[![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
+[![Tapestry](https://img.shields.io/badge/Reputation-Tapestry-orange)](https://tapestry.network/)
+
+**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo Video:** [YouTube](https://youtu.be/h94i_Q3kM_I) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
+
+---
+
+## 🚀 Hackathons
+We are proudly submitting Identity Prism to two major Solana hackathons simultaneously!
+
+### 1. MONOLITH (Solana Mobile Hackathon)
+*   **Track:** Mobile Track
+*   **Why it fits:** Identity Prism is designed **Mobile-First**. It leverages the Solana Mobile Wallet Adapter (MWA) for seamless signing without constant app-switching. The UI, 3D Canvas rendering, and touch controls are highly optimized for the upcoming **Seeker** device, delivering smooth 60 FPS gameplay. It is already live on the Solana dApp Store.
+*   **Perks:** Seeker Genesis holders get a 50% discount on minting cNFTs when paying with SKR token.
+
+### 2. Solana Graveyard Hackathon
+*   **Track:** Gaming (MagicBlock)
+    *   *How we use it:* Orbit Survival uses MagicBlock Ephemeral Rollups to cryptographically seed the game session and verify the final score. Players dodge asteroids off-chain (zero latency), and the backend validates the result against the on-chain session before committing the score via a Solana Memo transaction.
+*   **Track:** Onchain Social (Tapestry)
+    *   *How we use it:* Your calculated tier (e.g., "Mars Tier") and behavioral badges are published to the Tapestry network under the `identity_prism` namespace. This turns an isolated app into a composable reputation layer.
 
 ---
 

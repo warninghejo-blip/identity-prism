@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Identity Prism — Your On-Chain Identity, Written in the Stars</title>
+  <meta name="description" content="Scan your Solana wallet. Discover your cosmic identity. Play, burn, mint, share — all on-chain.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<canvas id="stars"></canvas>
+
+<!-- ════════════════════════════════════════════
+     SECTION 1 — HERO
+     ════════════════════════════════════════════ -->
+<section class="hero">
+  <div class="reveal d1">
+    <div class="hero-badge">◆ Built on Solana · Live on Seeker dApp Store</div>
+  </div>
+
+  <h1 class="hero-title reveal d2">IDENTITY<br>PRISM</h1>
+
+  <p class="hero-sub reveal d3">
+    Your Solana wallet tells a story.<br>
+    We make it visual, verifiable, and unforgettable.
+  </p>
+
+  <div class="hero-cta-row reveal d4">
+    <a href="https://identityprism.xyz" class="btn btn-primary" target="_blank">Launch App</a>
+    <a href="#features" class="btn btn-outline">Explore ↓</a>
+  </div>
+
+  <div class="scroll-hint reveal d5">
+    <span>Scroll to explore</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 5v14M19 12l-7 7-7-7"/>
+    </svg>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 2 — WHAT IS IT
+     ════════════════════════════════════════════ -->
+<section class="section glow-cyan" id="features">
+  <div class="section-inner" style="text-align:center">
+    <div class="reveal">
+      <div class="label">The Concept</div>
+      <h2 class="heading">Every Wallet Has a Story</h2>
+      <p class="desc" style="margin:0 auto 48px">
+        Identity Prism scans your Solana wallet across 40+ data points — balance, age, transactions, NFTs, DeFi activity, and behavioral patterns — then transforms everything into a unique cosmic identity.
+      </p>
+    </div>
+
+    <div class="cards-grid">
+      <div class="card reveal d1">
+        <div class="card-icon card-icon-cyan">🔍</div>
+        <h3>Scan</h3>
+        <p>Connect any Solana wallet or paste a public address. We analyze the entire on-chain history.</p>
+      </div>
+      <div class="card reveal d2">
+        <div class="card-icon card-icon-purple">⚡</div>
+        <h3>Analyze</h3>
+        <p>40+ data points scored: SOL balance, wallet age, transaction count, NFTs, DeFi protocols, behavior.</p>
+      </div>
+      <div class="card reveal d3">
+        <div class="card-icon card-icon-gold">🪐</div>
+        <h3>Visualize</h3>
+        <p>Your identity becomes a cosmic card with a unique 3D solar system, planet tier, and behavioral badges.</p>
+      </div>
+      <div class="card reveal d4">
+        <div class="card-icon card-icon-cyan">✨</div>
+        <h3>Own</h3>
+        <p>Mint your identity as a compressed NFT. Share via Solana Blinks. Verify on-chain.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 3 — IDENTITY CARD & TIERS
+     ════════════════════════════════════════════ -->
+<section class="section">
+  <div class="section-inner">
+    <div class="split">
+      <!-- Left: card mockup -->
+      <div class="reveal-left" style="display:flex;justify-content:center">
+        <div style="
+          width: 280px; height: 400px;
+          border-radius: 20px;
+          border: 1px solid rgba(255,255,255,.08);
+          background: linear-gradient(160deg, #0f0f2e 0%, #050510 50%, #0a0520 100%);
+          box-shadow: 0 0 60px rgba(34,211,238,.08), 0 0 120px rgba(168,85,247,.05);
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 32px; text-align: center; position: relative; overflow: hidden;
+        ">
+          <div style="
+            position: absolute; top: 0; left: 0; right: 0; height: 4px;
+            background: linear-gradient(90deg, var(--cyan), var(--purple), var(--gold));
+          "></div>
+          <div style="
+            width: 80px; height: 80px; border-radius: 50%;
+            background: radial-gradient(circle at 35% 35%, #4ade80, #166534);
+            box-shadow: 0 0 24px rgba(74,222,128,.3);
+            margin-bottom: 20px;
+          "></div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:1.15rem;font-weight:700;margin-bottom:4px">Cosmic Explorer</div>
+          <div style="color:var(--cyan);font-size:.8rem;margin-bottom:16px">⬡ EARTH TIER</div>
+          <div style="
+            font-size: 2rem; font-weight: 800;
+            background: linear-gradient(135deg, #fff, var(--cyan));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+          ">742</div>
+          <div style="color:var(--text-dim);font-size:.7rem;margin-top:2px">IDENTITY SCORE</div>
+          <div style="display:flex;gap:6px;margin-top:16px;flex-wrap:wrap;justify-content:center">
+            <span style="padding:3px 10px;border-radius:999px;font-size:.65rem;border:1px solid rgba(34,211,238,.2);color:var(--cyan)">💎 Diamond Hands</span>
+            <span style="padding:3px 10px;border-radius:999px;font-size:.65rem;border:1px solid rgba(251,191,36,.2);color:var(--gold)">👑 DeFi King</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: text -->
+      <div class="reveal-right">
+        <div class="label">Identity Card</div>
+        <h2 class="heading">Your Cosmic Identity</h2>
+        <p class="desc">
+          Each wallet is assigned a planet tier based on its score — from
+          the humble Mercury to the legendary Binary Sun. Your card shows
+          your tier, behavioral badges, and a procedurally generated 3D planet.
+        </p>
+        <p class="desc" style="margin-top:12px">
+          Behavioral traits are detected automatically: Diamond Hands, DeFi King,
+          Meme Lord, Blue Chip Collector, and more. Seeker Genesis & Chapter 2
+          Preorder holders get exclusive OG badges.
+        </p>
+
+        <div class="tier-strip">
+          <div class="tier-dot" style="background:rgba(139,139,139,.15);border-color:#8B8B8B"><span>Mercury</span>☿</div>
+          <div class="tier-dot" style="background:rgba(232,205,160,.12);border-color:#E8CDA0"><span>Venus</span>♀</div>
+          <div class="tier-dot" style="background:rgba(75,156,211,.12);border-color:#4B9CD3"><span>Earth</span>🌍</div>
+          <div class="tier-dot" style="background:rgba(193,68,14,.12);border-color:#C1440E"><span>Mars</span>♂</div>
+          <div class="tier-dot" style="background:rgba(200,139,58,.12);border-color:#C88B3A"><span>Jupiter</span>♃</div>
+          <div class="tier-dot" style="background:rgba(232,209,145,.12);border-color:#E8D191"><span>Saturn</span>🪐</div>
+          <div class="tier-dot" style="background:rgba(115,194,251,.12);border-color:#73C2FB"><span>Uranus</span>⛢</div>
+          <div class="tier-dot" style="background:rgba(63,84,190,.12);border-color:#3F54BE"><span>Neptune</span>♆</div>
+          <div class="tier-dot" style="background:rgba(255,215,0,.15);border-color:#FFD700"><span>Sun</span>☀</div>
+          <div class="tier-dot" style="background:rgba(34,211,238,.15);border-color:#22D3EE"><span>Binary Sun</span>🌟</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 4 — SOLAR SYSTEM
+     ════════════════════════════════════════════ -->
+<section class="section glow-gold">
+  <div class="section-inner">
+    <div class="split">
+      <!-- Left: text -->
+      <div class="reveal-left">
+        <div class="label label-gold">3D Visualization</div>
+        <h2 class="heading">A Universe, Deterministically Yours</h2>
+        <p class="desc">
+          Every wallet address hashes into a unique solar system — planets with
+          moons, rings, nebulae, and binary stars. Your Sun type depends on your
+          tier. Seeker OGs get a golden plasma bridge between binary stars.
+        </p>
+        <p class="desc" style="margin-top:12px">
+          The Three.js scene is fully interactive — rotate, zoom, explore your
+          cosmic neighborhood. No two wallets produce the same system.
+        </p>
+        <div class="stat-row">
+          <div class="stat-pill"><span class="emoji">🌐</span> Terrestrial</div>
+          <div class="stat-pill"><span class="emoji">🌋</span> Volcanic</div>
+          <div class="stat-pill"><span class="emoji">💨</span> Gas Giant</div>
+          <div class="stat-pill"><span class="emoji">❄️</span> Ice World</div>
+        </div>
+      </div>
+
+      <!-- Right: orbital animation -->
+      <div class="reveal-right" style="display:flex;justify-content:center">
+        <div class="orbit-visual">
+          <div class="orbit-ring"><div class="orbit-planet" style="background:#4ade80;width:8px;height:8px"></div></div>
+          <div class="orbit-ring"><div class="orbit-planet" style="background:#f59e0b;width:12px;height:12px;top:-6px;margin-left:-6px"></div></div>
+          <div class="orbit-ring"><div class="orbit-planet" style="background:#3b82f6;width:10px;height:10px"></div></div>
+          <div class="orbit-ring"><div class="orbit-planet" style="background:#a78bfa;width:7px;height:7px;top:-3.5px;margin-left:-3.5px"></div></div>
+          <div class="orbit-sun"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 5 — ORBIT SURVIVAL GAME
+     ════════════════════════════════════════════ -->
+<section class="section glow-cyan">
+  <div class="section-inner">
+    <div class="split">
+      <!-- Left: game mockup -->
+      <div class="reveal-scale" style="display:flex;justify-content:center">
+        <div class="game-frame" style="width:100%;max-width:440px">
+          <div class="game-planet"></div>
+          <div class="game-ship"></div>
+          <div class="game-ast" style="top:25%;left:72%"></div>
+          <div class="game-ast" style="top:60%;left:20%;width:10px;height:10px"></div>
+          <div class="game-ast" style="top:35%;left:35%;width:6px;height:6px"></div>
+          <div class="game-ast" style="top:75%;left:65%;width:9px;height:9px"></div>
+          <div style="position:absolute;top:12px;right:16px;font-size:.7rem;color:var(--text-dim);font-family:'Space Grotesk',monospace">
+            SCORE: <span style="color:#fff;font-weight:600">1140</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: text -->
+      <div class="reveal-right">
+        <div class="label">Mini-Game</div>
+        <h2 class="heading">Orbit Survival</h2>
+        <p class="desc">
+          An arcade game set in your cosmic neighborhood. Orbit a planet, dodge
+          asteroids and black hole pulls, survive as long as you can. Tap or
+          press Space to reverse direction.
+        </p>
+        <p class="desc" style="margin-top:12px">
+          Every session is cryptographically seeded using a MagicBlock ephemeral
+          rollup slot. Scores are verified server-side against the chain. Save
+          your best score on-chain with a signed Solana Memo transaction.
+        </p>
+
+        <div class="stat-row">
+          <div class="stat-pill"><span class="emoji">🏆</span> Global Leaderboard</div>
+          <div class="stat-pill"><span class="emoji">🎖️</span> 12+ Achievements</div>
+          <div class="stat-pill"><span class="emoji">⛓️</span> On-Chain Scores</div>
+        </div>
+        <div class="stat-row">
+          <div class="stat-pill"><span class="emoji">🧩</span> MagicBlock Verified</div>
+          <div class="stat-pill"><span class="emoji">🏅</span> Achievement NFTs</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 6 — BLACK HOLE BURNER
+     ════════════════════════════════════════════ -->
+<section class="section glow-purple">
+  <div class="section-inner">
+    <div class="split">
+      <!-- Left: text -->
+      <div class="reveal-left">
+        <div class="label label-purple">Token Burner</div>
+        <h2 class="heading">The Black Hole</h2>
+        <p class="desc">
+          Warp into a 3D black hole and clean up your wallet. Burn unwanted
+          dust tokens, close empty accounts, recover rent SOL.
+        </p>
+        <p class="desc" style="margin-top:12px">
+          We protect your valuables — blue-chip NFTs and high-value tokens are
+          flagged as safe. Real-time prices from Magic Eden and Tensor.
+          Everything else? Feed it to the singularity.
+        </p>
+
+        <div class="stat-row">
+          <div class="stat-pill"><span class="emoji">🔥</span> Batch Burn</div>
+          <div class="stat-pill"><span class="emoji">💰</span> Recover Rent SOL</div>
+          <div class="stat-pill"><span class="emoji">🛡️</span> Blue-Chip Protection</div>
+        </div>
+      </div>
+
+      <!-- Right: black hole visual -->
+      <div class="reveal-right" style="display:flex;justify-content:center">
+        <div class="bh-visual">
+          <div class="bh-ring"></div>
+          <div class="bh-ring"></div>
+          <div class="bh-ring"></div>
+          <div class="bh-ring"></div>
+          <div class="bh-ring"></div>
+          <div class="bh-core"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 7 — MINT · SHARE · SOCIAL
+     ════════════════════════════════════════════ -->
+<section class="section glow-gold">
+  <div class="section-inner" style="text-align:center">
+    <div class="reveal">
+      <div class="label label-gold">On-Chain</div>
+      <h2 class="heading">Mint · Share · Verify</h2>
+      <p class="desc" style="margin:0 auto 48px">
+        Your identity doesn't just live in the app — it lives on the blockchain.
+      </p>
+    </div>
+
+    <div class="cards-grid" style="max-width:820px;margin:0 auto">
+      <div class="card reveal d1">
+        <div class="card-icon card-icon-gold">🎴</div>
+        <h3>cNFT Identity</h3>
+        <p>Mint your identity as a compressed NFT via Helius DAS. Pay with SOL or SKR token (50% off for Seeker holders).</p>
+      </div>
+      <div class="card reveal d2">
+        <div class="card-icon card-icon-cyan">🔗</div>
+        <h3>Solana Blinks</h3>
+        <p>Share your identity card as an interactive Solana Action link. Anyone can scan your wallet through the blink.</p>
+      </div>
+      <div class="card reveal d3">
+        <div class="card-icon card-icon-purple">✅</div>
+        <h3>Verify On-Chain</h3>
+        <p>Every game score commit is a signed Memo transaction. Independently verifiable on the Verify page.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 8 — TAPESTRY SOCIAL GRAPH
+     ════════════════════════════════════════════ -->
+<section class="section">
+  <div class="section-inner">
+    <div class="split">
+      <div class="reveal-left">
+        <div class="label">Social Graph</div>
+        <h2 class="heading">Tapestry Protocol</h2>
+        <p class="desc">
+          Your wallet identity is published to the Tapestry social graph —
+          making your on-chain reputation composable across the entire
+          Solana ecosystem. Other apps can read your Identity Prism profile.
+        </p>
+        <p class="desc" style="margin-top:12px">
+          Namespace: <code style="background:rgba(34,211,238,.1);padding:2px 8px;border-radius:4px;font-size:.85rem;color:var(--cyan)">identity_prism</code>
+        </p>
+      </div>
+      <div class="reveal-right" style="display:flex;justify-content:center">
+        <!-- Social graph visual - nodes and lines -->
+        <svg width="280" height="280" viewBox="0 0 280 280" style="opacity:.7">
+          <line x1="140" y1="140" x2="60" y2="60" stroke="rgba(34,211,238,.2)" stroke-width="1"/>
+          <line x1="140" y1="140" x2="220" y2="70" stroke="rgba(168,85,247,.2)" stroke-width="1"/>
+          <line x1="140" y1="140" x2="50" y2="200" stroke="rgba(34,211,238,.15)" stroke-width="1"/>
+          <line x1="140" y1="140" x2="230" y2="210" stroke="rgba(168,85,247,.15)" stroke-width="1"/>
+          <line x1="140" y1="140" x2="140" y2="30" stroke="rgba(251,191,36,.15)" stroke-width="1"/>
+          <line x1="140" y1="140" x2="260" y2="140" stroke="rgba(34,211,238,.12)" stroke-width="1"/>
+          <line x1="140" y1="140" x2="20" y2="140" stroke="rgba(168,85,247,.12)" stroke-width="1"/>
+          <circle cx="140" cy="140" r="12" fill="rgba(34,211,238,.3)" stroke="var(--cyan)" stroke-width="1.5"/>
+          <circle cx="60" cy="60" r="6" fill="rgba(168,85,247,.3)" stroke="var(--purple)" stroke-width="1"/>
+          <circle cx="220" cy="70" r="7" fill="rgba(251,191,36,.3)" stroke="var(--gold)" stroke-width="1"/>
+          <circle cx="50" cy="200" r="5" fill="rgba(34,211,238,.2)" stroke="var(--cyan)" stroke-width="1"/>
+          <circle cx="230" cy="210" r="8" fill="rgba(168,85,247,.2)" stroke="var(--purple)" stroke-width="1"/>
+          <circle cx="140" cy="30" r="5" fill="rgba(251,191,36,.2)" stroke="var(--gold)" stroke-width="1"/>
+          <circle cx="260" cy="140" r="4" fill="rgba(34,211,238,.2)" stroke="var(--cyan)" stroke-width="1"/>
+          <circle cx="20" cy="140" r="6" fill="rgba(168,85,247,.2)" stroke="var(--purple)" stroke-width="1"/>
+          <text x="140" y="145" text-anchor="middle" fill="#fff" font-size="8" font-family="Space Grotesk" font-weight="600">YOU</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 9 — TECH STACK
+     ════════════════════════════════════════════ -->
+<section class="section">
+  <div class="section-inner" style="text-align:center">
+    <div class="reveal">
+      <div class="label">Technology</div>
+      <h2 class="heading">Built on Solana's Best</h2>
+      <p class="desc" style="margin:0 auto 12px">
+        Identity Prism integrates with leading Solana infrastructure.
+      </p>
+    </div>
+
+    <div class="tech-row reveal d2">
+      <div class="tech-badge">◎ Solana</div>
+      <div class="tech-badge">⚡ Helius</div>
+      <div class="tech-badge">🧩 MagicBlock</div>
+      <div class="tech-badge">🕸️ Tapestry</div>
+      <div class="tech-badge">📱 Solana Mobile (MWA)</div>
+      <div class="tech-badge">🏪 Seeker dApp Store</div>
+      <div class="tech-badge">🌐 Three.js</div>
+      <div class="tech-badge">⚛️ React + Vite</div>
+    </div>
+
+    <div class="cards-grid reveal d3" style="max-width:820px;margin:40px auto 0">
+      <div class="card">
+        <div class="card-icon card-icon-cyan">📱</div>
+        <h3>Mobile-First</h3>
+        <p>Full MWA support for Seeker. Dismiss detection, optimized 30fps transitions, native-feel UX.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon card-icon-purple">🏪</div>
+        <h3>dApp Store</h3>
+        <p>Published on the Solana dApp Store. Available for download on Seeker devices right now.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon card-icon-gold">🔐</div>
+        <h3>No Wasted Signs</h3>
+        <p>All transactions simulate before prompting. No wasted wallet approvals. Instant cancel detection.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════════════════════
+     SECTION 10 — CTA
+     ════════════════════════════════════════════ -->
+<section class="section" style="min-height:70vh">
+  <div class="section-inner" style="text-align:center">
+    <div class="reveal">
+      <h2 class="heading" style="font-size:clamp(2.2rem, 5vw, 3.6rem)">
+        Ready to Discover<br>Your Identity?
+      </h2>
+      <p class="desc" style="margin:0 auto 36px">
+        Connect your Solana wallet and explore the cosmos of your on-chain history.
+      </p>
+    </div>
+
+    <div class="hero-cta-row reveal d2">
+      <a href="https://identityprism.xyz" class="btn btn-primary" target="_blank">
+        🚀 Launch App
+      </a>
+      <a href="https://github.com/nickolasmv/identity-prism" class="btn btn-outline" target="_blank">
+        GitHub
+      </a>
+    </div>
+
+    <div class="hack-badges reveal d3">
+      <a href="https://solana.com/graveyard-hack" class="hack-badge hack-graveyard" target="_blank">
+        ☠️ Graveyard Hackathon
+      </a>
+      <a href="https://align.nexus/organizations/8b216ce8-dd0e-4f96-85a1-0d95ba3022e2/hackathons/6unDGXkWmY1Yw99SsKMt6pPCQTpSSQh5kSiJRgqTwHXE" class="hack-badge hack-monolith" target="_blank">
+        🗿 MONOLITH · Solana Mobile
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════
+     FOOTER
+     ════════════════════════════════════════════ -->
+<footer class="footer">
+  <p>Identity Prism © 2026 · Built with ♥ on <a href="https://solana.com" target="_blank">Solana</a></p>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
