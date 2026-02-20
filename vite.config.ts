@@ -11,11 +11,14 @@ const prodApiTarget =
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // In dev, route /api and /rpc to the local backend (helius-proxy.js on port 3000)
-  const apiProxyTarget =
-    mode === "development"
-      ? process.env.VITE_LOCAL_API_TARGET || "http://localhost:3000"
-      : prodApiTarget;
+  const localApiTarget = process.env.VITE_LOCAL_API_TARGET || "http://localhost:3000";
+
+  // In dev: /api and /metadata go to local server; /rpc goes to prod (needs Helius API key)
+  // In prod: everything goes to the prod target
+  const apiProxyTarget = mode === "development" ? localApiTarget : prodApiTarget;
+  const rpcProxyTarget = mode === "development"
+    ? (process.env.VITE_LOCAL_RPC_TARGET || prodApiTarget)
+    : prodApiTarget;
 
   return {
   server: {
@@ -28,7 +31,12 @@ export default defineConfig(({ mode }) => {
         secure: false,
       },
       "/rpc": {
-        target: apiProxyTarget,
+        target: rpcProxyTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+      "/helius-proxy": {
+        target: rpcProxyTarget,
         changeOrigin: true,
         secure: false,
       },
