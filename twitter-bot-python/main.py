@@ -366,7 +366,7 @@ SLEEP_CHECK = 90            # poll every 1.5 min
 POST_COOLDOWN_MIN = 14400   # minimum 4h between posts
 POST_COOLDOWN_MAX = 21600   # up to 6h between posts
 MAX_POSTS_PER_DAY = 3       # total write actions (posts + threads + trends + quotes)
-MAX_ENGAGEMENTS_PER_DAY = 6  # comments/replies per day (~1 per 2h over 12h active window)
+MAX_ENGAGEMENTS_PER_DAY = 12  # comments/replies per day (~1 per 2h over 12h active window)
 SKIPPED_RETRY_MIN = 600     # if engage skipped, retry in 10 min
 SKIPPED_RETRY_MAX = 900     # ... up to 15 min
 
