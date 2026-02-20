@@ -917,14 +917,10 @@ async def main():
 
 
 if __name__ == '__main__':
-    _backoff = 5
-    while True:
-        try:
-            asyncio.run(main())
-        except KeyboardInterrupt:
-            break
-        except Exception as exc:
-            logging.error('FATAL: %s', exc, exc_info=True)
-        logging.warning('Bot exited — restarting in %ds', _backoff)
-        time.sleep(_backoff)
-        _backoff = min(_backoff * 2, 300)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info('Bot stopped by user')
+    except Exception as exc:
+        logging.error('FATAL: %s', exc, exc_info=True)
+        sys.exit(1)
