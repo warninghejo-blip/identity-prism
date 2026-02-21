@@ -674,12 +674,19 @@ function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> })
       g.scale.setScalar(pulse);
 
       const typeIdx = pw.type === "shield" ? 0 : pw.type === "slowmo" ? 1 : pw.type === "phase" ? 2 : 3;
-      icons.children.forEach((c, idx) => { (c as THREE.Mesh).visible = idx === typeIdx; });
+      icons.children.forEach((c, idx) => { c.visible = idx === typeIdx; });
       const col = PWR_COL[pw.type];
-      icons.children.forEach((c) => {
-        const m = (c as THREE.Mesh).material as THREE.MeshStandardMaterial;
-        m.color.set(col); m.emissive.set(col); m.opacity = fade;
-      });
+      const activeGroup = icons.children[typeIdx];
+      if (activeGroup) {
+        activeGroup.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const m = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+            if (m.emissive) m.emissive.set(col);
+            if (!m.wireframe) m.color.set(col);
+            m.opacity = fade;
+          }
+        });
+      }
       const halo = haloRefs.current[i];
       if (halo) { const m = halo.material as THREE.MeshBasicMaterial; m.color.set(col); m.opacity = fade * .2 * (.6 + Math.sin(t * 4) * .4); }
       const ring = ringRefs.current[i];
@@ -695,14 +702,28 @@ function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> })
   return (<>{Array.from({ length: PWR_MAX }).map((_, i) => (
     <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
       <group ref={el => { iconRefs.current[i] = el; }}>
-        {/* Shield: hexagonal gem */}
-        <mesh><octahedronGeometry args={[.42, 1]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.8} roughness={.1} /></mesh>
-        {/* Slowmo: torus (clock ring) */}
-        <mesh><torusGeometry args={[.32, .14, 16, 24]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.7} roughness={.15} /></mesh>
-        {/* Phase: icosahedron (ghostly) */}
-        <mesh><icosahedronGeometry args={[.38, 1]} /><meshStandardMaterial emissiveIntensity={3} toneMapped={false} transparent opacity={0} metalness={.3} roughness={.4} /></mesh>
-        {/* Coin: cylinder */}
-        <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.35, .35, .1, 24]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.9} roughness={.05} /></mesh>
+        {/* Shield: dome + cross */}
+        <group>
+          <mesh><sphereGeometry args={[.3, 16, 12, 0, Math.PI * 2, 0, Math.PI * .55]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.8} roughness={.1} side={THREE.DoubleSide} /></mesh>
+          <mesh position={[0, 0, .01]}><planeGeometry args={[.06, .38]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
+          <mesh position={[0, 0, .01]}><planeGeometry args={[.38, .06]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
+        </group>
+        {/* Slowmo: clock ring + hour/minute hands */}
+        <group>
+          <mesh><torusGeometry args={[.32, .06, 12, 24]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.7} roughness={.15} /></mesh>
+          <mesh position={[0, .1, .02]} rotation={[0, 0, .3]}><boxGeometry args={[.04, .2, .02]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
+          <mesh position={[.06, 0, .02]} rotation={[0, 0, -.8]}><boxGeometry args={[.03, .14, .02]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
+        </group>
+        {/* Phase: ghostly diamond */}
+        <group>
+          <mesh scale={[.7, 1, .5]}><octahedronGeometry args={[.4, 0]} /><meshStandardMaterial emissiveIntensity={3} toneMapped={false} transparent opacity={0} metalness={.3} roughness={.4} /></mesh>
+          <mesh scale={[.85, 1.15, .6]}><octahedronGeometry args={[.4, 0]} /><meshStandardMaterial emissiveIntensity={1} toneMapped={false} transparent opacity={0} wireframe /></mesh>
+        </group>
+        {/* Coin: flat cylinder + center dot */}
+        <group>
+          <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.32, .32, .08, 24]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.9} roughness={.05} /></mesh>
+          <mesh position={[0, 0, .06]}><sphereGeometry args={[.08, 8, 8]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={4} toneMapped={false} transparent opacity={0} /></mesh>
+        </group>
       </group>
       {/* Orbiting ring */}
       <mesh ref={el => { ringRefs.current[i] = el; }}>

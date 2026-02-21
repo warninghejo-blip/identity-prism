@@ -707,26 +707,41 @@ const PrismLeague = () => {
 
         toast.success(`Score on-chain! +${bonusCoins} bonus coins (×${ONCHAIN_BONUS_MULTIPLIER})`);
 
-        setLeaderboard((prev) => {
-          const playerAddr = address!;
-          const idx = prev.findIndex((e) => e.address === playerAddr);
-          if (idx !== -1) {
-            prev[idx].txSignature = result.txSignature;
-            const next = [...prev];
-            writeLeaderboard(next);
-            // Sync txSignature to server
-            submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature });
-            return next;
-          }
-          return prev;
-        });
+        // Update the correct leaderboard per mode
+        if (gameMode === "destroyer") {
+          setDefenderLeaderboard((prev) => {
+            const playerAddr = address!;
+            const idx = prev.findIndex((e) => e.address === playerAddr);
+            if (idx !== -1) {
+              prev[idx].txSignature = result.txSignature;
+              const next = [...prev];
+              writeDefenderLeaderboard(next);
+              submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature });
+              return next;
+            }
+            return prev;
+          });
+        } else {
+          setLeaderboard((prev) => {
+            const playerAddr = address!;
+            const idx = prev.findIndex((e) => e.address === playerAddr);
+            if (idx !== -1) {
+              prev[idx].txSignature = result.txSignature;
+              const next = [...prev];
+              writeLeaderboard(next);
+              submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature });
+              return next;
+            }
+            return prev;
+          });
+        }
 
         if (isTapestryEnabled() && address) {
           try {
             await publishGameScore({
               walletAddress: address,
               score,
-              survivalTime: formatTime(score),
+              survivalTime: gameMode === "destroyer" ? formatPoints(score) : formatTime(score),
               txSignature: result.txSignature,
               sessionProofId: sessionProof?.id,
               sessionProofHash: sessionProof?.hash,

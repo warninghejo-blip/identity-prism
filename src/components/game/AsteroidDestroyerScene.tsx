@@ -96,15 +96,15 @@ const MAX_ENEMY_BULLETS = 80;
 const MAX_POWERUPS = 4;
 
 const ENEMY_STATS: Record<EnemyType, { hp: number; speed: number; r: number; score: number; shoots: boolean; color: string }> = {
-  scout:    { hp: 1, speed: 6,  r: 0.6, score: 2,   shoots: false, color: "#44ff66" },
-  fighter:  { hp: 2, speed: 7,  r: 0.5, score: 3,   shoots: true,  color: "#ff4466" },
-  tank:     { hp: 5, speed: 3.5,r: 1.0, score: 5,   shoots: true,  color: "#ff8800" },
-  swarm:    { hp: 1, speed: 9,  r: 0.35,score: 1,   shoots: false, color: "#aaffaa" },
-  bomber:   { hp: 3, speed: 4.5,r: 0.8, score: 4,   shoots: true,  color: "#ff44ff" },
-  cloaker:  { hp: 2, speed: 6,  r: 0.55,score: 5,   shoots: true,  color: "#8844ff" },
-  shielder: { hp: 3, speed: 4,  r: 0.7, score: 5,   shoots: true,  color: "#00ccff" },
-  elite:    { hp: 6, speed: 7,  r: 0.65,score: 8,   shoots: true,  color: "#ffcc00" },
-  boss:     { hp: 40,speed: 2.5,r: 2.0, score: 40,  shoots: true,  color: "#ff0044" },
+  scout:    { hp: 1, speed: 6,  r: 0.85, score: 2,   shoots: false, color: "#44ff66" },
+  fighter:  { hp: 2, speed: 7,  r: 0.8,  score: 3,   shoots: true,  color: "#ff4466" },
+  tank:     { hp: 5, speed: 3.5,r: 1.1,  score: 5,   shoots: true,  color: "#ff8800" },
+  swarm:    { hp: 1, speed: 9,  r: 0.65, score: 1,   shoots: false, color: "#aaffaa" },
+  bomber:   { hp: 3, speed: 4.5,r: 0.9,  score: 4,   shoots: true,  color: "#ff44ff" },
+  cloaker:  { hp: 2, speed: 6,  r: 0.8,  score: 5,   shoots: true,  color: "#8844ff" },
+  shielder: { hp: 3, speed: 4,  r: 0.85, score: 5,   shoots: true,  color: "#00ccff" },
+  elite:    { hp: 6, speed: 7,  r: 0.85, score: 8,   shoots: true,  color: "#ffcc00" },
+  boss:     { hp: 40,speed: 2.5,r: 2.0,  score: 40,  shoots: true,  color: "#ff0044" },
 };
 
 /* ═══════════════════════════════════════════════════
@@ -310,22 +310,34 @@ function EnemyModel({ type }: { type: EnemyType }) {
   }
 }
 
-function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> }) {
+function EnemyVisuals({ poolRef, shipPos }: { poolRef: React.MutableRefObject<Enemy[]>; shipPos: React.MutableRefObject<{ x: number; y: number }> }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
+  const hpBarBgRefs = useRef<(THREE.Mesh | null)[]>([]);
   const hpBarRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const typeCache = useRef<(EnemyType | null)[]>(new Array(MAX_ENEMIES).fill(null));
 
   useFrame((s) => {
     const t = s.clock.elapsedTime;
+    const sp = shipPos.current;
     for (let i = 0; i < MAX_ENEMIES; i++) {
       const g = refs.current[i]; const e = poolRef.current[i];
       const hpBar = hpBarRefs.current[i];
+      const hpBg = hpBarBgRefs.current[i];
       if (!g) continue;
       if (!e || !e.active) { g.visible = false; continue; }
       g.visible = true;
       g.position.set(e.x, e.y, 0);
-      g.rotation.z = e.rz + Math.sin(t * 2 + i) * 0.1;
       g.scale.setScalar(e.r);
+
+      // Rotation: homing types face player, others face strictly down (PI)
+      const isHoming = e.type === "fighter" || e.type === "elite" || e.type === "cloaker";
+      if (isHoming) {
+        const ang = Math.atan2(sp.y - e.y, sp.x - e.x) - Math.PI / 2;
+        e.rz = ang;
+      } else {
+        e.rz = Math.PI; // face down
+      }
+      g.rotation.z = e.rz;
+
       // Cloaker fade
       if (e.type === "cloaker") {
         const alpha = 0.15 + Math.sin(t * 3 + i * 1.7) * 0.1;
@@ -335,13 +347,22 @@ function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> })
           if (m && 'opacity' in m) (m as THREE.MeshBasicMaterial).opacity = alpha;
         });
       }
-      // HP bar
-      if (hpBar && e.maxHp > 1) {
-        hpBar.visible = true;
-        hpBar.scale.x = Math.max(0.01, e.hp / e.maxHp);
-        (hpBar.material as THREE.MeshBasicMaterial).color.set(e.hp / e.maxHp > 0.5 ? "#44ff44" : e.hp / e.maxHp > 0.25 ? "#ffaa00" : "#ff2222");
-      } else if (hpBar) {
-        hpBar.visible = false;
+
+      // HP bar — boss only
+      const isBoss = e.type === "boss";
+      if (hpBar && hpBg) {
+        if (isBoss) {
+          hpBg.visible = true;
+          hpBar.visible = true;
+          const pct = Math.max(0.01, e.hp / e.maxHp);
+          hpBar.scale.x = pct;
+          hpBar.position.x = -(1 - pct) * 1.2;
+          const col = pct > 0.5 ? "#00ffaa" : pct > 0.25 ? "#ffaa00" : "#ff2244";
+          (hpBar.material as THREE.MeshBasicMaterial).color.set(col);
+        } else {
+          hpBg.visible = false;
+          hpBar.visible = false;
+        }
       }
     }
   });
@@ -349,15 +370,14 @@ function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> })
   return (<>{Array.from({ length: MAX_ENEMIES }).map((_, i) => (
     <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
       <EnemyModelSlot index={i} poolRef={poolRef} />
-      {/* HP bar background */}
-      <mesh position={[0, -1.3, 0]}>
-        <planeGeometry args={[1.6, 0.12]} />
-        <meshBasicMaterial color="#333" transparent opacity={0.5} />
+      {/* Boss HP bar — modern rounded style */}
+      <mesh ref={el => { hpBarBgRefs.current[i] = el; }} position={[0, -1.6, 0]} visible={false}>
+        <planeGeometry args={[2.4, 0.18]} />
+        <meshBasicMaterial color="#111" transparent opacity={0.7} />
       </mesh>
-      {/* HP bar fill */}
-      <mesh ref={el => { hpBarRefs.current[i] = el; }} position={[0, -1.3, 0.01]} visible={false}>
-        <planeGeometry args={[1.6, 0.12]} />
-        <meshBasicMaterial color="#44ff44" transparent opacity={0.8} />
+      <mesh ref={el => { hpBarRefs.current[i] = el; }} position={[0, -1.6, 0.01]} visible={false}>
+        <planeGeometry args={[2.4, 0.14]} />
+        <meshBasicMaterial color="#00ffaa" transparent opacity={0.9} />
       </mesh>
     </group>
   ))}</>);
@@ -405,32 +425,52 @@ function EnemyBulletVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy
 
 function PowerUpShape({ type }: { type: DPwrType }) {
   const c = PWR_COLORS[type];
-  const labels: Record<DPwrType, string> = { prism_shield: "S", photon_burst: "2x", quantum_core: "F", nebula_bomb: "B", nova_rockets: "R" };
   return (<group>
-    {/* Outer ring — universal */}
-    <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.5, .03, 8, 20]} /><meshBasicMaterial color={c} transparent opacity={.6} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-    {/* Inner icon per type */}
+    {/* Outer pulsing ring */}
+    <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.55, .04, 10, 24]} /><meshBasicMaterial color={c} transparent opacity={.7} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+    {/* Background glow sphere */}
+    <mesh><sphereGeometry args={[.4, 14, 14]} /><meshBasicMaterial color={c} transparent opacity={.12} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+
+    {/* SHIELD — dome + cross */}
     {type === "prism_shield" && (<>
-      <mesh><sphereGeometry args={[.3, 16, 16]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2} toneMapped={false} transparent opacity={.7} /></mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.35, .025, 8, 16]} /><meshBasicMaterial color="#ffffff" transparent opacity={.5} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh><sphereGeometry args={[.28, 16, 12, 0, Math.PI * 2, 0, Math.PI * .55]} /><meshStandardMaterial color="#22d3ee" emissive={c} emissiveIntensity={2.5} toneMapped={false} transparent opacity={.8} side={THREE.DoubleSide} /></mesh>
+      <mesh position={[0, 0, .01]}><planeGeometry args={[.06, .4]} /><meshBasicMaterial color="#ffffff" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh position={[0, 0, .01]}><planeGeometry args={[.4, .06]} /><meshBasicMaterial color="#ffffff" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </>)}
+
+    {/* DUAL SHOT — two parallel vertical bars */}
     {type === "photon_burst" && (<>
-      <mesh position={[-.12, 0, 0]}><capsuleGeometry args={[.08, .25, 6, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2.5} toneMapped={false} /></mesh>
-      <mesh position={[.12, 0, 0]}><capsuleGeometry args={[.08, .25, 6, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2.5} toneMapped={false} /></mesh>
+      <mesh position={[-.14, 0, 0]}><capsuleGeometry args={[.06, .32, 6, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[.14, 0, 0]}><capsuleGeometry args={[.06, .32, 6, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[-.14, .22, 0]}><coneGeometry args={[.06, .12, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={4} toneMapped={false} /></mesh>
+      <mesh position={[.14, .22, 0]}><coneGeometry args={[.06, .12, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={4} toneMapped={false} /></mesh>
     </>)}
+
+    {/* RAPID FIRE — zigzag lightning bolt */}
     {type === "quantum_core" && (<>
-      <mesh rotation={[.5, .5, 0]}><boxGeometry args={[.35, .35, .35]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2} toneMapped={false} metalness={.9} roughness={.05} /></mesh>
+      <mesh position={[-.05, .12, 0]} rotation={[0, 0, .3]}><boxGeometry args={[.18, .08, .04]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[.05, 0, 0]} rotation={[0, 0, -.3]}><boxGeometry args={[.18, .08, .04]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[-.05, -.12, 0]} rotation={[0, 0, .3]}><boxGeometry args={[.18, .08, .04]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[0, -.25, 0]}><coneGeometry args={[.06, .12, 6]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={4} toneMapped={false} /></mesh>
     </>)}
+
+    {/* NUKE — radiation: central sphere + 3 orbital dots */}
     {type === "nebula_bomb" && (<>
-      <mesh><sphereGeometry args={[.28, 12, 12]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2} toneMapped={false} /></mesh>
-      <mesh><icosahedronGeometry args={[.38, 0]} /><meshBasicMaterial color={c} transparent opacity={.2} blending={THREE.AdditiveBlending} depthWrite={false} wireframe /></mesh>
+      <mesh><sphereGeometry args={[.18, 12, 12]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[0, .3, 0]}><sphereGeometry args={[.08, 8, 8]} /><meshStandardMaterial color="#ffffff" emissive={c} emissiveIntensity={5} toneMapped={false} /></mesh>
+      <mesh position={[.26, -.15, 0]}><sphereGeometry args={[.08, 8, 8]} /><meshStandardMaterial color="#ffffff" emissive={c} emissiveIntensity={5} toneMapped={false} /></mesh>
+      <mesh position={[-.26, -.15, 0]}><sphereGeometry args={[.08, 8, 8]} /><meshStandardMaterial color="#ffffff" emissive={c} emissiveIntensity={5} toneMapped={false} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.28, .02, 8, 16]} /><meshBasicMaterial color={c} transparent opacity={.5} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </>)}
+
+    {/* ROCKETS — missile shape */}
     {type === "nova_rockets" && (<>
-      <mesh><coneGeometry args={[.1, .45, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2} toneMapped={false} metalness={.8} roughness={.1} /></mesh>
-      <mesh position={[0, -.28, 0]}><sphereGeometry args={[.06, 8, 8]} /><meshStandardMaterial color="#ffaa44" emissive="#ff8822" emissiveIntensity={5} toneMapped={false} /></mesh>
+      <mesh position={[0, .05, 0]}><capsuleGeometry args={[.08, .25, 8, 10]} /><meshStandardMaterial color="#cc2222" emissive={c} emissiveIntensity={2} metalness={.85} roughness={.1} toneMapped={false} /></mesh>
+      <mesh position={[0, .28, 0]}><coneGeometry args={[.08, .16, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[.1, -.12, 0]} rotation={[0, 0, -.2]}><boxGeometry args={[.12, .04, .02]} /><meshStandardMaterial color="#aa2222" emissive={c} emissiveIntensity={1} toneMapped={false} /></mesh>
+      <mesh position={[-.1, -.12, 0]} rotation={[0, 0, .2]}><boxGeometry args={[.12, .04, .02]} /><meshStandardMaterial color="#aa2222" emissive={c} emissiveIntensity={1} toneMapped={false} /></mesh>
+      <mesh position={[0, -.18, 0]}><sphereGeometry args={[.06, 8, 8]} /><meshStandardMaterial color="#ffaa44" emissive="#ff6622" emissiveIntensity={6} toneMapped={false} /></mesh>
     </>)}
-    {/* Glow halo */}
-    <mesh><sphereGeometry args={[.55, 10, 10]} /><meshBasicMaterial color={c} transparent opacity={.08} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
   </group>);
 }
 
@@ -1013,7 +1053,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMi
           case "quantum_core": firerateT.current = FIRERATE_DUR; break;
           case "photon_burst": doubleT.current = DOUBLE_DUR; break;
           case "nova_rockets": rocketAmmo.current += ROCKET_AMMO; break;
-          case "prism_shield": shieldActive.current = true; shieldHits.current = 3; break;
+          case "prism_shield": shieldActive.current = true; shieldHits.current = 1; break;
           case "nebula_bomb":
             // Kill all enemies on screen
             for (const e of enemies.current) {
@@ -1058,7 +1098,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMi
             onScore(scoreRef.current); onCoins(coinBank.current);
             shake.current = Math.max(shake.current, e.type === "boss" ? 1.5 : .3);
             // Drop powerup (15% chance, higher for bosses)
-            const dropChance = e.type === "boss" ? 1.0 : e.type === "elite" ? 0.4 : 0.15;
+            const dropChance = e.type === "boss" ? 0.6 : e.type === "elite" ? 0.15 : 0.04;
             if (Math.random() < dropChance) {
               for (const pw of powerups.current) {
                 if (!pw.active) {
@@ -1131,7 +1171,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMi
       <Dust />
       <ShooterShip posRef={shipPos} color={sCol} shieldActive={shieldActive} />
       <ProjectileVisuals poolRef={projectiles} color={sCol} />
-      <EnemyVisuals poolRef={enemies} />
+      <EnemyVisuals poolRef={enemies} shipPos={shipPos} />
       <EnemyBulletVisuals poolRef={enemyBullets} />
       <DPowerUpVisuals poolRef={powerups} />
       <SmallExplosions poolRef={smallExplosions} />

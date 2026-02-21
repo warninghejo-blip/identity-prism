@@ -80,7 +80,10 @@ interface IncinerationToken {
 const formatUsd = (value?: number | null) => {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
   if (value === 0) return '$0.00';
-  if (value < 0.01) return '<$0.01';
+  const abs = Math.abs(value);
+  if (abs < 0.0001) return '<$0.0001';
+  if (abs < 0.01) return `$${parseFloat(value.toFixed(4))}`;
+  if (abs < 1) return `$${parseFloat(value.toFixed(3))}`;
   return `$${value.toFixed(2)}`;
 };
 
