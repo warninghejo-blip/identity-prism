@@ -515,7 +515,7 @@ function ShooterShip({ posRef, color, shieldActive }: {
   shieldActive: React.MutableRefObject<boolean>;
 }) {
   const gRef = useRef<THREE.Group>(null);
-  const shieldRef = useRef<THREE.Mesh>(null);
+  const shieldRef = useRef<THREE.Group>(null);
   const exRef = useRef<THREE.Points>(null);
   const N = 40;
   const exSt = useMemo(() => {
@@ -536,8 +536,8 @@ function ShooterShip({ posRef, color, shieldActive }: {
     if (shieldRef.current) {
       shieldRef.current.visible = shieldActive.current;
       if (shieldActive.current) {
-        (shieldRef.current.material as THREE.MeshBasicMaterial).opacity = .12 + Math.sin(t * 4) * .05;
-        shieldRef.current.scale.setScalar(1 + Math.sin(t * 3) * .05);
+        shieldRef.current.scale.setScalar(1 + Math.sin(t * 3) * .06);
+        shieldRef.current.rotation.y = t * 1.5;
       }
     }
     if (exRef.current) {
@@ -627,8 +627,14 @@ function ShooterShip({ posRef, color, shieldActive }: {
         <capsuleGeometry args={[.008, .5, 4, 8]} />
         <meshBasicMaterial color={color} transparent opacity={.6} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
-      {/* Shield bubble */}
-      <mesh ref={shieldRef} visible={false}><sphereGeometry args={[1.3, 32, 32]} /><meshBasicMaterial color="#22d3ee" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
+      {/* Shield bubble — layered glow */}
+      <group ref={shieldRef} visible={false}>
+        <mesh><sphereGeometry args={[1.3, 32, 32]} /><meshBasicMaterial color="#22d3ee" transparent opacity={.1} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
+        <mesh><sphereGeometry args={[1.35, 32, 32]} /><meshBasicMaterial color="#67e8f9" transparent opacity={.04} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} wireframe /></mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[1.3, .03, 12, 32]} /><meshBasicMaterial color="#22d3ee" transparent opacity={.5} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+        <mesh rotation={[0, 0, 0]}><torusGeometry args={[1.3, .03, 12, 32]} /><meshBasicMaterial color="#22d3ee" transparent opacity={.3} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+        <pointLight intensity={4} color="#22d3ee" distance={5} />
+      </group>
       {/* Exhaust particles */}
       <points ref={exRef}><bufferGeometry><bufferAttribute attach="attributes-position" args={[exSt.p, 3]} /></bufferGeometry><pointsMaterial size={.06} color="#ffaa55" transparent opacity={.7} blending={THREE.AdditiveBlending} sizeAttenuation depthWrite={false} /></points>
       <pointLight intensity={3} color={color} distance={8} />
