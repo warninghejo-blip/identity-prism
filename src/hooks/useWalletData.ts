@@ -475,11 +475,8 @@ export function useWalletData(address?: string) {
               }
             }
             if (!assets.some((a: { id: string }) => a.id === mint)) {
-              uniqueTokenCount++;
-              // If it has decimals 0 and was missed, it's an NFT
+              // Only use SPL fallback for special token detection, not for counting
               if (info.tokenAmount.decimals === 0) {
-                nftCount++;
-                // Check if this missed asset is a Seeker/Preorder by mint address
                 if (mint === "2DMMamkkxQ6zDMBtkFp8KH7FoWzBMBA1CGTYwom4QH6Z") hasPreorder = true;
               }
             }
@@ -521,7 +518,7 @@ export function useWalletData(address?: string) {
           isDeFiKing,
           uniqueTokenCount, nftCount, txCount, memeCoinsHeld, isMemeLord,
           hyperactiveDegen: avgTxPerDay30d >= 8,
-          diamondHands: walletAgeDays >= 60,
+          diamondHands: walletAgeDays >= 365 && solBalance >= 0.5,
           avgTxPerDay30d, daysSinceLastTx: null,
           solBalance, solBonusApplied, walletAgeDays, walletAgeBonus,
           planetTier: "mercury", totalAssetsCount,

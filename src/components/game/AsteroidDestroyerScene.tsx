@@ -248,58 +248,87 @@ function ProjectileVisuals({ poolRef, color }: { poolRef: React.MutableRefObject
    ═══════════════════════════════════════════════════ */
 
 function EnemyModel({ type }: { type: EnemyType }) {
-  const s = ENEMY_STATS[type];
-  const c = s.color;
+  const c = ENEMY_STATS[type].color;
   switch (type) {
     case "scout": return (<>
-      {/* Arrow/dart shape */}
-      <mesh rotation={[Math.PI, 0, 0]}><coneGeometry args={[0.5, 1.2, 3]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={0.8} metalness={0.6} roughness={0.3} /></mesh>
-      <mesh position={[0, 0.2, 0]}><sphereGeometry args={[0.15, 8, 8]} /><meshStandardMaterial color="#fff" emissive={c} emissiveIntensity={2} toneMapped={false} /></mesh>
+      {/* Sleek interceptor — tapered fuselage + swept fins + engine glow */}
+      <mesh position={[0, .15, 0]}><capsuleGeometry args={[.2, .6, 12, 16]} /><meshStandardMaterial color="#226633" emissive={c} emissiveIntensity={.6} metalness={.9} roughness={.08} /></mesh>
+      <mesh position={[0, .55, 0]}><coneGeometry args={[.2, .35, 16]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={1} metalness={.85} roughness={.1} toneMapped={false} /></mesh>
+      <mesh position={[.3, -.05, 0]} rotation={[0, 0, -.3]}><capsuleGeometry args={[.015, .4, 6, 8]} /><meshStandardMaterial color="#338844" metalness={.85} roughness={.1} /></mesh>
+      <mesh position={[-.3, -.05, 0]} rotation={[0, 0, .3]}><capsuleGeometry args={[.015, .4, 6, 8]} /><meshStandardMaterial color="#338844" metalness={.85} roughness={.1} /></mesh>
+      <mesh position={[0, -.25, 0]}><sphereGeometry args={[.08, 10, 10]} /><meshStandardMaterial color="#88ff88" emissive={c} emissiveIntensity={5} toneMapped={false} /></mesh>
     </>);
     case "fighter": return (<>
-      {/* X-wing style */}
-      <mesh><boxGeometry args={[0.3, 0.9, 0.2]} /><meshStandardMaterial color="#aa2233" emissive={c} emissiveIntensity={0.5} metalness={0.8} roughness={0.2} /></mesh>
-      <mesh position={[0.5, 0, 0]} rotation={[0, 0, 0.4]}><boxGeometry args={[0.7, 0.08, 0.12]} /><meshStandardMaterial color="#cc3344" metalness={0.7} roughness={0.2} /></mesh>
-      <mesh position={[-0.5, 0, 0]} rotation={[0, 0, -0.4]}><boxGeometry args={[0.7, 0.08, 0.12]} /><meshStandardMaterial color="#cc3344" metalness={0.7} roughness={0.2} /></mesh>
-      <mesh position={[0, -0.3, 0]}><sphereGeometry args={[0.12, 8, 8]} /><meshStandardMaterial color="#ff6644" emissive="#ff4422" emissiveIntensity={3} toneMapped={false} /></mesh>
+      {/* Twin-hull gunship — two parallel pods + bridge + weapon pylons */}
+      <mesh position={[.22, 0, 0]}><capsuleGeometry args={[.14, .55, 10, 12]} /><meshStandardMaterial color="#882233" emissive={c} emissiveIntensity={.4} metalness={.88} roughness={.1} /></mesh>
+      <mesh position={[-.22, 0, 0]}><capsuleGeometry args={[.14, .55, 10, 12]} /><meshStandardMaterial color="#882233" emissive={c} emissiveIntensity={.4} metalness={.88} roughness={.1} /></mesh>
+      <mesh position={[0, .05, 0]}><capsuleGeometry args={[.08, .25, 8, 10]} /><meshStandardMaterial color="#aa3344" metalness={.92} roughness={.06} /></mesh>
+      <mesh position={[0, .22, .08]}><sphereGeometry args={[.07, 12, 12, 0, Math.PI * 2, 0, Math.PI * .5]} /><meshStandardMaterial color="#ff8866" emissive="#ff4422" emissiveIntensity={3} toneMapped={false} transparent opacity={.9} /></mesh>
+      <mesh position={[.22, -.38, 0]}><sphereGeometry args={[.06, 8, 8]} /><meshStandardMaterial color="#ff6644" emissive={c} emissiveIntensity={4} toneMapped={false} /></mesh>
+      <mesh position={[-.22, -.38, 0]}><sphereGeometry args={[.06, 8, 8]} /><meshStandardMaterial color="#ff6644" emissive={c} emissiveIntensity={4} toneMapped={false} /></mesh>
     </>);
     case "tank": return (<>
-      {/* Heavy armored hexagon */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.9, 0.9, 0.4, 6]} /><meshStandardMaterial color="#885500" emissive={c} emissiveIntensity={0.4} metalness={0.9} roughness={0.1} /></mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.6, 0.6, 0.5, 6]} /><meshStandardMaterial color="#aa6600" emissive={c} emissiveIntensity={0.6} metalness={0.85} roughness={0.15} /></mesh>
-      <mesh position={[0, -0.5, 0]}><boxGeometry args={[0.15, 0.6, 0.1]} /><meshStandardMaterial color="#666" metalness={0.9} roughness={0.1} /></mesh>
+      {/* Heavy fortress — wide armored hull + turret dome + side armor plates */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.75, .85, .35, 24]} /><meshStandardMaterial color="#664400" emissive={c} emissiveIntensity={.3} metalness={.92} roughness={.08} /></mesh>
+      <mesh position={[0, .08, 0]}><sphereGeometry args={[.4, 20, 16, 0, Math.PI * 2, 0, Math.PI * .5]} /><meshStandardMaterial color="#886600" emissive={c} emissiveIntensity={.5} metalness={.88} roughness={.12} /></mesh>
+      <mesh position={[0, .2, 0]}><sphereGeometry args={[.12, 12, 12]} /><meshStandardMaterial color="#ffaa44" emissive="#ff8800" emissiveIntensity={2} toneMapped={false} /></mesh>
+      <mesh position={[.65, 0, 0]} rotation={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[.08, .3, 8, 10]} /><meshStandardMaterial color="#775500" metalness={.9} roughness={.1} /></mesh>
+      <mesh position={[-.65, 0, 0]} rotation={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[.08, .3, 8, 10]} /><meshStandardMaterial color="#775500" metalness={.9} roughness={.1} /></mesh>
+      <mesh position={[0, -.35, 0]}><capsuleGeometry args={[.06, .5, 8, 10]} /><meshStandardMaterial color="#554400" metalness={.9} roughness={.08} /></mesh>
     </>);
     case "swarm": return (<>
-      {/* Tiny glowing orb */}
-      <mesh><sphereGeometry args={[0.5, 8, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={1.5} toneMapped={false} transparent opacity={0.85} /></mesh>
+      {/* Plasma wisp — glowing core + pulsing halo + trail spark */}
+      <mesh><sphereGeometry args={[.35, 16, 16]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2} toneMapped={false} transparent opacity={.9} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.48, .025, 10, 20]} /><meshBasicMaterial color={c} transparent opacity={.5} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh position={[0, -.3, 0]}><sphereGeometry args={[.06, 8, 8]} /><meshStandardMaterial color="#ffffff" emissive={c} emissiveIntensity={6} toneMapped={false} /></mesh>
     </>);
     case "bomber": return (<>
-      {/* Fat round body with bomb rack */}
-      <mesh><sphereGeometry args={[0.7, 12, 12]} /><meshStandardMaterial color="#993399" emissive={c} emissiveIntensity={0.5} metalness={0.6} roughness={0.3} /></mesh>
-      <mesh position={[-0.35, -0.5, 0]}><sphereGeometry args={[0.15, 6, 6]} /><meshStandardMaterial color="#ff44ff" emissive="#ff22ff" emissiveIntensity={2} toneMapped={false} /></mesh>
-      <mesh position={[0.35, -0.5, 0]}><sphereGeometry args={[0.15, 6, 6]} /><meshStandardMaterial color="#ff44ff" emissive="#ff22ff" emissiveIntensity={2} toneMapped={false} /></mesh>
+      {/* Bulbous carrier — fat hull + belly bay + side bomb racks + cockpit */}
+      <mesh><capsuleGeometry args={[.35, .3, 14, 18]} /><meshStandardMaterial color="#662266" emissive={c} emissiveIntensity={.4} metalness={.82} roughness={.15} /></mesh>
+      <mesh position={[0, -.3, 0]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.25, .3, .15, 16]} /><meshStandardMaterial color="#553355" metalness={.85} roughness={.12} /></mesh>
+      <mesh position={[-.28, -.32, 0]}><sphereGeometry args={[.09, 10, 10]} /><meshStandardMaterial color="#ff66ff" emissive="#ff22ff" emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[.28, -.32, 0]}><sphereGeometry args={[.09, 10, 10]} /><meshStandardMaterial color="#ff66ff" emissive="#ff22ff" emissiveIntensity={3} toneMapped={false} /></mesh>
+      <mesh position={[0, .2, .15]}><sphereGeometry args={[.1, 12, 8, 0, Math.PI * 2, 0, Math.PI * .5]} /><meshStandardMaterial color="#cc88ff" emissive="#aa44ff" emissiveIntensity={2} toneMapped={false} transparent opacity={.8} /></mesh>
     </>);
     case "cloaker": return (<>
-      {/* Sleek diamond stealth */}
-      <mesh><octahedronGeometry args={[0.6, 0]} /><meshStandardMaterial color="#442288" emissive={c} emissiveIntensity={0.8} metalness={0.9} roughness={0.05} transparent /></mesh>
+      {/* Phase phantom — elongated diamond + ghost shell + eye */}
+      <mesh scale={[.7, 1, .5]}><octahedronGeometry args={[.55, 1]} /><meshStandardMaterial color="#331166" emissive={c} emissiveIntensity={.7} metalness={.92} roughness={.03} transparent /></mesh>
+      <mesh scale={[.8, 1.1, .6]}><octahedronGeometry args={[.55, 1]} /><meshBasicMaterial color={c} transparent opacity={.08} blending={THREE.AdditiveBlending} depthWrite={false} wireframe /></mesh>
+      <mesh position={[0, .15, .25]}><sphereGeometry args={[.06, 10, 10]} /><meshStandardMaterial color="#cc88ff" emissive={c} emissiveIntensity={5} toneMapped={false} /></mesh>
     </>);
     case "shielder": return (<>
-      {/* Hexagon body + protective ring */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.6, 0.6, 0.3, 6]} /><meshStandardMaterial color="#006688" emissive={c} emissiveIntensity={0.6} metalness={0.7} roughness={0.2} /></mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.85, 0.06, 8, 6]} /><meshBasicMaterial color={c} transparent opacity={0.7} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      {/* Sentinel dome — armored core + energy shield ring + antenna */}
+      <mesh><sphereGeometry args={[.45, 20, 16]} /><meshStandardMaterial color="#004466" emissive={c} emissiveIntensity={.5} metalness={.88} roughness={.1} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.7, .04, 12, 24]} /><meshBasicMaterial color={c} transparent opacity={.65} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh rotation={[Math.PI / 2 + .5, 0, 0]}><torusGeometry args={[.65, .025, 10, 20]} /><meshBasicMaterial color={c} transparent opacity={.3} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh position={[0, .35, 0]}><capsuleGeometry args={[.02, .2, 6, 8]} /><meshStandardMaterial color="#0088aa" emissive={c} emissiveIntensity={2} toneMapped={false} /></mesh>
+      <mesh position={[0, .48, 0]}><sphereGeometry args={[.04, 8, 8]} /><meshStandardMaterial color="#88ffff" emissive={c} emissiveIntensity={6} toneMapped={false} /></mesh>
     </>);
     case "elite": return (<>
-      {/* Crystal star */}
-      <mesh><octahedronGeometry args={[0.55, 0]} /><meshStandardMaterial color="#ccaa00" emissive={c} emissiveIntensity={1.2} metalness={0.95} roughness={0.05} toneMapped={false} /></mesh>
-      <mesh rotation={[0, 0, Math.PI / 4]}><octahedronGeometry args={[0.55, 0]} /><meshStandardMaterial color="#ffdd33" emissive={c} emissiveIntensity={0.8} metalness={0.9} roughness={0.1} transparent opacity={0.5} toneMapped={false} /></mesh>
+      {/* Crystalline dreadnought — central prism + rotating outer crystal + energy veins */}
+      <mesh><dodecahedronGeometry args={[.45, 0]} /><meshStandardMaterial color="#aa8800" emissive={c} emissiveIntensity={1} metalness={.96} roughness={.02} toneMapped={false} /></mesh>
+      <mesh rotation={[.4, .4, 0]}><icosahedronGeometry args={[.55, 0]} /><meshBasicMaterial color={c} transparent opacity={.15} blending={THREE.AdditiveBlending} depthWrite={false} wireframe /></mesh>
+      <mesh position={[0, 0, .3]}><sphereGeometry args={[.08, 10, 10]} /><meshStandardMaterial color="#ffee44" emissive="#ffcc00" emissiveIntensity={6} toneMapped={false} /></mesh>
+      <mesh position={[0, 0, -.3]}><sphereGeometry args={[.08, 10, 10]} /><meshStandardMaterial color="#ffee44" emissive="#ffcc00" emissiveIntensity={6} toneMapped={false} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.52, .02, 8, 20]} /><meshBasicMaterial color="#ffcc00" transparent opacity={.4} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </>);
     case "boss": return (<>
-      {/* Large multi-part octagonal warship */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.8, 1.0, 0.35, 8]} /><meshStandardMaterial color="#880022" emissive={c} emissiveIntensity={0.6} metalness={0.85} roughness={0.15} /></mesh>
-      <mesh position={[0, 0.25, 0]}><sphereGeometry args={[0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color="#ff2244" emissive="#ff0033" emissiveIntensity={1.5} toneMapped={false} transparent opacity={0.9} /></mesh>
-      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[1.05, 0.05, 8, 8]} /><meshBasicMaterial color="#ff4444" transparent opacity={0.6} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-      <mesh position={[0.7, -0.2, 0]}><boxGeometry args={[0.5, 0.12, 0.12]} /><meshStandardMaterial color="#662222" metalness={0.9} roughness={0.1} /></mesh>
-      <mesh position={[-0.7, -0.2, 0]}><boxGeometry args={[0.5, 0.12, 0.12]} /><meshStandardMaterial color="#662222" metalness={0.9} roughness={0.1} /></mesh>
+      {/* Capital warship — layered hull + command tower + weapon arrays + shield generators + engine bank */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.7, .9, .3, 32]} /><meshStandardMaterial color="#660018" emissive={c} emissiveIntensity={.4} metalness={.9} roughness={.1} /></mesh>
+      <mesh position={[0, .08, 0]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.5, .6, .25, 24]} /><meshStandardMaterial color="#880022" emissive={c} emissiveIntensity={.6} metalness={.88} roughness={.12} /></mesh>
+      <mesh position={[0, .22, 0]}><sphereGeometry args={[.3, 20, 16, 0, Math.PI * 2, 0, Math.PI * .5]} /><meshStandardMaterial color="#aa0033" emissive="#ff0033" emissiveIntensity={1.5} toneMapped={false} transparent opacity={.9} /></mesh>
+      <mesh position={[0, .32, .12]}><sphereGeometry args={[.08, 12, 12]} /><meshStandardMaterial color="#ff4444" emissive="#ff0000" emissiveIntensity={5} toneMapped={false} /></mesh>
+      {/* Weapon arrays */}
+      <mesh position={[.65, -.05, 0]}><capsuleGeometry args={[.06, .4, 8, 10]} /><meshStandardMaterial color="#551118" metalness={.92} roughness={.08} /></mesh>
+      <mesh position={[-.65, -.05, 0]}><capsuleGeometry args={[.06, .4, 8, 10]} /><meshStandardMaterial color="#551118" metalness={.92} roughness={.08} /></mesh>
+      <mesh position={[.65, -.3, 0]}><sphereGeometry args={[.05, 8, 8]} /><meshStandardMaterial color="#ff6644" emissive="#ff4422" emissiveIntensity={4} toneMapped={false} /></mesh>
+      <mesh position={[-.65, -.3, 0]}><sphereGeometry args={[.05, 8, 8]} /><meshStandardMaterial color="#ff6644" emissive="#ff4422" emissiveIntensity={4} toneMapped={false} /></mesh>
+      {/* Shield generators */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.95, .03, 12, 32]} /><meshBasicMaterial color="#ff3344" transparent opacity={.5} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      {/* Engine bank */}
+      <mesh position={[-.3, -.35, 0]}><sphereGeometry args={[.06, 8, 8]} /><meshStandardMaterial color="#ff8844" emissive="#ff6622" emissiveIntensity={6} toneMapped={false} /></mesh>
+      <mesh position={[0, -.38, 0]}><sphereGeometry args={[.07, 8, 8]} /><meshStandardMaterial color="#ff8844" emissive="#ff6622" emissiveIntensity={6} toneMapped={false} /></mesh>
+      <mesh position={[.3, -.35, 0]}><sphereGeometry args={[.06, 8, 8]} /><meshStandardMaterial color="#ff8844" emissive="#ff6622" emissiveIntensity={6} toneMapped={false} /></mesh>
     </>);
   }
 }
@@ -503,28 +532,85 @@ function ShooterShip({ posRef, color, shieldActive }: {
 
   return (
     <group ref={gRef}>
-      {/* Nose */}
-      <mesh position={[0, .42, 0]}><coneGeometry args={[.17, .82, 16]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={.7} metalness={.92} roughness={.06} toneMapped={false} /></mesh>
-      {/* Body */}
-      <mesh position={[0, -.1, 0]}><cylinderGeometry args={[.21, .27, .72, 16]} /><meshStandardMaterial color="#e8ecf0" metalness={.94} roughness={.04} emissive="#111820" emissiveIntensity={.15} /></mesh>
-      {/* Canopy */}
-      <mesh position={[0, .15, .21]}><sphereGeometry args={[.15, 16, 12, 0, 6.28, 0, Math.PI * .55]} /><meshStandardMaterial color="#67e8f9" emissive="#22d3ee" emissiveIntensity={2.5} toneMapped={false} transparent opacity={.88} /></mesh>
-      {/* Wings */}
-      <mesh position={[.42, -.08, 0]} rotation={[0, 0, -.3]}><boxGeometry args={[.6, .035, .14]} /><meshStandardMaterial color="#cbd5e1" metalness={.82} roughness={.15} /></mesh>
-      <mesh position={[-.42, -.08, 0]} rotation={[0, 0, .3]}><boxGeometry args={[.6, .035, .14]} /><meshStandardMaterial color="#cbd5e1" metalness={.82} roughness={.15} /></mesh>
-      {/* Wing tips */}
-      <mesh position={[.68, -.15, 0]}><sphereGeometry args={[.04, 8, 8]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={3} toneMapped={false} /></mesh>
-      <mesh position={[-.68, -.15, 0]}><sphereGeometry args={[.04, 8, 8]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={3} toneMapped={false} /></mesh>
-      {/* Engines */}
-      <mesh position={[.2, -.52, 0]}><cylinderGeometry args={[.06, .08, .28, 10]} /><meshStandardMaterial color="#94a3b8" metalness={.94} roughness={.06} /></mesh>
-      <mesh position={[-.2, -.52, 0]}><cylinderGeometry args={[.06, .08, .28, 10]} /><meshStandardMaterial color="#94a3b8" metalness={.94} roughness={.06} /></mesh>
-      <mesh position={[.2, -.72, 0]}><sphereGeometry args={[.07, 8, 8]} /><meshStandardMaterial color="#fb923c" emissive="#f97316" emissiveIntensity={6} toneMapped={false} /></mesh>
-      <mesh position={[-.2, -.72, 0]}><sphereGeometry args={[.07, 8, 8]} /><meshStandardMaterial color="#fb923c" emissive="#f97316" emissiveIntensity={6} toneMapped={false} /></mesh>
+      {/* ── Fuselage: smooth tapered capsule ── */}
+      <mesh position={[0, .05, 0]}>
+        <capsuleGeometry args={[.18, .65, 16, 24]} />
+        <meshStandardMaterial color="#d0d8e0" metalness={.96} roughness={.03} envMapIntensity={1.2} />
+      </mesh>
+      {/* Nose cap — rounded cone with high segments */}
+      <mesh position={[0, .58, 0]}>
+        <coneGeometry args={[.18, .38, 24]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={.6} metalness={.95} roughness={.04} toneMapped={false} />
+      </mesh>
+      {/* Canopy — glass dome */}
+      <mesh position={[0, .22, .18]}>
+        <sphereGeometry args={[.13, 24, 16, 0, Math.PI * 2, 0, Math.PI * .5]} />
+        <meshStandardMaterial color="#67e8f9" emissive="#22d3ee" emissiveIntensity={3} toneMapped={false} transparent opacity={.85} metalness={.3} roughness={.1} />
+      </mesh>
+      {/* ── Swept wings — smooth tapered ── */}
+      <mesh position={[.38, -.04, 0]} rotation={[0, 0, -.25]}>
+        <capsuleGeometry args={[.018, .55, 8, 12]} />
+        <meshStandardMaterial color="#b8c4d0" metalness={.88} roughness={.08} />
+      </mesh>
+      <mesh position={[-.38, -.04, 0]} rotation={[0, 0, .25]}>
+        <capsuleGeometry args={[.018, .55, 8, 12]} />
+        <meshStandardMaterial color="#b8c4d0" metalness={.88} roughness={.08} />
+      </mesh>
+      {/* Wing tip nacelles */}
+      <mesh position={[.62, -.13, 0]}>
+        <sphereGeometry args={[.05, 16, 16]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} />
+      </mesh>
+      <mesh position={[-.62, -.13, 0]}>
+        <sphereGeometry args={[.05, 16, 16]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} />
+      </mesh>
+      {/* ── Tail fins ── */}
+      <mesh position={[.12, -.38, 0]} rotation={[0, 0, -.15]}>
+        <capsuleGeometry args={[.012, .2, 6, 8]} />
+        <meshStandardMaterial color="#9ca8b8" metalness={.9} roughness={.06} />
+      </mesh>
+      <mesh position={[-.12, -.38, 0]} rotation={[0, 0, .15]}>
+        <capsuleGeometry args={[.012, .2, 6, 8]} />
+        <meshStandardMaterial color="#9ca8b8" metalness={.9} roughness={.06} />
+      </mesh>
+      {/* ── Engine pods ── */}
+      <mesh position={[.18, -.48, 0]}>
+        <capsuleGeometry args={[.05, .22, 12, 16]} />
+        <meshStandardMaterial color="#8090a4" metalness={.95} roughness={.04} />
+      </mesh>
+      <mesh position={[-.18, -.48, 0]}>
+        <capsuleGeometry args={[.05, .22, 12, 16]} />
+        <meshStandardMaterial color="#8090a4" metalness={.95} roughness={.04} />
+      </mesh>
+      {/* Engine glow rings */}
+      <mesh position={[.18, -.64, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[.055, .015, 12, 24]} />
+        <meshBasicMaterial color="#ff8833" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+      <mesh position={[-.18, -.64, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[.055, .015, 12, 24]} />
+        <meshBasicMaterial color="#ff8833" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+      {/* Engine flame cores */}
+      <mesh position={[.18, -.68, 0]}>
+        <sphereGeometry args={[.045, 12, 12]} />
+        <meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={8} toneMapped={false} />
+      </mesh>
+      <mesh position={[-.18, -.68, 0]}>
+        <sphereGeometry args={[.045, 12, 12]} />
+        <meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={8} toneMapped={false} />
+      </mesh>
+      {/* Accent stripe — glowing belly line */}
+      <mesh position={[0, -.05, .19]}>
+        <capsuleGeometry args={[.008, .5, 4, 8]} />
+        <meshBasicMaterial color={color} transparent opacity={.6} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
       {/* Shield bubble */}
-      <mesh ref={shieldRef} visible={false}><sphereGeometry args={[1.3, 24, 24]} /><meshBasicMaterial color="#22d3ee" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
+      <mesh ref={shieldRef} visible={false}><sphereGeometry args={[1.3, 32, 32]} /><meshBasicMaterial color="#22d3ee" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
       {/* Exhaust particles */}
       <points ref={exRef}><bufferGeometry><bufferAttribute attach="attributes-position" args={[exSt.p, 3]} /></bufferGeometry><pointsMaterial size={.06} color="#ffaa55" transparent opacity={.7} blending={THREE.AdditiveBlending} sizeAttenuation depthWrite={false} /></points>
-      <pointLight intensity={2.8} color={color} distance={8} />
+      <pointLight intensity={3} color={color} distance={8} />
     </group>
   );
 }

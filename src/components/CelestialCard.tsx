@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
-import { Activity, Clock, Info, Trophy, Wallet, Sparkles as SparklesIcon, Zap, Skull, Shield, Gem, Flame, Hourglass, RotateCw, RotateCcw } from 'lucide-react';
+import { Activity, Clock, Info, Trophy, Wallet, Sparkles as SparklesIcon, Zap, Shield, Flame, Hourglass, RotateCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Planet3D } from './Planet3D';
@@ -611,76 +611,87 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               <TabsContent value="stats" className="flex-1 overflow-y-auto px-5 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
                 {/* 2-col stats grid with rich metric cards */}
                 <div className="grid grid-cols-2 gap-2 mb-4">
-                  <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="SOL Balance" value={`${safeTraits.solBalance.toFixed(2)}`} captureKey="sol" accent bar={Math.min(safeTraits.solBalance / 100, 1)} />
-                  <StatItem icon={<Clock className="w-3.5 h-3.5" />} label="Wallet Age" value={`${safeTraits.walletAgeDays}d`} captureKey="age" accent bar={Math.min(safeTraits.walletAgeDays / 1500, 1)} />
+                  <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="SOL Balance" value={`${safeTraits.solBalance.toFixed(2)}`} captureKey="sol" bar={Math.min(safeTraits.solBalance / 100, 1)} />
+                  <StatItem icon={<Clock className="w-3.5 h-3.5" />} label="Wallet Age" value={`${safeTraits.walletAgeDays}d`} captureKey="age" bar={Math.min(safeTraits.walletAgeDays / 1500, 1)} />
                   <StatItem icon={<Activity className="w-3.5 h-3.5" />} label="Transactions" value={safeTraits.txCount > 999 ? `${(safeTraits.txCount / 1000).toFixed(1)}k` : safeTraits.txCount.toString()} captureKey="tx" bar={Math.min(safeTraits.txCount / 10000, 1)} />
-                  <StatItem icon={<Trophy className="w-3.5 h-3.5" />} label="NFT Collection" value={safeTraits.nftCount.toString()} captureKey="nfts" bar={Math.min(safeTraits.nftCount / 100, 1)} />
-                  <StatItem icon={<Gem className="w-3.5 h-3.5" />} label="Unique Tokens" value={safeTraits.uniqueTokenCount.toString()} captureKey="tokens" bar={Math.min(safeTraits.uniqueTokenCount / 50, 1)} />
+                  <StatItem icon={<Trophy className="w-3.5 h-3.5" />} label="NFT Collection" value={Math.min(safeTraits.nftCount, safeTraits.totalAssetsCount).toString()} captureKey="nfts" bar={Math.min(Math.min(safeTraits.nftCount, safeTraits.totalAssetsCount) / 100, 1)} />
                   <StatItem icon={<Flame className="w-3.5 h-3.5" />} label="Daily Activity" value={`${(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)} tx/d`} captureKey="activity" bar={Math.min((safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)) / 10, 1)} />
                   <StatItem icon={<Hourglass className="w-3.5 h-3.5" />} label="Dormancy" value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d ago` : 'Active'} captureKey="dormancy" bar={safeTraits.daysSinceLastTx ? Math.max(0, 1 - safeTraits.daysSinceLastTx / 365) : 1} />
                   <StatItem icon={<Shield className="w-3.5 h-3.5" />} label="Total Assets" value={safeTraits.totalAssetsCount > 999 ? `${(safeTraits.totalAssetsCount / 1000).toFixed(1)}k` : safeTraits.totalAssetsCount.toString()} captureKey="assets" bar={Math.min(safeTraits.totalAssetsCount / 500, 1)} />
-                  <StatItem icon={<Skull className="w-3.5 h-3.5" />} label="Meme Coins" value={safeTraits.memeCoinsHeld?.length?.toString() ?? '0'} captureKey="memes" bar={Math.min((safeTraits.memeCoinsHeld?.length ?? 0) / 20, 1)} />
+                  <StatItem icon={<SparklesIcon className="w-3.5 h-3.5" />} label="Wallet Score" value={displayScore.toString()} captureKey="score" bar={Math.min(displayScore / 1200, 1)} />
                 </div>
 
                 {/* Score History — premium sparkline */}
-                {scoreHistory.length >= 2 && (
-                  <div className="mb-4 rounded-2xl border border-cyan-500/10 bg-gradient-to-br from-cyan-950/20 via-transparent to-blue-950/15 p-3.5 relative overflow-hidden">
-                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(34,211,238,0.04),transparent_70%)]" />
+                {scoreHistory.length >= 1 && (
+                  <div className="mb-4 rounded-2xl border border-white/[0.06] bg-gradient-to-br from-white/[0.02] via-transparent to-white/[0.01] p-3.5 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.02),transparent_70%)]" />
                     <div className="relative z-10">
                       <div className="flex items-center justify-between mb-2.5">
                         <div className="flex items-center gap-1.5">
                           <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                          <span className="text-[9px] uppercase tracking-[0.15em] text-cyan-300/50 font-bold">Score History</span>
+                          <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">Score History</span>
                         </div>
-                        <span className="text-[9px] text-white/20 font-mono">{scoreHistory.length} scans</span>
+                        <span className="text-[9px] text-white/20 font-mono">{scoreHistory.length} {scoreHistory.length === 1 ? 'scan' : 'scans'}</span>
                       </div>
-                      <svg viewBox={`0 0 ${Math.max(scoreHistory.length - 1, 1) * 20} 48`} className="w-full h-12" preserveAspectRatio="none">
-                        <defs>
-                          <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="rgba(34,211,238,0.15)" />
-                            <stop offset="100%" stopColor="rgba(34,211,238,0)" />
-                          </linearGradient>
-                          <filter id="sparkGlow">
-                            <feGaussianBlur stdDeviation="1.5" result="blur" />
-                            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                          </filter>
-                        </defs>
-                        {(() => {
-                          const pts = [...scoreHistory].reverse();
-                          const maxS = Math.max(...pts.map(p => p.score), 1);
-                          const minS = Math.min(...pts.map(p => p.score), 0);
-                          const range = Math.max(maxS - minS, 1);
-                          const w = Math.max(pts.length - 1, 1) * 20;
-                          const points = pts.map((p, i) => {
-                            const x = (i / Math.max(pts.length - 1, 1)) * w;
-                            const y = 44 - ((p.score - minS) / range) * 38;
-                            return `${x},${y}`;
-                          }).join(' ');
-                          const areaPoints = `0,46 ${points} ${w},46`;
-                          const lastX = ((pts.length - 1) / Math.max(pts.length - 1, 1)) * w;
-                          const lastY = 44 - ((pts[pts.length - 1].score - minS) / range) * 38;
+                      {(() => {
+                        const pts = [...scoreHistory].reverse();
+                        const maxS = Math.max(...pts.map(p => p.score), 1);
+                        const minS = Math.min(...pts.map(p => p.score), 0);
+                        const isFlat = maxS === minS;
+                        const range = Math.max(maxS - minS, 1);
+                        const w = Math.max(pts.length - 1, 1) * 20;
+                        const svgW = Math.max(w, 100);
+
+                        if (pts.length === 1 || isFlat) {
                           return (
-                            <>
-                              <polyline points={areaPoints} fill="url(#sparkGrad)" stroke="none" />
-                              <polyline points={points} fill="none" stroke="rgba(34,211,238,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" filter="url(#sparkGlow)" />
-                              {pts.map((p, i) => {
-                                const cx = (i / Math.max(pts.length - 1, 1)) * w;
-                                const cy = 44 - ((p.score - minS) / range) * 38;
-                                return <circle key={i} cx={cx} cy={cy} r="1.8" fill="rgba(34,211,238,0.3)" stroke="rgba(34,211,238,0.6)" strokeWidth="0.5" />;
-                              })}
-                              <circle cx={lastX} cy={lastY} r="3" fill="#22d3ee" filter="url(#sparkGlow)" />
-                            </>
+                            <div className="flex flex-col items-center justify-center h-12 gap-1">
+                              <div className="flex items-center gap-2">
+                                <div className="h-px w-8 bg-gradient-to-r from-transparent to-cyan-500/30" />
+                                <span className="text-sm font-bold font-mono text-cyan-300/80">{pts[pts.length - 1].score}</span>
+                                <div className="h-px w-8 bg-gradient-to-l from-transparent to-cyan-500/30" />
+                              </div>
+                              <span className="text-[8px] text-white/20">{isFlat && pts.length > 1 ? 'Stable score' : 'Current score'}</span>
+                            </div>
                           );
-                        })()}
-                      </svg>
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-[8px] text-white/15 font-mono">
-                          low {Math.min(...[...scoreHistory].map(p => p.score))}
-                        </span>
-                        <span className="text-[8px] text-cyan-300/30 font-mono font-bold">
-                          peak {Math.max(...[...scoreHistory].map(p => p.score))}
-                        </span>
-                      </div>
+                        }
+
+                        const points = pts.map((p, i) => {
+                          const x = (i / Math.max(pts.length - 1, 1)) * svgW;
+                          const y = 44 - ((p.score - minS) / range) * 38;
+                          return `${x},${y}`;
+                        }).join(' ');
+                        const areaPoints = `0,46 ${points} ${svgW},46`;
+                        const lastX = ((pts.length - 1) / Math.max(pts.length - 1, 1)) * svgW;
+                        const lastY = 44 - ((pts[pts.length - 1].score - minS) / range) * 38;
+                        return (
+                          <>
+                            <svg viewBox={`0 0 ${svgW} 48`} className="w-full h-12" preserveAspectRatio="none">
+                              <defs>
+                                <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="0%" stopColor="rgba(34,211,238,0.12)" />
+                                  <stop offset="100%" stopColor="rgba(34,211,238,0)" />
+                                </linearGradient>
+                                <filter id="sparkGlow">
+                                  <feGaussianBlur stdDeviation="1.5" result="blur" />
+                                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                                </filter>
+                              </defs>
+                              <polyline points={areaPoints} fill="url(#sparkGrad)" stroke="none" />
+                              <polyline points={points} fill="none" stroke="rgba(34,211,238,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#sparkGlow)" />
+                              {pts.map((p, i) => {
+                                const cx = (i / Math.max(pts.length - 1, 1)) * svgW;
+                                const cy = 44 - ((p.score - minS) / range) * 38;
+                                return <circle key={i} cx={cx} cy={cy} r="1.5" fill="rgba(34,211,238,0.25)" stroke="rgba(34,211,238,0.5)" strokeWidth="0.5" />;
+                              })}
+                              <circle cx={lastX} cy={lastY} r="2.5" fill="#22d3ee" filter="url(#sparkGlow)" />
+                            </svg>
+                            <div className="flex items-center justify-between mt-1.5">
+                              <span className="text-[8px] text-white/15 font-mono">low {minS}</span>
+                              <span className="text-[8px] text-white/25 font-mono font-bold">peak {maxS}</span>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -748,32 +759,30 @@ function StatItem({
   label,
   value,
   captureKey,
-  accent,
   bar = 0,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   captureKey?: string;
-  accent?: boolean;
   bar?: number;
 }) {
   const pct = Math.round(Math.max(0, Math.min(1, bar)) * 100);
   return (
-    <div className={`relative overflow-hidden rounded-xl border p-2.5 transition-colors ${accent ? 'bg-cyan-500/[0.04] border-cyan-500/10 hover:bg-cyan-500/[0.08]' : 'bg-white/[0.02] border-white/[0.05] hover:bg-white/[0.05]'}`}>
+    <div className="relative overflow-hidden rounded-xl border p-2.5 transition-colors bg-white/[0.02] border-white/[0.05] hover:bg-white/[0.05]">
       <div className="flex items-center gap-2 mb-1.5">
-        <div className={`shrink-0 flex items-center justify-center w-6 h-6 rounded-md ${accent ? 'bg-cyan-500/10 text-cyan-400' : 'bg-white/5 text-white/30'}`}>{icon}</div>
+        <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md bg-white/5 text-white/30">{icon}</div>
         <span className="text-[9px] text-white/30 uppercase tracking-wider leading-none truncate">{label}</span>
       </div>
       <span
         data-stat-key={captureKey}
-        className={`capture-value text-sm font-bold font-mono leading-none block ${accent ? 'text-cyan-200' : 'text-white/90'}`}
+        className="capture-value text-sm font-bold font-mono leading-none block text-white/90"
       >
         {value}
       </span>
       <div className="mt-1.5 h-[3px] w-full rounded-full bg-white/[0.04] overflow-hidden">
         <div
-          className={`h-full rounded-full transition-all duration-700 ${accent ? 'bg-gradient-to-r from-cyan-500/60 to-cyan-400/40' : 'bg-gradient-to-r from-white/20 to-white/10'}`}
+          className="h-full rounded-full transition-all duration-700 bg-gradient-to-r from-white/20 to-white/10"
           style={{ width: `${pct}%` }}
         />
       </div>
