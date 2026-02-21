@@ -1479,9 +1479,9 @@ const BlackHole = () => {
                         <TableCell className="text-center font-mono text-zinc-400 text-sm whitespace-nowrap">
                           {token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}
                         </TableCell>
-                        <TableCell className="text-center text-sm">
+                        <TableCell className="text-center text-sm whitespace-nowrap max-w-[90px]">
                           <div className="flex flex-col items-center leading-tight">
-                            <span className="font-mono text-zinc-300">{formatSolCompact(token.valueSol) ?? (token.priceUsd != null ? `$${formatCompact(token.priceUsd)}` : '—')}</span>
+                            <span className="font-mono text-zinc-300 text-[12px]">{formatSolCompact(token.valueSol) ?? (token.priceUsd != null ? formatUsd(token.priceUsd) : '—')}</span>
                             {token.valueSol != null && token.valueSol > 0 && (
                               <span className="text-[9px] text-zinc-600">SOL</span>
                             )}

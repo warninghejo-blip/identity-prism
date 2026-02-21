@@ -1758,12 +1758,12 @@ body:has(.prism-league-page) #root > * {
   letter-spacing: 0.18em;
   text-transform: uppercase;
   line-height: 1;
-  background: linear-gradient(180deg, rgba(255, 130, 90, 1) 0%, rgba(255, 60, 30, 0.9) 50%, rgba(180, 40, 20, 0.7) 100%);
+  background: linear-gradient(180deg, rgba(120, 220, 255, 1) 0%, rgba(34, 211, 238, 0.9) 50%, rgba(20, 120, 180, 0.7) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   text-shadow: none;
-  filter: drop-shadow(0 0 40px rgba(255, 80, 40, 0.35));
+  filter: drop-shadow(0 0 40px rgba(34, 211, 238, 0.25));
   margin-bottom: 4px;
 }
 
@@ -1837,11 +1837,11 @@ body:has(.prism-league-page) #root > * {
   background: conic-gradient(
     from 0deg,
     transparent 0deg,
-    rgba(255, 180, 120, 0.5) 30deg,
-    rgba(255, 120, 60, 0.65) 80deg,
-    rgba(255, 200, 150, 0.6) 130deg,
-    rgba(255, 80, 40, 0.4) 190deg,
-    rgba(255, 160, 100, 0.25) 250deg,
+    rgba(120, 220, 255, 0.5) 30deg,
+    rgba(34, 211, 238, 0.65) 80deg,
+    rgba(160, 230, 255, 0.6) 130deg,
+    rgba(20, 160, 220, 0.4) 190deg,
+    rgba(100, 200, 240, 0.25) 250deg,
     transparent 310deg
   );
   filter: blur(10px);
@@ -1857,8 +1857,8 @@ body:has(.prism-league-page) #root > * {
   width: clamp(200px, 60vw, 380px);
   height: clamp(100px, 22vw, 160px);
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 180, 140, 0.35);
-  box-shadow: 0 0 40px rgba(255, 100, 60, 0.3), inset 0 0 20px rgba(255, 100, 60, 0.12);
+  border: 1.5px solid rgba(120, 220, 255, 0.3);
+  box-shadow: 0 0 40px rgba(34, 211, 238, 0.25), inset 0 0 20px rgba(34, 211, 238, 0.1);
   transform: rotateX(78deg) rotateZ(12deg);
   animation: bh-pulse 5s ease-in-out infinite;
 }
@@ -1868,8 +1868,8 @@ body:has(.prism-league-page) #root > * {
   width: clamp(150px, 45vw, 300px);
   height: clamp(150px, 45vw, 300px);
   border-radius: 50%;
-  border: 1px solid rgba(255, 200, 160, 0.15);
-  box-shadow: 0 0 50px rgba(255, 140, 100, 0.15);
+  border: 1px solid rgba(120, 220, 255, 0.12);
+  box-shadow: 0 0 50px rgba(34, 211, 238, 0.12);
   opacity: 0.7;
   animation: bh-spin-slow 25s linear infinite;
 }
@@ -1893,8 +1893,8 @@ body:has(.prism-league-page) #root > * {
   width: clamp(140px, 40vw, 280px);
   height: clamp(140px, 40vw, 280px);
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,255,255,0.05) 0%, rgba(255,160,100,0.02) 40%, transparent 65%);
-  box-shadow: 0 0 80px rgba(255, 120, 80, 0.1);
+  background: radial-gradient(circle, rgba(255,255,255,0.05) 0%, rgba(120,220,255,0.02) 40%, transparent 65%);
+  box-shadow: 0 0 80px rgba(34, 211, 238, 0.08);
   z-index: 1;
 }
 
@@ -1950,7 +1950,7 @@ body:has(.prism-league-page) #root > * {
   width: clamp(240px, 70vw, 460px);
   height: clamp(240px, 70vw, 460px);
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 100, 60, 0.25) 0%, rgba(255, 60, 20, 0.08) 40%, rgba(255, 40, 20, 0.02) 60%, transparent 75%);
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.2) 0%, rgba(20, 160, 220, 0.07) 40%, rgba(10, 100, 160, 0.02) 60%, transparent 75%);
   filter: blur(25px);
   opacity: 0.85;
   animation: bh-pulse 7s ease-in-out infinite alternate;
@@ -2055,12 +2055,12 @@ body:has(.prism-league-page) #root > * {
 .blackhole-panel {
   position: relative;
   background: linear-gradient(170deg, rgba(8, 10, 22, 0.88), rgba(4, 4, 12, 0.82));
-  border: 1px solid rgba(255, 120, 60, 0.06);
+  border: 1px solid rgba(34, 211, 238, 0.08);
   border-radius: 24px;
   padding: clamp(16px, 3vw, 32px);
   box-shadow:
     0 0 80px rgba(0, 0, 0, 0.4),
-    0 0 1px rgba(255, 120, 60, 0.15),
+    0 0 1px rgba(34, 211, 238, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.03);
   backdrop-filter: blur(20px);
 }
@@ -2069,7 +2069,7 @@ body:has(.prism-league-page) #root > * {
   position: absolute;
   inset: -1px;
   border-radius: 25px;
-  background: linear-gradient(170deg, rgba(255, 120, 60, 0.08), transparent 40%, rgba(255, 80, 40, 0.04));
+  background: linear-gradient(170deg, rgba(34, 211, 238, 0.06), transparent 40%, rgba(20, 140, 200, 0.03));
   z-index: -1;
   pointer-events: none;
 }
