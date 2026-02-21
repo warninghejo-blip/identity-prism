@@ -63,7 +63,18 @@ import {
   type GameSessionProof,
 } from "@/lib/magicblock";
 import { createWormholeTunnel, fadeOutWormholeTunnel } from "@/lib/wormholeTunnel";
-import { getHeliusProxyUrl, getAppBaseUrl } from "@/constants";
+import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, getAppBaseUrl } from "@/constants";
+import {
+  checkDefenderAchievements,
+  updateDefenderStats,
+  getDefenderStats,
+  getDefenderAchievements,
+  getDefenderAchievementProgress,
+  claimDefenderReward,
+  DEFENDER_COIN_REWARDS,
+  type DefenderAchievement,
+  type DefenderStats,
+} from "@/lib/defenderAchievements";
 
 /* ═══════════════════════════════════════════════════
    Leaderboard types & server sync
@@ -378,6 +389,35 @@ const PrismLeague = () => {
   const [achievements, setAchievements] = useState<Achievement[]>(() => getAchievements());
   const [onchainScores] = useState<OnchainScore[]>(() => getOnchainScores());
 
+  // Defender-specific state
+  const [defenderAchievements, setDefenderAchievements] = useState<DefenderAchievement[]>(() => getDefenderAchievements());
+  const [defenderStats, setDefenderStats] = useState<DefenderStats>(() => getDefenderStats());
+  const defenderKills = useRef(0);
+  const defenderLevel = useRef(0);
+
+  // Minted ID check → 2x score multiplier
+  const [hasMintedId, setHasMintedId] = useState(false);
+  useEffect(() => {
+    if (!address) return;
+    const heliusUrl = getHeliusRpcUrl();
+    const collectionMint = getCollectionMint();
+    if (!heliusUrl || !collectionMint) return;
+    (async () => {
+      try {
+        const res = await fetch(heliusUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: 'mint-check', method: 'searchAssets',
+            params: { ownerAddress: address, grouping: ['collection', collectionMint], page: 1, limit: 1 },
+          }),
+        });
+        const data = await res.json();
+        setHasMintedId((data?.result?.total ?? 0) > 0);
+      } catch { /* silent */ }
+    })();
+  }, [address]);
+
   /* MagicBlock state */
   const [mbHealthy, setMbHealthy] = useState<boolean | null>(null);
   const [mbLatency, setMbLatency] = useState<number>(0);
@@ -537,20 +577,32 @@ const PrismLeague = () => {
 
       void verifyAndPublish();
 
-      const stats = updatePlayerStats(finalScore);
-      setPlayerStats(stats);
-
-      const { newlyUnlocked, all } = checkAchievements(finalScore);
-      setAchievements(all);
-      if (newlyUnlocked.length > 0) {
-        setNewAchievements(newlyUnlocked);
-        newlyUnlocked.forEach((a) => {
-          toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
-        });
-        // Push all currently unlocked achievements to server (idempotent)
-        const walletAddr = address || "anonymous";
-        const allUnlockedIds = all.filter((a) => a.unlocked).map((a) => a.id);
-        syncUnlockedToServer(walletAddr, allUnlockedIds);
+      if (gameMode === "orbit") {
+        const stats = updatePlayerStats(finalScore);
+        setPlayerStats(stats);
+        const { newlyUnlocked, all } = checkAchievements(finalScore);
+        setAchievements(all);
+        if (newlyUnlocked.length > 0) {
+          setNewAchievements(newlyUnlocked);
+          newlyUnlocked.forEach((a) => {
+            toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
+          });
+          const walletAddr = address || "anonymous";
+          const allUnlockedIds = all.filter((a) => a.unlocked).map((a) => a.id);
+          syncUnlockedToServer(walletAddr, allUnlockedIds);
+        }
+      } else if (gameMode === "destroyer") {
+        const dStats = updateDefenderStats(finalScore, defenderLevel.current, defenderKills.current);
+        setDefenderStats(dStats);
+        const { newlyUnlocked: defNew, all: defAll } = checkDefenderAchievements(finalScore, defenderLevel.current);
+        setDefenderAchievements(defAll);
+        if (defNew.length > 0) {
+          defNew.forEach((a) => {
+            toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
+          });
+        }
+        defenderKills.current = 0;
+        defenderLevel.current = 0;
       }
 
       const playerAddr = address || "anonymous";
@@ -733,10 +785,10 @@ const PrismLeague = () => {
       {/* 3D Scene — switches based on selected game mode */}
       <div className="absolute inset-0 z-0">
         {gameMode === "orbit" && (
-          <OrbitSurvivalScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
+          <OrbitSurvivalScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} hasMintedId={hasMintedId} />
         )}
         {gameMode === "destroyer" && (
-          <AsteroidDestroyerScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} />
+          <AsteroidDestroyerScene gameState={gameState} onScore={setScore} onCoins={setCoins} onGameOver={handleGameOver} traits={traits} walletScore={score} hasMintedId={hasMintedId} />
         )}
         {/* gravity and territory modes removed */}
       </div>

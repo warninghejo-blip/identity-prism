@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useCallback, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import {
@@ -56,7 +56,7 @@ interface LevelDef {
   bgTint: string;
 }
 
-type DPwrType = "firerate" | "double" | "rocket" | "shield" | "bomb";
+type DPwrType = "prism_shield" | "photon_burst" | "quantum_core" | "nebula_bomb" | "nova_rockets";
 
 interface DPowerUp {
   id: number;
@@ -96,15 +96,15 @@ const MAX_ENEMY_BULLETS = 80;
 const MAX_POWERUPS = 4;
 
 const ENEMY_STATS: Record<EnemyType, { hp: number; speed: number; r: number; score: number; shoots: boolean; color: string }> = {
-  scout:    { hp: 1, speed: 6,  r: 0.6, score: 10,  shoots: false, color: "#44ff66" },
-  fighter:  { hp: 2, speed: 7,  r: 0.5, score: 20,  shoots: true,  color: "#ff4466" },
-  tank:     { hp: 5, speed: 3.5,r: 1.0, score: 40,  shoots: true,  color: "#ff8800" },
-  swarm:    { hp: 1, speed: 9,  r: 0.35,score: 5,   shoots: false, color: "#aaffaa" },
-  bomber:   { hp: 3, speed: 4.5,r: 0.8, score: 30,  shoots: true,  color: "#ff44ff" },
-  cloaker:  { hp: 2, speed: 6,  r: 0.55,score: 35,  shoots: true,  color: "#8844ff" },
-  shielder: { hp: 3, speed: 4,  r: 0.7, score: 45,  shoots: true,  color: "#00ccff" },
-  elite:    { hp: 6, speed: 7,  r: 0.65,score: 60,  shoots: true,  color: "#ffcc00" },
-  boss:     { hp: 40,speed: 2.5,r: 2.0, score: 500, shoots: true,  color: "#ff0044" },
+  scout:    { hp: 1, speed: 6,  r: 0.6, score: 2,   shoots: false, color: "#44ff66" },
+  fighter:  { hp: 2, speed: 7,  r: 0.5, score: 3,   shoots: true,  color: "#ff4466" },
+  tank:     { hp: 5, speed: 3.5,r: 1.0, score: 5,   shoots: true,  color: "#ff8800" },
+  swarm:    { hp: 1, speed: 9,  r: 0.35,score: 1,   shoots: false, color: "#aaffaa" },
+  bomber:   { hp: 3, speed: 4.5,r: 0.8, score: 4,   shoots: true,  color: "#ff44ff" },
+  cloaker:  { hp: 2, speed: 6,  r: 0.55,score: 5,   shoots: true,  color: "#8844ff" },
+  shielder: { hp: 3, speed: 4,  r: 0.7, score: 5,   shoots: true,  color: "#00ccff" },
+  elite:    { hp: 6, speed: 7,  r: 0.65,score: 8,   shoots: true,  color: "#ffcc00" },
+  boss:     { hp: 40,speed: 2.5,r: 2.0, score: 40,  shoots: true,  color: "#ff0044" },
 };
 
 /* ═══════════════════════════════════════════════════
@@ -160,9 +160,12 @@ const LEVELS: LevelDef[] = [
   ]},
 ];
 
-const PWR_TYPES: DPwrType[] = ["firerate", "double", "rocket", "shield", "bomb"];
+const PWR_TYPES: DPwrType[] = ["quantum_core", "photon_burst", "nova_rockets", "prism_shield", "nebula_bomb"];
 const PWR_COLORS: Record<DPwrType, string> = {
-  firerate: "#ffcc00", double: "#00ffcc", rocket: "#ff4444", shield: "#22d3ee", bomb: "#ff66ff",
+  quantum_core: "#ffcc00", photon_burst: "#00ffcc", nova_rockets: "#ff4444", prism_shield: "#22d3ee", nebula_bomb: "#ff66ff",
+};
+const PWR_LABELS: Record<DPwrType, string> = {
+  quantum_core: "RAPID FIRE", photon_burst: "DUAL SHOT", nova_rockets: "HOMING", prism_shield: "SHIELD", nebula_bomb: "NUKE",
 };
 
 /* ═══════════════════════════════════════════════════
@@ -241,12 +244,70 @@ function ProjectileVisuals({ poolRef, color }: { poolRef: React.MutableRefObject
 }
 
 /* ═══════════════════════════════════════════════════
-   Enemy visuals (3D UFO shapes)
+   Enemy visuals — unique model per type
    ═══════════════════════════════════════════════════ */
+
+function EnemyModel({ type }: { type: EnemyType }) {
+  const s = ENEMY_STATS[type];
+  const c = s.color;
+  switch (type) {
+    case "scout": return (<>
+      {/* Arrow/dart shape */}
+      <mesh rotation={[Math.PI, 0, 0]}><coneGeometry args={[0.5, 1.2, 3]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={0.8} metalness={0.6} roughness={0.3} /></mesh>
+      <mesh position={[0, 0.2, 0]}><sphereGeometry args={[0.15, 8, 8]} /><meshStandardMaterial color="#fff" emissive={c} emissiveIntensity={2} toneMapped={false} /></mesh>
+    </>);
+    case "fighter": return (<>
+      {/* X-wing style */}
+      <mesh><boxGeometry args={[0.3, 0.9, 0.2]} /><meshStandardMaterial color="#aa2233" emissive={c} emissiveIntensity={0.5} metalness={0.8} roughness={0.2} /></mesh>
+      <mesh position={[0.5, 0, 0]} rotation={[0, 0, 0.4]}><boxGeometry args={[0.7, 0.08, 0.12]} /><meshStandardMaterial color="#cc3344" metalness={0.7} roughness={0.2} /></mesh>
+      <mesh position={[-0.5, 0, 0]} rotation={[0, 0, -0.4]}><boxGeometry args={[0.7, 0.08, 0.12]} /><meshStandardMaterial color="#cc3344" metalness={0.7} roughness={0.2} /></mesh>
+      <mesh position={[0, -0.3, 0]}><sphereGeometry args={[0.12, 8, 8]} /><meshStandardMaterial color="#ff6644" emissive="#ff4422" emissiveIntensity={3} toneMapped={false} /></mesh>
+    </>);
+    case "tank": return (<>
+      {/* Heavy armored hexagon */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.9, 0.9, 0.4, 6]} /><meshStandardMaterial color="#885500" emissive={c} emissiveIntensity={0.4} metalness={0.9} roughness={0.1} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.6, 0.6, 0.5, 6]} /><meshStandardMaterial color="#aa6600" emissive={c} emissiveIntensity={0.6} metalness={0.85} roughness={0.15} /></mesh>
+      <mesh position={[0, -0.5, 0]}><boxGeometry args={[0.15, 0.6, 0.1]} /><meshStandardMaterial color="#666" metalness={0.9} roughness={0.1} /></mesh>
+    </>);
+    case "swarm": return (<>
+      {/* Tiny glowing orb */}
+      <mesh><sphereGeometry args={[0.5, 8, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={1.5} toneMapped={false} transparent opacity={0.85} /></mesh>
+    </>);
+    case "bomber": return (<>
+      {/* Fat round body with bomb rack */}
+      <mesh><sphereGeometry args={[0.7, 12, 12]} /><meshStandardMaterial color="#993399" emissive={c} emissiveIntensity={0.5} metalness={0.6} roughness={0.3} /></mesh>
+      <mesh position={[-0.35, -0.5, 0]}><sphereGeometry args={[0.15, 6, 6]} /><meshStandardMaterial color="#ff44ff" emissive="#ff22ff" emissiveIntensity={2} toneMapped={false} /></mesh>
+      <mesh position={[0.35, -0.5, 0]}><sphereGeometry args={[0.15, 6, 6]} /><meshStandardMaterial color="#ff44ff" emissive="#ff22ff" emissiveIntensity={2} toneMapped={false} /></mesh>
+    </>);
+    case "cloaker": return (<>
+      {/* Sleek diamond stealth */}
+      <mesh><octahedronGeometry args={[0.6, 0]} /><meshStandardMaterial color="#442288" emissive={c} emissiveIntensity={0.8} metalness={0.9} roughness={0.05} transparent /></mesh>
+    </>);
+    case "shielder": return (<>
+      {/* Hexagon body + protective ring */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.6, 0.6, 0.3, 6]} /><meshStandardMaterial color="#006688" emissive={c} emissiveIntensity={0.6} metalness={0.7} roughness={0.2} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.85, 0.06, 8, 6]} /><meshBasicMaterial color={c} transparent opacity={0.7} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+    </>);
+    case "elite": return (<>
+      {/* Crystal star */}
+      <mesh><octahedronGeometry args={[0.55, 0]} /><meshStandardMaterial color="#ccaa00" emissive={c} emissiveIntensity={1.2} metalness={0.95} roughness={0.05} toneMapped={false} /></mesh>
+      <mesh rotation={[0, 0, Math.PI / 4]}><octahedronGeometry args={[0.55, 0]} /><meshStandardMaterial color="#ffdd33" emissive={c} emissiveIntensity={0.8} metalness={0.9} roughness={0.1} transparent opacity={0.5} toneMapped={false} /></mesh>
+    </>);
+    case "boss": return (<>
+      {/* Large multi-part octagonal warship */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.8, 1.0, 0.35, 8]} /><meshStandardMaterial color="#880022" emissive={c} emissiveIntensity={0.6} metalness={0.85} roughness={0.15} /></mesh>
+      <mesh position={[0, 0.25, 0]}><sphereGeometry args={[0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color="#ff2244" emissive="#ff0033" emissiveIntensity={1.5} toneMapped={false} transparent opacity={0.9} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[1.05, 0.05, 8, 8]} /><meshBasicMaterial color="#ff4444" transparent opacity={0.6} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh position={[0.7, -0.2, 0]}><boxGeometry args={[0.5, 0.12, 0.12]} /><meshStandardMaterial color="#662222" metalness={0.9} roughness={0.1} /></mesh>
+      <mesh position={[-0.7, -0.2, 0]}><boxGeometry args={[0.5, 0.12, 0.12]} /><meshStandardMaterial color="#662222" metalness={0.9} roughness={0.1} /></mesh>
+    </>);
+  }
+}
 
 function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
   const hpBarRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const typeCache = useRef<(EnemyType | null)[]>(new Array(MAX_ENEMIES).fill(null));
 
   useFrame((s) => {
     const t = s.clock.elapsedTime;
@@ -258,8 +319,7 @@ function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> })
       g.visible = true;
       g.position.set(e.x, e.y, 0);
       g.rotation.z = e.rz + Math.sin(t * 2 + i) * 0.1;
-      const sc = e.r;
-      g.scale.setScalar(sc);
+      g.scale.setScalar(e.r);
       // Cloaker fade
       if (e.type === "cloaker") {
         const alpha = 0.15 + Math.sin(t * 3 + i * 1.7) * 0.1;
@@ -273,6 +333,7 @@ function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> })
       if (hpBar && e.maxHp > 1) {
         hpBar.visible = true;
         hpBar.scale.x = Math.max(0.01, e.hp / e.maxHp);
+        (hpBar.material as THREE.MeshBasicMaterial).color.set(e.hp / e.maxHp > 0.5 ? "#44ff44" : e.hp / e.maxHp > 0.25 ? "#ffaa00" : "#ff2222");
       } else if (hpBar) {
         hpBar.visible = false;
       }
@@ -281,21 +342,7 @@ function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> })
 
   return (<>{Array.from({ length: MAX_ENEMIES }).map((_, i) => (
     <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
-      {/* Saucer body */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[0.7, 1, 0.25, 16]} />
-        <meshStandardMaterial color="#888" emissive="#224" emissiveIntensity={0.5} metalness={0.8} roughness={0.2} transparent />
-      </mesh>
-      {/* Dome */}
-      <mesh position={[0, 0.15, 0]}>
-        <sphereGeometry args={[0.45, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
-        <meshStandardMaterial color="#aaf" emissive="#66f" emissiveIntensity={1} transparent toneMapped={false} />
-      </mesh>
-      {/* Glow ring */}
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.85, 0.04, 8, 24]} />
-        <meshBasicMaterial color="#44ffaa" transparent opacity={0.6} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
+      <EnemyModelSlot index={i} poolRef={poolRef} />
       {/* HP bar background */}
       <mesh position={[0, -1.3, 0]}>
         <planeGeometry args={[1.6, 0.12]} />
@@ -308,6 +355,19 @@ function EnemyVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy[]> })
       </mesh>
     </group>
   ))}</>);
+}
+
+function EnemyModelSlot({ index, poolRef }: { index: number; poolRef: React.MutableRefObject<Enemy[]> }) {
+  const [currentType, setCurrentType] = useState<EnemyType>("scout");
+  const lastType = useRef<EnemyType>("scout");
+  useFrame(() => {
+    const e = poolRef.current[index];
+    if (e && e.active && e.type !== lastType.current) {
+      lastType.current = e.type;
+      setCurrentType(e.type);
+    }
+  });
+  return <EnemyModel type={currentType} />;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -334,39 +394,63 @@ function EnemyBulletVisuals({ poolRef }: { poolRef: React.MutableRefObject<Enemy
 }
 
 /* ═══════════════════════════════════════════════════
-   PowerUp drop visuals
+   PowerUp drop visuals — distinct shape per type
    ═══════════════════════════════════════════════════ */
+
+function PowerUpShape({ type }: { type: DPwrType }) {
+  const c = PWR_COLORS[type];
+  switch (type) {
+    case "prism_shield": return (<>
+      <mesh><icosahedronGeometry args={[0.4, 0]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2} toneMapped={false} transparent opacity={0.7} metalness={0.8} roughness={0.1} /></mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.55, 0.04, 8, 16]} /><meshBasicMaterial color={c} transparent opacity={0.6} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+    </>);
+    case "photon_burst": return (<>
+      <mesh position={[-0.15, 0, 0]}><coneGeometry args={[0.15, 0.5, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2.5} toneMapped={false} /></mesh>
+      <mesh position={[0.15, 0, 0]}><coneGeometry args={[0.15, 0.5, 8]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2.5} toneMapped={false} /></mesh>
+      <mesh><sphereGeometry args={[0.12, 8, 8]} /><meshBasicMaterial color="#fff" transparent opacity={0.8} blending={THREE.AdditiveBlending} /></mesh>
+    </>);
+    case "quantum_core": return (<>
+      <mesh rotation={[0.6, 0.6, 0]}><boxGeometry args={[0.45, 0.45, 0.45]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={2} toneMapped={false} metalness={0.9} roughness={0.05} /></mesh>
+      <mesh rotation={[0.6, 0.6, Math.PI / 4]}><boxGeometry args={[0.45, 0.45, 0.45]} /><meshStandardMaterial color={c} emissive={c} emissiveIntensity={1} toneMapped={false} transparent opacity={0.4} /></mesh>
+    </>);
+    case "nebula_bomb": return (<>
+      <mesh><sphereGeometry args={[0.35, 12, 12]} /><meshStandardMaterial color="#cc44cc" emissive={c} emissiveIntensity={2} toneMapped={false} /></mesh>
+      <mesh><sphereGeometry args={[0.5, 8, 4]} /><meshBasicMaterial color={c} transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} wireframe /></mesh>
+    </>);
+    case "nova_rockets": return (<>
+      <mesh rotation={[0, 0, 0.3]}><coneGeometry args={[0.12, 0.6, 6]} /><meshStandardMaterial color="#cc2222" emissive={c} emissiveIntensity={1.5} toneMapped={false} metalness={0.8} roughness={0.1} /></mesh>
+      <mesh position={[0, -0.35, 0]}><sphereGeometry args={[0.08, 6, 6]} /><meshStandardMaterial color="#ff8844" emissive="#ff6622" emissiveIntensity={4} toneMapped={false} /></mesh>
+    </>);
+  }
+}
 
 function DPowerUpVisuals({ poolRef }: { poolRef: React.MutableRefObject<DPowerUp[]> }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
+  const [types, setTypes] = useState<DPwrType[]>(new Array(MAX_POWERUPS).fill("prism_shield"));
+  const lastTypes = useRef<DPwrType[]>(new Array(MAX_POWERUPS).fill("prism_shield"));
+
   useFrame((s) => {
     const t = s.clock.elapsedTime;
+    let needsUpdate = false;
     for (let i = 0; i < MAX_POWERUPS; i++) {
       const g = refs.current[i]; const pw = poolRef.current[i];
       if (!g) continue;
       if (!pw || !pw.active) { g.visible = false; continue; }
       g.visible = true;
       g.position.set(pw.x, pw.y, 0);
-      g.rotation.y = t * 2;
-      g.scale.setScalar(0.8 + Math.sin(t * 3 + i) * 0.1);
-      const col = PWR_COLORS[pw.type];
-      g.children.forEach(c => {
-        const m = (c as THREE.Mesh).material;
-        if (m && 'color' in m) (m as THREE.MeshBasicMaterial).color.set(col);
-        if (m && 'emissive' in m) (m as THREE.MeshStandardMaterial).emissive.set(col);
-      });
+      g.rotation.y = t * 2.5;
+      g.scale.setScalar(0.9 + Math.sin(t * 3 + i) * 0.12);
+      if (pw.type !== lastTypes.current[i]) {
+        lastTypes.current[i] = pw.type;
+        needsUpdate = true;
+      }
     }
+    if (needsUpdate) setTypes([...lastTypes.current]);
   });
+
   return (<>{Array.from({ length: MAX_POWERUPS }).map((_, i) => (
     <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
-      <mesh>
-        <octahedronGeometry args={[.4, 1]} />
-        <meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0.9} metalness={.7} roughness={.15} />
-      </mesh>
-      <mesh>
-        <torusGeometry args={[.55, .03, 8, 24]} />
-        <meshBasicMaterial transparent opacity={.5} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
+      <PowerUpShape type={types[i]} />
     </group>
   ))}</>);
 }
@@ -468,7 +552,8 @@ function FixedCam({ shake }: { shake: React.MutableRefObject<number> }) {
    Game World — Cosmic Defender (top-down shooter)
    ═══════════════════════════════════════════════════ */
 
-function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProps) {
+function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedId }: GameProps) {
+  const scoreMult = hasMintedId ? 2 : 1;
   // Ship state
   const shipPos = useRef({ x: 0, y: -HALF_H + 4 });
   const inputDir = useRef({ x: 0, y: 0 });
@@ -655,7 +740,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
       // All 9 levels complete — game over with victory score
       if (!overRef.current) {
         overRef.current = true;
-        scoreRef.current += 1000; // completion bonus
+        scoreRef.current += 50 * scoreMult; // completion bonus
         onScore(scoreRef.current);
         onGameOver(scoreRef.current, coinBank.current);
       }
@@ -692,10 +777,10 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
           waveTimer.current = 0;
           if (waveIdx.current >= lvl.waves.length) {
             levelComplete.current = true;
-            levelPause.current = 2.0;
-            const bonus = lvl.id * 100;
+            levelPause.current = 0.3;
+            const bonus = lvl.id * 5 * scoreMult;
             scoreRef.current += bonus;
-            coinBank.current += lvl.id * 10;
+            coinBank.current += lvl.id * 2 * scoreMult;
             onScore(scoreRef.current);
             onCoins(coinBank.current);
           }
@@ -858,17 +943,17 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
         pw.active = false;
         shake.current = Math.max(shake.current, .2);
         switch (pw.type) {
-          case "firerate": firerateT.current = FIRERATE_DUR; break;
-          case "double": doubleT.current = DOUBLE_DUR; break;
-          case "rocket": rocketAmmo.current += ROCKET_AMMO; break;
-          case "shield": shieldActive.current = true; shieldHits.current = 3; break;
-          case "bomb":
+          case "quantum_core": firerateT.current = FIRERATE_DUR; break;
+          case "photon_burst": doubleT.current = DOUBLE_DUR; break;
+          case "nova_rockets": rocketAmmo.current += ROCKET_AMMO; break;
+          case "prism_shield": shieldActive.current = true; shieldHits.current = 3; break;
+          case "nebula_bomb":
             // Kill all enemies on screen
             for (const e of enemies.current) {
               if (e.active) {
                 addExplosion(smallExplosions.current, e.x, e.y, ENEMY_STATS[e.type].color);
-                scoreRef.current += ENEMY_STATS[e.type].score;
-                coinBank.current += Math.floor(ENEMY_STATS[e.type].score / 5);
+                scoreRef.current += ENEMY_STATS[e.type].score * scoreMult;
+                coinBank.current += Math.max(1, Math.floor(ENEMY_STATS[e.type].score * scoreMult / 5));
                 e.active = false;
               }
             }
@@ -899,10 +984,10 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
             // Score + combo
             combo.current++;
             comboTimer.current = 3;
-            const mult = Math.min(combo.current, 10);
-            const pts = ENEMY_STATS[e.type].score * mult;
+            const mult = Math.min(combo.current, 3);
+            const pts = ENEMY_STATS[e.type].score * mult * scoreMult;
             scoreRef.current += pts;
-            coinBank.current += Math.max(1, Math.floor(pts / 10));
+            coinBank.current += Math.max(1, Math.floor(pts / 5));
             onScore(scoreRef.current); onCoins(coinBank.current);
             shake.current = Math.max(shake.current, e.type === "boss" ? 1.5 : .3);
             // Drop powerup (15% chance, higher for bosses)
@@ -956,7 +1041,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
           if (e.hp <= 0) {
             e.active = false;
             addExplosion(smallExplosions.current, e.x, e.y, ENEMY_STATS[e.type].color);
-            scoreRef.current += ENEMY_STATS[e.type].score;
+            scoreRef.current += ENEMY_STATS[e.type].score * scoreMult;
             onScore(scoreRef.current);
           }
         } else {

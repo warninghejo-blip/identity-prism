@@ -17,6 +17,7 @@ export interface GameProps {
   gameState: GameState;
   traits: WalletTraits | null;
   walletScore: number;
+  hasMintedId?: boolean;
 }
 
 export interface AsteroidData {

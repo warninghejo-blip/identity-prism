@@ -17,6 +17,7 @@ interface GameProps {
   gameState: GameState;
   traits: WalletTraits | null;
   walletScore: number;
+  hasMintedId?: boolean;
 }
 
 interface AsteroidData {
@@ -838,7 +839,8 @@ function AsteroidInstances({ pool, geos }: {
   );
 }
 
-function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProps) {
+function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedId }: GameProps) {
+  const scoreMult = hasMintedId ? 2 : 1;
   const asteroidPool = useRef<AsteroidData[]>([]);
 
   useMemo(() => {
@@ -1028,7 +1030,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
     const dt = frameDt;
     const el = elapsed.current;
 
-    const sc = Math.floor(el) + bonusPoints.current;
+    const sc = (Math.floor(el) + bonusPoints.current) * scoreMult;
     if (sc !== scoreRef.current) { scoreRef.current = sc; onScore(sc); }
 
     // Time-based coin accumulation: 1/sec base, +1/sec every 30s
@@ -1164,7 +1166,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProp
           shake.current = 2; 
           explPos.current = { x: sx, y: sy }; 
           explAct.current = true;
-          onGameOver(Math.floor(el) + bonusPoints.current, coinBank.current); 
+          onGameOver((Math.floor(el) + bonusPoints.current) * scoreMult, coinBank.current); 
           return;
         }
         const hd = Math.sqrt(dd2);

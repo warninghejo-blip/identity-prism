@@ -608,18 +608,18 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </div>
 
               {/* STATS CONTENT */}
-              <TabsContent value="stats" className="flex-1 overflow-y-auto px-6 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
-                {/* Unified 3×3 stats grid */}
-                <div className="grid grid-cols-3 gap-1.5 mb-4">
-                  <StatItem icon={<Wallet className="w-3 h-3" />} label="SOL" value={`${safeTraits.solBalance.toFixed(2)}`} captureKey="sol" accent />
-                  <StatItem icon={<Clock className="w-3 h-3" />} label="Age" value={`${safeTraits.walletAgeDays}d`} captureKey="age" accent />
-                  <StatItem icon={<Activity className="w-3 h-3" />} label="Txns" value={safeTraits.txCount > 999 ? `${(safeTraits.txCount / 1000).toFixed(1)}k` : safeTraits.txCount.toString()} captureKey="tx" />
-                  <StatItem icon={<Trophy className="w-3 h-3" />} label="NFTs" value={safeTraits.nftCount.toString()} captureKey="nfts" />
-                  <StatItem icon={<Gem className="w-3 h-3" />} label="Tokens" value={safeTraits.uniqueTokenCount.toString()} captureKey="tokens" />
-                  <StatItem icon={<Flame className="w-3 h-3" />} label="Tx/Day" value={(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)} captureKey="activity" />
-                  <StatItem icon={<Hourglass className="w-3 h-3" />} label="Dormancy" value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d` : 'Active'} captureKey="dormancy" />
-                  <StatItem icon={<Shield className="w-3 h-3" />} label="Assets" value={safeTraits.totalAssetsCount > 999 ? `${(safeTraits.totalAssetsCount / 1000).toFixed(1)}k` : safeTraits.totalAssetsCount.toString()} captureKey="assets" />
-                  <StatItem icon={<Skull className="w-3 h-3" />} label="Memes" value={safeTraits.memeCoinsHeld?.length?.toString() ?? '0'} captureKey="memes" />
+              <TabsContent value="stats" className="flex-1 overflow-y-auto px-5 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
+                {/* 2-col stats grid with rich metric cards */}
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="SOL Balance" value={`${safeTraits.solBalance.toFixed(2)}`} captureKey="sol" accent bar={Math.min(safeTraits.solBalance / 100, 1)} />
+                  <StatItem icon={<Clock className="w-3.5 h-3.5" />} label="Wallet Age" value={`${safeTraits.walletAgeDays}d`} captureKey="age" accent bar={Math.min(safeTraits.walletAgeDays / 1500, 1)} />
+                  <StatItem icon={<Activity className="w-3.5 h-3.5" />} label="Transactions" value={safeTraits.txCount > 999 ? `${(safeTraits.txCount / 1000).toFixed(1)}k` : safeTraits.txCount.toString()} captureKey="tx" bar={Math.min(safeTraits.txCount / 10000, 1)} />
+                  <StatItem icon={<Trophy className="w-3.5 h-3.5" />} label="NFT Collection" value={safeTraits.nftCount.toString()} captureKey="nfts" bar={Math.min(safeTraits.nftCount / 100, 1)} />
+                  <StatItem icon={<Gem className="w-3.5 h-3.5" />} label="Unique Tokens" value={safeTraits.uniqueTokenCount.toString()} captureKey="tokens" bar={Math.min(safeTraits.uniqueTokenCount / 50, 1)} />
+                  <StatItem icon={<Flame className="w-3.5 h-3.5" />} label="Daily Activity" value={`${(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)} tx/d`} captureKey="activity" bar={Math.min((safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)) / 10, 1)} />
+                  <StatItem icon={<Hourglass className="w-3.5 h-3.5" />} label="Dormancy" value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d ago` : 'Active'} captureKey="dormancy" bar={safeTraits.daysSinceLastTx ? Math.max(0, 1 - safeTraits.daysSinceLastTx / 365) : 1} />
+                  <StatItem icon={<Shield className="w-3.5 h-3.5" />} label="Total Assets" value={safeTraits.totalAssetsCount > 999 ? `${(safeTraits.totalAssetsCount / 1000).toFixed(1)}k` : safeTraits.totalAssetsCount.toString()} captureKey="assets" bar={Math.min(safeTraits.totalAssetsCount / 500, 1)} />
+                  <StatItem icon={<Skull className="w-3.5 h-3.5" />} label="Meme Coins" value={safeTraits.memeCoinsHeld?.length?.toString() ?? '0'} captureKey="memes" bar={Math.min((safeTraits.memeCoinsHeld?.length ?? 0) / 20, 1)} />
                 </div>
 
                 {/* Score History — premium sparkline */}
@@ -749,23 +749,34 @@ function StatItem({
   value,
   captureKey,
   accent,
+  bar = 0,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   captureKey?: string;
   accent?: boolean;
+  bar?: number;
 }) {
+  const pct = Math.round(Math.max(0, Math.min(1, bar)) * 100);
   return (
-    <div className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg border transition-colors ${accent ? 'bg-cyan-500/[0.06] border-cyan-500/12 hover:bg-cyan-500/10' : 'bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.06]'}`}>
-      <div className={`${accent ? 'text-cyan-400/80' : 'text-white/25'} mb-0.5`}>{icon}</div>
+    <div className={`relative overflow-hidden rounded-xl border p-2.5 transition-colors ${accent ? 'bg-cyan-500/[0.04] border-cyan-500/10 hover:bg-cyan-500/[0.08]' : 'bg-white/[0.02] border-white/[0.05] hover:bg-white/[0.05]'}`}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <div className={`shrink-0 flex items-center justify-center w-6 h-6 rounded-md ${accent ? 'bg-cyan-500/10 text-cyan-400' : 'bg-white/5 text-white/30'}`}>{icon}</div>
+        <span className="text-[9px] text-white/30 uppercase tracking-wider leading-none truncate">{label}</span>
+      </div>
       <span
         data-stat-key={captureKey}
-        className={`capture-value text-[11px] font-bold font-mono leading-none ${accent ? 'text-cyan-200' : 'text-white/85'}`}
+        className={`capture-value text-sm font-bold font-mono leading-none block ${accent ? 'text-cyan-200' : 'text-white/90'}`}
       >
         {value}
       </span>
-      <span className="text-[7px] text-white/20 uppercase tracking-wider mt-0.5 leading-none">{label}</span>
+      <div className="mt-1.5 h-[3px] w-full rounded-full bg-white/[0.04] overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ${accent ? 'bg-gradient-to-r from-cyan-500/60 to-cyan-400/40' : 'bg-gradient-to-r from-white/20 to-white/10'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }
@@ -779,7 +790,11 @@ type BadgeKey =
   | 'titan'
   | 'maxi'
   | 'seeker'
-  | 'visionary';
+  | 'visionary'
+  | 'bluechip'
+  | 'defi_king'
+  | 'meme_lord'
+  | 'diamond_hands';
 
 type BadgeItem = {
   key: BadgeKey;
@@ -801,6 +816,10 @@ const BADGE_TEXTURES: Record<BadgeKey, string> = {
   maxi: badgeTexture('Solana Maxi.png'),
   seeker: badgeTexture('Seeker of Truth.png'),
   visionary: badgeTexture('Visionary.png'),
+  bluechip: badgeTexture('Blue Chip.png'),
+  defi_king: badgeTexture('DeFi King.png'),
+  meme_lord: badgeTexture('Meme Lord.png'),
+  diamond_hands: badgeTexture('Diamond Hands.png'),
 };
 
 function getBadgeItems(traits: WalletTraits): BadgeItem[] {
@@ -867,6 +886,34 @@ function getBadgeItems(traits: WalletTraits): BadgeItem[] {
       isActive: traits.hasPreorder, 
       texture: BADGE_TEXTURES.visionary,
       description: 'Foresaw the future of the ecosystem.'
+    },
+    { 
+      key: 'bluechip', 
+      label: 'Blue Chip', 
+      isActive: traits.isBlueChip, 
+      texture: BADGE_TEXTURES.bluechip,
+      description: 'Holds tokens from blue-chip Solana collections.'
+    },
+    { 
+      key: 'defi_king', 
+      label: 'DeFi King', 
+      isActive: traits.isDeFiKing, 
+      texture: BADGE_TEXTURES.defi_king,
+      description: 'A master of decentralized finance protocols.'
+    },
+    { 
+      key: 'meme_lord', 
+      label: 'Meme Lord', 
+      isActive: traits.isMemeLord, 
+      texture: BADGE_TEXTURES.meme_lord,
+      description: 'Wields the power of meme coins with reckless abandon.'
+    },
+    { 
+      key: 'diamond_hands', 
+      label: 'Diamond Hands', 
+      isActive: traits.diamondHands, 
+      texture: BADGE_TEXTURES.diamond_hands,
+      description: 'Never sells. Holds through every storm.'
     },
   ];
 }
