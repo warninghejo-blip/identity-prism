@@ -152,6 +152,7 @@ function writeWalletCoins(walletAddress: string, coins: number) {
    ═══════════════════════════════════════════════════ */
 
 const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
+const DEFENDER_LEADERBOARD_KEY = "identity_prism_defender_board_v1";
 const ONCHAIN_BONUS_MULTIPLIER = 1.5;
 const COIN_BONUS = 25;
 async function syncCoinsToServer(walletAddress: string, coins: number, delta: number): Promise<void> {
@@ -229,6 +230,20 @@ const formatTime = (seconds: number) => {
   const mins = Math.floor(total / 60);
   const secs = total % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+};
+
+const formatPoints = (pts: number) => pts.toLocaleString();
+
+const readDefenderLeaderboard = (): LeaderboardEntry[] => {
+  try {
+    const raw = window.localStorage.getItem(DEFENDER_LEADERBOARD_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as LeaderboardEntry[];
+  } catch { return []; }
+};
+
+const writeDefenderLeaderboard = (entries: LeaderboardEntry[]) => {
+  try { window.localStorage.setItem(DEFENDER_LEADERBOARD_KEY, JSON.stringify(entries)); } catch { /* */ }
 };
 
 const readLeaderboard = (): LeaderboardEntry[] => {
@@ -330,6 +345,7 @@ const PrismLeague = () => {
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
+  const [defenderLeaderboard, setDefenderLeaderboard] = useState<LeaderboardEntry[]>(() => readDefenderLeaderboard());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
   const [isJumpingBack, setIsJumpingBack] = useState(false);
@@ -613,26 +629,42 @@ const PrismLeague = () => {
         playedAt: new Date().toISOString(),
       };
 
-      setLeaderboard((prev) => {
-        const existing = prev.findIndex((e) => e.address === playerAddr);
-        let next = [...prev];
-        if (existing !== -1) {
-          if (finalScore > next[existing].score) next[existing] = newEntry;
-        } else {
-          next.push(newEntry);
-        }
-        next.sort((a, b) => b.score - a.score);
-        next = next.slice(0, 20);
-        writeLeaderboard(next);
-        return next;
-      });
+      if (gameMode === "destroyer") {
+        setDefenderLeaderboard((prev) => {
+          const existing = prev.findIndex((e) => e.address === playerAddr);
+          let next = [...prev];
+          if (existing !== -1) {
+            if (finalScore > next[existing].score) next[existing] = newEntry;
+          } else {
+            next.push(newEntry);
+          }
+          next.sort((a, b) => b.score - a.score);
+          next = next.slice(0, 20);
+          writeDefenderLeaderboard(next);
+          return next;
+        });
+      } else {
+        setLeaderboard((prev) => {
+          const existing = prev.findIndex((e) => e.address === playerAddr);
+          let next = [...prev];
+          if (existing !== -1) {
+            if (finalScore > next[existing].score) next[existing] = newEntry;
+          } else {
+            next.push(newEntry);
+          }
+          next.sort((a, b) => b.score - a.score);
+          next = next.slice(0, 20);
+          writeLeaderboard(next);
+          return next;
+        });
+      }
 
       // Persist to server leaderboard
       submitToServerLeaderboard({ address: playerAddr, score: finalScore, playedAt: newEntry.playedAt });
 
       if (finalScore > highScore) {
         setHighScore(finalScore);
-        toast.success(`New High Score: ${formatTime(finalScore)}!`);
+        toast.success(`New High Score: ${gameMode === "destroyer" ? formatPoints(finalScore) : formatTime(finalScore)}!`);
       }
     },
     [address, highScore, mbSeed, mbSlot]
@@ -745,7 +777,9 @@ const PrismLeague = () => {
   };
 
   const handleShare = () => {
-    const text = `I survived ${formatTime(score)} in Orbit Survival on @IdentityPrism!${lastTxSignature ? `\n\nVerified on-chain: solscan.io/tx/${lastTxSignature.slice(0, 16)}...` : ""}\n\nCan you beat me? Play now:`;
+    const text = gameMode === "destroyer"
+      ? `I scored ${formatPoints(score)} pts in Cosmic Defender on @IdentityPrism!${lastTxSignature ? `\n\nVerified on-chain: solscan.io/tx/${lastTxSignature.slice(0, 16)}...` : ""}\n\nCan you beat me? Play now:`
+      : `I survived ${formatTime(score)} in Orbit Survival on @IdentityPrism!${lastTxSignature ? `\n\nVerified on-chain: solscan.io/tx/${lastTxSignature.slice(0, 16)}...` : ""}\n\nCan you beat me? Play now:`;
     const url = "https://identityprism.xyz/game";
     const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`;
     if (isCapacitor || isMobile) {
@@ -863,11 +897,11 @@ const PrismLeague = () => {
           {gameState === "playing" && (
             <div className="absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center">
               <span className="text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]">
-                {formatTime(score)}
+                {gameMode === "destroyer" ? formatPoints(score) : formatTime(score)}
               </span>
               {highScore > 0 && (
                 <span className="text-[10px] text-cyan-400/60 uppercase tracking-widest font-semibold mt-0.5">
-                  Best: {formatTime(highScore)}
+                  Best: {gameMode === "destroyer" ? formatPoints(highScore) : formatTime(highScore)}
                 </span>
               )}
 
@@ -961,7 +995,7 @@ const PrismLeague = () => {
                   </div>
                   <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-3 text-center">
                     <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Stats</div>
-                    <div className="text-lg font-bold text-cyan-400 tabular-nums">{playerStats.gamesPlayed > 0 ? formatTime(playerStats.bestScore) : "--:--"}</div>
+                    <div className="text-lg font-bold text-cyan-400 tabular-nums">{gameMode === "destroyer" ? (defenderStats.gamesPlayed > 0 ? formatPoints(defenderStats.bestScore) : "0") : (playerStats.gamesPlayed > 0 ? formatTime(playerStats.bestScore) : "--:--")}</div>
                     <div className="text-[9px] text-white/30 mt-0.5">
                       {playerStats.gamesPlayed > 0 ? `${playerStats.gamesPlayed} games` : "No games yet"}
                     </div>
@@ -1026,16 +1060,18 @@ const PrismLeague = () => {
                   </button>
                 )}
 
-                {/* Achievements toggle — always visible */}
+                {/* Achievements toggle — mode-aware */}
                 {(() => {
-                  const claimable = achievements.filter((a) => a.unlocked && !a.claimed).length;
-                  return (
+                  const isDefMode = gameMode === "destroyer";
+                  const achList = isDefMode ? defenderAchievements : achievements;
+                  const claimable = achList.filter((a) => a.unlocked && !a.claimed).length;
+                  return (<>
                     <button
                       className="mt-4 flex items-center gap-1.5 text-xs text-yellow-400/60 hover:text-yellow-300 transition-colors"
                       onClick={() => setShowAchievements(!showAchievements)}
                     >
                       <Award className="w-3.5 h-3.5" />
-                      Achievements ({achievements.filter((a) => a.unlocked).length}/{achievements.length})
+                      {isDefMode ? "Defender" : "Orbit"} Achievements ({achList.filter((a) => a.unlocked).length}/{achList.length})
                       {claimable > 0 && (
                         <span className="px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300 text-[9px] font-bold animate-pulse">
                           {claimable} to claim
@@ -1043,81 +1079,85 @@ const PrismLeague = () => {
                       )}
                       {showAchievements ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                     </button>
-                  );
-                })()}
-                {showAchievements && (
-                  <div className="w-full mt-2 space-y-1.5">
-                    {achievements.map((ach) => {
-                      const progress = getAchievementProgress(ach);
-                      const reward = ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0;
-                      const canClaim = ach.unlocked && !ach.claimed;
-                      return (
-                        <div
-                          key={ach.id}
-                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${
-                            canClaim
-                              ? "bg-yellow-500/[0.06] border-yellow-500/25"
-                              : ach.unlocked
-                              ? "bg-white/[0.04] border-white/[0.1]"
-                              : "bg-white/[0.01] border-white/[0.04] opacity-50"
-                          }`}
-                        >
-                          <img
-                            src={ach.image}
-                            alt={ach.name}
-                            className={`w-10 h-10 rounded-md object-cover border ${ach.unlocked ? 'border-white/20' : 'border-white/5 grayscale'}`}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-white/80">{ach.name}</span>
-                              <span
-                                className="text-[9px] px-1 py-px rounded-full border uppercase font-bold"
-                                style={{
-                                  color: ACH_TIER_COLORS[ach.tier],
-                                  borderColor: ACH_TIER_COLORS[ach.tier] + "60",
-                                }}
-                              >
-                                {ach.tier}
-                              </span>
-                              {reward > 0 && (
-                                <span className="text-[9px] text-yellow-400/60 ml-auto">+{reward}</span>
-                              )}
-                            </div>
-                            <div className="text-white/40">{ach.description}</div>
-                            {!ach.unlocked && (
-                              <div className="mt-1 h-1 rounded-full bg-white/10 overflow-hidden">
-                                <div
-                                  className="h-full bg-cyan-500/60 rounded-full transition-all"
-                                  style={{ width: `${progress * 100}%` }}
-                                />
-                              </div>
-                            )}
-                          </div>
-                          {canClaim ? (
-                            <button
-                              className="shrink-0 px-2.5 py-1 rounded-md bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors"
-                              onClick={() => handleClaimAchievement(ach.id)}
+                    {showAchievements && (
+                      <div className="w-full mt-2 space-y-1.5">
+                        {achList.map((ach) => {
+                          const progress = isDefMode ? getDefenderAchievementProgress(ach as DefenderAchievement) : getAchievementProgress(ach as Achievement);
+                          const reward = isDefMode ? (DEFENDER_COIN_REWARDS[(ach as DefenderAchievement).tier] ?? 0) : (ACHIEVEMENT_COIN_REWARDS[(ach as Achievement).tier] ?? 0);
+                          const canClaim = ach.unlocked && !ach.claimed;
+                          return (
+                            <div
+                              key={ach.id}
+                              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${
+                                canClaim
+                                  ? "bg-yellow-500/[0.06] border-yellow-500/25"
+                                  : ach.unlocked
+                                  ? "bg-white/[0.04] border-white/[0.1]"
+                                  : "bg-white/[0.01] border-white/[0.04] opacity-50"
+                              }`}
                             >
-                              Claim
-                            </button>
-                          ) : ach.claimed ? (
-                            <span className="text-green-400 text-[10px] shrink-0">✓ Claimed</span>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                              <img
+                                src={ach.image}
+                                alt={ach.name}
+                                className={`w-10 h-10 rounded-md object-cover border ${ach.unlocked ? 'border-white/20' : 'border-white/5 grayscale'}`}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-white/80">{ach.name}</span>
+                                  <span
+                                    className="text-[9px] px-1 py-px rounded-full border uppercase font-bold"
+                                    style={{
+                                      color: ACH_TIER_COLORS[ach.tier],
+                                      borderColor: ACH_TIER_COLORS[ach.tier] + "60",
+                                    }}
+                                  >
+                                    {ach.tier}
+                                  </span>
+                                  {reward > 0 && (
+                                    <span className="text-[9px] text-yellow-400/60 ml-auto">+{reward}</span>
+                                  )}
+                                </div>
+                                <div className="text-white/40">{ach.description}</div>
+                                {!ach.unlocked && (
+                                  <div className="mt-1 h-1 rounded-full bg-white/10 overflow-hidden">
+                                    <div
+                                      className="h-full bg-cyan-500/60 rounded-full transition-all"
+                                      style={{ width: `${progress * 100}%` }}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                              {canClaim ? (
+                                <button
+                                  className="shrink-0 px-2.5 py-1 rounded-md bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors"
+                                  onClick={() => handleClaimAchievement(ach.id)}
+                                >
+                                  Claim
+                                </button>
+                              ) : ach.claimed ? (
+                                <span className="text-green-400 text-[10px] shrink-0">✓ Claimed</span>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>);
+                })()}
 
-                {/* On-Chain Leaderboard */}
-                {leaderboard.length > 0 && (
+                {/* On-Chain Leaderboard — mode-aware */}
+                {(() => {
+                  const isDefMode = gameMode === "destroyer";
+                  const board = isDefMode ? defenderLeaderboard : leaderboard;
+                  if (board.length === 0) return null;
+                  return (
                   <>
                     <button
                       className="mt-4 flex items-center gap-1.5 text-xs text-cyan-500/60 hover:text-cyan-300 transition-colors"
                       onClick={() => setShowLeaderboard(!showLeaderboard)}
                     >
                       <Trophy className="w-3.5 h-3.5" />
-                      On-Chain Leaderboard ({leaderboard.length})
+                      {isDefMode ? "Defender" : "Orbit"} Leaderboard ({board.length})
                       {showLeaderboard ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                     </button>
                     <div className={`w-full mt-2 ${showLeaderboard ? "" : "hidden"}`}>
@@ -1125,12 +1165,12 @@ const PrismLeague = () => {
                         <div className="px-3 py-2 border-b border-white/[0.05] flex items-center justify-between">
                           <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold">Rank</span>
                           <div className="flex items-center gap-4">
-                            <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold">Time</span>
+                            <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold">{isDefMode ? "Score" : "Time"}</span>
                             <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold w-12 text-right">Status</span>
                           </div>
                         </div>
                         <div className="divide-y divide-white/[0.03]">
-                          {leaderboard.slice(0, 10).map((entry, i) => {
+                          {board.slice(0, 10).map((entry, i) => {
                             const isCurrentPlayer = entry.address === (address || "anonymous");
                             const rankMedal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
                             return (
@@ -1154,7 +1194,7 @@ const PrismLeague = () => {
                                   )}
                                 </div>
                                 <div className="flex items-center gap-3">
-                                  <span className="font-bold text-white/80 tabular-nums">{formatTime(entry.score)}</span>
+                                  <span className="font-bold text-white/80 tabular-nums">{isDefMode ? formatPoints(entry.score) : formatTime(entry.score)}</span>
                                   {entry.txSignature ? (
                                     <a
                                       href={`https://solscan.io/tx/${entry.txSignature}`}
@@ -1174,7 +1214,7 @@ const PrismLeague = () => {
                             );
                           })}
                         </div>
-                        {leaderboard.some((e) => e.txSignature) && (
+                        {board.some((e) => e.txSignature) && (
                           <div className="px-3 py-1.5 border-t border-white/[0.05] flex items-center gap-1 text-[9px] text-green-400/40">
                             <Shield className="w-2.5 h-2.5" />
                             Scores verified via Solana Memo transactions
@@ -1183,7 +1223,8 @@ const PrismLeague = () => {
                       </div>
                     </div>
                   </>
-                )}
+                  );
+                })()}
               </div>
               </div>
             </div>
@@ -1194,12 +1235,12 @@ const PrismLeague = () => {
             <div className="absolute inset-0 flex items-center justify-center pointer-events-auto animate-in fade-in duration-300">
               <div className="league-scroll max-w-sm w-full mx-4 p-6 md:p-8 rounded-2xl border border-red-500/20 bg-black/90 backdrop-blur-xl shadow-[0_0_80px_rgba(239,68,68,0.15)] flex flex-col items-center text-center max-h-[85vh] overflow-y-auto league-menu-shell league-menu-shell--danger">
                 <div className="text-red-400 font-black text-4xl md:text-5xl mb-1 tracking-tighter uppercase">
-                  Orbit Broken
+                  {gameMode === "destroyer" ? "Mission Failed" : "Orbit Broken"}
                 </div>
-                <div className="text-sm text-white/40 mb-4">Asteroids took you out of orbit…</div>
+                <div className="text-sm text-white/40 mb-4">{gameMode === "destroyer" ? "Your ship was destroyed…" : "Asteroids took you out of orbit…"}</div>
 
                 <div className="text-3xl font-black text-white mb-1 tabular-nums">
-                  {formatTime(score)}
+                  {gameMode === "destroyer" ? formatPoints(score) : formatTime(score)}
                 </div>
                 {score > highScore && score > 0 && (
                   <div className="text-xs text-yellow-400 font-bold uppercase tracking-widest mb-2 animate-pulse">
@@ -1207,7 +1248,7 @@ const PrismLeague = () => {
                   </div>
                 )}
                 {highScore > 0 && score <= highScore && (
-                  <div className="text-xs text-white/30 mb-2">Best: {formatTime(highScore)}</div>
+                  <div className="text-xs text-white/30 mb-2">Best: {gameMode === "destroyer" ? formatPoints(highScore) : formatTime(highScore)}</div>
                 )}
 
                 {/* Coins earned this round + rank */}

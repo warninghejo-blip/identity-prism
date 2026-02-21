@@ -697,8 +697,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 )}
 
                 <div className="bg-gradient-to-br from-cyan-900/10 to-blue-900/10 border border-cyan-500/15 rounded-2xl p-4 relative overflow-hidden text-center">
-                  <div className="absolute top-0 right-0 p-2 opacity-8">
-                    <SparklesIcon className="w-14 h-14 text-cyan-500" />
+                  <div className="absolute top-0 right-0 p-2 opacity-10">
+                    <SparklesIcon className="w-8 h-8 text-cyan-500" />
                   </div>
                   <p className="text-[9px] text-cyan-300/50 uppercase tracking-[0.15em] mb-2 font-bold">Cosmic Insight</p>
                   <p className="text-sm text-cyan-100/90 font-medium leading-relaxed italic">
@@ -769,20 +769,20 @@ function StatItem({
 }) {
   const pct = Math.round(Math.max(0, Math.min(1, bar)) * 100);
   return (
-    <div className="relative overflow-hidden rounded-xl border p-2.5 transition-colors bg-white/[0.02] border-white/[0.05] hover:bg-white/[0.05]">
+    <div className="relative overflow-hidden rounded-xl border p-2.5 transition-colors bg-cyan-500/[0.04] border-cyan-500/10 hover:bg-cyan-500/[0.08]">
       <div className="flex items-center gap-2 mb-1.5">
-        <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md bg-white/5 text-white/30">{icon}</div>
-        <span className="text-[9px] text-white/30 uppercase tracking-wider leading-none truncate">{label}</span>
+        <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md bg-cyan-500/10 text-cyan-400">{icon}</div>
+        <span className="text-[9px] text-cyan-300/40 uppercase tracking-wider leading-none truncate">{label}</span>
       </div>
       <span
         data-stat-key={captureKey}
-        className="capture-value text-sm font-bold font-mono leading-none block text-white/90"
+        className="capture-value text-sm font-bold font-mono leading-none block text-cyan-200"
       >
         {value}
       </span>
-      <div className="mt-1.5 h-[3px] w-full rounded-full bg-white/[0.04] overflow-hidden">
+      <div className="mt-1.5 h-[3px] w-full rounded-full bg-cyan-500/[0.06] overflow-hidden">
         <div
-          className="h-full rounded-full transition-all duration-700 bg-gradient-to-r from-white/20 to-white/10"
+          className="h-full rounded-full transition-all duration-700 bg-gradient-to-r from-cyan-500/60 to-cyan-400/40"
           style={{ width: `${pct}%` }}
         />
       </div>

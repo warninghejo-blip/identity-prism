@@ -467,23 +467,22 @@ export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseR
     <group ref={gRef} scale={[scale, scale, scale]}>
       <Trail width={.6 * scale} length={28} color={color} attenuation={t => Math.pow(t, 1.5)}>
         <group>
-          <mesh position={[0, .42, 0]}><coneGeometry args={[.17, .82, 16]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={.7} metalness={.92} roughness={.06} toneMapped={false} /></mesh>
-          <mesh position={[0, -.1, 0]}><cylinderGeometry args={[.21, .27, .72, 16]} /><meshStandardMaterial color="#e8ecf0" metalness={.94} roughness={.04} emissive="#111820" emissiveIntensity={.15} /></mesh>
-          <mesh position={[0, -.05, .22]}><boxGeometry args={[.08, .55, .01]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.5} toneMapped={false} transparent opacity={.7} /></mesh>
-          <mesh position={[0, .15, .21]}><sphereGeometry args={[.15, 16, 12, 0, 6.28, 0, Math.PI * .55]} /><meshStandardMaterial color="#67e8f9" emissive="#22d3ee" emissiveIntensity={2.5} toneMapped={false} transparent opacity={.88} /></mesh>
-          <mesh position={[0, .14, .18]}><sphereGeometry args={[.09, 12, 10, 0, 6.28, 0, Math.PI * .5]} /><meshBasicMaterial color="#22d3ee" transparent opacity={.3} blending={THREE.AdditiveBlending} /></mesh>
-          <mesh position={[.42, -.08, 0]} rotation={[0, 0, -.3]}><boxGeometry args={[.6, .035, .14]} /><meshStandardMaterial color="#cbd5e1" metalness={.82} roughness={.15} /></mesh>
-          <mesh position={[-.42, -.08, 0]} rotation={[0, 0, .3]}><boxGeometry args={[.6, .035, .14]} /><meshStandardMaterial color="#cbd5e1" metalness={.82} roughness={.15} /></mesh>
-          <mesh position={[.68, -.15, 0]}><sphereGeometry args={[.04, 8, 8]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={3} toneMapped={false} /></mesh>
-          <mesh position={[-.68, -.15, 0]}><sphereGeometry args={[.04, 8, 8]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={3} toneMapped={false} /></mesh>
-          <mesh position={[.2, -.52, 0]}><cylinderGeometry args={[.06, .08, .28, 10]} /><meshStandardMaterial color="#94a3b8" metalness={.94} roughness={.06} /></mesh>
-          <mesh position={[-.2, -.52, 0]}><cylinderGeometry args={[.06, .08, .28, 10]} /><meshStandardMaterial color="#94a3b8" metalness={.94} roughness={.06} /></mesh>
-          <mesh position={[.2, -.66, 0]}><ringGeometry args={[.04, .075, 16]} /><meshBasicMaterial color="#ff8844" transparent opacity={.8} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} /></mesh>
-          <mesh position={[-.2, -.66, 0]}><ringGeometry args={[.04, .075, 16]} /><meshBasicMaterial color="#ff8844" transparent opacity={.8} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} /></mesh>
-          <mesh position={[.2, -.72, 0]}><sphereGeometry args={[.07, 8, 8]} /><meshStandardMaterial color="#fb923c" emissive="#f97316" emissiveIntensity={6} toneMapped={false} /></mesh>
-          <mesh position={[-.2, -.72, 0]}><sphereGeometry args={[.07, 8, 8]} /><meshStandardMaterial color="#fb923c" emissive="#f97316" emissiveIntensity={6} toneMapped={false} /></mesh>
-          <mesh position={[0, .82, 0]}><cylinderGeometry args={[.008, .008, .12, 4]} /><meshStandardMaterial color="#94a3b8" metalness={.9} roughness={.1} /></mesh>
-          <mesh position={[0, .89, 0]}><sphereGeometry args={[.018, 6, 6]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} /></mesh>
+          <mesh position={[0, .05, 0]}><capsuleGeometry args={[.18, .65, 16, 24]} /><meshStandardMaterial color="#d0d8e0" metalness={.96} roughness={.03} envMapIntensity={1.2} /></mesh>
+          <mesh position={[0, .58, 0]}><coneGeometry args={[.18, .38, 24]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={.6} metalness={.95} roughness={.04} toneMapped={false} /></mesh>
+          <mesh position={[0, .22, .18]}><sphereGeometry args={[.13, 24, 16, 0, Math.PI * 2, 0, Math.PI * .5]} /><meshStandardMaterial color="#67e8f9" emissive="#22d3ee" emissiveIntensity={3} toneMapped={false} transparent opacity={.85} metalness={.3} roughness={.1} /></mesh>
+          <mesh position={[.38, -.04, 0]} rotation={[0, 0, -.25]}><capsuleGeometry args={[.018, .55, 8, 12]} /><meshStandardMaterial color="#b8c4d0" metalness={.88} roughness={.08} /></mesh>
+          <mesh position={[-.38, -.04, 0]} rotation={[0, 0, .25]}><capsuleGeometry args={[.018, .55, 8, 12]} /><meshStandardMaterial color="#b8c4d0" metalness={.88} roughness={.08} /></mesh>
+          <mesh position={[.62, -.13, 0]}><sphereGeometry args={[.05, 16, 16]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} /></mesh>
+          <mesh position={[-.62, -.13, 0]}><sphereGeometry args={[.05, 16, 16]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} /></mesh>
+          <mesh position={[.12, -.38, 0]} rotation={[0, 0, -.15]}><capsuleGeometry args={[.012, .2, 6, 8]} /><meshStandardMaterial color="#9ca8b8" metalness={.9} roughness={.06} /></mesh>
+          <mesh position={[-.12, -.38, 0]} rotation={[0, 0, .15]}><capsuleGeometry args={[.012, .2, 6, 8]} /><meshStandardMaterial color="#9ca8b8" metalness={.9} roughness={.06} /></mesh>
+          <mesh position={[.18, -.48, 0]}><capsuleGeometry args={[.05, .22, 12, 16]} /><meshStandardMaterial color="#8090a4" metalness={.95} roughness={.04} /></mesh>
+          <mesh position={[-.18, -.48, 0]}><capsuleGeometry args={[.05, .22, 12, 16]} /><meshStandardMaterial color="#8090a4" metalness={.95} roughness={.04} /></mesh>
+          <mesh position={[.18, -.64, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.055, .015, 12, 24]} /><meshBasicMaterial color="#ff8833" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+          <mesh position={[-.18, -.64, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.055, .015, 12, 24]} /><meshBasicMaterial color="#ff8833" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+          <mesh position={[.18, -.68, 0]}><sphereGeometry args={[.045, 12, 12]} /><meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={8} toneMapped={false} /></mesh>
+          <mesh position={[-.18, -.68, 0]}><sphereGeometry args={[.045, 12, 12]} /><meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={8} toneMapped={false} /></mesh>
+          <mesh position={[0, -.05, .19]}><capsuleGeometry args={[.008, .5, 4, 8]} /><meshBasicMaterial color={color} transparent opacity={.6} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
         </group>
       </Trail>
       <mesh ref={shRef}><ringGeometry args={[.85, 1, 32]} /><meshBasicMaterial color={color} transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
