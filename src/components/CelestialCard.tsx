@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
-import * as THREE from 'three';
 import { Activity, Clock, Info, Trophy, Wallet, Sparkles as SparklesIcon, Zap, Shield, Flame, Hourglass, RotateCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -37,33 +36,6 @@ function FrameDetector({ onReady, texturesReady }: { onReady?: () => void; textu
     }
   });
   return null;
-}
-
-/** Tiny ship orbiting the planet on the card front */
-function CardShip({ color }: { color: string }) {
-  const ref = useRef<THREE.Group>(null);
-  useFrame((s) => {
-    if (!ref.current) return;
-    const t = s.clock.elapsedTime * 0.4;
-    const r = 4.2;
-    ref.current.position.set(Math.cos(t) * r, Math.sin(t * 0.7) * 1.2 + 0.5, Math.sin(t) * r);
-    ref.current.rotation.y = -t + Math.PI / 2;
-    ref.current.rotation.z = Math.sin(t * 0.7) * 0.15;
-  });
-  return (
-    <group ref={ref} scale={[0.22, 0.22, 0.22]}>
-      <mesh position={[0, .05, 0]}><capsuleGeometry args={[.18, .65, 8, 12]} /><meshStandardMaterial color="#d0d8e0" metalness={.95} roughness={.05} /></mesh>
-      <mesh position={[0, .55, 0]}><coneGeometry args={[.18, .35, 12]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={.8} metalness={.9} roughness={.06} toneMapped={false} /></mesh>
-      <mesh position={[0, .2, .16]}><sphereGeometry args={[.1, 12, 8, 0, Math.PI * 2, 0, Math.PI * .5]} /><meshStandardMaterial color="#67e8f9" emissive="#22d3ee" emissiveIntensity={3} toneMapped={false} transparent opacity={.85} /></mesh>
-      <mesh position={[.35, -.04, 0]} rotation={[0, 0, -.25]}><capsuleGeometry args={[.015, .45, 4, 6]} /><meshStandardMaterial color="#b8c4d0" metalness={.85} roughness={.1} /></mesh>
-      <mesh position={[-.35, -.04, 0]} rotation={[0, 0, .25]}><capsuleGeometry args={[.015, .45, 4, 6]} /><meshStandardMaterial color="#b8c4d0" metalness={.85} roughness={.1} /></mesh>
-      <mesh position={[.55, -.12, 0]}><sphereGeometry args={[.04, 8, 8]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} /></mesh>
-      <mesh position={[-.55, -.12, 0]}><sphereGeometry args={[.04, 8, 8]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} /></mesh>
-      <mesh position={[.16, -.55, 0]}><sphereGeometry args={[.04, 6, 6]} /><meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={6} toneMapped={false} /></mesh>
-      <mesh position={[-.16, -.55, 0]}><sphereGeometry args={[.04, 6, 6]} /><meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={6} toneMapped={false} /></mesh>
-      <pointLight intensity={1} color={color} distance={3} />
-    </group>
-  );
 }
 
 interface CelestialCardProps {
@@ -532,7 +504,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 </Suspense>
               </Float>
 
-              {!isCapture && <CardShip color={TIER_COLORS[safeTraits.planetTier] || '#22d3ee'} />}
               <Environment preset="city" />
               <OrbitControls
                 enableZoom
@@ -646,8 +617,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   <StatItem icon={<Trophy className="w-3.5 h-3.5" />} label="NFTs" value={safeTraits.nftCount.toString()} captureKey="nfts" bar={Math.min(safeTraits.nftCount / 100, 1)} />
                   <StatItem icon={<Flame className="w-3.5 h-3.5" />} label="Daily Activity" value={`${(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)} tx/d`} captureKey="activity" bar={Math.min((safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)) / 10, 1)} />
                   <StatItem icon={<Hourglass className="w-3.5 h-3.5" />} label="Dormancy" value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d ago` : 'Active'} captureKey="dormancy" bar={safeTraits.daysSinceLastTx ? Math.max(0, 1 - safeTraits.daysSinceLastTx / 365) : 1} />
-                  <StatItem icon={<Shield className="w-3.5 h-3.5" />} label="Total Assets" value={safeTraits.totalAssetsCount > 999 ? `${(safeTraits.totalAssetsCount / 1000).toFixed(1)}k` : safeTraits.totalAssetsCount.toString()} captureKey="assets" bar={Math.min(safeTraits.totalAssetsCount / 500, 1)} />
-                  <StatItem icon={<SparklesIcon className="w-3.5 h-3.5" />} label="Token Types" value={safeTraits.uniqueTokenCount > 999 ? `${(safeTraits.uniqueTokenCount / 1000).toFixed(1)}k` : safeTraits.uniqueTokenCount.toString()} captureKey="tokens" bar={Math.min(safeTraits.uniqueTokenCount / 200, 1)} />
+                  <StatItem icon={<Zap className="w-3.5 h-3.5" />} label="Meme Coins" value={safeTraits.memeCoinsHeld.length.toString()} captureKey="memes" bar={Math.min(safeTraits.memeCoinsHeld.length / 10, 1)} />
+                  <StatItem icon={<SparklesIcon className="w-3.5 h-3.5" />} label="Planet" value={safeTraits.planetTier.charAt(0).toUpperCase() + safeTraits.planetTier.slice(1).replace('_', ' ')} captureKey="planet" bar={(['mercury','mars','venus','earth','neptune','uranus','saturn','jupiter','sun','binary_sun'].indexOf(safeTraits.planetTier) + 1) / 10} />
                 </div>
 
                 {/* Score History — premium sparkline */}
@@ -805,7 +776,7 @@ function StatItem({
       </div>
       <span
         data-stat-key={captureKey}
-        className="capture-value text-sm font-bold font-mono leading-none block text-cyan-200"
+        className="capture-value text-sm font-bold font-mono leading-none block text-cyan-200 text-center"
       >
         {value}
       </span>

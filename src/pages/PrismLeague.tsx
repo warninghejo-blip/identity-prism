@@ -1024,26 +1024,64 @@ const PrismLeague = () => {
                   </span>
                 </div>
 
-                {/* How to play — compact */}
+                {/* How to play + Power-ups — mode-aware */}
                 <div className="w-full mb-3 p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.05] text-left">
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
-                    <div className="flex items-center gap-1.5">
-                      <Target className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                      <span className="text-white/60">{isMobile ? "Tap" : "Click"} — reverse orbit</span>
+                  <div className="text-[9px] text-white/30 uppercase tracking-wider font-bold mb-1.5">Controls & Power-ups</div>
+                  {gameMode === "destroyer" ? (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <Target className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                        <span className="text-white/60">{isMobile ? "Drag" : "WASD"} — move ship</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Zap className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+                        <span className="text-white/60">Auto-fire enabled</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 flex-shrink-0 rounded-full" style={{background:'#4488ff'}} />
+                        <span className="text-white/60">Shield — block 1 hit</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 flex-shrink-0 rounded-full" style={{background:'#44ff44'}} />
+                        <span className="text-white/60">Dual Shot — 2× bullets</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 flex-shrink-0 rounded-full" style={{background:'#ffcc00'}} />
+                        <span className="text-white/60">Rapid Fire — fast shots</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 flex-shrink-0 rounded-full" style={{background:'#ff4444'}} />
+                        <span className="text-white/60">Rockets — homing missiles</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 flex-shrink-0 rounded-full" style={{background:'#ff66ff'}} />
+                        <span className="text-white/60">Nuke — destroy all enemies</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <Shield className="w-3 h-3 text-cyan-400 flex-shrink-0" />
-                      <span className="text-white/60">Shield — block 1 hit</span>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <Target className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                        <span className="text-white/60">{isMobile ? "Tap" : "Click"} — reverse orbit</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Shield className="w-3 h-3 text-cyan-400 flex-shrink-0" />
+                        <span className="text-white/60">Shield — block 1 hit</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+                        <span className="text-white/60">Slow-mo — slow time</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 flex-shrink-0 rounded-full" style={{background:'#a855f7'}} />
+                        <span className="text-white/60">Phase — invincible</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Coins className="w-3 h-3 text-yellow-400 flex-shrink-0" />
+                        <span className="text-white/60">Coin — +{COIN_BONUS} pts</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3 h-3 text-yellow-400 flex-shrink-0" />
-                      <span className="text-white/60">Clock — slow time</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Coins className="w-3 h-3 text-yellow-400 flex-shrink-0" />
-                      <span className="text-white/60">Coin — +{COIN_BONUS} coins</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* MagicBlock — minimal */}

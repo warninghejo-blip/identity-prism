@@ -431,11 +431,16 @@ const BH_SPIRAL_FS = `
     vec2 c = vUv - .5;
     float r = length(c);
     float a = atan(c.y, c.x);
-    float spiral = sin(a * 3. - r * 12. + uTime * 2.) * .5 + .5;
-    spiral *= smoothstep(.5, .15, r);
-    spiral *= smoothstep(.0, .08, r);
-    float alpha = spiral * uFade * .55;
-    vec3 col = mix(vec3(.15, .08, .25), vec3(.4, .2, .6), spiral);
+    float s1 = sin(a * 3. - r * 14. + uTime * 2.5) * .5 + .5;
+    float s2 = sin(a * 2. + r * 10. - uTime * 1.8) * .5 + .5;
+    float spiral = max(s1, s2 * .7);
+    spiral *= smoothstep(.5, .12, r);
+    spiral *= smoothstep(.0, .06, r);
+    float ring = smoothstep(.02, .0, abs(r - .42)) * .4;
+    float alpha = (spiral * .65 + ring) * uFade;
+    vec3 col = mix(vec3(.1, .04, .2), vec3(.5, .15, .8), spiral);
+    col += vec3(.2, .4, .8) * ring;
+    col += vec3(.6, .3, 1.) * smoothstep(.15, .0, r) * .3;
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -474,7 +479,10 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
       if (spiralMesh) spiralMesh.rotation.z = t * (.6 + i * .15);
 
       const glow = g.children[3] as THREE.Mesh;
-      (glow.material as THREE.MeshBasicMaterial).opacity = fade * .1 * (.8 + Math.sin(t * 1.5 + i) * .2);
+      (glow.material as THREE.MeshBasicMaterial).opacity = fade * .25 * (.8 + Math.sin(t * 1.5 + i) * .2);
+
+      const light = g.children[4] as THREE.PointLight;
+      if (light) light.intensity = fade * 3 * (.8 + Math.sin(t * 2 + i) * .2);
     }
   });
 
@@ -493,6 +501,7 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
         />
       </mesh>
       <mesh geometry={_bhGlowGeo}><meshBasicMaterial color="#4422aa" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <pointLight color="#7744cc" intensity={0} distance={12} />
     </group>
   ))}</>);
 }
@@ -537,15 +546,33 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
     while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
     gRef.current.rotation.z = curRot + rotDiff * (1 - Math.exp(-10 * dt));
     if (shRef.current) { const m = shRef.current.material as THREE.MeshBasicMaterial; m.opacity = slerp(m.opacity, nearRef.current > .1 ? .25 * nearRef.current : 0, 10, dt); }
+    // Shield: make ship semi-transparent + glow
+    const shieldOn = shieldRef.current > 0;
+    const phaseOn = phaseRef.current > 0;
+    const ghostAlpha = shieldOn ? (.35 + Math.sin(t * 5) * .15) : (phaseOn ? (.3 + Math.sin(t * 7) * .1) : 1);
+    if (gRef.current) {
+      gRef.current.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mat = (child as THREE.Mesh).material as THREE.Material;
+          if ('opacity' in mat && 'transparent' in mat) {
+            if (shieldOn || phaseOn) {
+              mat.transparent = true;
+              mat.opacity = Math.min(mat.opacity, ghostAlpha);
+            }
+          }
+        }
+      });
+    }
     if (shieldBub.current) {
-      const on = shieldRef.current > 0;
-      shieldBub.current.visible = on;
-      if (on) { (shieldBub.current.material as THREE.MeshBasicMaterial).opacity = .12 + Math.sin(t * 4) * .05; shieldBub.current.scale.setScalar(1 + Math.sin(t * 3) * .05); }
+      shieldBub.current.visible = shieldOn;
+      if (shieldOn) {
+        (shieldBub.current.material as THREE.MeshBasicMaterial).opacity = .06 + Math.sin(t * 4) * .03;
+        shieldBub.current.scale.setScalar(1.1 + Math.sin(t * 3) * .08);
+      }
     }
     if (phaseGlow.current) {
-      const on = phaseRef.current > 0;
-      phaseGlow.current.visible = on;
-      if (on) { (phaseGlow.current.material as THREE.MeshBasicMaterial).opacity = .15 + Math.sin(t * 6) * .08; }
+      phaseGlow.current.visible = phaseOn;
+      if (phaseOn) { (phaseGlow.current.material as THREE.MeshBasicMaterial).opacity = .08 + Math.sin(t * 6) * .04; }
     }
     if (exRef.current) {
       const a = exRef.current.geometry.attributes.position.array as Float32Array;
@@ -1011,16 +1038,11 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < BH_CORE_R) {
-          const safeD = Math.max(0.05, dist);
-          const awayX = (px - bh.x) / safeD, awayY = (py - bh.y) / safeD;
-          const pushStr = BH_PUSH_STR * (1 - dist / BH_CORE_R) * dt;
-          px += awayX * pushStr;
-          py += awayY * pushStr;
-          const exitAng = Math.atan2(awayY, awayX);
-          const diff = normAng(exitAng - heading);
-          heading += diff * Math.min(1, 6 * dt);
-          curSpeed.current = Math.min(curSpeed.current + bh.str * .5 * dt, MAX_SPEED * 1.25);
-          shake.current = Math.max(shake.current, .4);
+          // Fly through: strong random heading deflection + big speed boost
+          const deflect = (Math.random() - .5) * Math.PI * 1.4 * (1 - dist / BH_CORE_R);
+          heading += deflect * Math.min(1, 8 * dt);
+          curSpeed.current = Math.min(curSpeed.current + bh.str * 2.5 * dt, MAX_SPEED * 1.5);
+          shake.current = Math.max(shake.current, .6 * (1 - dist / BH_CORE_R));
         } else {
           const angleToBH = Math.atan2(dy, dx);
           const cross = Math.cos(heading) * dy - Math.sin(heading) * dx;

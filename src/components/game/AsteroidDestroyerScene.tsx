@@ -113,56 +113,40 @@ const ENEMY_STATS: Record<EnemyType, { hp: number; speed: number; r: number; sco
 
 const LEVELS: LevelDef[] = [
   { id: 1, name: "First Contact", bgTint: "#0a0a1a", waves: [
-    { delay: 0.5, enemies: [{ type: "scout", count: 8 }] },
-    { delay: 2, enemies: [{ type: "scout", count: 10 }] },
+    { delay: 0.5, enemies: [{ type: "scout", count: 10 }] },
   ]},
   { id: 2, name: "Swarm Warning", bgTint: "#0a1a0a", waves: [
-    { delay: 0.5, enemies: [{ type: "scout", count: 10 }] },
-    { delay: 2, enemies: [{ type: "swarm", count: 16 }] },
-    { delay: 2, enemies: [{ type: "scout", count: 8 }, { type: "fighter", count: 3 }] },
+    { delay: 0.5, enemies: [{ type: "scout", count: 8 }, { type: "swarm", count: 10 }] },
   ]},
   { id: 3, name: "Armored Assault", bgTint: "#1a0a0a", waves: [
-    { delay: 0.5, enemies: [{ type: "fighter", count: 6 }] },
-    { delay: 2.5, enemies: [{ type: "tank", count: 4 }] },
-    { delay: 2.5, enemies: [{ type: "fighter", count: 6 }, { type: "tank", count: 3 }] },
+    { delay: 0.5, enemies: [{ type: "fighter", count: 5 }, { type: "tank", count: 3 }] },
   ]},
   { id: 4, name: "Speed Blitz", bgTint: "#0a0a2a", waves: [
-    { delay: 0.5, enemies: [{ type: "swarm", count: 22 }] },
-    { delay: 2, enemies: [{ type: "fighter", count: 10 }] },
-    { delay: 2, enemies: [{ type: "swarm", count: 18 }, { type: "fighter", count: 5 }] },
+    { delay: 0.5, enemies: [{ type: "swarm", count: 14 }, { type: "fighter", count: 5 }] },
   ]},
   { id: 5, name: "Bombardment", bgTint: "#1a0a1a", waves: [
-    { delay: 0.5, enemies: [{ type: "bomber", count: 6 }] },
-    { delay: 2.5, enemies: [{ type: "tank", count: 4 }, { type: "bomber", count: 4 }] },
-    { delay: 3, enemies: [{ type: "boss", count: 1 }] },
+    { delay: 0.5, enemies: [{ type: "bomber", count: 5 }, { type: "tank", count: 3 }] },
+    { delay: 2.5, enemies: [{ type: "boss", count: 1 }] },
   ]},
   { id: 6, name: "Phantom Menace", bgTint: "#0a001a", waves: [
-    { delay: 0.5, enemies: [{ type: "cloaker", count: 8 }] },
-    { delay: 2.5, enemies: [{ type: "cloaker", count: 5 }, { type: "fighter", count: 5 }] },
-    { delay: 2.5, enemies: [{ type: "cloaker", count: 10 }, { type: "bomber", count: 3 }] },
+    { delay: 0.5, enemies: [{ type: "cloaker", count: 6 }, { type: "fighter", count: 4 }] },
   ]},
   { id: 7, name: "Shield Wall", bgTint: "#001a1a", waves: [
-    { delay: 0.5, enemies: [{ type: "shielder", count: 6 }] },
-    { delay: 2.5, enemies: [{ type: "shielder", count: 5 }, { type: "tank", count: 4 }] },
-    { delay: 2.5, enemies: [{ type: "shielder", count: 7 }, { type: "elite", count: 3 }] },
+    { delay: 0.5, enemies: [{ type: "shielder", count: 5 }, { type: "elite", count: 3 }] },
   ]},
   { id: 8, name: "Total War", bgTint: "#1a1a0a", waves: [
-    { delay: 0.5, enemies: [{ type: "scout", count: 12 }, { type: "fighter", count: 6 }] },
-    { delay: 2.5, enemies: [{ type: "tank", count: 4 }, { type: "cloaker", count: 5 }, { type: "bomber", count: 4 }] },
-    { delay: 2.5, enemies: [{ type: "elite", count: 5 }, { type: "shielder", count: 4 }] },
-    { delay: 3, enemies: [{ type: "boss", count: 1 }, { type: "elite", count: 3 }] },
+    { delay: 0.5, enemies: [{ type: "elite", count: 4 }, { type: "cloaker", count: 4 }, { type: "bomber", count: 3 }] },
+    { delay: 2.5, enemies: [{ type: "boss", count: 1 }, { type: "elite", count: 2 }] },
   ]},
   { id: 9, name: "Final Stand", bgTint: "#1a0000", waves: [
-    { delay: 0.5, enemies: [{ type: "swarm", count: 24 }, { type: "fighter", count: 10 }] },
-    { delay: 3, enemies: [{ type: "elite", count: 8 }, { type: "shielder", count: 5 }] },
-    { delay: 3, enemies: [{ type: "tank", count: 5 }, { type: "bomber", count: 5 }, { type: "cloaker", count: 5 }] },
-    { delay: 3, enemies: [{ type: "boss", count: 2 }, { type: "elite", count: 5 }] },
+    { delay: 0.5, enemies: [{ type: "elite", count: 5 }, { type: "shielder", count: 4 }, { type: "tank", count: 3 }] },
+    { delay: 3, enemies: [{ type: "boss", count: 2 }, { type: "elite", count: 3 }] },
   ]},
 ];
 
 const PWR_TYPES: DPwrType[] = ["quantum_core", "photon_burst", "nova_rockets", "prism_shield", "nebula_bomb"];
 const PWR_COLORS: Record<DPwrType, string> = {
-  quantum_core: "#ffcc00", photon_burst: "#00ffcc", nova_rockets: "#ff4444", prism_shield: "#22d3ee", nebula_bomb: "#ff66ff",
+  quantum_core: "#ffcc00", photon_burst: "#44ff44", nova_rockets: "#ff4444", prism_shield: "#4488ff", nebula_bomb: "#ff66ff",
 };
 const PWR_LABELS: Record<DPwrType, string> = {
   quantum_core: "RAPID FIRE", photon_burst: "DUAL SHOT", nova_rockets: "HOMING", prism_shield: "SHIELD", nebula_bomb: "NUKE",
@@ -383,17 +367,29 @@ function EnemyVisuals({ poolRef, shipPos }: { poolRef: React.MutableRefObject<En
   ))}</>);
 }
 
+const ENEMY_TYPE_LIST: EnemyType[] = ["scout", "fighter", "tank", "swarm", "bomber", "cloaker", "shielder", "elite", "boss"];
+
 function EnemyModelSlot({ index, poolRef }: { index: number; poolRef: React.MutableRefObject<Enemy[]> }) {
-  const [currentType, setCurrentType] = useState<EnemyType>("scout");
-  const lastType = useRef<EnemyType>("scout");
+  const groupRefs = useRef<(THREE.Group | null)[]>([]);
+  const lastType = useRef<EnemyType | null>(null);
   useFrame(() => {
     const e = poolRef.current[index];
-    if (e && e.active && e.type !== lastType.current) {
-      lastType.current = e.type;
-      setCurrentType(e.type);
+    const t = e?.active ? e.type : null;
+    if (t !== lastType.current) {
+      lastType.current = t;
+      for (let i = 0; i < ENEMY_TYPE_LIST.length; i++) {
+        const g = groupRefs.current[i];
+        if (g) g.visible = ENEMY_TYPE_LIST[i] === t;
+      }
     }
   });
-  return <EnemyModel type={currentType} />;
+  return (<>
+    {ENEMY_TYPE_LIST.map((type, i) => (
+      <group key={type} ref={el => { groupRefs.current[i] = el; }} visible={false}>
+        <EnemyModel type={type} />
+      </group>
+    ))}
+  </>);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -433,7 +429,7 @@ function PowerUpShape({ type }: { type: DPwrType }) {
 
     {/* SHIELD — dome + cross */}
     {type === "prism_shield" && (<>
-      <mesh><sphereGeometry args={[.28, 16, 12, 0, Math.PI * 2, 0, Math.PI * .55]} /><meshStandardMaterial color="#22d3ee" emissive={c} emissiveIntensity={2.5} toneMapped={false} transparent opacity={.8} side={THREE.DoubleSide} /></mesh>
+      <mesh><sphereGeometry args={[.28, 16, 12, 0, Math.PI * 2, 0, Math.PI * .55]} /><meshStandardMaterial color="#4488ff" emissive={c} emissiveIntensity={2.5} toneMapped={false} transparent opacity={.8} side={THREE.DoubleSide} /></mesh>
       <mesh position={[0, 0, .01]}><planeGeometry args={[.06, .4]} /><meshBasicMaterial color="#ffffff" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
       <mesh position={[0, 0, .01]}><planeGeometry args={[.4, .06]} /><meshBasicMaterial color="#ffffff" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </>)}
@@ -1064,7 +1060,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMi
             // Kill all enemies on screen
             for (const e of enemies.current) {
               if (e.active) {
-                addExplosion(smallExplosions.current, e.x, e.y, ENEMY_STATS[e.type].color);
+                addExplosion(smallExplosions.current, e.x, e.y, "#ff8844");
                 scoreRef.current += ENEMY_STATS[e.type].score * scoreMult;
                 coinBank.current += Math.max(1, Math.floor(ENEMY_STATS[e.type].score * scoreMult / 5));
                 e.active = false;
@@ -1093,7 +1089,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMi
           else { e.hp -= dmg; }
           if (e.hp <= 0) {
             e.active = false;
-            addExplosion(smallExplosions.current, e.x, e.y, ENEMY_STATS[e.type].color);
+            addExplosion(smallExplosions.current, e.x, e.y, "#ff8844");
             // Score + combo
             combo.current++;
             comboTimer.current = 3;
@@ -1153,7 +1149,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMi
           if (shieldHits.current <= 0) shieldActive.current = false;
           if (e.hp <= 0) {
             e.active = false;
-            addExplosion(smallExplosions.current, e.x, e.y, ENEMY_STATS[e.type].color);
+            addExplosion(smallExplosions.current, e.x, e.y, "#ff8844");
             scoreRef.current += ENEMY_STATS[e.type].score * scoreMult;
             onScore(scoreRef.current);
           }

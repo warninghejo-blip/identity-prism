@@ -117,8 +117,7 @@ const formatCompact = (value: number): string => {
   if (abs >= 1_000) return `${parseFloat((value / 1_000).toFixed(1))}K`;
   if (abs >= 100) return `${Math.round(value)}`;
   if (abs >= 1) return `${parseFloat(value.toFixed(2))}`;
-  if (abs >= 0.01) return `${parseFloat(value.toFixed(4))}`;
-  return `${parseFloat(value.toFixed(6))}`;
+  return `${parseFloat(value.toFixed(4))}`;
 };
 
 const formatSolCompact = (value?: number | null): string | null => {
