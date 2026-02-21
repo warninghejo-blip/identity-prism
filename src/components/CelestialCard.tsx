@@ -520,11 +520,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           </div>
 
           {/* Footer Info */}
-          <div data-suck="footer" className="relative z-20 mt-auto px-7 pb-8 flex flex-col gap-5 pointer-events-none">
+          <div data-suck="footer" className="relative z-20 mt-auto px-7 pb-8 flex flex-col gap-5">
             <div className="flex justify-center items-center border-t border-white/5 pt-5 relative z-30">
                {/* Badges moved here */}
                {frontBadges.length > 0 ? (
-                <div className="front-badges flex gap-3 flex-wrap justify-center px-6 w-full">
+                <div className="front-badges flex gap-3 flex-wrap justify-center px-6 w-full pointer-events-auto">
                   {frontBadges.map((badge) => (
                     <div key={badge.key} className="badge-icon-wrap">
                       <span className="badge-tooltip">{badge.label}</span>
@@ -609,69 +609,17 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
               {/* STATS CONTENT */}
               <TabsContent value="stats" className="flex-1 overflow-y-auto px-6 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
-                {/* Primary metrics */}
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  <StatItem
-                    icon={<Wallet className="w-3.5 h-3.5" />}
-                    label="SOL"
-                    value={`${safeTraits.solBalance.toFixed(2)}`}
-                    captureKey="sol"
-                    accent
-                  />
-                  <StatItem
-                    icon={<Clock className="w-3.5 h-3.5" />}
-                    label="Age"
-                    value={`${safeTraits.walletAgeDays}d`}
-                    captureKey="age"
-                  />
-                  <StatItem
-                    icon={<Activity className="w-3.5 h-3.5" />}
-                    label="Txns"
-                    value={safeTraits.txCount > 999 ? `${(safeTraits.txCount / 1000).toFixed(1)}k` : safeTraits.txCount.toString()}
-                    captureKey="tx"
-                  />
-                </div>
-                {/* Secondary metrics */}
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  <StatItem
-                    icon={<Trophy className="w-3.5 h-3.5" />}
-                    label="NFTs"
-                    value={safeTraits.nftCount.toString()}
-                    captureKey="nfts"
-                  />
-                  <StatItem
-                    icon={<Gem className="w-3.5 h-3.5" />}
-                    label="Tokens"
-                    value={safeTraits.uniqueTokenCount.toString()}
-                    captureKey="tokens"
-                  />
-                  <StatItem
-                    icon={<Flame className="w-3.5 h-3.5" />}
-                    label="Tx/Day"
-                    value={(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)}
-                    captureKey="activity"
-                  />
-                </div>
-                {/* Tertiary metrics */}
-                <div className="grid grid-cols-3 gap-2 mb-4">
-                  <StatItem
-                    icon={<Hourglass className="w-3.5 h-3.5" />}
-                    label="Dormancy"
-                    value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d` : 'Active'}
-                    captureKey="dormancy"
-                  />
-                  <StatItem
-                    icon={<Shield className="w-3.5 h-3.5" />}
-                    label="Assets"
-                    value={safeTraits.totalAssetsCount > 999 ? `${(safeTraits.totalAssetsCount / 1000).toFixed(1)}k` : safeTraits.totalAssetsCount.toString()}
-                    captureKey="assets"
-                  />
-                  <StatItem
-                    icon={<Skull className="w-3.5 h-3.5" />}
-                    label="Memes"
-                    value={safeTraits.memeCoinsHeld?.length?.toString() ?? '0'}
-                    captureKey="memes"
-                  />
+                {/* Unified 3×3 stats grid */}
+                <div className="grid grid-cols-3 gap-1.5 mb-4">
+                  <StatItem icon={<Wallet className="w-3 h-3" />} label="SOL" value={`${safeTraits.solBalance.toFixed(2)}`} captureKey="sol" accent />
+                  <StatItem icon={<Clock className="w-3 h-3" />} label="Age" value={`${safeTraits.walletAgeDays}d`} captureKey="age" accent />
+                  <StatItem icon={<Activity className="w-3 h-3" />} label="Txns" value={safeTraits.txCount > 999 ? `${(safeTraits.txCount / 1000).toFixed(1)}k` : safeTraits.txCount.toString()} captureKey="tx" />
+                  <StatItem icon={<Trophy className="w-3 h-3" />} label="NFTs" value={safeTraits.nftCount.toString()} captureKey="nfts" />
+                  <StatItem icon={<Gem className="w-3 h-3" />} label="Tokens" value={safeTraits.uniqueTokenCount.toString()} captureKey="tokens" />
+                  <StatItem icon={<Flame className="w-3 h-3" />} label="Tx/Day" value={(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)} captureKey="activity" />
+                  <StatItem icon={<Hourglass className="w-3 h-3" />} label="Dormancy" value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d` : 'Active'} captureKey="dormancy" />
+                  <StatItem icon={<Shield className="w-3 h-3" />} label="Assets" value={safeTraits.totalAssetsCount > 999 ? `${(safeTraits.totalAssetsCount / 1000).toFixed(1)}k` : safeTraits.totalAssetsCount.toString()} captureKey="assets" />
+                  <StatItem icon={<Skull className="w-3 h-3" />} label="Memes" value={safeTraits.memeCoinsHeld?.length?.toString() ?? '0'} captureKey="memes" />
                 </div>
 
                 {/* Score History — premium sparkline */}
@@ -809,15 +757,15 @@ function StatItem({
   accent?: boolean;
 }) {
   return (
-    <div className={`flex flex-col items-center justify-center p-2.5 rounded-xl border transition-colors ${accent ? 'bg-cyan-500/[0.06] border-cyan-500/15 hover:bg-cyan-500/10' : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.07]'}`}>
-      <div className={`${accent ? 'text-cyan-400/90' : 'text-white/30'} mb-1`}>{icon}</div>
-      <span className="text-[8px] text-white/25 uppercase tracking-wider mb-0.5 leading-none">{label}</span>
+    <div className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg border transition-colors ${accent ? 'bg-cyan-500/[0.06] border-cyan-500/12 hover:bg-cyan-500/10' : 'bg-white/[0.02] border-white/[0.04] hover:bg-white/[0.06]'}`}>
+      <div className={`${accent ? 'text-cyan-400/80' : 'text-white/25'} mb-0.5`}>{icon}</div>
       <span
         data-stat-key={captureKey}
-        className={`capture-value text-xs font-bold font-mono leading-none ${accent ? 'text-cyan-200' : 'text-white/90'}`}
+        className={`capture-value text-[11px] font-bold font-mono leading-none ${accent ? 'text-cyan-200' : 'text-white/85'}`}
       >
         {value}
       </span>
+      <span className="text-[7px] text-white/20 uppercase tracking-wider mt-0.5 leading-none">{label}</span>
     </div>
   );
 }

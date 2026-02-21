@@ -1078,7 +1078,7 @@ const BlackHole = () => {
 
     // Phase 3: Navigate (tunnel persists across route change)
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
-    const target = addr ? `/?address=${encodeURIComponent(addr)}` : '/';
+    const target = addr ? `/app?address=${encodeURIComponent(addr)}` : '/app';
     setTimeout(() => {
       sessionStorage.setItem('fromBlackHole', '1');
       try {

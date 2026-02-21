@@ -60,9 +60,10 @@ const router = createBrowserRouter([
     path: '/',
     element: <App />,
     children: [
-      { index: true, element: <HomePage /> },
+      { index: true, element: <Index /> },
       { path: 'app', element: <Index /> },
       { path: 'app/*', element: <Index /> },
+      { path: 'home', element: <HomePage /> },
       { path: 'share', element: <Index /> },
       { path: 'game', element: <PrismLeague /> },
       { path: 'preview', element: <PreviewDeck /> },

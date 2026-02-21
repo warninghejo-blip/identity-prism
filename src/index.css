@@ -2110,10 +2110,10 @@ body:has(.prism-league-page) #root > * {
 /* ── Card portal: game ship link ── */
 .game-card-portal {
   position: absolute;
-  left: 14px;
-  bottom: 125px;
-  width: 56px;
-  height: 56px;
+  left: 16px;
+  bottom: 130px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -2121,12 +2121,16 @@ body:has(.prism-league-page) #root > * {
   cursor: pointer;
   z-index: 20;
   border: none;
-  background: transparent;
+  background: radial-gradient(circle, rgba(6, 182, 212, 0.06) 0%, transparent 70%);
   padding: 0;
-  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease;
-  filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.35));
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease, background 0.3s ease;
+  filter: drop-shadow(0 0 10px rgba(6, 182, 212, 0.3));
 }
-.game-card-portal:hover { transform: scale(1.2); filter: drop-shadow(0 0 18px rgba(6, 182, 212, 0.55)); }
+.game-card-portal:hover {
+  transform: scale(1.18);
+  filter: drop-shadow(0 0 18px rgba(6, 182, 212, 0.5));
+  background: radial-gradient(circle, rgba(6, 182, 212, 0.1) 0%, transparent 70%);
+}
 .game-card-portal:hover .game-card-portal__glow { opacity: 1; }
 .game-card-portal.is-jumping {
   pointer-events: none;
@@ -2135,53 +2139,37 @@ body:has(.prism-league-page) #root > * {
 
 .game-card-portal__glow {
   position: absolute;
-  width: 68px;
-  height: 68px;
+  width: 62px;
+  height: 62px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(6, 182, 212, 0.3) 0%, rgba(6, 182, 212, 0.08) 50%, transparent 70%);
-  opacity: 0.5;
+  background: radial-gradient(circle, rgba(6, 182, 212, 0.25) 0%, transparent 65%);
+  opacity: 0.45;
   animation: game-portal-breathe 3s ease-in-out infinite;
 }
-/* Orbit trail connecting ship to BH */
-.game-card-portal::after {
-  content: '';
-  position: absolute;
-  width: 180px;
-  height: 60px;
-  left: 50%;
-  top: 50%;
-  border: 1px dashed rgba(6, 182, 212, 0.06);
-  border-radius: 50%;
-  transform: translate(-10%, -50%) rotate(-12deg);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.5s ease;
-}
-.game-card-portal:hover::after { opacity: 1; }
 
 .game-card-portal__ship {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   z-index: 2;
-  filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.6));
+  filter: drop-shadow(0 0 5px rgba(6, 182, 212, 0.6));
   animation: game-ship-bob 2.5s ease-in-out infinite;
 }
 
 .game-card-portal__label {
   position: absolute;
-  bottom: -18px;
-  font-size: 8px;
-  letter-spacing: 0.15em;
+  bottom: -16px;
+  font-size: 7px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(6, 182, 212, 0.6);
+  color: rgba(6, 182, 212, 0.5);
   white-space: nowrap;
   font-weight: 700;
   transition: opacity 0.3s ease, text-shadow 0.3s ease, color 0.3s ease;
 }
 .game-card-portal:hover .game-card-portal__label {
   color: rgba(6, 182, 212, 0.9);
-  text-shadow: 0 0 12px rgba(6, 182, 212, 0.8), 0 0 24px rgba(6, 182, 212, 0.4);
+  text-shadow: 0 0 10px rgba(6, 182, 212, 0.7);
 }
 
 @keyframes game-portal-breathe {
@@ -2203,39 +2191,29 @@ body:has(.prism-league-page) #root > * {
 /* ── Card portal: compact mini black hole ── */
 .bh-card-portal {
   position: absolute;
-  right: 14px;
-  bottom: 125px;
-  width: 64px;
-  height: 64px;
+  right: 16px;
+  bottom: 130px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   border: none;
-  background: transparent;
+  background: radial-gradient(circle, rgba(255, 80, 40, 0.04) 0%, transparent 70%);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 25;
   overflow: visible;
-  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
-  filter: drop-shadow(0 0 12px rgba(255, 80, 40, 0.4));
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease, background 0.3s ease;
+  filter: drop-shadow(0 0 10px rgba(255, 80, 40, 0.35));
 }
-.bh-card-portal:hover { transform: scale(1.25); filter: drop-shadow(0 0 22px rgba(255, 80, 40, 0.5)); }
+.bh-card-portal:hover {
+  transform: scale(1.22);
+  filter: drop-shadow(0 0 20px rgba(255, 80, 40, 0.45));
+  background: radial-gradient(circle, rgba(255, 80, 40, 0.06) 0%, transparent 70%);
+}
 .bh-card-portal:hover .bh-card-portal__glow { opacity: 1; }
 .bh-card-portal:hover .bh-card-portal__disk { opacity: 1; filter: blur(2px); }
-/* Gravity pull visual on hover */
-.bh-card-portal::after {
-  content: '';
-  position: absolute;
-  width: 90px;
-  height: 90px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 100, 50, 0.04);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.4s ease, transform 0.6s ease;
-  transform: scale(0.8);
-}
-.bh-card-portal:hover::after { opacity: 1; transform: scale(1.1); border-color: rgba(255, 100, 50, 0.1); }
 
 .bh-card-portal__glow {
   position: absolute;

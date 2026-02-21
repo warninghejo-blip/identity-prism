@@ -70,11 +70,11 @@ interface DPowerUp {
    Constants
    ═══════════════════════════════════════════════════ */
 
-const PLAY_W = 28;
-const PLAY_H = 38;
+const PLAY_W = 26;
+const PLAY_H = 28;
 const HALF_W = PLAY_W / 2;
 const HALF_H = PLAY_H / 2;
-const SHIP_SPEED = 18;
+const SHIP_SPEED = 16;
 const SHIP_R = 0.55;
 
 const MAX_PROJECTILES = 40;
@@ -96,15 +96,15 @@ const MAX_ENEMY_BULLETS = 80;
 const MAX_POWERUPS = 4;
 
 const ENEMY_STATS: Record<EnemyType, { hp: number; speed: number; r: number; score: number; shoots: boolean; color: string }> = {
-  scout:    { hp: 1, speed: 5,  r: 0.6, score: 10,  shoots: false, color: "#44ff66" },
-  fighter:  { hp: 2, speed: 8,  r: 0.5, score: 20,  shoots: true,  color: "#ff4466" },
-  tank:     { hp: 5, speed: 3,  r: 1.0, score: 40,  shoots: true,  color: "#ff8800" },
-  swarm:    { hp: 1, speed: 10, r: 0.35,score: 5,   shoots: false, color: "#aaffaa" },
-  bomber:   { hp: 3, speed: 4,  r: 0.8, score: 30,  shoots: true,  color: "#ff44ff" },
+  scout:    { hp: 1, speed: 6,  r: 0.6, score: 10,  shoots: false, color: "#44ff66" },
+  fighter:  { hp: 2, speed: 7,  r: 0.5, score: 20,  shoots: true,  color: "#ff4466" },
+  tank:     { hp: 5, speed: 3.5,r: 1.0, score: 40,  shoots: true,  color: "#ff8800" },
+  swarm:    { hp: 1, speed: 9,  r: 0.35,score: 5,   shoots: false, color: "#aaffaa" },
+  bomber:   { hp: 3, speed: 4.5,r: 0.8, score: 30,  shoots: true,  color: "#ff44ff" },
   cloaker:  { hp: 2, speed: 6,  r: 0.55,score: 35,  shoots: true,  color: "#8844ff" },
   shielder: { hp: 3, speed: 4,  r: 0.7, score: 45,  shoots: true,  color: "#00ccff" },
   elite:    { hp: 6, speed: 7,  r: 0.65,score: 60,  shoots: true,  color: "#ffcc00" },
-  boss:     { hp: 40,speed: 2,  r: 2.0, score: 500, shoots: true,  color: "#ff0044" },
+  boss:     { hp: 40,speed: 2.5,r: 2.0, score: 500, shoots: true,  color: "#ff0044" },
 };
 
 /* ═══════════════════════════════════════════════════
@@ -113,50 +113,50 @@ const ENEMY_STATS: Record<EnemyType, { hp: number; speed: number; r: number; sco
 
 const LEVELS: LevelDef[] = [
   { id: 1, name: "First Contact", bgTint: "#0a0a1a", waves: [
-    { delay: 1, enemies: [{ type: "scout", count: 6 }] },
-    { delay: 6, enemies: [{ type: "scout", count: 8 }] },
+    { delay: 0.5, enemies: [{ type: "scout", count: 8 }] },
+    { delay: 2, enemies: [{ type: "scout", count: 10 }] },
   ]},
   { id: 2, name: "Swarm Warning", bgTint: "#0a1a0a", waves: [
-    { delay: 1, enemies: [{ type: "scout", count: 8 }] },
-    { delay: 5, enemies: [{ type: "swarm", count: 14 }] },
-    { delay: 4, enemies: [{ type: "scout", count: 6 }, { type: "fighter", count: 2 }] },
+    { delay: 0.5, enemies: [{ type: "scout", count: 10 }] },
+    { delay: 2, enemies: [{ type: "swarm", count: 16 }] },
+    { delay: 2, enemies: [{ type: "scout", count: 8 }, { type: "fighter", count: 3 }] },
   ]},
   { id: 3, name: "Armored Assault", bgTint: "#1a0a0a", waves: [
-    { delay: 1, enemies: [{ type: "fighter", count: 4 }] },
-    { delay: 5, enemies: [{ type: "tank", count: 3 }] },
-    { delay: 5, enemies: [{ type: "fighter", count: 4 }, { type: "tank", count: 2 }] },
+    { delay: 0.5, enemies: [{ type: "fighter", count: 6 }] },
+    { delay: 2.5, enemies: [{ type: "tank", count: 4 }] },
+    { delay: 2.5, enemies: [{ type: "fighter", count: 6 }, { type: "tank", count: 3 }] },
   ]},
   { id: 4, name: "Speed Blitz", bgTint: "#0a0a2a", waves: [
-    { delay: 1, enemies: [{ type: "swarm", count: 20 }] },
-    { delay: 4, enemies: [{ type: "fighter", count: 8 }] },
-    { delay: 4, enemies: [{ type: "swarm", count: 15 }, { type: "fighter", count: 4 }] },
+    { delay: 0.5, enemies: [{ type: "swarm", count: 22 }] },
+    { delay: 2, enemies: [{ type: "fighter", count: 10 }] },
+    { delay: 2, enemies: [{ type: "swarm", count: 18 }, { type: "fighter", count: 5 }] },
   ]},
   { id: 5, name: "Bombardment", bgTint: "#1a0a1a", waves: [
-    { delay: 1, enemies: [{ type: "bomber", count: 5 }] },
-    { delay: 5, enemies: [{ type: "tank", count: 3 }, { type: "bomber", count: 3 }] },
-    { delay: 5, enemies: [{ type: "boss", count: 1 }] },
+    { delay: 0.5, enemies: [{ type: "bomber", count: 6 }] },
+    { delay: 2.5, enemies: [{ type: "tank", count: 4 }, { type: "bomber", count: 4 }] },
+    { delay: 3, enemies: [{ type: "boss", count: 1 }] },
   ]},
   { id: 6, name: "Phantom Menace", bgTint: "#0a001a", waves: [
-    { delay: 1, enemies: [{ type: "cloaker", count: 6 }] },
-    { delay: 5, enemies: [{ type: "cloaker", count: 4 }, { type: "fighter", count: 4 }] },
-    { delay: 5, enemies: [{ type: "cloaker", count: 8 }, { type: "bomber", count: 2 }] },
+    { delay: 0.5, enemies: [{ type: "cloaker", count: 8 }] },
+    { delay: 2.5, enemies: [{ type: "cloaker", count: 5 }, { type: "fighter", count: 5 }] },
+    { delay: 2.5, enemies: [{ type: "cloaker", count: 10 }, { type: "bomber", count: 3 }] },
   ]},
   { id: 7, name: "Shield Wall", bgTint: "#001a1a", waves: [
-    { delay: 1, enemies: [{ type: "shielder", count: 5 }] },
-    { delay: 5, enemies: [{ type: "shielder", count: 4 }, { type: "tank", count: 3 }] },
-    { delay: 5, enemies: [{ type: "shielder", count: 6 }, { type: "elite", count: 2 }] },
+    { delay: 0.5, enemies: [{ type: "shielder", count: 6 }] },
+    { delay: 2.5, enemies: [{ type: "shielder", count: 5 }, { type: "tank", count: 4 }] },
+    { delay: 2.5, enemies: [{ type: "shielder", count: 7 }, { type: "elite", count: 3 }] },
   ]},
   { id: 8, name: "Total War", bgTint: "#1a1a0a", waves: [
-    { delay: 1, enemies: [{ type: "scout", count: 10 }, { type: "fighter", count: 5 }] },
-    { delay: 5, enemies: [{ type: "tank", count: 3 }, { type: "cloaker", count: 4 }, { type: "bomber", count: 3 }] },
-    { delay: 5, enemies: [{ type: "elite", count: 4 }, { type: "shielder", count: 3 }] },
-    { delay: 5, enemies: [{ type: "boss", count: 1 }, { type: "elite", count: 2 }] },
+    { delay: 0.5, enemies: [{ type: "scout", count: 12 }, { type: "fighter", count: 6 }] },
+    { delay: 2.5, enemies: [{ type: "tank", count: 4 }, { type: "cloaker", count: 5 }, { type: "bomber", count: 4 }] },
+    { delay: 2.5, enemies: [{ type: "elite", count: 5 }, { type: "shielder", count: 4 }] },
+    { delay: 3, enemies: [{ type: "boss", count: 1 }, { type: "elite", count: 3 }] },
   ]},
   { id: 9, name: "Final Stand", bgTint: "#1a0000", waves: [
-    { delay: 1, enemies: [{ type: "swarm", count: 20 }, { type: "fighter", count: 8 }] },
-    { delay: 6, enemies: [{ type: "elite", count: 6 }, { type: "shielder", count: 4 }] },
-    { delay: 6, enemies: [{ type: "tank", count: 4 }, { type: "bomber", count: 4 }, { type: "cloaker", count: 4 }] },
-    { delay: 6, enemies: [{ type: "boss", count: 2 }, { type: "elite", count: 4 }] },
+    { delay: 0.5, enemies: [{ type: "swarm", count: 24 }, { type: "fighter", count: 10 }] },
+    { delay: 3, enemies: [{ type: "elite", count: 8 }, { type: "shielder", count: 5 }] },
+    { delay: 3, enemies: [{ type: "tank", count: 5 }, { type: "bomber", count: 5 }, { type: "cloaker", count: 5 }] },
+    { delay: 3, enemies: [{ type: "boss", count: 2 }, { type: "elite", count: 5 }] },
   ]},
 ];
 
@@ -178,10 +178,10 @@ function spawnEnemy(type: EnemyType, x?: number): Enemy {
   const s = ENEMY_STATS[type];
   const ex = x ?? rnd(-HALF_W + 2, HALF_W - 2);
   return {
-    id: ++_eid, x: ex, y: HALF_H + s.r + 1,
-    vx: rnd(-1, 1) * s.speed * 0.3, vy: -s.speed,
+    id: ++_eid, x: ex, y: HALF_H + s.r + rnd(1, 3),
+    vx: rnd(-1, 1) * s.speed * 0.3, vy: -s.speed * rnd(0.7, 1.0),
     hp: s.hp, maxHp: s.hp, type, active: true,
-    shootTimer: rnd(1, 3), phaseTimer: 0,
+    shootTimer: rnd(0.5, 2), phaseTimer: 0,
     shieldHp: type === "shielder" ? 3 : 0,
     cloakAlpha: type === "cloaker" ? 0.15 : 1,
     r: s.r, rx: 0, ry: 0, rz: rnd(0, 6.28),
@@ -470,7 +470,7 @@ function FixedCam({ shake }: { shake: React.MutableRefObject<number> }) {
 
 function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProps) {
   // Ship state
-  const shipPos = useRef({ x: 0, y: -HALF_H + 3 });
+  const shipPos = useRef({ x: 0, y: -HALF_H + 4 });
   const inputDir = useRef({ x: 0, y: 0 });
   const touchId = useRef<number | null>(null);
   const touchStart = useRef({ x: 0, y: 0, sx: 0, sy: 0 });
@@ -594,7 +594,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
   useEffect(() => {
     if (gameState !== "playing") return;
     resetEid(); resetPwid();
-    shipPos.current = { x: 0, y: -HALF_H + 3 };
+    shipPos.current = { x: 0, y: -HALF_H + 4 };
     inputDir.current = { x: 0, y: 0 };
     touchId.current = null;
     projectiles.current.forEach(p => { p.active = false; });
@@ -667,22 +667,23 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
       waveTimer.current += dt;
       const wave = lvl.waves[waveIdx.current];
       if (wave && !waveSpawned.current && waveTimer.current >= wave.delay) {
-        // Spawn this wave
+        // Spawn this wave — stagger positions across the top
         for (const eg of wave.enemies) {
+          const spacing = (PLAY_W - 4) / Math.max(1, eg.count);
           for (let j = 0; j < eg.count; j++) {
             const slot = enemies.current.find(e => !e.active);
             if (slot) {
               const spawned = spawnEnemy(eg.type);
-              // Stagger spawn X position
-              spawned.x = rnd(-HALF_W + 2, HALF_W - 2);
-              spawned.y = HALF_H + spawned.r + rnd(0, 4);
+              // Spread across top evenly with some randomness
+              spawned.x = -HALF_W + 2 + spacing * (j + 0.5) + rnd(-1, 1);
+              spawned.y = HALF_H + spawned.r + rnd(0.5, 3);
               Object.assign(slot, spawned);
             }
           }
         }
         waveSpawned.current = true;
       }
-      // Check if all enemies from this wave are dead
+      // Check if all enemies from this wave are cleared (dead or off-screen)
       if (waveSpawned.current) {
         const alive = enemies.current.some(e => e.active);
         if (!alive) {
@@ -691,8 +692,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
           waveTimer.current = 0;
           if (waveIdx.current >= lvl.waves.length) {
             levelComplete.current = true;
-            levelPause.current = 2.5;
-            // Level completion bonus
+            levelPause.current = 2.0;
             const bonus = lvl.id * 100;
             scoreRef.current += bonus;
             coinBank.current += lvl.id * 10;
@@ -711,7 +711,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
         waveSpawned.current = false;
         levelComplete.current = false;
       }
-      return; // skip combat during pause
+      return;
     }
 
     // Auto-fire
@@ -755,29 +755,53 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
     for (const e of enemies.current) {
       if (!e.active) continue;
       e.phaseTimer += dt;
+      const stats = ENEMY_STATS[e.type];
+
+      // Homing: steer toward player
+      const toPlayerX = sx - e.x;
+      const toPlayerY = sy - e.y;
+      const distToPlayer = Math.sqrt(toPlayerX * toPlayerX + toPlayerY * toPlayerY);
+
+      if (e.type === "scout" || e.type === "swarm") {
+        // Descend steadily + sinusoidal weave
+        e.vy = -stats.speed * 0.7;
+        e.vx = Math.sin(e.phaseTimer * 2.5 + e.id) * stats.speed * 0.6;
+      } else if (e.type === "fighter" || e.type === "elite" || e.type === "cloaker") {
+        // Active homing toward player
+        if (distToPlayer > 0.5) {
+          const nx = toPlayerX / distToPlayer, ny = toPlayerY / distToPlayer;
+          e.vx += nx * stats.speed * 2 * dt;
+          e.vy += ny * stats.speed * 1.5 * dt;
+        }
+        const spd = Math.sqrt(e.vx * e.vx + e.vy * e.vy);
+        if (spd > stats.speed) { e.vx *= stats.speed / spd; e.vy *= stats.speed / spd; }
+      } else if (e.type === "bomber") {
+        e.vy = -stats.speed * 0.6;
+        e.vx = Math.sin(e.phaseTimer * 1.5 + e.id * 0.7) * 4;
+      } else if (e.type === "tank" || e.type === "shielder") {
+        // Slow descent, slight tracking
+        e.vy = -stats.speed * 0.65;
+        e.vx += (toPlayerX > 0 ? 1 : -1) * stats.speed * 0.5 * dt;
+        e.vx = clamp(e.vx, -stats.speed * 0.5, stats.speed * 0.5);
+      } else if (e.type === "boss") {
+        // Boss hovers in upper area, tracks X
+        const targetY = HALF_H * 0.35;
+        if (e.y > targetY) e.vy = -stats.speed;
+        else { e.vy = Math.sin(e.phaseTimer * 0.5) * 1.5; }
+        e.vx += (toPlayerX > 0 ? 1 : -1) * 3 * dt;
+        e.vx = clamp(e.vx, -4, 4);
+      }
+
       e.x += e.vx * dt; e.y += e.vy * dt;
 
       // Bounce off walls
       if (e.x < -HALF_W + e.r) { e.x = -HALF_W + e.r; e.vx = Math.abs(e.vx); }
       if (e.x > HALF_W - e.r) { e.x = HALF_W - e.r; e.vx = -Math.abs(e.vx); }
 
-      // Stop descending past middle area
-      const minY = e.type === "boss" ? 4 : 0;
-      if (e.y < minY) { e.vy = Math.abs(e.vy) * 0.5; e.y = minY; }
-
-      // Despawn if too far below
-      if (e.y < -HALF_H - 5) { e.active = false; continue; }
-
-      // Sinusoidal movement patterns
-      if (e.type === "scout" || e.type === "swarm") {
-        e.vx = Math.sin(e.phaseTimer * 2 + e.id) * ENEMY_STATS[e.type].speed * 0.5;
-      }
-      if (e.type === "bomber") {
-        e.vx = Math.sin(e.phaseTimer * 1.5 + e.id * 0.7) * 3;
-      }
+      // Despawn if too far below screen
+      if (e.y < -HALF_H - 4) { e.active = false; continue; }
 
       // Enemy shooting
-      const stats = ENEMY_STATS[e.type];
       if (stats.shoots) {
         e.shootTimer -= dt;
         if (e.shootTimer <= 0) {
