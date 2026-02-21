@@ -6,7 +6,7 @@
 [![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
 [![Tapestry](https://img.shields.io/badge/Reputation-Tapestry-orange)](https://tapestry.network/)
 
-**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo Video:** [YouTube](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
+**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo Video:** [YouTube](https://www.youtube.com/watch?v=KP2GGv8PJmY) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
 
 ---
 
