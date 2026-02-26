@@ -62,6 +62,7 @@ export interface MintIdentityPrismArgs {
   paymentToken?: 'SOL' | 'SKR';
   remint?: boolean;
   burnSignature?: string;
+  burnAssetId?: string;
 }
 
 export interface MintIdentityPrismResult {
@@ -223,6 +224,7 @@ export async function mintIdentityPrism({
   paymentToken = 'SOL',
   remint,
   burnSignature,
+  burnAssetId,
 }: MintIdentityPrismArgs): Promise<MintIdentityPrismResult> {
   const wantsAdminMode = isAdminModeEnabled();
   const heliusRpcUrl = getHeliusRpcUrl(address);
@@ -389,20 +391,23 @@ export async function mintIdentityPrism({
     }
   }
 
+  const mintPayload = {
+    owner: address,
+    metadataUri,
+    name: metadataJson.name,
+    symbol: metadataJson.symbol,
+    sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
+    collectionMint: collectionMint.toBase58(),
+    admin: adminMode,
+    paymentToken,
+    ...(remint ? { remint: true, ...(burnSignature ? { burnSignature } : {}), ...(burnAssetId ? { burnAssetId } : {}) } : {}),
+  };
+  console.info('[mint] sending mint-cnft payload', { coreMintUrl, remint, burnAssetId: burnAssetId?.slice(0, 16), payloadKeys: Object.keys(mintPayload) });
+
   const cnftResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      owner: address,
-      metadataUri,
-      name: metadataJson.name,
-      symbol: metadataJson.symbol,
-      sellerFeeBasisPoints: MINT_CONFIG.SELLER_FEE_BASIS_POINTS ?? 0,
-      collectionMint: collectionMint.toBase58(),
-      admin: adminMode,
-      paymentToken,
-      ...(remint && burnSignature ? { remint: true, burnSignature } : {}),
-    }),
+    body: JSON.stringify(mintPayload),
   });
 
   if (!cnftResponse.ok) {
@@ -465,8 +470,9 @@ export async function mintIdentityPrism({
   if (requiresWalletTx) {
     const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
     const feeLamports = feeForMessage.value ?? 0;
+    // Remint mode has no payment — only rent + tx fee are required
     const configuredLamports =
-      paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0;
+      remint ? 0 : (paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0);
     const transferLamports = transaction.instructions.reduce((total, instruction) => {
       if (!instruction.programId.equals(SystemProgram.programId)) return total;
       try {
@@ -585,25 +591,22 @@ export async function mintIdentityPrism({
 
 /**
  * Find and burn an existing Identity Prism NFT, then mint a new one for free.
+ * Combined burn+mint in a single transaction — user signs once.
  * Steps:
  * 1. Query DAS for existing Identity Prism in wallet (by collection)
- * 2. Burn it via on-chain transaction (recovers ~0.0015 SOL rent)
- * 3. Mint new card with `remint: true` (server skips payment)
+ * 2. Send burnAssetId to server — server builds combined burn+mint tx
+ * 3. User signs the combined tx once
  */
 export async function remintIdentityPrism(
   args: MintIdentityPrismArgs
 ): Promise<MintIdentityPrismResult & { burnedAssetId: string }> {
   const { wallet, address } = args;
-  if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error('Wallet not connected or does not support signTransaction');
+  if (!wallet.publicKey || !wallet.signTransaction || !wallet.sendTransaction) {
+    throw new Error('Wallet not connected or does not support required transaction methods');
   }
 
   const heliusRpcUrl = getHeliusRpcUrl(address);
   if (!heliusRpcUrl) throw new Error('Helius API key required');
-  const connection = new Connection(heliusRpcUrl, {
-    commitment: 'confirmed',
-    httpHeaders: getHeliusProxyHeaders(address),
-  });
 
   const collectionMintAddress = getCollectionMint();
   if (!collectionMintAddress) throw new Error('Collection mint not configured');
@@ -636,55 +639,13 @@ export async function remintIdentityPrism(
     throw new Error('No existing Identity Prism card found in this wallet. Use regular mint instead.');
   }
 
-  // 2. Burn the old card via Metaplex Core burnV1
   const assetId = existingCard.id;
-  const { createUmi } = await import('@metaplex-foundation/umi-bundle-defaults');
-  const { publicKey: umiPublicKey, transactionBuilder, signTransaction: umiSignTx } = await import('@metaplex-foundation/umi');
-  const { burnV1 } = await import('@metaplex-foundation/mpl-core');
-  const { fromWeb3JsPublicKey, toWeb3JsTransaction } = await import('@metaplex-foundation/umi-web3js-adapters');
 
-  const umi = createUmi(heliusRpcUrl);
-  const ownerUmi = fromWeb3JsPublicKey(wallet.publicKey);
-  const collectionUmi = umiPublicKey(collectionMintAddress);
-
-  const burnIx = burnV1(umi, {
-    asset: umiPublicKey(assetId),
-    collection: collectionUmi,
-    authority: { publicKey: ownerUmi, signTransaction: umiSignTx, signMessage: async () => new Uint8Array(), signAllTransactions: async (txs: any[]) => txs },
-  });
-
-  // Convert UMI builder to web3.js Transaction for wallet signing
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-  const burnBuilder = burnIx.setFeePayer({ publicKey: ownerUmi, signTransaction: umiSignTx, signMessage: async () => new Uint8Array(), signAllTransactions: async (txs: any[]) => txs });
-  const umiTx = await burnBuilder.buildAndSign(umi);
-  const web3Tx = toWeb3JsTransaction(umiTx);
-  web3Tx.recentBlockhash = blockhash;
-  web3Tx.lastValidBlockHeight = lastValidBlockHeight;
-  web3Tx.feePayer = wallet.publicKey;
-
-  // Re-create as fresh Transaction since UMI tx may have wrong blockhash
-  const burnTransaction = new Transaction();
-  burnTransaction.recentBlockhash = blockhash;
-  burnTransaction.lastValidBlockHeight = lastValidBlockHeight;
-  burnTransaction.feePayer = wallet.publicKey;
-  for (const ix of web3Tx.instructions) {
-    burnTransaction.add(ix);
-  }
-
-  const signedBurn = await signWithDismissDetection(wallet, burnTransaction);
-  const burnSig = await connection.sendRawTransaction(
-    signedBurn.serialize({ requireAllSignatures: false, verifySignatures: false }),
-    { skipPreflight: true, preflightCommitment: 'confirmed' }
-  );
-
-  // Wait for burn confirmation
-  await confirmTransactionWithPolling(connection, burnSig, 30000);
-
-  // 3. Mint new card for free (remint mode)
+  // 2. Combined burn+mint in one transaction — server builds both instructions
   const mintResult = await mintIdentityPrism({
     ...args,
     remint: true,
-    burnSignature: burnSig,
+    burnAssetId: assetId,
   });
 
   return {

@@ -44,6 +44,8 @@ export interface WalletTraits {
   planetTier: PlanetTier;
   totalAssetsCount: number;
   solTier: "shrimp" | "dolphin" | "whale" | null;
+  totalValueUSD: number;
+  cosmicRank: "stardust" | "meteor" | "comet" | "nebula" | "supernova" | "quasar";
 }
 
 export interface WalletData {
@@ -102,6 +104,14 @@ export function calculateScore(traits: WalletTraits): number {
   if (traits.diamondHands) score += SCORING.DIAMOND_HANDS_BONUS;
   if (traits.hyperactiveDegen) score += SCORING.HYPERACTIVE_BONUS;
   if (traits.isMemeLord) score += SCORING.MEME_LORD_BONUS;
+
+  // 7. Badge Bonus Points (reward for harder badges)
+  if (traits.isOG) score += 80;           // hardest: 2yr + 5k tx + 1 SOL held 1yr
+  if (traits.isTxTitan) score += 40;      // 5000+ transactions
+  if (traits.isWhale) score += 35;        // 50+ SOL
+  if (traits.isCollector) score += 25;    // 10+ NFTs
+  if (traits.isEarlyAdopter) score += 20; // 2+ years old
+  if (traits.isSolanaMaxi) score += 30;   // 100 SOL + 100 tx
   
   // Log breakdown for debugging
   if (import.meta.env.DEV) console.log(`%c[Scoring] Total: ${Math.round(score)} | SOL: ${sol} | Age: ${age}d | Tx: ${tx} | NFTs: ${nfts} | Seeker: ${traits.hasSeeker} | Preorder: ${traits.hasPreorder} | Combo: ${traits.hasCombo}`, "color: #a855f7; font-weight: bold;");
@@ -134,14 +144,21 @@ export function useWalletData(address?: string) {
 
     // Check for cached data so planet renders immediately on return from BlackHole
     const cacheKey = `walletData_${address}`;
+    const cacheTimeKey = `walletData_ts_${address}`;
+    const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
     let hasCached = false;
+    let cacheIsFresh = false;
     try {
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
         const parsed = JSON.parse(cached) as WalletData;
         if (parsed.traits && parsed.address === address) {
-          setWalletData({ ...parsed, isLoading: true });
+          setWalletData({ ...parsed, isLoading: false });
           hasCached = true;
+          const ts = Number(sessionStorage.getItem(cacheTimeKey) || 0);
+          if (Date.now() - ts < CACHE_TTL_MS) {
+            cacheIsFresh = true;
+          }
         }
       }
     } catch { /* ignore */ }
@@ -153,6 +170,11 @@ export function useWalletData(address?: string) {
         isLoading: true,
         error: null
       });
+    }
+    // Skip re-fetch if cache is fresh (< 5 min old)
+    if (cacheIsFresh) return;
+    if (hasCached) {
+      setWalletData(prev => ({ ...prev, isLoading: true }));
     }
 
     let cancelled = false;
@@ -255,7 +277,8 @@ export function useWalletData(address?: string) {
             };
           };
           authorities?: { address: string }[];
-          creators?: { address: string }[];
+          creators?: { address: string; verified?: boolean }[];
+          burnt?: boolean;
           grouping?: { group_key: string; group_value: string }[];
           interface?: string;
           token_info?: {
@@ -263,6 +286,11 @@ export function useWalletData(address?: string) {
             supply?: number;
             balance?: number | string;
             amount?: number | string;
+            price_info?: {
+              price_per_token?: number;
+              total_price?: number;
+              currency?: string;
+            };
           };
           compression?: {
             compressed: boolean;
@@ -293,7 +321,8 @@ export function useWalletData(address?: string) {
                   page: 1,
                   limit: 1000,
                   displayOptions: {
-                    showCollectionMetadata: true
+                    showCollectionMetadata: true,
+                    showFungible: true
                   }
                 }
               }),
@@ -386,17 +415,11 @@ export function useWalletData(address?: string) {
           const authorities = asset.authorities || [];
           const creators = asset.creators || [];
 
-          const isSeekerNamed =
-            (name.includes("seeker") || symbol.includes("seeker")) &&
-            !name.includes("preorder") &&
-            !name.includes("chapter 2");
-          
           const isSeekerGenesis = 
             collectionGroup?.group_value === TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION ||
             authorities.some((auth) => auth.address === TOKEN_ADDRESSES.SEEKER_MINT_AUTHORITY) ||
             creators.some((c) => c.address === TOKEN_ADDRESSES.SEEKER_MINT_AUTHORITY) ||
-            (name.includes("seeker") && (name.includes("genesis") || name.includes("citizen"))) ||
-            isSeekerNamed;
+            (name.includes("seeker") && (name.includes("genesis") || name.includes("citizen")));
           
           if (isSeekerGenesis) hasSeeker = true;
 
@@ -413,15 +436,36 @@ export function useWalletData(address?: string) {
           const tokenInfo = asset.token_info || {};
           const decimals = tokenInfo.decimals ?? (isFungibleAsset(asset) ? 9 : 0);
           
-          const isExplicitNFT = iface.includes("NFT") || iface.includes("PROGRAMMABLE") || iface === "CUSTOM" || asset.compression?.compressed === true;
-          const isLikelyNFT = decimals === 0 && (metadata.name || content.links?.image || asset.grouping?.length > 0);
-          const isKnownFungible = iface === "FUNGIBLETOKEN" || iface === "FUNGIBLEASSET" || ((tokenInfo.supply || 0) > 1 && decimals > 0);
+          const isExplicitNFT = iface === "V1_NFT" || iface === "V2_NFT" || iface === "PROGRAMMABLENFT" || iface === "LEGACY_NFT" || asset.compression?.compressed === true;
+          const supply = tokenInfo.supply !== undefined ? tokenInfo.supply : -1;
+          const hasCollection = grouping.some((g: { group_key: string }) => g.group_key === "collection");
+          const isLikelyNFT = decimals === 0 && hasCollection && supply === 1;
+          const isKnownFungible = iface === "FUNGIBLETOKEN" || iface === "FUNGIBLEASSET" || iface === "FUNGIBLE_TOKEN" || iface === "FUNGIBLE_ASSET" || (supply > 1 && decimals >= 0);
 
-          if (isExplicitNFT || (isLikelyNFT && !isKnownFungible)) {
+          // Skip burnt assets
+          if (asset.burnt) return;
+
+          const hasVerifiedCreator = creators.some(c => c.verified === true);
+          const isCompressedNFT = asset.compression?.compressed === true;
+          // Strict NFT filter:
+          // 1. Must be verified creator + collection (Core assets: collection only)
+          // 2. Must have royalties >= 1% (100 bps) — filters spam/airdrop NFTs with 0 royalties
+          const isMplCore = iface === "MPLCOREASSET" || iface === "MPLBUBBLEGUMV2";
+          const isRealNFT = isMplCore ? hasCollection : (hasVerifiedCreator && hasCollection);
+          const royaltyBps = (asset as any).royalty?.basis_points ?? 0;
+          const hasRoyalty = royaltyBps >= 100;
+          if ((isExplicitNFT || isMplCore || (isLikelyNFT && !isKnownFungible)) && isRealNFT && hasRoyalty) {
             nftCount++;
             const collectionValue = collectionGroup?.group_value || "";
             if (BLUE_CHIP_COLLECTIONS.includes(collectionValue as typeof BLUE_CHIP_COLLECTIONS[number])) {
               isBlueChip = true;
+            }
+            // Also check by collection name
+            if (!isBlueChip && name) {
+              const lowerName = name.toLowerCase();
+              if (BLUE_CHIP_COLLECTION_NAMES.some(bcn => lowerName.includes(bcn))) {
+                isBlueChip = true;
+              }
             }
           } else {
             uniqueTokenCount++;
@@ -485,23 +529,43 @@ export function useWalletData(address?: string) {
 
         const hasCombo = hasSeeker && hasPreorder;
         const memeCoinsHeld = Array.from(memeHoldingsSet);
-        const isMemeLord = memeValueUSD >= 10;
-        const isDeFiKing = hasLstExposure || defiProtocolExposure;
+        const isMemeLord = memeCoinsHeld.length >= 3 && memeValueUSD >= 10;
+        // DeFi King: must have LST or DeFi protocol exposure AND meaningful wallet value
+        const isDeFiKing = (hasLstExposure || defiProtocolExposure) && (solBalance >= 0.1 || memeValueUSD >= 10);
 
         const solTier =
           solBalance >= 10 ? "whale" : solBalance >= 1 ? "dolphin" : solBalance >= 0.1 ? "shrimp" : null;
 
+        // Total wallet value: sum all token price_info from DAS + SOL balance
+        let allTokenValueUSD = 0;
+        assets.forEach((asset: DASAsset) => {
+          const pi = asset.token_info?.price_info;
+          if (pi?.total_price && pi.total_price > 0) {
+            allTokenValueUSD += pi.total_price;
+          }
+        });
+        // Also add from SPL fallback for tokens not in DAS
+        // SOL price: use DAS native SOL price if available, else estimate
+        const solAsset = assets.find((a: DASAsset) => a.id === 'So11111111111111111111111111111111111111112');
+        const solPrice = solAsset?.token_info?.price_info?.price_per_token || 150;
+        const solValueUSD = solBalance * solPrice;
+        const totalValueUSD = solValueUSD + allTokenValueUSD;
+        const cosmicRank: WalletTraits["cosmicRank"] =
+          totalValueUSD >= 50000 ? "quasar" :
+          totalValueUSD >= 10000 ? "supernova" :
+          totalValueUSD >= 2000 ? "nebula" :
+          totalValueUSD >= 500 ? "comet" :
+          totalValueUSD >= 50 ? "meteor" : "stardust";
+
         const solBonusApplied = solBalance >= 5 ? 150 : solBalance >= 1 ? 70 : solBalance >= 0.1 ? 30 : 0;
         const walletAgeBonus = Math.min(Math.floor((walletAgeDays / 365) * 100), 300);
 
-        const isOGByBalance = solBalance >= 5;
-        const isOGByAge = walletAgeDays >= 730;
-        const isOGByTransactions = txCount >= 1000;
-        const isOG = isOGByBalance && isOGByAge && isOGByTransactions;
+        const isTxTitan = txCount > 5000;
+        const diamondHands = walletAgeDays >= 365 && solBalance >= 1;
+        const isOG = walletAgeDays >= 730 && isTxTitan && diamondHands;
         const isWhale = solBalance >= 50;
         const isCollector = nftCount >= 10;
         const isEarlyAdopter = walletAgeDays >= 730;
-        const isTxTitan = txCount > 1000;
         const isSolanaMaxi = solBalance >= 100 && txCount > 100;
 
         const traits: WalletTraits = {
@@ -518,11 +582,11 @@ export function useWalletData(address?: string) {
           isDeFiKing,
           uniqueTokenCount, nftCount, txCount, memeCoinsHeld, isMemeLord,
           hyperactiveDegen: avgTxPerDay30d >= 8,
-          diamondHands: walletAgeDays >= 365 && solBalance >= 0.5,
+          diamondHands,
           avgTxPerDay30d, daysSinceLastTx: null,
           solBalance, solBonusApplied, walletAgeDays, walletAgeBonus,
           planetTier: "mercury", totalAssetsCount,
-          solTier,
+          solTier, totalValueUSD, cosmicRank,
         };
 
         const score = calculateScore(traits);
@@ -553,7 +617,7 @@ export function useWalletData(address?: string) {
         if (cancelled) return;
         const finalData: WalletData = { address, traits, score, isLoading: false, error: null };
         setWalletData(finalData);
-        try { sessionStorage.setItem(`walletData_${address}`, JSON.stringify(finalData)); } catch { /* ignore */ }
+        try { sessionStorage.setItem(`walletData_${address}`, JSON.stringify(finalData)); sessionStorage.setItem(`walletData_ts_${address}`, String(Date.now())); } catch { /* ignore */ }
         if (isDev) console.log(`%c[Scan Final] NFTs: ${nftCount} | Tx: ${txCount} | Score: ${score}`, "color: #fff; background: #22d3ee; padding: 4px; border-radius: 4px;");
 
       } catch (error) {

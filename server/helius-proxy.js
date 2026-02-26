@@ -28,7 +28,7 @@ import {
   keypairIdentity,
   publicKey,
 } from '@metaplex-foundation/umi';
-import { create, fetchCollection, mplCore } from '@metaplex-foundation/mpl-core';
+import { create, fetchCollection, mplCore, burnV1 } from '@metaplex-foundation/mpl-core';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
@@ -95,6 +95,13 @@ const HELIUS_KEYS = (process.env.HELIUS_API_KEYS ?? process.env.HELIUS_API_KEY ?
   .split(',')
   .map((key) => key.trim())
   .filter(Boolean);
+const ALCHEMY_RPC_URL = (process.env.ALCHEMY_RPC_URL ?? '').trim();
+const FALLBACK_RPC_URL = (process.env.FALLBACK_RPC_URL ?? 'https://api.mainnet-beta.solana.com').trim();
+const DAS_METHODS = new Set([
+  'getAssetsByOwner', 'getAsset', 'getAssetBatch', 'getAssetProof', 'getAssetProofBatch',
+  'getAssetsByGroup', 'getAssetsByCreator', 'getAssetsByAuthority', 'searchAssets',
+  'getSignaturesForAsset', 'getTokenAccounts', 'getNftEditions',
+]);
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
 const METADATA_DIR = process.env.METADATA_DIR
   ? path.resolve(process.env.METADATA_DIR)
@@ -579,6 +586,69 @@ const claimAchievement = (address, achievementId) => {
 
 loadAchievementData();
 
+// ── Server-side Free Revive tracking (3 per day per game mode, requires minted ID) ──
+const REVIVES_STORE_FILE = path.join(METADATA_DIR, 'revive-usage.json');
+const FREE_REVIVES_PER_DAY = 3;
+// address -> { orbit: { date: 'YYYY-MM-DD', used: number }, destroyer: { ... } }
+const reviveData = new Map();
+
+const loadReviveData = () => {
+  try {
+    if (!fs.existsSync(REVIVES_STORE_FILE)) return;
+    const raw = fs.readFileSync(REVIVES_STORE_FILE, 'utf8');
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    const data = parsed?.data || {};
+    for (const [addr, entry] of Object.entries(data)) {
+      reviveData.set(addr, entry);
+    }
+    console.log(`[revives] Loaded data for ${reviveData.size} wallets`);
+  } catch (err) {
+    console.warn('[revives] Failed to load', err);
+  }
+};
+
+const persistReviveData = () => {
+  try {
+    const obj = {};
+    for (const [k, v] of reviveData) obj[k] = v;
+    fs.writeFileSync(REVIVES_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
+  } catch (err) {
+    console.warn('[revives] Failed to persist', err);
+  }
+};
+
+const getToday = () => new Date().toISOString().slice(0, 10);
+
+const getRevivesUsedToday = (address, gameMode) => {
+  const entry = reviveData.get(address);
+  if (!entry) return 0;
+  const modeEntry = entry[gameMode];
+  if (!modeEntry) return 0;
+  return modeEntry.date === getToday() ? (modeEntry.used || 0) : 0;
+};
+
+const getRevivesLeft = (address, gameMode) => {
+  return Math.max(0, FREE_REVIVES_PER_DAY - getRevivesUsedToday(address, gameMode));
+};
+
+const useRevive = (address, gameMode) => {
+  const today = getToday();
+  let entry = reviveData.get(address);
+  if (!entry) { entry = {}; reviveData.set(address, entry); }
+  let modeEntry = entry[gameMode];
+  if (!modeEntry || modeEntry.date !== today) {
+    modeEntry = { date: today, used: 0 };
+    entry[gameMode] = modeEntry;
+  }
+  if (modeEntry.used >= FREE_REVIVES_PER_DAY) return false;
+  modeEntry.used++;
+  persistReviveData();
+  return true;
+};
+
+loadReviveData();
+
 const getHeliusKeyIndex = (seed = '') => {
   if (!HELIUS_KEYS.length) return -1;
   if (!seed) return 0;
@@ -877,6 +947,7 @@ const normalizeGameSessionPayload = (payload) => {
   const txSignature = typeof payload.txSignature === 'string' && payload.txSignature.trim()
     ? payload.txSignature.trim()
     : null;
+  const gameMode = typeof payload.gameMode === 'string' ? payload.gameMode.trim() : 'orbit';
 
   if (!Number.isFinite(score) || score < 0) {
     throw new Error('score must be a non-negative number');
@@ -900,6 +971,7 @@ const normalizeGameSessionPayload = (payload) => {
     startedAtMs: Math.floor(startedAtMs),
     endedAtMs: Math.floor(endedAtMs),
     txSignature,
+    gameMode,
   };
 };
 
@@ -1867,12 +1939,16 @@ const server = http.createServer(async (req, res) => {
         startedAtMs: payload.startedAtMs,
         endedAtMs: payload.endedAtMs,
         txSignature: payload.txSignature,
+        gameMode: payload.gameMode,
       });
       const hash = crypto.createHash('sha256').update(canonical).digest('hex');
       const id = createGameSessionProofId(payload.slot, hash);
       const durationMs = Math.max(0, payload.endedAtMs - payload.startedAtMs);
+      // For orbit: score = survival seconds, check delta against duration
+      // For destroyer: score = points (unrelated to time), skip score-time check
+      const isDestroyerMode = payload.gameMode === 'destroyer';
       const expectedScore = Math.floor(durationMs / 1000);
-      const scoreDelta = Math.abs(expectedScore - payload.score);
+      const scoreDelta = isDestroyerMode ? 0 : Math.abs(expectedScore - payload.score);
       const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
       const verified = verification.seedMatchesSlot && scoreDelta <= 5;
       const nowIso = new Date().toISOString();
@@ -1896,6 +1972,7 @@ const server = http.createServer(async (req, res) => {
         durationMs,
         scoreDelta,
         verified,
+        gameMode: payload.gameMode,
         proofUrl,
         verification: {
           ...verification,
@@ -2076,6 +2153,50 @@ const server = http.createServer(async (req, res) => {
       markAchievementsUnlocked(addr, ids);
       const entry = getWalletAchievements(addr);
       respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
+    } catch {
+      respondJson(res, 400, { error: 'Invalid JSON body' });
+    }
+    return;
+  }
+
+  // ── Free Revive API (3 per day per game mode, server-authoritative) ──
+  if (pathname === '/api/game/revives' && req.method === 'GET') {
+    const addr = url.searchParams.get('address') || '';
+    const mode = url.searchParams.get('mode') || 'orbit';
+    if (!addr) {
+      respondJson(res, 400, { error: 'address query param required' });
+      return;
+    }
+    if (mode !== 'orbit' && mode !== 'destroyer') {
+      respondJson(res, 400, { error: 'mode must be orbit or destroyer' });
+      return;
+    }
+    const left = getRevivesLeft(addr, mode);
+    respondJson(res, 200, { address: addr, mode, left, max: FREE_REVIVES_PER_DAY });
+    return;
+  }
+
+  if (pathname === '/api/game/revives' && req.method === 'POST') {
+    try {
+      const raw = await readBody(req);
+      const parsed = JSON.parse(raw);
+      const { address: addr, mode } = parsed;
+      if (!addr || typeof addr !== 'string') {
+        respondJson(res, 400, { error: 'address (string) required' });
+        return;
+      }
+      if (mode !== 'orbit' && mode !== 'destroyer') {
+        respondJson(res, 400, { error: 'mode must be orbit or destroyer' });
+        return;
+      }
+      const success = useRevive(addr, mode);
+      if (!success) {
+        const left = getRevivesLeft(addr, mode);
+        respondJson(res, 429, { error: 'No free revives left today', left, max: FREE_REVIVES_PER_DAY });
+        return;
+      }
+      const left = getRevivesLeft(addr, mode);
+      respondJson(res, 200, { address: addr, mode, success: true, left, max: FREE_REVIVES_PER_DAY });
     } catch {
       respondJson(res, 400, { error: 'Invalid JSON body' });
     }
@@ -2694,6 +2815,7 @@ const server = http.createServer(async (req, res) => {
       const adminMode = Boolean(payload?.admin);
       const remintMode = Boolean(payload?.remint);
       const burnSignature = typeof payload?.burnSignature === 'string' ? payload.burnSignature.trim() : '';
+      const burnAssetId = typeof payload?.burnAssetId === 'string' ? payload.burnAssetId.trim() : '';
       const paymentTokenRaw = typeof payload?.paymentToken === 'string' ? payload.paymentToken.trim() : '';
       const paymentToken = paymentTokenRaw.toUpperCase() === 'SKR' ? 'SKR' : 'SOL';
       const signedTransaction = typeof payload?.signedTransaction === 'string' ? payload.signedTransaction.trim() : '';
@@ -2848,18 +2970,20 @@ const server = http.createServer(async (req, res) => {
       }).setFeePayer(payerSigner);
 
       const paymentInstructions = [];
-      // Remint mode: verify burn signature exists, skip payment
-      if (remintMode && burnSignature) {
-        console.info('[mint-cnft] remint mode — skipping payment', { requestId, burnSignature: burnSignature.slice(0, 16) });
-        // Optionally verify burn tx on-chain (best-effort, don't block)
-        try {
-          const burnStatus = await connection.getSignatureStatus(burnSignature);
-          const conf = burnStatus?.value?.confirmationStatus;
-          if (conf !== 'confirmed' && conf !== 'finalized') {
-            console.warn('[mint-cnft] remint burn signature not yet confirmed', { requestId, burnSignature: burnSignature.slice(0, 16), status: conf });
+      // Remint mode: skip payment (combined burn+mint flow uses burnAssetId; legacy flow uses burnSignature)
+      if (remintMode && (burnSignature || burnAssetId)) {
+        console.info('[mint-cnft] remint mode — skipping payment', { requestId, burnAssetId: burnAssetId ? burnAssetId.slice(0, 16) : undefined, burnSignature: burnSignature ? burnSignature.slice(0, 16) : undefined });
+        // Optionally verify burn tx on-chain (best-effort, only for legacy burnSignature flow)
+        if (burnSignature) {
+          try {
+            const burnStatus = await connection.getSignatureStatus(burnSignature);
+            const conf = burnStatus?.value?.confirmationStatus;
+            if (conf !== 'confirmed' && conf !== 'finalized') {
+              console.warn('[mint-cnft] remint burn signature not yet confirmed', { requestId, burnSignature: burnSignature.slice(0, 16), status: conf });
+            }
+          } catch (e) {
+            console.warn('[mint-cnft] remint burn verification failed (non-blocking)', e);
           }
-        } catch (e) {
-          console.warn('[mint-cnft] remint burn verification failed (non-blocking)', e);
         }
       } else if (!adminMode) {
         if (paymentToken === 'SKR') {
@@ -2933,8 +3057,30 @@ const server = http.createServer(async (req, res) => {
           );
         }
       }
+      // Build burn instructions if burnAssetId provided (combined burn+mint in one tx)
+      const burnInstructions = [];
+      if (remintMode && burnAssetId) {
+        try {
+          const burnOwnerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
+          const burnBuilder = burnV1(umi, {
+            asset: publicKey(burnAssetId),
+            collection: publicKey(collectionMintKey.toBase58()),
+            authority: burnOwnerSigner,
+          });
+          for (const umiIx of burnBuilder.getInstructions()) {
+            burnInstructions.push(toWeb3JsInstruction(umiIx));
+          }
+          console.info('[mint-cnft] burn instructions added to combined tx', { requestId, burnAssetId: burnAssetId.slice(0, 16) });
+        } catch (burnErr) {
+          console.error('[mint-cnft] failed to build burn instructions', burnErr);
+          respondJson(res, 500, { error: 'Failed to build burn instructions', requestId });
+          return;
+        }
+      }
+
       const latestBlockhash = await connection.getLatestBlockhash('finalized');
       const instructions = [
+        ...burnInstructions,
         ...paymentInstructions,
         ...builder.getInstructions().map((instruction) => {
           const web3Ix = toWeb3JsInstruction(instruction);
@@ -3337,62 +3483,112 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (!HELIUS_KEYS.length && !HELIUS_RPC_BASE) {
+  if (!HELIUS_KEYS.length && !HELIUS_RPC_BASE && !ALCHEMY_RPC_URL && !FALLBACK_RPC_URL) {
     respondJson(res, 500, { error: 'RPC endpoint is not configured' });
     return;
   }
 
   try {
+    const rpcBody = await readBody(req);
     const seed = String(req.headers['x-wallet-address'] ?? '');
-    const apiKey = pickHeliusKey(seed);
 
-    if (!apiKey && HELIUS_KEYS.length) {
-      respondJson(res, 500, { error: 'Helius API key required' });
+    // Detect RPC method to decide routing
+    let rpcMethod = '';
+    try { rpcMethod = JSON.parse(rpcBody)?.method ?? ''; } catch {}
+
+    const isDasMethod = DAS_METHODS.has(rpcMethod);
+
+    // Build Helius URL
+    const apiKey = pickHeliusKey(seed);
+    let heliusUrl = null;
+    if (HELIUS_RPC_BASE && (apiKey || !HELIUS_KEYS.length)) {
+      const u = new URL(HELIUS_RPC_BASE);
+      if (apiKey) u.searchParams.set('api-key', apiKey);
+      heliusUrl = u.toString();
+    }
+
+    // Build ordered URL list based on method type
+    // DAS methods → Helius only (other providers don't support DAS)
+    // Standard RPC → Alchemy → Helius → Solana Public
+    const urls = [];
+    if (isDasMethod) {
+      if (heliusUrl) urls.push({ url: heliusUrl, name: 'helius' });
+    } else {
+      if (ALCHEMY_RPC_URL) urls.push({ url: ALCHEMY_RPC_URL, name: 'alchemy' });
+      if (heliusUrl) urls.push({ url: heliusUrl, name: 'helius' });
+      if (FALLBACK_RPC_URL) urls.push({ url: FALLBACK_RPC_URL, name: 'solana-public' });
+    }
+
+    if (!urls.length) {
+      respondJson(res, 500, { error: 'No RPC endpoint available for method: ' + rpcMethod });
       return;
     }
 
-    const targetUrl = new URL(HELIUS_RPC_BASE);
-    if (apiKey) {
-      targetUrl.searchParams.set('api-key', apiKey);
+    // Try each URL in order with fetch-based fallback
+    let lastError = null;
+    for (const { url, name } of urls) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        const upstream = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: rpcBody,
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (!upstream.ok) {
+          lastError = `${name} returned ${upstream.status}`;
+          console.warn(`[rpc-fallback] ${name} failed: HTTP ${upstream.status}, trying next...`);
+          continue;
+        }
+
+        const responseBody = await upstream.text();
+
+        // Check for RPC-level errors that warrant fallback (rate limits, etc.)
+        try {
+          const parsed = JSON.parse(responseBody);
+          if (parsed?.error?.code === -32429 || parsed?.error?.message?.includes('rate limit')) {
+            lastError = `${name} rate limited`;
+            console.warn(`[rpc-fallback] ${name} rate limited, trying next...`);
+            continue;
+          }
+        } catch {}
+
+        if (!res.headersSent) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(responseBody);
+        }
+        return;
+      } catch (err) {
+        lastError = `${name}: ${err.message}`;
+        console.warn(`[rpc-fallback] ${name} error: ${err.message}, trying next...`);
+        continue;
+      }
     }
 
-    const rpcBody = await readBody(req);
-
-    const transport = targetUrl.protocol === 'https:' ? https : http;
-    const upstreamReq = transport.request(
-      targetUrl,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      },
-      (upstreamRes) => {
-        res.writeHead(upstreamRes.statusCode ?? 502, {
-          'Content-Type': upstreamRes.headers['content-type'] ?? 'application/json',
-        });
-        upstreamRes.pipe(res);
-      }
-    );
-
-    upstreamReq.on('error', (error) => {
-      console.error('[helius-proxy] upstream error', error);
-      if (!res.headersSent) {
-        respondJson(res, 502, { error: 'Upstream request failed' });
-      } else {
-        res.end();
-      }
-    });
-
-    upstreamReq.write(rpcBody);
-    upstreamReq.end();
+    // All providers failed
+    console.error(`[rpc-fallback] all providers failed for ${rpcMethod}: ${lastError}`);
+    if (!res.headersSent) {
+      respondJson(res, 502, { error: 'All RPC providers failed', detail: lastError });
+    }
     return;
   } catch (error) {
-    console.error('[helius-proxy] upstream error', error);
-    respondJson(res, 502, { error: 'Upstream request failed' });
+    console.error('[helius-proxy] rpc error', error);
+    if (!res.headersSent) {
+      respondJson(res, 502, { error: 'Upstream request failed' });
+    }
   }
 });
 
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 server.listen(PORT, HOST, () => {
-  console.log(`[helius-proxy] listening on ${HOST}:${PORT} (gzip enabled, keep-alive 65s)`);
+  const providers = [];
+  if (ALCHEMY_RPC_URL) providers.push('alchemy');
+  if (HELIUS_KEYS.length) providers.push(`helius(${HELIUS_KEYS.length} keys)`);
+  else if (HELIUS_RPC_BASE) providers.push('helius(no-key)');
+  if (FALLBACK_RPC_URL) providers.push('solana-public');
+  console.log(`[helius-proxy] listening on ${HOST}:${PORT} | RPC chain: ${providers.join(' → ') || 'none'} (gzip, keep-alive 65s)`);
 });

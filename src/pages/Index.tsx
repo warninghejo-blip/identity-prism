@@ -12,7 +12,7 @@ import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorization
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from "lucide-react";
-import { getAppBaseUrl, getHeliusProxyUrl, getMetadataBaseUrl, MINT_CONFIG, SEEKER_TOKEN } from "@/constants";
+import { getAppBaseUrl, getHeliusProxyUrl, getMetadataBaseUrl, getHeliusRpcUrl, getCollectionMint, MINT_CONFIG, SEEKER_TOKEN } from "@/constants";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import { isTapestryEnabled, publishIdentityToTapestry } from "@/lib/tapestry";
@@ -121,6 +121,22 @@ const Index = () => {
       setWalletStable(true);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When returning from game/BlackHole with connected wallet but no URL address,
+  // sync activeAddress from wallet so card + Update button stay visible.
+  useEffect(() => {
+    if (!(returningFromBH.current || returningFromGameJump.current)) return;
+    if (activeAddress) return; // already set from URL
+    if (isConnected && connectedAddress) {
+      const addr = connectedAddress.toBase58();
+      setActiveAddress(addr);
+      setViewState("ready");
+      // Also update URL so refresh works
+      const next = new URLSearchParams(searchParams);
+      next.set("address", addr);
+      setSearchParams(next, { replace: true });
+    }
+  }, [isConnected, connectedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // If app was reopened with a stale BlackHole flag but no address,
   // clear it immediately so loading overlay is not suppressed.
@@ -521,12 +537,15 @@ const Index = () => {
   const { traits, score, address, isLoading } = walletData;
 
   // Phase 0: Return from Prism League via wormhole jump
+  const gameJumpTunnelFaded = useRef(false);
   useEffect(() => {
     if (!returningFromGameJump.current) return;
     suppressLoadingRef.current = true;
     dismissPreloader();
 
     const fadeTunnel = () => {
+      if (gameJumpTunnelFaded.current) return;
+      gameJumpTunnelFaded.current = true;
       const tunnel = document.getElementById('wormhole-tunnel');
       if (tunnel) {
         tunnel.style.transition = 'opacity 0.45s ease-out';
@@ -535,18 +554,11 @@ const Index = () => {
       }
     };
 
-    let readyTimer: ReturnType<typeof setTimeout> | null = null;
-    const maxTimer = setTimeout(fadeTunnel, 1300);
-    if (!isLoading && traits) {
-      readyTimer = setTimeout(fadeTunnel, 280);
-    } else {
-      readyTimer = setTimeout(fadeTunnel, 760);
-    }
-
-    return () => {
-      clearTimeout(maxTimer);
-      if (readyTimer) clearTimeout(readyTimer);
-    };
+    // Wait enough for card 3D scene to render before revealing
+    const delay = (!isLoading && traits) ? 600 : 1500;
+    const t = setTimeout(fadeTunnel, delay);
+    const safety = setTimeout(fadeTunnel, 2500);
+    return () => { clearTimeout(t); clearTimeout(safety); };
   }, [isLoading, traits, dismissPreloader]);
 
   useEffect(() => {
@@ -676,13 +688,42 @@ const Index = () => {
   };
 
   const [mintState, setMintState] = useState<"idle" | "minting" | "success" | "error">("idle");
-  const [remintState, setRemintState] = useState<"idle" | "burning" | "minting" | "success" | "error">("idle");
+  const [remintState, setRemintState] = useState<"idle" | "updating" | "success" | "error">("idle");
+  const [hasExistingId, setHasExistingId] = useState<boolean | null>(null);
   const [isMintPanelOpen, setIsMintPanelOpen] = useState(true);
   const [paymentToken, setPaymentToken] = useState<PaymentToken>("SOL");
   const [skrQuote, setSkrQuote] = useState<{ skrAmount: number; discount: number } | null>(null);
   const [skrQuoteError, setSkrQuoteError] = useState<string | null>(null);
   const [skrQuoteLoading, setSkrQuoteLoading] = useState(false);
   const proxyBase = getHeliusProxyUrl();
+
+  // Check if the wallet already owns an Identity Prism (to gate Update button)
+  useEffect(() => {
+    const addr = wallet?.publicKey?.toBase58();
+    if (!addr) { setHasExistingId(null); return; }
+    const heliusUrl = getHeliusRpcUrl(addr);
+    const collectionMint = getCollectionMint();
+    if (!heliusUrl || !collectionMint) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(heliusUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'check-id', method: 'getAssetsByOwner', params: { ownerAddress: addr, page: 1, limit: 1000 } }),
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json() as { result?: { items: Array<{ grouping?: Array<{ group_key: string; group_value: string }> }> } };
+        const owns = (data.result?.items ?? []).some(a =>
+          a.grouping?.some(g => g.group_key === 'collection' && g.group_value === collectionMint)
+        );
+        if (!cancelled) setHasExistingId(owns);
+      } catch {
+        if (!cancelled) setHasExistingId(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [wallet?.publicKey]);
 
   const fetchSkrQuote = useCallback(async () => {
     if (!proxyBase) {
@@ -891,19 +932,20 @@ const Index = () => {
 
   const handleRemint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
-    setRemintState("burning");
+    setRemintState("updating");
     let succeeded = false;
     const safetyTimer = setTimeout(() => {
       if (!succeeded) {
         setRemintState("idle");
-        toast.info("Re-mint timed out — please try again");
+        toast.info("Update timed out — please try again");
       }
     }, 120_000);
     try {
+      toast.info("Preparing update...", {
+        description: "Your wallet will show a small storage rent (~0.002 SOL). No mint fee — old card will be burned.",
+      });
       const cardImageUrl = await captureCardImage();
-      toast.info("Burning old card...");
       const { remintIdentityPrism } = await import("@/lib/mintIdentityPrism");
-      setRemintState("burning");
       const result = await remintIdentityPrism({
         wallet,
         address: wallet.publicKey.toBase58(),
@@ -913,17 +955,18 @@ const Index = () => {
       });
       succeeded = true;
       setRemintState("success");
-      toast.success("Card re-minted!", {
-        description: `Old card burned, new card: ${result.signature.slice(0, 8)}...`,
+      setHasExistingId(true);
+      toast.success("Card updated!", {
+        description: `Old burned & new minted: ${result.signature.slice(0, 8)}...`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const isUserCancel =
         /reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(msg);
       if (isUserCancel) {
-        toast.info("Re-mint cancelled");
+        toast.info("Update cancelled");
       } else {
-        toast.error("Re-mint failed", { description: msg });
+        toast.error("Update failed", { description: msg });
       }
     } finally {
       clearTimeout(safetyTimer);
@@ -1233,27 +1276,31 @@ const Index = () => {
                             <Button
                               onClick={handleRemint}
                               disabled={
-                                remintState === "burning" || remintState === "minting" ||
-                                mintState === "minting" || isLoading || !isConnected
+                                remintState === "updating" ||
+                                mintState === "minting" || isLoading || !isConnected ||
+                                hasExistingId !== true
                               }
                               variant="outline"
                               className="mint-primary-btn"
-                              style={{ background: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.25)' }}
+                              style={{ background: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.25)', opacity: hasExistingId !== true ? 0.4 : 1 }}
+                              title={hasExistingId === false ? 'You need to mint an Identity Prism first' : hasExistingId === null ? 'Checking wallet...' : undefined}
                             >
-                              {remintState === "idle" && <span>♻ UPDATE CARD (FREE)</span>}
-                              {remintState === "burning" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />BURNING OLD...</>}
-                              {remintState === "minting" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />MINTING NEW...</>}
+                              {remintState === "idle" && <span>♻ UPDATE CARD</span>}
+                              {remintState === "updating" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />UPDATING...</>}
                               {remintState === "success" && <span>✓ CARD UPDATED</span>}
                             </Button>
                           </div>
                         )}
-                        <div className="mint-meta" style={{ fontSize: '9px', opacity: 0.4, marginTop: '0.25rem' }}>
-                          <span>Already have a card? Update burns old + mints new for free</span>
-                        </div>
-                        <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
-                          <Share2 className="h-4 w-4 mr-2" />
-                          SHARE TO TWITTER
-                        </Button>
+                        {isConnected && hasExistingId === true && (
+                          <div className="mint-meta" style={{ marginTop: '-0.1rem', color: 'rgba(168,85,247,0.7)', textAlign: 'center', width: '100%' }}>
+                            <span>Burns old NFT · mints new · only ~0.002 SOL rent</span>
+                          </div>
+                        )}
+                        {isConnected && hasExistingId === false && (
+                          <div className="mint-meta" style={{ marginTop: '-0.1rem', color: 'rgba(255,120,50,0.6)', textAlign: 'center', width: '100%' }}>
+                            <span>Mint your Identity first to unlock Update</span>
+                          </div>
+                        )}
                         <Button
                           variant="ghost"
                           onClick={handlePublishTapestry}
