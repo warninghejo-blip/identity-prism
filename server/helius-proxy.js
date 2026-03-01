@@ -4659,6 +4659,188 @@ router.options('/api/v2/reputation', (req, res) => {
   res.end();
 });
 
+// ═══ Prism Marketplace — User Model Uploads ═══
+const MARKETPLACE_FILE = path.join(process.cwd(), 'marketplace_data.json');
+const marketplaceListings = new Map(); // id → listing
+const marketplacePurchases = new Map(); // `${address}:${listingId}` → true
+
+try {
+  if (fs.existsSync(MARKETPLACE_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(MARKETPLACE_FILE, 'utf8'));
+    if (raw.listings) for (const [k, v] of Object.entries(raw.listings)) marketplaceListings.set(k, v);
+    if (raw.purchases) for (const [k, v] of Object.entries(raw.purchases)) marketplacePurchases.set(k, v);
+    console.log(`[marketplace] Loaded ${marketplaceListings.size} listings`);
+  }
+} catch {}
+
+function saveMarketplace() {
+  try {
+    fs.writeFileSync(MARKETPLACE_FILE, JSON.stringify({
+      listings: Object.fromEntries(marketplaceListings),
+      purchases: Object.fromEntries(marketplacePurchases),
+    }), 'utf8');
+  } catch (e) { console.warn('[marketplace] save error', e.message); }
+}
+
+// List all marketplace items
+router.get('/api/marketplace/listings', (req, res) => {
+  const category = req.query?.category; // 'ship' | 'planet' | 'badge' | all
+  const entries = [...marketplaceListings.values()]
+    .filter(l => l.status === 'approved' && (!category || l.category === category))
+    .sort((a, b) => b.createdAt - a.createdAt);
+  respondJson(res, 200, { listings: entries });
+});
+
+// Get purchases for a wallet
+router.get('/api/marketplace/my-purchases', (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  const owned = [];
+  for (const [key] of marketplacePurchases) {
+    if (key.startsWith(address + ':')) {
+      const listingId = key.split(':')[1];
+      const listing = marketplaceListings.get(listingId);
+      if (listing) owned.push(listing);
+    }
+  }
+  respondJson(res, 200, { purchases: owned });
+});
+
+// Upload a new model
+router.post('/api/marketplace/upload', async (req, res) => {
+  const { address, name, description, category, price, modelData, modelFormat, previewImage } = req.body || {};
+  if (!address || !name || !modelData || !price) {
+    return respondJson(res, 400, { error: 'address, name, modelData, price required' });
+  }
+
+  // Validate format (GLB/GLTF only)
+  const format = (modelFormat || '').toLowerCase();
+  if (!['glb', 'gltf', 'obj'].includes(format)) {
+    return respondJson(res, 400, { error: 'Invalid format. Supported: GLB, GLTF, OBJ' });
+  }
+
+  // Validate model size (max 5MB base64)
+  if (modelData.length > 5 * 1024 * 1024 * 1.37) {
+    return respondJson(res, 400, { error: 'Model too large. Max 5MB.' });
+  }
+
+  // Validate price
+  const priceNum = Math.max(1, Math.floor(Number(price)));
+  if (priceNum > 10000) {
+    return respondJson(res, 400, { error: 'Price too high. Max 10000 PRISM.' });
+  }
+
+  // Validate GLB magic bytes (first 4 bytes should be "glTF" = 0x676C5446)
+  if (format === 'glb') {
+    try {
+      const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
+      if (buf.length < 12) return respondJson(res, 400, { error: 'GLB file too small' });
+      const magic = buf.readUInt32LE(0);
+      if (magic !== 0x46546C67) {
+        return respondJson(res, 400, { error: 'Invalid GLB file — magic bytes mismatch. Ensure this is a valid .glb file.' });
+      }
+      const version = buf.readUInt32LE(4);
+      if (version !== 2) {
+        return respondJson(res, 400, { error: `Unsupported GLB version ${version}. Only glTF 2.0 supported.` });
+      }
+    } catch (e) {
+      return respondJson(res, 400, { error: 'Could not parse GLB file: ' + e.message });
+    }
+  }
+
+  const id = `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  // Save model file to disk
+  const modelsDir = path.join(process.cwd(), 'marketplace_models');
+  if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
+  const modelPath = path.join(modelsDir, `${id}.${format}`);
+  try {
+    const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
+    fs.writeFileSync(modelPath, buf);
+  } catch (e) {
+    return respondJson(res, 500, { error: 'Failed to save model file' });
+  }
+
+  const listing = {
+    id,
+    seller: address,
+    name: name.slice(0, 60),
+    description: (description || '').slice(0, 200),
+    category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship',
+    price: priceNum,
+    format,
+    modelUrl: `/marketplace_models/${id}.${format}`,
+    previewImage: previewImage ? previewImage.slice(0, 100000) : null,
+    status: 'approved', // auto-approve for now, add moderation later
+    purchaseCount: 0,
+    createdAt: Date.now(),
+  };
+
+  marketplaceListings.set(id, listing);
+  saveMarketplace();
+
+  respondJson(res, 200, { listing, message: 'Model uploaded successfully!' });
+});
+
+// Purchase a model
+router.post('/api/marketplace/purchase', async (req, res) => {
+  const { address, listingId } = req.body || {};
+  if (!address || !listingId) return respondJson(res, 400, { error: 'address and listingId required' });
+
+  const listing = marketplaceListings.get(listingId);
+  if (!listing) return respondJson(res, 404, { error: 'Listing not found' });
+
+  const purchaseKey = `${address}:${listingId}`;
+  if (marketplacePurchases.has(purchaseKey)) {
+    return respondJson(res, 400, { error: 'Already purchased' });
+  }
+
+  // Check PRISM balance
+  const bal = getPrismBalance(address);
+  if (bal.balance < listing.price) {
+    return respondJson(res, 400, { error: 'Insufficient PRISM balance' });
+  }
+
+  // Deduct from buyer
+  bal.balance -= listing.price;
+  bal.totalSpent += listing.price;
+  bal.lastUpdated = new Date().toISOString();
+  prismBalances.set(address, bal);
+
+  // Credit seller (80% — 20% platform fee)
+  const sellerShare = Math.floor(listing.price * 0.8);
+  const sellerBal = getPrismBalance(listing.seller);
+  sellerBal.balance += sellerShare;
+  sellerBal.totalEarned += sellerShare;
+  sellerBal.lastUpdated = new Date().toISOString();
+  prismBalances.set(listing.seller, sellerBal);
+
+  // Record purchase
+  marketplacePurchases.set(purchaseKey, true);
+  listing.purchaseCount = (listing.purchaseCount || 0) + 1;
+  marketplaceListings.set(listingId, listing);
+
+  debouncedSavePrism();
+  saveMarketplace();
+
+  respondJson(res, 200, {
+    success: true,
+    listing,
+    newBalance: bal.balance,
+    message: `Purchased "${listing.name}" for ${listing.price} PRISM`,
+  });
+});
+
+// Serve marketplace model files
+router.get('/marketplace_models/*', (req, res) => {
+  const filePath = path.join(process.cwd(), req.url);
+  if (!fs.existsSync(filePath)) return respondJson(res, 404, { error: 'Model not found' });
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeTypes = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain' };
+  res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
+  fs.createReadStream(filePath).pipe(res);
+});
+
 // Identity Feed
 router.get('/api/feed', (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 30));
