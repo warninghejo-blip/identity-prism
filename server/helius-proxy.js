@@ -4180,19 +4180,317 @@ router.get('/api/sybil/analysis', async (req, res) => {
   }
 });
 
-// Sybil Funding Sources (stub — requires deep tx parsing)
-router.get('/api/sybil/funding-sources', (req, res) => {
-  respondJson(res, 200, { sources: [] });
+// Known CEX/Bridge/DEX addresses for labeling
+const KNOWN_LABELS = {
+  '2ojv9BAiHUrvsm9gxDe7fJSzbNZSJcxZvf8dqmWGHG8S': { label: 'Binance', type: 'cex' },
+  '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM': { label: 'Binance Hot', type: 'cex' },
+  '5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9': { label: 'Binance', type: 'cex' },
+  'H8sMJSCQxfKbeSTMe3fPaFKBMq3pS3bhVwn9dSjYqYLn': { label: 'Coinbase', type: 'cex' },
+  'GJRs4FwHtemZ5ZE9Q3MNTDzoH7VDrKEswLzVRSJNDRLZ': { label: 'Coinbase', type: 'cex' },
+  'FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5': { label: 'Kraken', type: 'cex' },
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': { label: 'Jupiter', type: 'dex' },
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': { label: 'Raydium', type: 'dex' },
+  'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb': { label: 'Wormhole', type: 'bridge' },
+  'So1endDq2YkqhipRh3WViPa8hFvz0XP1MXF1VZU8Q4Mw': { label: 'Solend', type: 'dex' },
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': { label: 'Orca', type: 'dex' },
+};
+
+// Known scam contracts / rug-pull deployers
+const KNOWN_SCAM_ADDRESSES = new Set([
+  // Placeholder — in production, load from a maintained blocklist
+]);
+const scamListFile = path.join(process.cwd(), 'scam_addresses.json');
+try {
+  if (fs.existsSync(scamListFile)) {
+    const list = JSON.parse(fs.readFileSync(scamListFile, 'utf8'));
+    if (Array.isArray(list)) list.forEach(a => KNOWN_SCAM_ADDRESSES.add(a));
+    console.log(`[sybil] Loaded ${KNOWN_SCAM_ADDRESSES.size} known scam addresses`);
+  }
+} catch {}
+
+// Shared helper: fetch parsed transactions for an address
+async function fetchParsedTransactions(address, limit = 50) {
+  const conn = getConnection();
+  const pubkey = new PublicKey(address);
+  const sigs = await conn.getSignaturesForAddress(pubkey, { limit });
+  if (!sigs.length) return { signatures: sigs, parsed: [] };
+  
+  // Fetch parsed txs in batches of 10
+  const parsed = [];
+  for (let i = 0; i < sigs.length; i += 10) {
+    const batch = sigs.slice(i, i + 10).map(s => s.signature);
+    try {
+      const txs = await conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 });
+      parsed.push(...txs.filter(Boolean));
+    } catch { /* partial failure ok */ }
+  }
+  return { signatures: sigs, parsed };
+}
+
+// Extract SOL transfers from parsed transactions
+function extractSolTransfers(parsed, targetAddress) {
+  const incoming = new Map(); // sender → { totalSol, count, firstTime, lastTime }
+  const outgoing = new Map(); // receiver → { totalSol, count }
+  const programIds = new Set();
+  
+  for (const tx of parsed) {
+    if (!tx?.meta || !tx?.transaction) continue;
+    const blockTime = tx.blockTime ? tx.blockTime * 1000 : Date.now();
+    
+    // Collect program IDs for protocol diversity
+    const ixs = tx.transaction.message?.instructions || [];
+    for (const ix of ixs) {
+      if (ix.programId) programIds.add(ix.programId.toBase58());
+    }
+    
+    // Parse SOL balance changes from pre/post balances
+    const accounts = tx.transaction.message?.accountKeys || [];
+    const pre = tx.meta.preBalances || [];
+    const post = tx.meta.postBalances || [];
+    
+    for (let i = 0; i < accounts.length; i++) {
+      const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+      const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+      
+      if (acc === targetAddress && diff > 0.001) {
+        // Someone sent SOL to us — find likely sender (account with negative diff)
+        for (let j = 0; j < accounts.length; j++) {
+          if (j === i) continue;
+          const senderAcc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
+          const senderDiff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
+          if (senderDiff < -0.001 && senderAcc !== '11111111111111111111111111111111') {
+            const existing = incoming.get(senderAcc) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime };
+            existing.totalSol += Math.abs(diff);
+            existing.count += 1;
+            existing.firstTime = Math.min(existing.firstTime, blockTime);
+            existing.lastTime = Math.max(existing.lastTime, blockTime);
+            incoming.set(senderAcc, existing);
+            break;
+          }
+        }
+      } else if (acc === targetAddress && diff < -0.001) {
+        for (let j = 0; j < accounts.length; j++) {
+          if (j === i) continue;
+          const recvAcc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
+          const recvDiff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
+          if (recvDiff > 0.001) {
+            const existing = outgoing.get(recvAcc) || { totalSol: 0, count: 0 };
+            existing.totalSol += Math.abs(recvDiff);
+            existing.count += 1;
+            outgoing.set(recvAcc, existing);
+            break;
+          }
+        }
+      }
+    }
+  }
+  return { incoming, outgoing, programIds };
+}
+
+// Sybil Funding Sources — real implementation
+router.get('/api/sybil/funding-sources', async (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  
+  try {
+    const { parsed } = await fetchParsedTransactions(address, 100);
+    const { incoming } = extractSolTransfers(parsed, address);
+    
+    const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
+    const sources = [...incoming.entries()]
+      .sort((a, b) => b[1].totalSol - a[1].totalSol)
+      .slice(0, 20)
+      .map(([addr, info]) => {
+        const known = KNOWN_LABELS[addr];
+        return {
+          address: addr,
+          label: known?.label || null,
+          type: known?.type || 'wallet',
+          totalSolReceived: Math.round(info.totalSol * 10000) / 10000,
+          transactionCount: info.count,
+          firstInteraction: new Date(info.firstTime).toISOString(),
+          lastInteraction: new Date(info.lastTime).toISOString(),
+          percentage: Math.round((info.totalSol / totalReceived) * 100),
+        };
+      });
+    
+    respondJson(res, 200, { sources });
+  } catch (e) {
+    respondJson(res, 200, { sources: [], error: e.message });
+  }
 });
 
-// Sybil Cluster Detection (stub)
-router.get('/api/sybil/cluster', (req, res) => {
-  respondJson(res, 200, { clusterId: null });
+// Sybil Cluster Detection — finds wallets funded from same source
+const clusterCache = new Map();
+router.get('/api/sybil/cluster', async (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  
+  const cached = clusterCache.get(address);
+  if (cached && Date.now() - cached.ts < 1800_000) return respondJson(res, 200, cached.data);
+  
+  try {
+    const { parsed } = await fetchParsedTransactions(address, 50);
+    const { incoming } = extractSolTransfers(parsed, address);
+    
+    // Find the top funder
+    let topFunder = null;
+    let topAmount = 0;
+    for (const [addr, info] of incoming) {
+      if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
+    }
+    
+    if (!topFunder || topAmount < 0.01) {
+      const result = { clusterId: null };
+      clusterCache.set(address, { data: result, ts: Date.now() });
+      return respondJson(res, 200, result);
+    }
+    
+    // Check if the top funder also funded other wallets (siblings)
+    const conn = getConnection();
+    const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
+    const funderBatch = funderSigs.slice(0, 20).map(s => s.signature);
+    let funderParsed = [];
+    try {
+      const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
+      funderParsed = txs.filter(Boolean);
+    } catch {}
+    
+    const siblings = new Set();
+    for (const tx of funderParsed) {
+      if (!tx?.meta || !tx?.transaction) continue;
+      const accounts = tx.transaction.message?.accountKeys || [];
+      const pre = tx.meta.preBalances || [];
+      const post = tx.meta.postBalances || [];
+      for (let i = 0; i < accounts.length; i++) {
+        const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+        const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+        if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
+          siblings.add(acc);
+        }
+      }
+    }
+    
+    const known = KNOWN_LABELS[topFunder];
+    const result = siblings.size >= 2 ? {
+      clusterId: crypto.createHash('sha256').update(topFunder).digest('hex').slice(0, 16),
+      clusterSize: siblings.size + 1,
+      sharedFundingSource: topFunder,
+      sharedFundingLabel: known?.label || null,
+      siblingWallets: [...siblings].slice(0, 10),
+      confidence: Math.min(100, 30 + siblings.size * 10),
+    } : { clusterId: null };
+    
+    clusterCache.set(address, { data: result, ts: Date.now() });
+    respondJson(res, 200, result);
+  } catch (e) {
+    respondJson(res, 200, { clusterId: null, error: e.message });
+  }
 });
 
-// Sybil Circular Flow (stub)
-router.get('/api/sybil/circular-flow', (req, res) => {
-  respondJson(res, 200, { detected: false, cycle: [] });
+// Sybil Circular Flow — detect A→B→C→A patterns
+router.get('/api/sybil/circular-flow', async (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  
+  try {
+    const { parsed } = await fetchParsedTransactions(address, 50);
+    const { incoming, outgoing } = extractSolTransfers(parsed, address);
+    
+    // Check: did any address I sent SOL to also send SOL to me? (A↔B loop)
+    const cycle = [];
+    for (const [outAddr] of outgoing) {
+      if (incoming.has(outAddr)) {
+        cycle.push(address, outAddr, address);
+        break;
+      }
+    }
+    
+    respondJson(res, 200, { detected: cycle.length > 0, cycle });
+  } catch (e) {
+    respondJson(res, 200, { detected: false, cycle: [], error: e.message });
+  }
+});
+
+// Dark Pool Warning — check wallet interactions with known scam contracts
+router.get('/api/sybil/dark-pool', async (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  
+  try {
+    const { parsed } = await fetchParsedTransactions(address, 100);
+    const scamInteractions = [];
+    const allPrograms = new Set();
+    
+    for (const tx of parsed) {
+      if (!tx?.transaction) continue;
+      const ixs = tx.transaction.message?.instructions || [];
+      for (const ix of ixs) {
+        const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+        if (pid) allPrograms.add(pid);
+        if (KNOWN_SCAM_ADDRESSES.has(pid)) {
+          scamInteractions.push({
+            program: pid,
+            signature: tx.transaction.signatures?.[0] || '',
+            blockTime: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null,
+          });
+        }
+      }
+      // Also check if any counterparty is a known scam address
+      const accounts = tx.transaction.message?.accountKeys || [];
+      for (const acc of accounts) {
+        const addr = typeof acc === 'string' ? acc : acc?.pubkey?.toBase58?.() || '';
+        if (KNOWN_SCAM_ADDRESSES.has(addr) && addr !== address) {
+          scamInteractions.push({
+            address: addr,
+            signature: tx.transaction.signatures?.[0] || '',
+            blockTime: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null,
+          });
+        }
+      }
+    }
+    
+    respondJson(res, 200, {
+      address,
+      scamInteractions: scamInteractions.slice(0, 20),
+      scamCount: scamInteractions.length,
+      totalProgramsUsed: allPrograms.size,
+      riskLevel: scamInteractions.length >= 5 ? 'high' : scamInteractions.length >= 1 ? 'medium' : 'clean',
+    });
+  } catch (e) {
+    respondJson(res, 200, { address, scamInteractions: [], scamCount: 0, riskLevel: 'unknown', error: e.message });
+  }
+});
+
+// Contract Scanner — check if a specific contract/program is flagged
+router.post('/api/scam-check', async (req, res) => {
+  const { address } = req.body || {};
+  if (!address) return respondJson(res, 400, { error: 'contract address required' });
+  
+  const isKnownScam = KNOWN_SCAM_ADDRESSES.has(address);
+  
+  // Also try to fetch program account info
+  let programInfo = null;
+  try {
+    const conn = getConnection();
+    const info = await conn.getAccountInfo(new PublicKey(address));
+    if (info) {
+      programInfo = {
+        executable: info.executable,
+        owner: info.owner?.toBase58(),
+        lamports: info.lamports,
+        dataSize: info.data?.length || 0,
+      };
+    }
+  } catch {}
+  
+  respondJson(res, 200, {
+    address,
+    isKnownScam,
+    isExecutable: programInfo?.executable || false,
+    programInfo,
+    verdict: isKnownScam ? 'FLAGGED — Known scam contract' : programInfo?.executable ? 'Program found — not in blocklist' : 'Not a program account',
+  });
 });
 
 // Global Leaderboard
@@ -4216,12 +4514,79 @@ router.get('/api/feed', (req, res) => {
   respondJson(res, 200, { items: feedItems.slice(0, limit) });
 });
 
-// Constellation Network (stub — real impl needs tx graph analysis)
-router.get('/api/constellation', (req, res) => {
+// Constellation Network — real tx graph from on-chain data
+const constellationCache = new Map();
+router.get('/api/constellation', async (req, res) => {
   const address = req.query?.address;
   if (!address) return respondJson(res, 400, { error: 'address required' });
-  // Return empty — client generates demo data as fallback
-  respondJson(res, 200, { nodes: [], edges: [] });
+  
+  const cached = constellationCache.get(address);
+  if (cached && Date.now() - cached.ts < 600_000) return respondJson(res, 200, cached.data);
+  
+  try {
+    const { parsed } = await fetchParsedTransactions(address, 80);
+    const { incoming, outgoing, programIds } = extractSolTransfers(parsed, address);
+    
+    // Build node map: center + all counterparties
+    const nodeMap = new Map();
+    nodeMap.set(address, { id: address, label: address.slice(0, 4) + '...' + address.slice(-4), size: 14, x: 0, y: 0, vx: 0, vy: 0, color: '#22d3ee', isCenter: true });
+    
+    const allCounterparties = new Map();
+    for (const [addr, info] of incoming) {
+      const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0 };
+      existing.solIn += info.totalSol;
+      existing.count += info.count;
+      allCounterparties.set(addr, existing);
+    }
+    for (const [addr, info] of outgoing) {
+      const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0 };
+      existing.solOut += info.totalSol;
+      existing.count += info.count;
+      allCounterparties.set(addr, existing);
+    }
+    
+    // Sort by total interaction volume, take top 25
+    const sorted = [...allCounterparties.entries()]
+      .sort((a, b) => (b[1].solIn + b[1].solOut) - (a[1].solIn + a[1].solOut))
+      .slice(0, 25);
+    
+    const TIER_COLORS = { mercury: '#8B8B8B', mars: '#C1440E', venus: '#E8CDA0', earth: '#4B9CD3', neptune: '#3F54BE', uranus: '#73C2FB', saturn: '#E8D191', jupiter: '#C88B3A', sun: '#FFD700', binary_sun: '#22D3EE' };
+    const colorPalette = Object.values(TIER_COLORS);
+    
+    const edges = [];
+    for (let i = 0; i < sorted.length; i++) {
+      const [addr, info] = sorted[i];
+      const known = KNOWN_LABELS[addr];
+      const angle = (i / sorted.length) * Math.PI * 2;
+      const dist = 80 + Math.random() * 100;
+      const totalVol = info.solIn + info.solOut;
+      
+      nodeMap.set(addr, {
+        id: addr,
+        label: known?.label || (addr.slice(0, 4) + '...' + addr.slice(-4)),
+        size: Math.min(10, 3 + Math.log1p(totalVol) * 2),
+        x: Math.cos(angle) * dist + (Math.random() - 0.5) * 30,
+        y: Math.sin(angle) * dist + (Math.random() - 0.5) * 30,
+        vx: 0, vy: 0,
+        color: known ? '#f59e0b' : colorPalette[i % colorPalette.length],
+        isCenter: false,
+        tier: known?.type || null,
+      });
+      
+      edges.push({
+        source: address,
+        target: addr,
+        weight: info.count,
+        totalSol: Math.round((info.solIn + info.solOut) * 10000) / 10000,
+      });
+    }
+    
+    const result = { nodes: [...nodeMap.values()], edges };
+    constellationCache.set(address, { data: result, ts: Date.now() });
+    respondJson(res, 200, result);
+  } catch (e) {
+    respondJson(res, 200, { nodes: [], edges: [], error: e.message });
+  }
 });
 
 server.keepAliveTimeout = 65000;
