@@ -4493,16 +4493,44 @@ router.post('/api/scam-check', async (req, res) => {
   });
 });
 
-// Global Leaderboard
+// Global Leaderboard — combines identity scores + PRISM earnings
 router.get('/api/leaderboard', (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 50));
   
-  // Build from score-history data
-  const entries = [];
-  for (const [address, bal] of prismBalances) {
-    entries.push({ address, score: bal.totalEarned, tier: 'unknown', badges: 0, rank: 0 });
+  // Build from score-history (identity scores) merged with PRISM balances
+  const entryMap = new Map();
+  
+  // Add wallets from score-history (has real tier data)
+  for (const [address, hist] of scoreHistory) {
+    const latest = hist.scores?.[0];
+    if (latest) {
+      entryMap.set(address, {
+        address,
+        score: latest.score,
+        tier: latest.tier || 'unknown',
+        prismBalance: prismBalances.get(address)?.balance || 0,
+        badges: 0,
+        rank: 0,
+      });
+    }
   }
-  entries.sort((a, b) => b.score - a.score);
+  
+  // Add wallets from PRISM balances that aren't in score-history
+  for (const [address, bal] of prismBalances) {
+    if (!entryMap.has(address)) {
+      entryMap.set(address, {
+        address,
+        score: 0,
+        tier: 'unknown',
+        prismBalance: bal.balance,
+        badges: 0,
+        rank: 0,
+      });
+    }
+  }
+  
+  const entries = [...entryMap.values()]
+    .sort((a, b) => b.score - a.score || b.prismBalance - a.prismBalance);
   entries.forEach((e, i) => { e.rank = i + 1; });
   
   respondJson(res, 200, { entries: entries.slice(0, limit) });
