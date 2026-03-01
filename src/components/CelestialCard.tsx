@@ -94,12 +94,40 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(false);
   const [scoreHistory, setScoreHistory] = useState<{ score: number; tier: string; date: string }[]>([]);
+  const [sybilRisk, setSybilRisk] = useState<{ riskScore: number; riskLevel: string } | null>(null);
+  const [forgeFrame, setForgeFrame] = useState<string | null>(null);
+  const [forgeTitle, setForgeTitle] = useState<string | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : 'stats';
   const navigate = useNavigate();
+
+  // Fetch sybil risk and forge loadout
+  useEffect(() => {
+    if (!address || isCapture) return;
+    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    // Sybil
+    fetch(`${base}/api/sybil/analysis?address=${address}`).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.riskScore !== undefined) setSybilRisk({ riskScore: d.riskScore, riskLevel: d.riskLevel }); })
+      .catch(() => {});
+    // Forge loadout (local)
+    try {
+      const raw = localStorage.getItem(`prism_forge_loadout_v1_${address}`);
+      if (raw) {
+        const loadout = JSON.parse(raw);
+        if (loadout.equippedFrame) setForgeFrame(loadout.equippedFrame);
+        if (loadout.equippedTitle) {
+          // Resolve title name from item catalog
+          import('@/lib/forgeItems').then(({ getItemById }) => {
+            const item = getItemById(loadout.equippedTitle);
+            if (item) setForgeTitle(item.preview);
+          }).catch(() => {});
+        }
+      }
+    } catch {}
+  }, [address, isCapture]);
 
   const clearTransitionTimers = useCallback(() => {
     transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -334,8 +362,14 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           style={{
             backfaceVisibility: 'hidden',
             zIndex: isFlipped ? 0 : 20,
-            borderColor: 'rgba(6,182,212,0.3)',
-            boxShadow: '0 0 20px -4px rgba(6,182,212,0.15), 0 0 60px -12px rgba(6,182,212,0.08)',
+            borderColor: forgeFrame === 'frame_supernova' ? 'rgba(245,158,11,0.6)' :
+                         forgeFrame === 'frame_void' ? 'rgba(139,92,246,0.5)' :
+                         forgeFrame === 'frame_quantum' ? 'rgba(34,211,238,0.5)' :
+                         forgeFrame === 'frame_solar_flare' ? 'rgba(251,191,36,0.5)' :
+                         forgeFrame === 'frame_event_horizon' ? 'rgba(168,85,247,0.6)' :
+                         forgeFrame === 'frame_nebula' ? 'rgba(147,51,234,0.4)' :
+                         'rgba(6,182,212,0.3)',
+            boxShadow: forgeFrame ? `0 0 30px -4px ${forgeFrame.includes('supernova') ? 'rgba(245,158,11,0.3)' : forgeFrame.includes('void') ? 'rgba(139,92,246,0.3)' : 'rgba(6,182,212,0.15)'}, 0 0 60px -12px rgba(6,182,212,0.08)` : '0 0 20px -4px rgba(6,182,212,0.15), 0 0 60px -12px rgba(6,182,212,0.08)',
           }}
         >
           {/* Card background — separate suckable piece */}
@@ -343,6 +377,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
           {/* Header */}
           <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
+            {/* Sybil risk shield */}
+            {sybilRisk && !isCapture && (
+              <div
+                className="capture-hidden absolute left-3 top-3 flex items-center justify-center w-9 h-9 rounded-full backdrop-blur-md border transition-all"
+                style={{
+                  borderColor: sybilRisk.riskLevel === 'clean' ? 'rgba(34,197,94,0.3)' : sybilRisk.riskLevel === 'low' ? 'rgba(132,204,22,0.3)' : sybilRisk.riskLevel === 'medium' ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)',
+                  background: sybilRisk.riskLevel === 'clean' ? 'rgba(34,197,94,0.1)' : sybilRisk.riskLevel === 'low' ? 'rgba(132,204,22,0.1)' : sybilRisk.riskLevel === 'medium' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                }}
+                title={`Sybil Risk: ${sybilRisk.riskLevel} (${sybilRisk.riskScore}/100)`}
+              >
+                <Shield
+                  className="w-4 h-4"
+                  style={{ color: sybilRisk.riskLevel === 'clean' ? '#22c55e' : sybilRisk.riskLevel === 'low' ? '#84cc16' : sybilRisk.riskLevel === 'medium' ? '#f59e0b' : '#ef4444' }}
+                />
+              </div>
+            )}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -353,6 +403,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             >
               <RotateCw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:rotate-180 duration-500" />
             </button>
+            {forgeTitle && (
+              <p className="text-purple-300/70 text-[8px] font-bold tracking-[0.4em] uppercase">{forgeTitle}</p>
+            )}
             <p className="text-cyan-200/50 text-[9px] font-bold tracking-[0.3em] uppercase">
               Tier Level
             </p>
