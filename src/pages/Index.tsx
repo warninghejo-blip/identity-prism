@@ -19,7 +19,7 @@ import { isTapestryEnabled, publishIdentityToTapestry } from "@/lib/tapestry";
 import type { IdentityData } from "@/lib/tapestry";
 // html2canvas loaded dynamically in renderCardImage()
 const CosmicHub = React.lazy(() => import("@/components/CosmicHub"));
-import { getPrismBalance, earnPrism, type PrismBalance } from '@/lib/prismCoin';
+import { getPrismBalance, earnPrism, canEarnFromScan, markScanEarned, type PrismBalance } from '@/lib/prismCoin';
 
 type ViewState = "landing" | "scanning" | "ready" | "hub";
 type PaymentToken = "SOL" | "SKR";
@@ -681,10 +681,19 @@ const Index = () => {
       setViewState("scanning");
     } else {
       setViewState("ready");
-      // Load PRISM balance + earn scan reward
+      // Load PRISM balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
         getPrismBalance(resolvedAddress).then(setPrismBalance).catch(() => {});
-        earnPrism(resolvedAddress, 'scan_wallet').catch(() => {});
+        if (canEarnFromScan(resolvedAddress)) {
+          markScanEarned(resolvedAddress);
+          earnPrism(resolvedAddress, 'scan_wallet').catch(() => {});
+          // Quest auto-tracking
+          import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
+            const qs = getQuestState(resolvedAddress);
+            incrementQuest(qs, 'daily_scan');
+            incrementQuest(qs, 'ot_first_scan');
+          }).catch(() => {});
+        }
       }
     }
   }, [resolvedAddress, isWarping, isLoading, traits, fromBlackHole]);

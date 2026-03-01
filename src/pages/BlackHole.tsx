@@ -999,13 +999,22 @@ const BlackHole = () => {
 
       // Award PRISM coins for burning
       if (publicKey) {
+        const addr = publicKey.toBase58();
         const nftsBurned = safeTargets.filter(t => t.isNft).length;
         const tokensBurned = safeTargets.length - nftsBurned;
         const prismEarned = calculateBurnPrism(tokensBurned, nftsBurned);
         if (prismEarned > 0) {
-          earnPrism(publicKey.toBase58(), 'burn_tokens', prismEarned, `Burned ${safeTargets.length} asset(s) in Black Hole`).catch(() => {});
+          earnPrism(addr, 'burn_tokens', prismEarned, `Burned ${safeTargets.length} asset(s) in Black Hole`).catch(() => {});
           toast.success(`+${prismEarned} PRISM earned!`, { duration: 3000 });
         }
+        // Quest auto-tracking
+        import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
+          const qs = getQuestState(addr);
+          incrementQuest(qs, 'daily_burn', safeTargets.length);
+          incrementQuest(qs, 'ot_first_burn');
+          incrementQuest(qs, 'weekly_burn5', safeTargets.length);
+          incrementQuest(qs, 'ot_burn100', safeTargets.length);
+        }).catch(() => {});
       }
 
       // Refresh

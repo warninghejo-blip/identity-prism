@@ -715,6 +715,15 @@ const PrismLeague = () => {
         if (prismEarned > 0) {
           earnPrism(walletAddr, gameMode === 'orbit' ? 'game_orbit' : 'game_defender', prismEarned, `${gameMode === 'orbit' ? 'Orbit Survival' : 'Cosmic Defender'}: score ${finalScore}`).catch(() => {});
         }
+        // Quest auto-tracking
+        import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
+          const qs = getQuestState(walletAddr);
+          incrementQuest(qs, 'daily_game');
+          incrementQuest(qs, 'ot_first_game');
+          incrementQuest(qs, 'weekly_games5');
+          if (finalScore >= 1000) incrementQuest(qs, 'ot_score1000');
+          if (finalScore > highScore) incrementQuest(qs, 'daily_highscore');
+        }).catch(() => {});
       }
       const startedAtMs = runStartedAtRef.current || Date.now();
       const endedAtMs = Date.now();

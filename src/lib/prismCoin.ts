@@ -137,6 +137,25 @@ function saveLocalTransaction(address: string, tx: PrismTransaction): void {
 
 // ── Public API ──
 
+// ── Scan cooldown (1 earn per hour per wallet) ──
+
+const SCAN_COOLDOWN_KEY = 'prism_scan_cooldown_v1';
+const SCAN_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+
+export function canEarnFromScan(address: string): boolean {
+  try {
+    const lastScan = localStorage.getItem(`${SCAN_COOLDOWN_KEY}_${address}`);
+    if (!lastScan) return true;
+    return Date.now() - Number(lastScan) >= SCAN_COOLDOWN_MS;
+  } catch { return true; }
+}
+
+export function markScanEarned(address: string): void {
+  try {
+    localStorage.setItem(`${SCAN_COOLDOWN_KEY}_${address}`, String(Date.now()));
+  } catch {}
+}
+
 /**
  * Get PRISM balance for a wallet address.
  * Tries server first, falls back to localStorage.
