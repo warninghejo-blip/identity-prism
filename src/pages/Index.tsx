@@ -18,8 +18,10 @@ import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import { isTapestryEnabled, publishIdentityToTapestry } from "@/lib/tapestry";
 import type { IdentityData } from "@/lib/tapestry";
 // html2canvas loaded dynamically in renderCardImage()
+const CosmicHub = React.lazy(() => import("@/components/CosmicHub"));
+import { getPrismBalance, earnPrism, type PrismBalance } from '@/lib/prismCoin';
 
-type ViewState = "landing" | "scanning" | "ready";
+type ViewState = "landing" | "scanning" | "ready" | "hub";
 type PaymentToken = "SOL" | "SKR";
 
 const MWA_AUTH_CACHE_KEY = "SolanaMobileWalletAdapterDefaultAuthorizationCache";
@@ -83,6 +85,7 @@ const Index = () => {
   const suppressLoadingRef = useRef(shouldResumeFromBlackHole || shouldResumeFromGameJump);
 
   const [isWarping, setIsWarping] = useState(false);
+  const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(null);
   const [viewState, setViewState] = useState<ViewState>(
     (returningFromBH.current || returningFromGameJump.current) && urlAddress
       ? "ready"
@@ -678,6 +681,11 @@ const Index = () => {
       setViewState("scanning");
     } else {
       setViewState("ready");
+      // Load PRISM balance + earn scan reward
+      if (resolvedAddress) {
+        getPrismBalance(resolvedAddress).then(setPrismBalance).catch(() => {});
+        earnPrism(resolvedAddress, 'scan_wallet').catch(() => {});
+      }
     }
   }, [resolvedAddress, isWarping, isLoading, traits, fromBlackHole]);
 
@@ -1176,7 +1184,15 @@ const Index = () => {
       ref={shellRef}
       className={`identity-shell relative min-h-screen ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view nft-kiosk-mode' : ''}`}
     >
-      {isNftMode ? (
+      {viewState === "hub" && activeAddress ? (
+        <React.Suspense fallback={<div style={{position:'fixed',inset:0,background:'#050510'}} />}>
+          <CosmicHub
+            walletAddress={activeAddress}
+            prismBalance={prismBalance}
+            onNavigateToCard={() => setViewState("ready")}
+          />
+        </React.Suspense>
+      ) : isNftMode ? (
         <>
           <div className="absolute inset-0 bg-[#05070a] background-base" />
           <div className="nebula-layer nebula-one" />
@@ -1340,6 +1356,13 @@ const Index = () => {
                         >
                           <Share2 className="h-4 w-4 mr-2" />
                           SHARE ON X
+                        </Button>
+                        <Button
+                          onClick={() => setViewState("hub")}
+                          className="mint-primary-btn"
+                          style={{ background: 'linear-gradient(135deg, #8b5cf6, #06b6d4)', marginTop: '0.25rem' }}
+                        >
+                          🌌 COSMIC HUB
                         </Button>
                         <Button
                           variant="ghost"

@@ -67,6 +67,7 @@ import {
   type GameSessionProof,
 } from "@/lib/magicblock";
 import { createWormholeTunnel, fadeOutWormholeTunnel } from "@/lib/wormholeTunnel";
+import { earnPrism, calculateGamePrism } from "@/lib/prismCoin";
 import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, getAppBaseUrl } from "@/constants";
 import {
   checkDefenderAchievements,
@@ -707,6 +708,13 @@ const PrismLeague = () => {
         writeWalletCoins(walletAddr, next);
         setTotalCoins(next);
         syncCoinsToServer(walletAddr, next, finalCoins);
+      }
+      // Award PRISM coins for gameplay
+      if (walletAddr !== "anonymous") {
+        const prismEarned = calculateGamePrism(gameMode, finalScore, gameMode === 'destroyer' ? defLevel : undefined);
+        if (prismEarned > 0) {
+          earnPrism(walletAddr, gameMode === 'orbit' ? 'game_orbit' : 'game_defender', prismEarned, `${gameMode === 'orbit' ? 'Orbit Survival' : 'Cosmic Defender'}: score ${finalScore}`).catch(() => {});
+        }
       }
       const startedAtMs = runStartedAtRef.current || Date.now();
       const endedAtMs = Date.now();

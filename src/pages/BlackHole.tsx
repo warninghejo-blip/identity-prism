@@ -13,6 +13,7 @@ import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLe
 import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { createWormholeTunnel, fadeOutWormholeTunnel } from '@/lib/wormholeTunnel';
+import { earnPrism, calculateBurnPrism } from '@/lib/prismCoin';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -995,6 +996,17 @@ const BlackHole = () => {
       toast.success("Incineration complete!", {
         description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee) in ${signatures.length} tx${signatures.length > 1 ? 's' : ''}`
       });
+
+      // Award PRISM coins for burning
+      if (publicKey) {
+        const nftsBurned = safeTargets.filter(t => t.isNft).length;
+        const tokensBurned = safeTargets.length - nftsBurned;
+        const prismEarned = calculateBurnPrism(tokensBurned, nftsBurned);
+        if (prismEarned > 0) {
+          earnPrism(publicKey.toBase58(), 'burn_tokens', prismEarned, `Burned ${safeTargets.length} asset(s) in Black Hole`).catch(() => {});
+          toast.success(`+${prismEarned} PRISM earned!`, { duration: 3000 });
+        }
+      }
 
       // Refresh
       fetchTokens();
