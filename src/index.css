@@ -3302,3 +3302,52 @@ body:has(.prism-league-page) #root > * {
   pointer-events: none;
   opacity: 0.15;
 }
+
+/* ═══ v5.0 Mobile-First Styles ═══ */
+
+/* Safe area padding utility */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+
+/* Cosmic Hub: touch-friendly module targets */
+@media (max-width: 640px) {
+  .cosmic-hub-overlay {
+    padding: env(safe-area-inset-top, 12px) 12px env(safe-area-inset-bottom, 12px);
+  }
+}
+
+/* Stellar Forge: 2-col grid on mobile, 3-col on tablet */
+@media (max-width: 480px) {
+  .forge-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+  .forge-grid .rounded-xl { padding: 10px !important; }
+}
+
+/* Touch target minimum 44px for all interactive elements */
+@media (pointer: coarse) {
+  button, [role="button"], a[href], input, select {
+    min-height: 44px;
+  }
+  /* Larger tap targets in quest cards */
+  .quest-claim-btn { min-width: 72px; min-height: 44px; }
+}
+
+/* Scrollbar hide for horizontal tab bars */
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* Prevent text selection on interactive elements (mobile) */
+.no-select { -webkit-user-select: none; user-select: none; }
+
+/* Constellation canvas: prevent default touch scroll */
+canvas[class*="constellation"],
+canvas[class*="timewarp"] {
+  touch-action: none;
+}
+
+/* Nebula Market / Scam Checker: full-width inputs on mobile */
+@media (max-width: 640px) {
+  .market-search input,
+  .scam-search input {
+    font-size: 16px !important; /* prevents iOS zoom on focus */
+  }
+}
