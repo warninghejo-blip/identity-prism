@@ -4553,6 +4553,112 @@ router.get('/api/leaderboard', (req, res) => {
   respondJson(res, 200, { entries: entries.slice(0, limit) });
 });
 
+// ═══ Identity Reputation API v2 — Public REST endpoint ═══
+// Other dApps can query wallet reputation via this endpoint.
+// Rate limited: 10 req/min per IP without API key, 60 req/min with key.
+const reputationV2RateLimit = new Map(); // ip → { count, resetAt }
+
+router.get('/api/v2/reputation', async (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
+
+  // Rate limit by IP
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+  const apiKey = req.headers['x-api-key'] || req.query?.api_key;
+  const maxPerMin = apiKey ? 60 : 10;
+  const now = Date.now();
+  const rl = reputationV2RateLimit.get(ip) || { count: 0, resetAt: now + 60000 };
+  if (now > rl.resetAt) { rl.count = 0; rl.resetAt = now + 60000; }
+  rl.count++;
+  reputationV2RateLimit.set(ip, rl);
+  if (rl.count > maxPerMin) {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+    res.end(JSON.stringify({ error: 'Rate limited', retryAfterSec: Math.ceil((rl.resetAt - now) / 1000) }));
+    return;
+  }
+
+  try {
+    // Get identity data
+    const identity = await calculateIdentity(address);
+    if (!identity || identity.error) {
+      return respondJson(res, 404, { error: 'Could not resolve wallet identity', address });
+    }
+
+    // Get sybil analysis (cached)
+    let sybil = null;
+    const cachedSybil = sybilCache.get(address);
+    if (cachedSybil && now - cachedSybil.cachedAt < 3600_000) {
+      sybil = cachedSybil.analysis;
+    }
+
+    // Get score history
+    const history = getScoreHistory(address);
+    const latestScores = (history.scores || []).slice(0, 5);
+
+    // Get PRISM balance
+    const prismBal = prismBalances.get(address);
+
+    // Build comprehensive response
+    const response = {
+      version: '2.0',
+      address,
+      identity: {
+        score: identity.score,
+        maxScore: 1200,
+        tier: identity.tier,
+        badges: identity.badges || [],
+        badgeCount: identity.badges?.length || 0,
+      },
+      stats: {
+        solBalance: identity.stats?.solBalance ?? null,
+        walletAgeDays: identity.stats?.walletAgeDays ?? null,
+        transactionCount: identity.stats?.txCount ?? null,
+        tokenCount: identity.stats?.tokenCount ?? null,
+        nftCount: identity.stats?.nftCount ?? null,
+      },
+      sybilRisk: sybil ? {
+        score: sybil.riskScore,
+        level: sybil.riskLevel,
+        signalsDetected: sybil.signals?.filter(s => s.detected).length || 0,
+        totalSignals: sybil.signals?.length || 0,
+      } : null,
+      prism: prismBal ? {
+        balance: prismBal.balance,
+        totalEarned: prismBal.totalEarned,
+      } : null,
+      scoreHistory: latestScores,
+      meta: {
+        timestamp: new Date().toISOString(),
+        cached: Boolean(cachedSybil),
+        provider: 'Identity Prism',
+        website: 'https://identityprism.xyz',
+      },
+    };
+
+    // CORS headers for cross-origin API usage
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+      'Cache-Control': 'public, max-age=300',
+    });
+    res.end(JSON.stringify(response));
+  } catch (e) {
+    respondJson(res, 500, { error: 'Internal error', detail: e.message });
+  }
+});
+
+// Reputation API v2 — OPTIONS preflight
+router.options('/api/v2/reputation', (req, res) => {
+  res.writeHead(204, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+  });
+  res.end();
+});
+
 // Identity Feed
 router.get('/api/feed', (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 30));
