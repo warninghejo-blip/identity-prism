@@ -3303,6 +3303,12 @@ body:has(.prism-league-page) #root > * {
   opacity: 0.15;
 }
 
+/* ═══ Forge Aura CSS Animation ═══ */
+@keyframes aura-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.08); }
+}
+
 /* ═══ v5.0 Mobile-First Styles ═══ */
 
 /* Safe area padding utility */

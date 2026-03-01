@@ -96,6 +96,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [scoreHistory, setScoreHistory] = useState<{ score: number; tier: string; date: string }[]>([]);
   const [sybilRisk, setSybilRisk] = useState<{ riskScore: number; riskLevel: string } | null>(null);
   const [forgeFrame, setForgeFrame] = useState<string | null>(null);
+  const [forgeAura, setForgeAura] = useState<string | null>(null);
   const [forgeTitle, setForgeTitle] = useState<string | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
@@ -118,6 +119,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
       if (raw) {
         const loadout = JSON.parse(raw);
         if (loadout.equippedFrame) setForgeFrame(loadout.equippedFrame);
+        if (loadout.equippedAura) setForgeAura(loadout.equippedAura);
         if (loadout.equippedTitle) {
           // Resolve title name from item catalog
           import('@/lib/forgeItems').then(({ getItemById }) => {
@@ -369,7 +371,19 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                          forgeFrame === 'frame_event_horizon' ? 'rgba(168,85,247,0.6)' :
                          forgeFrame === 'frame_nebula' ? 'rgba(147,51,234,0.4)' :
                          'rgba(6,182,212,0.3)',
-            boxShadow: forgeFrame ? `0 0 30px -4px ${forgeFrame.includes('supernova') ? 'rgba(245,158,11,0.3)' : forgeFrame.includes('void') ? 'rgba(139,92,246,0.3)' : 'rgba(6,182,212,0.15)'}, 0 0 60px -12px rgba(6,182,212,0.08)` : '0 0 20px -4px rgba(6,182,212,0.15), 0 0 60px -12px rgba(6,182,212,0.08)',
+            boxShadow: [
+              // Frame glow
+              forgeFrame ? `0 0 30px -4px ${forgeFrame.includes('supernova') ? 'rgba(245,158,11,0.3)' : forgeFrame.includes('void') ? 'rgba(139,92,246,0.3)' : 'rgba(6,182,212,0.15)'}` : '0 0 20px -4px rgba(6,182,212,0.15)',
+              // Aura glow (outer)
+              forgeAura === 'aura_frost' ? '0 0 40px 8px rgba(96,165,250,0.15), 0 0 80px 20px rgba(96,165,250,0.06)' :
+              forgeAura === 'aura_ember' ? '0 0 40px 8px rgba(239,68,68,0.2), 0 0 80px 20px rgba(251,146,60,0.08)' :
+              forgeAura === 'aura_electric' ? '0 0 40px 8px rgba(59,130,246,0.2), 0 0 80px 20px rgba(96,165,250,0.08)' :
+              forgeAura === 'aura_plasma' ? '0 0 40px 8px rgba(168,85,247,0.2), 0 0 80px 20px rgba(139,92,246,0.08)' :
+              forgeAura === 'aura_dark_matter' ? '0 0 40px 8px rgba(88,28,135,0.25), 0 0 80px 20px rgba(126,34,206,0.1)' :
+              forgeAura === 'aura_binary_pulse' ? '0 0 40px 8px rgba(34,211,238,0.2), 0 0 80px 20px rgba(251,191,36,0.08)' :
+              '0 0 60px -12px rgba(6,182,212,0.08)',
+            ].join(', '),
+            animation: forgeAura ? 'aura-pulse 3s ease-in-out infinite' : undefined,
           }}
         >
           {/* Card background — separate suckable piece */}
