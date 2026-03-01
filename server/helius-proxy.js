@@ -28,8 +28,9 @@ import {
   keypairIdentity,
   publicKey,
 } from '@metaplex-foundation/umi';
-import { create, fetchCollection, mplCore, burnV1 } from '@metaplex-foundation/mpl-core';
+import { create, fetchCollection, fetchAsset, mplCore, burnV1, updateV1 } from '@metaplex-foundation/mpl-core';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
+import jwt from 'jsonwebtoken';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
 
@@ -139,6 +140,64 @@ const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+
+// ── JWT Auth ──────────────────────────────────────────────────────────────────
+const JWT_SECRET = (process.env.JWT_SECRET ?? crypto.randomBytes(32).toString('hex')).trim();
+const JWT_TTL = '1h';
+const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 min nonce window
+const authChallenges = new Map(); // nonce → { address, expiresAt }
+
+// Clean up expired challenges every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [nonce, entry] of authChallenges) {
+    if (entry.expiresAt < now) authChallenges.delete(nonce);
+  }
+}, 60_000);
+
+/**
+ * Verify a Solana wallet signature (Ed25519) using node:crypto.
+ * Returns true if signature of `message` is valid for `address`.
+ */
+function verifyWalletSignature(address, message, signatureBase64) {
+  try {
+    const pubkeyBytes = Buffer.from(new PublicKey(address).toBytes());
+    const msgBytes = Buffer.from(message, 'utf8');
+    const sigBytes = Buffer.from(signatureBase64, 'base64');
+    return crypto.verify(null, msgBytes, { key: pubkeyBytes, dsaEncoding: 'ieee-p1363', format: 'der', type: 'spki' }, sigBytes);
+  } catch {
+    // fallback: use raw Ed25519 key verify
+    try {
+      const pubkeyBytes = Buffer.from(new PublicKey(address).toBytes());
+      const keyObject = crypto.createPublicKey({ key: pubkeyBytes, format: 'raw', type: 'public' });
+      const msgBytes = Buffer.from(message, 'utf8');
+      const sigBytes = Buffer.from(signatureBase64, 'base64');
+      return crypto.verify(null, msgBytes, keyObject, sigBytes);
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Middleware: verify Authorization: Bearer <jwt> header.
+ * Returns { ok: true, address } or sends 401 and returns { ok: false }.
+ */
+function requireJwt(req, res) {
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    respondJson(res, 401, { error: 'Missing auth token. Call /api/auth/challenge then /api/auth/token first.' });
+    return { ok: false };
+  }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return { ok: true, address: payload.address };
+  } catch {
+    respondJson(res, 401, { error: 'Invalid or expired auth token' });
+    return { ok: false };
+  }
+}
 
 const TOKEN_ADDRESSES = {
   SEEKER_GENESIS_COLLECTION: 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te',
@@ -1457,8 +1516,8 @@ const fetchIdentitySnapshot = async (address) => {
     }
   });
 
-  const isMemeLord = memeValueUSD >= 10;
-  const isDeFiKing = hasLstExposure || defiProtocolExposure;
+  const isMemeLord = memeHoldingsSet.size >= 3 && memeValueUSD >= 10;
+  const isDeFiKing = (hasLstExposure || defiProtocolExposure) && (solBalance >= 0.1 || memeValueUSD >= 10);
 
   const walletAgeDays = firstTxTime
     ? Math.floor((Date.now() - firstTxTime * 1000) / (1000 * 60 * 60 * 24))
@@ -1581,6 +1640,64 @@ const server = http.createServer(async (req, res) => {
       });
       return;
     }
+  }
+
+  // ── Auth: issue challenge nonce ──
+  if (pathname === '/api/auth/challenge' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const parsed = safeParseJson(body);
+      const address = typeof parsed?.address === 'string' ? parsed.address.trim() : '';
+      if (!address) { respondJson(res, 400, { error: 'address required' }); return; }
+      try { new PublicKey(address); } catch { respondJson(res, 400, { error: 'Invalid address' }); return; }
+      const nonce = crypto.randomBytes(16).toString('hex');
+      authChallenges.set(nonce, { address, expiresAt: Date.now() + AUTH_CHALLENGE_TTL_MS });
+      const message = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
+      respondJson(res, 200, { nonce, message });
+    } catch (e) {
+      respondJson(res, 500, { error: 'Challenge failed' });
+    }
+    return;
+  }
+
+  // ── Auth: verify signature, issue JWT ──
+  if (pathname === '/api/auth/token' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const parsed = safeParseJson(body);
+      const { address, nonce, signature } = parsed ?? {};
+      if (!address || !nonce || !signature) {
+        respondJson(res, 400, { error: 'address, nonce, and signature required' }); return;
+      }
+      const challenge = authChallenges.get(nonce);
+      if (!challenge) { respondJson(res, 401, { error: 'Invalid or expired nonce' }); return; }
+      if (challenge.address !== address) { respondJson(res, 401, { error: 'Address mismatch' }); return; }
+      if (challenge.expiresAt < Date.now()) {
+        authChallenges.delete(nonce);
+        respondJson(res, 401, { error: 'Challenge expired' }); return;
+      }
+      // Verify Ed25519 signature using node:crypto
+      const message = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
+      let verified = false;
+      try {
+        const pubkeyBytes = Buffer.from(new PublicKey(address).toBytes());
+        const keyObject = crypto.createPublicKey({ key: pubkeyBytes, format: 'raw', type: 'public', namedCurve: 'ed25519' });
+        const msgBytes = Buffer.from(message, 'utf8');
+        const sigBytes = Buffer.from(signature, 'base64');
+        verified = crypto.verify(null, msgBytes, keyObject, sigBytes);
+      } catch (verifyErr) {
+        console.warn('[auth] signature verify error', verifyErr?.message);
+        verified = false;
+      }
+      if (!verified) { respondJson(res, 401, { error: 'Invalid signature' }); return; }
+      authChallenges.delete(nonce); // one-time use
+      const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL });
+      console.info('[auth] JWT issued', { address: address.slice(0, 8) });
+      respondJson(res, 200, { token, expiresIn: JWT_TTL });
+    } catch (e) {
+      respondJson(res, 500, { error: 'Auth failed' });
+    }
+    return;
   }
 
   // ── Reputation API ──
@@ -2771,6 +2888,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // JWT auth guard (optional — skip if no Authorization header to stay backward-compatible during rollout)
+    const jwtAuth = req.headers['authorization'] ? requireJwt(req, res) : { ok: true, address: null };
+    if (!jwtAuth.ok) return;
+
     try {
       const fallbackRequestId = crypto.randomUUID
         ? crypto.randomUUID()
@@ -3058,23 +3179,51 @@ const server = http.createServer(async (req, res) => {
         }
       }
       // Build burn instructions if burnAssetId provided (combined burn+mint in one tx)
+      // Validate burnAssetId is a valid Solana public key (32-44 chars base58); legacy cNFT IDs are shorter
       const burnInstructions = [];
+      let burnAssetIsValid = false;
       if (remintMode && burnAssetId) {
         try {
-          const burnOwnerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
-          const burnBuilder = burnV1(umi, {
-            asset: publicKey(burnAssetId),
-            collection: publicKey(collectionMintKey.toBase58()),
-            authority: burnOwnerSigner,
-          });
-          for (const umiIx of burnBuilder.getInstructions()) {
-            burnInstructions.push(toWeb3JsInstruction(umiIx));
+          new PublicKey(burnAssetId); // throws if not a valid 32-byte base58 pubkey
+          burnAssetIsValid = true;
+        } catch {
+          console.warn('[mint-cnft] burnAssetId is not a valid public key (legacy cNFT?) — skipping burn instructions', { requestId, burnAssetId: burnAssetId.slice(0, 16) });
+        }
+        if (burnAssetIsValid) {
+          try {
+            // Fetch the asset on-chain to verify it's a real Core asset owned by this wallet
+            const assetAccount = await fetchAsset(umi, publicKey(burnAssetId)).catch(() => null);
+            if (!assetAccount) {
+              console.warn('[mint-cnft] burnAssetId not found on-chain or not a Core asset — skipping burn', { requestId, burnAssetId: burnAssetId.slice(0, 16) });
+              burnAssetIsValid = false;
+            } else if (assetAccount.owner?.toString() !== ownerKey.toBase58()) {
+              console.warn('[mint-cnft] burn asset owner mismatch — skipping burn', { requestId, assetOwner: assetAccount.owner?.toString(), expectedOwner: ownerKey.toBase58() });
+              burnAssetIsValid = false;
+            } else {
+              console.info('[mint-cnft] burn asset verified', { requestId, assetId: burnAssetId.slice(0, 16), owner: assetAccount.owner?.toString(), collection: assetAccount.updateAuthority?.address?.toString() });
+            }
+          } catch (fetchErr) {
+            console.warn('[mint-cnft] failed to fetch burn asset — skipping burn', { requestId, error: fetchErr?.message });
+            burnAssetIsValid = false;
           }
-          console.info('[mint-cnft] burn instructions added to combined tx', { requestId, burnAssetId: burnAssetId.slice(0, 16) });
-        } catch (burnErr) {
-          console.error('[mint-cnft] failed to build burn instructions', burnErr);
-          respondJson(res, 500, { error: 'Failed to build burn instructions', requestId });
-          return;
+        }
+        if (burnAssetIsValid) {
+          try {
+            const burnOwnerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
+            const burnBuilder = burnV1(umi, {
+              asset: publicKey(burnAssetId),
+              collection: publicKey(collectionMintKey.toBase58()),
+              authority: burnOwnerSigner,
+            });
+            for (const umiIx of burnBuilder.getInstructions()) {
+              burnInstructions.push(toWeb3JsInstruction(umiIx));
+            }
+            console.info('[mint-cnft] burn instructions added to combined tx', { requestId, burnAssetId: burnAssetId.slice(0, 16) });
+          } catch (burnErr) {
+            console.error('[mint-cnft] failed to build burn instructions', burnErr);
+            respondJson(res, 500, { error: 'Failed to build burn instructions', requestId });
+            return;
+          }
         }
       }
 
@@ -3188,6 +3337,262 @@ const server = http.createServer(async (req, res) => {
       console.error('[mint-cnft] failed', error);
       respondJson(res, 500, {
         error: 'Core mint failed',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+
+  // ── UPDATE CARD (in-place metadata update via updateV1) ──
+  // User pays: service fee (to treasury) + network fee. Server signs with collection authority.
+  const UPDATE_FEE_SOL = 0.0005;
+  if (pathname === '/api/update-card') {
+    if (req.method !== 'POST') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    // JWT auth guard (optional during rollout)
+    const jwtAuth = req.headers['authorization'] ? requireJwt(req, res) : { ok: true, address: null };
+    if (!jwtAuth.ok) return;
+
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const ownerAddress = typeof payload?.ownerAddress === 'string' ? payload.ownerAddress.trim() : '';
+      let assetId = typeof payload?.assetId === 'string' ? payload.assetId.trim() : '';
+      const metadataUri = typeof payload?.metadataUri === 'string' ? payload.metadataUri.trim() : '';
+      const newName = typeof payload?.name === 'string' ? payload.name.trim() : '';
+      const signedTransaction = typeof payload?.signedTransaction === 'string' ? payload.signedTransaction.trim() : '';
+
+      if (!ownerAddress || !assetId || !metadataUri || !newName) {
+        respondJson(res, 400, { error: 'Missing required fields: ownerAddress, assetId, metadataUri, name' });
+        return;
+      }
+      if (!COLLECTION_AUTHORITY_SECRET) {
+        respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured' });
+        return;
+      }
+      if (!CORE_COLLECTION) {
+        respondJson(res, 500, { error: 'CORE_COLLECTION is not configured' });
+        return;
+      }
+
+      const collectionSecret = parseSecretKey(COLLECTION_AUTHORITY_SECRET);
+      if (!collectionSecret) {
+        respondJson(res, 500, { error: 'Invalid collection authority secret' });
+        return;
+      }
+      const ownerKey = parsePublicKey(ownerAddress, 'owner');
+      const collectionMintKey = parsePublicKey(CORE_COLLECTION, 'collectionMint');
+      if (!ownerKey || !collectionMintKey) {
+        respondJson(res, 400, { error: 'Invalid public keys' });
+        return;
+      }
+
+      const rpcUrl = getRpcUrl(ownerKey.toBase58());
+      if (!rpcUrl) {
+        respondJson(res, 500, { error: 'Helius API key required' });
+        return;
+      }
+      const connection = new Connection(rpcUrl, { commitment: 'confirmed' });
+      const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
+      const treasuryKey = new PublicKey(TREASURY_ADDRESS);
+
+      // ── Phase 2: user signed → co-sign colAuth via raw Ed25519 bytes & submit ──
+      // We avoid Transaction.partialSign() because compileMessage() may reorder
+      // accounts, invalidating the wallet's owner signature.  Instead we inject
+      // the colAuth signature directly into the wire-format buffer so both sigs
+      // are over the identical message bytes.
+      if (signedTransaction) {
+        const txBuf = Buffer.from(signedTransaction, 'base64');
+
+        // Parse for diagnostics only (no compileMessage / partialSign)
+        let txParsed;
+        try {
+          txParsed = Transaction.from(txBuf);
+        } catch {
+          respondJson(res, 400, { error: 'Invalid signed transaction' });
+          return;
+        }
+
+        const colAuthPubkeyStr = collectionAuthorityKeypair.publicKey.toBase58();
+        const colAuthIndex = txParsed.signatures.findIndex(
+          (s) => s.publicKey.toBase58() === colAuthPubkeyStr,
+        );
+        const signerKeys = txParsed.signatures.map((s, i) => ({
+          index: i,
+          pubkey: s.publicKey.toBase58(),
+          signed: s.signature !== null,
+        }));
+        console.info('[update-card] phase2 signers', JSON.stringify(signerKeys));
+
+        if (colAuthIndex === -1) {
+          console.error('[update-card] colAuth not in signers', { colAuthPubkeyStr });
+          respondJson(res, 500, { error: 'Collection authority not a required signer' });
+          return;
+        }
+
+        // Parse compact-u16 signature count to locate message bytes
+        let sigCount = 0;
+        let byteOffset = 0;
+        for (let shift = 0; ; shift += 7) {
+          const byte = txBuf[byteOffset++];
+          sigCount |= (byte & 0x7f) << shift;
+          if ((byte & 0x80) === 0) break;
+        }
+        const messageBytes = txBuf.slice(byteOffset + sigCount * 64);
+
+        // Ed25519 sign the exact message bytes the wallet signed
+        const pkcs8Prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
+        const seed = Buffer.from(collectionAuthorityKeypair.secretKey.slice(0, 32));
+        const privateKeyObj = crypto.createPrivateKey({
+          key: Buffer.concat([pkcs8Prefix, seed]),
+          format: 'der',
+          type: 'pkcs8',
+        });
+        const colSig = crypto.sign(null, messageBytes, privateKeyObj);
+        colSig.copy(txBuf, byteOffset + colAuthIndex * 64);
+
+        try {
+          const signature = await connection.sendRawTransaction(txBuf, {
+            preflightCommitment: 'confirmed',
+            skipPreflight: true,
+          });
+          await connection.confirmTransaction(signature, 'confirmed');
+          console.info('[update-card] finalized', { ownerAddress: ownerAddress.slice(0, 8), assetId: assetId.slice(0, 16), signature: signature.slice(0, 16) });
+          respondJson(res, 200, { signature, assetId, finalized: true });
+        } catch (submitErr) {
+          console.error('[update-card] submit failed', submitErr?.message ?? submitErr);
+          respondJson(res, 500, { error: 'Transaction submission failed', detail: submitErr?.message ?? String(submitErr) });
+        }
+        return;
+      }
+
+      // ── Phase 1: build tx, partially sign with collection authority, return to client ──
+      const umi = createUmi(rpcUrl).use(mplCore());
+      const collectionAuthoritySigner = umi.eddsa.createKeypairFromSecretKey(collectionSecret);
+      umi.use(keypairIdentity(collectionAuthoritySigner));
+
+      // Verify asset exists and is owned by requester (use DAS getAsset — more reliable than Umi fetchAsset)
+      let dasAsset;
+      try {
+        const dasRes = await fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'update-verify', method: 'getAsset', params: { id: assetId } }),
+        });
+        const dasJson = await dasRes.json();
+        dasAsset = dasJson?.result;
+        if (!dasAsset || !dasAsset.ownership) throw new Error('DAS returned no asset');
+      } catch (fetchErr) {
+        console.error('[update-card] DAS getAsset failed', { assetId, error: fetchErr?.message ?? fetchErr });
+        respondJson(res, 404, { error: 'Asset not found on-chain' });
+        return;
+      }
+      if (dasAsset.ownership.owner !== ownerAddress) {
+        console.warn('[update-card] owner mismatch', { expected: ownerAddress, actual: dasAsset.ownership.owner });
+        respondJson(res, 403, { error: 'Asset not owned by this wallet' });
+        return;
+      }
+      if (dasAsset.interface !== 'MplCoreAsset') {
+        respondJson(res, 400, { error: 'Asset is not an mpl-core NFT' });
+        return;
+      }
+
+      // Validate asset on-chain — DAS can return stale/burned accounts
+      // Key::AssetV1 = 1 is the first byte of a valid MPL Core asset
+      const rawAsset = await connection.getAccountInfo(new PublicKey(assetId), 'confirmed').catch(() => null);
+      const isValidAsset = rawAsset && rawAsset.data.length > 0 && rawAsset.data[0] === 1;
+      console.info('[update-card] asset on-chain check', {
+        assetId: assetId.slice(0, 16),
+        exists: !!rawAsset, dataLen: rawAsset?.data?.length ?? 0,
+        firstByte: rawAsset?.data?.length > 0 ? rawAsset.data[0] : 'none', valid: isValidAsset,
+      });
+
+      if (!isValidAsset) {
+        // DAS may have stale data — scan all owner assets to find a valid one
+        console.warn('[update-card] assetId invalid on-chain, scanning DAS for valid asset');
+        const dasSearch = await fetch(rpcUrl, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'update-scan', method: 'getAssetsByOwner',
+            params: { ownerAddress, page: 1, limit: 200 } }),
+        }).then(r => r.json()).catch(() => null);
+        const candidates = (dasSearch?.result?.items ?? []).filter(
+          a => a.interface === 'MplCoreAsset' &&
+               a.grouping?.some(g => g.group_key === 'collection' && g.group_value === CORE_COLLECTION)
+        );
+        let foundId = null;
+        for (const c of candidates) {
+          if (c.id === assetId) continue;
+          const acc = await connection.getAccountInfo(new PublicKey(c.id), 'confirmed').catch(() => null);
+          if (acc && acc.data.length > 0 && acc.data[0] === 1) { foundId = c.id; break; }
+        }
+        if (!foundId) {
+          console.error('[update-card] no valid MPL Core asset found', { ownerAddress: ownerAddress.slice(0, 8) });
+          respondJson(res, 404, { error: 'No valid Identity Prism NFT found on-chain. Try minting a new one.' });
+          return;
+        }
+        console.info('[update-card] switching to valid asset', { from: assetId.slice(0, 16), to: foundId.slice(0, 16) });
+        assetId = foundId;
+      }
+
+      // Build updateV1 instruction — explicit payer=owner so MPL Core account layout is correct
+      const ownerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
+      const builder = updateV1(umi, {
+        asset: publicKey(assetId),
+        collection: publicKey(collectionMintKey.toBase58()),
+        payer: ownerSigner,
+        authority: collectionAuthoritySigner,
+        newName,
+        newUri: metadataUri,
+      }).setFeePayer(ownerSigner);
+      const updateIxs = builder.getInstructions().map((ix) => {
+        const web3Ix = toWeb3JsInstruction(ix);
+        web3Ix.keys = web3Ix.keys.map((key) => {
+          const keyStr = key.pubkey.toBase58();
+          if (keyStr === collectionAuthorityKeypair.publicKey.toBase58()) {
+            return { ...key, isSigner: true };
+          }
+          if (keyStr === ownerKey.toBase58()) {
+            return { ...key, isSigner: true };
+          }
+          return key;
+        });
+        return web3Ix;
+      });
+
+      // Service fee transfer: user → treasury
+      const feeLamports = Math.round(UPDATE_FEE_SOL * LAMPORTS_PER_SOL);
+      const feeIx = SystemProgram.transfer({
+        fromPubkey: ownerKey,
+        toPubkey: treasuryKey,
+        lamports: feeLamports,
+      });
+
+      const latestBlockhash = await connection.getLatestBlockhash('finalized');
+      const transaction = new Transaction().add(feeIx, ...updateIxs);
+      transaction.feePayer = ownerKey;
+      transaction.recentBlockhash = latestBlockhash.blockhash;
+      // Log required signers for diagnostics
+      const compiledMsg = transaction.compileMessage();
+      const requiredSigners = compiledMsg.accountKeys
+        .slice(0, compiledMsg.header.numRequiredSignatures)
+        .map((k) => k.toBase58());
+      console.info('[update-card] required signers', { requiredSigners, collectionAuth: collectionAuthorityKeypair.publicKey.toBase58(), owner: ownerAddress });
+
+      const txBuffer = transaction.serialize({ requireAllSignatures: false });
+
+      console.info('[update-card] prepared', { ownerAddress: ownerAddress.slice(0, 8), assetId: assetId.slice(0, 16), feeSol: UPDATE_FEE_SOL });
+      respondJson(res, 200, {
+        transaction: txBuffer.toString('base64'),
+        feeSol: UPDATE_FEE_SOL,
+        blockhash: latestBlockhash.blockhash,
+      });
+    } catch (error) {
+      console.error('[update-card] failed', error);
+      respondJson(res, 500, {
+        error: 'Update card failed',
         detail: error instanceof Error ? error.message : String(error),
       });
     }

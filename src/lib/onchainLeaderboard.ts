@@ -151,7 +151,7 @@ export async function commitScoreOnchain(
 
     // ── Simulate BEFORE prompting user to sign (dApp Store requirement) ──
     try {
-      const simulation = await connection.simulateTransaction(tx, {
+      const simulation = await connection.simulateTransaction(tx, undefined, {
         sigVerify: false,
         replaceRecentBlockhash: true,
       });
@@ -179,16 +179,19 @@ export async function commitScoreOnchain(
         verifySignatures: false,
       })) as typeof tx.serialize;
 
-    // ── Sign & send ──
+    // ── Sign & send (with timeout) ──
     let txSignature: string;
+    const signTimeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('User rejected the request.')), 120_000)
+    );
     if (wallet.signTransaction) {
-      const signed = await wallet.signTransaction(tx);
+      const signed = await Promise.race([wallet.signTransaction(tx), signTimeout]);
       txSignature = await connection.sendRawTransaction(
         signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
         { skipPreflight: true, maxRetries: 3 },
       );
     } else if (wallet.sendTransaction) {
-      txSignature = await wallet.sendTransaction(tx, connection);
+      txSignature = await Promise.race([wallet.sendTransaction(tx, connection), signTimeout]) as string;
     } else {
       return { success: false, error: 'Wallet does not support transaction signing' };
     }

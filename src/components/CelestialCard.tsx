@@ -60,6 +60,12 @@ const TIER_COLORS: Record<string, string> = {
   binary_sun: 'text-amber-400',
 };
 
+const TIER_HEX: Record<string, string> = {
+  mercury: '#a8a29e', mars: '#fb923c', venus: '#fde047', earth: '#60a5fa',
+  neptune: '#22d3ee', uranus: '#7dd3fc', saturn: '#fcd34d', jupiter: '#fdba74',
+  sun: '#facc15', binary_sun: '#fbbf24',
+};
+
 const TIER_LABELS: Record<string, string> = {
   mercury: 'MERCURY',
   mars: 'MARS',
@@ -261,9 +267,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     planetTier: 'mercury',
     totalAssetsCount: 0,
     solTier: null,
+    totalValueUSD: 0,
+    cosmicRank: 'stardust',
   };
 
-  const safeTraits = traits ?? fallbackTraits;
+  const safeTraits = {
+    ...fallbackTraits,
+    ...(traits ?? {}),
+    cosmicRank: (traits?.cosmicRank) || fallbackTraits.cosmicRank,
+    planetTier: (traits?.planetTier) || fallbackTraits.planetTier,
+  };
   const displayScore = traits ? score : 0;
   const shortAddress = address
     ? `${address.slice(0, 4)}...${address.slice(-4)}`
@@ -312,23 +325,21 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           className="w-full h-full relative preserve-3d"
           initial={false}
           animate={{ rotateY: isFlipped ? 180 : 0 }}
-          transition={{ type: 'tween', duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-          style={{ transformStyle: 'preserve-3d' }}
+          transition={{ type: 'tween', duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
+          style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}
         >
         {/* FRONT */}
         <div
-          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border border-white/10 bg-[#020408] shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] backface-hidden flex flex-col ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto cursor-pointer'}`}
-          style={{ backfaceVisibility: 'hidden', zIndex: isFlipped ? 0 : 20 }}
-          onClick={() => {
-            if (!isCapture) {
-              setIsFlipped(true);
-            }
+          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border-2 bg-[#020408] backface-hidden flex flex-col ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
+          style={{
+            backfaceVisibility: 'hidden',
+            zIndex: isFlipped ? 0 : 20,
+            borderColor: 'rgba(6,182,212,0.3)',
+            boxShadow: '0 0 20px -4px rgba(6,182,212,0.15), 0 0 60px -12px rgba(6,182,212,0.08)',
           }}
         >
           {/* Card background — separate suckable piece */}
-          <div data-suck="bg" className="absolute inset-0 rounded-[40px] bg-[#020408] border border-white/10 shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] pointer-events-none">
-            <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-transparent to-black/60 rounded-[40px]" />
-          </div>
+          <div data-suck="bg" className="absolute inset-0 rounded-[40px] bg-[#020408] border border-white/10 shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] pointer-events-none" />
 
           {/* Header */}
           <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
@@ -345,7 +356,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             <p className="text-cyan-200/50 text-[9px] font-bold tracking-[0.3em] uppercase">
               Tier Level
             </p>
-            <h1 className={`text-3xl font-black uppercase tracking-widest drop-shadow-[0_2px_4px_rgba(0,0,0,1)] ${tierColorClass}`}>
+            <h1
+              className="text-3xl font-black uppercase tracking-widest"
+              style={{
+                color: TIER_HEX[safeTraits.planetTier] || '#fff',
+                textShadow: `0 0 20px ${TIER_HEX[safeTraits.planetTier] || '#fff'}, 0 0 40px ${TIER_HEX[safeTraits.planetTier] || '#fff'}, 0 2px 4px rgba(0,0,0,1)`,
+              }}
+            >
               {tierLabel}
             </h1>
           </div>
@@ -367,13 +384,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 }
 
                 transitionTimersRef.current.push(window.setTimeout(() => {
-                  createWormholeTunnel();
+                  createWormholeTunnel('game');
                 }, 280));
 
                 const returnAddress = address ? { returnAddress: address } : {};
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   navigate('/game', { state: { fromAppJump: true, ...returnAddress } });
-                }, 1500));
+                }, 2780));
               }}
             >
               <span className="game-card-portal__glow" />
@@ -416,14 +433,14 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
                 // Phase 2: Wormhole tunnel
                 transitionTimersRef.current.push(window.setTimeout(() => {
-                  createWormholeTunnel();
+                  createWormholeTunnel('blackhole');
                 }, 350));
 
-                // Phase 3: Navigate (tunnel persists across route change)
+                // Phase 3: Navigate after shader completes (350 + 2500 = 2850ms)
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
                 transitionTimersRef.current.push(window.setTimeout(() => {
                   navigate(target);
-                }, 1650));
+                }, 2850));
               }}
             >
               <span className="bh-card-portal__glow" />
@@ -473,7 +490,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             <Canvas
               camera={{ position: [0, 0, 8.5], fov: 35 }}
               gl={{ antialias: !IS_MOBILE, alpha: true, preserveDrawingBuffer: isCapture }}
-              dpr={IS_MOBILE ? [1, 1.3] : [1, 1.5]}
+              dpr={IS_MOBILE ? [1, 1.5] : [1, 1.5]}
               onCreated={({ gl }) => {
                 const canvas = gl.domElement;
                 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); });
@@ -481,12 +498,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               }}
             >
               {!isCapture && <FrameDetector onReady={onSceneReady} texturesReady={texturesReady} />}
-              <ambientLight intensity={0.6} />
-              <pointLight position={[10, 5, 5]} intensity={1.5} color="#fff" />
-              <pointLight position={[-8, -5, -5]} intensity={0.5} color="#4cc9f0" />
+              <ambientLight intensity={IS_MOBILE ? 1.4 : 0.6} />
+              <pointLight position={[10, 5, 5]} intensity={IS_MOBILE ? 3.0 : 1.5} color="#fff" />
+              <pointLight position={[-8, -5, -5]} intensity={IS_MOBILE ? 1.2 : 0.5} color="#4cc9f0" />
+              <pointLight position={[0, 8, 3]} intensity={IS_MOBILE ? 1.5 : 0} color="#ffe8b0" />
               
               <StarField
-                count={IS_MOBILE ? 250 : 560}
+                count={IS_MOBILE ? 300 : 560}
                 radius={[9, 18]}
                 sizeRange={[0.45, 1.35]}
                 intensityRange={[0.4, 0.85]}
@@ -504,7 +522,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 </Suspense>
               </Float>
 
-              <Environment preset="city" />
+              {!IS_MOBILE && <Environment preset="city" />}
               <OrbitControls
                 enableZoom
                 enableRotate
@@ -520,13 +538,19 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           </div>
 
           {/* Footer Info */}
-          <div data-suck="footer" className="relative z-20 mt-auto px-7 pb-8 flex flex-col gap-5">
-            <div className="flex justify-center items-center border-t border-white/5 pt-5 relative z-30">
+          <div data-suck="footer" className="relative z-20 mt-auto px-7 pb-4 flex flex-col">
+            <div className="flex justify-center items-center border-t border-white/5 pt-4 pb-2 relative z-30">
                {/* Badges moved here */}
                {frontBadges.length > 0 ? (
-                <div className="front-badges flex gap-3 flex-wrap justify-center px-6 w-full pointer-events-auto">
+                <div className="front-badges flex gap-3 flex-wrap justify-center items-center w-full pointer-events-auto">
                   {frontBadges.map((badge) => (
-                    <div key={badge.key} className="badge-icon-wrap">
+                    <div
+                      key={badge.key}
+                      className="badge-icon-wrap"
+                      onTouchStart={(e) => e.currentTarget.classList.add('active')}
+                      onTouchEnd={(e) => { setTimeout(() => e.currentTarget.classList.remove('active'), 400); }}
+                      onTouchCancel={(e) => e.currentTarget.classList.remove('active')}
+                    >
                       <span className="badge-tooltip">{badge.label}</span>
                       <BadgeIcon badge={badge} size="sm" />
                     </div>
@@ -548,7 +572,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           <div className="relative z-10 flex flex-col h-full" style={{ transformStyle: 'flat', transform: 'translateZ(0)', willChange: 'auto' }}>
             {/* Flip Button (Back) */}
             {/* Back Header */}
-            <div className="text-center pt-8 pb-4 border-b border-white/5 bg-black/20 relative z-20">
+            <div className="text-center pt-8 pb-4 border-b border-white/5 relative z-20">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -571,13 +595,14 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       strokeWidth="3"
                       strokeLinecap="round"
                       strokeDasharray={`${tierProgress * 238.76} 238.76`}
-                      className={`${tierColorClass} transition-all duration-1000 ease-out`}
-                      style={{ filter: 'drop-shadow(0 0 4px currentColor)' }}
+                      className="transition-all duration-1000 ease-out"
+                      style={{ color: TIER_HEX[safeTraits.planetTier] || '#fff', stroke: TIER_HEX[safeTraits.planetTier] || '#fff', filter: `drop-shadow(0 0 4px ${TIER_HEX[safeTraits.planetTier] || '#fff'})` }}
                     />
                   </svg>
                   <span
                     data-capture="score"
-                    className={`capture-value text-3xl font-mono font-bold tracking-tighter drop-shadow-lg ${tierColorClass}`}
+                    className="capture-value text-3xl font-mono font-bold tracking-tighter drop-shadow-lg"
+                    style={{ color: TIER_HEX[safeTraits.planetTier] || '#fff' }}
                   >
                     {displayScore}
                   </span>
@@ -591,7 +616,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </div>
               <p
                 data-capture="address"
-                className={`capture-value font-mono text-[10px] mt-1 tracking-wider ${tierColorClass}`}
+                className="capture-value font-mono text-[10px] mt-1 tracking-wider"
+                style={{ color: TIER_HEX[safeTraits.planetTier] || '#fff', opacity: 0.7 }}
               >
                 {shortAddress}
               </p>
@@ -599,6 +625,10 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
             {/* Tabs Container */}
             <div className="flex-1 flex flex-col min-h-0 bg-black/10 cursor-auto relative z-10" onClick={(e) => e.stopPropagation()}>
+              {/* Solana logo watermark — centered behind tabs content */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
+                <img src="/textures/Solana.png" alt="" className="w-[55%] opacity-[0.07]" draggable={false} />
+              </div>
             <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
               <div className="px-6 pt-4">
                 <TabsList className="w-full grid grid-cols-2 bg-white/5 border border-white/5 pointer-events-auto">
@@ -608,7 +638,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </div>
 
               {/* STATS CONTENT */}
-              <TabsContent value="stats" className="flex-1 overflow-y-auto px-5 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
+              <TabsContent value="stats" forceMount className="flex-1 overflow-y-auto no-scrollbar px-5 pt-4 pb-4 relative z-20 pointer-events-auto data-[state=inactive]:hidden">
                 {/* 2-col stats grid with rich metric cards */}
                 <div className="grid grid-cols-2 gap-2 mb-4">
                   <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="SOL Balance" value={`${safeTraits.solBalance.toFixed(2)}`} captureKey="sol" bar={Math.min(safeTraits.solBalance / 100, 1)} />
@@ -617,8 +647,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   <StatItem icon={<Trophy className="w-3.5 h-3.5" />} label="NFTs" value={safeTraits.nftCount.toString()} captureKey="nfts" bar={Math.min(safeTraits.nftCount / 100, 1)} />
                   <StatItem icon={<Flame className="w-3.5 h-3.5" />} label="Daily Activity" value={`${(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)} tx/d`} captureKey="activity" bar={Math.min((safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)) / 10, 1)} />
                   <StatItem icon={<Hourglass className="w-3.5 h-3.5" />} label="Dormancy" value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d ago` : 'Active'} captureKey="dormancy" bar={safeTraits.daysSinceLastTx ? Math.max(0, 1 - safeTraits.daysSinceLastTx / 365) : 1} />
-                  <StatItem icon={<Zap className="w-3.5 h-3.5" />} label="Meme Coins" value={safeTraits.memeCoinsHeld.length.toString()} captureKey="memes" bar={Math.min(safeTraits.memeCoinsHeld.length / 10, 1)} />
-                  <StatItem icon={<SparklesIcon className="w-3.5 h-3.5" />} label="Planet" value={safeTraits.planetTier.charAt(0).toUpperCase() + safeTraits.planetTier.slice(1).replace('_', ' ')} captureKey="planet" bar={(['mercury','mars','venus','earth','neptune','uranus','saturn','jupiter','sun','binary_sun'].indexOf(safeTraits.planetTier) + 1) / 10} />
+                  <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="Total Value" value={`$${safeTraits.totalValueUSD < 1000 ? safeTraits.totalValueUSD.toFixed(0) : (safeTraits.totalValueUSD / 1000).toFixed(1) + 'k'}`} captureKey="value" bar={Math.min(safeTraits.totalValueUSD / 10000, 1)} />
+                  <StatItem icon={<SparklesIcon className="w-3.5 h-3.5" />} label="Cosmic Rank" value={`${{'stardust':'✨','meteor':'☄️','comet':'💫','nebula':'🌌','supernova':'💥','quasar':'🔮'}[safeTraits.cosmicRank] || '✨'} ${safeTraits.cosmicRank.charAt(0).toUpperCase() + safeTraits.cosmicRank.slice(1)}`} captureKey="rank" bar={(['stardust','meteor','comet','nebula','supernova','quasar'].indexOf(safeTraits.cosmicRank) + 1) / 6} />
                 </div>
 
                 {/* Score History — premium sparkline */}
@@ -650,7 +680,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                                 <span className="text-sm font-bold font-mono text-cyan-300/80">{pts[pts.length - 1].score}</span>
                                 <div className="h-px w-8 bg-gradient-to-l from-transparent to-cyan-500/30" />
                               </div>
-                              <span className="text-[8px] text-white/20">{isFlat && pts.length > 1 ? 'Stable score' : 'Current score'}</span>
+                              <span className="text-[8px] text-white/20">{isFlat && pts.length > 1 ? 'Stable score' : pts.length === 1 ? 'Scan again to see trends' : 'Current score'}</span>
                             </div>
                           );
                         }
@@ -708,8 +738,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </TabsContent>
 
               {/* BADGES CONTENT */}
-              <TabsContent value="badges" className="flex-1 overflow-y-auto px-6 pt-4 pb-16 custom-scrollbar relative z-20 pointer-events-auto">
-                <div className="space-y-3 pb-4">
+              <TabsContent value="badges" forceMount className="flex-1 overflow-y-auto no-scrollbar px-5 pt-3 pb-4 relative z-20 pointer-events-auto data-[state=inactive]:hidden">
+                <div className="space-y-3 pb-2">
                   {badgeItems.length === 0 ? (
                     <div className="text-center py-10 opacity-50">
                       <p className="text-xs text-white/40">No badges earned yet.</p>
@@ -727,13 +757,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                           <div className="flex-1 min-w-0 text-center">
                             <p
                               data-badge-label
-                              className={`text-xs font-bold uppercase tracking-wider ${badge.isActive ? 'text-white' : 'text-white/50'}`}
+                              className={`text-sm font-bold uppercase tracking-wider ${badge.isActive ? 'text-white' : 'text-white/50'}`}
                             >
                               {badge.label}
                             </p>
                             <p
                               data-badge-desc
-                              className={`text-[10px] leading-relaxed ${badge.isActive ? 'text-white/50' : 'text-white/30'}`}
+                              className={`text-xs leading-snug mt-0.5 ${badge.isActive ? 'text-white/50' : 'text-white/30'}`}
                             >
                               {badge.description}
                             </p>
@@ -754,6 +784,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   );
 });
 
+let _statIdx = 0;
 function StatItem({
   icon,
   label,
@@ -768,9 +799,15 @@ function StatItem({
   bar?: number;
 }) {
   const pct = Math.round(Math.max(0, Math.min(1, bar)) * 100);
+  const idx = useMemo(() => _statIdx++, []);
+  const [animPct, setAnimPct] = useState(0);
+  useEffect(() => {
+    const timer = setTimeout(() => setAnimPct(pct), 80 + idx * 60);
+    return () => clearTimeout(timer);
+  }, [pct, idx]);
   return (
     <div className="relative overflow-hidden rounded-xl border p-2.5 transition-colors bg-cyan-500/[0.04] border-cyan-500/10 hover:bg-cyan-500/[0.08]">
-      <div className="flex items-center gap-2 mb-1.5">
+      <div className="flex items-center justify-center gap-2 mb-1.5">
         <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md bg-cyan-500/10 text-cyan-400">{icon}</div>
         <span className="text-[9px] text-cyan-300/40 uppercase tracking-wider leading-none truncate">{label}</span>
       </div>
@@ -780,10 +817,16 @@ function StatItem({
       >
         {value}
       </span>
-      <div className="mt-1.5 h-[3px] w-full rounded-full bg-cyan-500/[0.06] overflow-hidden">
+      <div className="mt-1.5 h-[3px] w-full rounded-full bg-white/[0.06] overflow-hidden">
         <div
-          className="h-full rounded-full transition-all duration-700 bg-gradient-to-r from-cyan-500/60 to-cyan-400/40"
-          style={{ width: `${pct}%` }}
+          className="h-full rounded-full transition-all duration-700 ease-out"
+          style={{
+            width: `${animPct}%`,
+            background: animPct < 25 ? 'linear-gradient(90deg, rgba(239,68,68,0.7), rgba(239,68,68,0.4))'
+              : animPct < 50 ? 'linear-gradient(90deg, rgba(245,158,11,0.7), rgba(245,158,11,0.4))'
+              : animPct < 75 ? 'linear-gradient(90deg, rgba(34,197,94,0.7), rgba(34,197,94,0.4))'
+              : 'linear-gradient(90deg, rgba(34,211,238,0.7), rgba(34,211,238,0.4))',
+          }}
         />
       </div>
     </div>
@@ -813,23 +856,29 @@ type BadgeItem = {
   description: string;
 };
 
-const badgeTexture = (file: string) => `/textures/${encodeURIComponent(file)}`;
-
 const BADGE_TEXTURES: Record<BadgeKey, string> = {
-  og: badgeTexture('OG.png'),
-  whale: badgeTexture('Whale.png'),
-  collector: badgeTexture('Collector.png'),
-  binary: badgeTexture('Binary Sun.png'),
-  early: badgeTexture('Early Adopter.png'),
-  titan: badgeTexture('Tx Titan.png'),
-  maxi: badgeTexture('Solana Maxi.png'),
-  seeker: badgeTexture('Seeker of Truth.png'),
-  visionary: badgeTexture('Visionary.png'),
-  bluechip: badgeTexture('Blue Chip.png'),
-  defi_king: badgeTexture('DeFi King.png'),
-  meme_lord: badgeTexture('Meme Lord.png'),
-  diamond_hands: badgeTexture('Diamond Hands.png'),
+  og: '/badges/og_member.png',
+  whale: '/badges/whale.png',
+  collector: '/badges/collector.png',
+  binary: '/badges/binary_sun.png',
+  early: '/badges/early_adopter.png',
+  titan: '/badges/tx_titan.png',
+  maxi: '/badges/solana_maxi.png',
+  seeker: '/badges/seeker_of_truth.png',
+  visionary: '/badges/visionary.png',
+  bluechip: '/badges/blue_chip.png',
+  defi_king: '/badges/defi_king.png',
+  meme_lord: '/badges/meme_lord.png',
+  diamond_hands: '/badges/diamond_hands.png',
 };
+
+// Preload badge images so they render instantly
+if (typeof window !== 'undefined') {
+  Object.values(BADGE_TEXTURES).forEach((src) => {
+    const img = new Image();
+    img.src = src;
+  });
+}
 
 function getBadgeItems(traits: WalletTraits): BadgeItem[] {
   return [

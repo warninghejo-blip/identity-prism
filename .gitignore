@@ -55,7 +55,9 @@ homepage/
 DEMO*.mp4
 demo_frames/
 demo_temp/
-edit_demo.py
+edit_demo*.py
+NEW/
+deploy_tmp/
 twitter-bot-python/test_*.py
 twitter-bot-python/check_tweets*.py
 twitter-bot-python/reset_slot.py
@@ -92,6 +94,9 @@ metadata/
 # Keys directory (NEVER push private keys)
 keys/
 *.keypair
+tmp_srv_key
+.ssh_key_vps
+gh_token*
 
 # Misc sensitive
 .env.scraper
@@ -107,3 +112,6 @@ twitter-bot-python/.env.server
 *.njsproj
 *.sln
 *.sw?
+
+# Local Netlify folder
+.netlify

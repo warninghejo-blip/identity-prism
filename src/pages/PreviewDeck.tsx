@@ -58,6 +58,8 @@ function buildPreviewTraits(tier: PlanetTier): WalletTraits {
     walletAgeBonus: 0,
     planetTier: tier,
     totalAssetsCount: 42,
+    totalValueUSD: tier === "binary_sun" ? 5000 : tier === "sun" ? 3000 : tier === "jupiter" ? 1500 : 200,
+    cosmicRank: tier === "binary_sun" ? "quasar" : tier === "sun" ? "supernova" : tier === "jupiter" ? "nebula" : tier === "saturn" ? "comet" : "stardust",
     solTier:
       tier === "binary_sun" || tier === "sun"
         ? "whale"

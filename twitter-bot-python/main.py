@@ -169,18 +169,33 @@ def today_str():
     return datetime.date.today().isoformat()
 
 
+COMMENT_COOLDOWN_HOURS = 6  # allow re-commenting after 6 hours
+
 def is_commented_today(state, handle):
-    return state.get('commented_today', {}).get(handle) == today_str()
+    ts_val = state.get('commented_today', {}).get(handle)
+    if not ts_val:
+        return False
+    if isinstance(ts_val, (int, float)):
+        return (time.time() - ts_val) < COMMENT_COOLDOWN_HOURS * 3600
+    return ts_val == today_str()
 
 
 def mark_commented_today(state, handle):
-    state.setdefault('commented_today', {})[handle] = today_str()
+    state.setdefault('commented_today', {})[handle] = time.time()
 
 
 def cleanup_old_comments(state):
-    today = today_str()
+    now = time.time()
     old = state.get('commented_today', {})
-    state['commented_today'] = {h: d for h, d in old.items() if d == today}
+    cutoff = COMMENT_COOLDOWN_HOURS * 3600
+    cleaned = {}
+    for h, d in old.items():
+        if isinstance(d, (int, float)):
+            if (now - d) < cutoff:
+                cleaned[h] = d
+        elif d == today_str():
+            cleaned[h] = d
+    state['commented_today'] = cleaned
 
 
 def get_next_account(state):
@@ -253,7 +268,10 @@ async def do_engage(client, ai_engine, state):
     # Pick next uncommented account
     handle = get_next_account(state)
     if not handle:
-        logging.info('All %d accounts commented today; trying mention reply', len(TARGET_USERS))
+        logging.info('All %d accounts on cooldown; trying search engage', len(TARGET_USERS))
+        search_result = await _try_search_engage(client, ai_engine, state)
+        if search_result in ('commented', 'replied'):
+            return search_result
         return await _try_mention_reply(client, ai_engine, state)
 
     logging.info('Checking @%s for new posts', handle)
@@ -339,6 +357,49 @@ async def do_engage(client, ai_engine, state):
 
     logging.info('No fresh post from @%s; trying mention reply', handle)
     return await _try_mention_reply(client, ai_engine, state)
+
+
+async def _try_search_engage(client, ai_engine, state):
+    """Fallback engage: find popular tweets via search and comment."""
+    query = random.choice(SEARCH_QUERIES)
+    try:
+        tweets = await client.search_tweets(query, count=10)
+    except Exception as exc:
+        logging.warning('Search engage failed: %s', exc)
+        return 'skipped'
+    if not tweets:
+        return 'skipped'
+    for tweet in tweets:
+        tid = client._extract_tweet_id(tweet)
+        if not tid or _already_replied(tid, state):
+            continue
+        text = client.get_tweet_text(tweet)
+        user = getattr(tweet, 'user_screen_name', '') or 'anon'
+        if not text or len(text) < 30:
+            continue
+        likes = client.get_like_count(tweet)
+        if likes < 10:
+            continue
+        if client.is_retweet(tweet):
+            continue
+        await maybe_like(client, tweet)
+        await asyncio.sleep(random.uniform(2, 6))
+        reply_text = ai_engine.generate_sniper_reply(text, user, include_shill=should_shill())
+        if not reply_text:
+            continue
+        logging.info('Search engage: commenting on @%s tweet %s', user, tid)
+        status, reply_id = await client.try_reply(tid, reply_text)
+        if status == '429':
+            return '429'
+        if status == 'ok' and reply_id:
+            remember_reply(state, tid)
+            state['last_engagement_at'] = time.time()
+            if _memory:
+                _memory.record_interaction(user, tid, reply_id, 'search_comment', reply_text)
+            save_state(state, state['state_path'])
+            logging.info('Search engage comment on @%s: %s', user, reply_id)
+            return 'commented'
+    return 'skipped'
 
 
 async def _try_mention_reply(client, ai_engine, state):
@@ -433,8 +494,8 @@ SLOT_INTERVAL_MIN = 1800    # 30 min between actions
 SLOT_INTERVAL_MAX = 3600    # up to 60 min
 SLEEP_CHECK = 90            # poll every 1.5 min
 POST_COOLDOWN_MIN = 14400   # minimum 4h between posts
-POST_COOLDOWN_MAX = 21600   # up to 6h between posts
-MAX_POSTS_PER_DAY = 3       # total write actions (posts + threads + trends + quotes)
+POST_COOLDOWN_MAX = 18000   # up to 5h between posts
+MAX_POSTS_PER_DAY = 5       # total write actions (posts + threads + trends + quotes)
 MAX_ENGAGEMENTS_PER_DAY = 12  # comments/replies per day (~1 per 2h over 12h active window)
 SKIPPED_RETRY_MIN = 600     # if engage skipped, retry in 10 min
 SKIPPED_RETRY_MAX = 900     # ... up to 15 min
@@ -803,7 +864,7 @@ async def main():
             last_post = state.get('last_post_at') or 0
             post_cooldown = random.uniform(POST_COOLDOWN_MIN, POST_COOLDOWN_MAX)
             since_last_post = time.time() - last_post
-            can_post = since_last_post >= post_cooldown and total_writes < MAX_POSTS_PER_DAY
+            can_post = since_last_post >= post_cooldown and total_writes < MAX_POSTS_PER_DAY and _is_active_hour()
 
             # Alternation logic: last was engage -> try post; last was post -> engage
             if last_type == 'engage' and can_post:

@@ -5,6 +5,7 @@
 @tailwind utilities;
 
 :root {
+  color-scheme: dark;
   --prism-cyan: #22d3ee;
   --prism-blue: #0ea5e9;
   --prism-gold: #fbbf24;
@@ -193,9 +194,6 @@ body:has(.prism-league-page) #root > * {
   z-index: 0;
   opacity: 0;
 }
-.card-stage {
-  z-index: 1;
-}
 
 /* Card stage — no transition, instant reveal */
 .card-stage.card-stage-enter {
@@ -363,7 +361,7 @@ body:has(.prism-league-page) #root > * {
 }
 
 .badge-sm {
-  --badge-size: 36px;
+  --badge-size: 44px;
 }
 
 .badge-md {
@@ -392,7 +390,14 @@ body:has(.prism-league-page) #root > * {
   transition: transform 0.25s cubic-bezier(.4,0,.2,1), filter 0.25s ease, opacity 0.25s ease;
 }
 
-.front-badges .badge-icon-wrap:hover .badge-icon {
+.front-badges .badge-icon-wrap.active .badge-icon,
+@media (hover: hover) {
+  .front-badges .badge-icon-wrap:hover .badge-icon {
+    transform: scale(1.35);
+    filter: drop-shadow(0 0 14px rgba(148, 220, 255, 0.85));
+  }
+}
+.front-badges .badge-icon-wrap.active .badge-icon {
   transform: scale(1.35);
   filter: drop-shadow(0 0 14px rgba(148, 220, 255, 0.85));
 }
@@ -418,9 +423,15 @@ body:has(.prism-league-page) #root > * {
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.front-badges .badge-icon-wrap:hover .badge-tooltip {
+.front-badges .badge-icon-wrap.active .badge-tooltip {
   opacity: 1;
   transform: translateX(-50%) scale(1);
+}
+@media (hover: hover) {
+  .front-badges .badge-icon-wrap:hover .badge-tooltip {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
 }
 
 /* === NFT KIOSK MODE FIXES === */
@@ -595,15 +606,16 @@ body:has(.prism-league-page) #root > * {
 }
 
 .mint-primary-btn {
-  min-width: 240px !important;
-  height: 56px !important;
-  border-radius: 18px !important;
+  width: 100% !important;
+  height: 48px !important;
+  border-radius: 16px !important;
   background: linear-gradient(135deg, rgba(14, 165, 233, 0.95), rgba(56, 189, 248, 0.95), rgba(165, 243, 252, 0.85)) !important;
   color: #00121f !important;
   font-weight: 900 !important;
+  font-size: 0.75rem !important;
   letter-spacing: 0.2em !important;
   text-transform: uppercase !important;
-  box-shadow: 0 18px 35px rgba(14, 165, 233, 0.45), 0 0 35px rgba(14, 165, 233, 0.35) !important;
+  box-shadow: 0 12px 25px rgba(14, 165, 233, 0.35), 0 0 25px rgba(14, 165, 233, 0.25) !important;
 }
 
 .mint-primary-btn:disabled {
@@ -628,7 +640,8 @@ body:has(.prism-league-page) #root > * {
 
 .mint-share-btn,
 .mint-secondary-btn {
-  height: 46px !important;
+  width: 100% !important;
+  height: 48px !important;
   border-radius: 16px !important;
   font-size: 0.7rem !important;
   font-weight: 800 !important;
@@ -804,6 +817,7 @@ body:has(.prism-league-page) #root > * {
   from { opacity: 0; transform: translateY(20px) scale(0.95); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+
 
 .glow-icon-container {
   display: flex;
@@ -1642,6 +1656,44 @@ body:has(.prism-league-page) #root > * {
 .toaster [data-sonner-toast] [data-close-button],
 [data-sonner-toast] [data-close-button] {
   top: 6px;
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  color: rgba(255,255,255,0.5) !important;
+}
+[data-sonner-toast] [data-close-button]:hover {
+  background: rgba(255,255,255,0.12) !important;
+  color: rgba(255,255,255,0.8) !important;
+}
+
+/* Sonner toast icon color overrides — no default green */
+[data-sonner-toast][data-type="success"] [data-icon] svg {
+  color: #34d399 !important;
+}
+[data-sonner-toast][data-type="error"] [data-icon] svg {
+  color: #f87171 !important;
+}
+[data-sonner-toast][data-type="warning"] [data-icon] svg {
+  color: #fbbf24 !important;
+}
+[data-sonner-toast][data-type="info"] [data-icon] svg {
+  color: #22d3ee !important;
+}
+
+/* Toast text color override */
+[data-sonner-toast] [data-title] {
+  color: #e2e8f0 !important;
+}
+[data-sonner-toast] [data-description] {
+  color: #94a3b8 !important;
+}
+
+/* Hidden scrollbar — functional scroll, no visible bar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Custom Scrollbar */
@@ -1746,7 +1798,7 @@ body:has(.prism-league-page) #root > * {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: calc(env(safe-area-inset-top, 0px) + clamp(32px, 6vh, 70px));
+  padding-top: calc(env(safe-area-inset-top, 0px) + clamp(48px, 8vh, 90px));
   padding-bottom: 0;
   text-align: center;
   overflow: visible;
@@ -1797,21 +1849,21 @@ body:has(.prism-league-page) #root > * {
   font-size: 14px;
   letter-spacing: 0.4em;
   text-transform: uppercase;
-  color: rgba(255, 220, 180, 1);
-  text-shadow: 0 0 18px rgba(255, 140, 80, 0.9), 0 0 40px rgba(255, 100, 60, 0.5), 0 0 60px rgba(255, 80, 40, 0.3);
+  color: rgba(120, 220, 255, 1);
+  text-shadow: 0 0 18px rgba(34, 211, 238, 0.9), 0 0 40px rgba(34, 211, 238, 0.5), 0 0 60px rgba(20, 120, 180, 0.3);
   opacity: 1;
   pointer-events: none;
   font-weight: 700;
   padding: 8px 24px;
-  border: 1px solid rgba(255, 160, 100, 0.35);
+  border: 1px solid rgba(34, 211, 238, 0.35);
   border-radius: 20px;
-  background: rgba(255, 100, 50, 0.12);
+  background: rgba(34, 211, 238, 0.12);
   animation: bh-return-pulse 2.5s ease-in-out infinite;
 }
 
 @keyframes bh-return-pulse {
-  0%, 100% { opacity: 0.85; text-shadow: 0 0 18px rgba(255, 140, 80, 0.9), 0 0 40px rgba(255, 100, 60, 0.5); }
-  50% { opacity: 1; text-shadow: 0 0 24px rgba(255, 160, 100, 1), 0 0 50px rgba(255, 120, 70, 0.7), 0 0 80px rgba(255, 80, 40, 0.4); }
+  0%, 100% { opacity: 0.85; text-shadow: 0 0 18px rgba(34, 211, 238, 0.9), 0 0 40px rgba(34, 211, 238, 0.5); }
+  50% { opacity: 1; text-shadow: 0 0 24px rgba(120, 220, 255, 1), 0 0 50px rgba(34, 211, 238, 0.7), 0 0 80px rgba(20, 120, 180, 0.4); }
 }
 
 .blackhole-warp {
@@ -1988,6 +2040,9 @@ body:has(.prism-league-page) #root > * {
 }
 
 /* Mouse attraction: shift elements toward cursor */
+.blackhole-visual {
+  contain: style;
+}
 .blackhole-visual[style] .blackhole-core {
   transform: translate(var(--mx, 0px), var(--my, 0px));
   transition: transform 0.4s cubic-bezier(0.2, 0, 0.3, 1);
@@ -2002,10 +2057,11 @@ body:has(.prism-league-page) #root > * {
 /* ── Content panel below the black hole ── */
 .blackhole-content {
   position: relative;
-  z-index: 5;
+  z-index: 3;
   max-width: min(96vw, 780px);
   margin: 0 auto;
   padding: 0 8px clamp(60px, 8vh, 120px);
+  margin-top: 16px;
 }
 
 /* Table: fixed layout to prevent column shifting */
@@ -2040,16 +2096,20 @@ body:has(.prism-league-page) #root > * {
 @media (max-width: 640px) {
   .blackhole-hero__title { font-size: 1.4rem; letter-spacing: 0.08em; }
   .blackhole-hero__sub { font-size: 0.6rem; letter-spacing: 0.1em; margin-bottom: 8px; }
-  .blackhole-visual { height: 180px; margin-bottom: 40px; }
+  .blackhole-visual { height: 240px; margin-bottom: 56px; overflow: visible; }
   .blackhole-hero { padding-top: clamp(16px, 3vh, 32px); }
   .blackhole-panel { padding: 12px; border-radius: 16px; }
   .blackhole-content { padding: 0 6px 80px; max-width: 100vw; overflow-x: hidden; }
   .blackhole-shell { overflow-x: hidden; }
   .blackhole-content table { min-width: unset; font-size: 10px; }
-  /* Keep visual effects on mobile — only simplify heavy blur */
-  .blackhole-warp { filter: blur(3px); }
-  .blackhole-accretion { filter: blur(7px); }
-  .blackhole-jet::after { filter: blur(8px); }
+  /* Simplify heavy blur + animations on mobile for FPS */
+  .blackhole-warp { filter: blur(2px); animation-duration: 15s; }
+  .blackhole-accretion { filter: blur(5px); animation-duration: 24s; }
+  .blackhole-jet::after { filter: blur(6px); }
+  .blackhole-glow { filter: blur(15px); animation: none; opacity: 0.7; }
+  .blackhole-photon { animation: none; opacity: 0.5; }
+  .bh-debris-particle:nth-child(n+9) { display: none; }
+  .constellation-bg { animation: none; }
 }
 
 .blackhole-panel {

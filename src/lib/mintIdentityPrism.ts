@@ -82,6 +82,69 @@ function encodeBase64(value: string): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// ── JWT Auth Helper (persisted in sessionStorage — sign once per session) ──
+const JWT_STORAGE_KEY = 'ip_auth_jwt';
+
+function loadCachedJwt(): { token: string; address: string; expiresAt: number } | null {
+  try {
+    const raw = typeof window !== 'undefined' ? sessionStorage.getItem(JWT_STORAGE_KEY) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { token: string; address: string; expiresAt: number };
+    if (parsed.expiresAt > Date.now() + 60_000) return parsed;
+    sessionStorage.removeItem(JWT_STORAGE_KEY);
+  } catch { /* ignore */ }
+  return null;
+}
+
+function saveCachedJwt(entry: { token: string; address: string; expiresAt: number }) {
+  try { sessionStorage.setItem(JWT_STORAGE_KEY, JSON.stringify(entry)); } catch { /* ignore */ }
+}
+
+async function getAuthToken(
+  wallet: { publicKey?: PublicKey | null; signMessage?: (message: Uint8Array) => Promise<Uint8Array> },
+  baseUrl: string,
+): Promise<string | null> {
+  const address = wallet.publicKey?.toBase58();
+  if (!address || !wallet.signMessage) return null;
+
+  // Return cached token (memory or sessionStorage) if still valid
+  const cached = loadCachedJwt();
+  if (cached && cached.address === address) return cached.token;
+
+  try {
+    // 1. Get challenge
+    const challengeRes = await fetch(`${baseUrl}/api/auth/challenge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address }),
+    });
+    if (!challengeRes.ok) return null;
+    const { nonce, message } = await challengeRes.json() as { nonce: string; message: string };
+
+    // 2. Sign the challenge message
+    const msgBytes = new TextEncoder().encode(message);
+    const signatureBytes = await wallet.signMessage(msgBytes);
+    const signatureBase64 = Buffer.from(signatureBytes).toString('base64');
+
+    // 3. Exchange for JWT
+    const tokenRes = await fetch(`${baseUrl}/api/auth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, nonce, signature: signatureBase64 }),
+    });
+    if (!tokenRes.ok) return null;
+    const { token } = await tokenRes.json() as { token: string };
+
+    const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
+    saveCachedJwt(entry);
+    console.info('[auth] JWT obtained (cached for session)');
+    return token;
+  } catch (e) {
+    console.warn('[auth] JWT flow failed, proceeding without auth', e);
+    return null;
+  }
+}
+
 const TX_FEE_BUFFER_SOL = 0.003;
 const MIN_REQUIRED_SOL = 0.02;
 
@@ -279,6 +342,9 @@ export async function mintIdentityPrism({
     throw new Error('Wallet not ready or does not support transactions');
   }
 
+  // Obtain JWT auth token (non-blocking — proceeds without if signMessage unavailable)
+  const authToken = await getAuthToken(wallet, coreMintUrl);
+
   const parseOptionalPublicKey = (value: string | null, label: string) => {
     if (!value) return null;
     try {
@@ -404,9 +470,12 @@ export async function mintIdentityPrism({
   };
   console.info('[mint] sending mint-cnft payload', { coreMintUrl, remint, burnAssetId: burnAssetId?.slice(0, 16), payloadKeys: Object.keys(mintPayload) });
 
+  const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (authToken) authHeaders['Authorization'] = `Bearer ${authToken}`;
+
   const cnftResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
     body: JSON.stringify(mintPayload),
   });
 
@@ -515,7 +584,7 @@ export async function mintIdentityPrism({
     }
 
     try {
-      const simulation = await connection.simulateTransaction(transaction, {
+      const simulation = await connection.simulateTransaction(transaction, undefined, {
         sigVerify: false,
         replaceRecentBlockhash: true,
       });
@@ -558,7 +627,7 @@ export async function mintIdentityPrism({
 
     const finalizeResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         requestId,
         owner: payer.toBase58(),
@@ -627,19 +696,26 @@ export async function remintIdentityPrism(
   });
   if (!dasResponse.ok) throw new Error(`DAS API error: ${dasResponse.status}`);
   const dasData = (await dasResponse.json()) as {
-    result?: { items: Array<{ id: string; grouping?: Array<{ group_key: string; group_value: string }> }> };
+    result?: { items: Array<{ id: string; interface?: string; grouping?: Array<{ group_key: string; group_value: string }> }> };
   };
   const assets = dasData.result?.items ?? [];
-  const existingCard = assets.find((a) =>
+  const matchingAssets = assets.filter((a) =>
     a.grouping?.some(
       (g) => g.group_key === 'collection' && g.group_value === collectionMintAddress
     )
   );
+  // Prefer Core assets (burnV1 only works with MplCoreAsset); fall back to any matching asset
+  const coreAsset = matchingAssets.find((a) => a.interface === 'MplCoreAsset');
+  const existingCard = coreAsset ?? matchingAssets[0];
   if (!existingCard) {
     throw new Error('No existing Identity Prism card found in this wallet. Use regular mint instead.');
   }
+  if (!coreAsset && existingCard) {
+    console.warn('[remint] found legacy cNFT instead of Core asset — burn may fail', { id: existingCard.id, interface: existingCard.interface });
+  }
 
   const assetId = existingCard.id;
+  console.info('[remint] found asset to burn', { assetId, interface: existingCard.interface });
 
   // 2. Combined burn+mint in one transaction — server builds both instructions
   const mintResult = await mintIdentityPrism({
@@ -652,4 +728,174 @@ export async function remintIdentityPrism(
     ...mintResult,
     burnedAssetId: assetId,
   };
+}
+
+/**
+ * Update existing Identity Prism NFT in-place (no burn/create).
+ * Server signs with collection authority — user pays nothing.
+ * Metadata (name, URI, image) is updated on the same NFT account.
+ */
+export interface UpdateIdentityPrismArgs {
+  wallet: WalletContextState;
+  address: string;
+  traits: WalletTraits;
+  score: number;
+  cardImageUrl?: string;
+}
+
+export interface UpdateIdentityPrismResult {
+  signature: string;
+  assetId: string;
+  metadataUri: string;
+}
+
+export async function updateIdentityPrism({
+  wallet,
+  address,
+  traits,
+  score,
+  cardImageUrl,
+}: UpdateIdentityPrismArgs): Promise<UpdateIdentityPrismResult> {
+  if (!wallet.publicKey || !wallet.signTransaction) {
+    throw new Error('Wallet not connected or does not support signTransaction');
+  }
+
+  const metadataBaseUrl = getMetadataBaseUrl();
+  if (!metadataBaseUrl) throw new Error('Metadata service URL not configured');
+  const appBaseUrl = (getAppBaseUrl() ?? 'https://identityprism.xyz').replace(/\/+$/, '');
+  const collectionMintAddress = getCollectionMint();
+  if (!collectionMintAddress) throw new Error('Collection mint not configured');
+  const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;
+  if (!coreMintUrl) throw new Error('Core mint endpoint is not configured');
+
+  // Obtain JWT auth token
+  const authToken = await getAuthToken(wallet, coreMintUrl);
+  const updateAuthHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (authToken) updateAuthHeaders['Authorization'] = `Bearer ${authToken}`;
+
+  const heliusRpcUrl = getHeliusRpcUrl(address);
+  if (!heliusRpcUrl) throw new Error('Helius API key required');
+
+  // 1. Find existing Core NFT via DAS
+  const dasResponse = await fetch(heliusRpcUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(getHeliusProxyHeaders(address) ?? {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'update-find',
+      method: 'getAssetsByOwner',
+      params: { ownerAddress: address, page: 1, limit: 1000 },
+    }),
+  });
+  if (!dasResponse.ok) throw new Error(`DAS API error: ${dasResponse.status}`);
+  const dasData = (await dasResponse.json()) as {
+    result?: { items: Array<{ id: string; interface?: string; grouping?: Array<{ group_key: string; group_value: string }> }> };
+  };
+  const coreAsset = (dasData.result?.items ?? []).find(
+    (a) =>
+      a.interface === 'MplCoreAsset' &&
+      a.grouping?.some((g) => g.group_key === 'collection' && g.group_value === collectionMintAddress)
+  );
+  if (!coreAsset) {
+    throw new Error('No existing Identity Prism Core NFT found. Use regular mint instead.');
+  }
+  const assetId = coreAsset.id;
+  console.info('[update] found Core asset', { assetId });
+
+  // 2. Build metadata and upload
+  const resolvedImageUrl = cardImageUrl || `${appBaseUrl}/phav.png`;
+  const resolvedExternalUrl = `${appBaseUrl}/?address=${address}`;
+  const resolvedAnimationUrl = `${appBaseUrl}/?address=${address}&mode=nft`;
+  const resolveImageContentType = (url: string) => {
+    const n = url.split('?')[0]?.toLowerCase() ?? '';
+    if (n.endsWith('.gif')) return 'image/gif';
+    if (n.endsWith('.jpg') || n.endsWith('.jpeg')) return 'image/jpeg';
+    if (n.endsWith('.webp')) return 'image/webp';
+    return 'image/png';
+  };
+  const shortAddress = address.slice(0, 4);
+  const displayName = `Identity Prism ${shortAddress}`;
+  const metadataJson = {
+    name: displayName,
+    symbol: MINT_CONFIG.SYMBOL ?? 'PRISM',
+    description: 'Identity Prism — a living Solana identity card built from your on-chain footprint.',
+    image: resolvedImageUrl,
+    external_url: resolvedExternalUrl,
+    animation_url: resolvedAnimationUrl,
+    attributes: [
+      { trait_type: 'Tier', value: traits.planetTier },
+      { trait_type: 'Score', value: score.toString() },
+      { trait_type: 'Origin', value: 'Identity Prism' },
+      { trait_type: 'NFTs', value: traits.nftCount },
+      { trait_type: 'Tokens', value: traits.uniqueTokenCount },
+      { trait_type: 'Transactions', value: traits.txCount },
+      { trait_type: 'Wallet Age (days)', value: traits.walletAgeDays },
+    ],
+    properties: {
+      files: [
+        { uri: resolvedImageUrl, type: resolveImageContentType(resolvedImageUrl) },
+        { uri: resolvedAnimationUrl, type: 'text/html' },
+      ],
+      category: 'html',
+    },
+  };
+
+  const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(metadataJson),
+  });
+  if (!metadataResponse.ok) {
+    const errorText = await metadataResponse.text();
+    throw new Error(`Metadata upload failed: ${metadataResponse.status} ${errorText}`);
+  }
+  const metadataPayload = (await metadataResponse.json()) as { uri?: string };
+  const metadataUri = metadataPayload.uri;
+  if (!metadataUri) throw new Error('Metadata URI not returned');
+
+  // 3. Phase 1: get partially-signed tx from server
+  console.info('[update] requesting tx from /api/update-card', { assetId: assetId.slice(0, 16), name: displayName });
+  const prepareResponse = await fetch(`${coreMintUrl}/api/update-card`, {
+    method: 'POST',
+    headers: updateAuthHeaders,
+    body: JSON.stringify({ ownerAddress: address, assetId, metadataUri, name: displayName }),
+  });
+  if (!prepareResponse.ok) {
+    const errorText = await prepareResponse.text();
+    throw new Error(`Update prepare failed: ${prepareResponse.status} ${errorText}`);
+  }
+  const prepareData = (await prepareResponse.json()) as { transaction?: string; feeSol?: number };
+  if (!prepareData.transaction) throw new Error('Update transaction missing from server');
+
+  // 4. User signs the transaction (pays service fee + network fee)
+  const transaction = Transaction.from(Buffer.from(prepareData.transaction, 'base64'));
+  // Patch serialize so wallet adapter doesn't reject due to missing colAuth sig
+  // (same pattern as mint-cnft — MWA internally calls serialize())
+  const origSerialize = transaction.serialize.bind(transaction);
+  transaction.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+    origSerialize({
+      ...config,
+      requireAllSignatures: false,
+      verifySignatures: false,
+    })) as typeof transaction.serialize;
+  const signed = await signWithDismissDetection(wallet, transaction);
+
+  // 5. Phase 2: send signed tx back to server for co-signing & submission
+  const serialized = signed.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
+  const finalizeResponse = await fetch(`${coreMintUrl}/api/update-card`, {
+    method: 'POST',
+    headers: updateAuthHeaders,
+    body: JSON.stringify({ ownerAddress: address, assetId, metadataUri, name: displayName, signedTransaction: serialized }),
+  });
+  if (!finalizeResponse.ok) {
+    const errorText = await finalizeResponse.text();
+    throw new Error(`Update finalize failed: ${finalizeResponse.status} ${errorText}`);
+  }
+  const result = (await finalizeResponse.json()) as { signature?: string; assetId?: string };
+  if (!result.signature) throw new Error('Update signature missing');
+
+  return { signature: result.signature, assetId, metadataUri };
 }

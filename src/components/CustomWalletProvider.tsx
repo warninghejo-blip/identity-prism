@@ -158,12 +158,26 @@ export const CustomWalletProvider = ({
         };
     }, [adapter, handleError, setWalletName]);
 
-    // Handle Unload
+    // Handle Unload — clear persisted wallet name so next fresh open won't auto-reconnect
     useEffect(() => {
-        const handleBeforeUnload = () => { isUnloadingRef.current = true; };
+        const handleBeforeUnload = () => {
+            isUnloadingRef.current = true;
+            try { localStorage.removeItem(localStorageKey); } catch {}
+        };
         window.addEventListener('beforeunload', handleBeforeUnload);
-        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, []);
+        // pagehide fires on iOS/Android when app is actually closed (not just minimized)
+        const handlePageHide = (e: PageTransitionEvent) => {
+            if (!e.persisted) {
+                isUnloadingRef.current = true;
+                try { localStorage.removeItem(localStorageKey); } catch {}
+            }
+        };
+        window.addEventListener('pagehide', handlePageHide);
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            window.removeEventListener('pagehide', handlePageHide);
+        };
+    }, [localStorageKey]);
 
     // Select Wallet
     const select = useCallback((name: WalletName | null) => {

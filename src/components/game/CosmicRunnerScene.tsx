@@ -481,7 +481,7 @@ function GameWorld({ gameState, onGameOver, onScore, traits }: GameProps) {
 
   return (
     <>
-      <color attach="background" args={["#050510"]} />
+      <color attach="background" args={["#080c1a"]} />
       <ambientLight intensity={0.4} />
       <SimpleStars count={IS_MOBILE ? 150 : 2000} />
       {!IS_MOBILE && <NebulaGrid />}

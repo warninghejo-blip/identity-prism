@@ -28,13 +28,15 @@ TARGET_USERS = [
     # Infra & tooling
     'solanamobile', 'MagicBlock_', 'heliuslabs',
     # DEXes & DeFi
-    'JupiterExchange', 'DriftProtocol', 'MarginFi', 'kamino_finance',
+    'JupiterExchange', 'DriftProtocol', 'MarginFi',
     # NFT / Consumer
-    'tensor_hq', 'MagicEden', 'ORE_Supply',
+    'tensor_hq', 'MagicEden',
     # Hackathons & grants
     'colosseum', 'superteamDAO',
     # Identity / social adjacent
     'TapestryProto', 'phantom',
+    # Additional active accounts
+    'sendarcade', 'RaydiumProtocol',
 ]
 
 SNIPER_INTERVAL_RANGE = (25 * 60, 40 * 60)
@@ -81,11 +83,11 @@ HASHTAG_SETS = [
 
 ACTION_WEIGHTS = {
     'post': 6,
-    'thread': 6,
-    'trend_post': 8,
-    'quote': 6,
-    'news_post': 14,
-    'engage': 60,
+    'thread': 4,
+    'trend_post': 6,
+    'quote': 18,
+    'news_post': 10,
+    'engage': 56,
 }
 
 SHILL_RATE = 0.4

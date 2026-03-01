@@ -30,20 +30,12 @@ const isCapacitorNative = Boolean(
     ?.isNativePlatform?.()
 );
 
-// Always clear stored wallet on page load so user picks wallet manually each time
+// Clear MWA cache on load but keep walletAdapter for session persistence
 try {
-  localStorage.removeItem('walletAdapter');
   localStorage.removeItem('SolanaMobileWalletAdapterDefaultAuthorizationCache');
 } catch {}
 
-if (isCapacitorNative && typeof document !== 'undefined') {
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'hidden') {
-      window.dispatchEvent(new Event('blur'));
-    }
-  };
-  document.addEventListener('visibilitychange', handleVisibilityChange);
-}
+// Removed: visibilitychange→blur was disconnecting wallet on app minimize
 
 const routerOptions: Parameters<typeof createBrowserRouter>[1] = {
   future: {
@@ -127,7 +119,7 @@ export default function AppShell() {
       )}
       <CustomWalletProvider
         wallets={wallets}
-        autoConnect={true}
+        autoConnect={false}
         localStorageKey="walletAdapter"
       >
         <DebugWallet />

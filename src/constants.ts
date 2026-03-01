@@ -165,24 +165,18 @@ export const BLUE_CHIP_COLLECTIONS = [
   'SMB3ndYpSXY97H8MhpxYit3pD8TzYJ5v6ndP4D2L2nd', // SMB Gen3
   '6v9UWGmEB5Hthst9KqEAgXW6XF6R6yv4t7Yf3YfD3A7t', // Claynosaurz
   'BUjZjAS2vbbb9p56fAun4sFmPAt8W6JURG5L3AkVvHP9', // Famous Fox Federation
-  '4S8L8L1M5E1X5vM1Y1M1X5vM1Y1M1X5vM1Y1M1X5vM1Y', // Tensorians
   '7TENEKwBnkpENuefriGPg4hBDR4WJ2Gyfw5AhdkMA4rq', // Okay Bears
-  '9uBX3ASuCtv6S5o56yq7F9n7U6o9o7o9o7o9o7o9o7o9', // Degen Ape Academy
-  'GGSGP689TGoX6WJ9mSj2S8mH78S8S8S8S8S8S8S8S8S8S', // Galactic Geckos
   'CDgbhX61QFADQAeeYKP5BQ7nnzDyMkkR3NEhYF2ETn1k', // Taiyo Robotics
-  'Port7uDYB3P8meS5m7Yv62222222222222222222222', // Portals
-  'CocMmG5v88888888888888888888888888888888888', // Cets on Creck
-  'y00t9S9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD', // y00ts
-  'abc777777777777777777777777777777777777777', // ABC
-  'LILY5555555555555555555555555555555555555', // LILY
-  'PRM77777777777777777777777777777777777777', // Primates
-  'Jelly8888888888888888888888888888888888888', // Jelly Rascals
-  '4Q2C5S930M9c9e96b', // Froganas (prefix match suggested)
-  'TFF77777777777777777777777777777777777777', // TFF
-  'DTP77777777777777777777777777777777777777', // DTP
 ];
 
-export const BLUE_CHIP_COLLECTION_NAMES = ['mad lads', 'solana monkey business', 'claynosaurz'];
+// Also match by collection name (case-insensitive) for broader coverage
+export const BLUE_CHIP_COLLECTION_NAMES = [
+  'mad lads', 'solana monkey business', 'claynosaurz', 'okay bears',
+  'famous fox federation', 'tensorians', 'degenerate ape academy',
+  'y00ts', 'abc', 'cets on creck', 'primates', 'portals',
+  'galactic geckos', 'taiyo robotics', 'degen ape academy',
+  'froganas', 'jelly rascals', 'lily',
+];
 
 export const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
 

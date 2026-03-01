@@ -20,10 +20,10 @@ export interface Achievement {
 }
 
 export const ACHIEVEMENT_COIN_REWARDS: Record<string, number> = {
-  bronze: 20,
-  silver: 50,
-  gold: 100,
-  diamond: 200,
+  bronze: 50,
+  silver: 150,
+  gold: 400,
+  diamond: 1000,
 };
 
 const ACHIEVEMENTS_KEY = 'orbit_survival_achievements_v1';

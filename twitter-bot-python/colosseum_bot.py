@@ -638,8 +638,7 @@ def post_progress_update(api_key, state):
 # Main loop
 # ---------------------------------------------------------------------------
 if not check_single_instance('colosseum_bot.lock'):
-    import sys
-    sys.exit(0)
+        return
 
     
 async def main():

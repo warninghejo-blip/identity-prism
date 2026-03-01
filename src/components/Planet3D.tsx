@@ -17,11 +17,12 @@ import {
   TextureLoader,
 } from 'three';
 import type { PlanetTier } from '@/hooks/useWalletData';
+import { SunCore, SunGlow, getProceduralParams, STAR_ARCHETYPES } from './SeekerSun';
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 // Restore high quality segments as requested
-const SEGMENTS = 96; 
-const SEGMENTS_LOW = 64;
+const SEGMENTS = IS_MOBILE ? 48 : 96; 
+const SEGMENTS_LOW = IS_MOBILE ? 32 : 64;
 
 type PlanetTextureConfig = {
   map: string;
@@ -206,29 +207,27 @@ float snoise(vec3 v) {
 }
 
 void main() {
-  // Rotate noise over time
-  float noiseLarge = snoise(vPosition * 2.2 + vec3(uTime * 0.25));
-  float noiseMid = snoise(vPosition * 6.5 - vec3(uTime * 0.35));
-  float noiseFine = snoise(vPosition * 12.0 + vec3(uTime * 0.6));
-  
-  float combined = noiseLarge * 0.55 + noiseMid * 0.3 + noiseFine * 0.15;
-  float flare = smoothstep(0.15, 0.8, combined);
-  float lava = mix(combined, flare, 0.5);
-  
-  // Mix colors based on noise
-  vec3 finalColor = mix(uColorA, uColorB, lava * uGain + 0.5);
-  finalColor += uColorB * pow(flare, 3.0) * 0.25;
+  // 4-octave turbulence — fire-like texture
+  float n1 = abs(snoise(vPosition * 2.5 + vec3(uTime * 0.18, uTime * 0.12, -uTime * 0.09)));
+  float n2 = abs(snoise(vPosition * 6.0 - vec3(uTime * 0.25, -uTime * 0.15, uTime * 0.1)));
+  float n3 = abs(snoise(vPosition * 13.0 + vec3(-uTime * 0.35, uTime * 0.2, uTime * 0.12)));
+  float n4 = abs(snoise(vPosition * 26.0 - vec3(uTime * 0.45, uTime * 0.25, -uTime * 0.18)));
 
+  float fire = n1 * 0.4 + n2 * 0.3 + n3 * 0.2 + n4 * 0.1;
+  fire = pow(fire, 1.3) * uGain;
+
+  // Solid base — prevents hollow/transparent look
+  vec3 baseColor = uColorA * 0.55 + uColorB * 0.15;
+  vec3 brightColor = uColorB;
+  vec3 finalColor = mix(baseColor, brightColor, clamp(fire, 0.0, 1.0));
+
+  // Bright flare highlights
+  finalColor += uColorB * pow(clamp(fire, 0.0, 1.0), 3.0) * 0.35;
+
+  // Limb darkening — subtle, keeps edges solid
   float viewDot = max(0.0, dot(vNormal, vec3(0.0, 0.0, 1.0)));
-  float core = pow(viewDot, 2.6);
-  float rim = pow(1.0 - viewDot, 1.5);
-  finalColor += uColorB * core * 0.35;
-  finalColor += uColorB * rim * 0.25;
-  
-  // Add fresnel rim - REMOVED per user request
-  // float viewDot = dot(vNormal, vec3(0.0, 0.0, 1.0));
-  // float fresnel = pow(1.0 - abs(viewDot), 2.5);
-  // finalColor += uColorB * fresnel * 0.1; 
+  float limb = pow(viewDot, 0.35);
+  finalColor *= (0.5 + limb * 0.5);
 
   gl_FragColor = vec4(finalColor, 1.0);
 }
@@ -515,9 +514,9 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
   // NEW: Animated shader uniforms for Binary Stars
   const sun1ShaderUniforms = useMemo(() => ({
     uTime: { value: 0 },
-    uColorA: { value: new Color('#ffaa00') }, // Deep Orange
-    uColorB: { value: new Color('#ffea00') }, // Bright Yellow
-    uGain: { value: 1.35 } // Increased for epicness
+    uColorA: { value: new Color('#ff8800') }, // Deep Orange
+    uColorB: { value: new Color('#ffff44') }, // Bright Yellow (boosted)
+    uGain: { value: 1.6 } // Brighter
   }), []);
 
   const sun2ShaderUniforms = useMemo(() => ({
@@ -529,9 +528,9 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
 
   const singleSunUniforms = useMemo(() => ({
     uTime: { value: 0 },
-    uColorA: { value: new Color('#ff9f1c') }, // Orange
-    uColorB: { value: new Color('#fff3b0') }, // Yellow/White
-    uGain: { value: 1.25 }
+    uColorA: { value: new Color('#ff8800') }, // Orange
+    uColorB: { value: new Color('#ffff55') }, // Yellow/White (boosted)
+    uGain: { value: 1.5 } // Brighter
   }), []);
 
   const prominenceWarmUniforms = useMemo(() => ({
@@ -682,7 +681,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
         <pointLight intensity={5} color="#ffb703" distance={25} />
         <pointLight intensity={3.5} color="#0077b6" distance={25} position={[3, 0, 0]} />
         
-        {/* Sun 1 - Yellow/Orange (Pulsing Shader) */}
+        {/* Sun 1 - Yellow/Orange */}
         <mesh position={[-1.0, 0, 0]}>
           <sphereGeometry args={[0.65, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
@@ -691,6 +690,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
             uniforms={sun1ShaderUniforms}
           />
         </mesh>
+        {/* Atmosphere radius (like planets) */}
         <mesh position={[-1.0, 0, 0]} scale={[1.12, 1.12, 1.12]}>
           <sphereGeometry args={[0.65, 32, 32]} />
           <shaderMaterial
@@ -704,21 +704,12 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
             depthWrite={false}
           />
         </mesh>
-        <mesh position={[-1.0, 0, 0]} scale={[1.08, 1.08, 1.08]}>
-          <sphereGeometry args={[0.65, SEGMENTS_LOW, SEGMENTS_LOW]} />
-          <shaderMaterial
-            vertexShader={prominenceVertexShader}
-            fragmentShader={prominenceFragmentShader}
-            uniforms={prominenceWarmUniforms}
-            blending={AdditiveBlending}
-            transparent
-            opacity={0.7}
-            side={DoubleSide}
-            depthWrite={false}
-          />
-        </mesh>
+        {/* Fire god-ray glow */}
+        <group position={[-1.0, 0, 0]}>
+          <SunGlow size={0.65} color="#ff8800" intensity={0.6} />
+        </group>
         
-        {/* Sun 2 - Blue/Cyan (Pulsing Shader) */}
+        {/* Sun 2 - Blue/Cyan */}
         <mesh position={[1.0, 0, 0]}>
           <sphereGeometry args={[0.6, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
@@ -727,6 +718,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
             uniforms={sun2ShaderUniforms}
           />
         </mesh>
+        {/* Atmosphere radius (like planets) */}
         <mesh position={[1.0, 0, 0]} scale={[1.12, 1.12, 1.12]}>
           <sphereGeometry args={[0.6, 32, 32]} />
           <shaderMaterial
@@ -740,21 +732,12 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
             depthWrite={false}
           />
         </mesh>
-        <mesh position={[1.0, 0, 0]} scale={[1.07, 1.07, 1.07]}>
-          <sphereGeometry args={[0.6, SEGMENTS_LOW, SEGMENTS_LOW]} />
-          <shaderMaterial
-            vertexShader={prominenceVertexShader}
-            fragmentShader={prominenceFragmentShader}
-            uniforms={prominenceCoolUniforms}
-            blending={AdditiveBlending}
-            transparent
-            opacity={0.65}
-            side={DoubleSide}
-            depthWrite={false}
-          />
-        </mesh>
+        {/* Ice god-ray glow */}
+        <group position={[1.0, 0, 0]}>
+          <SunGlow size={0.6} color="#00bbff" intensity={0.5} />
+        </group>
 
-        {/* Energy Bridge (Hyper Beam) - Reduced segments */}
+        {/* Energy Bridge (Hyper Beam) */}
         <mesh position={[0, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
           <cylinderGeometry args={[0.055, 0.055, 2.0, SEGMENTS_LOW, 1, true]} /> 
           <shaderMaterial
@@ -768,7 +751,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
             depthWrite={false}
           />
         </mesh>
-        {/* Filament overlays - Reduced segments */}
+        {/* Filament overlays */}
         <mesh position={[0, 0.035, 0.02]} rotation={[0, 0, Math.PI / 2]}>
           <cylinderGeometry args={[0.02, 0.02, 2.0, 16, 1, true]} />
           <shaderMaterial
@@ -854,20 +837,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           />
         </mesh>
 
-        {/* Sun Prominences */}
-        <mesh scale={[1.06, 1.06, 1.06]}>
-          <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
-          <shaderMaterial
-            vertexShader={prominenceVertexShader}
-            fragmentShader={prominenceFragmentShader}
-            uniforms={prominenceWarmUniforms}
-            blending={AdditiveBlending}
-            transparent
-            opacity={0.7}
-            side={DoubleSide}
-            depthWrite={false}
-          />
-        </mesh>
+        {/* Atmosphere radius (like planets) */}
         <mesh scale={[1.12, 1.12, 1.12]}>
           <sphereGeometry args={[size, SEGMENTS_LOW, SEGMENTS_LOW]} />
           <shaderMaterial
@@ -881,6 +851,8 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
             depthWrite={false}
           />
         </mesh>
+        {/* God-ray glow */}
+        <SunGlow size={size} color="#ff9933" intensity={0.65} />
       </group>
     );
   }

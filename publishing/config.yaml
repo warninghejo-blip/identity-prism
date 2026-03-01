@@ -49,13 +49,13 @@ release:
         • 3D Identity Card — stunning Three.js-powered celestial card with interactive planet
           rendering based on your tier.
         • Mint as NFT — mint your identity card as a Metaplex Core NFT on Solana. • Solana Blinks — share and attest your identity via Solana Actions. • Tapestry Social Graph — publish identity profiles for cross-app reputation discovery. • Reputation API — public REST API for any dApp to query wallet reputation. • AI Twitter Agent — autonomous bot analyzing on-chain identity and posting insights.
-      new_in_version: 'v3.2: Improved 3D card rendering, Tapestry social graph integration, on-chain attestation via Solana Actions, AI-powered Twitter agent, enhanced scoring algorithm.'
-      saga_features: Native Mobile Wallet Adapter support for seamless wallet connection on Saga and Seeker devices. Full MWA integration for signing and minting directly from the app.
+      new_in_version: 'v4.0: Cosmic Defender — new top-down shooter mode (4 levels, bosses, powerups, 9 achievements). Update Card — update NFT metadata in-place without burning (~0.0005 SOL), protected by Co-Sign Authority Guard. Custom GLSL Wormhole Transitions for all navigation at 60 FPS. Procedural Audio Engine — all game SFX synthesized via Web Audio API, zero audio files. Redesigned badges, 4 new (13 total). Score History sparkline and Progress Ring. Procedural plasma shader for Sun/Binary Sun with godrays. Realistic asteroid textures (Poly Haven CC0). InstancedMesh — 200 to 4 draw calls. Wallet reconnection fix.'
+      saga_features: Native Mobile Wallet Adapter (Seed Vault) support for seamless wallet connection on Seeker and Saga devices. Full MWA integration for signing, minting, and updating NFTs directly from the app.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.23
-    version_code: 24
+    version: 1.0.31
+    version_code: 42
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:

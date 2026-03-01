@@ -112,15 +112,22 @@ const Index = () => {
   // On fresh app open (no URL address, not returning from BlackHole),
   // force-disconnect any auto-connected wallet so user must choose manually.
   // Keep walletStable=false until disconnect settles to prevent connected UI flash.
+  // Re-runs on isConnected to catch Phantom eager-connect that fires AFTER first render.
   useEffect(() => {
-    if (didForceDisconnect.current) return;
-    didForceDisconnect.current = true;
-    if (!urlAddress && !returningFromBH.current && !returningFromGameJump.current && isConnected) {
+    if (urlAddress || returningFromBH.current || returningFromGameJump.current) {
+      setWalletStable(true);
+      return;
+    }
+    if (isConnected && !didForceDisconnect.current) {
+      didForceDisconnect.current = true;
       disconnect().catch(() => {}).finally(() => setTimeout(() => setWalletStable(true), 100));
-    } else {
+      return;
+    }
+    if (!isConnected && !didForceDisconnect.current) {
+      didForceDisconnect.current = true; // mark handled so manual connect isn't force-disconnected
       setWalletStable(true);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When returning from game/BlackHole with connected wallet but no URL address,
   // sync activeAddress from wallet so card + Update button stay visible.
@@ -481,6 +488,9 @@ const Index = () => {
       toast.error("Connection failed", {
         description: err instanceof Error ? err.message : String(err),
       });
+      // Reset adapter state so next connect attempt starts fresh
+      try { await targetWallet.adapter.disconnect(); } catch {}
+      try { select(null); } catch {}
     }
   }, [preferredMobileWallet, preferredMobileWalletReady, availableWallets, isCapacitor, isAndroidDevice, select, isConnected, connectedAddress, disconnect, isIosDevice, startMwaAssociationNudge]);
 
@@ -521,6 +531,9 @@ const Index = () => {
       toast.error("Connection failed", {
         description: err instanceof Error ? err.message : String(err),
       });
+      // Reset adapter state so next connect attempt starts fresh
+      try { await targetWallet.adapter.disconnect(); } catch {}
+      try { select(null); } catch {}
     }
   }, [preferredDesktopWallet, desktopWalletReady, isConnected, connectedAddress, select, connect, setWalletModalVisible]);
 
@@ -683,6 +696,8 @@ const Index = () => {
     await disconnect();
     mwaAuthorizationCache.clear().catch(() => {});
     try { localStorage.removeItem(MWA_AUTH_CACHE_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem('walletAdapter'); } catch { /* ignore */ }
+    try { localStorage.removeItem('walletName'); } catch { /* ignore */ }
     setActiveAddress(undefined);
     setViewState("landing");
   };
@@ -857,7 +872,7 @@ const Index = () => {
         setMintState("idle");
         toast.info("Transaction timed out — please try again");
       }
-    }, 10_000);
+    }, 20_000);
     try {
       const cardImageUrl = await captureCardImage();
       const { mintIdentityPrism } = await import("@/lib/mintIdentityPrism");
@@ -873,7 +888,8 @@ const Index = () => {
       if (import.meta.env.DEV) console.log("Mint success:", result);
       succeeded = true;
       setMintState("success");
-      toast.success("Identity Secured!", {
+      setTimeout(() => setMintState("idle"), 4000);
+      toast.success("Identity minted!", {
         description: `Tx: ${result.signature.slice(0, 8)}...`,
       });
     } catch (err) {
@@ -939,14 +955,14 @@ const Index = () => {
         setRemintState("idle");
         toast.info("Update timed out — please try again");
       }
-    }, 120_000);
+    }, 60_000);
     try {
-      toast.info("Preparing update...", {
-        description: "Your wallet will show a small storage rent (~0.002 SOL). No mint fee — old card will be burned.",
+      toast.info("Updating card...", {
+        description: "Updates metadata on existing NFT — only ~0.0005 SOL.",
       });
       const cardImageUrl = await captureCardImage();
-      const { remintIdentityPrism } = await import("@/lib/mintIdentityPrism");
-      const result = await remintIdentityPrism({
+      const { updateIdentityPrism } = await import("@/lib/mintIdentityPrism");
+      const result = await updateIdentityPrism({
         wallet,
         address: wallet.publicKey.toBase58(),
         traits,
@@ -955,9 +971,10 @@ const Index = () => {
       });
       succeeded = true;
       setRemintState("success");
+      setTimeout(() => setRemintState("idle"), 4000);
       setHasExistingId(true);
       toast.success("Card updated!", {
-        description: `Old burned & new minted: ${result.signature.slice(0, 8)}...`,
+        description: `NFT metadata updated: ${result.signature.slice(0, 8)}...`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1292,8 +1309,8 @@ const Index = () => {
                           </div>
                         )}
                         {isConnected && hasExistingId === true && (
-                          <div className="mint-meta" style={{ marginTop: '-0.1rem', color: 'rgba(168,85,247,0.7)', textAlign: 'center', width: '100%' }}>
-                            <span>Burns old NFT · mints new · only ~0.002 SOL rent</span>
+                          <div className="mint-meta" style={{ marginTop: '-0.1rem', textAlign: 'center', width: '100%' }}>
+                            <span>Updates metadata on existing NFT · only ~0.0005 SOL</span>
                           </div>
                         )}
                         {isConnected && hasExistingId === false && (
@@ -1315,6 +1332,14 @@ const Index = () => {
                           ) : (
                             <>🌐 PUBLISH TO TAPESTRY</>
                           )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={handleShare}
+                          className="mint-share-btn"
+                        >
+                          <Share2 className="h-4 w-4 mr-2" />
+                          SHARE ON X
                         </Button>
                         <Button
                           variant="ghost"
@@ -1437,7 +1462,7 @@ function LandingOverlay({
             <img src="/phav.png" alt="Identity Prism" className="h-24 w-24 mx-auto mb-6 glow-logo" />
           </div>
           <p className="landing-eyebrow select-none">
-            Identity Prism v3.2
+            Identity Prism v4.0
           </p>
           <h1 className="landing-title-v2">Decode your cosmic signature</h1>
         </div>

@@ -242,13 +242,13 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
   }, [gameState]);
 
   const physAccum = useRef(0);
-  const PHYS_DT = 1 / 90;
+  const PHYS_DT = IS_MOBILE ? 1 / 60 : 1 / 90;
 
   useFrame((_, delta) => {
     if (gameState !== "playing" || overRef.current) return;
     const frameDt = Math.min(delta, .1);
     physAccum.current += frameDt;
-    if (physAccum.current > PHYS_DT * 6) physAccum.current = PHYS_DT * 6;
+    if (physAccum.current > PHYS_DT * 4) physAccum.current = PHYS_DT * 4;
 
     while (physAccum.current >= PHYS_DT) {
       physAccum.current -= PHYS_DT;
@@ -524,7 +524,7 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
 
   return (
     <>
-      <color attach="background" args={["#010208"]} />
+      <color attach="background" args={["#080c1a"]} />
       <ambientLight intensity={.35} />
       <directionalLight intensity={.65} color="#93c5fd" position={[8, 10, 14]} />
       <directionalLight intensity={.32} color="#f8fafc" position={[-12, -8, 12]} />

@@ -1,7 +1,8 @@
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Mesh, Group, Color, BackSide, CanvasTexture, ClampToEdgeWrapping } from 'three';
+import { Mesh, Group, Color, BackSide, CanvasTexture, ClampToEdgeWrapping, PointLight } from 'three';
 import type { PlanetTier } from '@/hooks/useWalletData';
+import { SunCore, getProceduralParams, STAR_ARCHETYPES } from './SeekerSun';
 
 interface PlanetIdentityProps {
   tier: PlanetTier;
@@ -182,6 +183,10 @@ export function PlanetIdentity({ tier, score }: PlanetIdentityProps) {
     return <BinarySunIdentity score={score} />;
   }
 
+  if (tier === 'sun') {
+    return <SingleSunIdentity score={score} />;
+  }
+
   return (
     <group ref={groupRef}>
       {/* Main Planet */}
@@ -230,82 +235,74 @@ function SaturnRings({ planetSize }: { planetSize: number }) {
   );
 }
 
+function SingleSunIdentity({ score }: { score: number }) {
+  const params = useMemo(() => getProceduralParams(`sun-${score}`), [score]);
+  const archetype = STAR_ARCHETYPES.rare;
+
+  return (
+    <>
+      <SunCore
+        color1="#FF6B00"
+        color2="#FFD700"
+        size={3.0}
+        intensity={archetype.intensity}
+        params={params}
+        archetype={archetype}
+      />
+      <pointLight color="#FFA500" intensity={archetype.intensity * 25} distance={200} decay={2} />
+    </>
+  );
+}
+
 function BinarySunIdentity({ score }: { score: number }) {
   const group1Ref = useRef<Group>(null);
   const group2Ref = useRef<Group>(null);
-  const sun1Ref = useRef<Mesh>(null);
-  const sun2Ref = useRef<Mesh>(null);
+  const light1Ref = useRef<PointLight>(null);
+  const light2Ref = useRef<PointLight>(null);
 
-  const texture1 = useMemo(() => generatePlanetTexture('sun', score), [score]);
-  const texture2 = useMemo(() => generatePlanetTexture('binary_sun', score + 500), [score]);
+  const params = useMemo(() => getProceduralParams(`binary-${score}`), [score]);
+  const archetype = STAR_ARCHETYPES.legendary;
 
   useFrame((state) => {
     const time = state.clock.elapsedTime;
     if (group1Ref.current && group2Ref.current) {
       group1Ref.current.position.x = Math.cos(time * 0.3) * 4;
       group1Ref.current.position.z = Math.sin(time * 0.3) * 4;
-      
       group2Ref.current.position.x = Math.cos(time * 0.3 + Math.PI) * 4;
       group2Ref.current.position.z = Math.sin(time * 0.3 + Math.PI) * 4;
     }
-    
-    if (sun1Ref.current) sun1Ref.current.rotation.y += 0.005;
-    if (sun2Ref.current) sun2Ref.current.rotation.y -= 0.005;
+    if (light1Ref.current && group1Ref.current) light1Ref.current.position.copy(group1Ref.current.position);
+    if (light2Ref.current && group2Ref.current) light2Ref.current.position.copy(group2Ref.current.position);
   });
 
   return (
     <>
-      {/* Sun 1 - Orange */}
+      {/* Sun 1 - Orange/Gold — shader-based fire surface */}
       <group ref={group1Ref}>
-        <mesh ref={sun1Ref}>
-          <sphereGeometry args={[2.2, 256, 256]} />
-          <meshPhysicalMaterial
-            map={texture1}
-            color="#FFA500"
-            emissive="#FF8C00"
-            emissiveIntensity={2.0}
-            metalness={0}
-            roughness={0.3}
-          />
-        </mesh>
-        <mesh scale={1.08}>
-          <sphereGeometry args={[2.2, 64, 64]} />
-          <meshBasicMaterial
-            color="#FFD700"
-            transparent
-            opacity={0.16}
-            side={BackSide}
-            depthWrite={false}
-          />
-        </mesh>
-        <pointLight position={[0, 0, 0]} intensity={3} distance={20} color="#FFA500" />
+        <SunCore
+          color1="#FF6B00"
+          color2="#FFD700"
+          size={2.2}
+          intensity={archetype.intensity}
+          params={params}
+          archetype={archetype}
+        />
       </group>
 
-      {/* Sun 2 - Cyan */}
+      {/* Sun 2 - Cyan/Blue — shader-based fire surface */}
       <group ref={group2Ref}>
-        <mesh ref={sun2Ref}>
-          <sphereGeometry args={[1.8, 256, 256]} />
-          <meshPhysicalMaterial
-            map={texture2}
-            color="#00CED1"
-            emissive="#00BFFF"
-            emissiveIntensity={2.5}
-            metalness={0}
-            roughness={0.2}
-          />
-        </mesh>
-        <mesh scale={1.08}>
-          <sphereGeometry args={[1.8, 64, 64]} />
-          <meshBasicMaterial
-            color="#00FFFF"
-            transparent
-            opacity={0.16}
-            side={BackSide}
-            depthWrite={false}
-          />
-        </mesh>
-        <pointLight position={[0, 0, 0]} intensity={2.5} distance={18} color="#00CED1" />
+        <SunCore
+          color1="#00B4FF"
+          color2="#8CFFE3"
+          size={1.8}
+          intensity={archetype.intensity * 0.85}
+          params={{ ...params, hueShift: -params.hueShift }}
+          archetype={archetype}
+        />
       </group>
+
+      <pointLight ref={light1Ref} color="#FFA500" intensity={archetype.intensity * 25} distance={200} decay={2} />
+      <pointLight ref={light2Ref} color="#00CED1" intensity={archetype.intensity * 20} distance={200} decay={2} />
 
       {/* Plasma Bridge */}
       <PlasmaBridge />

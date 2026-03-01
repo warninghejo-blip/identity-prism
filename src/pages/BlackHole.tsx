@@ -24,7 +24,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Toaster } from '@/components/ui/sonner';
 
 type AssetStatus = 'protected' | 'valuable' | 'burnable';
 
@@ -336,6 +335,7 @@ const BlackHole = () => {
   const [ownerPublicKey, setOwnerPublicKey] = useState<PublicKey | null>(publicKey ?? null);
   const [sortField, setSortField] = useState<'value' | 'return' | 'status' | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [assetFilter, setAssetFilter] = useState<'all' | 'nft' | 'token'>('all');
 
   useEffect(() => {
     if (addressParam) {
@@ -373,11 +373,21 @@ const BlackHole = () => {
 
   const getVisibleTokens = useCallback(
     (list: TokenAccount[] = tokens, showAll = showAllAssets) => {
-      const closeable = list.filter(token => token.closeable !== false);
-      return showAll ? closeable : closeable.filter(token => token.isCandidate);
+      let closeable = list.filter(token => token.closeable !== false);
+      if (!showAll) closeable = closeable.filter(token => token.isCandidate);
+      if (assetFilter === 'nft') closeable = closeable.filter(token => token.isNft);
+      else if (assetFilter === 'token') closeable = closeable.filter(token => !token.isNft);
+      return closeable;
     },
-    [showAllAssets, tokens]
+    [showAllAssets, tokens, assetFilter]
   );
+
+  // Total recoverable SOL from all burnable tokens (shown at top before selection)
+  const totalRecoverableSol = useMemo(() => {
+    return tokens
+      .filter(t => t.closeable !== false && t.assetStatus === 'burnable')
+      .reduce((sum, t) => sum + (t.rentSol || 0), 0);
+  }, [tokens]);
 
   const fetchTokens = useCallback(async (owner?: PublicKey | null) => {
     const targetOwner = owner ?? publicKeyRef.current;
@@ -904,7 +914,7 @@ const BlackHole = () => {
 
         // Simulate transaction before prompting user to sign (dApp Store requirement)
         try {
-          const simulation = await connection.simulateTransaction(tx, {
+          const simulation = await connection.simulateTransaction(tx, undefined, {
             sigVerify: false,
             replaceRecentBlockhash: true,
           });
@@ -929,14 +939,26 @@ const BlackHole = () => {
           })) as typeof tx.serialize;
 
         let signature: string;
-        if (signTransaction) {
-          const signed = await signTransaction(tx);
-          signature = await connection.sendRawTransaction(
-            signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-            { skipPreflight: true, preflightCommitment: 'confirmed' }
-          );
-        } else {
-          signature = await sendTransaction(tx, connection);
+        const signPromise = signTransaction
+          ? signTransaction(tx).then(async (signed) =>
+              connection.sendRawTransaction(
+                signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+                { skipPreflight: true, preflightCommitment: 'confirmed' }
+              )
+            )
+          : sendTransaction(tx, connection);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Wallet signing timed out — please try again')), 120_000)
+        );
+        try {
+          signature = await Promise.race([signPromise, timeoutPromise]);
+        } catch (signErr) {
+          const msg = signErr instanceof Error ? signErr.message : String(signErr);
+          if (/reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(msg)) {
+            toast.info('Transaction cancelled');
+            return;
+          }
+          throw signErr;
         }
         signatures.push(signature);
 
@@ -1075,10 +1097,10 @@ const BlackHole = () => {
 
     // Phase 2: Wormhole tunnel
     setTimeout(() => {
-      createWormholeTunnel();
+      createWormholeTunnel('blackhole-return');
     }, 350);
 
-    // Phase 3: Navigate (tunnel persists across route change)
+    // Phase 3: Navigate after shader completes (350 + 2500 = 2850ms)
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/app?address=${encodeURIComponent(addr)}` : '/app';
     setTimeout(() => {
@@ -1095,7 +1117,7 @@ const BlackHole = () => {
           window.location.replace(target);
         }
       }, 600);
-    }, 1650);
+    }, 2850);
 
     // Safety: reset returning flag after generous timeout so user can retry
     setTimeout(() => { setReturning(false); }, 4000);
@@ -1193,9 +1215,23 @@ const BlackHole = () => {
 
           {/* Description + wallet */}
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pb-4 border-b border-white/6">
-            <p className="text-zinc-500 text-sm max-w-lg leading-relaxed text-center sm:text-left">
-              Burn dust tokens and abandoned NFTs to reclaim locked SOL rent. Valuable assets are automatically protected.
-            </p>
+            <div className="text-center sm:text-left max-w-lg">
+              <p className="text-zinc-500 text-sm leading-relaxed">
+                Burn dust tokens and abandoned NFTs to reclaim locked SOL rent. Valuable assets are automatically protected.
+              </p>
+              <p className="text-[11px] mt-1.5 leading-relaxed">
+                {hasMintedCard ? (
+                  <span className="text-emerald-400/80">
+                    <Shield className="inline w-3 h-3 mr-0.5 -mt-0.5" />
+                    ID Holder — reduced fee: <strong>{(COMMISSION_RATE_MINTED * 100).toFixed(0)}%</strong> (vs {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% standard)
+                  </span>
+                ) : (
+                  <span className="text-zinc-500">
+                    Fee: {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% · <span className="text-cyan-400/70">Mint your Identity Prism ID to get only {(COMMISSION_RATE_MINTED * 100).toFixed(0)}%</span>
+                  </span>
+                )}
+              </p>
+            </div>
             <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0 hidden sm:inline-flex" />
           </div>
 
@@ -1266,11 +1302,11 @@ const BlackHole = () => {
                     )}
                   </div>
                 </div>
-                <div className="flex justify-end">
+                <div className="flex justify-center">
                   <Button
                     onClick={handleIncinerate}
                     disabled={isBurning || summary.totalAccounts === 0}
-                    className="bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-11 text-base shadow-lg shadow-red-900/30"
+                    className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-12 text-base shadow-lg shadow-red-900/30"
                   >
                     {isBurning ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Flame className="mr-2 h-5 w-5" />}
                     <span className="hidden sm:inline">Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr; </span>
@@ -1279,6 +1315,21 @@ const BlackHole = () => {
                   </Button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* SOL Recovery Calculator */}
+          {tokens.length > 0 && totalRecoverableSol > 0 && selectedTokens.size === 0 && (
+            <div className="bg-gradient-to-r from-emerald-950/30 via-emerald-950/20 to-zinc-900/30 border border-emerald-800/30 rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] text-emerald-500/80 uppercase tracking-wider font-bold">Total Recoverable SOL</div>
+                <div className="text-xl font-black font-mono text-emerald-400 mt-0.5">
+                  ~{parseFloat(totalRecoverableSol.toFixed(4))} <span className="text-sm text-emerald-600">SOL</span>
+                  {solPriceUsd && <span className="text-sm text-emerald-600/70 ml-2">{formatUsd(totalRecoverableSol * solPriceUsd)}</span>}
+                </div>
+                <div className="text-[10px] text-zinc-600 mt-0.5">Select tokens below to burn and reclaim rent</div>
+              </div>
+              <Flame className="h-8 w-8 text-emerald-600/40" />
             </div>
           )}
 
@@ -1294,6 +1345,20 @@ const BlackHole = () => {
               {isLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
               Rescan
             </Button>
+
+            {/* Quick Filters */}
+            <div className="flex rounded-lg border border-zinc-800/60 overflow-hidden">
+              {(['all', 'nft', 'token'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setAssetFilter(f)}
+                  className={`px-3 py-1 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
+                >
+                  {f === 'all' ? 'All' : f === 'nft' ? 'NFTs' : 'Tokens'}
+                </button>
+              ))}
+            </div>
+
             <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer">
               <Checkbox
                 checked={showAllAssets}
@@ -1528,14 +1593,6 @@ const BlackHole = () => {
         )}
       </div>
 
-      <Toaster
-        position="bottom-center"
-        theme="dark"
-        expand={false}
-        richColors
-        closeButton
-        offset={16}
-      />
     </div>
   );
 };

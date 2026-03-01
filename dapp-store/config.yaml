@@ -46,33 +46,39 @@ release:
       long_description: |
         Identity Prism scans any Solana wallet and builds a cosmic identity card with
         real on-chain data. Your tier (Mercury → Binary Sun) is determined by SOL balance,
-        wallet age, transaction history, NFT holdings, and behavioral traits like Diamond
-        Hands, DeFi King, Meme Lord, and Hyperactive Degen.
+        wallet age, transaction history, NFT holdings, and behavioral traits.
 
         Features:
-        - 3D interactive planet visualization matching your tier
-        - Orbit Survival — dodge asteroids and black holes in a skill-based arcade game,
-          commit high scores on-chain via Memo transactions with MagicBlock session proofs
-        - Mint your identity as a compressed NFT (cNFT) — pay with SOL or SKR (50% off)
-        - Black Hole token burner — warp into a 3D black hole and burn unwanted SPL tokens
-        - Solana Actions & Blinks — share your card as an interactive link
-        - Space curtain reveal transition after scanning
-        - OG badges for Seeker Genesis and Chapter 2 Preorder holders
-        - Share to Twitter with auto-generated card image
+        - 3D interactive planet card with score history sparkline and progress ring
+        - 13 achievement badges with custom artwork
+        - Prism League — Orbit Survival (dodge asteroids, MagicBlock-verified scores)
+          and Cosmic Defender (top-down shooter, 4 levels, bosses, powerups)
+        - Procedural Audio Engine — all game SFX synthesized via Web Audio API, zero files
+        - Update Card — update NFT metadata without burning, Co-Sign Authority Guard
+        - Mint identity as Metaplex Core NFT — pay with SOL or SKR (50% off for Seeker)
+        - Black Hole — burn unwanted tokens and NFTs, reclaim rent SOL
+        - Custom GLSL wormhole transitions at 60 FPS
+        - Solana Blinks — share your card as an interactive link
+        - Tapestry Social Graph integration
         - Full Solana Mobile Wallet Adapter (MWA) support for Seeker
-        - All transactions simulate before prompting to sign — no wasted approvals
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
-        v1.0.30: Smooth canvas-based wormhole tunnel transition (replaces laggy CSS layers).
-        New asteroid textures in Orbit Survival. Added game start, black hole, and home screenshots.
-        Performance optimizations for Seeker — 30fps capped transition, single compositor layer.
+        v4.0: Cosmic Defender — new top-down shooter mode in Prism League (4 levels,
+        bosses, powerups, 9 achievements). Update Card — update NFT metadata in-place
+        without burning (~0.0005 SOL), protected by Co-Sign Authority Guard. Custom GLSL
+        Wormhole Transitions for all navigation at 60 FPS. Procedural Audio Engine — all
+        game SFX synthesized via Web Audio API, zero audio files. Redesigned badge artwork,
+        4 new badges (13 total). Score History sparkline and Progress Ring on card back.
+        Procedural plasma shader for Sun/Binary Sun with organic godrays. Realistic asteroid
+        textures (Poly Haven CC0). InstancedMesh — 200 to 4 draw calls. Fixed wallet
+        reconnection after dismissing connection dialog.
       saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.30
-    version_code: 41
+    version: 1.0.31
+    version_code: 42
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:

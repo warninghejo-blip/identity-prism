@@ -1,9 +1,12 @@
 import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { Trail } from "@react-three/drei";
+import { Canvas, useFrame, useLoader, useThree, extend } from "@react-three/fiber";
 import * as THREE from "three";
+
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import { WalletTraits } from "@/hooks/useWalletData";
+import { sfxPickup, sfxShield, sfxExplosion, sfxNearMiss, sfxTap, sfxRevive, sfxRumble, sfxDebris, sfxAsteroidHit } from "@/lib/gameAudio";
+
+extend({ Line_: THREE.Line });
 
 /* ═══════════════════════════════════════════════════
    Types
@@ -14,6 +17,8 @@ interface GameProps {
   onScore: (score: number) => void;
   onCoins: (coins: number) => void;
   onGameOver: (finalScore: number, finalCoins: number) => void;
+  onCombo?: (combo: number, pts: number) => void;
+  reviveRef?: React.MutableRefObject<boolean>;
   gameState: GameState;
   traits: WalletTraits | null;
   walletScore: number;
@@ -33,6 +38,7 @@ interface AsteroidData {
   active: boolean;
   wobbleAmp: number; wobbleFreq: number; wobblePhase: number;
   spawnTime: number;
+  scored: boolean;
 }
 
 interface BHole {
@@ -55,15 +61,18 @@ interface PowerUp {
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
-const HIT_R = 0.58;
-const NEAR_MISS_D = 1.6;
+const HIT_R = 0.72;
+const NEAR_MISS_D = 1.4;
 const CAM_Z = 32;
-const SPAWN_R = 22;
-const DESPAWN_R = 36;
+const SPAWN_R = 28;
+const DESPAWN_R = 42;
 
 const INIT_SPEED = 4.5;
 const MAX_SPEED = 22;
 const SPEED_GAIN = 0.18;
+// Near-miss scoring
+const NEAR_MISS_PTS = 3;
+const STREAK_MULT_CAP = 5;
 const ANG_RATE = 1.2;
 const TAP_BOOST = 0.14;
 
@@ -73,12 +82,12 @@ const BH_MIN_LIFE = 12;
 const BH_MAX_LIFE = 25;
 const BH_SPAWN_INTERVAL = 10;
 const BH_TURN_K = 4.5;
-const BH_CORE_R = 1.6;
+const BH_CORE_R = 2.2;
 const BH_PUSH_STR = 18;
-const BH_DEFLECT_K = 5.0;
+const BH_DEFLECT_K = 7.0;
 
-const EXPLODE_N = 80;
-const EXHAUST_N = 60;
+const EXPLODE_N = IS_MOBILE ? 25 : 80;
+const EXHAUST_N = IS_MOBILE ? 14 : 60;
 
 const PWR_MAX = 3;
 const PWR_SPAWN_INTERVAL = 14;
@@ -113,10 +122,10 @@ const _cfgDiff = (t: THREE.Texture) => { t.wrapS = t.wrapT = THREE.RepeatWrappin
 const _cfgNorm = (t: THREE.Texture) => { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.LinearSRGBColorSpace; return t; };
 
 const AST_TEX_PAIRS = [
-  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/rock_ground_diff_1k.jpg')),         normal: _cfgNorm(_tl.load('/textures/asteroids/rock_ground_nor_gl_1k.jpg')) },
-  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/rock_boulder_dry_diff_1k.jpg')),    normal: _cfgNorm(_tl.load('/textures/asteroids/rock_boulder_dry_nor_gl_1k.jpg')) },
-  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/brown_mud_rocks_01_diff_1k.jpg')),  normal: _cfgNorm(_tl.load('/textures/asteroids/brown_mud_rocks_01_nor_gl_1k.jpg')) },
-  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/rock_face_diff_1k.jpg')),           normal: _cfgNorm(_tl.load('/textures/asteroids/rock_face_nor_gl_1k.jpg')) },
+  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/rock_ground_diff_1k.jpg')), normal: _cfgNorm(_tl.load('/textures/asteroids/rock_ground_nor_gl_1k.jpg')) },
+  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/rock_boulder_dry_diff_1k.jpg')), normal: _cfgNorm(_tl.load('/textures/asteroids/rock_boulder_dry_nor_gl_1k.jpg')) },
+  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/brown_mud_rocks_01_diff_1k.jpg')), normal: _cfgNorm(_tl.load('/textures/asteroids/brown_mud_rocks_01_nor_gl_1k.jpg')) },
+  { diffuse: _cfgDiff(_tl.load('/textures/asteroids/rock_face_diff_1k.jpg')), normal: _cfgNorm(_tl.load('/textures/asteroids/rock_face_nor_gl_1k.jpg')) },
 ];
 
 const AST_NORM_SCALE = new THREE.Vector2(1.6, 1.6);
@@ -128,44 +137,72 @@ const AST_M = [
   { met: .14, rou: .78 },  // rock_face: exposed rock face
 ];
 
-// Shared PBR materials — one per texture pair (avoids 200 duplicate materials)
-const AST_SHARED_MATS = AST_TEX_PAIRS.map((pair, i) => {
-  const mat = new THREE.MeshStandardMaterial({
-    map: pair.diffuse,
-    normalMap: pair.normal,
-    normalScale: AST_NORM_SCALE,
-    roughness: AST_M[i].rou,
-    metalness: AST_M[i].met,
-  });
-  return mat;
+// Shared Lambert materials — one per texture pair (avoids 200 duplicate materials)
+// Lambert = per-vertex lighting, much cheaper than PBR Standard
+const AST_SHARED_MATS: THREE.MeshLambertMaterial[] = [];
+// Regular rock materials (indices 0..3) — emissive so they don't vanish on dark bg
+AST_TEX_PAIRS.forEach((pair) => {
+  AST_SHARED_MATS.push(new THREE.MeshLambertMaterial({
+    map: pair.diffuse, color: new THREE.Color('#e8ecf4'),
+    emissive: new THREE.Color('#1a1e2e'), emissiveIntensity: 0.25, side: THREE.DoubleSide,
+  }));
 });
+if (!IS_MOBILE) {
+  // Ice materials (indices 4..7)
+  AST_TEX_PAIRS.forEach((pair) => {
+    AST_SHARED_MATS.push(new THREE.MeshLambertMaterial({
+      map: pair.diffuse, color: new THREE.Color('#c8ddf0'),
+      emissive: new THREE.Color('#1a3355'), emissiveIntensity: 0.08, side: THREE.DoubleSide,
+    }));
+  });
+  // Fire materials (indices 8..11)
+  AST_TEX_PAIRS.forEach((pair) => {
+    AST_SHARED_MATS.push(new THREE.MeshLambertMaterial({
+      map: pair.diffuse, color: new THREE.Color('#d8c0a8'),
+      emissive: new THREE.Color('#442200'), emissiveIntensity: 0.1, side: THREE.DoubleSide,
+    }));
+  });
+}
+const AST_MAT_COUNT = AST_SHARED_MATS.length; // 4 on mobile, 12 on desktop
 
 /* ═══════════════════════════════════════════════════
    Rock geometry — smooth sphere + gentle displacement
    ═══════════════════════════════════════════════════ */
 
 function makeRockGeo(seg: number, seed: number): THREE.SphereGeometry {
-  const geo = new THREE.SphereGeometry(1, seg, seg);
+  const geo = new THREE.SphereGeometry(1, seg, Math.max(8, Math.round(seg * 0.75)));
   const R = seededRng(seed);
   const p = geo.attributes.position as THREE.BufferAttribute;
   const v = new THREE.Vector3();
 
+  // Low-frequency organic shape
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i);
-    v.multiplyScalar(.9 + R() * .2);
+    const nx = v.x * 2.5, ny = v.y * 2.5, nz = v.z * 2.5;
+    const lo = Math.sin(nx + seed) * Math.cos(ny + seed * 0.7) * Math.sin(nz + seed * 1.3);
+    // High-frequency craggy detail
+    const hx = v.x * 7 + seed * 3.1, hy = v.y * 7 + seed * 1.7, hz = v.z * 7 + seed * 2.3;
+    const hi = (Math.sin(hx) * Math.cos(hy + hz) + Math.sin(hy * 1.3) * Math.cos(hz * 0.8)) * 0.5;
+    v.multiplyScalar(.88 + lo * .1 + hi * .06 + R() * .03);
     p.setXYZ(i, v.x, v.y, v.z);
   }
 
+  // Broad bumps and deep craters
   const dir = new THREE.Vector3();
-  const bumps = 2 + Math.floor(R() * 4);
+  const bumps = 4 + Math.floor(R() * 5);
   for (let b = 0; b < bumps; b++) {
     dir.set(R() - .5, R() - .5, R() - .5).normalize();
-    const w = .2 + R() * .35, d = .03 + R() * .07;
+    const w = .2 + R() * .5, d = (R() < .4 ? 1 : -1) * (.04 + R() * .1);
     for (let i = 0; i < p.count; i++) {
       v.fromBufferAttribute(p, i);
       const n = v.clone().normalize();
       const ang = Math.acos(clamp(n.dot(dir), -1, 1));
-      if (ang < w) { const t = 1 - ang / w; v.multiplyScalar(1 - d * t * t); p.setXYZ(i, v.x, v.y, v.z); }
+      if (ang < w) {
+        const t = 1 - ang / w;
+        const smooth = t * t * (3 - 2 * t);
+        v.multiplyScalar(1 + d * smooth);
+        p.setXYZ(i, v.x, v.y, v.z);
+      }
     }
   }
 
@@ -178,34 +215,61 @@ function makeRockGeo(seg: number, seed: number): THREE.SphereGeometry {
    Spawners
    ═══════════════════════════════════════════════════ */
 
-function spawnAst(el: number, sx: number, sy: number): AsteroidData {
+function assignAst(a: AsteroidData, el: number, sx: number, sy: number): void {
   const small = Math.random() < .6;
   const r = small ? rnd(.4, .9) : rnd(1, 2);
-  const a = rnd(0, 6.28), dist = SPAWN_R + rnd(2, 5);
-  const ca = a + Math.PI + rnd(-.55, .55);
-  // Speed variation: 20% fast, 20% slow, 60% normal
+  const ang = rnd(0, 6.28), dist = SPAWN_R + rnd(2, 5);
+  const ca = ang + Math.PI + rnd(-.55, .55);
   const speedRoll = Math.random();
   const speedMult = speedRoll < .2 ? rnd(1.8, 2.5) : speedRoll > .8 ? rnd(.3, .55) : 1;
   const sp = (small ? rnd(5, 8.5) : rnd(2.2, 4.8)) * (1 + el * .018) * speedMult;
   const td = rnd(-1.8, 1.8) * (small ? 1 : .6);
-  return {
-    id: ++aidN,
-    x: sx + Math.cos(a) * dist, y: sy + Math.sin(a) * dist,
-    vx: Math.cos(ca) * sp - Math.sin(a) * td,
-    vy: Math.sin(ca) * sp + Math.cos(a) * td,
-    r,
-    rx: rnd(0, 6.28), ry: rnd(0, 6.28), rz: rnd(0, 6.28),
-    rsx: rnd(-1.5, 1.5), rsy: rnd(-2, 2), rsz: rnd(-1.8, 1.8),
-    sx: rnd(.88, 1.15), sy: rnd(.88, 1.15), sz: rnd(.88, 1.15),
-    gi: Math.floor(rnd(0, 6)), mi: Math.floor(rnd(0, 4)), small,
-    active: true,
-    wobbleAmp: rnd(.3, 1.8), wobbleFreq: rnd(1.5, 4), wobblePhase: rnd(0, 6.28),
-    spawnTime: el,
-  };
+  const roll = Math.random();
+  a.id = ++aidN;
+  a.x = sx + Math.cos(ang) * dist; a.y = sy + Math.sin(ang) * dist;
+  a.vx = Math.cos(ca) * sp - Math.sin(ang) * td;
+  a.vy = Math.sin(ca) * sp + Math.cos(ang) * td;
+  a.r = r;
+  a.rx = rnd(0, 6.28); a.ry = rnd(0, 6.28); a.rz = rnd(0, 6.28);
+  a.rsx = rnd(-1.5, 1.5); a.rsy = rnd(-2, 2); a.rsz = rnd(-1.8, 1.8);
+  a.sx = rnd(.88, 1.15); a.sy = rnd(.88, 1.15); a.sz = rnd(.88, 1.15);
+  a.gi = Math.floor(rnd(0, 8));
+  a.mi = roll < 0.2 ? Math.floor(rnd(4, 8)) : roll < 0.35 ? Math.floor(rnd(8, 12)) : Math.floor(rnd(0, 4));
+  a.small = small;
+  a.active = true;
+  a.wobbleAmp = rnd(.3, 1.8); a.wobbleFreq = rnd(1.5, 4); a.wobblePhase = rnd(0, 6.28);
+  a.spawnTime = el;
+  a.scored = false;
+}
+
+function splitAsteroid(pool: AsteroidData[], parent: AsteroidData, el: number): void {
+  if (parent.small || parent.r < 0.7) return;
+  const count = 2 + (Math.random() < 0.4 ? 1 : 0);
+  let spawned = 0;
+  for (let i = 0; i < pool.length && spawned < count; i++) {
+    if (pool[i].active) continue;
+    const f = pool[i];
+    const ang = (Math.PI * 2 / count) * spawned + (Math.random() - 0.5) * 0.8;
+    const sp = 3.5 + Math.random() * 4;
+    f.id = ++aidN;
+    f.x = parent.x + Math.cos(ang) * 0.4;
+    f.y = parent.y + Math.sin(ang) * 0.4;
+    f.vx = parent.vx * 0.4 + Math.cos(ang) * sp;
+    f.vy = parent.vy * 0.4 + Math.sin(ang) * sp;
+    f.r = parent.r * (0.35 + Math.random() * 0.15);
+    f.rx = Math.random() * 6.28; f.ry = Math.random() * 6.28; f.rz = Math.random() * 6.28;
+    f.rsx = (Math.random() - 0.5) * 5; f.rsy = (Math.random() - 0.5) * 5; f.rsz = (Math.random() - 0.5) * 5;
+    f.sx = 0.85 + Math.random() * 0.3; f.sy = 0.85 + Math.random() * 0.3; f.sz = 0.85 + Math.random() * 0.3;
+    f.gi = Math.floor(Math.random() * 6); f.mi = Math.floor(Math.random() * 4);
+    f.small = true; f.active = true;
+    f.wobbleAmp = 0.5 + Math.random() * 1.2; f.wobbleFreq = 2.5 + Math.random() * 3; f.wobblePhase = Math.random() * 6.28;
+    f.spawnTime = el; f.scored = false;
+    spawned++;
+  }
 }
 
 function spawnBH(sx: number, sy: number): BHole {
-  const a = rnd(0, 6.28), d = rnd(8, 18);
+  const a = rnd(0, 6.28), d = rnd(SPAWN_R - 4, SPAWN_R + 2);
   return { x: sx + Math.cos(a) * d, y: sy + Math.sin(a) * d, str: rnd(.6, 1) * BH_STR, life: 0, maxLife: rnd(BH_MIN_LIFE, BH_MAX_LIFE) };
 }
 
@@ -238,8 +302,9 @@ function Cam({ sPos, shake, gs }: {
     const ty = gs === "playing" ? sPos.current.y : 0;
     let sx = 0, sy = 0;
     if (shake.current > .01) {
-      sx = (Math.random() - .5) * shake.current * .6;
-      sy = (Math.random() - .5) * shake.current * .6;
+      const shakeScale = IS_MOBILE ? .42 : .6;
+      sx = (Math.random() - .5) * shake.current * shakeScale;
+      sy = (Math.random() - .5) * shake.current * shakeScale;
       shake.current = Math.max(0, shake.current - dt * 4);
     }
     camera.position.x = slerp(camera.position.x, tx + sx, 10, dt);
@@ -270,7 +335,7 @@ function SpaceBG() {
     uniforms: { uTime: { value: 0 } },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader: `
-      #define FBM_ITER ${IS_MOBILE ? 4 : 7}
+      #define FBM_ITER ${IS_MOBILE ? 3 : 7}
       #define STAR_LAYERS ${IS_MOBILE ? 2 : 4}
       uniform float uTime;
       varying vec2 vUv;
@@ -336,21 +401,21 @@ function SpaceBG() {
         vec2 cuv = (uv - .5) * 2.;
         float r = length(cuv);
 
-        vec3 col = vec3(.002, .003, .012);
+        vec3 col = vec3(.10, .08, .22);
 
         float n1 = fbm(cuv * 1.5 + vec2(uTime*.008, -uTime*.005));
         float n2 = fbm(cuv * 3.0 + vec2(-uTime*.004, uTime*.01));
         float n3 = fbm(cuv * 2.0 + vec2(uTime*.003, uTime*.003));
 
-        col = mix(col, vec3(.06, .01, .10), smoothstep(.22, .55, n1) * .55);
-        col = mix(col, vec3(.01, .03, .12), smoothstep(.28, .6, n2) * .40);
-        col = mix(col, vec3(.005, .06, .08), smoothstep(.35, .68, n3) * .30);
+        col = mix(col, vec3(.28, .12, .38), smoothstep(.22, .55, n1) * .7);
+        col = mix(col, vec3(.12, .15, .38), smoothstep(.28, .6, n2) * .6);
+        col = mix(col, vec3(.10, .20, .35), smoothstep(.35, .68, n3) * .5);
 
-        float glow = exp(-r * 1.8) * .04;
-        col += vec3(.015, .03, .08) * glow;
+        float glow = exp(-r * 1.5) * .22;
+        col += vec3(.12, .10, .28) * glow;
 
-        col += renderStars(uv, 40., .55, .015, .03) * .12;
-        col += renderStars(uv, 100., .60, .008, .02) * .10;
+        col += renderStars(uv, 40., .55, .015, .03) * .18;
+        col += renderStars(uv, 100., .60, .008, .02) * .14;
 #if STAR_LAYERS > 2
         col += renderStars(uv, 250., .65, .005, .012) * .08;
         col += renderStars(uv, 600., .70, .003, .008) * .06;
@@ -376,8 +441,9 @@ function SpaceBG() {
    ═══════════════════════════════════════════════════ */
 
 function Dust() {
-  const N = IS_MOBILE ? 250 : 500;
+  const N = IS_MOBILE ? 80 : 500;
   const ref = useRef<THREE.Points>(null);
+  const frameSkip = useRef(0);
   const { pos, col } = useMemo(() => {
     const p = new Float32Array(N * 3), c = new Float32Array(N * 3);
     const cs = [[.2, .3, .55], [.35, .2, .45], [.1, .4, .45], [.3, .25, .5]];
@@ -391,9 +457,10 @@ function Dust() {
 
   useFrame((s, d) => {
     if (!ref.current) return;
-    const dt = Math.min(d, .033);
     ref.current.position.x = s.camera.position.x;
     ref.current.position.y = s.camera.position.y;
+    if (IS_MOBILE) { frameSkip.current++; if (frameSkip.current % 4 !== 0) return; }
+    const dt = Math.min(d, .033) * (IS_MOBILE ? 4 : 1);
     ref.current.rotation.z += dt * .0015;
     const a = ref.current.geometry.attributes.position.array as Float32Array;
     for (let i = 0; i < N; i++) { a[i * 3] += dt * .2; a[i * 3 + 1] += dt * .07; if (a[i * 3] > 70) a[i * 3] = -70; if (a[i * 3 + 1] > 70) a[i * 3 + 1] = -70; }
@@ -411,36 +478,119 @@ function Dust() {
   );
 }
 
-/* OrbitRings and CoreBeacon removed — no fixed center */
+/* Background comets — occasional bright streaks */
+const COMET_N = IS_MOBILE ? 3 : 6;
+function Comets() {
+  const data = useRef<{ x: number; y: number; vx: number; vy: number; life: number; maxLife: number; active: boolean }[]>(
+    Array.from({ length: COMET_N }, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, active: false }))
+  );
+  const refs = useRef<(THREE.Mesh | null)[]>([]);
+  const timer = useRef(0);
 
+  useFrame((s, delta) => {
+    const dt = Math.min(delta, .033);
+    const cx = s.camera.position.x, cy = s.camera.position.y;
+    timer.current += dt;
+    // Spawn new comet periodically
+    if (timer.current > (IS_MOBILE ? 3.5 : 2.0)) {
+      timer.current = 0;
+      for (let ci = 0; ci < data.current.length; ci++) {
+        const c = data.current[ci];
+        if (!c.active) {
+          // Spawn from random edge: 0=top, 1=right, 2=bottom, 3=left
+          const edge = Math.floor(Math.random() * 4);
+          const speed = 20 + Math.random() * 40;
+          const spread = 60;
+          if (edge === 0) { c.x = cx + (Math.random() - .5) * spread; c.y = cy + 25 + Math.random() * 10; }
+          else if (edge === 1) { c.x = cx + 30 + Math.random() * 10; c.y = cy + (Math.random() - .5) * spread; }
+          else if (edge === 2) { c.x = cx + (Math.random() - .5) * spread; c.y = cy - 25 - Math.random() * 10; }
+          else { c.x = cx - 30 - Math.random() * 10; c.y = cy + (Math.random() - .5) * spread; }
+          // Aim roughly toward center with randomness
+          const toCx = cx - c.x + (Math.random() - .5) * 30;
+          const toCy = cy - c.y + (Math.random() - .5) * 30;
+          const ang = Math.atan2(toCy, toCx);
+          c.vx = Math.cos(ang) * speed;
+          c.vy = Math.sin(ang) * speed;
+          c.maxLife = 1.0 + Math.random() * 2.0;
+          c.life = 0;
+          c.active = true;
+          break;
+        }
+      }
+    }
+    for (let i = 0; i < COMET_N; i++) {
+      const c = data.current[i];
+      const m = refs.current[i];
+      if (!m) continue;
+      if (!c.active) { m.visible = false; continue; }
+      c.life += dt;
+      if (c.life > c.maxLife) { c.active = false; m.visible = false; continue; }
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      m.visible = true;
+      m.position.set(c.x, c.y, -8);
+      const angle = Math.atan2(c.vy, c.vx);
+      m.rotation.z = angle;
+      const fade = Math.min(1, c.life * 3) * Math.min(1, (c.maxLife - c.life) * 2);
+      (m.material as THREE.MeshBasicMaterial).opacity = fade * 0.35;
+      m.scale.set(1, 1, 1);
+    }
+  });
+
+  return (<>{Array.from({ length: COMET_N }).map((_, i) => (
+    <mesh key={i} ref={el => { refs.current[i] = el; }} visible={false}>
+      <planeGeometry args={[3.5, .04]} />
+      <meshBasicMaterial color="#aaccff" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
+    </mesh>
+  ))}</>);
+}
+
+/* OrbitRings and CoreBeacon removed — no fixed center */
 /* ═══════════════════════════════════════════════════
-   BLACK HOLES — clean black circle with rotating spiral arms
+   BLACK HOLES — event horizon + accretion disk + corona
    ═══════════════════════════════════════════════════ */
 
-// Pre-created BH geometries to avoid GC spikes on spawn
-const _bhCircleGeo = new THREE.CircleGeometry(1, 48);
-const _bhRingGeo = new THREE.RingGeometry(.92, 1.05, 64);
-const _bhGlowGeo = new THREE.CircleGeometry(2, 32);
+// Pre-created BH geometries (medium size)
+const _bhCircleGeo = new THREE.CircleGeometry(1.0, IS_MOBILE ? 48 : 64);
+const _bhRingGeo = new THREE.RingGeometry(1.0, 1.3, IS_MOBILE ? 48 : 64);
+const _bhGlowGeo = new THREE.CircleGeometry(2.2, IS_MOBILE ? 48 : 64);
+const _bhOuterGeo = new THREE.CircleGeometry(3.0, IS_MOBILE ? 48 : 64);
+const _bhAccretionGeo = new THREE.RingGeometry(1.2, 2.8, IS_MOBILE ? 48 : 96);
 
 const BH_SPIRAL_VS = `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`;
-const BH_SPIRAL_FS = `
-  uniform float uTime;
-  uniform float uFade;
-  varying vec2 vUv;
+const BH_SPIRAL_FS = IS_MOBILE ? `
+  uniform float uTime; uniform float uFade; varying vec2 vUv;
   void main(){
-    vec2 c = vUv - .5;
-    float r = length(c);
-    float a = atan(c.y, c.x);
-    float s1 = sin(a * 3. - r * 14. + uTime * 2.5) * .5 + .5;
-    float s2 = sin(a * 2. + r * 10. - uTime * 1.8) * .5 + .5;
-    float spiral = max(s1, s2 * .7);
-    spiral *= smoothstep(.5, .12, r);
-    spiral *= smoothstep(.0, .06, r);
-    float ring = smoothstep(.02, .0, abs(r - .42)) * .4;
-    float alpha = (spiral * .65 + ring) * uFade;
-    vec3 col = mix(vec3(.1, .04, .2), vec3(.5, .15, .8), spiral);
-    col += vec3(.2, .4, .8) * ring;
-    col += vec3(.6, .3, 1.) * smoothstep(.15, .0, r) * .3;
+    float t = mod(uTime, 62.83);
+    vec2 c = vUv - .5; float r = length(c); float a = atan(c.y, c.x);
+    float hole = smoothstep(.12, .08, r);
+    float arm = sin(a * 2.0 - r * 14.0 + t * 2.5) * .5 + .5;
+    float disk = arm * smoothstep(.5, .13, r) * smoothstep(.08, .15, r);
+    float ring = exp(-pow((r - .13) * 25.0, 2.0)) * 1.0;
+    float alpha = (disk * .6 + ring) * uFade * (1.0 - hole * .9);
+    vec3 col = mix(vec3(.3, .1, .7), vec3(.7, .8, 1.), smoothstep(.3, .12, r)) * disk + vec3(.8, .85, 1.) * ring;
+    col *= (1.0 - hole * .85);
+    gl_FragColor = vec4(col, alpha);
+  }
+` : `
+  uniform float uTime; uniform float uFade; varying vec2 vUv;
+  void main(){
+    float t = mod(uTime, 62.83);
+    vec2 c = vUv - .5; float r = length(c); float a = atan(c.y, c.x);
+    float hole = smoothstep(.12, .08, r);
+    float arm1 = sin(a * 2.0 - r * 18.0 + t * 3.0) * .5 + .5;
+    float arm2 = sin(a * 3.0 + r * 14.0 - t * 2.2 + 1.5) * .5 + .5;
+    float disk = max(arm1, arm2 * .7) * smoothstep(.5, .13, r) * smoothstep(.08, .15, r);
+    float photonRing = exp(-pow((r - .13) * 30.0, 2.0)) * 1.2;
+    float corona = smoothstep(.5, .1, r) * .3 * (1.0 + sin(t * 1.8 + a * 2.0) * .15);
+    float lensRing = exp(-pow((r - .42) * 8.0, 2.0)) * .18;
+    float alpha = (disk * .8 + photonRing + corona + lensRing) * uFade * (1.0 - hole * .95);
+    vec3 hotColor = mix(vec3(.3, .1, .7), vec3(.7, .8, 1.), smoothstep(.3, .12, r));
+    vec3 coreColor = vec3(.8, .85, 1.) * photonRing;
+    vec3 outerColor = vec3(.2, .1, .5) * corona;
+    vec3 lensColor = vec3(.3, .5, 1.) * lensRing;
+    vec3 col = hotColor * disk + coreColor + outerColor + lensColor;
+    col *= (1.0 - hole * .9);
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -448,49 +598,62 @@ const BH_SPIRAL_FS = `
 function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
   const spiralMats = useRef<(THREE.ShaderMaterial | null)[]>([]);
+  const warmFrames = useRef(0);
 
   useFrame((state) => {
     const t = state.clock.elapsedTime;
+    // Warm-up pass: render ALL BH groups for 3 frames to fully warm GPU pipeline
+    if (warmFrames.current < 3) {
+      warmFrames.current++;
+      for (let i = 0; i < BH_N; i++) {
+        const g = refs.current[i];
+        if (g) { g.visible = true; g.scale.setScalar(0.001); g.position.set(9999, 9999, 0); }
+        const sm = spiralMats.current[i];
+        if (sm) { sm.uniforms.uFade.value = 0.01; sm.uniforms.uTime.value = t; }
+      }
+      if (warmFrames.current < 3) return;
+    }
     for (let i = 0; i < BH_N; i++) {
       const g = refs.current[i];
       const w = bhRef.current[i];
       if (!g) continue;
       if (!w) { g.visible = false; continue; }
-      const fadeIn = Math.min(1, w.life * 1.2);
-      const fadeOut = Math.min(1, (w.maxLife - w.life) * 1.2);
+      const fadeIn = Math.min(1, w.life * 1.5);
+      const fadeOut = Math.min(1, (w.maxLife - w.life) * 1.5);
       const fade = Math.min(fadeIn, fadeOut);
       g.visible = fade > .02;
       g.position.set(w.x, w.y, 0);
-      const sc = 1.2 + w.str / BH_STR * .4;
+      const sc = (1.2 + w.str / BH_STR * .4) * 0.7;
       g.scale.setScalar(sc);
 
-      const core = g.children[0] as THREE.Mesh;
-      (core.material as THREE.MeshBasicMaterial).opacity = fade;
+      // [0] Event horizon — pure black core
+      const coreMat = (g.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      if (coreMat) coreMat.opacity = fade;
 
-      const ring = g.children[1] as THREE.Mesh;
-      (ring.material as THREE.MeshBasicMaterial).opacity = fade * .5;
-
+      // [1] Shader spiral disk
       const sm = spiralMats.current[i];
       if (sm) {
         sm.uniforms.uTime.value = t;
-        sm.uniforms.uFade.value = fade;
+        sm.uniforms.uFade.value = fade * .8;
       }
-      const spiralMesh = g.children[2] as THREE.Mesh;
-      if (spiralMesh) spiralMesh.rotation.z = t * (.6 + i * .15);
+      (g.children[1] as THREE.Mesh).rotation.z = (t % 62.83) * (.3 + i * .05);
 
-      const glow = g.children[3] as THREE.Mesh;
-      (glow.material as THREE.MeshBasicMaterial).opacity = fade * .25 * (.8 + Math.sin(t * 1.5 + i) * .2);
+      // [2] Soft glow (smooth continuous pulse)
+      const glowM = (g.children[2] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      if (glowM) { glowM.opacity = fade * (.12 + Math.sin(t * 0.8 + i * 2.1) * .04); }
 
-      const light = g.children[4] as THREE.PointLight;
-      if (light) light.intensity = fade * 3 * (.8 + Math.sin(t * 2 + i) * .2);
+      // [3] Point light
+      const light = g.children[3] as THREE.PointLight;
+      if (light) { light.intensity = fade * 1.8; light.distance = 10; }
     }
   });
 
   return (<>{Array.from({ length: BH_N }).map((_, i) => (
     <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
+      {/* [0] Event horizon — pure black core */}
       <mesh geometry={_bhCircleGeo}><meshBasicMaterial color="#000000" transparent opacity={0} /></mesh>
-      <mesh geometry={_bhRingGeo}><meshBasicMaterial color="#6633aa" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
-      <mesh geometry={_bhCircleGeo} position={[0, 0, .01]}>
+      {/* [1] Shader spiral disk */}
+      <mesh geometry={_bhCircleGeo} position={[0, 0, .01]} scale={[3.2, 3.2, 1]}>
         <shaderMaterial
           ref={el => { spiralMats.current[i] = el; }}
           uniforms={{ uTime: { value: 0 }, uFade: { value: 0 } }}
@@ -498,10 +661,15 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
           fragmentShader={BH_SPIRAL_FS}
           transparent
           depthWrite={false}
+          blending={THREE.AdditiveBlending}
         />
       </mesh>
-      <mesh geometry={_bhGlowGeo}><meshBasicMaterial color="#4422aa" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-      <pointLight color="#7744cc" intensity={0} distance={12} />
+      {/* [2] Soft glow */}
+      <mesh geometry={_bhGlowGeo} position={[0, 0, -.01]}>
+        <meshBasicMaterial color="#4422aa" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+      {/* [3] Point light */}
+      <pointLight color="#6633cc" intensity={0} distance={10} />
     </group>
   ))}</>);
 }
@@ -519,18 +687,38 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
   phaseRef: React.MutableRefObject<number>;
 }) {
   const gRef = useRef<THREE.Group>(null);
+  const bodyRef = useRef<THREE.Group>(null);
   const shRef = useRef<THREE.Mesh>(null);
-  const shieldBub = useRef<THREE.Mesh>(null);
-  const phaseGlow = useRef<THREE.Mesh>(null);
-  const exRef = useRef<THREE.Points>(null);
-  const N = EXHAUST_N;
-
-  const exSt = useMemo(() => {
-    const p = new Float32Array(N * 3);
-    const d: { l: number; ml: number; sp: number; ox: number }[] = [];
-    for (let i = 0; i < N; i++) { d.push({ l: Math.random() * .5, ml: .2 + Math.random() * .35, sp: 1.2 + Math.random() * 2.5, ox: (Math.random() - .5) * .12 }); p[i * 3] = 0; p[i * 3 + 1] = -.85; p[i * 3 + 2] = 0; }
-    return { p, d };
+  const shieldBub = useRef<THREE.Group>(null);
+  const shipMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const _shieldGeo = useMemo(() => new THREE.IcosahedronGeometry(1.65, 1), []);
+  const _shieldEdgeGeo = useMemo(() => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.66, 1)), []);
+  const trailRef = useRef<THREE.InstancedMesh>(null);
+  const TRAIL_N = IS_MOBILE ? 60 : 100;
+  const TRAIL_LIFE = 2.0;
+  const trailData = useRef<{ x: number; y: number; age: number; sz: number }[]>([]);
+  const trailIdx = useRef(0);
+  const trailTimer = useRef(0);
+  const _trailDummy = useMemo(() => new THREE.Object3D(), []);
+  const _trailColor = useMemo(() => new THREE.Color(), []);
+  const _trailGeo = useMemo(() => new THREE.CircleGeometry(0.12, 6), []);
+  const _trailMat = useMemo(() => new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, toneMapped: false, side: THREE.DoubleSide }), []);
+  if (trailData.current.length === 0) {
+    for (let i = 0; i < TRAIL_N; i++) trailData.current.push({ x: 0, y: 0, age: 999, sz: 0 });
+  }
+  // Hide all instances on first mount to prevent white flash
+  useEffect(() => {
+    const mesh = trailRef.current;
+    if (!mesh) return;
+    const dummy = new THREE.Object3D();
+    dummy.position.set(0, 0, -5000);
+    dummy.scale.setScalar(0.001);
+    dummy.updateMatrix();
+    for (let i = 0; i < TRAIL_N; i++) mesh.setMatrixAt(i, dummy.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
   }, []);
+  const shipTex = useLoader(THREE.TextureLoader, '/textures/ship.png');
+  shipTex.colorSpace = THREE.SRGBColorSpace;
 
   useFrame((s, delta) => {
     if (!gRef.current) return;
@@ -546,79 +734,103 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
     while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
     gRef.current.rotation.z = curRot + rotDiff * (1 - Math.exp(-10 * dt));
     if (shRef.current) { const m = shRef.current.material as THREE.MeshBasicMaterial; m.opacity = slerp(m.opacity, nearRef.current > .1 ? .25 * nearRef.current : 0, 10, dt); }
-    // Shield: make ship semi-transparent + glow
-    const shieldOn = shieldRef.current > 0;
-    const phaseOn = phaseRef.current > 0;
-    const ghostAlpha = shieldOn ? (.35 + Math.sin(t * 5) * .15) : (phaseOn ? (.3 + Math.sin(t * 7) * .1) : 1);
-    if (gRef.current) {
-      gRef.current.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          const mat = (child as THREE.Mesh).material as THREE.Material;
-          if ('opacity' in mat && 'transparent' in mat) {
-            if (shieldOn || phaseOn) {
-              mat.transparent = true;
-              mat.opacity = Math.min(mat.opacity, ghostAlpha);
-            }
-          }
-        }
-      });
+    if (shipMatRef.current) {
+      shipMatRef.current.opacity = phaseRef.current > 0 ? .2 + Math.sin(t * 10) * .1 : 1;
     }
+    const shieldOn = shieldRef.current > 0;
     if (shieldBub.current) {
       shieldBub.current.visible = shieldOn;
       if (shieldOn) {
-        (shieldBub.current.material as THREE.MeshBasicMaterial).opacity = .06 + Math.sin(t * 4) * .03;
-        shieldBub.current.scale.setScalar(1.1 + Math.sin(t * 3) * .08);
+        shieldBub.current.scale.setScalar(1 + Math.sin(t * 3) * .06);
+        shieldBub.current.rotation.y = t * 1.5;
       }
     }
-    if (phaseGlow.current) {
-      phaseGlow.current.visible = phaseOn;
-      if (phaseOn) { (phaseGlow.current.material as THREE.MeshBasicMaterial).opacity = .08 + Math.sin(t * 6) * .04; }
+    // InstancedMesh trail — scattered dot trail in world space
+    const rot = gRef.current.rotation.z;
+    const cx = gRef.current.position.x, cy = gRef.current.position.y;
+    const cosR = Math.cos(rot), sinR = Math.sin(rot);
+    trailTimer.current += dt;
+    const spawnInterval = IS_MOBILE ? 0.025 : 0.018;
+    while (trailTimer.current >= spawnInterval) {
+      trailTimer.current -= spawnInterval;
+      const ly = -1.6 * scale;
+      const spread = 0.7 * scale;
+      const wx = cx - ly * sinR + (Math.random() - .5) * spread;
+      const wy = cy + ly * cosR + (Math.random() - .5) * spread;
+      const i = trailIdx.current % TRAIL_N;
+      trailData.current[i].x = wx;
+      trailData.current[i].y = wy;
+      trailData.current[i].age = 0;
+      trailData.current[i].sz = 0.15 + Math.random() * 0.15;
+      trailIdx.current++;
     }
-    if (exRef.current) {
-      const a = exRef.current.geometry.attributes.position.array as Float32Array;
-      for (let i = 0; i < N; i++) { const d = exSt.d[i]; d.l -= dt; if (d.l <= 0) { d.l = d.ml; a[i * 3] = d.ox; a[i * 3 + 1] = -.82; a[i * 3 + 2] = (Math.random() - .5) * .05; } else { a[i * 3 + 1] -= d.sp * dt; a[i * 3] += (Math.random() - .5) * dt * .6; a[i * 3 + 2] += (Math.random() - .5) * dt * .3; } }
-      exRef.current.geometry.attributes.position.needsUpdate = true;
+    const mesh = trailRef.current;
+    if (mesh) {
+      for (let i = 0; i < TRAIL_N; i++) {
+        const d = trailData.current[i];
+        d.age += dt;
+        const life = d.age / TRAIL_LIFE;
+        if (life >= 1 || d.sz === 0) {
+          _trailDummy.position.set(0, 0, -9999);
+          _trailDummy.scale.setScalar(0.001);
+          _trailColor.setRGB(0, 0, 0);
+          mesh.setColorAt(i, _trailColor);
+        } else {
+          const fade = Math.pow(1 - life, 1.2);
+          const sz = d.sz * (0.5 + 0.5 * fade);
+          _trailDummy.position.set(d.x, d.y, 0.2);
+          _trailDummy.scale.setScalar(Math.max(sz, 0.01));
+          // Bright cyan → blue → dark
+          const r = 0.3 * fade;
+          const g = (0.85 + 0.15 * Math.sin(life * 4)) * fade;
+          const b = 1.0 * fade;
+          _trailColor.setRGB(r, g, b);
+          mesh.setColorAt(i, _trailColor);
+        }
+        _trailDummy.updateMatrix();
+        mesh.setMatrixAt(i, _trailDummy.matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   });
 
-  return (
-    <group ref={gRef} scale={[scale, scale, scale]}>
-      <Trail width={.6 * scale} length={28} color={color} attenuation={t => Math.pow(t, 1.5)}>
-        <group>
-          {/* Fuselage: smooth tapered capsule */}
-          <mesh position={[0, .05, 0]}><capsuleGeometry args={[.18, .65, 16, 24]} /><meshStandardMaterial color="#d0d8e0" metalness={.96} roughness={.03} envMapIntensity={1.2} /></mesh>
-          {/* Nose cap */}
-          <mesh position={[0, .58, 0]}><coneGeometry args={[.18, .38, 24]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={.6} metalness={.95} roughness={.04} toneMapped={false} /></mesh>
-          {/* Canopy glass dome */}
-          <mesh position={[0, .22, .18]}><sphereGeometry args={[.13, 24, 16, 0, Math.PI * 2, 0, Math.PI * .5]} /><meshStandardMaterial color="#67e8f9" emissive="#22d3ee" emissiveIntensity={3} toneMapped={false} transparent opacity={.85} metalness={.3} roughness={.1} /></mesh>
-          {/* Swept wings */}
-          <mesh position={[.38, -.04, 0]} rotation={[0, 0, -.25]}><capsuleGeometry args={[.018, .55, 8, 12]} /><meshStandardMaterial color="#b8c4d0" metalness={.88} roughness={.08} /></mesh>
-          <mesh position={[-.38, -.04, 0]} rotation={[0, 0, .25]}><capsuleGeometry args={[.018, .55, 8, 12]} /><meshStandardMaterial color="#b8c4d0" metalness={.88} roughness={.08} /></mesh>
-          {/* Wing tip nacelles */}
-          <mesh position={[.62, -.13, 0]}><sphereGeometry args={[.05, 16, 16]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} /></mesh>
-          <mesh position={[-.62, -.13, 0]}><sphereGeometry args={[.05, 16, 16]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={4} toneMapped={false} /></mesh>
-          {/* Tail fins */}
-          <mesh position={[.12, -.38, 0]} rotation={[0, 0, -.15]}><capsuleGeometry args={[.012, .2, 6, 8]} /><meshStandardMaterial color="#9ca8b8" metalness={.9} roughness={.06} /></mesh>
-          <mesh position={[-.12, -.38, 0]} rotation={[0, 0, .15]}><capsuleGeometry args={[.012, .2, 6, 8]} /><meshStandardMaterial color="#9ca8b8" metalness={.9} roughness={.06} /></mesh>
-          {/* Engine pods */}
-          <mesh position={[.18, -.48, 0]}><capsuleGeometry args={[.05, .22, 12, 16]} /><meshStandardMaterial color="#8090a4" metalness={.95} roughness={.04} /></mesh>
-          <mesh position={[-.18, -.48, 0]}><capsuleGeometry args={[.05, .22, 12, 16]} /><meshStandardMaterial color="#8090a4" metalness={.95} roughness={.04} /></mesh>
-          {/* Engine glow rings */}
-          <mesh position={[.18, -.64, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.055, .015, 12, 24]} /><meshBasicMaterial color="#ff8833" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-          <mesh position={[-.18, -.64, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[.055, .015, 12, 24]} /><meshBasicMaterial color="#ff8833" transparent opacity={.9} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-          {/* Engine flame cores */}
-          <mesh position={[.18, -.68, 0]}><sphereGeometry args={[.045, 12, 12]} /><meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={8} toneMapped={false} /></mesh>
-          <mesh position={[-.18, -.68, 0]}><sphereGeometry args={[.045, 12, 12]} /><meshStandardMaterial color="#ffcc66" emissive="#ff9922" emissiveIntensity={8} toneMapped={false} /></mesh>
-          {/* Accent belly line */}
-          <mesh position={[0, -.05, .19]}><capsuleGeometry args={[.008, .5, 4, 8]} /><meshBasicMaterial color={color} transparent opacity={.6} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
-        </group>
-      </Trail>
-      <mesh ref={shRef}><ringGeometry args={[.85, 1, 32]} /><meshBasicMaterial color={color} transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
-      <mesh ref={shieldBub} visible={false}><sphereGeometry args={[1.3, 24, 24]} /><meshBasicMaterial color="#22d3ee" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
-      <mesh ref={phaseGlow} visible={false}><sphereGeometry args={[1.1, 20, 20]} /><meshBasicMaterial color="#a855f7" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
-      <points ref={exRef}><bufferGeometry><bufferAttribute attach="attributes-position" args={[exSt.p, 3]} /></bufferGeometry><pointsMaterial size={.06} color="#ffaa55" transparent opacity={.7} blending={THREE.AdditiveBlending} sizeAttenuation depthWrite={false} /></points>
-      <pointLight intensity={2.8} color={color} distance={8} />
+  const shipBody = (
+    <>
+      {/* Main ship sprite */}
+      <mesh>
+        <planeGeometry args={[1.6, 2.2]} />
+        <meshBasicMaterial ref={shipMatRef} map={shipTex} transparent depthWrite={false} side={THREE.DoubleSide} toneMapped={false} />
+      </mesh>
+      {/* Rim light — bright edge highlight on top for 3D pop */}
+      <mesh position={[-.02, .02, .02]} scale={[1.03, 1.03, 1]}>
+        <planeGeometry args={[1.6, 2.2]} />
+        <meshBasicMaterial map={shipTex} transparent depthWrite={false} color="#88ccff" opacity={.18} blending={THREE.AdditiveBlending} />
+      </mesh>
+      {/* Cockpit highlight glow */}
+      <mesh position={[0, .15, .03]}><sphereGeometry args={[.15, 8, 8]} /><meshBasicMaterial color="#00eeff" transparent opacity={.25} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+    </>
+  );
+
+  return (<>
+    <group ref={gRef} scale={[scale * 1.15, scale * 1.15, scale * 1.15]}>
+      <group ref={bodyRef}>
+        {shipBody}
+      </group>
+      <mesh ref={shRef}><ringGeometry args={[1, 1.15, 32]} /><meshBasicMaterial color={color} transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
+      {/* Shield — hex-panel geodesic */}
+      <group ref={shieldBub} visible={false}>
+        <mesh geometry={_shieldGeo}><meshBasicMaterial color="#22d3ee" transparent opacity={.12} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
+        <lineSegments geometry={_shieldEdgeGeo}>
+          <lineBasicMaterial color="#44eeff" transparent opacity={.5} />
+        </lineSegments>
+        {!IS_MOBILE && <pointLight intensity={4} color="#22d3ee" distance={6} />}
+      </group>
+      {!IS_MOBILE && <pointLight intensity={3} color="#0088ff" distance={8} />}
     </group>
+    {/* World-space instancedMesh trail */}
+    <instancedMesh ref={trailRef} args={[_trailGeo, _trailMat, TRAIL_N]} frustumCulled={false} renderOrder={10} />
+    </>
   );
 }
 
@@ -632,7 +844,7 @@ function AstMesh({ a, geos }: { a: AsteroidData; geos: THREE.SphereGeometry[] })
   const m = AST_M[a.mi % AST_M.length];
   return (
     <mesh geometry={geo} position={[a.x, a.y, 0]} rotation={[a.rx, a.ry, a.rz]} scale={[a.r * a.sx, a.r * a.sy, a.r * a.sz]}>
-      <meshStandardMaterial map={pair.diffuse} normalMap={pair.normal} normalScale={AST_NORM_SCALE} roughness={m.rou} metalness={m.met} />
+      <meshLambertMaterial map={pair.diffuse} color="#d8dce8" side={THREE.DoubleSide} />
     </mesh>
   );
 }
@@ -643,30 +855,39 @@ function AstMesh({ a, geos }: { a: AsteroidData; geos: THREE.SphereGeometry[] })
 
 function Explosion({ pRef, actRef }: { pRef: React.MutableRefObject<{ x: number; y: number }>; actRef: React.MutableRefObject<boolean> }) {
   const ptRef = useRef<THREE.Points>(null);
-  const rgRef = useRef<THREE.Mesh>(null);
   const tRef = useRef(0);
   const st = useMemo(() => {
     const p = new Float32Array(EXPLODE_N * 3), v = new Float32Array(EXPLODE_N * 3), c = new Float32Array(EXPLODE_N * 3);
     for (let i = 0; i < EXPLODE_N; i++) { const a = Math.random() * 6.28, s = 3 + Math.random() * 14; v[i * 3] = Math.cos(a) * s; v[i * 3 + 1] = Math.sin(a) * s; v[i * 3 + 2] = (Math.random() - .5) * 4; c[i * 3] = .9 + Math.random() * .1; c[i * 3 + 1] = .2 + Math.random() * .4; c[i * 3 + 2] = Math.random() * .15; p[i * 3] = 0; p[i * 3 + 1] = 0; p[i * 3 + 2] = -500; }
     return { p, v, c };
   }, []);
+  const wasActive = useRef(false);
   useFrame((_, delta) => {
     const dt = Math.min(delta, .033);
-    if (!actRef.current) { if (ptRef.current) ptRef.current.visible = false; if (rgRef.current) rgRef.current.visible = false; return; }
+    if (!actRef.current) { wasActive.current = false; if (ptRef.current) ptRef.current.visible = false; return; }
+    // Reset on fresh explosion
+    if (!wasActive.current) {
+      wasActive.current = true;
+      tRef.current = 0;
+      for (let i = 0; i < EXPLODE_N; i++) { const a = Math.random() * 6.28, s = 3 + Math.random() * 14; st.v[i * 3] = Math.cos(a) * s; st.v[i * 3 + 1] = Math.sin(a) * s; st.v[i * 3 + 2] = (Math.random() - .5) * 4; }
+    }
     tRef.current += dt; const t = tRef.current;
-    if (t > 2.2) { actRef.current = false; return; }
+    if (t > 2.5) { actRef.current = false; return; }
     if (ptRef.current) {
       ptRef.current.visible = true;
+      ptRef.current.renderOrder = 999;
       const a = ptRef.current.geometry.attributes.position.array as Float32Array;
-      for (let i = 0; i < EXPLODE_N; i++) { if (t < .02) { a[i * 3] = pRef.current.x; a[i * 3 + 1] = pRef.current.y; a[i * 3 + 2] = 0; } else { a[i * 3] += st.v[i * 3] * dt; a[i * 3 + 1] += st.v[i * 3 + 1] * dt; a[i * 3 + 2] += st.v[i * 3 + 2] * dt; st.v[i * 3] *= .97; st.v[i * 3 + 1] *= .97; st.v[i * 3 + 2] *= .97; } }
+      const px = pRef.current.x, py = pRef.current.y;
+      for (let i = 0; i < EXPLODE_N; i++) {
+        if (t < .05) { a[i * 3] = px; a[i * 3 + 1] = py; a[i * 3 + 2] = 0; }
+        else { a[i * 3] += st.v[i * 3] * dt; a[i * 3 + 1] += st.v[i * 3 + 1] * dt; a[i * 3 + 2] += st.v[i * 3 + 2] * dt; st.v[i * 3] *= .97; st.v[i * 3 + 1] *= .97; st.v[i * 3 + 2] *= .97; }
+      }
       ptRef.current.geometry.attributes.position.needsUpdate = true;
-      const m = ptRef.current.material as THREE.PointsMaterial; m.opacity = Math.max(0, 1 - t / 1.9); m.size = .18 + t * .08;
+      const m = ptRef.current.material as THREE.PointsMaterial; m.opacity = Math.max(0, 1 - t / 2.2); m.size = .35 + t * .12;
     }
-    if (rgRef.current) { rgRef.current.visible = true; rgRef.current.position.set(pRef.current.x, pRef.current.y, 0); rgRef.current.scale.setScalar(1 + t * 7); (rgRef.current.material as THREE.MeshBasicMaterial).opacity = Math.max(0, .55 - t / 1.6); }
   });
   return (<>
-    <points ref={ptRef} visible={false}><bufferGeometry><bufferAttribute attach="attributes-position" args={[st.p, 3]} /><bufferAttribute attach="attributes-color" args={[st.c, 3]} /></bufferGeometry><pointsMaterial size={.18} vertexColors transparent opacity={1} blending={THREE.AdditiveBlending} sizeAttenuation depthWrite={false} /></points>
-    <mesh ref={rgRef} visible={false}><ringGeometry args={[.9, 1.5, 48]} /><meshBasicMaterial color="#ff6633" transparent opacity={.6} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
+    <points ref={ptRef} visible={false} renderOrder={999}><bufferGeometry><bufferAttribute attach="attributes-position" args={[st.p, 3]} /><bufferAttribute attach="attributes-color" args={[st.c, 3]} /></bufferGeometry><pointsMaterial size={.35} vertexColors transparent opacity={1} blending={THREE.AdditiveBlending} sizeAttenuation depthWrite={false} /></points>
   </>);
 }
 
@@ -676,95 +897,76 @@ function Explosion({ pRef, actRef }: { pRef: React.MutableRefObject<{ x: number;
 
 const PWR_COL: Record<PwrType, string> = { shield: "#22d3ee", slowmo: "#facc15", phase: "#a855f7", coin: "#fbbf24" };
 
+const S_PWR_TEX_PATHS: Record<PwrType, string> = {
+  shield: '/textures/powerups/powerup_shield.png',
+  slowmo: '/textures/powerups/powerup_slowmo.png',
+  phase: '/textures/powerups/powerup_phase.png',
+  coin: '/textures/powerups/powerup_coin.png',
+};
+const S_PWR_TYPE_LIST: PwrType[] = ["shield", "slowmo", "phase", "coin"];
+const _sPwrDiscGeo = new THREE.CircleGeometry(0.5, 48);
+const _sPwrEdgeGeo = new THREE.TorusGeometry(0.44, 0.018, 8, 48);
+
 function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
-  const iconRefs = useRef<(THREE.Group | null)[]>([]);
-  const haloRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const ringRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const lastTypes = useRef<(PwrType | null)[]>(Array(PWR_MAX).fill(null));
+  const faceMats = useRef<THREE.MeshBasicMaterial[]>([]);
+  const edgeMats = useRef<THREE.MeshBasicMaterial[]>([]);
+  const sPwrTexMap = useRef<Record<string, THREE.Texture>>({});
+  const allSPwrTexPaths = useMemo(() => S_PWR_TYPE_LIST.map(t => S_PWR_TEX_PATHS[t]), []);
+  const allSPwrTextures = useLoader(THREE.TextureLoader, allSPwrTexPaths);
+  useMemo(() => {
+    for (let i = 0; i < S_PWR_TYPE_LIST.length; i++) {
+      const tex = allSPwrTextures[i];
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = 16;
+      tex.generateMipmaps = true;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      sPwrTexMap.current[S_PWR_TYPE_LIST[i]] = tex;
+    }
+  }, [allSPwrTextures]);
 
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     for (let i = 0; i < PWR_MAX; i++) {
       const g = refs.current[i];
       const pw = pwRef.current[i];
-      const icons = iconRefs.current[i];
-      if (!g || !icons) continue;
-      if (!pw) { g.visible = false; continue; }
+      if (!g) continue;
+      if (!pw) { g.visible = false; lastTypes.current[i] = null; continue; }
       const fadeIn = Math.min(1, pw.life * 2);
       const fadeOut = Math.min(1, (pw.maxLife - pw.life) * 2);
       const fade = Math.min(fadeIn, fadeOut);
       g.visible = fade > .02;
-      const bob = Math.sin(t * 2.5 + i * 3) * .2;
-      const pulse = 1 + Math.sin(t * 3.5 + i * 2) * .08;
-      g.position.set(pw.x, pw.y, bob);
-      g.rotation.y = t * 1.8;
-      g.scale.setScalar(pulse);
+      g.position.set(pw.x, pw.y, Math.sin(t * 2.5 + i * 3) * .15);
+      g.rotation.y = t * 1.8 + i * 1.5;
+      g.scale.setScalar(1.3);
 
-      const typeIdx = pw.type === "shield" ? 0 : pw.type === "slowmo" ? 1 : pw.type === "phase" ? 2 : 3;
-      icons.children.forEach((c, idx) => { c.visible = idx === typeIdx; });
-      const col = PWR_COL[pw.type];
-      const activeGroup = icons.children[typeIdx];
-      if (activeGroup) {
-        activeGroup.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) {
-            const m = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
-            if (m.emissive) m.emissive.set(col);
-            if (!m.wireframe) m.color.set(col);
-            m.opacity = fade;
-          }
-        });
+      if (pw.type !== lastTypes.current[i]) {
+        lastTypes.current[i] = pw.type;
+        const tex = sPwrTexMap.current[pw.type];
+        const mat = faceMats.current[i];
+        if (tex && mat) { mat.map = tex; mat.needsUpdate = true; }
       }
-      const halo = haloRefs.current[i];
-      if (halo) { const m = halo.material as THREE.MeshBasicMaterial; m.color.set(col); m.opacity = fade * .2 * (.6 + Math.sin(t * 4) * .4); }
-      const ring = ringRefs.current[i];
-      if (ring) {
-        ring.rotation.x = t * 1.2 + i;
-        ring.rotation.z = t * .8;
-        const rm = ring.material as THREE.MeshBasicMaterial;
-        rm.color.set(col); rm.opacity = fade * .45;
-      }
+      // Always sync edge color + fade every frame
+      const mat = faceMats.current[i];
+      if (mat) { mat.opacity = fade; }
+      const eMat = edgeMats.current[i];
+      if (eMat) { eMat.color.set(PWR_COL[pw.type]); eMat.opacity = fade * 0.7; }
     }
   });
 
-  return (<>{Array.from({ length: PWR_MAX }).map((_, i) => (
-    <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
-      <group ref={el => { iconRefs.current[i] = el; }}>
-        {/* Shield: dome + cross */}
-        <group>
-          <mesh><sphereGeometry args={[.3, 16, 12, 0, Math.PI * 2, 0, Math.PI * .55]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.8} roughness={.1} side={THREE.DoubleSide} /></mesh>
-          <mesh position={[0, 0, .01]}><planeGeometry args={[.06, .38]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
-          <mesh position={[0, 0, .01]}><planeGeometry args={[.38, .06]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
-        </group>
-        {/* Slowmo: clock ring + hour/minute hands */}
-        <group>
-          <mesh><torusGeometry args={[.32, .06, 12, 24]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.7} roughness={.15} /></mesh>
-          <mesh position={[0, .1, .02]} rotation={[0, 0, .3]}><boxGeometry args={[.04, .2, .02]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
-          <mesh position={[.06, 0, .02]} rotation={[0, 0, -.8]}><boxGeometry args={[.03, .14, .02]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={3} toneMapped={false} transparent opacity={0} /></mesh>
-        </group>
-        {/* Phase: ghostly diamond */}
-        <group>
-          <mesh scale={[.7, 1, .5]}><octahedronGeometry args={[.4, 0]} /><meshStandardMaterial emissiveIntensity={3} toneMapped={false} transparent opacity={0} metalness={.3} roughness={.4} /></mesh>
-          <mesh scale={[.85, 1.15, .6]}><octahedronGeometry args={[.4, 0]} /><meshStandardMaterial emissiveIntensity={1} toneMapped={false} transparent opacity={0} wireframe /></mesh>
-        </group>
-        {/* Coin: flat cylinder + center dot */}
-        <group>
-          <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[.32, .32, .08, 24]} /><meshStandardMaterial emissiveIntensity={2.5} toneMapped={false} transparent opacity={0} metalness={.9} roughness={.05} /></mesh>
-          <mesh position={[0, 0, .06]}><sphereGeometry args={[.08, 8, 8]} /><meshStandardMaterial color="#fff" emissive="#fff" emissiveIntensity={4} toneMapped={false} transparent opacity={0} /></mesh>
-        </group>
+  return (<>{Array.from({ length: PWR_MAX }).map((_, i) => {
+    if (!faceMats.current[i]) faceMats.current[i] = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+    if (!edgeMats.current[i]) edgeMats.current[i] = new THREE.MeshBasicMaterial({ color: '#44ddff', transparent: true, opacity: 0.7, depthWrite: false });
+    return (
+      <group key={i} ref={el => { refs.current[i] = el; }} visible={false}>
+        <mesh geometry={_sPwrDiscGeo} material={faceMats.current[i]} position={[0, 0, 0.03]} />
+        <mesh geometry={_sPwrDiscGeo} material={faceMats.current[i]} position={[0, 0, -0.03]} rotation={[0, Math.PI, 0]} />
+        <mesh geometry={_sPwrEdgeGeo} material={edgeMats.current[i]} />
       </group>
-      {/* Orbiting ring */}
-      <mesh ref={el => { ringRefs.current[i] = el; }}>
-        <torusGeometry args={[.6, .03, 8, 32]} />
-        <meshBasicMaterial transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Inner glow */}
-      <mesh ref={el => { haloRefs.current[i] = el; }}>
-        <sphereGeometry args={[.7, 14, 14]} />
-        <meshBasicMaterial transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
-      <pointLight intensity={2.2} distance={5} />
-    </group>
-  ))}</>);
+    );
+  })}</>);
 }
 
 /* ═══════════════════════════════════════════════════
@@ -826,10 +1028,11 @@ function PickupEffect({ pickupRef }: { pickupRef: React.MutableRefObject<{ activ
    ═══════════════════════════════════════════════════ */
 
 function FX() {
+  if (IS_MOBILE) return null;
   return (
-    <EffectComposer disableNormalPass multisampling={IS_MOBILE ? 0 : 2}>
-      <Bloom luminanceThreshold={IS_MOBILE ? .4 : .3} mipmapBlur intensity={IS_MOBILE ? 1.2 : 1.6} radius={IS_MOBILE ? .4 : .6} />
-      {!IS_MOBILE && <Vignette eskil={false} offset={.08} darkness={1.15} />}
+    <EffectComposer disableNormalPass multisampling={0}>
+      <Bloom luminanceThreshold={.3} mipmapBlur intensity={1.6} radius={.6} />
+      <Vignette eskil={false} offset={.08} darkness={1.15} />
     </EffectComposer>
   );
 }
@@ -846,22 +1049,24 @@ function AsteroidInstances({ pool, geos }: {
 }) {
   const refs = useRef<(THREE.InstancedMesh | null)[]>([]);
 
+  const _counts = useMemo(() => new Array(AST_MAT_COUNT).fill(0), []);
   useFrame(() => {
-    const counts = new Array(AST_TEX_PAIRS.length).fill(0);
+    const counts = _counts;
+    for (let ci = 0; ci < counts.length; ci++) counts[ci] = 0;
     const poolArr = pool.current;
     for (let i = 0; i < poolArr.length; i++) {
       const a = poolArr[i];
       if (!a.active) continue;
-      const texIdx = a.mi % AST_TEX_PAIRS.length;
-      const im = refs.current[texIdx];
+      const matIdx = a.mi % AST_MAT_COUNT;
+      const im = refs.current[matIdx];
       if (!im) continue;
-      const idx = counts[texIdx];
+      const idx = counts[matIdx];
       _dummy.position.set(a.x, a.y, 0);
       _dummy.rotation.set(a.rx, a.ry, a.rz);
       _dummy.scale.set(a.r * a.sx, a.r * a.sy, a.r * a.sz);
       _dummy.updateMatrix();
       im.setMatrixAt(idx, _dummy.matrix);
-      counts[texIdx]++;
+      counts[matIdx]++;
     }
     for (let i = 0; i < refs.current.length; i++) {
       const im = refs.current[i];
@@ -885,8 +1090,8 @@ function AsteroidInstances({ pool, geos }: {
   );
 }
 
-function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedId }: GameProps) {
-  const scoreMult = hasMintedId ? 2 : 1;
+function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef, traits, hasMintedId }: GameProps) {
+  const coinMult = hasMintedId ? 2 : 1;
   const asteroidPool = useRef<AsteroidData[]>([]);
 
   useMemo(() => {
@@ -903,6 +1108,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
       active: false,
       wobbleAmp: 0, wobbleFreq: 0, wobblePhase: 0,
       spawnTime: 0,
+      scored: false,
     }));
   }, []);
 
@@ -929,16 +1135,21 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
   const bonusPoints = useRef(0);
   const coinBank = useRef(0);
   const coinAccum = useRef(0);
+  const streak = useRef(0);
+  const streakTimer = useRef(0);
   const pickupEffect = useRef({ active: false, type: "shield" as PwrType, x: 0, y: 0, t: 0 });
+  const _activeIdx = useRef(new Int32Array(MAX_ASTEROIDS));
 
   const sCol = traits?.planetTier ? TIER_COLORS[traits.planetTier] || "#22d3ee" : "#22d3ee";
-  const sSc = traits?.planetTier === "binary_sun" ? 1.08 : 1;
+  const sSc = traits?.planetTier === "binary_sun" ? 1.1 : 1.0;
 
   const geos = useMemo(() => {
-    const s = IS_MOBILE ? 0.6 : 1;
+    const s = IS_MOBILE ? 0.7 : 1;
+    const seg = (n: number) => Math.max(16, Math.round(n * s));
     return [
-      makeRockGeo(Math.round(22 * s), 41), makeRockGeo(Math.round(20 * s), 67), makeRockGeo(Math.round(24 * s), 89),
-      makeRockGeo(Math.round(22 * s), 97), makeRockGeo(Math.round(20 * s), 131), makeRockGeo(Math.round(24 * s), 157),
+      makeRockGeo(seg(28), 41), makeRockGeo(seg(26), 67), makeRockGeo(seg(30), 89),
+      makeRockGeo(seg(28), 97), makeRockGeo(seg(26), 131), makeRockGeo(seg(30), 157),
+      makeRockGeo(seg(24), 211), makeRockGeo(seg(32), 263),
     ];
   }, []);
 
@@ -948,12 +1159,12 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
     if (gameState !== "playing") return;
     const rev = () => {
       orbDir.current = orbDir.current === 1 ? -1 : 1;
-      // Instant heading bump so tap feels immediate
       headingBoost.current = TAP_BOOST * orbDir.current;
+      sfxTap();
     };
     const onK = (e: KeyboardEvent) => { if (e.code === "Space" || e.key === " ") { e.preventDefault(); rev(); } };
     const onM = (e: MouseEvent) => { if (e.button === 0) rev(); };
-    const onT = (e: TouchEvent) => { e.preventDefault(); rev(); };
+    const onT = (e: TouchEvent) => { if (overRef.current) return; e.preventDefault(); rev(); };
     window.addEventListener("keydown", onK);
     window.addEventListener("mousedown", onM);
     window.addEventListener("touchstart", onT, { passive: false });
@@ -967,7 +1178,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
   useEffect(() => {
     if (gameState !== "playing") return;
     aidN = 0; pwIdN = 0;
-    
+
     // Reset pool
     asteroidPool.current.forEach(a => { a.active = false; });
 
@@ -987,14 +1198,34 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
   }, [gameState]);
 
   const physAccum = useRef(0);
-  const PHYS_DT = 1 / 90; // fixed physics timestep
+  const PHYS_DT = IS_MOBILE ? 1 / 60 : 1 / 90; // fixed physics timestep
 
   useFrame((_, delta) => {
+    // Revive check
+    if (reviveRef?.current && overRef.current) {
+      overRef.current = false;
+      reviveRef.current = false;
+      phaseT.current = 3; // 3 seconds of invulnerability on revive (semi-transparent)
+      explAct.current = false; // clear explosion visual
+      sfxRevive();
+      shake.current = 0;
+      physAccum.current = 0;
+      // Clear ALL nearby asteroids (large radius)
+      for (const a of asteroidPool.current) {
+        if (!a.active) continue;
+        const dx = a.x - shipPos.current.x, dy = a.y - shipPos.current.y;
+        if (dx * dx + dy * dy < 64) a.active = false;
+      }
+    }
     if (gameState !== "playing" || overRef.current) return;
     const frameDt = Math.min(delta, .1);
     physAccum.current += frameDt;
     // Cap max sub-steps to prevent spiral of death
-    if (physAccum.current > PHYS_DT * 6) physAccum.current = PHYS_DT * 6;
+    if (physAccum.current > PHYS_DT * 4) physAccum.current = PHYS_DT * 4;
+
+    // Per-frame audio guards — prevent multiple sfx calls from physics sub-steps
+    let _rumbleThisFrame = false;
+    let _debrisThisFrame = false;
 
     while (physAccum.current >= PHYS_DT) {
       physAccum.current -= PHYS_DT;
@@ -1026,8 +1257,10 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
         bhTimer.current = 0;
       }
 
-      const nextBH: BHole[] = [];
-      for (const bh of bhs.current) {
+      // In-place filter — zero allocation per tick
+      let writeIdx = 0;
+      for (let bi = 0; bi < bhs.current.length; bi++) {
+        const bh = bhs.current[bi];
         bh.life += dt;
         if (bh.life >= bh.maxLife) continue;
         const fadeIn = Math.min(1, bh.life * 1.2);
@@ -1038,11 +1271,12 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist < BH_CORE_R) {
-          // Fly through: strong random heading deflection + big speed boost
-          const deflect = (Math.random() - .5) * Math.PI * 1.4 * (1 - dist / BH_CORE_R);
-          heading += deflect * Math.min(1, 8 * dt);
-          curSpeed.current = Math.min(curSpeed.current + bh.str * 2.5 * dt, MAX_SPEED * 1.5);
-          shake.current = Math.max(shake.current, .6 * (1 - dist / BH_CORE_R));
+          const coreFactor = 1 - dist / BH_CORE_R;
+          const deflect = (Math.random() - .5) * Math.PI * 2.0 * coreFactor;
+          heading += deflect * Math.min(1, 12 * dt);
+          curSpeed.current = Math.min(curSpeed.current + bh.str * 4 * dt * coreFactor, MAX_SPEED * 1.6);
+          shake.current = Math.max(shake.current, .8 * coreFactor);
+          if (!_rumbleThisFrame) { _rumbleThisFrame = true; sfxRumble(1.0); }
         } else {
           const angleToBH = Math.atan2(dy, dx);
           const cross = Math.cos(heading) * dy - Math.sin(heading) * dx;
@@ -1055,10 +1289,14 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
           if (dist < 6) {
             curSpeed.current = Math.min(curSpeed.current + bh.str * .08 * dt, MAX_SPEED * 1.1);
           }
+          if (dist < 10) {
+            const rumbleIntensity = (1 - dist / 10) * fade;
+            if (!_rumbleThisFrame && Math.random() < rumbleIntensity * 0.15) { _rumbleThisFrame = true; sfxRumble(rumbleIntensity); }
+          }
         }
-        nextBH.push(bh);
+        bhs.current[writeIdx++] = bh;
       }
-      bhs.current = nextBH;
+      bhs.current.length = writeIdx;
 
       px += Math.cos(heading) * curSpeed.current * dt;
       py += Math.sin(heading) * curSpeed.current * dt;
@@ -1071,11 +1309,11 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
     const dt = frameDt;
     const el = elapsed.current;
 
-    const sc = (Math.floor(el) + bonusPoints.current) * scoreMult;
+    const sc = Math.floor(el) + bonusPoints.current;
     if (sc !== scoreRef.current) { scoreRef.current = sc; onScore(sc); }
 
-    // Time-based coin accumulation: 1/sec base, +1/sec every 30s
-    const coinsPerSec = 1 + Math.floor(el / 30);
+    // Time-based coin accumulation: 1/sec base, +1/sec every 30s, ×coinMult for minted ID
+    const coinsPerSec = (1 + Math.floor(el / 30)) * coinMult;
     coinAccum.current += coinsPerSec * dt;
     const wholeCoins = Math.floor(coinAccum.current);
     if (wholeCoins > 0) {
@@ -1095,8 +1333,10 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
       pwTimer.current = 0;
     }
 
-    const nextPW: PowerUp[] = [];
-    for (const pw of pws.current) {
+    // In-place filter — zero allocation per tick
+    let pwWrite = 0;
+    for (let pi = 0; pi < pws.current.length; pi++) {
+      const pw = pws.current[pi];
       pw.life += dt;
       if (pw.life >= pw.maxLife) continue;
       const pdx = pw.x - px, pdy = pw.y - py;
@@ -1114,11 +1354,12 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
         }
         pickupEffect.current = { active: true, type: pw.type, x: px, y: py, t: 0 };
         shake.current = Math.max(shake.current, .3);
+        if (pw.type === "shield") sfxShield(); else sfxPickup();
         continue;
       }
-      nextPW.push(pw);
+      pws.current[pwWrite++] = pw;
     }
-    pws.current = nextPW;
+    pws.current.length = pwWrite;
 
     // SPAWNING
     spawnT.current += dt;
@@ -1126,14 +1367,13 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
     if (spawnT.current >= si) {
       spawnT.current = 0;
       const wc = el > 35 && Math.random() < .35 ? 2 : 1;
-      
+
       let spawned = 0;
       for (let i = 0; i < asteroidPool.current.length; i++) {
         if (spawned >= wc) break;
         const a = asteroidPool.current[i];
         if (!a.active) {
-          const newData = spawnAst(el, px, py);
-          Object.assign(a, { ...newData, active: true });
+          assignAst(a, el, px, py);
           spawned++;
         }
       }
@@ -1149,24 +1389,44 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
 
     // PHYSICS & COLLISION LOOP (rendering handled by AsteroidInstances)
     const sx = shipPos.current.x, sy = shipPos.current.y;
-    
+
     for (let i = 0; i < asteroidPool.current.length; i++) {
       const a = asteroidPool.current[i];
       if (!a.active) continue;
 
-      // Physics — BH gravity on asteroids
+      // Physics — BH gravity on asteroids (strong pull + deflect near core)
       let nvx = a.vx, nvy = a.vy;
-      for (const bh of currentBHs) {
+      let destroyed = false;
+      for (let bi = 0; bi < currentBHs.length; bi++) {
+        const bh = currentBHs[bi];
         const bdx = bh.x - a.x, bdy = bh.y - a.y;
         const bd = Math.sqrt(bdx * bdx + bdy * bdy);
-        const bsd = Math.max(1, bd);
-        const bfadeIn = Math.min(1, bh.life * .6);
-        const bfadeOut = Math.min(1, (bh.maxLife - bh.life) * .6);
-        const bfade = Math.min(bfadeIn, bfadeOut);
-        const bf = bh.str * 6 / (bsd * bsd) * bfade;
-        nvx += (bdx / bsd) * bf * dt;
-        nvy += (bdy / bsd) * bf * dt;
+        if (bd < 1.5) {
+          // Strong deflect — push asteroid OUT of BH core so it doesn't get stuck
+          const safeD = Math.max(0.1, bd);
+          const pushStr = bh.str * 28;
+          nvx += -(bdx / safeD) * pushStr * dt;
+          nvy += -(bdy / safeD) * pushStr * dt;
+          // Lateral kick for variety
+          const lateralAngle = Math.atan2(bdy, bdx) + (Math.random() - 0.5) * Math.PI;
+          nvx += Math.cos(lateralAngle) * pushStr * 0.6 * dt;
+          nvy += Math.sin(lateralAngle) * pushStr * 0.6 * dt;
+          // Enforce minimum outward speed to escape
+          const outSpd = Math.sqrt(nvx * nvx + nvy * nvy);
+          if (outSpd < 6) { const sc = 6 / Math.max(0.1, outSpd); nvx *= sc; nvy *= sc; }
+          if (!_debrisThisFrame && Math.random() < 0.15) { _debrisThisFrame = true; sfxDebris(); }
+        } else {
+          // Normal gravity pull (only outside core)
+          const bsd = Math.max(1, bd);
+          const bfadeIn = Math.min(1, bh.life * .6);
+          const bfadeOut = Math.min(1, (bh.maxLife - bh.life) * .6);
+          const bfade = Math.min(bfadeIn, bfadeOut);
+          const bf = bh.str * 25 / (bsd * bsd) * bfade;
+          nvx += (bdx / bsd) * bf * dt;
+          nvy += (bdy / bsd) * bf * dt;
+        }
       }
+      if (destroyed) { a.active = false; continue; }
 
       a.vx = nvx; a.vy = nvy;
       const age = el - a.spawnTime;
@@ -1192,41 +1452,113 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
       }
 
       // Collision + near-miss
-      const cd = HIT_R + a.r * .88;
+      const cd = HIT_R + a.r * .95;
       const cd2sq = cd * cd;
       const nmOuter = cd + NEAR_MISS_D;
       if (dd2 < nmOuter * nmOuter && !isPhase) {
         if (dd2 < cd2sq) {
-          if (hasShield) { 
-            shieldT.current = 0; 
-            shake.current = Math.max(shake.current, 1); 
+          if (hasShield) {
+            shieldT.current = 0;
+            shake.current = Math.max(shake.current, 1);
+            splitAsteroid(asteroidPool.current, a, el);
             a.active = false;
-            continue; 
+            streak.current = 0; streakTimer.current = 0;
+            continue;
           }
-          overRef.current = true; 
-          shake.current = 2; 
-          explPos.current = { x: sx, y: sy }; 
+          splitAsteroid(asteroidPool.current, a, el);
+          overRef.current = true;
+          shake.current = 2;
+          explPos.current = { x: sx, y: sy };
           explAct.current = true;
-          onGameOver((Math.floor(el) + bonusPoints.current) * scoreMult, coinBank.current); 
+          sfxExplosion();
+          onGameOver(Math.floor(el) + bonusPoints.current, coinBank.current);
           return;
         }
         const hd = Math.sqrt(dd2);
         const inten = 1 - (hd - cd) / NEAR_MISS_D;
         nearMiss.current = Math.max(nearMiss.current, inten);
+        // Near-miss scoring: award points for close dodges (once per asteroid)
+        if (inten > 0.4 && !a.scored) {
+          a.scored = true;
+          streak.current++;
+          streakTimer.current = 2;
+          const mult = Math.min(streak.current, STREAK_MULT_CAP);
+          const pts = NEAR_MISS_PTS * mult;
+          bonusPoints.current += pts;
+          coinBank.current += Math.max(1, Math.floor(pts / 3)) * coinMult;
+          const newSc = Math.floor(el) + bonusPoints.current;
+          scoreRef.current = newSc;
+          onScore(newSc); onCoins(coinBank.current);
+          onCombo?.(streak.current, pts);
+          sfxNearMiss();
+        }
       }
+    }
+
+    // Inter-asteroid collision & repulsion — active-only index list (pre-allocated)
+    const pool = asteroidPool.current;
+    const aidx = _activeIdx.current;
+    let aN = 0;
+    for (let i = 0; i < pool.length; i++) { if (pool[i].active) aidx[aN++] = i; }
+    for (let ai = 0; ai < aN; ai++) {
+      const a = pool[aidx[ai]];
+      for (let aj = ai + 1; aj < aN; aj++) {
+        const b = pool[aidx[aj]];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const minD = (a.r + b.r) * 0.97;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= minD * minD || d2 < 0.0001) continue;
+        const d = Math.sqrt(d2);
+        const nx = dx / d, ny = dy / d;
+        const overlap = minD - d;
+        const tm = a.r * a.r + b.r * b.r;
+        const aR = b.r * b.r / tm, bR = a.r * a.r / tm;
+        a.x -= nx * overlap * aR;
+        a.y -= ny * overlap * aR;
+        b.x += nx * overlap * bR;
+        b.y += ny * overlap * bR;
+        const rvx = a.vx - b.vx, rvy = a.vy - b.vy;
+        const rdn = rvx * nx + rvy * ny;
+        if (rdn > 0) {
+          const imp = rdn * 0.75;
+          a.vx -= imp * nx * aR;
+          a.vy -= imp * ny * aR;
+          b.vx += imp * nx * bR;
+          b.vy += imp * ny * bR;
+          // Collision sound if within player visibility (~18 units)
+          const mx = (a.x + b.x) * 0.5, my = (a.y + b.y) * 0.5;
+          const vdx = mx - sx, vdy = my - sy;
+          if (vdx * vdx + vdy * vdy < 324) { // 18^2
+            sfxAsteroidHit(Math.min(1, rdn * 0.15));
+          }
+          // Enforce minimum speed so asteroids don't stall and just spin
+          const MIN_SPD = 1.5;
+          const sa2 = a.vx * a.vx + a.vy * a.vy;
+          if (sa2 > 0.001 && sa2 < MIN_SPD * MIN_SPD) { const f = MIN_SPD / Math.sqrt(sa2); a.vx *= f; a.vy *= f; }
+          const sb2 = b.vx * b.vx + b.vy * b.vy;
+          if (sb2 > 0.001 && sb2 < MIN_SPD * MIN_SPD) { const f = MIN_SPD / Math.sqrt(sb2); b.vx *= f; b.vy *= f; }
+        }
+      }
+    }
+
+    // Streak decay
+    if (streakTimer.current > 0) {
+      streakTimer.current -= frameDt;
+      if (streakTimer.current <= 0) { streak.current = 0; }
     }
   });
 
   return (
     <>
-      <color attach="background" args={["#010208"]} />
-      <ambientLight intensity={.35} />
+      <color attach="background" args={["#0a0818"]} />
+      <ambientLight intensity={IS_MOBILE ? .55 : .35} />
       <directionalLight intensity={.65} color="#93c5fd" position={[8, 10, 14]} />
       <directionalLight intensity={.32} color="#f8fafc" position={[-12, -8, 12]} />
 
       <Cam sPos={shipPos} shake={shake} gs={gameState} />
       <SpaceBG />
       <Dust />
+      <Comets />
 
       <BHVisuals bhRef={bhs} />
       <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} />
@@ -1237,8 +1569,38 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, traits, hasMintedI
 
       <Explosion pRef={explPos} actRef={explAct} />
       <FX />
+      <ShaderPreWarm />
     </>
   );
+}
+
+/* Pre-compile all shaders & upload textures on mount to prevent mid-game lag */
+function ShaderPreWarm() {
+  const { gl, scene, camera } = useThree();
+  const done = useRef(false);
+  useEffect(() => {
+    if (done.current) return;
+    done.current = true;
+    // Temporarily make all hidden objects visible so shaders compile
+    const hidden: THREE.Object3D[] = [];
+    scene.traverse((obj) => { if (!obj.visible) { obj.visible = true; hidden.push(obj); } });
+    gl.compile(scene, camera);
+    // Restore visibility
+    hidden.forEach((obj) => { obj.visible = false; });
+    // Force-upload asteroid textures to GPU
+    for (const pair of AST_TEX_PAIRS) {
+      if (pair.diffuse.image) gl.initTexture(pair.diffuse);
+      if (pair.normal.image) gl.initTexture(pair.normal);
+    }
+    // Force-upload power-up textures to GPU (prevents micro-lag on first spawn)
+    scene.traverse((obj) => {
+      if ((obj as THREE.Mesh).material) {
+        const mat = (obj as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        if (mat.map?.image) gl.initTexture(mat.map);
+      }
+    });
+  }, [gl, scene, camera]);
+  return null;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1256,8 +1618,8 @@ export default function OrbitSurvivalScene(props: GameProps) {
       <Suspense fallback={null}>
         <Canvas
           camera={{ fov: isMobile ? 62 : 50, position: [0, 0, CAM_Z], near: .1, far: 400 }}
-          gl={{ antialias: !isMobile, powerPreference: "high-performance", alpha: false }}
-          dpr={isMobile ? [1, 1.2] : [1, 2]}
+          gl={{ antialias: false, powerPreference: "high-performance", alpha: false }}
+          dpr={isMobile ? 1 : [1, 1.5]}
           frameloop="always"
         >
           <GameWorld {...props} />

@@ -37,6 +37,7 @@ export interface RegisterGameSessionPayload {
   startedAtMs: number;
   endedAtMs: number;
   txSignature?: string;
+  gameMode?: string;
 }
 
 export interface GameSessionProof {
@@ -106,6 +107,8 @@ export async function generateFairSeed(): Promise<{ seed: string; slot: number }
  */
 export async function verifyGameSession(seed: string): Promise<boolean> {
   try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 5000);
     const res = await fetch(MAGICBLOCK_RPC, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -114,7 +117,9 @@ export async function verifyGameSession(seed: string): Promise<boolean> {
         id: 1,
         method: 'getHealth',
       }),
+      signal: ctrl.signal,
     });
+    clearTimeout(timeout);
     const data = await res.json();
     return data?.result === 'ok';
   } catch {
@@ -131,6 +136,8 @@ export async function verifyGameSessionSeed(seed: string, slot?: number): Promis
   }
 
   try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 5000);
     const res = await fetch(MAGICBLOCK_RPC, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -148,7 +155,9 @@ export async function verifyGameSessionSeed(seed: string, slot?: number): Promis
           },
         ],
       }),
+      signal: ctrl.signal,
     });
+    clearTimeout(timeout);
     const data = await res.json();
     const blockhash = data?.result?.blockhash;
     if (typeof blockhash === 'string' && blockhash.length > 0) {
@@ -169,11 +178,15 @@ export async function registerGameSessionProof(
   const base = getGameSessionApiBase();
   if (!base) return null;
 
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 8000);
   const res = await fetch(`${base}/api/game/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    signal: ctrl.signal,
   });
+  clearTimeout(timeout);
   if (!res.ok) {
     throw new Error(`Session proof API ${res.status}`);
   }

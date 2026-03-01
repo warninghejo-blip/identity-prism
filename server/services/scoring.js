@@ -61,6 +61,14 @@ const calculateScore = (traits) => {
   if (traits.hyperactiveDegen) score += SCORING.HYPERACTIVE_BONUS;
   if (traits.isMemeLord) score += SCORING.MEME_LORD_BONUS;
 
+  // Badge bonus points — mirrors frontend calculateScore
+  if (traits.isOG) score += 80;
+  if (traits.isTxTitan) score += 40;
+  if (traits.isWhale) score += 35;
+  if (traits.isCollector) score += 25;
+  if (traits.isEarlyAdopter) score += 20;
+  if (traits.isSolanaMaxi) score += 30;
+
   return Math.min(Math.round(score), MAX_SCORE);
 };
 
@@ -81,19 +89,19 @@ export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, 
   } = extraTraits ?? {};
   const hasCombo = hasSeeker && hasPreorder;
 
-  const isOGByBalance = solBalance >= 5;
-  const isOGByAge = walletAgeDays >= 730;
-  const isOGByTransactions = txCount >= 1000;
+  const isTxTitan = txCount > 5000;
+  const diamondHands = walletAgeDays >= 365 && solBalance >= 1;
+  const isOG = walletAgeDays >= 730 && isTxTitan && diamondHands;
 
   const traits = {
     hasSeeker,
     hasPreorder,
     hasCombo,
-    isOG: isOGByBalance && isOGByAge && isOGByTransactions,
+    isOG,
     isWhale: solBalance >= 50,
     isCollector: nftCount >= 10,
     isEarlyAdopter: walletAgeDays >= 730,
-    isTxTitan: txCount > 1000,
+    isTxTitan,
     isSolanaMaxi: solBalance >= 100 && txCount > 100,
     isBlueChip,
     isDeFiKing,
@@ -102,7 +110,7 @@ export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, 
     txCount,
     isMemeLord,
     hyperactiveDegen: avgTxPerDay30d >= 8,
-    diamondHands: walletAgeDays >= 60,
+    diamondHands,
     solBalance,
     walletAgeDays,
   };

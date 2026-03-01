@@ -10,7 +10,7 @@ export interface DefenderAchievement {
   icon: string;
   image: string;
   threshold: number;
-  thresholdType: 'level_reached' | 'games_played' | 'total_kills';
+  thresholdType: 'level_reached' | 'games_played' | 'total_kills' | 'best_score';
   tier: 'bronze' | 'silver' | 'gold' | 'diamond';
   unlocked: boolean;
   unlockedAt?: string;
@@ -19,10 +19,10 @@ export interface DefenderAchievement {
 }
 
 export const DEFENDER_COIN_REWARDS: Record<string, number> = {
-  bronze: 20,
-  silver: 50,
-  gold: 100,
-  diamond: 200,
+  bronze: 50,
+  silver: 150,
+  gold: 400,
+  diamond: 1000,
 };
 
 const ACHIEVEMENTS_KEY = 'cosmic_defender_achievements_v1';
@@ -38,62 +38,42 @@ export interface DefenderStats {
 
 export const DEFENDER_ACHIEVEMENT_DEFS: Omit<DefenderAchievement, 'unlocked' | 'unlockedAt' | 'claimed' | 'claimedAt'>[] = [
   {
-    id: 'def_first_blood',
-    name: 'First Blood',
-    description: 'Complete Level 1',
+    id: 'def_outer_rim',
+    name: 'Outer Rim',
+    description: 'Complete Level 1 — Outer Rim',
     icon: '⚔️',
-    image: '/achievements/def_first_blood.png',
+    image: '/achievements/def_outer_rim.png',
     threshold: 1,
     thresholdType: 'level_reached',
     tier: 'bronze',
   },
   {
-    id: 'def_frontline',
-    name: 'Frontline',
-    description: 'Complete Level 3',
+    id: 'def_nebula_front',
+    name: 'Nebula Veteran',
+    description: 'Complete Level 2 — Nebula Front',
     icon: '🛡️',
-    image: '/achievements/def_frontline.png',
-    threshold: 3,
-    thresholdType: 'level_reached',
-    tier: 'bronze',
-  },
-  {
-    id: 'def_commander',
-    name: 'Commander',
-    description: 'Complete Level 5',
-    icon: '🎖️',
-    image: '/achievements/def_commander.png',
-    threshold: 5,
+    image: '/achievements/def_nebula_front.png',
+    threshold: 2,
     thresholdType: 'level_reached',
     tier: 'silver',
   },
   {
-    id: 'def_war_hero',
-    name: 'War Hero',
-    description: 'Complete Level 7',
+    id: 'def_dark_sector',
+    name: 'Dark Sector',
+    description: 'Complete Level 3 — Dark Sector',
     icon: '⭐',
-    image: '/achievements/def_war_hero.png',
-    threshold: 7,
-    thresholdType: 'level_reached',
-    tier: 'silver',
-  },
-  {
-    id: 'def_galactic_defender',
-    name: 'Galactic Defender',
-    description: 'Complete Level 9',
-    icon: '🏆',
-    image: '/achievements/def_galactic_defender.png',
-    threshold: 9,
+    image: '/achievements/def_dark_sector.png',
+    threshold: 3,
     thresholdType: 'level_reached',
     tier: 'gold',
   },
   {
-    id: 'def_legend',
-    name: 'Cosmic Legend',
-    description: 'Complete all 9 levels in one run',
-    icon: '💎',
-    image: '/achievements/def_legend.png',
-    threshold: 9,
+    id: 'def_final_stand',
+    name: 'Galactic Defender',
+    description: 'Complete Level 4 — Final Stand',
+    icon: '🏆',
+    image: '/achievements/def_final_stand.png',
+    threshold: 4,
     thresholdType: 'level_reached',
     tier: 'diamond',
   },
@@ -126,6 +106,26 @@ export const DEFENDER_ACHIEVEMENT_DEFS: Omit<DefenderAchievement, 'unlocked' | '
     threshold: 500,
     thresholdType: 'total_kills',
     tier: 'gold',
+  },
+  {
+    id: 'achive_trophy',
+    name: 'War Hero',
+    description: 'Score 500+ points in a single run',
+    icon: '🏅',
+    image: '/achievements/achive_trophy.png',
+    threshold: 500,
+    thresholdType: 'best_score',
+    tier: 'gold',
+  },
+  {
+    id: 'achive_diamond_ship',
+    name: 'Diamond Commander',
+    description: 'Score 1500+ points in a single run',
+    icon: '💎',
+    image: '/achievements/achive_diamond_ship.png',
+    threshold: 1500,
+    thresholdType: 'best_score',
+    tier: 'diamond',
   },
 ];
 
@@ -195,6 +195,9 @@ export function checkDefenderAchievements(score: number, levelReached: number): 
       case 'total_kills':
         met = stats.totalKills >= ach.threshold;
         break;
+      case 'best_score':
+        met = stats.bestScore >= ach.threshold;
+        break;
     }
 
     if (met) {
@@ -230,6 +233,8 @@ export function getDefenderAchievementProgress(achievement: DefenderAchievement)
       return Math.min(1, stats.gamesPlayed / achievement.threshold);
     case 'total_kills':
       return Math.min(1, stats.totalKills / achievement.threshold);
+    case 'best_score':
+      return Math.min(1, stats.bestScore / achievement.threshold);
     default:
       return 0;
   }

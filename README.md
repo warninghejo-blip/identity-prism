@@ -6,7 +6,7 @@
 [![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
 [![Tapestry](https://img.shields.io/badge/Reputation-Tapestry-orange)](https://tapestry.network/)
 
-**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo Video:** [YouTube](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
+**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo v4.0:** [YouTube](https://youtu.be/2JR4UN8-Elo) · **Demo v3.0:** [YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
 
 ---
 
@@ -29,6 +29,23 @@ Identity Prism integrates multiple advanced Solana primitives, making it a stron
 *   **Mobile / Consumer:** The entire experience is fully native to Seeker and Saga, built as a PWA/APK with seamless Mobile Wallet Adapter integration and zero-friction transaction signing.
 
 </details>
+
+---
+
+## What's New in v4.0
+
+| Feature | Description |
+|---------|-------------|
+| **Cosmic Defender** | New Prism League mode — top-down shooter, 4 levels, bosses, powerups, dedicated achievements |
+| **Update Card** | Update NFT metadata in-place without burning (~0.0005 SOL), protected by **Co-Sign Authority Guard** — server co-signs the transaction to ensure collection integrity |
+| **Badge Redesign** | Overhauled badge artwork + 4 new badges (13 total) |
+| **Score History + Sparkline** | Score history chart on card back |
+| **Progress Ring** | Visual progress ring toward next tier |
+| **3D Sun/Star Overhaul** | Procedural plasma shader for Sun & Binary Sun tiers, organic godrays |
+| **Realistic Asteroid Textures** | Poly Haven CC0 textures for asteroids |
+| **InstancedMesh Optimization** | 200 → 4 draw calls (major FPS boost on mobile) |
+| **Custom GLSL Wormhole Transitions** | Hand-crafted GPU shader transitions for Black Hole entry/exit and Prism League launch/return. Plasma wormhole effect at 60 FPS |
+| **Procedural Audio Engine** | All game SFX synthesized in real-time via Web Audio API — laser shots (single/double/rocket), explosions, debris, near-miss whoosh, rumble, shield, pickups, level-up fanfare, boss warning, game-over melody, victory theme. Zero audio files |
 
 ---
 
@@ -129,8 +146,27 @@ An autonomous Twitter bot ([@Identity_Prism](https://x.com/Identity_Prism)) powe
 - **Media upload** via Twitter API v1.1 (official) with automatic fallback
 - Uses **weighted random action selection** with human-like timing (1h+ intervals)
 
-### 📱 Android App
-Native Android application via Capacitor with Solana Mobile Wallet Adapter support.
+### �️ Black Hole
+A smart asset management tool for cleaning up your wallet. Select dust tokens and unwanted NFTs, burn them in a single batch transaction, and reclaim the rent SOL locked inside each account. Real-time price feeds protect valuable assets from accidental burning.
+
+### 🎮 Prism League
+Two browser-based game modes running inside the app:
+- **Orbit Survival** — Dodge asteroids, collect powerups, survive as long as possible. Sessions are cryptographically seeded via MagicBlock Ephemeral Rollups; the backend validates the final score before committing it on-chain via Solana Memo.
+- **Cosmic Defender** — Top-down shooter with 4 levels, boss enemies, powerups, and 9 dedicated achievements.
+
+Scores are recorded on-chain and displayed on a global leaderboard.
+
+### ♻️ Update Card
+Update your NFT metadata in-place without burning the original NFT (~0.0005 SOL). Each update transaction is protected by a **Co-Sign Authority Guard** — the server validates and co-signs the transaction to ensure collection integrity while preserving user sovereignty.
+
+### 🌀 Custom GLSL Wormhole Transitions
+Hand-crafted GPU shader transitions for every navigation event — entering the Black Hole, launching into Prism League, and returning. Plasma wormhole effect runs at 60 FPS on mobile hardware.
+
+### 🎵 Procedural Audio Engine
+All game sounds are synthesized in real-time via Web Audio API — no audio files, no downloads. Includes laser shots (single/double/rocket), asteroid explosions, debris, near-miss whoosh, rumble feedback, shield activation, pickup chimes, level-up fanfare, boss warning, game-over melody, and victory theme.
+
+### �📱 Android App
+Native Android application via Capacitor with Solana Mobile Wallet Adapter support. Published on Solana dApp Store.
 
 ### 🏛️ Colosseum Forum Agent
 An AI agent that participates in the Colosseum hackathon forum — posting topics, commenting, and engaging with the community.
@@ -217,7 +253,9 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 | **Blockchain** | Solana, SPL Tokens, Metaplex Core NFTs, Solana Actions (Blinks) |
 | **Social Graph** | Tapestry Protocol (REST API), on-chain profile + content publishing |
 | **AI Agents** | Python, Google Gemini (text + Imagen), Official Twitter API v2 (tweepy), twikit, twitterapi.io |
-| **Mobile** | Capacitor, Solana Mobile Wallet Adapter |
+| **Gaming** | MagicBlock Ephemeral Rollups, Canvas 2D game engine, Web Audio API (procedural SFX) |
+| **Shaders** | Custom GLSL fragment shaders (wormhole transitions), Three.js procedural planet/sun materials |
+| **Mobile** | Capacitor, Solana Mobile Wallet Adapter, Solana dApp Store |
 | **Infrastructure** | Nginx, systemd services, Squid proxy, logrotate |
 
 ---

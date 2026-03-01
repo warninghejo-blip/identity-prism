@@ -137,9 +137,9 @@ export default function Compare() {
   const isLoading = (addrA && dataA.isLoading) || (addrB && dataB.isLoading);
 
   return (
-    <div className="min-h-screen bg-[#05070a] text-white">
+    <div className="h-screen flex flex-col bg-[#05070a] text-white">
       {/* Header */}
-      <header className="sticky top-0 z-20 bg-black/80 backdrop-blur-xl border-b border-white/[0.06]">
+      <header className="flex-none sticky top-0 z-20 bg-black/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <button onClick={() => navigate("/app")} className="text-white/50 hover:text-white transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -161,7 +161,7 @@ export default function Compare() {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+      <main className="flex-1 overflow-y-auto max-w-3xl mx-auto w-full px-4 py-6 pb-24 space-y-6">
         {/* Input Section */}
         <div className="space-y-3">
           <div className="flex gap-2">

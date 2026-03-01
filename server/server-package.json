@@ -1,0 +1,19 @@
+{
+  "name": "identityprism-helius-proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "helius-proxy.js",
+  "scripts": {
+    "start": "node helius-proxy.js"
+  },
+  "dependencies": {
+    "@metaplex-foundation/mpl-core": "^1.4.0",
+    "@metaplex-foundation/umi": "^1.4.1",
+    "@metaplex-foundation/umi-bundle-defaults": "^1.4.1",
+    "@metaplex-foundation/umi-web3js-adapters": "^1.4.1",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "canvas": "^3.2.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
