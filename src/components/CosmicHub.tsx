@@ -97,9 +97,22 @@ const HUB_MODULES: HubModule[] = [
     glowColor: '#059669',
     orbitRadius: 4.6,
     orbitSpeed: 0.14,
-    initialAngle: (8 * Math.PI) / 5,
+    initialAngle: (8 * Math.PI) / 6,
     description: 'Map your wallet connections',
     size: 0.5,
+  },
+  {
+    id: 'scam-checker',
+    label: 'Scam Shield',
+    icon: '🛡️',
+    route: '/scam-checker',
+    color: '#ef4444',
+    glowColor: '#dc2626',
+    orbitRadius: 4.9,
+    orbitSpeed: 0.11,
+    initialAngle: (10 * Math.PI) / 6,
+    description: 'Check contracts & wallets for scams',
+    size: 0.55,
   },
 ];
 

@@ -29,6 +29,7 @@ const NebulaMarket = React.lazy(() => import('./pages/NebulaMarket'));
 const ConstellationNetwork = React.lazy(() => import('./pages/ConstellationNetwork'));
 const TimeWarp = React.lazy(() => import('./pages/TimeWarp'));
 const QuestsPage = React.lazy(() => import('./pages/QuestsPage'));
+const ScamChecker = React.lazy(() => import('./pages/ScamChecker'));
 
 const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -72,6 +73,7 @@ const router = createBrowserRouter([
       { path: 'constellation', element: <ConstellationNetwork /> },
       { path: 'timewarp', element: <TimeWarp /> },
       { path: 'quests', element: <QuestsPage /> },
+      { path: 'scam-checker', element: <ScamChecker /> },
       { path: '*', element: <NotFound /> },
     ],
   },
