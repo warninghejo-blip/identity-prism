@@ -1,13 +1,19 @@
 /**
- * Gravity Runner — endless runner with gravity flip mechanic.
- * Tap/click to flip gravity between floor and ceiling.
- * Collect PRISM crystals, dodge obstacles, survive as long as possible.
+ * Gravity Runner v2 — polished endless runner with gravity flip mechanic.
+ * 
+ * Features:
+ * - 5 visual themes/levels (Nebula → Asteroid Belt → Black Hole → Warp Zone → Prism Realm)
+ * - 4 power-ups: Shield, Magnet, Slow-Mo, Ghost
+ * - Combo system (consecutive crystal pickups = multiplier)
+ * - Boss obstacles every 1000 points (rotating lasers, gravity wells)
+ * - Progressive difficulty with speed/obstacle density curves
+ * - Screen shake, particles, trail effects
+ * - One-tap mobile control
  * 
  * Canvas 2D for maximum mobile performance.
- * One-tap control — perfect for mobile.
  */
 
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 
 interface GravityRunnerProps {
   gameState: 'start' | 'playing' | 'gameover';
@@ -21,25 +27,75 @@ interface GravityRunnerProps {
 }
 
 // ── Game constants ──
-const GROUND_H = 60;
-const PLAYER_W = 28;
-const PLAYER_H = 28;
-const GRAVITY = 0.6;
-const JUMP_VEL = -10;
-const BASE_SPEED = 4;
-const SPEED_INCREMENT = 0.0008;
-const OBSTACLE_INTERVAL_MIN = 80;
-const OBSTACLE_INTERVAL_MAX = 160;
-const CRYSTAL_INTERVAL = 120;
-const CRYSTAL_SIZE = 16;
+const GROUND_H = 50;
+const PLAYER_W = 26;
+const PLAYER_H = 26;
+const GRAVITY = 0.55;
+const BASE_SPEED = 3.5;
+const MAX_SPEED = 9;
+const SPEED_INCREMENT = 0.0006;
+const CRYSTAL_SIZE = 14;
+
+// ── Level themes ──
+interface LevelTheme {
+  name: string;
+  bg1: string; bg2: string; bg3: string;
+  floorColor: string; ceilColor: string;
+  accentColor: string; crystalColor: string;
+  scoreThreshold: number;
+}
+
+const LEVEL_THEMES: LevelTheme[] = [
+  { name: 'Nebula', bg1: '#0a0e1a', bg2: '#0d1428', bg3: '#0a0e1a', floorColor: 'rgba(34,211,238,0.08)', ceilColor: 'rgba(168,85,247,0.06)', accentColor: '#22d3ee', crystalColor: '#a855f7', scoreThreshold: 0 },
+  { name: 'Asteroid Belt', bg1: '#0f0a05', bg2: '#1a1008', bg3: '#0f0a05', floorColor: 'rgba(245,158,11,0.08)', ceilColor: 'rgba(239,68,68,0.06)', accentColor: '#f59e0b', crystalColor: '#fbbf24', scoreThreshold: 500 },
+  { name: 'Black Hole', bg1: '#050008', bg2: '#0a0014', bg3: '#050008', floorColor: 'rgba(139,92,246,0.1)', ceilColor: 'rgba(236,72,153,0.06)', accentColor: '#8b5cf6', crystalColor: '#ec4899', scoreThreshold: 1200 },
+  { name: 'Warp Zone', bg1: '#000a0f', bg2: '#001420', bg3: '#000a0f', floorColor: 'rgba(6,182,212,0.12)', ceilColor: 'rgba(16,185,129,0.08)', accentColor: '#06b6d4', crystalColor: '#10b981', scoreThreshold: 2000 },
+  { name: 'Prism Realm', bg1: '#0f0510', bg2: '#1a0820', bg3: '#0f0510', floorColor: 'rgba(251,191,36,0.1)', ceilColor: 'rgba(34,211,238,0.08)', accentColor: '#fbbf24', crystalColor: '#22d3ee', scoreThreshold: 3000 },
+];
+
+function getThemeForScore(score: number): LevelTheme {
+  let theme = LEVEL_THEMES[0];
+  for (const t of LEVEL_THEMES) {
+    if (score >= t.scoreThreshold) theme = t;
+  }
+  return theme;
+}
+
+// ── Power-up types ──
+type PowerUpType = 'shield' | 'magnet' | 'slowmo' | 'ghost';
+
+interface PowerUp {
+  x: number;
+  y: number;
+  type: PowerUpType;
+  collected: boolean;
+  pulse: number;
+}
+
+const POWERUP_COLORS: Record<PowerUpType, string> = {
+  shield: '#3b82f6',
+  magnet: '#f59e0b',
+  slowmo: '#8b5cf6',
+  ghost: '#6ee7b7',
+};
+
+const POWERUP_ICONS: Record<PowerUpType, string> = {
+  shield: '🛡', magnet: '🧲', slowmo: '⏳', ghost: '👻',
+};
+
+const POWERUP_DURATION = 300; // frames (~5 sec at 60fps)
 
 interface Obstacle {
   x: number;
   y: number;
   w: number;
   h: number;
-  type: 'spike' | 'wall' | 'laser';
+  type: 'spike' | 'wall' | 'laser' | 'boss_laser' | 'gravity_well';
   color: string;
+  rotation?: number;
+  rotSpeed?: number;
+  gapY?: number;
+  gapH?: number;
 }
 
 interface Crystal {
@@ -47,6 +103,7 @@ interface Crystal {
   y: number;
   collected: boolean;
   pulse: number;
+  value: number;
 }
 
 interface Particle {
@@ -73,19 +130,32 @@ export default function GravityRunnerScene({
     playerX: 80,
     playerY: 0,
     velY: 0,
-    gravityDir: 1, // 1 = down, -1 = up
+    gravityDir: 1 as 1 | -1,
     score: 0,
     coins: 0,
     speed: BASE_SPEED,
     obstacles: [] as Obstacle[],
     crystals: [] as Crystal[],
+    powerUps: [] as PowerUp[],
     particles: [] as Particle[],
     nextObstacle: 100,
     nextCrystal: 60,
+    nextPowerUp: 400,
+    nextBoss: 1000,
     frameCount: 0,
     alive: true,
     trail: [] as { x: number; y: number; alpha: number }[],
     screenShake: 0,
+    combo: 0,
+    comboTimer: 0,
+    maxCombo: 0,
+    flipCount: 0,
+    activePowerUp: null as PowerUpType | null,
+    powerUpTimer: 0,
+    levelName: 'Nebula',
+    prevLevelName: '',
+    levelBanner: 0,
+    bossWarning: 0,
   });
 
   const flipGravity = useCallback(() => {
