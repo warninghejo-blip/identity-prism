@@ -177,6 +177,12 @@ export default function StellarForge() {
     setBalance(result.balance);
     setPurchasing(null);
     toast.success(`Acquired ${item.name}!`, { description: `−${item.price} PRISM` });
+    // Quest auto-tracking
+    import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
+      const qs = getQuestState(walletAddress);
+      incrementQuest(qs, 'weekly_forge');
+      incrementQuest(qs, 'ot_forge5');
+    }).catch(() => {});
   }, [walletAddress, loadout, balance]);
 
   const handleEquip = useCallback((item: ForgeItem) => {

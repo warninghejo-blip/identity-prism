@@ -1367,6 +1367,19 @@ const Index = () => {
                           SHARE ON X
                         </Button>
                         <Button
+                          variant="ghost"
+                          onClick={async () => {
+                            if (!traits || !activeAddress) return;
+                            const { generatePassportImage, sharePassport, downloadPassport } = await import('@/lib/walletPassport');
+                            const img = await generatePassportImage({ address: activeAddress, score, traits, prismBalance: prismBalance?.balance });
+                            const shared = await sharePassport(img, activeAddress);
+                            if (!shared) downloadPassport(img, activeAddress);
+                          }}
+                          className="mint-secondary-btn"
+                        >
+                          🪪 PASSPORT
+                        </Button>
+                        <Button
                           onClick={() => setViewState("hub")}
                           className="mint-primary-btn"
                           style={{ background: 'linear-gradient(135deg, #8b5cf6, #06b6d4)', marginTop: '0.25rem' }}

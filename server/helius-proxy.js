@@ -4036,10 +4036,27 @@ router.get('/api/prism/balance', (req, res) => {
   respondJson(res, 200, getPrismBalance(address));
 });
 
+// PRISM earn rate-limit: max 1 earn per source per 5 min per address
+const prismEarnRateLimit = new Map(); // key: `${address}:${source}` → timestamp
+const PRISM_EARN_COOLDOWN_MS = 5 * 60 * 1000;
+
 // PRISM Earn
 router.post('/api/prism/earn', async (req, res) => {
   const { address, source, amount, description } = req.body || {};
   if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
+  
+  // Rate limit check
+  const rlKey = `${address}:${source || 'unknown'}`;
+  const lastEarn = prismEarnRateLimit.get(rlKey) || 0;
+  if (Date.now() - lastEarn < PRISM_EARN_COOLDOWN_MS) {
+    return respondJson(res, 429, { error: 'Rate limited — try again later', cooldownMs: PRISM_EARN_COOLDOWN_MS - (Date.now() - lastEarn) });
+  }
+  prismEarnRateLimit.set(rlKey, Date.now());
+  // Cleanup old entries every 1000 earns
+  if (prismEarnRateLimit.size > 5000) {
+    const cutoff = Date.now() - PRISM_EARN_COOLDOWN_MS * 2;
+    for (const [k, v] of prismEarnRateLimit) { if (v < cutoff) prismEarnRateLimit.delete(k); }
+  }
   
   const earned = Math.max(0, Math.floor(Number(amount)));
   if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });

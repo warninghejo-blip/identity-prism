@@ -571,7 +571,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 floatIntensity={isCapture ? 0 : 0.2}
               >
                 <Suspense fallback={null}>
-                  <Planet3D tier={safeTraits.planetTier} isCapture={isCapture} onTexturesReady={handleTexturesReady} forgeAura={forgeAura} />
+                  <Planet3D tier={safeTraits.planetTier} isCapture={isCapture} onTexturesReady={handleTexturesReady} />
                 </Suspense>
               </Float>
 

@@ -110,7 +110,17 @@ export default function Compare() {
     setAddrA(a);
     setAddrB(b);
     setSearchParams({ a, b });
-  }, [inputA, inputB, setSearchParams]);
+    // Quest auto-tracking
+    const myAddr = publicKey?.toBase58();
+    if (myAddr) {
+      import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
+        const qs = getQuestState(myAddr);
+        incrementQuest(qs, 'weekly_compare3');
+        incrementQuest(qs, 'ot_compare10');
+        incrementQuest(qs, 'daily_explore');
+      }).catch(() => {});
+    }
+  }, [inputA, inputB, setSearchParams, publicKey]);
 
   const handleSwap = useCallback(() => {
     setInputA(inputB);

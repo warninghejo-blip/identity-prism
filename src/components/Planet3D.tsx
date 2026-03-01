@@ -18,7 +18,7 @@ import {
 } from 'three';
 import type { PlanetTier } from '@/hooks/useWalletData';
 import { SunCore, SunGlow, getProceduralParams, STAR_ARCHETYPES } from './SeekerSun';
-import { ForgeAura, hasForgeAura } from './ForgeAura';
+// ForgeAura removed — too heavy for mobile planet rendering. Auras applied via CSS on card instead.
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 // Restore high quality segments as requested
@@ -394,10 +394,9 @@ interface Planet3DProps {
   tier: PlanetTier;
   isCapture?: boolean;
   onTexturesReady?: () => void;
-  forgeAura?: string | null;
 }
 
-export function Planet3D({ tier, isCapture = false, onTexturesReady, forgeAura = null }: Planet3DProps) {
+export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DProps) {
   const groupRef = useRef<Group>(null);
   const cloudsRef = useRef<Mesh>(null);
   const ringsRef = useRef<Group>(null);
@@ -982,10 +981,6 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady, forgeAura =
         </group>
       )}
 
-      {/* Forge Aura — procedural shader effect around planet */}
-      {forgeAura && hasForgeAura(forgeAura) && (
-        <ForgeAura auraId={forgeAura} planetSize={size} />
-      )}
     </group>
   );
 }
