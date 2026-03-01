@@ -14,19 +14,26 @@
 <summary><b>🏆 Hackathon Submissions (Graveyard & MONOLITH)</b></summary>
 
 <br/>
-We are proudly submitting Identity Prism to two major Solana hackathons simultaneously!
+
+### 📹 Project Evolution
+
+| Version | Demo | What changed |
+|---------|------|--------------|
+| **v3.0** | [▶ YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) | Core reputation engine, 3D planet card, NFT minting, Black Hole, Orbit Survival, Tapestry, Blinks |
+| **v4.0** | [▶ YouTube](https://youtu.be/2JR4UN8-Elo) | Cosmic Defender, Update Card + Co-Sign Guard, GLSL wormhole transitions, procedural audio engine, badge redesign, Sun/Star plasma shaders, InstancedMesh optimization |
 
 ### 1. MONOLITH (Solana Mobile Hackathon)
 *   **Track:** Mobile Track
-*   **Why it fits:** Identity Prism is designed **Mobile-First**. It leverages the Solana Mobile Wallet Adapter (MWA) for seamless signing without constant app-switching. The UI, 3D Canvas rendering, and touch controls are highly optimized for the upcoming **Seeker** device, delivering smooth 60 FPS gameplay. It is already live on the Solana dApp Store.
+*   **Why it fits:** Identity Prism is designed **Mobile-First**. It uses Solana Mobile Wallet Adapter (MWA) for seamless Seed Vault signing without app-switching. The UI, Three.js 3D rendering, Canvas game engine, custom GLSL shader transitions, and touch controls are optimized for **Seeker**, delivering 60 FPS. Published on the Solana dApp Store.
+*   **v4.0 highlights:** Cosmic Defender (top-down shooter, 4 levels, bosses), Update Card with **Co-Sign Authority Guard** for collection integrity, procedural audio engine (20+ synthesized SFX via Web Audio API, zero audio files), custom GLSL wormhole transitions, 13 achievement badges with redesigned artwork, score history sparkline, progress ring.
 *   **Perks:** Seeker Genesis holders get a 50% discount on minting Identity Prism NFTs (Metaplex Core) when paying with SKR token.
 
 ### 2. Solana Graveyard Hackathon
-Identity Prism integrates multiple advanced Solana primitives, making it a strong contender across several tracks:
-*   **Gaming (MagicBlock):** Orbit Survival uses MagicBlock Ephemeral Rollups to cryptographically seed the game session and verify the final score. Players dodge asteroids off-chain (zero latency), and the backend validates the result against the on-chain session before committing the score via a Solana Memo transaction.
-*   **Onchain Social (Tapestry):** Your calculated tier (e.g., "Mars Tier") and behavioral badges are published to the Tapestry network under the `identity_prism` namespace. This turns an isolated app into a composable reputation layer.
-*   **DeFi / Tooling:** The "Black Hole" feature acts as a smart asset management tool, allowing users to safely isolate and burn dust tokens to recover rent SOL while protecting valuable assets using real-time price feeds.
-*   **Mobile / Consumer:** The entire experience is fully native to Seeker and Saga, built as a PWA/APK with seamless Mobile Wallet Adapter integration and zero-friction transaction signing.
+Identity Prism integrates multiple advanced Solana primitives across several tracks:
+*   **Gaming (MagicBlock):** Two game modes — **Orbit Survival** (dodge asteroids, collect powerups) and **Cosmic Defender** (top-down shooter, 4 levels, boss enemies). Sessions are cryptographically seeded via MagicBlock Ephemeral Rollups; the backend validates the final score against the on-chain session before committing via Solana Memo. Scores displayed on a global leaderboard.
+*   **Onchain Social (Tapestry):** Tier (e.g., "Mars") and 13 behavioral badges are published to Tapestry under the `identity_prism` namespace, making Identity Prism a composable reputation layer for the ecosystem.
+*   **DeFi / Tooling:** **Black Hole** burns dust tokens and NFTs in batch, reclaiming rent SOL. Real-time price feeds protect valuable assets. **Update Card** updates NFT metadata in-place (~0.0005 SOL) without burning, protected by a Co-Sign Authority Guard.
+*   **Mobile / Consumer:** Native Seeker/Saga experience as PWA/APK with MWA integration. Published on Solana dApp Store.
 
 </details>
 

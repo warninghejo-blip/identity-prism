@@ -54,8 +54,8 @@ release:
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.31
-    version_code: 42
+    version: 1.0.32
+    version_code: 43
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
