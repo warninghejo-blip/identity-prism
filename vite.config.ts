@@ -74,9 +74,13 @@ export default defineConfig(({ mode }) => {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            // React core — tiny critical-path chunk (~150KB), loaded by bootstrapper
             if (/\/react\/|\/react-dom\/|\/scheduler\/|\/buffer\//.test(id)) return 'vendor-react';
-            if (/three|@react-three|postprocessing|framer-motion/.test(id)) return 'vendor-three';
+            // Three.js core (biggest chunk)
+            if (/\/three\//.test(id)) return 'vendor-three';
+            // Three.js addons (react-three-fiber, drei, postprocessing) — separate for better caching
+            if (/@react-three|postprocessing/.test(id)) return 'vendor-three-addons';
+            // framer-motion — used broadly, own chunk
+            if (/framer-motion/.test(id)) return 'vendor-motion';
             if (/@metaplex-foundation/.test(id)) return; // stays with lazy mintIdentityPrism
             if (/@solana|@solana-mobile|bn\.js|borsh|bs58|buffer-layout|superstruct/.test(id)) return 'vendor-solana';
             if (/@radix-ui|lucide-react|@tanstack/.test(id)) return 'vendor-ui';
