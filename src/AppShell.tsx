@@ -24,6 +24,11 @@ const PrismLeague = React.lazy(() => import('./pages/PrismLeague'));
 const Verify = React.lazy(() => import('./pages/Verify'));
 const Compare = React.lazy(() => import('./pages/Compare'));
 const HomePage = React.lazy(() => import('./pages/HomePage'));
+const StellarForge = React.lazy(() => import('./pages/StellarForge'));
+const NebulaMarket = React.lazy(() => import('./pages/NebulaMarket'));
+const ConstellationNetwork = React.lazy(() => import('./pages/ConstellationNetwork'));
+const TimeWarp = React.lazy(() => import('./pages/TimeWarp'));
+const QuestsPage = React.lazy(() => import('./pages/QuestsPage'));
 
 const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -62,6 +67,11 @@ const router = createBrowserRouter([
       { path: 'preview/:tier', element: <PreviewDeck /> },
       { path: 'verify', element: <Verify /> },
       { path: 'compare', element: <Compare /> },
+      { path: 'forge', element: <StellarForge /> },
+      { path: 'market', element: <NebulaMarket /> },
+      { path: 'constellation', element: <ConstellationNetwork /> },
+      { path: 'timewarp', element: <TimeWarp /> },
+      { path: 'quests', element: <QuestsPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },
