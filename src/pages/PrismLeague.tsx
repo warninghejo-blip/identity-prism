@@ -30,13 +30,15 @@ import { initAudio, startMusic, stopMusic, stopAllAudio, sfxGameOver } from "@/l
 import { hapticHeavy, hapticMedium, hapticSuccess, hapticError } from "@/lib/haptics";
 import OrbitSurvivalScene from "@/components/game/OrbitSurvivalScene";
 import AsteroidDestroyerScene from "@/components/game/AsteroidDestroyerScene";
+import GravityRunnerScene from "@/components/game/GravityRunnerScene";
 import { FpsOverlay } from "@/components/game/GameShared";
 
-type GameMode = "orbit" | "destroyer";
+type GameMode = "orbit" | "destroyer" | "gravity";
 
 const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string }[] = [
   { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit" },
   { id: "destroyer", name: "Cosmic Defender", icon: "💥", desc: "4 sectors of enemies & bosses. Auto-fire, collect powerups!", controls: "WASD/Arrows to move, auto-fire. Touch: drag to move" },
+  { id: "gravity", name: "Gravity Runner", icon: "🔄", desc: "Flip gravity, collect crystals, dodge obstacles!", controls: "Tap/Space to flip gravity" },
 ];
 import {
   commitScoreOnchain,
@@ -1162,7 +1164,9 @@ const PrismLeague = () => {
         {gameMode === "destroyer" && (
           <AsteroidDestroyerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGameOver} onLevel={handleDefLevel} onActiveBonuses={handleActiveBonuses} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} />
         )}
-        {/* gravity and territory modes removed */}
+        {gameMode === "gravity" && (
+          <GravityRunnerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGameOver} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} />
+        )}
       </div>
 
       {/* FPS overlay */}
