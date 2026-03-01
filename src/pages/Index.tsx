@@ -18,7 +18,7 @@ import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import { isTapestryEnabled, publishIdentityToTapestry } from "@/lib/tapestry";
 import type { IdentityData } from "@/lib/tapestry";
 // html2canvas loaded dynamically in renderCardImage()
-const CosmicHub = React.lazy(() => import("@/components/CosmicHub"));
+const CosmicHub = React.lazy(() => import("@/components/CosmicHubV2"));
 import { getPrismBalance, earnPrism, canEarnFromScan, markScanEarned, type PrismBalance } from '@/lib/prismCoin';
 
 type ViewState = "landing" | "scanning" | "ready" | "hub";
@@ -680,7 +680,8 @@ const Index = () => {
     if (isLoading || !traits) {
       setViewState("scanning");
     } else {
-      setViewState("ready");
+      // After scan → go to Hub (not card). Card accessible from Hub.
+      setViewState("hub");
       // Load PRISM balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
         getPrismBalance(resolvedAddress).then(setPrismBalance).catch(() => {});
