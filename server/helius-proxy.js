@@ -3987,6 +3987,243 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// v5.0 API — PRISM Coin, Sybil Detection, Leaderboard, Feed, Constellation
+// ═══════════════════════════════════════════════════════════
+
+const prismBalances = new Map(); // address → { balance, totalEarned, totalSpent, lastUpdated }
+const prismTransactions = new Map(); // address → PrismTransaction[]
+const leaderboardCache = { entries: [], lastUpdated: 0 };
+const feedItems = [];
+const sybilCache = new Map(); // address → { analysis, cachedAt }
+
+// Load persisted PRISM data
+const PRISM_DATA_FILE = path.join(process.cwd(), 'prism_data.json');
+try {
+  if (fs.existsSync(PRISM_DATA_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(PRISM_DATA_FILE, 'utf8'));
+    if (raw.balances) for (const [k, v] of Object.entries(raw.balances)) prismBalances.set(k, v);
+    if (raw.transactions) for (const [k, v] of Object.entries(raw.transactions)) prismTransactions.set(k, v);
+    console.log(`[prism] Loaded ${prismBalances.size} balances`);
+  }
+} catch { /* first run */ }
+
+function savePrismData() {
+  try {
+    const data = {
+      balances: Object.fromEntries(prismBalances),
+      transactions: Object.fromEntries(prismTransactions),
+    };
+    fs.writeFileSync(PRISM_DATA_FILE, JSON.stringify(data), 'utf8');
+  } catch (e) { console.warn('[prism] save error', e.message); }
+}
+
+// Debounced save
+let prismSaveTimer = null;
+function debouncedSavePrism() {
+  if (prismSaveTimer) clearTimeout(prismSaveTimer);
+  prismSaveTimer = setTimeout(savePrismData, 2000);
+}
+
+function getPrismBalance(address) {
+  return prismBalances.get(address) || { address, balance: 0, totalEarned: 0, totalSpent: 0, lastUpdated: new Date().toISOString() };
+}
+
+// PRISM Balance
+router.get('/api/prism/balance', (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  respondJson(res, 200, getPrismBalance(address));
+});
+
+// PRISM Earn
+router.post('/api/prism/earn', async (req, res) => {
+  const { address, source, amount, description } = req.body || {};
+  if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
+  
+  const earned = Math.max(0, Math.floor(Number(amount)));
+  if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
+  
+  const bal = getPrismBalance(address);
+  bal.balance += earned;
+  bal.totalEarned += earned;
+  bal.lastUpdated = new Date().toISOString();
+  prismBalances.set(address, bal);
+  
+  const tx = {
+    id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    address, amount: earned, type: 'earn', source: source || 'unknown',
+    description: description || `Earned ${earned} PRISM`,
+    timestamp: new Date().toISOString(),
+  };
+  const txs = prismTransactions.get(address) || [];
+  txs.unshift(tx);
+  if (txs.length > 500) txs.length = 500;
+  prismTransactions.set(address, txs);
+  
+  debouncedSavePrism();
+  
+  // Add to feed
+  feedItems.unshift({
+    id: tx.id, type: source?.includes('burn') ? 'burn' : source?.includes('game') ? 'achievement' : 'scan',
+    address, description: description || `Earned ${earned} PRISM from ${source}`,
+    timestamp: tx.timestamp,
+  });
+  if (feedItems.length > 200) feedItems.length = 200;
+  
+  respondJson(res, 200, { balance: bal, earned });
+});
+
+// PRISM Spend
+router.post('/api/prism/spend', async (req, res) => {
+  const { address, source, amount, description } = req.body || {};
+  if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
+  
+  const spent = Math.max(0, Math.floor(Number(amount)));
+  const bal = getPrismBalance(address);
+  if (bal.balance < spent) return respondJson(res, 400, { error: 'insufficient balance' });
+  
+  bal.balance -= spent;
+  bal.totalSpent += spent;
+  bal.lastUpdated = new Date().toISOString();
+  prismBalances.set(address, bal);
+  
+  const tx = {
+    id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    address, amount: spent, type: 'spend', source: source || 'unknown',
+    description: description || `Spent ${spent} PRISM`,
+    timestamp: new Date().toISOString(),
+  };
+  const txs = prismTransactions.get(address) || [];
+  txs.unshift(tx);
+  if (txs.length > 500) txs.length = 500;
+  prismTransactions.set(address, txs);
+  
+  debouncedSavePrism();
+  respondJson(res, 200, { balance: bal, spent });
+});
+
+// PRISM Transaction History
+router.get('/api/prism/transactions', (req, res) => {
+  const address = req.query?.address;
+  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 50));
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  const txs = (prismTransactions.get(address) || []).slice(0, limit);
+  respondJson(res, 200, txs);
+});
+
+// Sybil Analysis — basic server-side endpoint
+router.get('/api/sybil/analysis', async (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  
+  // Check cache (valid for 1 hour)
+  const cached = sybilCache.get(address);
+  if (cached && Date.now() - cached.cachedAt < 3600_000) {
+    return respondJson(res, 200, cached.analysis);
+  }
+  
+  try {
+    // Basic analysis from on-chain data
+    const conn = getConnection();
+    const pubkey = new PublicKey(address);
+    const [balanceResult, signaturesResult] = await Promise.allSettled([
+      conn.getBalance(pubkey),
+      conn.getSignaturesForAddress(pubkey, { limit: 100 }),
+    ]);
+    
+    const balance = balanceResult.status === 'fulfilled' ? balanceResult.value / 1e9 : 0;
+    const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
+    
+    // Analyze transaction timing
+    const timestamps = signatures.filter(s => s.blockTime).map(s => s.blockTime * 1000);
+    let timingVariance = 1;
+    let isRobotic = false;
+    if (timestamps.length >= 10) {
+      const sorted = [...timestamps].sort((a, b) => a - b);
+      const intervals = [];
+      for (let i = 1; i < sorted.length; i++) intervals.push(sorted[i] - sorted[i - 1]);
+      const mean = intervals.reduce((s, v) => s + v, 0) / intervals.length;
+      if (mean > 0) {
+        const stdDev = Math.sqrt(intervals.reduce((s, v) => s + (v - mean) ** 2, 0) / intervals.length);
+        const cv = stdDev / mean;
+        timingVariance = Math.min(1, cv / 1.5);
+        isRobotic = cv < 0.25 && intervals.length > 20;
+      }
+    }
+    
+    // Determine wallet age
+    const oldestTx = signatures.length > 0 ? signatures[signatures.length - 1] : null;
+    const walletAgeDays = oldestTx?.blockTime ? Math.floor((Date.now() / 1000 - oldestTx.blockTime) / 86400) : 0;
+    
+    // Build signals
+    const signals = [];
+    const freshBurst = walletAgeDays < 30 && signatures.length > 50;
+    signals.push({ id: 'fresh_wallet', name: 'Fresh Wallet Burst', detected: freshBurst, weight: 15, severity: freshBurst ? 'warning' : 'info' });
+    signals.push({ id: 'robotic_timing', name: 'Robotic Transaction Timing', detected: isRobotic, weight: 18, severity: isRobotic ? 'danger' : 'info' });
+    
+    let riskScore = signals.reduce((sum, s) => sum + (s.detected ? s.weight : 0), 0);
+    riskScore = Math.min(100, riskScore);
+    
+    const riskLevel = riskScore >= 75 ? 'critical' : riskScore >= 50 ? 'high' : riskScore >= 30 ? 'medium' : riskScore >= 10 ? 'low' : 'clean';
+    
+    const analysis = {
+      address, riskScore, riskLevel, signals,
+      behaviorProfile: { txTimingVariance: timingVariance, protocolDiversity: 0.5 },
+      timestamp: new Date().toISOString(),
+    };
+    
+    sybilCache.set(address, { analysis, cachedAt: Date.now() });
+    respondJson(res, 200, analysis);
+  } catch (e) {
+    respondJson(res, 500, { error: 'Sybil analysis failed', detail: e.message });
+  }
+});
+
+// Sybil Funding Sources (stub — requires deep tx parsing)
+router.get('/api/sybil/funding-sources', (req, res) => {
+  respondJson(res, 200, { sources: [] });
+});
+
+// Sybil Cluster Detection (stub)
+router.get('/api/sybil/cluster', (req, res) => {
+  respondJson(res, 200, { clusterId: null });
+});
+
+// Sybil Circular Flow (stub)
+router.get('/api/sybil/circular-flow', (req, res) => {
+  respondJson(res, 200, { detected: false, cycle: [] });
+});
+
+// Global Leaderboard
+router.get('/api/leaderboard', (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 50));
+  
+  // Build from score-history data
+  const entries = [];
+  for (const [address, bal] of prismBalances) {
+    entries.push({ address, score: bal.totalEarned, tier: 'unknown', badges: 0, rank: 0 });
+  }
+  entries.sort((a, b) => b.score - a.score);
+  entries.forEach((e, i) => { e.rank = i + 1; });
+  
+  respondJson(res, 200, { entries: entries.slice(0, limit) });
+});
+
+// Identity Feed
+router.get('/api/feed', (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 30));
+  respondJson(res, 200, { items: feedItems.slice(0, limit) });
+});
+
+// Constellation Network (stub — real impl needs tx graph analysis)
+router.get('/api/constellation', (req, res) => {
+  const address = req.query?.address;
+  if (!address) return respondJson(res, 400, { error: 'address required' });
+  // Return empty — client generates demo data as fallback
+  respondJson(res, 200, { nodes: [], edges: [] });
+});
+
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 server.listen(PORT, HOST, () => {
