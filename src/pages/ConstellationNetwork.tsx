@@ -13,6 +13,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
 import { ArrowLeft, Loader2, ZoomIn, ZoomOut, Maximize2, Search, Shield, AlertTriangle, ChevronRight, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 import { getHeliusProxyUrl } from '@/constants';
 
 // ── Types ──
@@ -93,6 +94,126 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
     g: parseInt(h.substring(2, 4), 16),
     b: parseInt(h.substring(4, 6), 16),
   };
+}
+
+// ── Mini planet rendering on canvas (matches CelestialCard tiers) ──
+
+const TIER_PLANET_PARAMS: Record<string, { baseColor: string; highlight: string; darkSpot?: string; hasRings?: boolean; isSun?: boolean; isBinary?: boolean }> = {
+  mercury: { baseColor: '#a8a29e', highlight: '#d6d3d1' },
+  mars: { baseColor: '#c1440e', highlight: '#fb923c', darkSpot: '#7c2d12' },
+  venus: { baseColor: '#e8cda0', highlight: '#fde68a' },
+  earth: { baseColor: '#2563eb', highlight: '#60a5fa', darkSpot: '#16a34a' },
+  neptune: { baseColor: '#3F54BE', highlight: '#818cf8', darkSpot: '#1e3a8a' },
+  uranus: { baseColor: '#73C2FB', highlight: '#bae6fd' },
+  saturn: { baseColor: '#e8d191', highlight: '#fcd34d', hasRings: true },
+  jupiter: { baseColor: '#c88b3a', highlight: '#fdba74', darkSpot: '#92400e' },
+  sun: { baseColor: '#fbbf24', highlight: '#fef08a', isSun: true },
+  binary_sun: { baseColor: '#22d3ee', highlight: '#fbbf24', isSun: true, isBinary: true },
+};
+
+function drawMiniPlanet(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, tier: string, frame: number) {
+  const params = TIER_PLANET_PARAMS[tier] || TIER_PLANET_PARAMS.mercury;
+  const rgb = hexToRgb(params.baseColor);
+
+  ctx.save();
+
+  if (params.isSun) {
+    // Solar corona
+    const coronaR = radius * 2.5;
+    const coronaPulse = 1 + Math.sin(frame * 0.03) * 0.15;
+    const corona = ctx.createRadialGradient(x, y, radius * 0.6, x, y, coronaR * coronaPulse);
+    corona.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.4)`);
+    corona.addColorStop(0.5, `rgba(${rgb.r},${rgb.g},${rgb.b},0.1)`);
+    corona.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = corona;
+    ctx.beginPath();
+    ctx.arc(x, y, coronaR * coronaPulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (params.isBinary) {
+      // Two overlapping suns
+      const offset = radius * 0.6;
+      for (const dx of [-offset, offset]) {
+        const sx = x + dx;
+        const grad = ctx.createRadialGradient(sx - radius * 0.2, y - radius * 0.2, radius * 0.1, sx, y, radius * 0.9);
+        grad.addColorStop(0, '#fff');
+        grad.addColorStop(0.3, dx < 0 ? '#22d3ee' : '#fbbf24');
+        grad.addColorStop(1, dx < 0 ? '#0e7490' : '#b45309');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(sx, y, radius * 0.75, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // Single sun
+      const sunGrad = ctx.createRadialGradient(x - radius * 0.2, y - radius * 0.2, radius * 0.1, x, y, radius);
+      sunGrad.addColorStop(0, '#fff');
+      sunGrad.addColorStop(0.25, '#fef08a');
+      sunGrad.addColorStop(0.6, '#fbbf24');
+      sunGrad.addColorStop(1, '#b45309');
+      ctx.fillStyle = sunGrad;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else {
+    // Regular planet body
+    const grad = ctx.createRadialGradient(x - radius * 0.3, y - radius * 0.3, radius * 0.1, x, y, radius);
+    grad.addColorStop(0, params.highlight);
+    grad.addColorStop(0.6, params.baseColor);
+    grad.addColorStop(1, `rgba(${rgb.r * 0.3 | 0},${rgb.g * 0.3 | 0},${rgb.b * 0.3 | 0},1)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Dark spot (for earth = land, mars = crater, etc.)
+    if (params.darkSpot) {
+      const spotAngle = frame * 0.01;
+      const spotX = x + Math.cos(spotAngle) * radius * 0.3;
+      const spotY = y + Math.sin(spotAngle) * radius * 0.15;
+      ctx.fillStyle = params.darkSpot;
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.ellipse(spotX, spotY, radius * 0.25, radius * 0.2, spotAngle, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // Atmospheric haze
+    const haze = ctx.createRadialGradient(x, y, radius * 0.7, x, y, radius * 1.1);
+    haze.addColorStop(0, 'rgba(255,255,255,0)');
+    haze.addColorStop(0.8, `rgba(${rgb.r},${rgb.g},${rgb.b},0.15)`);
+    haze.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = haze;
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 1.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Saturn rings
+    if (params.hasRings) {
+      ctx.strokeStyle = params.highlight;
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(x, y, radius * 1.6, radius * 0.35, -0.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(x, y, radius * 1.85, radius * 0.4, -0.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Light reflection spot
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.arc(x - radius * 0.25, y - radius * 0.3, radius * 0.15, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 // ── Force-directed graph simulation ──
@@ -280,7 +401,7 @@ function renderGraph(
 
     const isSelected = selectedId != null && (edge.source === selectedId || edge.target === selectedId);
     const w = edge.weight ?? 0;
-    const alpha = isSelected ? 0.55 : Math.min(0.35, 0.04 + w * 0.015);
+    const alpha = isSelected ? 0.55 : Math.min(0.65, 0.20 + w * 0.015);
 
     // Parse node colors for gradient
     const srcRgb = hexToRgb(source.color);
@@ -289,7 +410,7 @@ function renderGraph(
     // Soft glow line behind (wider, low opacity)
     const glowLineW = isSelected ? Math.min(8, 3 + w * 0.2) : Math.min(5, 1.5 + w * 0.12);
     const glowGrad = ctx.createLinearGradient(source.x, source.y, target.x, target.y);
-    const glowAlpha = alpha * 0.25;
+    const glowAlpha = alpha * 0.45;
     glowGrad.addColorStop(0, `rgba(${srcRgb.r},${srcRgb.g},${srcRgb.b},${glowAlpha})`);
     glowGrad.addColorStop(1, `rgba(${tgtRgb.r},${tgtRgb.g},${tgtRgb.b},${glowAlpha})`);
     ctx.strokeStyle = glowGrad;
@@ -340,8 +461,8 @@ function renderGraph(
     if ((edge.totalSol ?? 0) > 0.5 && zoom > 0.8) {
       const mx = (source.x + target.x) / 2;
       const my = (source.y + target.y) / 2;
-      ctx.fillStyle = 'rgba(255,255,255,0.15)';
-      ctx.font = '7px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = '8px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(`${(edge.totalSol ?? 0).toFixed(1)} SOL`, mx, my - 5);
     }
@@ -418,21 +539,25 @@ function renderGraph(
       ctx.stroke();
     }
 
-    // Star body — filled circle with color
-    ctx.fillStyle = node.color;
-    ctx.shadowColor = node.color;
-    ctx.shadowBlur = isSelected ? 18 : isCenter ? 14 : 8;
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    // Star body — center node gets mini planet, others get star circle
+    if (isCenter && node.tier) {
+      drawMiniPlanet(ctx, node.x, node.y, r * 1.8, node.tier, frame);
+    } else {
+      ctx.fillStyle = node.color;
+      ctx.shadowColor = node.color;
+      ctx.shadowBlur = isSelected ? 18 : isCenter ? 14 : 8;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
 
-    // Inner bright core — white center
-    const coreAlpha = isCenter ? 0.7 : isSelected ? 0.6 : 0.45;
-    ctx.fillStyle = `rgba(255,255,255,${coreAlpha})`;
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, r * 0.35, 0, Math.PI * 2);
-    ctx.fill();
+      // Inner bright core — white center
+      const coreAlpha = isSelected ? 0.6 : 0.45;
+      ctx.fillStyle = `rgba(255,255,255,${coreAlpha})`;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Selection ring
     if (isSelected || isCenter) {
@@ -451,6 +576,18 @@ function renderGraph(
       }
     }
 
+    // ID star marker — nodes that have minted Identity Prism get a star icon
+    if ((node as any).hasMintedId) {
+      const starY = node.y - r - 8;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fbbf24';
+      ctx.shadowColor = '#fbbf24';
+      ctx.shadowBlur = 6;
+      ctx.fillText('★', node.x, starY);
+      ctx.shadowBlur = 0;
+    }
+
     // ── Labels with glow shadow ──
     if (zoom > 0.5 || isCenter || isSelected) {
       const fontSize = isCenter ? 12 : isSelected ? 10 : 9;
@@ -466,15 +603,27 @@ function renderGraph(
         ? 'rgba(255,255,255,0.92)'
         : isCenter
           ? 'rgba(255,255,255,0.8)'
-          : 'rgba(255,255,255,0.45)';
+          : 'rgba(255,255,255,0.65)';
       ctx.fillText(node.label, node.x, node.y + r + 15);
       ctx.shadowBlur = 0;
 
-      // SOL volume under label
+      // Tier badge under label
+      if (node.tier) {
+        const tierText = node.tier.toUpperCase();
+        const tierFontSize = isCenter ? 10 : 7;
+        ctx.font = `bold ${tierFontSize}px monospace`;
+        ctx.shadowColor = node.color;
+        ctx.shadowBlur = isCenter ? 10 : 6;
+        ctx.fillStyle = node.color;
+        ctx.fillText(tierText, node.x, node.y + r + (isCenter ? 28 : 26));
+        ctx.shadowBlur = 0;
+      }
+
+      // SOL volume under tier
       if (node.solVolume > 0 && (isSelected || zoom > 1.2)) {
-        ctx.fillStyle = 'rgba(255,255,255,0.2)';
-        ctx.font = '7px monospace';
-        ctx.fillText(`${(node.solVolume ?? 0).toFixed(1)} SOL`, node.x, node.y + r + 26);
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = '8px monospace';
+        ctx.fillText(`${(node.solVolume ?? 0).toFixed(1)} SOL`, node.x, node.y + r + (node.tier ? 38 : 26));
       }
     }
   }
@@ -746,9 +895,25 @@ export default function ConstellationNetwork() {
 
       try {
         const base = getHeliusProxyUrl() || window.location.origin;
-        const res = await fetch(`${base}/api/constellation?address=${targetAddress}&depth=2`);
-        if (res.ok) {
-          const data: ConstellationData = await res.json();
+        // Fetch reputation first (for tier), then constellation with tier param
+        let tier: string | null = null;
+        try {
+          const repRes = await fetch(`${base}/api/reputation?address=${targetAddress}`);
+          if (repRes.ok) {
+            const rep = await repRes.json();
+            tier = rep?.tier || null;
+          }
+        } catch { /* reputation optional */ }
+
+        const constUrl = `${base}/api/constellation?address=${targetAddress}&depth=2${tier ? `&tier=${tier}` : ''}`;
+        const constRes = await fetch(constUrl);
+        if (constRes.ok) {
+          const data: ConstellationData = await constRes.json();
+          // Ensure center node has tier even if server didn't set it
+          if (tier) {
+            const centerNode = data.nodes.find(n => n.isCenter);
+            if (centerNode && !centerNode.tier) centerNode.tier = tier;
+          }
           nodesRef.current = data.nodes;
           edgesRef.current = data.edges;
           rebuildNodeMap(data.nodes);
@@ -947,37 +1112,58 @@ export default function ConstellationNetwork() {
         </div>
       )}
 
-      {/* Selected node details */}
-      {selectedNode && !selectedNode.isCenter && (
+      {/* Selected node details — expanded panel */}
+      {selectedNode && !selectedNode.isCenter && (() => {
+        const edge = edgesRef.current.find(e => e.target === selectedNode.id || e.source === selectedNode.id);
+        const outSol = edge?.outSol ?? 0;
+        const inSol = edge?.inSol ?? 0;
+        return (
         <div className="absolute bottom-20 left-4 right-4 z-10 max-w-sm mx-auto">
           <div className="rounded-xl bg-black/80 backdrop-blur-md border border-white/[0.08] p-4">
-            <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center gap-3 mb-3">
               <div className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedNode.color, boxShadow: `0 0 8px ${selectedNode.color}60` }} />
-              <span className="text-xs font-mono text-white/70">{selectedNode.id.slice(0, 8)}...{selectedNode.id.slice(-8)}</span>
+              <span className="text-xs font-mono text-white/70 flex-1">{selectedNode.id.slice(0, 8)}...{selectedNode.id.slice(-8)}</span>
+              <button
+                onClick={() => { navigator.clipboard.writeText(selectedNode.id); toast?.('Address copied'); }}
+                className="px-2 py-1 rounded text-[9px] text-white/40 border border-white/10 hover:bg-white/5"
+              >
+                Copy
+              </button>
             </div>
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div>
-                <p className="text-[10px] text-white/30 uppercase">Volume</p>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div className="rounded-lg bg-white/[0.03] px-3 py-2 text-center">
+                <p className="text-[9px] text-white/30 uppercase">Volume</p>
                 <p className="text-xs font-bold text-white/70">{(selectedNode.solVolume ?? 0).toFixed(2)} SOL</p>
               </div>
-              <div>
-                <p className="text-[10px] text-white/30 uppercase">Txns</p>
+              <div className="rounded-lg bg-white/[0.03] px-3 py-2 text-center">
+                <p className="text-[9px] text-white/30 uppercase">Transactions</p>
                 <p className="text-xs font-bold text-white/70">{selectedNode.txCount ?? 0}</p>
               </div>
-              <div>
-                <p className="text-[10px] text-white/30 uppercase">Tier</p>
-                <p className="text-xs font-bold capitalize" style={{ color: selectedNode.color }}>{selectedNode.tier ?? 'Unknown'}</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="rounded-lg bg-green-500/[0.06] px-2 py-1.5 text-center border border-green-500/10">
+                <p className="text-[8px] text-green-400/50 uppercase">Sent</p>
+                <p className="text-[11px] font-bold text-green-400/70">{outSol.toFixed(2)}</p>
+              </div>
+              <div className="rounded-lg bg-blue-500/[0.06] px-2 py-1.5 text-center border border-blue-500/10">
+                <p className="text-[8px] text-blue-400/50 uppercase">Received</p>
+                <p className="text-[11px] font-bold text-blue-400/70">{inSol.toFixed(2)}</p>
+              </div>
+              <div className="rounded-lg bg-white/[0.03] px-2 py-1.5 text-center">
+                <p className="text-[8px] text-white/30 uppercase">Type</p>
+                <p className="text-[11px] font-bold capitalize" style={{ color: selectedNode.color }}>{selectedNode.tier ?? '—'}</p>
               </div>
             </div>
             <button
               onClick={() => exploreWallet(selectedNode.id)}
-              className="mt-3 w-full py-1.5 rounded-lg bg-cyan-600/20 border border-cyan-500/20 text-cyan-300 text-[10px] font-bold tracking-wider uppercase hover:bg-cyan-600/30 transition-colors"
+              className="w-full py-2 rounded-lg bg-cyan-600/20 border border-cyan-500/20 text-cyan-300 text-[10px] font-bold tracking-wider uppercase hover:bg-cyan-600/30 transition-colors"
             >
               Explore this wallet
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Zoom controls */}
       <div className="absolute bottom-6 right-4 z-10 flex flex-col gap-2">

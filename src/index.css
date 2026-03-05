@@ -96,9 +96,19 @@ body:has(.prism-league-page) #root > * {
 }
 
 .scrollable-shell::-webkit-scrollbar,
-.identity-shell.preview-scroll::-webkit-scrollbar {
+.identity-shell.preview-scroll::-webkit-scrollbar,
+.league-scroll::-webkit-scrollbar {
   width: 0;
   height: 0;
+}
+
+.league-scroll {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  touch-action: pan-y;
 }
 
 .background-base {
@@ -139,6 +149,22 @@ body:has(.prism-league-page) #root > * {
   0% { transform: translate3d(0, 0, 0) scale(1); }
   50% { transform: translate3d(-2%, 1%, 0) scale(1.04); }
   100% { transform: translate3d(2%, -1%, 0) scale(1.02); }
+}
+
+/* Forge frame animations */
+@keyframes supernova-rotate {
+  0% { filter: hue-rotate(0deg); }
+  100% { filter: hue-rotate(360deg); }
+}
+
+@keyframes event-horizon-pulse {
+  0%, 100% { box-shadow: 0 0 40px -4px rgba(168,85,247,0.4); }
+  50% { box-shadow: 0 0 60px -2px rgba(168,85,247,0.65); }
+}
+
+@keyframes quantum-march {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; filter: brightness(1.15); }
 }
 
 .identity-gradient {
@@ -3340,6 +3366,11 @@ body:has(.prism-league-page) #root > * {
 @keyframes title-gold-shimmer {
   0% { background-position: 0% 50%; }
   100% { background-position: 200% 50%; }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 /* ═══ v5.0 Mobile-First Styles ═══ */

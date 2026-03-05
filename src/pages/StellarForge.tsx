@@ -22,7 +22,10 @@ import {
   saveLocalLoadout,
   purchaseItem,
   equipItem,
+  unequipItem,
   getItemById,
+  FRAME_STYLES,
+  AURA_GLOW_MAP,
   type ForgeCategory,
   type ForgeItem,
   type ForgeLoadout,
@@ -509,7 +512,18 @@ export default function StellarForge() {
     const newLoadout = equipItem(loadout, item.id);
     saveLocalLoadout(newLoadout);
     setLoadout(newLoadout);
-    toast.success(`Equipped ${item.name}`);
+    toast.success(`Equipped ${item.name}`, {
+      action: { label: 'View Card', onClick: () => navigate('/') },
+    });
+  }, [loadout, navigate]);
+
+  const handleUnequip = useCallback((category: ForgeCategory) => {
+    if (!loadout) return;
+    const newLoadout = unequipItem(loadout, category);
+    saveLocalLoadout(newLoadout);
+    setLoadout(newLoadout);
+    const labels: Record<ForgeCategory, string> = { frame: 'Frame', aura: 'Aura', ship_skin: 'Ship Skin', title: 'Title' };
+    toast.success(`Unequipped ${labels[category]}`);
   }, [loadout]);
 
   const isOwned = useCallback((id: string) => loadout?.ownedItems.some((o) => o.itemId === id) ?? false, [loadout]);
@@ -829,6 +843,12 @@ export default function StellarForge() {
                         <p className="text-white font-bold text-sm">{equippedItem.name}</p>
                         <p className="text-white/25 text-[10px] truncate mt-0.5">{equippedItem.description}</p>
                       </div>
+                      <button
+                        onClick={() => handleUnequip(cat)}
+                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-red-400/70 border border-red-500/15 hover:bg-red-500/10 transition-colors"
+                      >
+                        Unequip
+                      </button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-3 py-2">

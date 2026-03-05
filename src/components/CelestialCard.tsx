@@ -15,6 +15,7 @@ import { BLACKHOLE_ENABLED } from '@/constants';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
+import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
@@ -379,30 +380,29 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           transition={{ type: 'tween', duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
           style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}
         >
-        {/* FRONT */}
+        {/* FRONT — gradient border wrapper for forge frames */}
         <div
-          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] overflow-hidden border-2 bg-[#020408] backface-hidden flex flex-col ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
+          className={`absolute inset-0 w-full h-full rounded-[40px] ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
           style={{
             backfaceVisibility: 'hidden',
             zIndex: isFlipped ? 0 : 20,
-            borderColor: forgeFrame === 'frame_supernova' ? 'rgba(245,158,11,0.6)' :
-                         forgeFrame === 'frame_void' ? 'rgba(139,92,246,0.5)' :
-                         forgeFrame === 'frame_quantum' ? 'rgba(34,211,238,0.5)' :
-                         forgeFrame === 'frame_solar_flare' ? 'rgba(251,191,36,0.5)' :
-                         forgeFrame === 'frame_event_horizon' ? 'rgba(168,85,247,0.6)' :
-                         forgeFrame === 'frame_nebula' ? 'rgba(147,51,234,0.4)' :
-                         'rgba(6,182,212,0.3)',
-            boxShadow: forgeFrame ? `0 0 30px -4px ${forgeFrame.includes('supernova') ? 'rgba(245,158,11,0.3)' : forgeFrame.includes('void') ? 'rgba(139,92,246,0.3)' : 'rgba(6,182,212,0.15)'}` : '0 0 20px -4px rgba(6,182,212,0.15)',
-            ...(forgeAura ? {
-              borderColor:
-                forgeAura === 'aura_frost' ? 'rgba(96,165,250,0.6)' :
-                forgeAura === 'aura_ember' ? 'rgba(239,68,68,0.7)' :
-                forgeAura === 'aura_electric' ? 'rgba(59,130,246,0.7)' :
-                forgeAura === 'aura_plasma' ? 'rgba(168,85,247,0.7)' :
-                forgeAura === 'aura_dark_matter' ? 'rgba(126,34,206,0.7)' :
-                forgeAura === 'aura_binary_pulse' ? 'rgba(34,211,238,0.7)' :
-                undefined,
-            } : {}),
+            padding: forgeFrame && FRAME_STYLES[forgeFrame] ? 2 : 0,
+            background: (forgeFrame && FRAME_STYLES[forgeFrame]?.gradient) || 'transparent',
+            borderRadius: 40,
+            boxShadow: (() => {
+              const fs = forgeFrame ? FRAME_STYLES[forgeFrame] : null;
+              const base = fs?.boxShadow || '0 0 20px -4px rgba(6,182,212,0.15)';
+              const aura = forgeAura ? AURA_GLOW_MAP[forgeAura] : null;
+              return aura ? `${base}, ${aura}` : base;
+            })(),
+            animation: (forgeFrame && FRAME_STYLES[forgeFrame]?.animation) || undefined,
+          }}
+        >
+        <div
+          className={`celestial-card-face w-full h-full rounded-[38px] overflow-hidden ${forgeFrame && FRAME_STYLES[forgeFrame] ? '' : 'border-2'} bg-[#020408] backface-hidden flex flex-col`}
+          style={{
+            backfaceVisibility: 'hidden',
+            borderColor: forgeFrame && FRAME_STYLES[forgeFrame] ? undefined : 'rgba(6,182,212,0.3)',
           }}
         >
           {/* Card background — separate suckable piece */}
@@ -663,6 +663,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                )}
             </div>
           </div>
+        </div>
         </div>
 
         {/* BACK */}

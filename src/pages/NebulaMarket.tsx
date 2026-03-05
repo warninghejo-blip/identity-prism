@@ -693,7 +693,7 @@ interface Challenge {
   opponent: string | null;
   type: 'score' | 'game';
   gameMode: string | null;
-  stakeType: 'prism' | 'coins';
+  stakeType: 'coins' | 'sol';
   stakeAmount: number;
   status: 'open' | 'accepted' | 'playing' | 'completed' | 'cancelled';
   creatorScore: number | null;
@@ -702,6 +702,8 @@ interface Challenge {
   createdAt: number;
   acceptedAt: number | null;
   completedAt: number | null;
+  solPayoutStatus?: string;
+  solPayoutTx?: string;
 }
 
 // ── Server health check ──
@@ -865,6 +867,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
   const [formType, setFormType] = useState<'score' | 'game'>('score');
   const [formGameMode, setFormGameMode] = useState<'orbit' | 'destroyer' | 'gravity'>('orbit');
   const [formStake, setFormStake] = useState<number>(10);
+  const [formBetType, setFormBetType] = useState<'coins' | 'sol'>('coins');
   const [formOpponent, setFormOpponent] = useState('');
 
   // Track previous "mine" for change detection
@@ -919,9 +922,9 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
                 toast.info('Challenge is now in play!');
               } else if (c.status === 'completed') {
                 if (c.winner === myAddress) {
-                  toast.success(`You won ${c.stakeAmount * 2} Coins!`);
+                  toast.success(`You won ${c.stakeAmount * 2} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'}!`);
                 } else {
-                  toast.error(`You lost the challenge. ${c.stakeAmount} Coins gone.`);
+                  toast.error(`You lost the challenge. ${c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'} gone.`);
                 }
               } else if (c.status === 'cancelled') {
                 toast.info('Challenge was cancelled.');
@@ -955,8 +958,13 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
       toast.error('Connect your wallet first');
       return;
     }
-    if (formStake < 1 || formStake > 1000) {
+    const isSol = formBetType === 'sol';
+    if (!isSol && (formStake < 1 || formStake > 1000)) {
       toast.error('Stake must be between 1 and 1000 Coins');
+      return;
+    }
+    if (isSol && (formStake <= 0 || formStake > 10)) {
+      toast.error('SOL stake must be between 0.01 and 10 SOL');
       return;
     }
 
@@ -975,10 +983,37 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
         }
       }
 
+      let solTxSignature: string | undefined;
+      // SOL bet: send SOL to treasury first
+      if (isSol) {
+        try {
+          const { Connection: SolConn, PublicKey: SolPK, SystemProgram: SolSP, Transaction: SolTx } = await import('@solana/web3.js');
+          const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
+          const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          const tx = new SolTx().add(
+            SolSP.transfer({ fromPubkey: new SolPK(myAddress), toPubkey: new SolPK(treasuryAddr), lamports: Math.floor(formStake * 1e9) })
+          );
+          tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+          tx.feePayer = new SolPK(myAddress);
+          const signed = await wallet.signTransaction!(tx);
+          const sig = await conn.sendRawTransaction(signed.serialize());
+          await conn.confirmTransaction(sig, 'confirmed');
+          solTxSignature = sig;
+          toast.info('SOL transfer confirmed, creating challenge...');
+        } catch (e: any) {
+          toast.error(e?.message || 'SOL transfer failed');
+          setSubmitting(false);
+          actionLockRef.current = false;
+          return;
+        }
+      }
+
       const body: Record<string, unknown> = {
         type: formType,
         stakeAmount: formStake,
+        betType: formBetType,
       };
+      if (isSol && solTxSignature) body.solTxSignature = solTxSignature;
       if (formType === 'game') body.gameMode = formGameMode;
       if (formOpponent.trim().length >= 32) body.opponent = formOpponent.trim();
 
@@ -992,10 +1027,10 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
       });
 
       if (res.ok) {
-        toast.success('Challenge created!');
+        toast.success(`Challenge created! ${isSol ? formStake + ' SOL' : formStake + ' Coins'} staked`);
         setCreating(false);
         setFormOpponent('');
-        setFormStake(10);
+        setFormStake(isSol ? 0.1 : 10);
         fetchOpen();
         fetchMine();
       } else {
@@ -1008,7 +1043,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
       actionLockRef.current = false;
     }
     setSubmitting(false);
-  }, [myAddress, formType, formGameMode, formStake, formOpponent, base, wallet, fetchOpen, fetchMine]);
+  }, [myAddress, formType, formGameMode, formStake, formBetType, formOpponent, base, wallet, fetchOpen, fetchMine]);
 
   // ── Accept challenge ──
   const handleAccept = useCallback(async (challengeId: string) => {
@@ -1032,13 +1067,42 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
         }
       }
 
+      // Find the challenge to check if it's SOL
+      const challenge = [...openChallenges, ...myChallenges].find(c => c.id === challengeId);
+      let solTxSignature: string | undefined;
+      if (challenge?.stakeType === 'sol') {
+        try {
+          const { Connection: SolConn, PublicKey: SolPK, SystemProgram: SolSP, Transaction: SolTx } = await import('@solana/web3.js');
+          const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
+          const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          const tx = new SolTx().add(
+            SolSP.transfer({ fromPubkey: new SolPK(myAddress), toPubkey: new SolPK(treasuryAddr), lamports: Math.floor(challenge.stakeAmount * 1e9) })
+          );
+          tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+          tx.feePayer = new SolPK(myAddress);
+          const signed = await wallet.signTransaction!(tx);
+          const sig = await conn.sendRawTransaction(signed.serialize());
+          await conn.confirmTransaction(sig, 'confirmed');
+          solTxSignature = sig;
+          toast.info('SOL transfer confirmed, accepting challenge...');
+        } catch (e: any) {
+          toast.error(e?.message || 'SOL transfer failed');
+          setAcceptingId(null);
+          actionLockRef.current = false;
+          return;
+        }
+      }
+
+      const acceptBody: Record<string, unknown> = { challengeId };
+      if (solTxSignature) acceptBody.solTxSignature = solTxSignature;
+
       const res = await fetch(`${base}/api/challenge/accept`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
-        body: JSON.stringify({ challengeId }),
+        body: JSON.stringify(acceptBody),
       });
 
       if (res.ok) {
@@ -1055,7 +1119,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
       actionLockRef.current = false;
     }
     setAcceptingId(null);
-  }, [myAddress, base, wallet, fetchOpen, fetchMine]);
+  }, [myAddress, base, wallet, fetchOpen, fetchMine, openChallenges, myChallenges]);
 
   // ── Cancel challenge ──
   const handleCancel = useCallback(async (challengeId: string) => {
@@ -1197,20 +1261,54 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
             </div>
           )}
 
+          {/* Bet type toggle */}
+          <div>
+            <label className="text-[10px] uppercase tracking-widest text-white/30 font-bold mb-1.5 block">Bet Currency</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setFormBetType('coins'); setFormStake(10); }}
+                className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all border ${
+                  formBetType === 'coins' ? 'bg-amber-400/15 border-amber-400/40 text-amber-400' : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50'
+                }`}
+              >
+                Coins
+              </button>
+              <button
+                onClick={() => { setFormBetType('sol'); setFormStake(0.1); }}
+                className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all border ${
+                  formBetType === 'sol' ? 'bg-purple-400/15 border-purple-400/40 text-purple-400' : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50'
+                }`}
+              >
+                SOL
+              </button>
+            </div>
+          </div>
+
           {/* Stake amount */}
           <div>
-            <label className="text-[10px] uppercase tracking-widest text-white/30 font-bold mb-1.5 block">Stake Amount</label>
+            <label className="text-[10px] uppercase tracking-widest text-white/30 font-bold mb-1.5 block">
+              Stake Amount {formBetType === 'sol' && <span className="text-purple-400/50">(10% fee)</span>}
+            </label>
             <div className="relative">
               <input
                 type="number"
-                min={1}
-                max={1000}
+                min={formBetType === 'sol' ? 0.01 : 1}
+                max={formBetType === 'sol' ? 10 : 1000}
+                step={formBetType === 'sol' ? 0.01 : 1}
                 value={formStake}
-                onChange={(e) => setFormStake(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
+                onChange={(e) => {
+                  const v = Number(e.target.value) || 0;
+                  setFormStake(formBetType === 'sol' ? Math.max(0.01, Math.min(10, v)) : Math.max(1, Math.min(1000, Math.floor(v))));
+                }}
                 className="w-full px-4 py-3 pr-20 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-white font-bold focus:outline-none focus:border-amber-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-amber-400/60">Coins</span>
+              <span className={`absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold ${formBetType === 'sol' ? 'text-purple-400/60' : 'text-amber-400/60'}`}>
+                {formBetType === 'sol' ? 'SOL' : 'Coins'}
+              </span>
             </div>
+            {formBetType === 'sol' && (
+              <p className="text-[10px] text-white/20 mt-1">Winner gets {(formStake * 2 * 0.9).toFixed(3)} SOL (90% of pool)</p>
+            )}
           </div>
 
           {/* Opponent (optional) */}
@@ -1236,7 +1334,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
             {submitting ? (
               <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Creating...</>
             ) : (
-              <><Swords className="w-4 h-4 mr-2" /> Create Challenge — {formStake} Coins</>
+              <><Swords className="w-4 h-4 mr-2" /> Create Challenge — {formStake} {formBetType === 'sol' ? 'SOL' : 'Coins'}</>
             )}
           </Button>
         </div>
@@ -1280,7 +1378,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-bold text-amber-400 flex items-center gap-1">
                       <Zap className="w-3.5 h-3.5" />
-                      {c.stakeAmount} Coins
+                      {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
                     </span>
                     <span className="text-[10px] text-white/20">
                       <Clock className="w-3 h-3 inline mr-0.5 -mt-0.5" />
@@ -1365,7 +1463,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
                 {/* Stake */}
                 <div className="flex items-center gap-1 text-sm font-bold text-amber-400 mb-3">
                   <Zap className="w-3.5 h-3.5" />
-                  {c.stakeAmount} Coins
+                  {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
                 </div>
 
                 {/* Completed: show results */}
@@ -1374,7 +1472,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className={`text-xs font-bold ${didWin ? 'text-green-400' : 'text-red-400'}`}>
-                          {didWin ? `Won ${c.stakeAmount * 2} Coins` : 'Lost'}
+                          {didWin ? `Won ${c.stakeAmount * 2} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'}` : 'Lost'}
                         </p>
                         {(myScore !== null || theirScore !== null) && (
                           <p className="text-[10px] text-white/30 mt-0.5">

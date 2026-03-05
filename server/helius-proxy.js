@@ -142,7 +142,16 @@ const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
 // ── JWT Auth ──────────────────────────────────────────────────────────────────
-const JWT_SECRET = (process.env.JWT_SECRET ?? crypto.randomBytes(32).toString('hex')).trim();
+const JWT_SECRET_FILE = path.join(process.cwd(), '.jwt_secret');
+const JWT_SECRET = (() => {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET.trim();
+  try {
+    if (fs.existsSync(JWT_SECRET_FILE)) return fs.readFileSync(JWT_SECRET_FILE, 'utf8').trim();
+  } catch {}
+  const secret = crypto.randomBytes(32).toString('hex');
+  try { fs.writeFileSync(JWT_SECRET_FILE, secret, 'utf8'); } catch (e) { console.warn('[jwt] Could not persist secret:', e.message); }
+  return secret;
+})();
 const JWT_TTL = '1h';
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 min nonce window
 const authChallenges = new Map(); // nonce → { address, expiresAt }
@@ -161,21 +170,13 @@ setInterval(() => {
  */
 function verifyWalletSignature(address, message, signatureBase64) {
   try {
-    const pubkeyBytes = Buffer.from(new PublicKey(address).toBytes());
+    const nacl = require('tweetnacl');
+    const pubkeyBytes = new PublicKey(address).toBytes();
     const msgBytes = Buffer.from(message, 'utf8');
     const sigBytes = Buffer.from(signatureBase64, 'base64');
-    return crypto.verify(null, msgBytes, { key: pubkeyBytes, dsaEncoding: 'ieee-p1363', format: 'der', type: 'spki' }, sigBytes);
+    return nacl.sign.detached.verify(msgBytes, sigBytes, pubkeyBytes);
   } catch {
-    // fallback: use raw Ed25519 key verify
-    try {
-      const pubkeyBytes = Buffer.from(new PublicKey(address).toBytes());
-      const keyObject = crypto.createPublicKey({ key: pubkeyBytes, format: 'raw', type: 'public' });
-      const msgBytes = Buffer.from(message, 'utf8');
-      const sigBytes = Buffer.from(signatureBase64, 'base64');
-      return crypto.verify(null, msgBytes, keyObject, sigBytes);
-    } catch {
-      return false;
-    }
+    return false;
   }
 }
 
@@ -4116,11 +4117,12 @@ const server = http.createServer(async (req, res) => {
       const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, burn_tokens: 500, burn_nfts: 500, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20 };
       const maxAllowed = MAX_EARN_PER_CALL[source] || 50;
       if (Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
-      // Per-source rate limit
+      // Per-source rate limit with per-source cooldowns
       const rlKey = `${address}:${source || 'unknown'}`;
       const lastEarn = prismEarnRateLimit.get(rlKey) || 0;
-      if (Date.now() - lastEarn < PRISM_EARN_COOLDOWN_MS) {
-        return respondJson(res, 429, { error: 'Rate limited — try again later', cooldownMs: PRISM_EARN_COOLDOWN_MS - (Date.now() - lastEarn) });
+      const cooldownMs = PRISM_EARN_COOLDOWN_TABLE[source] ?? PRISM_EARN_COOLDOWN_DEFAULT;
+      if (Date.now() - lastEarn < cooldownMs) {
+        return respondJson(res, 429, { error: 'Rate limited — try again later', cooldownMs: cooldownMs - (Date.now() - lastEarn) });
       }
       // Global per-address rate limit (max 1 earn per 2 seconds regardless of source)
       const globalKey = `${address}:__global__`;
@@ -4131,7 +4133,7 @@ const server = http.createServer(async (req, res) => {
       prismEarnRateLimit.set(globalKey, Date.now());
       prismEarnRateLimit.set(rlKey, Date.now());
       if (prismEarnRateLimit.size > 5000) {
-        const cutoff = Date.now() - PRISM_EARN_COOLDOWN_MS * 2;
+        const cutoff = Date.now() - PRISM_EARN_COOLDOWN_DEFAULT * 2;
         for (const [k, v] of prismEarnRateLimit) { if (v < cutoff) prismEarnRateLimit.delete(k); }
       }
       const earned = Math.max(0, Math.floor(Number(amount)));
@@ -4218,18 +4220,35 @@ const server = http.createServer(async (req, res) => {
       const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
       const pubkey = new PublicKey(address);
 
-      // Fetch balance, signatures, token accounts, and parsed txs in parallel
+      // Fetch balance, first page of signatures, and token accounts in parallel
       const [balanceResult, signaturesResult, tokenAccountsResult] = await Promise.allSettled([
         conn.getBalance(pubkey),
-        conn.getSignaturesForAddress(pubkey, { limit: 200 }),
+        conn.getSignaturesForAddress(pubkey, { limit: 1000 }),
         conn.getParsedTokenAccountsByOwner(pubkey, { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }),
       ]);
       const balance = balanceResult.status === 'fulfilled' ? balanceResult.value / 1e9 : 0;
       const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
       const tokenAccounts = tokenAccountsResult.status === 'fulfilled' ? tokenAccountsResult.value?.value || [] : [];
 
-      // Parse a subset of transactions for deeper analysis (max 30 to stay fast)
-      const sigBatch = signatures.slice(0, 30).map(s => s.signature);
+      // Paginate to find the true oldest tx (up to 10 pages, 10s timeout) — same depth as fetchIdentitySnapshot
+      let oldestSig = signatures.length > 0 ? signatures[signatures.length - 1] : null;
+      if (signatures.length === 1000) {
+        const ageStart = Date.now();
+        let cursor = oldestSig?.signature;
+        for (let page = 0; page < 9 && cursor; page++) {
+          if (Date.now() - ageStart > 10000) break;
+          try {
+            const older = await conn.getSignaturesForAddress(pubkey, { limit: 1000, before: cursor });
+            if (!older.length) break;
+            oldestSig = older[older.length - 1];
+            if (older.length < 1000) break;
+            cursor = oldestSig.signature;
+          } catch { break; }
+        }
+      }
+
+      // Parse a subset of transactions for deeper analysis (max 60 to stay fast)
+      const sigBatch = signatures.slice(0, 60).map(s => s.signature);
       let parsedTxs = [];
       if (sigBatch.length > 0) {
         try {
@@ -4246,9 +4265,8 @@ const server = http.createServer(async (req, res) => {
       const timestamps = signatures.filter(s => s.blockTime).map(s => s.blockTime * 1000);
       const nowMs = Date.now();
 
-      // 1. Wallet Age
-      const oldestTx = signatures.length > 0 ? signatures[signatures.length - 1] : null;
-      const walletAgeDays = oldestTx?.blockTime ? Math.floor((nowMs / 1000 - oldestTx.blockTime) / 86400) : 0;
+      // 1. Wallet Age (uses paginated oldest tx)
+      const walletAgeDays = oldestSig?.blockTime ? Math.floor((nowMs / 1000 - oldestSig.blockTime) / 86400) : 0;
 
       // 2. Transaction Timing Variance (Coefficient of Variation)
       let timingVariance = 1;
@@ -4300,6 +4318,8 @@ const server = http.createServer(async (req, res) => {
       let historicalMaxBalance = balance; // start with current
       let runningBalance = balance;
       const allProgramIds = new Set();
+      const incomingSenders = new Set();
+      const outgoingRecipients = new Set();
 
       for (const tx of parsedTxs) {
         if (!tx?.meta || !tx?.transaction) continue;
@@ -4323,25 +4343,34 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        // SOL balance changes for target address
+        // SOL balance changes for target address + counterparties
         const accounts = tx.transaction.message?.accountKeys || [];
         const pre = tx.meta.preBalances || [];
         const post = tx.meta.postBalances || [];
+        let targetIdx = -1;
         for (let i = 0; i < accounts.length; i++) {
           const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
-          if (acc === address) {
-            const diffLamports = (post[i] || 0) - (pre[i] || 0);
-            const diffSol = diffLamports / 1e9;
-            if (Math.abs(diffSol) >= 0.0001) {
-              totalSolTxCount++;
-              if (diffSol > 0) { incomingVolume += diffSol; incomingCount++; }
-              else { outgoingVolume += Math.abs(diffSol); outgoingCount++; }
-              if (Math.abs(diffSol) < 0.001) dustTxCount++;
-            }
-            // Track historical balance (approximate from recent txs)
-            const preBal = (pre[i] || 0) / 1e9;
-            if (preBal > historicalMaxBalance) historicalMaxBalance = preBal;
-            break;
+          if (acc === address) { targetIdx = i; break; }
+        }
+        if (targetIdx >= 0) {
+          const diffLamports = (post[targetIdx] || 0) - (pre[targetIdx] || 0);
+          const diffSol = diffLamports / 1e9;
+          if (Math.abs(diffSol) >= 0.0001) {
+            totalSolTxCount++;
+            if (diffSol > 0) { incomingVolume += diffSol; incomingCount++; }
+            else { outgoingVolume += Math.abs(diffSol); outgoingCount++; }
+            if (Math.abs(diffSol) < 0.001) dustTxCount++;
+          }
+          const preBal = (pre[targetIdx] || 0) / 1e9;
+          if (preBal > historicalMaxBalance) historicalMaxBalance = preBal;
+          // Identify counterparties: accounts with opposite balance change
+          for (let i = 0; i < accounts.length; i++) {
+            if (i === targetIdx) continue;
+            const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+            if (!acc || acc === '11111111111111111111111111111111') continue;
+            const otherDiff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+            if (diffSol > 0.001 && otherDiff < -0.001) incomingSenders.add(acc);
+            if (diffSol < -0.001 && otherDiff > 0.001) outgoingRecipients.add(acc);
           }
         }
       }
@@ -4545,6 +4574,9 @@ const server = http.createServer(async (req, res) => {
           tokenDiversityCount, nftCount,
           incomingVolume: Math.round(incomingVolume * 10000) / 10000,
           outgoingVolume: Math.round(outgoingVolume * 10000) / 10000,
+          incomingCount, outgoingCount,
+          uniqueSenders: incomingSenders.size,
+          uniqueRecipients: outgoingRecipients.size,
           flowRatio: Math.round(flowRatio * 100),
           dustRatio: Math.round(dustRatio * 100),
           uniquePrograms,
@@ -4917,8 +4949,9 @@ const server = http.createServer(async (req, res) => {
     if (!jwtAuth.ok) return;
     try {
       const body = JSON.parse(await readBody(req));
-      const { type, gameMode, stakeAmount, opponent } = body;
+      const { type, gameMode, stakeAmount, opponent, betType, solTxSignature } = body;
       const creator = jwtAuth.address;
+      const isSolBet = betType === 'sol';
 
       // Validate type
       if (!type || !['score', 'game'].includes(type)) {
@@ -4931,12 +4964,15 @@ const server = http.createServer(async (req, res) => {
         }
       }
       // Validate stakeAmount
-      const stake = Math.floor(Number(stakeAmount));
+      const stake = isSolBet ? Number(stakeAmount) : Math.floor(Number(stakeAmount));
       if (!Number.isFinite(stake) || stake <= 0) {
         return respondJson(res, 400, { error: 'stakeAmount must be a positive number' });
       }
-      if (stake > 1000) {
+      if (!isSolBet && stake > 1000) {
         return respondJson(res, 400, { error: 'stakeAmount cannot exceed 1000 Coins' });
+      }
+      if (isSolBet && stake > 10) {
+        return respondJson(res, 400, { error: 'SOL stake cannot exceed 10 SOL' });
       }
       // Validate opponent if provided
       if (opponent) {
@@ -4945,17 +4981,40 @@ const server = http.createServer(async (req, res) => {
         }
         try { new PublicKey(opponent); } catch { return respondJson(res, 400, { error: 'Invalid opponent address' }); }
       }
-      // Check creator balance
-      const creatorBal = getPrismBalance(creator);
-      if (creatorBal.balance < stake) {
-        return respondJson(res, 400, { error: `Insufficient balance. Have ${creatorBal.balance} Coins, need ${stake}` });
+
+      if (isSolBet) {
+        // Verify SOL transfer to treasury
+        if (!solTxSignature) return respondJson(res, 400, { error: 'solTxSignature required for SOL bets' });
+        try {
+          const conn = new Connection(getRpcUrl(creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+          const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
+          if (!tx) return respondJson(res, 400, { error: 'Transaction not found' });
+          // Verify transfer to treasury
+          const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          if (!treasuryAddr) return respondJson(res, 500, { error: 'Treasury not configured' });
+          const instructions = tx.transaction?.message?.instructions || [];
+          const validTransfer = instructions.some(ix => {
+            if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
+              const info = ix.parsed.info;
+              return info.destination === treasuryAddr && info.lamports >= Math.floor(stake * 1e9 * 0.99);
+            }
+            return false;
+          });
+          if (!validTransfer) return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' });
+        } catch (e) { return respondJson(res, 400, { error: `Failed to verify SOL transfer: ${e.message}` }); }
+      } else {
+        // Check creator Coin balance
+        const creatorBal = getPrismBalance(creator);
+        if (creatorBal.balance < stake) {
+          return respondJson(res, 400, { error: `Insufficient balance. Have ${creatorBal.balance} Coins, need ${stake}` });
+        }
+        // Lock Coins from creator
+        creatorBal.balance -= stake;
+        creatorBal.totalSpent += stake;
+        creatorBal.lastUpdated = new Date().toISOString();
+        setCoinBalance(creator, creatorBal.balance);
+        debouncedSavePrism();
       }
-      // Lock PRISM from creator
-      creatorBal.balance -= stake;
-      creatorBal.totalSpent += stake;
-      creatorBal.lastUpdated = new Date().toISOString();
-      setCoinBalance(creator, creatorBal.balance);
-      debouncedSavePrism();
 
       const challenge = {
         id: `ch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -4963,7 +5022,7 @@ const server = http.createServer(async (req, res) => {
         opponent: opponent || null,
         type,
         gameMode: type === 'game' ? gameMode : null,
-        stakeType: 'coins',
+        stakeType: isSolBet ? 'sol' : 'coins',
         stakeAmount: stake,
         status: 'open',
         creatorScore: null,
@@ -4972,10 +5031,12 @@ const server = http.createServer(async (req, res) => {
         createdAt: Date.now(),
         acceptedAt: null,
         completedAt: null,
+        solTxCreator: isSolBet ? solTxSignature : null,
+        solTxAcceptor: null,
       };
       challenges.unshift(challenge);
       saveChallenges();
-      console.log(`[challenges] Created ${challenge.id} by ${creator.slice(0, 8)}... (${type}, ${stake} Coins)`);
+      console.log(`[challenges] Created ${challenge.id} by ${creator.slice(0, 8)}... (${type}, ${stake} ${isSolBet ? 'SOL' : 'Coins'})`);
       respondJson(res, 200, { ok: true, challenge });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
@@ -5018,7 +5079,7 @@ const server = http.createServer(async (req, res) => {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
-      const { challengeId } = JSON.parse(await readBody(req));
+      const { challengeId, solTxSignature } = JSON.parse(await readBody(req));
       const acceptor = jwtAuth.address;
       if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
 
@@ -5030,28 +5091,49 @@ const server = http.createServer(async (req, res) => {
         return respondJson(res, 403, { error: 'This challenge is for a specific opponent' });
       }
 
+      const isSolBet = challenge.stakeType === 'sol';
+
       // Lock challenge immediately to prevent race condition on double accept
       challenge.status = 'accepted';
       challenge.opponent = acceptor;
       challenge.acceptedAt = Date.now();
       saveChallenges();
 
-      // Check acceptor balance
-      const acceptorBal = getPrismBalance(acceptor);
-      if (acceptorBal.balance < challenge.stakeAmount) {
-        // Roll back lock — insufficient balance
-        challenge.status = 'open';
-        challenge.opponent = null;
-        challenge.acceptedAt = null;
-        saveChallenges();
-        return respondJson(res, 400, { error: `Insufficient balance. Have ${acceptorBal.balance} Coins, need ${challenge.stakeAmount}` });
+      if (isSolBet) {
+        // Verify SOL transfer from acceptor
+        if (!solTxSignature) {
+          challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges();
+          return respondJson(res, 400, { error: 'solTxSignature required for SOL challenges' });
+        }
+        try {
+          const conn = new Connection(getRpcUrl(acceptor) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+          const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
+          if (!tx) { challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges(); return respondJson(res, 400, { error: 'Transaction not found' }); }
+          const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          const instructions = tx.transaction?.message?.instructions || [];
+          const validTransfer = instructions.some(ix => {
+            if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
+              return ix.parsed.info.destination === treasuryAddr && ix.parsed.info.lamports >= Math.floor(challenge.stakeAmount * 1e9 * 0.99);
+            }
+            return false;
+          });
+          if (!validTransfer) { challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
+          challenge.solTxAcceptor = solTxSignature;
+        } catch (e) { challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges(); return respondJson(res, 400, { error: `Transfer verification failed: ${e.message}` }); }
+      } else {
+        // Check acceptor Coin balance
+        const acceptorBal = getPrismBalance(acceptor);
+        if (acceptorBal.balance < challenge.stakeAmount) {
+          challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges();
+          return respondJson(res, 400, { error: `Insufficient balance. Have ${acceptorBal.balance} Coins, need ${challenge.stakeAmount}` });
+        }
+        // Lock Coins from acceptor
+        acceptorBal.balance -= challenge.stakeAmount;
+        acceptorBal.totalSpent += challenge.stakeAmount;
+        acceptorBal.lastUpdated = new Date().toISOString();
+        setCoinBalance(acceptor, acceptorBal.balance);
       }
-
-      // Lock PRISM from acceptor
-      acceptorBal.balance -= challenge.stakeAmount;
-      acceptorBal.totalSpent += challenge.stakeAmount;
-      acceptorBal.lastUpdated = new Date().toISOString();
-      setCoinBalance(acceptor, acceptorBal.balance);
+      const acceptorBal = isSolBet ? null : getPrismBalance(acceptor);
 
       if (challenge.type === 'score') {
         // Score challenge: immediately resolve by fetching identity scores
@@ -5063,39 +5145,74 @@ const server = http.createServer(async (req, res) => {
           challenge.creatorScore = creatorSnap?.identity?.score ?? 0;
           challenge.opponentScore = opponentSnap?.identity?.score ?? 0;
 
-          // Determine winner
+          // Determine winner — SOL bets use 10% fee, Coin bets use 5%
           const totalPot = challenge.stakeAmount * 2;
-          const winnerPrize = Math.floor(totalPot * 0.95);
+          const feeRate = isSolBet ? 0.10 : 0.05;
+          const winnerPrize = isSolBet ? totalPot * (1 - feeRate) : Math.floor(totalPot * (1 - feeRate));
           const fee = totalPot - winnerPrize;
+
+          const resolveCoinWinner = (winnerAddr) => {
+            const winnerBal = getPrismBalance(winnerAddr);
+            winnerBal.balance += winnerPrize;
+            winnerBal.totalEarned += winnerPrize;
+            winnerBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(winnerAddr, winnerBal.balance);
+          };
+
+          const resolveSolWinner = async (winnerAddr) => {
+            challenge.solPayoutAddress = winnerAddr;
+            challenge.solPayoutAmount = winnerPrize;
+            challenge.solPayoutStatus = 'pending';
+            // Attempt payout from treasury
+            try {
+              const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
+              if (treasurySecret) {
+                const conn = new Connection(getRpcUrl(winnerAddr) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+                const treasuryKeypair = Keypair.fromSecretKey(treasurySecret);
+                const tx = new Transaction().add(
+                  SystemProgram.transfer({ fromPubkey: treasuryKeypair.publicKey, toPubkey: new PublicKey(winnerAddr), lamports: Math.floor(winnerPrize * 1e9) })
+                );
+                tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+                tx.feePayer = treasuryKeypair.publicKey;
+                tx.sign(treasuryKeypair);
+                const sig = await conn.sendRawTransaction(tx.serialize());
+                challenge.solPayoutTx = sig;
+                challenge.solPayoutStatus = 'sent';
+                console.log(`[challenges] SOL payout ${winnerPrize} SOL → ${winnerAddr.slice(0,8)}... tx: ${sig}`);
+              }
+            } catch (e) { console.warn('[challenges] SOL payout failed:', e.message); challenge.solPayoutStatus = 'failed'; }
+          };
+
           if (challenge.creatorScore > challenge.opponentScore) {
             challenge.winner = challenge.creator;
-            const winnerBal = getPrismBalance(challenge.creator);
-            winnerBal.balance += winnerPrize;
-            winnerBal.totalEarned += winnerPrize;
-            winnerBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(challenge.creator, winnerBal.balance);
+            if (isSolBet) await resolveSolWinner(challenge.creator);
+            else resolveCoinWinner(challenge.creator);
           } else if (challenge.opponentScore > challenge.creatorScore) {
             challenge.winner = acceptor;
-            const winnerBal = getPrismBalance(acceptor);
-            winnerBal.balance += winnerPrize;
-            winnerBal.totalEarned += winnerPrize;
-            winnerBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(acceptor, winnerBal.balance);
+            if (isSolBet) await resolveSolWinner(acceptor);
+            else resolveCoinWinner(acceptor);
           } else {
             // Tie — refund both (no fee)
             challenge.winner = null;
-            const creatorBal = getPrismBalance(challenge.creator);
-            creatorBal.balance += challenge.stakeAmount;
-            creatorBal.totalSpent -= challenge.stakeAmount;
-            creatorBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(challenge.creator, creatorBal.balance);
-            acceptorBal.balance += challenge.stakeAmount;
-            acceptorBal.totalSpent -= challenge.stakeAmount;
-            acceptorBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(acceptor, acceptorBal.balance);
+            if (!isSolBet) {
+              const creatorBal = getPrismBalance(challenge.creator);
+              creatorBal.balance += challenge.stakeAmount;
+              creatorBal.totalSpent -= challenge.stakeAmount;
+              creatorBal.lastUpdated = new Date().toISOString();
+              setCoinBalance(challenge.creator, creatorBal.balance);
+              if (acceptorBal) {
+                acceptorBal.balance += challenge.stakeAmount;
+                acceptorBal.totalSpent -= challenge.stakeAmount;
+                acceptorBal.lastUpdated = new Date().toISOString();
+                setCoinBalance(acceptor, acceptorBal.balance);
+              }
+            } else {
+              // SOL tie: refund both from treasury
+              challenge.solPayoutStatus = 'tie_refund_pending';
+            }
           }
-          // Send 5% fee to treasury (not burned)
-          if (challenge.winner && fee > 0) {
+          // Fee to treasury (Coin bets only — SOL fee stays in treasury naturally)
+          if (!isSolBet && challenge.winner && fee > 0) {
             const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
             const tBal = getPrismBalance(treasuryAddr);
             tBal.balance += fee;
@@ -5108,20 +5225,24 @@ const server = http.createServer(async (req, res) => {
         } catch (scoreErr) {
           // Score fetch failed — refund both and cancel
           console.warn('[challenges] Score fetch failed for', challengeId, scoreErr.message);
-          const creatorBal = getPrismBalance(challenge.creator);
-          creatorBal.balance += challenge.stakeAmount;
-          creatorBal.totalSpent -= challenge.stakeAmount;
-          creatorBal.lastUpdated = new Date().toISOString();
-          setCoinBalance(challenge.creator, creatorBal.balance);
-          acceptorBal.balance += challenge.stakeAmount;
-          acceptorBal.totalSpent -= challenge.stakeAmount;
-          acceptorBal.lastUpdated = new Date().toISOString();
-          setCoinBalance(acceptor, acceptorBal.balance);
+          if (!isSolBet) {
+            const creatorBal = getPrismBalance(challenge.creator);
+            creatorBal.balance += challenge.stakeAmount;
+            creatorBal.totalSpent -= challenge.stakeAmount;
+            creatorBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(challenge.creator, creatorBal.balance);
+            if (acceptorBal) {
+              acceptorBal.balance += challenge.stakeAmount;
+              acceptorBal.totalSpent -= challenge.stakeAmount;
+              acceptorBal.lastUpdated = new Date().toISOString();
+              setCoinBalance(acceptor, acceptorBal.balance);
+            }
+          }
           challenge.status = 'cancelled';
           challenge.completedAt = Date.now();
           debouncedSavePrism();
           saveChallenges();
-          return respondJson(res, 500, { ok: false, error: 'Failed to fetch identity scores. Both stakes refunded.' });
+          return respondJson(res, 500, { ok: false, error: 'Failed to fetch identity scores. Stakes refunded.' });
         }
       } else {
         // Game challenge: set to playing, wait for score submissions
@@ -5169,39 +5290,66 @@ const server = http.createServer(async (req, res) => {
 
       // If both scores submitted, resolve the challenge
       if (challenge.creatorScore !== null && challenge.opponentScore !== null) {
+        const isSolBet = challenge.stakeType === 'sol';
         const totalPot = challenge.stakeAmount * 2;
-        const winnerPrize = Math.floor(totalPot * 0.95);
+        const feeRate = isSolBet ? 0.10 : 0.05;
+        const winnerPrize = isSolBet ? totalPot * (1 - feeRate) : Math.floor(totalPot * (1 - feeRate));
         const fee = totalPot - winnerPrize;
+
+        const awardCoinWinner = (addr) => {
+          const bal = getPrismBalance(addr);
+          bal.balance += winnerPrize;
+          bal.totalEarned += winnerPrize;
+          bal.lastUpdated = new Date().toISOString();
+          setCoinBalance(addr, bal.balance);
+        };
+
+        const awardSolWinner = async (addr) => {
+          challenge.solPayoutAddress = addr;
+          challenge.solPayoutAmount = winnerPrize;
+          challenge.solPayoutStatus = 'pending';
+          try {
+            const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
+            if (treasurySecret) {
+              const conn = new Connection(getRpcUrl(addr) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+              const kp = Keypair.fromSecretKey(treasurySecret);
+              const tx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(addr), lamports: Math.floor(winnerPrize * 1e9) })
+              );
+              tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+              tx.feePayer = kp.publicKey;
+              tx.sign(kp);
+              const sig = await conn.sendRawTransaction(tx.serialize());
+              challenge.solPayoutTx = sig;
+              challenge.solPayoutStatus = 'sent';
+            }
+          } catch (e) { console.warn('[challenges] SOL payout failed:', e.message); challenge.solPayoutStatus = 'failed'; }
+        };
+
         if (challenge.creatorScore > challenge.opponentScore) {
           challenge.winner = challenge.creator;
-          const winnerBal = getPrismBalance(challenge.creator);
-          winnerBal.balance += winnerPrize;
-          winnerBal.totalEarned += winnerPrize;
-          winnerBal.lastUpdated = new Date().toISOString();
-          setCoinBalance(challenge.creator, winnerBal.balance);
+          if (isSolBet) await awardSolWinner(challenge.creator);
+          else awardCoinWinner(challenge.creator);
         } else if (challenge.opponentScore > challenge.creatorScore) {
           challenge.winner = challenge.opponent;
-          const winnerBal = getPrismBalance(challenge.opponent);
-          winnerBal.balance += winnerPrize;
-          winnerBal.totalEarned += winnerPrize;
-          winnerBal.lastUpdated = new Date().toISOString();
-          setCoinBalance(challenge.opponent, winnerBal.balance);
+          if (isSolBet) await awardSolWinner(challenge.opponent);
+          else awardCoinWinner(challenge.opponent);
         } else {
-          // Tie — refund both (no fee)
           challenge.winner = null;
-          const creatorBal = getPrismBalance(challenge.creator);
-          creatorBal.balance += challenge.stakeAmount;
-          creatorBal.totalSpent -= challenge.stakeAmount;
-          creatorBal.lastUpdated = new Date().toISOString();
-          setCoinBalance(challenge.creator, creatorBal.balance);
-          const opponentBal = getPrismBalance(challenge.opponent);
-          opponentBal.balance += challenge.stakeAmount;
-          opponentBal.totalSpent -= challenge.stakeAmount;
-          opponentBal.lastUpdated = new Date().toISOString();
-          setCoinBalance(challenge.opponent, opponentBal.balance);
+          if (!isSolBet) {
+            const creatorBal = getPrismBalance(challenge.creator);
+            creatorBal.balance += challenge.stakeAmount;
+            creatorBal.totalSpent -= challenge.stakeAmount;
+            creatorBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(challenge.creator, creatorBal.balance);
+            const opponentBal = getPrismBalance(challenge.opponent);
+            opponentBal.balance += challenge.stakeAmount;
+            opponentBal.totalSpent -= challenge.stakeAmount;
+            opponentBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(challenge.opponent, opponentBal.balance);
+          }
         }
-        // Send 5% fee to treasury (not burned)
-        if (challenge.winner && fee > 0) {
+        if (!isSolBet && challenge.winner && fee > 0) {
           const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
           const tBal = getPrismBalance(treasuryAddr);
           tBal.balance += fee;
@@ -5235,13 +5383,34 @@ const server = http.createServer(async (req, res) => {
       if (challenge.creator !== canceller) return respondJson(res, 403, { error: 'Only the creator can cancel a challenge' });
       if (challenge.status !== 'open') return respondJson(res, 400, { error: 'Can only cancel open challenges (no opponent yet)' });
 
-      // Refund creator's stake (reverse the totalSpent from creation)
-      const creatorBal = getPrismBalance(challenge.creator);
-      creatorBal.balance += challenge.stakeAmount;
-      creatorBal.totalSpent -= challenge.stakeAmount;
-      creatorBal.lastUpdated = new Date().toISOString();
-      setCoinBalance(challenge.creator, creatorBal.balance);
-      debouncedSavePrism();
+      // Refund creator's stake
+      if (challenge.stakeType === 'sol') {
+        // SOL refund — send from treasury back to creator
+        challenge.solPayoutStatus = 'cancel_refund_pending';
+        try {
+          const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
+          if (treasurySecret) {
+            const conn = new Connection(getRpcUrl(challenge.creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+            const kp = Keypair.fromSecretKey(treasurySecret);
+            const tx = new Transaction().add(
+              SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.creator), lamports: Math.floor(challenge.stakeAmount * 1e9) })
+            );
+            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx.feePayer = kp.publicKey;
+            tx.sign(kp);
+            const sig = await conn.sendRawTransaction(tx.serialize());
+            challenge.solPayoutTx = sig;
+            challenge.solPayoutStatus = 'refunded';
+          }
+        } catch (e) { console.warn('[challenges] SOL refund failed:', e.message); }
+      } else {
+        const creatorBal = getPrismBalance(challenge.creator);
+        creatorBal.balance += challenge.stakeAmount;
+        creatorBal.totalSpent -= challenge.stakeAmount;
+        creatorBal.lastUpdated = new Date().toISOString();
+        setCoinBalance(challenge.creator, creatorBal.balance);
+        debouncedSavePrism();
+      }
 
       challenge.status = 'cancelled';
       challenge.completedAt = Date.now();
@@ -5290,7 +5459,8 @@ const server = http.createServer(async (req, res) => {
       const { parsed } = await fetchParsedTransactions(address, 80);
       const { incoming, outgoing, programIds } = extractSolTransfers(parsed, address);
       const nodeMap = new Map();
-      nodeMap.set(address, { id: address, label: address.slice(0, 4) + '...' + address.slice(-4), size: 14, x: 0, y: 0, vx: 0, vy: 0, color: '#22d3ee', isCenter: true, solVolume: 0, txCount: 0 });
+      const centerTier = url.searchParams.get('tier') || null;
+      nodeMap.set(address, { id: address, label: address.slice(0, 4) + '...' + address.slice(-4), size: 14, x: 0, y: 0, vx: 0, vy: 0, color: '#22d3ee', isCenter: true, solVolume: 0, txCount: 0, tier: centerTier });
       const allCounterparties = new Map();
       for (const [addr, info] of incoming) {
         // Double-check: skip any remaining program addresses
@@ -5525,11 +5695,20 @@ function getPrismBalance(address) {
   return { address, balance: coins, totalEarned: coins, totalSpent: 0, lastUpdated: new Date().toISOString() };
 }
 
-// PRISM earn rate-limit: max 1 earn per source per 5 min per address
+// PRISM earn rate-limit: per-source cooldowns
 const prismEarnRateLimit = new Map(); // key: `${address}:${source}` → timestamp
 // Reputation v1 rate-limit: 1 request per 10 seconds per IP
 const reputationRateLimit = new Map(); // key: `repv1:${ip}` → timestamp
-const PRISM_EARN_COOLDOWN_MS = 5 * 60 * 1000;
+const PRISM_EARN_COOLDOWN_TABLE = {
+  game_orbit: 60_000,
+  game_defender: 60_000,
+  game_gravity: 60_000,
+  quest_daily: 24 * 60 * 60_000,
+  quest_weekly: 7 * 24 * 60 * 60_000,
+  challenge_win: 10_000,
+  scan_wallet: 30_000,
+};
+const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;
 
 // Known CEX/Bridge/DEX addresses for labeling
 const KNOWN_LABELS = {

@@ -38,18 +38,19 @@ interface GravityRunnerProps {
 const GROUND_H = 40;
 const SHIP_W = 36;
 const SHIP_H = 36;
-const GRAVITY = 0.32;              // reduced gravity for smoother feel
-const FLAP_VEL = -5.8;            // upward impulse on tap (tuned for lower gravity)
-const MAX_FALL_VEL = 7;           // terminal velocity
-const BASE_SPEED = 2.2;           // starting speed (~60% of old 3.5)
-const MAX_SPEED = 3.8;            // cap near old base speed
-const SPEED_RAMP_INTERVAL = 600;  // frames between speed increases (~10 sec at 60fps)
-const SPEED_RAMP_AMOUNT = 0.04;   // ~2% of base per ramp step
+const GRAVITY = 0.48;              // stronger gravity, snappier feel
+const FLAP_VEL = -7.8;            // sharper jumps
+const MAX_FALL_VEL = 8;           // terminal velocity
+const BASE_SPEED = 4.0;           // fast start
+const MAX_SPEED = 7.5;            // high ceiling
+const SPEED_RAMP_INTERVAL = 250;  // fast ramp-up (~4 sec at 60fps)
+const SPEED_RAMP_AMOUNT = 0.08;   // aggressive ramp
 const CRYSTAL_SIZE = 14;
-const CRYSTAL_INTERVAL = 55;
-const MIN_COL_GAP_PX = 135;       // minimum vertical gap between columns (px)
-const MIN_COL_SPACING_PX = 220;   // minimum horizontal distance between columns (px)
-const GAP_SHRINK_PER_MIN = 8;     // gap shrinks this many px per minute of play
+const CRYSTAL_INTERVAL = 45;
+const MIN_COL_GAP_PX = 115;       // minimum vertical gap between columns (px)
+const MIN_COL_SPACING_PX = 160;   // tighter horizontal distance between columns (px)
+const GAP_SHRINK_PER_MIN = 12;    // gap shrinks faster
+const DYNAMIC_COL_SCORE = 15;     // score threshold when dynamic columns start appearing
 
 // ── Level themes ──
 interface LevelTheme {
@@ -105,10 +106,25 @@ interface AsteroidField {
   gapH: number;
 }
 
+/** Dynamic column: emerges from top or bottom, animated extension */
+interface DynamicColumn {
+  x: number;
+  width: number;
+  fromTop: boolean;       // true = descends from ceiling, false = rises from floor
+  maxH: number;           // final height
+  currentH: number;       // current animated height
+  growSpeed: number;       // px per frame growth
+  passed: boolean;
+  jagged: number[];
+  crackSeeds: number[];
+  pulsing: boolean;       // wobbles at full extension
+}
+
 type ObstacleUnion =
   | { kind: 'column'; data: AsteroidColumn }
   | { kind: 'laser'; data: LaserBeam }
-  | { kind: 'field'; data: AsteroidField };
+  | { kind: 'field'; data: AsteroidField }
+  | { kind: 'dynamic'; data: DynamicColumn };
 
 interface Crystal {
   x: number;
@@ -270,7 +286,7 @@ export default function GravityRunnerScene({
     s.crystals = [];
     s.particles = [];
     s.trail = [];
-    s.nextObstacle = 150;   // grace period at start before first obstacle
+    s.nextObstacle = 100;   // grace period at start before first obstacle
     s.nextCrystal = 80;
     s.frameCount = 0;
     s.alive = true;
@@ -358,9 +374,7 @@ export default function GravityRunnerScene({
     function rightmostObstacleX(): number {
       let maxX = -Infinity;
       for (const o of s.obstacles) {
-        const ox = o.kind === 'column' ? o.data.x + o.data.width
-                 : o.kind === 'laser'  ? o.data.x + o.data.width
-                 : o.data.x + o.data.width;
+        const ox = o.data.x + (o.data.width ?? 0);
         if (ox > maxX) maxX = ox;
       }
       return maxX;
@@ -377,8 +391,30 @@ export default function GravityRunnerScene({
       const rightEdge = rightmostObstacleX();
       const spawnX = Math.max(W + 30, rightEdge + MIN_COL_SPACING_PX);
 
+      // Dynamic columns appear after DYNAMIC_COL_SCORE
+      const canDynamic = s.score >= DYNAMIC_COL_SCORE;
       const roll = Math.random();
-      if (roll < 0.55) {
+      // At high scores, existing column types also become dynamic occasionally
+      const dynamicize = canDynamic && s.score >= 30 && Math.random() < 0.3;
+
+      if (canDynamic && roll < 0.22) {
+        // Dynamic column — emerges from top or bottom
+        const fromTop = Math.random() < 0.5;
+        const colW = 38 + Math.random() * 16;
+        const maxH = playH * (0.30 + Math.random() * 0.25); // covers 30-55% of play area
+        const jagged: number[] = [];
+        const crackSeeds: number[] = [];
+        for (let j = 0; j < 14; j++) jagged.push((Math.random() - 0.5) * 14);
+        for (let j = 0; j < 6; j++) crackSeeds.push(Math.random());
+        s.obstacles.push({
+          kind: 'dynamic',
+          data: {
+            x: spawnX, width: colW, fromTop, maxH, currentH: 0,
+            growSpeed: 1.8 + Math.random() * 1.5, passed: false,
+            jagged, crackSeeds, pulsing: Math.random() < 0.4,
+          },
+        });
+      } else if (roll < (canDynamic ? 0.65 : 0.55)) {
         // Asteroid column pair (Flappy Bird style)
         const gapH = currentGapH(playH);
         // Clamp gapY to middle 70% of playable area
@@ -395,7 +431,7 @@ export default function GravityRunnerScene({
           kind: 'column',
           data: { x: spawnX, gapY, gapH, width: colW, passed: false, jagged, crackSeeds },
         });
-      } else if (roll < 0.78) {
+      } else if (roll < (canDynamic ? 0.82 : 0.78)) {
         // Laser beam — clamp to middle 70%
         const margin = playH * 0.15;
         const y = ceilY + margin + Math.random() * (playH - margin * 2);
@@ -506,6 +542,24 @@ export default function GravityRunnerScene({
       return false;
     }
 
+    function checkDynamicCollision(dc: DynamicColumn): boolean {
+      if (dc.currentH <= 0) return false;
+      const { x, y, w, h } = shipHitbox();
+      const H = cssH();
+      const floorY = H - GROUND_H;
+      const ceilY = GROUND_H;
+      // Pulsing adds slight wobble to height
+      const pulseExtra = dc.pulsing ? Math.sin(s.frameCount * 0.06) * 4 : 0;
+      const actualH = dc.currentH + pulseExtra;
+      if (dc.fromTop) {
+        // Block from ceiling downward
+        return rectOverlap(x, y, w, h, dc.x, ceilY, dc.width, actualH);
+      } else {
+        // Block from floor upward
+        return rectOverlap(x, y, w, h, dc.x, floorY - actualH, dc.width, actualH);
+      }
+    }
+
     function die() {
       s.alive = false;
       s.screenShake = 20;
@@ -583,22 +637,22 @@ export default function GravityRunnerScene({
 
       // Move obstacles
       for (const o of s.obstacles) {
-        if (o.kind === 'column') o.data.x -= s.speed;
-        else if (o.kind === 'laser') {
-          o.data.x -= s.speed;
+        o.data.x -= s.speed;
+        if (o.kind === 'laser') {
           if (o.data.warning > 0) {
             o.data.warning--;
             if (o.data.warning <= 0) o.data.active = true;
           }
         }
-        else if (o.kind === 'field') o.data.x -= s.speed;
+        if (o.kind === 'dynamic') {
+          // Grow dynamic column towards max height
+          if (o.data.currentH < o.data.maxH) {
+            o.data.currentH = Math.min(o.data.maxH, o.data.currentH + o.data.growSpeed);
+          }
+        }
       }
       // Remove off-screen
-      s.obstacles = s.obstacles.filter(o => {
-        if (o.kind === 'column') return o.data.x + o.data.width > -30;
-        if (o.kind === 'laser') return o.data.x + o.data.width > -30;
-        return o.data.x + o.data.width > -30;
-      });
+      s.obstacles = s.obstacles.filter(o => o.data.x + (o.data.width ?? 0) > -30);
 
       // Move crystals
       for (const c of s.crystals) {
@@ -613,9 +667,9 @@ export default function GravityRunnerScene({
         spawnObstacle();
         // Interval shortens slightly over time, but never too fast
         const elapsedMin = (performance.now() - s.startTime) / 60000;
-        const baseInterval = 130;     // generous base interval (frames)
-        const minInterval = 70;       // never spawn faster than this
-        s.nextObstacle = Math.max(minInterval, baseInterval - elapsedMin * 8);
+        const baseInterval = 100;     // tighter base interval (frames)
+        const minInterval = 50;       // never spawn faster than this
+        s.nextObstacle = Math.max(minInterval, baseInterval - elapsedMin * 10);
       }
 
       // Spawn crystals
@@ -630,11 +684,13 @@ export default function GravityRunnerScene({
         if (o.kind === 'column' && checkColumnCollision(o.data)) { die(); return; }
         if (o.kind === 'laser' && checkLaserCollision(o.data)) { die(); return; }
         if (o.kind === 'field' && checkFieldCollision(o.data)) { die(); return; }
+        if (o.kind === 'dynamic' && checkDynamicCollision(o.data)) { die(); return; }
       }
 
-      // Columns passed — bonus coins
+      // Columns passed — bonus coins (columns + dynamics)
       for (const o of s.obstacles) {
-        if (o.kind === 'column' && !o.data.passed && o.data.x + o.data.width < s.playerX) {
+        const passable = o.kind === 'column' || o.kind === 'dynamic';
+        if (passable && !o.data.passed && o.data.x + o.data.width < s.playerX) {
           o.data.passed = true;
           s.columnsPassedForBonus++;
           // +3 coins per column passed
@@ -704,8 +760,8 @@ export default function GravityRunnerScene({
       if (s.trail.length > 30) s.trail.shift();
       for (const t of s.trail) t.alpha *= 0.86;
 
-      // Score = time survived in tenths of seconds (FPS-independent)
-      s.score = Math.floor((performance.now() - s.startTime) / 100);
+      // Score = time survived in seconds (FPS-independent)
+      s.score = Math.floor((performance.now() - s.startTime) / 1000);
       onScore(s.score);
 
       // Screen shake decay
@@ -867,25 +923,6 @@ export default function GravityRunnerScene({
           drawAsteroidPillar(ctx, col.x, ceilY, col.width, topH, col.jagged, col.crackSeeds, theme, false, s.frameCount);
           drawAsteroidPillar(ctx, col.x, bottomTop, col.width, bottomH, col.jagged, col.crackSeeds, theme, true, s.frameCount);
 
-          // Danger glow on gap edges
-          ctx.shadowColor = theme.accentColor;
-          ctx.shadowBlur = 8;
-          ctx.strokeStyle = theme.accentColor;
-          ctx.globalAlpha = 0.35;
-          ctx.lineWidth = 1.5;
-          // Top edge
-          ctx.beginPath();
-          ctx.moveTo(col.x - 2, ceilY + topH);
-          ctx.lineTo(col.x + col.width + 2, ceilY + topH);
-          ctx.stroke();
-          // Bottom edge
-          ctx.beginPath();
-          ctx.moveTo(col.x - 2, bottomTop);
-          ctx.lineTo(col.x + col.width + 2, bottomTop);
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-          ctx.shadowBlur = 0;
-
           // Small debris particles near columns
           if (Math.random() < 0.15) {
             s.particles.push({
@@ -959,7 +996,6 @@ export default function GravityRunnerScene({
             ctx.save();
             ctx.translate(rx, ry);
             ctx.rotate(rock.rot + s.frameCount * 0.003);
-            // Irregular asteroid shape with per-rock variation
             const sides = rock.shape.length;
             ctx.fillStyle = theme.obstacleColor;
             ctx.shadowColor = theme.accentColor;
@@ -976,19 +1012,51 @@ export default function GravityRunnerScene({
             ctx.closePath();
             ctx.fill();
             ctx.shadowBlur = 0;
-            // Highlight edge
             ctx.strokeStyle = theme.obstacleHighlight;
             ctx.globalAlpha = 0.25;
             ctx.lineWidth = 0.8;
             ctx.stroke();
             ctx.globalAlpha = 1;
-            // Crater
             ctx.fillStyle = 'rgba(0,0,0,0.2)';
             ctx.beginPath();
             ctx.arc(rock.size * 0.15, -rock.size * 0.1, rock.size * 0.2, 0, Math.PI * 2);
             ctx.fill();
             ctx.restore();
           }
+        }
+
+        if (o.kind === 'dynamic') {
+          const dc = o.data;
+          if (dc.currentH <= 0) continue;
+          const pulseExtra = dc.pulsing ? Math.sin(s.frameCount * 0.06) * 4 : 0;
+          const drawH = dc.currentH + pulseExtra;
+          const drawY = dc.fromTop ? ceilY : floorY - drawH;
+
+          // Warning glow while growing
+          if (dc.currentH < dc.maxH) {
+            ctx.save();
+            ctx.globalAlpha = 0.15 + Math.sin(s.frameCount * 0.12) * 0.1;
+            ctx.shadowColor = '#ef4444';
+            ctx.shadowBlur = 15;
+            ctx.fillStyle = '#ef4444';
+            ctx.fillRect(dc.x - 2, drawY, dc.width + 4, drawH);
+            ctx.shadowBlur = 0;
+            ctx.restore();
+          }
+
+          drawAsteroidPillar(ctx, dc.x, drawY, dc.width, drawH, dc.jagged, dc.crackSeeds, theme, dc.fromTop, s.frameCount);
+
+          // Glowing tip for dynamic columns
+          const tipY = dc.fromTop ? drawY + drawH : drawY;
+          ctx.save();
+          ctx.shadowColor = theme.accentColor;
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = theme.accentColor;
+          ctx.globalAlpha = 0.5 + Math.sin(s.frameCount * 0.08) * 0.2;
+          ctx.fillRect(dc.x - 1, tipY - 2, dc.width + 2, 4);
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha = 1;
+          ctx.restore();
         }
       }
 
@@ -1160,12 +1228,6 @@ export default function GravityRunnerScene({
       ctx.fillStyle = depthGrad;
       ctx.fillRect(x, y, w, h);
 
-      // Subtle shimmer at edge
-      const shimmer = Math.sin(frame * 0.02 + x * 0.1) * 0.1 + 0.1;
-      ctx.fillStyle = theme.accentColor;
-      ctx.globalAlpha = shimmer;
-      ctx.fillRect(x, fromTop ? y + h - 2 : y, w, 2);
-      ctx.globalAlpha = 1;
     }
 
     function loop() {

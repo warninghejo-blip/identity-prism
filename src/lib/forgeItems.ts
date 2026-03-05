@@ -78,6 +78,53 @@ export const ALL_FORGE_ITEMS: ForgeItem[] = [
   ...FORGE_TITLES,
 ];
 
+// ── Shared frame styles (used by StellarForge preview + CelestialCard render) ──
+
+export interface FrameStyle {
+  gradient: string;           // CSS gradient for the border wrapper background
+  boxShadow: string;          // glow around the card
+  animation?: string;         // CSS animation name (defined in index.css)
+}
+
+export const FRAME_STYLES: Record<string, FrameStyle> = {
+  frame_nebula: {
+    gradient: 'linear-gradient(135deg, rgba(147,51,234,0.5), rgba(88,28,135,0.4), rgba(147,51,234,0.5))',
+    boxShadow: '0 0 25px -4px rgba(147,51,234,0.3)',
+  },
+  frame_solar_flare: {
+    gradient: 'linear-gradient(135deg, rgba(251,191,36,0.6), rgba(245,158,11,0.5), rgba(234,88,12,0.5))',
+    boxShadow: '0 0 30px -4px rgba(251,191,36,0.35)',
+  },
+  frame_void: {
+    gradient: 'linear-gradient(135deg, rgba(139,92,246,0.6), rgba(76,29,149,0.5), rgba(139,92,246,0.6))',
+    boxShadow: '0 0 30px -4px rgba(139,92,246,0.35)',
+  },
+  frame_quantum: {
+    gradient: 'linear-gradient(135deg, rgba(34,211,238,0.5), rgba(6,182,212,0.4), rgba(34,211,238,0.5))',
+    boxShadow: '0 0 30px -4px rgba(34,211,238,0.3)',
+    animation: 'quantum-march 8s linear infinite',
+  },
+  frame_supernova: {
+    gradient: 'linear-gradient(135deg, rgba(245,158,11,0.7), rgba(239,68,68,0.5), rgba(245,158,11,0.7))',
+    boxShadow: '0 0 35px -4px rgba(245,158,11,0.4)',
+    animation: 'supernova-rotate 4s linear infinite',
+  },
+  frame_event_horizon: {
+    gradient: 'linear-gradient(135deg, rgba(168,85,247,0.7), rgba(88,28,135,0.6), rgba(168,85,247,0.7))',
+    boxShadow: '0 0 40px -4px rgba(168,85,247,0.4)',
+    animation: 'event-horizon-pulse 3s ease-in-out infinite',
+  },
+};
+
+export const AURA_GLOW_MAP: Record<string, string> = {
+  aura_frost: '0 0 30px -4px rgba(96,165,250,0.4), inset 0 0 20px -8px rgba(96,165,250,0.15)',
+  aura_ember: '0 0 30px -4px rgba(239,68,68,0.4), inset 0 0 20px -8px rgba(239,68,68,0.15)',
+  aura_electric: '0 0 30px -4px rgba(59,130,246,0.4), inset 0 0 20px -8px rgba(59,130,246,0.15)',
+  aura_plasma: '0 0 35px -4px rgba(168,85,247,0.45), inset 0 0 20px -8px rgba(168,85,247,0.15)',
+  aura_dark_matter: '0 0 40px -4px rgba(126,34,206,0.45), inset 0 0 25px -8px rgba(126,34,206,0.2)',
+  aura_binary_pulse: '0 0 40px -4px rgba(34,211,238,0.45), inset 0 0 25px -8px rgba(34,211,238,0.2)',
+};
+
 export function getItemById(id: string): ForgeItem | undefined {
   return ALL_FORGE_ITEMS.find((item) => item.id === id);
 }
@@ -184,5 +231,20 @@ export function equipItem(loadout: ForgeLoadout, itemId: string): ForgeLoadout {
     };
   });
 
+  return updated;
+}
+
+export function unequipItem(loadout: ForgeLoadout, category: ForgeCategory): ForgeLoadout {
+  const updated = { ...loadout };
+  switch (category) {
+    case 'frame': updated.equippedFrame = null; break;
+    case 'aura': updated.equippedAura = null; break;
+    case 'ship_skin': updated.equippedShipSkin = null; break;
+    case 'title': updated.equippedTitle = null; break;
+  }
+  updated.ownedItems = updated.ownedItems.map((o) => {
+    const oDef = getItemById(o.itemId);
+    return { ...o, equipped: oDef?.category === category ? false : o.equipped };
+  });
   return updated;
 }
