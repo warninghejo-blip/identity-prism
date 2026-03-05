@@ -1,11 +1,12 @@
 /**
  * Quests Page — Daily/Weekly/One-time challenges for Identity Prism v5.
- * Complete quests to earn PRISM coins.
+ * Complete quests to earn Coins.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { goBack } from '@/lib/safeNavigate';
 import { ArrowLeft, Gift, Check, Clock, Flame, Star, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -101,7 +102,7 @@ function QuestCard({
           ) : (
             <div className="text-right">
               <p className="text-purple-300 font-bold text-sm font-mono">+{quest.reward}</p>
-              <p className="text-white/20 text-[9px]">PRISM</p>
+              <p className="text-white/20 text-[9px]">Coins</p>
             </div>
           )}
         </div>
@@ -125,7 +126,7 @@ export default function QuestsPage() {
   useEffect(() => {
     if (!walletAddress) return;
     setQuestState(getQuestState(walletAddress));
-    getPrismBalance(walletAddress).then(setBalance);
+    getPrismBalance(walletAddress).then(setBalance).catch(() => {});
   }, [walletAddress]);
 
   const quests = useMemo(() => {
@@ -140,13 +141,20 @@ export default function QuestsPage() {
     if (!walletAddress || !questState) return;
     setClaiming(quest.id);
 
-    const result = await earnPrism(walletAddress, `quest_${quest.frequency}` as any, quest.reward, `Quest: ${quest.name}`);
-    const updatedState = claimQuestReward(questState, quest.id);
-    setQuestState({ ...updatedState });
-    setBalance(result.balance);
-    setClaiming(null);
-
-    toast.success(`+${quest.reward} PRISM`, { description: quest.name });
+    try {
+      const source = quest.frequency === 'one_time' ? 'quest_milestone'
+        : quest.frequency === 'weekly' ? 'quest_weekly'
+        : 'quest_daily';
+      const result = await earnPrism(walletAddress, source, quest.reward, `Quest: ${quest.name}`);
+      const updatedState = claimQuestReward(questState, quest.id);
+      setQuestState({ ...updatedState });
+      setBalance(result.balance);
+      toast.success(`+${quest.reward} Coins`, { description: quest.name });
+    } catch {
+      toast.error('Failed to claim reward');
+    } finally {
+      setClaiming(null);
+    }
   }, [walletAddress, questState]);
 
   const unclaimedCount = questState ? getUnclaimedCount(questState) : 0;
@@ -173,7 +181,7 @@ export default function QuestsPage() {
       {/* Header */}
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/5">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
+          <button onClick={() => goBack(navigate)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
             <ArrowLeft className="w-4 h-4" />
             Back
           </button>
@@ -184,8 +192,8 @@ export default function QuestsPage() {
               </span>
             )}
             <div className="flex items-center gap-1.5">
-              <span className="text-lg">💎</span>
-              <span className="text-purple-300 font-bold font-mono">{balance?.balance ?? 0}</span>
+              <span className="text-lg">🪙</span>
+              <span className="text-amber-300 font-bold font-mono">{balance?.balance ?? 0}</span>
             </div>
           </div>
         </div>
@@ -195,8 +203,8 @@ export default function QuestsPage() {
         {/* Title + streak */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-black">🎯 Prism Quests</h1>
-            <p className="text-white/30 text-xs mt-1">Complete challenges, earn PRISM</p>
+            <h1 className="text-xl font-black">🎯 Daily Quests</h1>
+            <p className="text-white/30 text-xs mt-1">Complete challenges, earn Coins</p>
           </div>
           <div className="text-right">
             <div className="flex items-center gap-1 text-amber-400">
@@ -259,7 +267,7 @@ export default function QuestsPage() {
             </div>
             <div>
               <p className="text-amber-400 font-bold text-lg">{questState?.currentStreak ?? 0}d</p>
-              <p className="text-white/20 text-[10px] uppercase tracking-wider">Best Streak</p>
+              <p className="text-white/20 text-[10px] uppercase tracking-wider">Day Streak</p>
             </div>
           </div>
         </div>

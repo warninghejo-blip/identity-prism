@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { SolanaMobileWalletAdapterWalletName } from "@solana-mobile/wallet-adapter-mobile";
@@ -22,11 +22,14 @@ import {
   Target,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Coins,
   RotateCw,
+  Swords,
 } from "lucide-react";
 import "./PrismLeague.css";
-import { initAudio, startMusic, stopMusic, stopAllAudio, sfxGameOver } from "@/lib/gameAudio";
+import { initAudio, startMusic, stopAllAudio, sfxGameOver } from "@/lib/gameAudio";
 import { hapticHeavy, hapticMedium, hapticSuccess, hapticError } from "@/lib/haptics";
 import OrbitSurvivalScene from "@/components/game/OrbitSurvivalScene";
 import AsteroidDestroyerScene from "@/components/game/AsteroidDestroyerScene";
@@ -38,14 +41,10 @@ type GameMode = "orbit" | "destroyer" | "gravity";
 const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string }[] = [
   { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit" },
   { id: "destroyer", name: "Cosmic Defender", icon: "💥", desc: "4 sectors of enemies & bosses. Auto-fire, collect powerups!", controls: "WASD/Arrows to move, auto-fire. Touch: drag to move" },
-  { id: "gravity", name: "Gravity Runner", icon: "🔄", desc: "Flip gravity, collect crystals, dodge obstacles!", controls: "Tap/Space to flip gravity" },
+  { id: "gravity", name: "Gravity Runner", icon: "🔄", desc: "Tap to fly, collect crystals, dodge asteroid columns!", controls: "Tap/Space to thrust upward" },
 ];
 import {
   commitScoreOnchain,
-  calculateRewardCredits,
-  getRankReward,
-  getOnchainScores,
-  type OnchainScore,
 } from "@/lib/onchainLeaderboard";
 import {
   checkAchievements,
@@ -64,12 +63,11 @@ import {
   generateFairSeed,
   verifyGameSessionSeed,
   getMagicBlockHealth,
-  MAGICBLOCK_BADGE,
   registerGameSessionProof,
   type GameSessionProof,
 } from "@/lib/magicblock";
 import { createWormholeTunnel, fadeOutWormholeTunnel } from "@/lib/wormholeTunnel";
-import { earnPrism, calculateGamePrism } from "@/lib/prismCoin";
+// earnPrism removed — unified economy uses coins directly
 import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, getAppBaseUrl } from "@/constants";
 import {
   checkDefenderAchievements,
@@ -99,11 +97,12 @@ function getServerBase(): string {
   return getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== "undefined" ? window.location.origin : "");
 }
 
-async function fetchServerLeaderboard(): Promise<LeaderboardEntry[]> {
+async function fetchServerLeaderboard(gameType?: string): Promise<LeaderboardEntry[]> {
   try {
     const base = getServerBase();
     if (!base) return [];
-    const res = await fetch(`${base}/api/game/leaderboard`);
+    const params = gameType ? `?gameType=${gameType}` : '';
+    const res = await fetch(`${base}/api/game/leaderboard${params}`);
     if (!res.ok) return [];
     const data = await res.json();
     return (data?.entries || []).map((e: { address: string; score: number; playedAt?: string; txSignature?: string }) => ({
@@ -118,7 +117,7 @@ async function fetchServerLeaderboard(): Promise<LeaderboardEntry[]> {
   }
 }
 
-async function submitToServerLeaderboard(entry: { address: string; score: number; playedAt: string; txSignature?: string }): Promise<void> {
+async function submitToServerLeaderboard(entry: { address: string; score: number; playedAt: string; txSignature?: string; gameType?: string }): Promise<void> {
   try {
     const base = getServerBase();
     if (!base) return;
@@ -160,6 +159,7 @@ function writeWalletCoins(walletAddress: string, coins: number) {
 
 const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
 const DEFENDER_LEADERBOARD_KEY = "identity_prism_defender_board_v1";
+const GRAVITY_LEADERBOARD_KEY = "prism_league_gravity_leaderboard_v1";
 const ONCHAIN_BONUS_MULTIPLIER = 1.5;
 const COIN_BONUS = 25;
 async function syncCoinsToServer(walletAddress: string, coins: number, delta: number): Promise<void> {
@@ -195,10 +195,10 @@ async function claimAchievementOnServer(walletAddress: string, achievementId: st
       body: JSON.stringify({ address: walletAddress, achievementId, reward }),
     });
     if (res.status === 409) return { ok: false };
-    if (!res.ok) return { ok: true };
+    if (!res.ok) return { ok: false };
     const data = await res.json();
     return { ok: true, coins: data?.coins };
-  } catch { return { ok: true }; }
+  } catch { return { ok: false }; }
 }
 
 async function syncUnlockedToServer(walletAddress: string, unlockedIds: string[]): Promise<void> {
@@ -295,6 +295,16 @@ const writeLeaderboard = (entries: LeaderboardEntry[]) => {
   } catch { /* */ }
 };
 
+const readGravityLeaderboard = (): LeaderboardEntry[] => {
+  try {
+    const raw = window.localStorage.getItem(GRAVITY_LEADERBOARD_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+};
+const writeGravityLeaderboard = (lb: LeaderboardEntry[]) => {
+  try { window.localStorage.setItem(GRAVITY_LEADERBOARD_KEY, JSON.stringify(lb)); } catch { /* storage full */ }
+};
+
 const isMobileDevice = () =>
   typeof window !== "undefined" && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
@@ -308,14 +318,72 @@ const isSeekerBrowser = () =>
   typeof navigator !== "undefined" && /seeker/i.test(navigator.userAgent);
 
 /* ═══════════════════════════════════════════════════
+   Challenge helpers (JWT + score submission)
+   ═══════════════════════════════════════════════════ */
+
+interface ChallengeResult {
+  id: string;
+  status: string;
+  creator: string;
+  opponent: string | null;
+  creatorScore: number | null;
+  opponentScore: number | null;
+  winner: string | null;
+  stakeAmount: number;
+  gameMode?: string;
+}
+
+function getChallengeJwt(): string | null {
+  try {
+    const raw = sessionStorage.getItem('ip_auth_jwt');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { token: string; address: string; expiresAt: number };
+    if (parsed.expiresAt > Date.now() + 60_000) return parsed.token;
+    sessionStorage.removeItem('ip_auth_jwt');
+  } catch { /* ignore */ }
+  return null;
+}
+
+async function submitChallengeScore(challengeId: string, score: number): Promise<{ ok: boolean; challenge?: ChallengeResult; error?: string }> {
+  const jwt = getChallengeJwt();
+  if (!jwt) return { ok: false, error: 'Not authenticated — sign in from Prism Arena first' };
+  try {
+    const base = getServerBase();
+    if (!base) return { ok: false, error: 'Server unavailable' };
+    const res = await fetch(`${base}/api/challenge/submit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${jwt}`,
+      },
+      body: JSON.stringify({ challengeId, score }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data?.error || 'Failed to submit score' };
+    return { ok: true, challenge: data?.challenge };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Network error' };
+  }
+}
+
+/* ═══════════════════════════════════════════════════
    Main component
    ═══════════════════════════════════════════════════ */
 
 const PrismLeague = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const locationState = location.state as { fromAppJump?: boolean; returnAddress?: string } | null;
   const fromAppJump = Boolean(locationState?.fromAppJump);
+
+  // ── Challenge integration ──
+  const urlChallengeId = searchParams.get('challengeId');
+  const urlMode = searchParams.get('mode') as GameMode | null;
+  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(urlChallengeId);
+  const [challengeResult, setChallengeResult] = useState<ChallengeResult | null>(null);
+  const [challengeSubmitting, setChallengeSubmitting] = useState(false);
+  const challengeSubmittedRef = useRef(false);
 
   const wallet = useWallet();
   const { publicKey, connected, wallets: availableWallets, select, connect, disconnect } = wallet;
@@ -377,9 +445,16 @@ const PrismLeague = () => {
   }, [connected, useMobileWallet, isCapacitor, isAndroid, availableWallets, select, connect, setWalletModalVisible]);
 
   const [gameMode, setGameMode] = useState<GameMode>("orbit");
+  // Auto-select game mode from URL param (challenge)
+  useEffect(() => {
+    if (urlMode && GAME_MODES.some(m => m.id === urlMode)) {
+      setGameMode(urlMode);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [gameState, setGameState] = useState<"start" | "playing" | "gameover">("start");
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
 
   // Live score/coins — direct DOM updates during gameplay to avoid React re-renders
   const _liveScore = useRef(0);
@@ -396,6 +471,7 @@ const PrismLeague = () => {
   }, []);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
   const [defenderLeaderboard, setDefenderLeaderboard] = useState<LeaderboardEntry[]>(() => readDefenderLeaderboard());
+  const [gravityLeaderboard, setGravityLeaderboard] = useState<LeaderboardEntry[]>(() => readGravityLeaderboard());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
   const [isJumpingBack, setIsJumpingBack] = useState(false);
@@ -453,7 +529,6 @@ const PrismLeague = () => {
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStats>(() => getPlayerStats());
   const [achievements, setAchievements] = useState<Achievement[]>(() => getAchievements());
-  const [onchainScores] = useState<OnchainScore[]>(() => getOnchainScores());
 
   // Defender-specific state
   const [defenderAchievements, setDefenderAchievements] = useState<DefenderAchievement[]>(() => getDefenderAchievements());
@@ -578,11 +653,14 @@ const PrismLeague = () => {
   mbSeedRef.current = mbSeed;
   mbSlotRef.current = mbSlot;
 
-  /* Fetch server leaderboard on mount and merge with local */
+  /* Fetch server leaderboard when gameMode changes and merge with local */
   useEffect(() => {
-    fetchServerLeaderboard().then((serverEntries) => {
+    fetchServerLeaderboard(gameMode).then((serverEntries) => {
       if (!serverEntries.length) return;
-      setLeaderboard((prev) => {
+      const mergeInto = (
+        prev: LeaderboardEntry[],
+        writeFn: (entries: LeaderboardEntry[]) => void
+      ): LeaderboardEntry[] => {
         const merged = new Map<string, LeaderboardEntry>();
         for (const e of prev) merged.set(e.address, e);
         for (const e of serverEntries) {
@@ -594,11 +672,18 @@ const PrismLeague = () => {
           }
         }
         const sorted = Array.from(merged.values()).sort((a, b) => b.score - a.score).slice(0, 20);
-        writeLeaderboard(sorted);
+        writeFn(sorted);
         return sorted;
-      });
+      };
+      if (gameMode === 'destroyer') {
+        setDefenderLeaderboard((prev) => mergeInto(prev, writeDefenderLeaderboard));
+      } else if (gameMode === 'gravity') {
+        setGravityLeaderboard((prev) => mergeInto(prev, writeGravityLeaderboard));
+      } else {
+        setLeaderboard((prev) => mergeInto(prev, writeLeaderboard));
+      }
     });
-  }, []);
+  }, [gameMode]);
 
   /* Check MagicBlock health on mount */
   useEffect(() => {
@@ -632,18 +717,18 @@ const PrismLeague = () => {
   // Cleanup audio on unmount
   useEffect(() => () => { stopAllAudio(); }, []);
 
-  const rewardCredits = useMemo(() => calculateRewardCredits(score), [score]);
   const playerRank = useMemo(() => {
-    const idx = leaderboard.findIndex((e) => e.address === (address || "anonymous"));
-    return idx >= 0 ? idx + 1 : leaderboard.length + 1;
-  }, [leaderboard, address]);
-  const rankReward = useMemo(() => getRankReward(playerRank), [playerRank]);
+    const board = gameMode === 'destroyer' ? defenderLeaderboard : gameMode === 'gravity' ? gravityLeaderboard : leaderboard;
+    const idx = board.findIndex((e) => e.address === (address || "anonymous"));
+    return idx >= 0 ? idx + 1 : board.length + 1;
+  }, [leaderboard, defenderLeaderboard, gravityLeaderboard, gameMode, address]);
 
   useEffect(() => {
     const playerAddr = address || "anonymous";
-    const userBest = leaderboard.find((e) => e.address === playerAddr)?.score || 0;
-    setHighScore(userBest);
-  }, [address, leaderboard]);
+    const lb = gameMode === 'destroyer' ? defenderLeaderboard : gameMode === 'gravity' ? gravityLeaderboard : leaderboard;
+    const currentBest = lb.find((e) => e.address === playerAddr)?.score || 0;
+    setHighScore(currentBest);
+  }, [address, leaderboard, defenderLeaderboard, gravityLeaderboard, gameMode]);
 
   const handleStart = () => {
     initAudio();
@@ -656,10 +741,15 @@ const PrismLeague = () => {
     setSessionProof(null);
     setNewAchievements([]);
     continueUsed.current = false;
+    defenderLevel.current = 0;
+    defenderKills.current = 0;
     // Init free revives from localStorage as immediate fallback
     freeRevivesLeft.current = hasMintedId ? Math.max(0, FREE_REVIVES_PER_DAY - getDailyRevivesUsed()) : 0;
     pendingGameOver.current = null;
     setIsVictory(false);
+    challengeSubmittedRef.current = false;
+    setChallengeResult(null);
+    setChallengeSubmitting(false);
     // Then fetch authoritative count from server (async, overrides local)
     if (hasMintedId && address) {
       const mode = gameMode === 'destroyer' ? 'destroyer' : 'orbit';
@@ -711,12 +801,8 @@ const PrismLeague = () => {
         setTotalCoins(next);
         syncCoinsToServer(walletAddr, next, finalCoins);
       }
-      // Award PRISM coins for gameplay
+      // Quest auto-tracking (coins already earned during gameplay above)
       if (walletAddr !== "anonymous") {
-        const prismEarned = calculateGamePrism(gameMode, finalScore, gameMode === 'destroyer' ? defLevel : undefined);
-        if (prismEarned > 0) {
-          earnPrism(walletAddr, gameMode === 'orbit' ? 'game_orbit' : 'game_defender', prismEarned, `${gameMode === 'orbit' ? 'Orbit Survival' : 'Cosmic Defender'}: score ${finalScore}`).catch(() => {});
-        }
         // Quest auto-tracking
         import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
           const qs = getQuestState(walletAddr);
@@ -850,6 +936,20 @@ const PrismLeague = () => {
           writeDefenderLeaderboard(next);
           return next;
         });
+      } else if (gameMode === "gravity") {
+        setGravityLeaderboard((prev) => {
+          const existing = prev.findIndex((e) => e.address === playerAddr);
+          let next = [...prev];
+          if (existing !== -1) {
+            if (finalScore > next[existing].score) next[existing] = newEntry;
+          } else {
+            next.push(newEntry);
+          }
+          next.sort((a, b) => b.score - a.score);
+          next = next.slice(0, 20);
+          writeGravityLeaderboard(next);
+          return next;
+        });
       } else {
         setLeaderboard((prev) => {
           const existing = prev.findIndex((e) => e.address === playerAddr);
@@ -867,14 +967,51 @@ const PrismLeague = () => {
       }
 
       // Persist to server leaderboard
-      submitToServerLeaderboard({ address: playerAddr, score: finalScore, playedAt: newEntry.playedAt });
+      submitToServerLeaderboard({ address: playerAddr, score: finalScore, playedAt: newEntry.playedAt, gameType: gameMode });
+
+      // ── Challenge: submit score if playing a challenge ──
+      if (activeChallengeId && !challengeSubmittedRef.current) {
+        challengeSubmittedRef.current = true;
+        setChallengeSubmitting(true);
+        submitChallengeScore(activeChallengeId, finalScore).then((result) => {
+          setChallengeSubmitting(false);
+          if (result.ok && result.challenge) {
+            setChallengeResult(result.challenge);
+            if (result.challenge.status === 'completed') {
+              // Determine win/lose/tie
+              const isWinner = result.challenge.winner === playerAddr;
+              const isTie = result.challenge.winner === null;
+              if (isWinner) {
+                const prize = Math.floor(result.challenge.stakeAmount * 2 * 0.95);
+                toast.success(`Challenge Won! +${prize} Coins`);
+                hapticSuccess();
+              } else if (isTie) {
+                toast.info(`Challenge Tied! Stake refunded.`);
+              } else {
+                toast.error(`Challenge Lost!`);
+                hapticError();
+              }
+            } else {
+              toast.success('Score submitted! Waiting for opponent...');
+            }
+          } else {
+            toast.error(result.error || 'Failed to submit challenge score');
+          }
+        }).catch(() => {
+          setChallengeSubmitting(false);
+          toast.error('Failed to submit challenge score');
+        });
+      }
 
       if (finalScore > highScore) {
+        setIsNewBest(true);
         setHighScore(finalScore);
         toast.success(`New High Score: ${gameMode === "destroyer" ? formatPoints(finalScore) : formatTime(finalScore)}!`);
+      } else {
+        setIsNewBest(false);
       }
     },
-    [address, gameMode, highScore]
+    [address, gameMode, highScore, activeChallengeId]
   );
 
   const handleGameOver = useCallback(
@@ -1020,7 +1157,19 @@ const PrismLeague = () => {
             if (idx !== -1) {
               const next = prev.map((e, i) => i === idx ? { ...e, txSignature: result.txSignature } : e);
               writeDefenderLeaderboard(next);
-              submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature });
+              submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature, gameType: 'destroyer' });
+              return next;
+            }
+            return prev;
+          });
+        } else if (gameMode === "gravity") {
+          setGravityLeaderboard((prev) => {
+            const playerAddr = address!;
+            const idx = prev.findIndex((e) => e.address === playerAddr);
+            if (idx !== -1) {
+              const next = prev.map((e, i) => i === idx ? { ...e, txSignature: result.txSignature } : e);
+              writeGravityLeaderboard(next);
+              submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature, gameType: 'gravity' });
               return next;
             }
             return prev;
@@ -1032,7 +1181,7 @@ const PrismLeague = () => {
             if (idx !== -1) {
               const next = prev.map((e, i) => i === idx ? { ...e, txSignature: result.txSignature } : e);
               writeLeaderboard(next);
-              submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature });
+              submitToServerLeaderboard({ address: playerAddr, score: next[idx].score, playedAt: next[idx].playedAt, txSignature: result.txSignature, gameType: gameMode });
               return next;
             }
             return prev;
@@ -1098,8 +1247,9 @@ const PrismLeague = () => {
 
   const handleShare = () => {
     const isDefMode = gameMode === "destroyer";
+    const isGravity = gameMode === "gravity";
     const scoreText = isDefMode ? `${formatPoints(score)} pts` : formatTime(score);
-    const gameName = isDefMode ? "Cosmic Defender" : "Orbit Survival";
+    const gameName = isDefMode ? "Cosmic Defender" : isGravity ? "Gravity Runner" : "Orbit Survival";
     // AI-style fun commentary based on performance
     let lines: string[];
     if (isDefMode) {
@@ -1241,31 +1391,67 @@ const PrismLeague = () => {
         <div className="flex-1 relative min-h-0">
           {gameState === "playing" && (
             <div className="absolute top-1 left-1/2 -translate-x-1/2 flex flex-col items-center">
-              <span ref={_scoreDomRef} className="text-3xl sm:text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]">
-                {gameMode === "destroyer" ? formatPoints(score) : formatTime(score)}
-              </span>
-              {highScore > 0 && (
-                <span className="text-[9px] sm:text-[10px] text-cyan-400/60 uppercase tracking-widest font-semibold">
-                  Best: {gameMode === "destroyer" ? formatPoints(highScore) : formatTime(highScore)}
-                </span>
-              )}
+              {gameMode === "gravity" ? (
+                /* Gravity mode: TIME and COINS side by side with equal visual weight */
+                <>
+                  <div className="flex items-center gap-4 sm:gap-6">
+                    {/* TIME display */}
+                    <div className="flex flex-col items-center">
+                      <span className="text-[10px] uppercase tracking-widest text-cyan-400/60 font-semibold">Time</span>
+                      <span ref={_scoreDomRef} className="text-3xl sm:text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]">
+                        {formatTime(score)}
+                      </span>
+                    </div>
+                    {/* Divider */}
+                    <div className="w-px h-10 sm:h-12 bg-white/15" />
+                    {/* COINS display */}
+                    <div className="flex flex-col items-center">
+                      <span className="text-[10px] uppercase tracking-widest text-yellow-400/60 font-semibold">Coins</span>
+                      <div className="flex items-center gap-1.5">
+                        <Coins className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-400" />
+                        <span ref={_coinsDomRef} className="text-2xl sm:text-3xl md:text-4xl font-black text-yellow-400 tabular-nums tracking-tight drop-shadow-[0_0_16px_rgba(234,179,8,0.4)]">{coins}</span>
+                      </div>
+                    </div>
+                  </div>
+                  {highScore > 0 && (
+                    <span className="text-[9px] sm:text-[10px] text-cyan-400/60 uppercase tracking-widest font-semibold mt-0.5">
+                      Best: {formatTime(highScore)}
+                    </span>
+                  )}
+                  {totalCoins > 0 && (
+                    <span className="text-[9px] text-white/30 font-bold tabular-nums">Total: {totalCoins}</span>
+                  )}
+                </>
+              ) : (
+                /* Orbit / Destroyer mode: original layout */
+                <>
+                  <span ref={_scoreDomRef} className="text-3xl sm:text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]">
+                    {gameMode === "destroyer" ? formatPoints(score) : formatTime(score)}
+                  </span>
+                  {highScore > 0 && (
+                    <span className="text-[9px] sm:text-[10px] text-cyan-400/60 uppercase tracking-widest font-semibold">
+                      Best: {gameMode === "destroyer" ? formatPoints(highScore) : formatTime(highScore)}
+                    </span>
+                  )}
 
-              {/* Coins + Level/Wave — single compact row */}
-              <div className="flex items-center gap-1.5 sm:gap-3 mt-1">
-                <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-black/40 border border-yellow-500/20">
-                  <Coins className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-400" />
-                  <span ref={_coinsDomRef} className="text-[9px] sm:text-[10px] text-yellow-400/80 font-bold tabular-nums">{coins}</span>
-                </div>
-                {totalCoins > 0 && (
-                  <span className="text-[9px] text-white/30 font-bold tabular-nums">Total: {totalCoins}</span>
-                )}
-                {gameMode === "destroyer" && defLevelInfo.name && (
-                  <span className="text-[9px] sm:text-[10px] font-bold text-cyan-300/70 uppercase">Lv.{defLevelInfo.level}</span>
-                )}
-                {gameMode === "destroyer" && defLevelInfo.wave > 0 && (
-                  <span className="text-[9px] sm:text-[10px] font-bold text-white/40 uppercase">W{defLevelInfo.wave}/4</span>
-                )}
-              </div>
+                  {/* Coins + Level/Wave — single compact row */}
+                  <div className="flex items-center gap-1.5 sm:gap-3 mt-1">
+                    <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-black/40 border border-yellow-500/20">
+                      <Coins className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-400" />
+                      <span ref={_coinsDomRef} className="text-[9px] sm:text-[10px] text-yellow-400/80 font-bold tabular-nums">{coins}</span>
+                    </div>
+                    {totalCoins > 0 && (
+                      <span className="text-[9px] text-white/30 font-bold tabular-nums">Total: {totalCoins}</span>
+                    )}
+                    {gameMode === "destroyer" && defLevelInfo.name && (
+                      <span className="text-[9px] sm:text-[10px] font-bold text-cyan-300/70 uppercase">Lv.{defLevelInfo.level}</span>
+                    )}
+                    {gameMode === "destroyer" && defLevelInfo.wave > 0 && (
+                      <span className="text-[9px] sm:text-[10px] font-bold text-white/40 uppercase">W{defLevelInfo.wave}/4</span>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* Combo Counter — DOM-driven, no React re-render */}
               {gameMode === "orbit" && (
@@ -1306,6 +1492,17 @@ const PrismLeague = () => {
                   <span className="text-[8px] text-purple-300/60 font-mono">MB: {mbSeed.slice(0, 6)}…</span>
                 </div>
               )}
+
+              {/* Challenge Mode banner */}
+              {activeChallengeId && (
+                <div
+                  className="mt-1 flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-400/40 bg-amber-500/10"
+                  style={{ boxShadow: '0 0 12px rgba(245,158,11,0.2)', animation: 'pulse 2s ease-in-out infinite' }}
+                >
+                  <Swords className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">Challenge Mode</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -1342,45 +1539,94 @@ const PrismLeague = () => {
                       <Orbit className="w-14 h-14 text-cyan-400 relative drop-shadow-[0_0_12px_rgba(34,211,238,0.6)]" />
                     </div>
                     <h2 className="text-3xl md:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-white to-purple-300 tracking-tight mb-1">
-                      {GAME_MODES.find(m => m.id === gameMode)?.name ?? "Orbit Survival"}
+                      Prism League
                     </h2>
                     <p className="text-cyan-200/40 text-xs max-w-[260px]">
-                      {GAME_MODES.find(m => m.id === gameMode)?.desc ?? "Dodge asteroids, collect coins, save on-chain for bonus rewards"}
+                      Earn coins & climb the ranks
                     </p>
                   </div>
                 </div>
 
-                {/* Game Mode Selector */}
-                <div className="w-full mb-4 grid grid-cols-2 gap-2">
-                  {GAME_MODES.map((mode) => (
-                    <button
-                      key={mode.id}
-                      className={`relative flex items-center gap-2.5 px-3.5 py-3 rounded-xl border text-left transition-all duration-300 overflow-hidden group ${
-                        gameMode === mode.id
-                          ? "bg-gradient-to-br from-cyan-500/20 via-cyan-500/10 to-purple-500/10 border-cyan-400/40 shadow-[0_0_20px_rgba(6,182,212,0.2),inset_0_1px_0_rgba(255,255,255,0.06)]"
-                          : "bg-gradient-to-br from-white/[0.03] to-white/[0.01] border-white/[0.08] hover:from-white/[0.06] hover:to-white/[0.02] hover:border-white/[0.15] hover:shadow-[0_0_12px_rgba(255,255,255,0.04)]"
-                      }`}
-                      onClick={() => setGameMode(mode.id)}
-                    >
-                      <div className={`flex items-center justify-center w-9 h-9 rounded-lg transition-all ${
-                        gameMode === mode.id
-                          ? "bg-cyan-500/20 shadow-[0_0_8px_rgba(6,182,212,0.3)]"
-                          : "bg-white/[0.04] group-hover:bg-white/[0.08]"
-                      }`}>
-                        <span className="text-xl leading-none">{mode.icon}</span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className={`text-xs font-bold truncate tracking-wide ${
-                          gameMode === mode.id ? "text-cyan-200" : "text-white/60 group-hover:text-white/80"
-                        }`}>
-                          {mode.name}
+                {/* Game Mode Carousel — swipeable */}
+                <div className="w-full mb-4 relative">
+                  {/* Arrow buttons */}
+                  <button
+                    className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-white/[0.06] border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all -ml-1"
+                    onClick={() => {
+                      const idx = GAME_MODES.findIndex(m => m.id === gameMode);
+                      const prev = (idx - 1 + GAME_MODES.length) % GAME_MODES.length;
+                      setGameMode(GAME_MODES[prev].id);
+                    }}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-white/[0.06] border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all -mr-1"
+                    onClick={() => {
+                      const idx = GAME_MODES.findIndex(m => m.id === gameMode);
+                      const next = (idx + 1) % GAME_MODES.length;
+                      setGameMode(GAME_MODES[next].id);
+                    }}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+
+                  {/* Swipeable card area */}
+                  <div
+                    className="mx-8 touch-pan-y"
+                    onTouchStart={(e) => {
+                      const touch = e.touches[0];
+                      (e.currentTarget as any)._swipeStartX = touch.clientX;
+                      (e.currentTarget as any)._swipeStartY = touch.clientY;
+                    }}
+                    onTouchEnd={(e) => {
+                      const startX = (e.currentTarget as any)._swipeStartX;
+                      const startY = (e.currentTarget as any)._swipeStartY;
+                      if (startX == null) return;
+                      const touch = e.changedTouches[0];
+                      const dx = touch.clientX - startX;
+                      const dy = touch.clientY - startY;
+                      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
+                        const idx = GAME_MODES.findIndex(m => m.id === gameMode);
+                        if (dx < 0) {
+                          setGameMode(GAME_MODES[(idx + 1) % GAME_MODES.length].id);
+                        } else {
+                          setGameMode(GAME_MODES[(idx - 1 + GAME_MODES.length) % GAME_MODES.length].id);
+                        }
+                      }
+                    }}
+                  >
+                    {/* Current game card */}
+                    {(() => {
+                      const mode = GAME_MODES.find(m => m.id === gameMode)!;
+                      return (
+                        <div className="relative rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/15 via-cyan-500/5 to-purple-500/10 px-5 py-4 text-center transition-all duration-300 shadow-[0_0_24px_rgba(6,182,212,0.15)]">
+                          <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-purple-500/5 rounded-2xl" />
+                          <div className="relative">
+                            <span className="text-3xl mb-2 block">{mode.icon}</span>
+                            <div className="text-sm font-black text-cyan-200 tracking-wide mb-1">{mode.name}</div>
+                            <div className="text-[11px] text-white/40 leading-relaxed">{mode.desc}</div>
+                            <div className="mt-2 text-[10px] text-cyan-400/50 font-medium">{mode.controls}</div>
+                          </div>
                         </div>
-                      </div>
-                      {gameMode === mode.id && (
-                        <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.6)]" />
-                      )}
-                    </button>
-                  ))}
+                      );
+                    })()}
+                  </div>
+
+                  {/* Dot indicators */}
+                  <div className="flex justify-center gap-1.5 mt-2.5">
+                    {GAME_MODES.map((mode) => (
+                      <button
+                        key={mode.id}
+                        className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                          gameMode === mode.id
+                            ? "bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.6)] scale-125"
+                            : "bg-white/20 hover:bg-white/40"
+                        }`}
+                        onClick={() => setGameMode(mode.id)}
+                      />
+                    ))}
+                  </div>
                 </div>
 
                 {/* Coin Balance + Stats Row */}
@@ -1394,17 +1640,28 @@ const PrismLeague = () => {
                   </div>
                   <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-4 text-center">
                     <div className="text-[11px] text-white/40 uppercase tracking-[0.15em] font-bold mb-2">Best Score</div>
-                    <div className="text-2xl font-black text-cyan-400 tabular-nums leading-none">{gameMode === "destroyer" ? (defenderStats.gamesPlayed > 0 ? formatPoints(defenderStats.bestScore) : "0") : (playerStats.gamesPlayed > 0 ? formatTime(playerStats.bestScore) : "--:--")}</div>
+                    <div className="text-2xl font-black text-cyan-400 tabular-nums leading-none">{
+                      gameMode === "destroyer"
+                        ? (defenderStats.gamesPlayed > 0 ? formatPoints(defenderStats.bestScore) : "0")
+                        : gameMode === "gravity"
+                        ? (gravityLeaderboard.length > 0 ? formatTime(gravityLeaderboard.find(e => e.address === (address || 'anonymous'))?.score || 0) : "--:--")
+                        : (playerStats.gamesPlayed > 0 ? formatTime(playerStats.bestScore) : "--:--")
+                    }</div>
                     <div className="text-[10px] text-white/30 mt-1.5">
-                      {playerStats.gamesPlayed > 0 ? `${playerStats.gamesPlayed} games played` : "No games yet"}
+                      {gameMode === "destroyer"
+                        ? (defenderStats.gamesPlayed > 0 ? `${defenderStats.gamesPlayed} games played` : "No games yet")
+                        : gameMode === "gravity"
+                        ? (gravityLeaderboard.length > 0 ? `${gravityLeaderboard.length} entries` : "No games yet")
+                        : (playerStats.gamesPlayed > 0 ? `${playerStats.gamesPlayed} games played` : "No games yet")
+                      }
                     </div>
                   </div>
                 </div>
 
-                {/* Token conversion hint */}
+                {/* Coins info */}
                 <div className="w-full mb-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/8 via-cyan-500/5 to-purple-500/8 border border-purple-500/15 text-center">
                   <span className="text-[11px] text-purple-200/50 font-medium">
-                    Earn coins in-game → convert to <strong className="text-purple-300/80">$PRISM</strong> tokens at Token Generation Event
+                    Earn Coins by playing → spend in the <strong className="text-purple-300/80">Coin Shop</strong> or wager in Challenges
                   </span>
                 </div>
 
@@ -1436,6 +1693,41 @@ const PrismLeague = () => {
                       <div className="flex items-center gap-2.5">
                         <img src="/textures/powerups/powerup_nebula_bomb.png" className="w-5 h-5 flex-shrink-0" alt="" />
                         <span className="text-white/70 flex-1">Nuke — destroys all enemies</span>
+                      </div>
+                      {/* ID Holder Perks */}
+                      <div className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}>
+                        <div className={`text-[10px] uppercase tracking-[0.15em] font-bold mb-2 ${hasMintedId ? 'text-green-400' : 'text-white/30'}`}>
+                          {hasMintedId ? '✓ ID Holder Perks' : 'ID Holder Perks (mint to unlock)'}
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2.5">
+                            <Coins className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`} />
+                            <span className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}>×2 Coin Multiplier</span>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <RotateCw className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-green-400' : 'text-white/25'}`} />
+                            <span className={`text-[12px] flex-1 ${hasMintedId ? 'text-green-400/80' : 'text-white/30'}`}>3 Free Revives / day</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : gameMode === "gravity" ? (
+                    <div className="flex flex-col gap-2.5 text-[13px] text-left">
+                      <div className="flex items-center gap-2.5">
+                        <Target className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                        <span className="text-white/70 flex-1">{isMobile ? "Tap" : "Click"} — thrust upward</span>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <img src="/textures/powerups/powerup_shield.png" className="w-5 h-5 flex-shrink-0" alt="" />
+                        <span className="text-white/70 flex-1">Navigate — pass through asteroid columns</span>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <img src="/textures/powerups/powerup_coin.png" className="w-5 h-5 flex-shrink-0" alt="" />
+                        <span className="text-white/70 flex-1">Crystals — collect for +5 coins</span>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <Coins className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                        <span className="text-white/70 flex-1">Columns — +3 coins per column passed</span>
                       </div>
                       {/* ID Holder Perks */}
                       <div className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}>
@@ -1508,14 +1800,32 @@ const PrismLeague = () => {
                   />
                 </div>
 
+                {/* Challenge banner on start screen */}
+                {activeChallengeId && (
+                  <div className="w-full mb-3 px-4 py-3 rounded-xl border border-amber-400/30 bg-amber-500/8 text-center">
+                    <div className="flex items-center justify-center gap-2 mb-1">
+                      <Swords className="w-4 h-4 text-amber-400" />
+                      <span className="text-sm font-bold text-amber-300 uppercase tracking-wider">Challenge Mode</span>
+                    </div>
+                    <p className="text-[11px] text-amber-200/50">Your score will be submitted to the challenge when the game ends.</p>
+                  </div>
+                )}
+
                 {/* ═══ PLAY BUTTON — above achievements ═══ */}
                 <Button
                   size="lg"
-                  className="w-full h-14 text-lg bg-gradient-to-r from-cyan-500 via-cyan-400 to-teal-400 hover:from-cyan-400 hover:via-cyan-300 hover:to-teal-300 text-black font-black uppercase tracking-[0.2em] shadow-[0_0_40px_rgba(6,182,212,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] transition-all duration-300 transform hover:scale-[1.03] active:scale-[0.97] rounded-xl border border-cyan-300/30 mb-2 shrink-0"
+                  className={`w-full h-14 text-lg font-black uppercase tracking-[0.2em] transition-all duration-300 transform hover:scale-[1.03] active:scale-[0.97] rounded-xl mb-2 shrink-0 ${
+                    activeChallengeId
+                      ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:via-amber-300 hover:to-yellow-300 text-black shadow-[0_0_40px_rgba(245,158,11,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-amber-300/30'
+                      : 'bg-gradient-to-r from-cyan-500 via-cyan-400 to-teal-400 hover:from-cyan-400 hover:via-cyan-300 hover:to-teal-300 text-black shadow-[0_0_40px_rgba(6,182,212,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-cyan-300/30'
+                  }`}
                   onClick={handleStart}
                 >
-                  <Play className="w-5 h-5 mr-2 fill-current" />
-                  {connected ? "Play" : "Play as Guest"}
+                  {activeChallengeId ? (
+                    <><Swords className="w-5 h-5 mr-2" /> Start Challenge</>
+                  ) : (
+                    <><Play className="w-5 h-5 mr-2 fill-current" /> {connected ? "Play" : "Play as Guest"}</>
+                  )}
                 </Button>
                 {!connected && (
                   <button
@@ -1614,7 +1924,8 @@ const PrismLeague = () => {
                 {/* On-Chain Leaderboard — mode-aware */}
                 {(() => {
                   const isDefMode = gameMode === "destroyer";
-                  const board = isDefMode ? defenderLeaderboard : leaderboard;
+                  const isGravMode = gameMode === "gravity";
+                  const board = isDefMode ? defenderLeaderboard : isGravMode ? gravityLeaderboard : leaderboard;
                   if (board.length === 0) return null;
                   return (
                   <>
@@ -1623,7 +1934,7 @@ const PrismLeague = () => {
                       onClick={() => setShowLeaderboard(!showLeaderboard)}
                     >
                       <Trophy className="w-3.5 h-3.5" />
-                      {isDefMode ? "Defender" : "Orbit"} Leaderboard ({board.length})
+                      {isDefMode ? "Defender" : isGravMode ? "Gravity" : "Orbit"} Leaderboard ({board.length})
                       {showLeaderboard ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                     </button>
                     <div className={`w-full mt-2 ${showLeaderboard ? "" : "hidden"}`}>
@@ -1767,25 +2078,93 @@ const PrismLeague = () => {
                 ) : (
                   <>
                     <div className="font-black text-4xl md:text-5xl tracking-tighter uppercase mb-0.5"
-                      style={{ background: gameMode === 'destroyer' ? 'linear-gradient(135deg,#f87171,#ef4444)' : 'linear-gradient(135deg,#fb923c,#ef4444)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                      {gameMode === "destroyer" ? "Mission Failed" : "Orbit Broken"}
+                      style={{ background: gameMode === 'destroyer' ? 'linear-gradient(135deg,#f87171,#ef4444)' : gameMode === 'gravity' ? 'linear-gradient(135deg,#f97316,#ef4444)' : 'linear-gradient(135deg,#fb923c,#ef4444)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                      {gameMode === "destroyer" ? "Mission Failed" : gameMode === "gravity" ? "Crashed!" : "Orbit Broken"}
                     </div>
-                    <div className="text-xs text-white/35 mb-1">{gameMode === "destroyer" ? "Your ship was destroyed…" : "Asteroids took you out of orbit…"}</div>
+                    <div className="text-xs text-white/35 mb-1">{gameMode === "destroyer" ? "Your ship was destroyed…" : gameMode === "gravity" ? "You hit an asteroid column…" : "Asteroids took you out of orbit…"}</div>
                   </>
                 )}
 
-                <div className="text-3xl font-black text-white mt-2 mb-0.5 tabular-nums">
-                  {gameMode === "destroyer" ? formatPoints(score) : formatTime(score)}
-                </div>
-                {score > highScore && score > 0 && (
+                {gameMode === "gravity" ? (
+                  /* Gravity mode: TIME and COINS side by side */
+                  <div className="flex items-center gap-4 mt-2 mb-0.5">
+                    <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+                      <span className="text-[10px] uppercase tracking-widest text-cyan-400/60 font-semibold">Time</span>
+                      <span className="text-2xl font-black text-white tabular-nums">{formatTime(score)}</span>
+                    </div>
+                    <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-yellow-500/5 border border-yellow-500/15">
+                      <span className="text-[10px] uppercase tracking-widest text-yellow-400/60 font-semibold">Coins</span>
+                      <div className="flex items-center gap-1">
+                        <Coins className="w-4 h-4 text-yellow-400" />
+                        <span className="text-2xl font-black text-yellow-400 tabular-nums">{coins}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-3xl font-black text-white mt-2 mb-0.5 tabular-nums">
+                    {gameMode === "destroyer" ? formatPoints(score) : formatTime(score)}
+                  </div>
+                )}
+                {isNewBest && score > 0 && (
                   <div className="text-[10px] text-yellow-400 font-bold uppercase tracking-widest animate-pulse">✦ New Personal Best ✦</div>
                 )}
-                {highScore > 0 && score <= highScore && (
+                {!isNewBest && highScore > 0 && (
                   <div className="text-[10px] text-white/25">Best: {gameMode === "destroyer" ? formatPoints(highScore) : formatTime(highScore)}</div>
                 )}
               </div>
               {/* Scrollable content */}
               <div className="flex-1 overflow-y-auto px-5 pb-2 flex flex-col items-center w-full">
+
+                {/* ── Challenge result overlay ── */}
+                {activeChallengeId && (
+                  <div className="w-full mb-3">
+                    {challengeSubmitting ? (
+                      <div className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-amber-400/30 bg-amber-500/8">
+                        <span className="w-4 h-4 border-2 border-amber-400/40 border-t-amber-400 rounded-full animate-spin" />
+                        <span className="text-sm text-amber-300 font-medium">Submitting challenge score...</span>
+                      </div>
+                    ) : challengeResult ? (
+                      challengeResult.status === 'completed' ? (
+                        (() => {
+                          const playerAddr = address || 'anonymous';
+                          const isWinner = challengeResult.winner === playerAddr;
+                          const isTie = challengeResult.winner === null;
+                          const myScore = playerAddr === challengeResult.creator ? challengeResult.creatorScore : challengeResult.opponentScore;
+                          const theirScore = playerAddr === challengeResult.creator ? challengeResult.opponentScore : challengeResult.creatorScore;
+                          const prize = Math.floor(challengeResult.stakeAmount * 2 * 0.95);
+                          return (
+                            <div
+                              className={`px-4 py-3.5 rounded-xl border text-center ${
+                                isWinner ? 'border-green-400/40 bg-green-500/10' : isTie ? 'border-yellow-400/40 bg-yellow-500/10' : 'border-red-400/40 bg-red-500/10'
+                              }`}
+                              style={{ boxShadow: isWinner ? '0 0 20px rgba(74,222,128,0.15)' : isTie ? '0 0 20px rgba(250,204,21,0.15)' : '0 0 20px rgba(239,68,68,0.15)' }}
+                            >
+                              <div className="flex items-center justify-center gap-2 mb-2">
+                                <Swords className={`w-5 h-5 ${isWinner ? 'text-green-400' : isTie ? 'text-yellow-400' : 'text-red-400'}`} />
+                                <span className={`text-lg font-black uppercase tracking-wider ${isWinner ? 'text-green-300' : isTie ? 'text-yellow-300' : 'text-red-300'}`}>
+                                  {isWinner ? 'YOU WON!' : isTie ? 'TIE' : 'YOU LOST'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-center gap-3 text-sm mb-1.5">
+                                <span className="text-white/70">Your score: <strong className="text-white">{myScore != null ? (gameMode === 'destroyer' ? formatPoints(myScore) : formatTime(myScore)) : '-'}</strong></span>
+                                <span className="text-white/30">vs</span>
+                                <span className="text-white/70">Opponent: <strong className="text-white">{theirScore != null ? (gameMode === 'destroyer' ? formatPoints(theirScore) : formatTime(theirScore)) : '-'}</strong></span>
+                              </div>
+                              <div className={`text-xs font-bold ${isWinner ? 'text-green-400' : isTie ? 'text-yellow-400' : 'text-red-400/70'}`}>
+                                {isWinner ? `+${prize} Coins` : isTie ? 'Stake refunded' : `Lost ${challengeResult.stakeAmount} Coins`}
+                              </div>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-cyan-400/30 bg-cyan-500/8">
+                          <Swords className="w-4 h-4 text-cyan-400" />
+                          <span className="text-sm text-cyan-300 font-medium">Score submitted. Waiting for opponent...</span>
+                        </div>
+                      )
+                    ) : null}
+                  </div>
+                )}
 
                 {/* Coins earned this round + rank */}
                 <div className="flex items-center gap-3 mb-4 mt-1">
@@ -1939,10 +2318,10 @@ const PrismLeague = () => {
                   <button
                     className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
                     style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.2)', color: 'rgba(34,211,238,0.7)' }}
-                    onClick={() => { stopAllAudio(); const nextMode = gameMode === "orbit" ? "destroyer" : "orbit"; setGameMode(nextMode); setGameState("start"); }}
+                    onClick={() => { stopAllAudio(); const idx = GAME_MODES.findIndex(m => m.id === gameMode); const next = GAME_MODES[(idx + 1) % GAME_MODES.length]; setGameMode(next.id); setGameState("start"); }}
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    {gameMode === "orbit" ? "Defender" : "Survival"}
+                    Next Mode
                   </button>
                   <button
                     className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"

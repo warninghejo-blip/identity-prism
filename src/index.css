@@ -785,7 +785,10 @@ body:has(.prism-league-page) #root > * {
   gap: 1rem;
   min-height: 100%;
   overflow-y: auto;
-  background: radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.1), transparent 60%);
+  background:
+    radial-gradient(circle at 50% 30%, rgba(34, 211, 238, 0.08), transparent 50%),
+    radial-gradient(circle at 20% 70%, rgba(139, 92, 246, 0.05), transparent 40%),
+    radial-gradient(circle at 80% 60%, rgba(236, 72, 153, 0.04), transparent 40%);
   transition: opacity 0.15s ease-out;
 }
 
@@ -805,17 +808,43 @@ body:has(.prism-league-page) #root > * {
   flex-direction: column;
   gap: 2rem;
   border-radius: 40px;
-  background: var(--prism-bg);
-  backdrop-filter: var(--prism-glass);
-  border: 1px solid var(--prism-border);
+  background: linear-gradient(135deg, rgba(5,10,20,0.85), rgba(10,15,30,0.9));
+  backdrop-filter: blur(40px) saturate(1.2);
+  -webkit-backdrop-filter: blur(40px) saturate(1.2);
+  border: 1px solid rgba(34, 211, 238, 0.08);
   text-align: center;
-  box-shadow: 0 50px 120px rgba(0, 0, 0, 0.9);
-  animation: cardEntrance 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow:
+    0 50px 120px rgba(0, 0, 0, 0.9),
+    0 0 80px rgba(34, 211, 238, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  animation: cardEntrance 1s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+.landing-card-v2::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(from 0deg at 50% 50%,
+    transparent 0deg,
+    rgba(34, 211, 238, 0.03) 60deg,
+    transparent 120deg,
+    rgba(139, 92, 246, 0.02) 240deg,
+    transparent 360deg
+  );
+  animation: cardShine 12s linear infinite;
+  pointer-events: none;
+}
+@keyframes cardShine {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes cardEntrance {
-  from { opacity: 0; transform: translateY(20px) scale(0.95); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(30px) scale(0.92); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
 
@@ -1500,13 +1529,17 @@ body:has(.prism-league-page) #root > * {
 .ach-tag.whale { color: #fbbf24; border-color: rgba(251, 191, 36, 0.25); background: rgba(251, 191, 36, 0.05); }
 
 .glow-logo {
-  filter: drop-shadow(0 0 15px var(--prism-cyan));
-  animation: logoPulse 4s infinite ease-in-out;
+  filter: drop-shadow(0 0 20px var(--prism-cyan)) drop-shadow(0 0 40px rgba(34,211,238,0.15));
+  animation: logoPulse 5s infinite ease-in-out, logoFloat 6s infinite ease-in-out;
 }
 
 @keyframes logoPulse {
-  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 10px var(--prism-cyan)); }
-  50% { transform: scale(1.05); filter: drop-shadow(0 0 25px var(--prism-cyan)); }
+  0%, 100% { filter: drop-shadow(0 0 15px var(--prism-cyan)) drop-shadow(0 0 30px rgba(34,211,238,0.1)); }
+  50% { filter: drop-shadow(0 0 30px var(--prism-cyan)) drop-shadow(0 0 60px rgba(34,211,238,0.2)); }
+}
+@keyframes logoFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
 }
 
 .vitals-scroll-x {
@@ -3303,10 +3336,10 @@ body:has(.prism-league-page) #root > * {
   opacity: 0.15;
 }
 
-/* ═══ Forge Aura CSS Animation ═══ */
-@keyframes aura-pulse {
-  0%, 100% { filter: brightness(1); }
-  50% { filter: brightness(1.08); }
+/* ═══ Forge Title Gold Shimmer ═══ */
+@keyframes title-gold-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
 }
 
 /* ═══ v5.0 Mobile-First Styles ═══ */
@@ -3350,10 +3383,22 @@ canvas[class*="timewarp"] {
   touch-action: none;
 }
 
-/* Nebula Market / Scam Checker: full-width inputs on mobile */
+/* Prism Arena / Scam Checker: full-width inputs on mobile */
 @media (max-width: 640px) {
   .market-search input,
   .scam-search input {
     font-size: 16px !important; /* prevents iOS zoom on focus */
+  }
+}
+
+/* Mobile performance: reduce expensive backdrop-filter blur on low-end devices (Seeker etc.) */
+@media (max-width: 768px) {
+  .landing-card-v2 {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .prism-hud-bottom {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 }

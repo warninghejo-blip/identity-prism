@@ -8,7 +8,7 @@ import {
   createCloseAccountInstruction 
 } from '@solana/spl-token';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { toast } from 'sonner';
+import { toast, Toaster as Sonner } from 'sonner';
 import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLeft, ExternalLink, ArrowUpDown } from 'lucide-react';
 import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -554,11 +554,11 @@ const BlackHole = () => {
 
         // Check if user owns an Identity Prism cNFT (compressed — not in token accounts)
         const ourCollection = getCollectionMint();
-        if (ourCollection && heliusUrl) {
+        if (ourCollection) {
           // First check regular tokens
           let ownsCard = parsedTokens.some(t => t.collectionId === ourCollection);
-          // If not found, check compressed NFTs via DAS searchAssets
-          if (!ownsCard) {
+          // If not found and heliusUrl available, check compressed NFTs via DAS searchAssets
+          if (!ownsCard && heliusUrl) {
             try {
               const dasSearch = await fetch(heliusUrl, {
                 method: 'POST',
@@ -582,6 +582,8 @@ const BlackHole = () => {
             }
           }
           setHasMintedCard(ownsCard);
+        } else {
+          setHasMintedCard(false);
         }
       }
 
@@ -836,7 +838,7 @@ const BlackHole = () => {
       const isTreasury = publicKey.toBase58() === TREASURY_ADDRESS;
       const commissionRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
       const commissionLamports = isTreasury ? 0 : Math.round(totalReclaimLamports * commissionRate);
-      const netReclaim = (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL;
+      const netReclaim = Math.max(0, (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL - ESTIMATED_FEE_SOL);
 
       // Chunk accounts into batches to stay within Solana tx size limit
       // Each account needs 1-2 instructions (burn + close); ~8 accounts per tx is safe
@@ -856,6 +858,7 @@ const BlackHole = () => {
         );
 
         for (const token of chunks[ci]) {
+          if (!token.pubkey || !token.programId) continue;
           if (token.amount > 0n) {
             tx.add(
               createBurnInstruction(
@@ -895,6 +898,7 @@ const BlackHole = () => {
 
       if (transactions.length === 0) {
         toast.info("Nothing to do");
+        setIsBurning(false);
         return;
       }
 
@@ -904,7 +908,13 @@ const BlackHole = () => {
 
       // Send all transaction chunks sequentially
       const signatures: string[] = [];
+      const initialWallet = publicKey.toBase58();
       for (let ti = 0; ti < transactions.length; ti++) {
+        // Verify wallet hasn't changed mid-burn
+        if (publicKey.toBase58() !== initialWallet) {
+          toast.error('Wallet changed — remaining transactions cancelled');
+          break;
+        }
         const tx = transactions[ti];
 
         // Explicitly set blockhash + feePayer (some mobile wallets don't auto-fill)
@@ -957,6 +967,7 @@ const BlackHole = () => {
           const msg = signErr instanceof Error ? signErr.message : String(signErr);
           if (/reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(msg)) {
             toast.info('Transaction cancelled');
+            setIsBurning(false);
             return;
           }
           throw signErr;
@@ -997,7 +1008,7 @@ const BlackHole = () => {
         description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee) in ${signatures.length} tx${signatures.length > 1 ? 's' : ''}`
       });
 
-      // Award PRISM coins for burning
+      // Award Coins for burning
       if (publicKey) {
         const addr = publicKey.toBase58();
         const nftsBurned = safeTargets.filter(t => t.isNft).length;
@@ -1005,7 +1016,7 @@ const BlackHole = () => {
         const prismEarned = calculateBurnPrism(tokensBurned, nftsBurned);
         if (prismEarned > 0) {
           earnPrism(addr, 'burn_tokens', prismEarned, `Burned ${safeTargets.length} asset(s) in Black Hole`).catch(() => {});
-          toast.success(`+${prismEarned} PRISM earned!`, { duration: 3000 });
+          toast.success(`+${prismEarned} Coins earned!`, { duration: 3000 });
         }
         // Quest auto-tracking
         import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
@@ -1614,6 +1625,13 @@ const BlackHole = () => {
         )}
       </div>
 
+      <Sonner
+        position="bottom-center"
+        expand={false}
+        closeButton
+        offset={{ bottom: 16 }}
+        mobileOffset={{ bottom: 12, left: 16, right: 16 }}
+      />
     </div>
   );
 };

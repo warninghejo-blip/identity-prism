@@ -7,7 +7,7 @@
  *   1. Black Hole (token burner)
  *   2. Prism League (games)
  *   3. Stellar Forge (shop/crafting)
- *   4. Nebula Market (social/leaderboard)
+ *   4. Prism Arena (social/leaderboard)
  *   5. Constellation (wallet graph)
  */
 
@@ -59,7 +59,7 @@ const HUB_MODULES: HubModule[] = [
     orbitRadius: 5.0,
     orbitSpeed: 0.12,
     initialAngle: (2 * Math.PI) / 5,
-    description: 'Play games, earn PRISM coins',
+    description: 'Play games, earn Coins',
     size: 0.65,
   },
   {
@@ -72,12 +72,12 @@ const HUB_MODULES: HubModule[] = [
     orbitRadius: 4.8,
     orbitSpeed: 0.18,
     initialAngle: (4 * Math.PI) / 5,
-    description: 'Craft upgrades with PRISM coins',
+    description: 'Craft upgrades with Coins',
     size: 0.55,
   },
   {
-    id: 'nebula-market',
-    label: 'Nebula Market',
+    id: 'prism-arena',
+    label: 'Prism Arena',
     icon: '🌌',
     route: '/market',
     color: '#ec4899',
@@ -383,7 +383,7 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#050510' }}>
-      {/* PRISM balance overlay */}
+      {/* Coin balance overlay */}
       <div
         style={{
           position: 'absolute',
@@ -400,12 +400,12 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
           backdropFilter: 'blur(8px)',
         }}
       >
-        <span style={{ fontSize: 18 }}>💎</span>
+        <span style={{ fontSize: 18 }}>🪙</span>
         <span style={{ color: '#c084fc', fontWeight: 700, fontSize: 16, fontFamily: 'monospace' }}>
           {prismBalance?.balance ?? 0}
         </span>
         <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: 600, letterSpacing: 2 }}>
-          PRISM
+          COINS
         </span>
       </div>
 

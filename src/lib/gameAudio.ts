@@ -87,12 +87,23 @@ export function initAudio() {
 
   if (!(window as any).__audioUnlockAdded) {
     (window as any).__audioUnlockAdded = true;
+    const unlockEvents = ['click', 'touchstart', 'keydown', 'pointerdown'] as const;
+    const removeUnlockListeners = () => {
+      for (const evt of unlockEvents) {
+        document.removeEventListener(evt, unlock);
+      }
+      (window as any).__audioUnlockAdded = false;
+      LOG('Unlock listeners removed');
+    };
     const unlock = () => {
       if (ctx && ctx.state === 'suspended') {
-        ctx.resume().then(() => { _ready = true; LOG('Unlocked via gesture'); }).catch(() => {});
-      } else if (ctx && ctx.state === 'running') { _ready = true; }
+        ctx.resume().then(() => { _ready = true; LOG('Unlocked via gesture'); removeUnlockListeners(); }).catch(() => {});
+      } else if (ctx && ctx.state === 'running') {
+        _ready = true;
+        removeUnlockListeners();
+      }
     };
-    for (const evt of ['click', 'touchstart', 'keydown', 'pointerdown']) {
+    for (const evt of unlockEvents) {
       document.addEventListener(evt, unlock, { passive: true });
     }
   }

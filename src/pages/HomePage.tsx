@@ -16,6 +16,7 @@ const PLANETS = [
   { tier: "saturn", label: "Saturn", map: "/textures/saturn_map.jpg", color: "#fcbf49", desc: "Ringed royalty" },
   { tier: "jupiter", label: "Jupiter", map: "/textures/jupiter_map.jpg", color: "#f4a261", desc: "Gas colossus" },
   { tier: "sun", label: "Sun", map: "/textures/sun_map.jpg", color: "#ffdd99", desc: "Stellar power" },
+  { tier: "binary_sun", label: "Binary Sun", map: "/textures/sun_map.jpg", color: "#fffbe6", desc: "Twin star transcendence" },
 ];
 
 const FEATURES = [
@@ -221,7 +222,7 @@ export default function HomePage() {
         <FadeInSection className="text-center mb-20">
           <h2 className="text-3xl md:text-5xl font-black tracking-tight mb-4">
             <span className="bg-gradient-to-r from-amber-200 via-orange-300 to-red-400 bg-clip-text text-transparent">
-              9 Celestial Tiers
+              10 Celestial Tiers
             </span>
           </h2>
           <p className="text-white/30 text-sm md:text-base max-w-lg mx-auto">

@@ -1,6 +1,6 @@
 /**
  * Stellar Forge — item catalog for Identity Prism v5.
- * All purchasable items with PRISM coins.
+ * All purchasable items with Coins.
  */
 
 // ── Types ──
@@ -11,7 +11,7 @@ export interface ForgeItem {
   id: string;
   name: string;
   category: ForgeCategory;
-  price: number;           // PRISM coins
+  price: number;           // Coins
   rarity: 'common' | 'rare' | 'epic' | 'legendary';
   description: string;
   preview: string;         // CSS/shader identifier or image path
@@ -132,8 +132,16 @@ export function saveLocalLoadout(loadout: ForgeLoadout): void {
   } catch {}
 }
 
-export function purchaseItem(loadout: ForgeLoadout, itemId: string): ForgeLoadout {
+export function purchaseItem(loadout: ForgeLoadout, itemId: string, prismBalance?: number): ForgeLoadout | null {
   if (loadout.ownedItems.some((o) => o.itemId === itemId)) return loadout;
+
+  // Validate PRISM balance if provided
+  if (prismBalance !== undefined) {
+    const item = getItemById(itemId);
+    if (!item) return null;
+    if (prismBalance < item.price) return null;
+  }
+
   return {
     ...loadout,
     ownedItems: [
@@ -166,12 +174,15 @@ export function equipItem(loadout: ForgeLoadout, itemId: string): ForgeLoadout {
       break;
   }
 
-  updated.ownedItems = updated.ownedItems.map((o) => ({
-    ...o,
-    equipped: o.itemId === itemId
-      ? true
-      : (getItemById(o.itemId)?.category === item.category ? false : o.equipped),
-  }));
+  updated.ownedItems = updated.ownedItems.map((o) => {
+    const oDef = getItemById(o.itemId);
+    return {
+      ...o,
+      equipped: o.itemId === itemId
+        ? true
+        : (oDef && oDef.category === item.category ? false : o.equipped),
+    };
+  });
 
   return updated;
 }

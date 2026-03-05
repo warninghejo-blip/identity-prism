@@ -537,7 +537,7 @@ export function Explosion({ pRef, actRef }: { pRef: React.MutableRefObject<{ x: 
     if (!actRef.current) { if (ptRef.current) ptRef.current.visible = false; return; }
     tRef.current += dt; const t = tRef.current;
     if (t > 2.2) { actRef.current = false; return; }
-    if (ptRef.current) {
+    if (ptRef.current && ptRef.current.geometry?.attributes?.position) {
       ptRef.current.visible = true;
       const a = ptRef.current.geometry.attributes.position.array as Float32Array;
       for (let i = 0; i < EXPLODE_N; i++) { if (t < .02) { a[i * 3] = pRef.current.x; a[i * 3 + 1] = pRef.current.y; a[i * 3 + 2] = 0; } else { a[i * 3] += st.v[i * 3] * dt; a[i * 3 + 1] += st.v[i * 3 + 1] * dt; a[i * 3 + 2] += st.v[i * 3 + 2] * dt; st.v[i * 3] *= .97; st.v[i * 3 + 1] *= .97; st.v[i * 3 + 2] *= .97; } }

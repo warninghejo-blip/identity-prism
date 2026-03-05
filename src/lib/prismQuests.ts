@@ -1,6 +1,6 @@
 /**
- * Prism Quests — daily/weekly on-chain challenges for Identity Prism v5.
- * Complete quests to earn PRISM coins. Creates daily engagement loop.
+ * Quests — daily/weekly challenges for Identity Prism v5.
+ * Complete quests to earn Coins. Creates daily engagement loop.
  */
 
 // ── Types ──
@@ -14,7 +14,7 @@ export interface Quest {
   description: string;
   category: QuestCategory;
   frequency: QuestFrequency;
-  reward: number;             // PRISM coins
+  reward: number;             // Coins
   target: number;             // e.g., "burn 3 tokens" → target = 3
   icon: string;
 }
@@ -42,7 +42,7 @@ export const DAILY_QUESTS: Quest[] = [
   { id: 'daily_scan', name: 'Daily Scan', description: 'Scan your wallet once', category: 'identity', frequency: 'daily', reward: 5, target: 1, icon: '🔬' },
   { id: 'daily_game', name: 'Daily Player', description: 'Play one game in Prism League', category: 'game', frequency: 'daily', reward: 10, target: 1, icon: '🎮' },
   { id: 'daily_burn', name: 'Dust Collector', description: 'Burn 1 token in Black Hole', category: 'burn', frequency: 'daily', reward: 8, target: 1, icon: '🔥' },
-  { id: 'daily_explore', name: 'Curious Mind', description: 'View another wallet in Nebula Market', category: 'explore', frequency: 'daily', reward: 5, target: 1, icon: '🔭' },
+  { id: 'daily_explore', name: 'Curious Mind', description: 'View another wallet in Prism Arena', category: 'explore', frequency: 'daily', reward: 5, target: 1, icon: '🔭' },
   { id: 'daily_highscore', name: 'Beat Yourself', description: 'Set a new personal best in any game', category: 'game', frequency: 'daily', reward: 15, target: 1, icon: '🏆' },
 ];
 
@@ -101,6 +101,26 @@ export function getQuestState(address: string): QuestState {
       let needsSave = false;
 
       if (now >= state.dailyResetAt) {
+        // Calculate how many days were missed since last reset
+        const resetTime = new Date(state.dailyResetAt).getTime();
+        const nowTime = new Date(now).getTime();
+        const daysMissed = Math.floor((nowTime - resetTime) / (24 * 60 * 60 * 1000));
+
+        // Streak logic: check if any daily quest was completed before reset
+        const hadDailyComplete = state.progress.some(
+          (p) => DAILY_QUESTS.some((q) => q.id === p.questId) && p.completed,
+        );
+
+        if (daysMissed > 1) {
+          // Skipped more than 1 day — streak is broken regardless
+          state.currentStreak = 0;
+        } else if (hadDailyComplete) {
+          state.currentStreak = (state.currentStreak || 0) + 1;
+        } else {
+          // Missed yesterday — reset streak
+          state.currentStreak = 0;
+        }
+
         // Reset daily quests
         state.progress = state.progress.filter(
           (p) => !DAILY_QUESTS.some((q) => q.id === p.questId),
@@ -162,25 +182,32 @@ export function incrementQuest(
   const quest = ALL_QUESTS.find((q) => q.id === questId);
   if (!quest) return { state, justCompleted: false };
 
-  let progress = state.progress.find((p) => p.questId === questId);
-  if (!progress) {
-    progress = { questId, current: 0, completed: false, completedAt: null, claimedAt: null };
-    state.progress.push(progress);
-  }
+  const existing = state.progress.find((p) => p.questId === questId);
+  if (existing?.completed) return { state, justCompleted: false };
 
-  if (progress.completed) return { state, justCompleted: false };
+  const prev: QuestProgress = existing ?? { questId, current: 0, completed: false, completedAt: null, claimedAt: null };
+  const newCurrent = Math.min(prev.current + amount, quest.target);
+  const justCompleted = newCurrent >= quest.target && !prev.completed;
 
-  progress.current = Math.min(progress.current + amount, quest.target);
-  const justCompleted = progress.current >= quest.target && !progress.completed;
+  const updatedProgress: QuestProgress = {
+    ...prev,
+    current: newCurrent,
+    completed: justCompleted ? true : prev.completed,
+    completedAt: justCompleted ? new Date().toISOString() : prev.completedAt,
+  };
 
-  if (justCompleted) {
-    progress.completed = true;
-    progress.completedAt = new Date().toISOString();
-    state.totalCompleted += 1;
-  }
+  const newProgress = existing
+    ? state.progress.map((p) => (p.questId === questId ? updatedProgress : p))
+    : [...state.progress, updatedProgress];
 
-  saveQuestState(state);
-  return { state, justCompleted };
+  const newState: QuestState = {
+    ...state,
+    progress: newProgress,
+    totalCompleted: state.totalCompleted + (justCompleted ? 1 : 0),
+  };
+
+  saveQuestState(newState);
+  return { state: newState, justCompleted };
 }
 
 /**
@@ -190,9 +217,14 @@ export function claimQuestReward(state: QuestState, questId: string): QuestState
   const progress = state.progress.find((p) => p.questId === questId);
   if (!progress || !progress.completed || progress.claimedAt) return state;
 
-  progress.claimedAt = new Date().toISOString();
-  saveQuestState(state);
-  return state;
+  const newState: QuestState = {
+    ...state,
+    progress: state.progress.map((p) =>
+      p.questId === questId ? { ...p, claimedAt: new Date().toISOString() } : p,
+    ),
+  };
+  saveQuestState(newState);
+  return newState;
 }
 
 /**

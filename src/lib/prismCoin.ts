@@ -1,11 +1,10 @@
 /**
- * PRISM Coin — in-game currency for Identity Prism.
+ * Coins — unified in-game currency for Identity Prism.
  * Earned through gameplay, burns, scans, achievements, quests.
- * Spent in Stellar Forge on card frames, auras, ship skins, titles.
- * 
- * Persistence: server-side via /api/prism/* endpoints.
+ * Spent in Coin Shop on card frames, auras, ship skins, titles.
+ *
+ * Persistence: server-side via /api/prism/* endpoints (backed by coinBalances).
  * Fallback: localStorage for offline/anonymous use.
- * Future: will become a real SPL token on Solana.
  */
 
 import { getHeliusProxyUrl } from '@/constants';
@@ -33,12 +32,14 @@ export interface PrismTransaction {
 export type PrismEarnSource =
   | 'game_orbit'
   | 'game_defender'
+  | 'game_gravity'
   | 'burn_tokens'
   | 'burn_nfts'
   | 'scan_wallet'
   | 'achievement'
   | 'quest_daily'
   | 'quest_weekly'
+  | 'quest_milestone'
   | 'challenge_win'
   | 'first_mint'
   | 'referral';
@@ -55,12 +56,14 @@ export type PrismSpendSource =
 export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   game_orbit: 1,           // per 10 seconds survived
   game_defender: 2,        // per level cleared
+  game_gravity: 1,         // per 80 points (gravity is harder)
   burn_tokens: 5,          // per token burned
   burn_nfts: 10,           // per NFT burned
   scan_wallet: 3,          // per wallet scan (max 1/hour)
   achievement: 25,         // per achievement unlocked
   quest_daily: 15,         // per daily quest completed
   quest_weekly: 50,        // per weekly quest completed
+  quest_milestone: 100,    // per milestone quest completed
   challenge_win: 30,       // per challenge won
   first_mint: 100,         // one-time bonus for first mint
   referral: 20,            // per referred user who scans
@@ -176,8 +179,8 @@ export async function earnPrism(
   amount?: number,
   description?: string,
 ): Promise<{ balance: PrismBalance; earned: number }> {
-  const earned = amount ?? PRISM_EARN_RATES[source];
-  const desc = description ?? `Earned ${earned} PRISM from ${source.replace(/_/g, ' ')}`;
+  const earned = amount ?? PRISM_EARN_RATES[source] ?? 1;
+  const desc = description ?? `Earned ${earned} Coins from ${source.replace(/_/g, ' ')}`;
 
   // Try server first
   const serverResult = await apiCall<{ balance: PrismBalance; earned: number }>(
@@ -218,7 +221,7 @@ export async function spendPrism(
   amount: number,
   description?: string,
 ): Promise<{ balance: PrismBalance; spent: number } | null> {
-  const desc = description ?? `Spent ${amount} PRISM on ${source.replace(/_/g, ' ')}`;
+  const desc = description ?? `Spent ${amount} Coins on ${source.replace(/_/g, ' ')}`;
 
   // Try server first
   const serverResult = await apiCall<{ balance: PrismBalance; spent: number }>(
@@ -268,10 +271,14 @@ export async function getPrismTransactions(
 /**
  * Calculate PRISM earned from a game score.
  */
-export function calculateGamePrism(gameMode: 'orbit' | 'destroyer', score: number, level?: number): number {
+export function calculateGamePrism(gameMode: 'orbit' | 'destroyer' | 'gravity', score: number, level?: number): number {
   if (gameMode === 'orbit') {
     // 1 PRISM per 100 points, min 1
     return Math.max(1, Math.floor(score / 100));
+  }
+  if (gameMode === 'gravity') {
+    // 1 PRISM per 80 points, min 1 (gravity is harder)
+    return Math.max(1, Math.floor(score / 80));
   }
   if (gameMode === 'destroyer') {
     // 2 PRISM per level + bonus for score

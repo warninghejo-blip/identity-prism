@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
-import { Activity, Clock, Info, Trophy, Wallet, Sparkles as SparklesIcon, Zap, Shield, Flame, Hourglass, RotateCw, RotateCcw } from 'lucide-react';
+import { Activity, Clock, Trophy, Wallet, Sparkles as SparklesIcon, Flame, Hourglass, RotateCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Planet3D } from './Planet3D';
@@ -14,6 +14,7 @@ import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { BLACKHOLE_ENABLED } from '@/constants';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
+import { trackInternalNavigation } from '@/lib/safeNavigate';
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
@@ -85,7 +86,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 ) {
   const [isFlipped, setIsFlipped] = useState(captureView === 'back');
   const [isInteracting, setIsInteracting] = useState(false);
-  const [wormholeActive, setWormholeActive] = useState(false);
   const [texturesReady, setTexturesReady] = useState(false);
   const handleTexturesReady = useCallback(() => setTexturesReady(true), []);
   const [shakeWarning, setShakeWarning] = useState(false);
@@ -94,10 +94,21 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(false);
   const [scoreHistory, setScoreHistory] = useState<{ score: number; tier: string; date: string }[]>([]);
-  const [sybilRisk, setSybilRisk] = useState<{ riskScore: number; riskLevel: string } | null>(null);
+  const [sybilRisk, setSybilRisk] = useState<{
+    riskScore: number; riskLevel: string; trustScore: number; trustGrade: string;
+    signals?: { id: string; name: string; detected: boolean; weight: number; severity: string; category?: string; value?: string; description?: string }[];
+    metrics?: {
+      walletAgeDays: number; activeDaysCount: number; activeDaysRatio: number;
+      tokenDiversityCount: number; nftCount: number;
+      incomingVolume: number; outgoingVolume: number; flowRatio: number;
+      dustRatio: number; uniquePrograms: number;
+      balance: number; historicalMaxBalance: number; txCount: number; clusterSimilarity: number;
+    };
+  } | null>(null);
   const [forgeFrame, setForgeFrame] = useState<string | null>(null);
   const [forgeAura, setForgeAura] = useState<string | null>(null);
   const [forgeTitle, setForgeTitle] = useState<string | null>(null);
+  const [forgeTitleRarity, setForgeTitleRarity] = useState<'common' | 'rare' | 'epic' | 'legendary'>('common');
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
   const { traits, score, address } = data;
@@ -111,7 +122,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
     // Sybil
     fetch(`${base}/api/sybil/analysis?address=${address}`).then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.riskScore !== undefined) setSybilRisk({ riskScore: d.riskScore, riskLevel: d.riskLevel }); })
+      .then(d => {
+        if (d?.riskScore !== undefined) setSybilRisk({
+          riskScore: d.riskScore, riskLevel: d.riskLevel,
+          trustScore: d.trustScore ?? (100 - d.riskScore), trustGrade: d.trustGrade ?? 'N/A',
+          signals: d.signals, metrics: d.metrics,
+        });
+      })
       .catch(() => {});
     // Forge loadout (local)
     try {
@@ -121,10 +138,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         if (loadout.equippedFrame) setForgeFrame(loadout.equippedFrame);
         if (loadout.equippedAura) setForgeAura(loadout.equippedAura);
         if (loadout.equippedTitle) {
-          // Resolve title name from item catalog
+          // Resolve title name + rarity from item catalog
           import('@/lib/forgeItems').then(({ getItemById }) => {
             const item = getItemById(loadout.equippedTitle);
-            if (item) setForgeTitle(item.preview);
+            if (item) {
+              setForgeTitle(item.preview);
+              setForgeTitleRarity(item.rarity);
+            }
           }).catch(() => {});
         }
       }
@@ -323,7 +343,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     { min: 701, max: 850, tier: 'uranus', next: 'saturn' },
     { min: 851, max: 950, tier: 'saturn', next: 'jupiter' },
     { min: 951, max: 1050, tier: 'jupiter', next: 'sun' },
-    { min: 1051, max: 1400, tier: 'sun', next: null },
+    { min: 1051, max: 1200, tier: 'sun', next: 'binary_sun' },
+    { min: 1201, max: 1400, tier: 'binary_sun', next: null },
   ];
   const currentThreshold = TIER_THRESHOLDS.find(t => t.tier === safeTraits.planetTier) || TIER_THRESHOLDS[0];
   const tierProgress = currentThreshold.max > currentThreshold.min
@@ -371,19 +392,17 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                          forgeFrame === 'frame_event_horizon' ? 'rgba(168,85,247,0.6)' :
                          forgeFrame === 'frame_nebula' ? 'rgba(147,51,234,0.4)' :
                          'rgba(6,182,212,0.3)',
-            boxShadow: [
-              // Frame glow
-              forgeFrame ? `0 0 30px -4px ${forgeFrame.includes('supernova') ? 'rgba(245,158,11,0.3)' : forgeFrame.includes('void') ? 'rgba(139,92,246,0.3)' : 'rgba(6,182,212,0.15)'}` : '0 0 20px -4px rgba(6,182,212,0.15)',
-              // Aura glow (outer)
-              forgeAura === 'aura_frost' ? '0 0 40px 8px rgba(96,165,250,0.15), 0 0 80px 20px rgba(96,165,250,0.06)' :
-              forgeAura === 'aura_ember' ? '0 0 40px 8px rgba(239,68,68,0.2), 0 0 80px 20px rgba(251,146,60,0.08)' :
-              forgeAura === 'aura_electric' ? '0 0 40px 8px rgba(59,130,246,0.2), 0 0 80px 20px rgba(96,165,250,0.08)' :
-              forgeAura === 'aura_plasma' ? '0 0 40px 8px rgba(168,85,247,0.2), 0 0 80px 20px rgba(139,92,246,0.08)' :
-              forgeAura === 'aura_dark_matter' ? '0 0 40px 8px rgba(88,28,135,0.25), 0 0 80px 20px rgba(126,34,206,0.1)' :
-              forgeAura === 'aura_binary_pulse' ? '0 0 40px 8px rgba(34,211,238,0.2), 0 0 80px 20px rgba(251,191,36,0.08)' :
-              '0 0 60px -12px rgba(6,182,212,0.08)',
-            ].join(', '),
-            animation: forgeAura ? 'aura-pulse 3s ease-in-out infinite' : undefined,
+            boxShadow: forgeFrame ? `0 0 30px -4px ${forgeFrame.includes('supernova') ? 'rgba(245,158,11,0.3)' : forgeFrame.includes('void') ? 'rgba(139,92,246,0.3)' : 'rgba(6,182,212,0.15)'}` : '0 0 20px -4px rgba(6,182,212,0.15)',
+            ...(forgeAura ? {
+              borderColor:
+                forgeAura === 'aura_frost' ? 'rgba(96,165,250,0.6)' :
+                forgeAura === 'aura_ember' ? 'rgba(239,68,68,0.7)' :
+                forgeAura === 'aura_electric' ? 'rgba(59,130,246,0.7)' :
+                forgeAura === 'aura_plasma' ? 'rgba(168,85,247,0.7)' :
+                forgeAura === 'aura_dark_matter' ? 'rgba(126,34,206,0.7)' :
+                forgeAura === 'aura_binary_pulse' ? 'rgba(34,211,238,0.7)' :
+                undefined,
+            } : {}),
           }}
         >
           {/* Card background — separate suckable piece */}
@@ -391,22 +410,28 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
           {/* Header */}
           <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
-            {/* Sybil risk shield */}
-            {sybilRisk && !isCapture && (
-              <div
-                className="capture-hidden absolute left-3 top-3 flex items-center justify-center w-9 h-9 rounded-full backdrop-blur-md border transition-all"
-                style={{
-                  borderColor: sybilRisk.riskLevel === 'clean' ? 'rgba(34,197,94,0.3)' : sybilRisk.riskLevel === 'low' ? 'rgba(132,204,22,0.3)' : sybilRisk.riskLevel === 'medium' ? 'rgba(245,158,11,0.3)' : 'rgba(239,68,68,0.3)',
-                  background: sybilRisk.riskLevel === 'clean' ? 'rgba(34,197,94,0.1)' : sybilRisk.riskLevel === 'low' ? 'rgba(132,204,22,0.1)' : sybilRisk.riskLevel === 'medium' ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
-                }}
-                title={`Sybil Risk: ${sybilRisk.riskLevel} (${sybilRisk.riskScore}/100)`}
-              >
-                <Shield
-                  className="w-4 h-4"
-                  style={{ color: sybilRisk.riskLevel === 'clean' ? '#22c55e' : sybilRisk.riskLevel === 'low' ? '#84cc16' : sybilRisk.riskLevel === 'medium' ? '#f59e0b' : '#ef4444' }}
-                />
-              </div>
-            )}
+            {/* Sybil risk pill badge */}
+            {sybilRisk && !isCapture && (() => {
+              const ts = sybilRisk.trustScore;
+              const grade = sybilRisk.trustGrade;
+              const color = ts >= 80 ? '#22c55e' : ts >= 60 ? '#3b82f6' : ts >= 40 ? '#eab308' : ts >= 20 ? '#f97316' : '#ef4444';
+              return (
+                <div
+                  className="capture-hidden absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold backdrop-blur-md border transition-all"
+                  style={{
+                    borderColor: `${color}40`,
+                    background: `${color}18`,
+                    color,
+                  }}
+                  title={`Trust Score: ${ts}/100 (Grade ${grade})`}
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                  </svg>
+                  <span>{grade}</span>
+                </div>
+              );
+            })()}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -418,7 +443,37 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               <RotateCw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:rotate-180 duration-500" />
             </button>
             {forgeTitle && (
-              <p className="text-purple-300/70 text-[8px] font-bold tracking-[0.4em] uppercase">{forgeTitle}</p>
+              <span
+                className={`px-3 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider border ${
+                  forgeTitleRarity === 'legendary' ? 'bg-yellow-500/15 border-yellow-500/20' :
+                  forgeTitleRarity === 'epic' ? 'bg-purple-500/15 border-purple-500/20' :
+                  forgeTitleRarity === 'rare' ? 'bg-blue-500/15 border-blue-500/20' :
+                  'bg-gray-500/15 border-gray-500/20 text-gray-300'
+                }`}
+              >
+                <span
+                  style={
+                    forgeTitleRarity === 'legendary' ? {
+                      backgroundClip: 'text',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      backgroundImage: 'linear-gradient(90deg, #fbbf24, #f59e0b, #fde68a, #f59e0b, #fbbf24)',
+                      backgroundSize: '200% 100%',
+                      animation: 'title-gold-shimmer 3s linear infinite',
+                    } : forgeTitleRarity === 'epic' ? {
+                      backgroundClip: 'text',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      backgroundImage: 'linear-gradient(90deg, #a855f7, #c084fc, #a855f7)',
+                    } : forgeTitleRarity === 'rare' ? {
+                      backgroundClip: 'text',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                      backgroundImage: 'linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6)',
+                    } : undefined
+                  }
+                >{forgeTitle}</span>
+              </span>
             )}
             <p className="text-cyan-200/50 text-[9px] font-bold tracking-[0.3em] uppercase">
               Tier Level
@@ -456,6 +511,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
                 const returnAddress = address ? { returnAddress: address } : {};
                 transitionTimersRef.current.push(window.setTimeout(() => {
+                  trackInternalNavigation();
                   navigate('/game', { state: { fromAppJump: true, ...returnAddress } });
                 }, 2780));
               }}
@@ -487,7 +543,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               className="bh-card-portal capture-hidden"
               onClick={(event) => {
                 event.stopPropagation();
-                if (suckingIn || consuming) return;
+                if (jumpingToGame || suckingIn || consuming) return;
                 clearTransitionTimers();
                 setSuckingIn(true);
 
@@ -506,6 +562,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 // Phase 3: Navigate after shader completes (350 + 2500 = 2850ms)
                 const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
                 transitionTimersRef.current.push(window.setTimeout(() => {
+                  trackInternalNavigation();
                   navigate(target);
                 }, 2850));
               }}
@@ -519,28 +576,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               <span className="bh-card-portal__label" data-suck="label">Black Hole</span>
             </button>
           )}
-          {wormholeActive && (
-            <div className="wormhole-overlay">
-              {Array.from({ length: 14 }).map((_, i) => (
-                <span
-                  key={i}
-                  className="wh-ring"
-                  style={{
-                    width: `${30 + i * 50}px`,
-                    height: `${30 + i * 50}px`,
-                    borderColor: i % 3 === 0
-                      ? 'rgba(255,140,90,0.4)'
-                      : i % 3 === 1
-                        ? 'rgba(100,180,255,0.35)'
-                        : 'rgba(255,200,160,0.2)',
-                    borderWidth: i < 4 ? '2px' : '1px',
-                    animation: `wh-ring-expand 1.6s ${i * 0.06}s cubic-bezier(0.22,1,0.36,1) forwards`,
-                  }}
-                />
-              ))}
-            </div>
-          )}
-
           {/* 3D Scene */}
           <div
             data-suck="scene"
@@ -615,7 +650,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       key={badge.key}
                       className="badge-icon-wrap"
                       onTouchStart={(e) => e.currentTarget.classList.add('active')}
-                      onTouchEnd={(e) => { setTimeout(() => e.currentTarget.classList.remove('active'), 400); }}
+                      onTouchEnd={(e) => { const el = e.currentTarget; setTimeout(() => el.classList.remove('active'), 400); }}
                       onTouchCancel={(e) => e.currentTarget.classList.remove('active')}
                     >
                       <span className="badge-tooltip">{badge.label}</span>
@@ -793,6 +828,167 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   </div>
                 )}
 
+                {/* Sybil Analysis Section — Comprehensive */}
+                {sybilRisk && (() => {
+                  const ts = sybilRisk.trustScore;
+                  const grade = sybilRisk.trustGrade;
+                  const riskColor = sybilRisk.riskScore >= 75 ? '#ef4444' : sybilRisk.riskScore >= 50 ? '#f97316' : sybilRisk.riskScore >= 30 ? '#eab308' : sybilRisk.riskScore >= 10 ? '#3b82f6' : '#22c55e';
+                  const trustColor = ts >= 80 ? '#22c55e' : ts >= 60 ? '#3b82f6' : ts >= 40 ? '#eab308' : ts >= 20 ? '#f97316' : '#ef4444';
+                  const gradeGlow = ts >= 80 ? 'rgba(34,197,94,0.3)' : ts >= 60 ? 'rgba(59,130,246,0.3)' : ts >= 40 ? 'rgba(234,179,8,0.3)' : 'rgba(239,68,68,0.3)';
+
+                  const allSignals = sybilRisk.signals || [];
+                  const behavioral = allSignals.filter(s => s.category === 'behavioral');
+                  const financial = allSignals.filter(s => s.category === 'financial');
+                  const network = allSignals.filter(s => s.category === 'network');
+                  // Fallback: if no categories (old API), show all as behavioral
+                  const hasCategories = behavioral.length > 0 || financial.length > 0 || network.length > 0;
+
+                  const categoryIcon = (cat: string) => {
+                    if (cat === 'behavioral') return (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    );
+                    if (cat === 'financial') return (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                    );
+                    return (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    );
+                  };
+
+                  const signalRow = (sig: typeof allSignals[0]) => (
+                    <div key={sig.id} className="flex items-center gap-2 py-1">
+                      <div className="flex items-center justify-center w-4 h-4 flex-shrink-0">
+                        {sig.detected ? (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={sig.severity === 'danger' ? '#ef4444' : sig.severity === 'warning' ? '#f97316' : '#eab308'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+                          </svg>
+                        ) : (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+                          </svg>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[9px] text-white/60 truncate font-medium">{sig.name}</span>
+                          {sig.value && <span className="text-[8px] font-mono text-white/30 flex-shrink-0">{sig.value}</span>}
+                        </div>
+                        {sig.description && sig.detected && (
+                          <span className="text-[7.5px] text-white/25 block truncate">{sig.description}</span>
+                        )}
+                      </div>
+                      {sig.detected && (
+                        <span className="text-[8px] font-mono font-bold flex-shrink-0" style={{ color: sig.severity === 'danger' ? '#ef4444' : sig.severity === 'warning' ? '#f97316' : '#eab308' }}>+{sig.weight}</span>
+                      )}
+                    </div>
+                  );
+
+                  const categoryBlock = (title: string, icon: React.ReactNode, sigs: typeof allSignals, catColor: string) => {
+                    if (sigs.length === 0) return null;
+                    const detected = sigs.filter(s => s.detected).length;
+                    const passed = sigs.length - detected;
+                    return (
+                      <div className="mb-2">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="flex-shrink-0" style={{ color: catColor }}>{icon}</div>
+                          <span className="text-[8px] uppercase tracking-[0.12em] font-bold" style={{ color: `${catColor}99` }}>{title}</span>
+                          <div className="flex-1 h-px bg-white/[0.04]" />
+                          <span className="text-[7.5px] text-white/20 font-mono">{passed}/{sigs.length}</span>
+                        </div>
+                        <div className="pl-1">
+                          {sigs.map(signalRow)}
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <div className="mb-4 rounded-2xl border border-white/[0.06] bg-gradient-to-br from-white/[0.02] via-transparent to-white/[0.01] p-3.5 relative overflow-hidden">
+                      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.02),transparent_70%)]" />
+                      <div className="relative z-10">
+                        {/* Header: Trust Score + Grade */}
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-1.5">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={trustColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-80">
+                              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            </svg>
+                            <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">Sybil Analysis</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                              style={{ background: `${riskColor}20`, color: riskColor, border: `1px solid ${riskColor}30` }}
+                            >
+                              {sybilRisk.riskLevel === 'clean' ? 'Clean' : sybilRisk.riskLevel === 'low' ? 'Low Risk' : sybilRisk.riskLevel === 'medium' ? 'Medium' : sybilRisk.riskLevel === 'high' ? 'High' : 'Critical'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Trust Score — big grade with arc */}
+                        <div className="flex items-center gap-4 mb-3">
+                          <div className="relative flex-shrink-0">
+                            <svg width="52" height="52" viewBox="0 0 52 52">
+                              <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+                              <circle
+                                cx="26" cy="26" r="22" fill="none"
+                                stroke={trustColor}
+                                strokeWidth="3"
+                                strokeLinecap="round"
+                                strokeDasharray={`${(ts / 100) * 138.23} 138.23`}
+                                transform="rotate(-90 26 26)"
+                                style={{ filter: `drop-shadow(0 0 4px ${gradeGlow})` }}
+                              />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <span className="text-base font-black font-mono" style={{ color: trustColor }}>{grade}</span>
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-baseline gap-1.5 mb-1">
+                              <span className="text-lg font-bold font-mono" style={{ color: trustColor }}>{ts}</span>
+                              <span className="text-[9px] text-white/20 font-mono">/100</span>
+                            </div>
+                            <span className="text-[8px] text-white/25 uppercase tracking-wider">Trust Score</span>
+                            <div className="mt-1 h-1 rounded-full bg-white/[0.06] overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-700"
+                                style={{
+                                  width: `${Math.max(ts, 2)}%`,
+                                  background: `linear-gradient(90deg, ${trustColor}60, ${trustColor})`,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Signal Categories */}
+                        {hasCategories ? (
+                          <>
+                            {categoryBlock('Behavioral', categoryIcon('behavioral'), behavioral, '#818cf8')}
+                            {categoryBlock('Financial', categoryIcon('financial'), financial, '#34d399')}
+                            {categoryBlock('Network', categoryIcon('network'), network, '#f472b6')}
+                          </>
+                        ) : (
+                          /* Fallback for old API format — show all signals flat */
+                          <div className="mb-2">
+                            {allSignals.map(signalRow)}
+                          </div>
+                        )}
+
+                        {/* Summary footer */}
+                        <div className="mt-2 pt-2 border-t border-white/[0.04] flex items-center justify-between">
+                          <span className="text-[8px] text-white/20 font-mono">
+                            {allSignals.filter(s => s.detected).length} / {allSignals.length} signals flagged
+                          </span>
+                          <span className="text-[8px] text-white/15 font-mono">
+                            Risk: {sybilRisk.riskScore}/100
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="bg-gradient-to-br from-cyan-900/10 to-blue-900/10 border border-cyan-500/15 rounded-2xl p-4 relative overflow-hidden text-center">
                   <div className="absolute top-0 right-0 p-2 opacity-10">
                     <SparklesIcon className="w-8 h-8 text-cyan-500" />
@@ -866,7 +1062,7 @@ function StatItem({
   bar?: number;
 }) {
   const pct = Math.round(Math.max(0, Math.min(1, bar)) * 100);
-  const idx = useMemo(() => _statIdx++, []);
+  const idx = useMemo(() => _statIdx++ % 20, []);
   const [animPct, setAnimPct] = useState(0);
   useEffect(() => {
     const timer = setTimeout(() => setAnimPct(pct), 80 + idx * 60);

@@ -332,6 +332,10 @@ export function fadeOutWormholeTunnel(delayMs = 400) {
       tunnel.style.opacity = '0';
       setTimeout(() => {
         tunnel.remove();
+        if (_gl) {
+          const ext = _gl.getExtension('WEBGL_lose_context');
+          if (ext) ext.loseContext();
+        }
         _gl = null;
       }, 650);
     }

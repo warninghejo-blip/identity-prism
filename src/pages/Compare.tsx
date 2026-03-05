@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { goBack } from '@/lib/safeNavigate';
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWalletData, calculateScore, type WalletTraits } from "@/hooks/useWalletData";
 import { Button } from "@/components/ui/button";
@@ -98,7 +99,7 @@ export default function Compare() {
       setInputA(addr);
       setAddrA(addr);
     }
-  }, [wallet.publicKey]);
+  }, [wallet.publicKey, addrA]);
 
   const dataA = useWalletData(addrA || undefined);
   const dataB = useWalletData(addrB || undefined);
@@ -111,7 +112,7 @@ export default function Compare() {
     setAddrB(b);
     setSearchParams({ a, b });
     // Quest auto-tracking
-    const myAddr = publicKey?.toBase58();
+    const myAddr = wallet.publicKey?.toBase58();
     if (myAddr) {
       import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
         const qs = getQuestState(myAddr);
@@ -120,7 +121,7 @@ export default function Compare() {
         incrementQuest(qs, 'daily_explore');
       }).catch(() => {});
     }
-  }, [inputA, inputB, setSearchParams, publicKey]);
+  }, [inputA, inputB, setSearchParams, wallet.publicKey]);
 
   const handleSwap = useCallback(() => {
     setInputA(inputB);
@@ -151,7 +152,7 @@ export default function Compare() {
       {/* Header */}
       <header className="flex-none sticky top-0 z-20 bg-black/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate("/app")} className="text-white/50 hover:text-white transition-colors">
+          <button onClick={() => goBack(navigate)} className="text-white/50 hover:text-white transition-colors">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">
@@ -222,31 +223,33 @@ export default function Compare() {
             {/* Score Cards */}
             <div className="grid grid-cols-2 gap-3">
               {/* Wallet A */}
-              <div className={`rounded-xl border p-4 text-center bg-gradient-to-br ${TIER_BG[tierA]} ${scoreA >= scoreB ? "border-green-500/30" : "border-white/[0.06]"}`}>
+              <div className={`rounded-xl border p-4 text-center bg-gradient-to-br ${TIER_BG[tierA]} ${scoreA === scoreB ? "border-yellow-500/30" : scoreA > scoreB ? "border-green-500/30" : "border-white/[0.06]"}`}>
                 <div className="text-[10px] uppercase tracking-widest text-cyan-400/60 font-bold mb-1">Wallet A</div>
                 <div className="font-mono text-xs text-white/50 mb-2">{formatAddr(addrA)}</div>
                 <div className="text-4xl font-black tabular-nums text-white mb-1">{scoreA}</div>
                 <div className={`text-sm font-bold uppercase tracking-wider ${TIER_COLORS[tierA]}`}>
                   {TIER_LABELS[tierA]}
                   {scoreA > scoreB && <span className="ml-1.5 text-green-400 text-[10px]">👑</span>}
+                  {scoreA === scoreB && <span className="ml-1.5 text-yellow-400 text-[10px]">🤝</span>}
                 </div>
                 <div className="text-[10px] text-white/30 mt-1">{badgesA} badges</div>
               </div>
               {/* Wallet B */}
-              <div className={`rounded-xl border p-4 text-center bg-gradient-to-br ${TIER_BG[tierB]} ${scoreB >= scoreA ? "border-green-500/30" : "border-white/[0.06]"}`}>
+              <div className={`rounded-xl border p-4 text-center bg-gradient-to-br ${TIER_BG[tierB]} ${scoreA === scoreB ? "border-yellow-500/30" : scoreB > scoreA ? "border-green-500/30" : "border-white/[0.06]"}`}>
                 <div className="text-[10px] uppercase tracking-widest text-purple-400/60 font-bold mb-1">Wallet B</div>
                 <div className="font-mono text-xs text-white/50 mb-2">{formatAddr(addrB)}</div>
                 <div className="text-4xl font-black tabular-nums text-white mb-1">{scoreB}</div>
                 <div className={`text-sm font-bold uppercase tracking-wider ${TIER_COLORS[tierB]}`}>
                   {TIER_LABELS[tierB]}
                   {scoreB > scoreA && <span className="ml-1.5 text-green-400 text-[10px]">👑</span>}
+                  {scoreA === scoreB && <span className="ml-1.5 text-yellow-400 text-[10px]">🤝</span>}
                 </div>
                 <div className="text-[10px] text-white/30 mt-1">{badgesB} badges</div>
               </div>
             </div>
 
             {/* Score Difference Banner */}
-            {scoreA !== scoreB && (
+            {scoreA !== scoreB ? (
               <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-2 flex items-center justify-center gap-2">
                 <Trophy className="w-4 h-4 text-yellow-400" />
                 <span className="text-sm text-white/60">
@@ -254,6 +257,13 @@ export default function Compare() {
                   {" "}wins by{" "}
                   <span className="font-bold text-green-400">+{Math.abs(scoreA - scoreB)}</span>
                   {" "}points
+                </span>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-2 flex items-center justify-center gap-2">
+                <Trophy className="w-4 h-4 text-yellow-400" />
+                <span className="text-sm text-yellow-300/70 font-bold">
+                  It's a tie! Both wallets scored {scoreA} points
                 </span>
               </div>
             )}

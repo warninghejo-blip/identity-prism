@@ -51,10 +51,21 @@ function buildHeliusUrl(seed) {
   return u.toString();
 }
 
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', c => data += c);
+    let size = 0;
+    req.on('data', c => {
+      size += c.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error('Request body too large'));
+        return;
+      }
+      data += c;
+    });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });

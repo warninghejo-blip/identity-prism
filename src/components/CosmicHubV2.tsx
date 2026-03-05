@@ -1,606 +1,423 @@
 /**
- * CosmicHub V2 — Premium 3D orbital menu.
- * 
- * Each module is a unique procedural shader sphere (SeekerSun-level quality):
- *   - Black Hole: gravitational lensing distortion sphere
- *   - Prism League: electric plasma energy ball
- *   - Stellar Forge: molten lava/magma sphere
- *   - Nebula Market: swirling galaxy/nebula sphere
- *   - Constellation: crystalline ice sphere with sparkles
- *   - Scam Shield: red pulsing warning sphere
- *   - Identity Card: center, mini version of user's planet
- *
- * Features:
- *   - Starfield with parallax on camera rotation
- *   - Orbit trails (glowing rings)
- *   - Camera auto-orbit + drag-to-rotate (touch/mouse)
- *   - Bloom + chromatic aberration post-processing
- *   - Nebula fog backdrop
- *   - Zoom-in transition on module select
- *   - Mobile-first touch controls
+ * CosmicHub V12 — 3D coin badges with printed icons.
+ * Each module = metallic spinning coin with canvas-drawn icon on face.
  */
-
-import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
-import { Canvas, useFrame, useThree, extend } from '@react-three/fiber';
-import { Stars, Float } from '@react-three/drei';
-import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing';
-import {
-  Vector3, Vector2, Color, Group, Mesh, ShaderMaterial,
-  AdditiveBlending, BackSide, DoubleSide, FrontSide,
-  SphereGeometry, RingGeometry, MathUtils,
-} from 'three';
-import { BlendFunction } from 'postprocessing';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
+import * as THREE from 'three';
 import type { PrismBalance } from '@/lib/prismCoin';
+import { trackInternalNavigation } from '@/lib/safeNavigate';
 
-const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
-
-// ── Simplex noise GLSL (shared across all module shaders) ──
-const NOISE_GLSL = `
-vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
-vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
-vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
-vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
-float snoise(vec3 v){
-  const vec2 C=vec2(1.0/6.0,1.0/3.0);
-  const vec4 D=vec4(0.0,0.5,1.0,2.0);
-  vec3 i=floor(v+dot(v,C.yyy));
-  vec3 x0=v-i+dot(i,C.xxx);
-  vec3 g=step(x0.yzx,x0.xyz);
-  vec3 l=1.0-g;
-  vec3 i1=min(g.xyz,l.zxy);
-  vec3 i2=max(g.xyz,l.zxy);
-  vec3 x1=x0-i1+C.xxx;
-  vec3 x2=x0-i2+C.yyy;
-  vec3 x3=x0-D.yyy;
-  i=mod289(i);
-  vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
-  float n_=0.142857142857;
-  vec3 ns=n_*D.wyz-D.xzx;
-  vec4 j=p-49.0*floor(p*ns.z*ns.z);
-  vec4 x_=floor(j*ns.z);
-  vec4 y_=floor(j-7.0*x_);
-  vec4 x=x_*ns.x+ns.yyyy;
-  vec4 y=y_*ns.x+ns.yyyy;
-  vec4 h=1.0-abs(x)-abs(y);
-  vec4 b0=vec4(x.xy,y.xy);
-  vec4 b1=vec4(x.zw,y.zw);
-  vec4 s0=floor(b0)*2.0+1.0;
-  vec4 s1=floor(b1)*2.0+1.0;
-  vec4 sh=-step(h,vec4(0.0));
-  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;
-  vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
-  vec3 p0=vec3(a0.xy,h.x);vec3 p1=vec3(a0.zw,h.y);
-  vec3 p2=vec3(a1.xy,h.z);vec3 p3=vec3(a1.zw,h.w);
-  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
-  p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
-  vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);
-  m=m*m;
-  return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
-}
-float fbm(vec3 p,int oct){
-  float v=0.0,a=0.5,f=1.0;
-  for(int i=0;i<6;i++){if(i>=oct)break;v+=a*abs(snoise(p*f));f*=2.1;a*=0.48;}
-  return v;
-}
-`;
-
-const SHARED_VERT = `
-varying vec2 vUv;
-varying vec3 vPos;
-varying vec3 vNormal;
-varying vec3 vViewPos;
-void main(){
-  vUv=uv; vPos=position;
-  vNormal=normalize(normalMatrix*normal);
-  vec4 mv=modelViewMatrix*vec4(position,1.0);
-  vViewPos=-mv.xyz;
-  gl_Position=projectionMatrix*mv;
-}
-`;
-
-// ── Module shader fragments — each unique and premium ──
-
-// Black Hole — gravitational distortion, event horizon glow
-const FRAG_BLACKHOLE = `
-precision highp float;
-${NOISE_GLSL}
-varying vec2 vUv;varying vec3 vPos;varying vec3 vNormal;
-uniform float uTime;
-void main(){
-  vec3 p=vPos*2.5;
-  float t=uTime*0.3;
-  float distort=fbm(p+vec3(t*0.2,-t*0.15,t*0.1),5);
-  float hole=1.0-smoothstep(0.0,0.4,length(vUv-0.5));
-  float ring=smoothstep(0.35,0.38,length(vUv-0.5))*smoothstep(0.42,0.38,length(vUv-0.5));
-  float fresnel=pow(1.0-abs(dot(vNormal,vec3(0,0,1))),3.0);
-  vec3 col=vec3(0.15,0.0,0.3)*distort+vec3(0.6,0.2,0.9)*ring*3.0;
-  col+=vec3(0.4,0.1,0.8)*fresnel*1.5;
-  col+=vec3(0.8,0.4,1.0)*pow(distort,2.0)*0.5;
-  float alpha=0.7+fresnel*0.3+ring;
-  gl_FragColor=vec4(col,alpha);
-}`;
-
-// Prism League — electric plasma energy
-const FRAG_LEAGUE = `
-precision highp float;
-${NOISE_GLSL}
-varying vec2 vUv;varying vec3 vPos;varying vec3 vNormal;
-uniform float uTime;
-void main(){
-  vec3 p=vPos*3.0;
-  float t=uTime*0.5;
-  float plasma=fbm(p+vec3(t*0.3,t*0.2,-t*0.4),5);
-  float bolt=max(0.0,snoise(p*8.0+t*4.0));bolt=step(0.75,bolt)*2.0;
-  float fresnel=pow(1.0-abs(dot(vNormal,vec3(0,0,1))),2.5);
-  vec3 col=mix(vec3(0.0,0.6,0.9),vec3(0.0,1.0,0.9),plasma);
-  col+=vec3(0.5,0.9,1.0)*bolt;
-  col+=vec3(0.2,0.8,1.0)*fresnel*2.0;
-  float alpha=0.6+plasma*0.3+fresnel*0.3;
-  gl_FragColor=vec4(col,alpha);
-}`;
-
-// Stellar Forge — molten magma/lava
-const FRAG_FORGE = `
-precision highp float;
-${NOISE_GLSL}
-varying vec2 vUv;varying vec3 vPos;varying vec3 vNormal;
-uniform float uTime;
-void main(){
-  vec3 p=vPos*2.0;
-  float t=uTime*0.2;
-  float lava1=fbm(p+vec3(t*0.1,t*0.08,-t*0.05),5);
-  float lava2=fbm(p*2.5+vec3(-t*0.15,t*0.12,t*0.09),4);
-  float cracks=pow(lava1,0.5)*0.7+pow(lava2,0.7)*0.3;
-  float fresnel=pow(1.0-abs(dot(vNormal,vec3(0,0,1))),2.0);
-  vec3 hot=vec3(1.0,0.4,0.0);
-  vec3 cool=vec3(0.3,0.05,0.0);
-  vec3 white=vec3(1.0,0.9,0.5);
-  vec3 col=mix(cool,hot,cracks);
-  col=mix(col,white,pow(cracks,3.0)*0.5);
-  col+=vec3(1.0,0.6,0.1)*fresnel*1.5;
-  float alpha=0.8+fresnel*0.2;
-  gl_FragColor=vec4(col,alpha);
-}`;
-
-// Nebula Market — swirling galaxy
-const FRAG_NEBULA = `
-precision highp float;
-${NOISE_GLSL}
-varying vec2 vUv;varying vec3 vPos;varying vec3 vNormal;
-uniform float uTime;
-void main(){
-  vec3 p=vPos*2.0;
-  float t=uTime*0.15;
-  float angle=atan(p.y,p.x);
-  float r=length(p.xy);
-  float spiral=snoise(vec3(angle*2.0+r*3.0-t*2.0,r*2.0+t,p.z))*0.5+0.5;
-  float dust=fbm(p+vec3(t*0.1,t*0.08,-t*0.06),4);
-  float fresnel=pow(1.0-abs(dot(vNormal,vec3(0,0,1))),2.5);
-  vec3 col=mix(vec3(0.8,0.1,0.5),vec3(0.2,0.1,0.6),spiral);
-  col=mix(col,vec3(0.9,0.5,0.8),dust*0.5);
-  col+=vec3(0.6,0.2,0.8)*fresnel*1.5;
-  float stars=step(0.95,snoise(vPos*30.0))*0.8;
-  col+=vec3(1.0)*stars;
-  float alpha=0.6+dust*0.3+fresnel*0.2;
-  gl_FragColor=vec4(col,alpha);
-}`;
-
-// Constellation — crystalline ice with sparkles
-const FRAG_CRYSTAL = `
-precision highp float;
-${NOISE_GLSL}
-varying vec2 vUv;varying vec3 vPos;varying vec3 vNormal;
-uniform float uTime;
-void main(){
-  vec3 p=vPos*4.0;
-  float t=uTime*0.3;
-  float crystal=abs(snoise(p+t*0.2))*0.5+abs(snoise(p*2.0-t*0.3))*0.3;
-  float sparkle=step(0.92,snoise(vPos*25.0+t*3.0))*2.0;
-  float fresnel=pow(1.0-abs(dot(vNormal,vec3(0,0,1))),3.0);
-  vec3 col=mix(vec3(0.1,0.7,0.5),vec3(0.3,0.9,0.8),crystal);
-  col+=vec3(0.8,1.0,0.9)*sparkle;
-  col+=vec3(0.4,0.9,0.7)*fresnel*2.0;
-  float alpha=0.5+crystal*0.3+fresnel*0.3+sparkle*0.2;
-  gl_FragColor=vec4(col,alpha);
-}`;
-
-// Scam Shield — pulsing red warning
-const FRAG_SHIELD = `
-precision highp float;
-${NOISE_GLSL}
-varying vec2 vUv;varying vec3 vPos;varying vec3 vNormal;
-uniform float uTime;
-void main(){
-  vec3 p=vPos*3.0;
-  float t=uTime*0.4;
-  float pulse=sin(t*3.0)*0.3+0.7;
-  float scan=fbm(p+vec3(0,t*0.5,0),4);
-  float hexGrid=abs(snoise(vPos*8.0))*0.5;
-  float fresnel=pow(1.0-abs(dot(vNormal,vec3(0,0,1))),2.0);
-  vec3 col=mix(vec3(0.6,0.05,0.05),vec3(1.0,0.2,0.1),scan*pulse);
-  col+=vec3(1.0,0.4,0.2)*hexGrid*0.3;
-  col+=vec3(1.0,0.3,0.2)*fresnel*1.5*pulse;
-  float alpha=0.6+fresnel*0.3+scan*0.1;
-  gl_FragColor=vec4(col,alpha);
-}`;
-
-// ── Module definitions ──
-interface HubModuleDef {
-  id: string;
-  label: string;
-  route: string;
-  frag: string;
-  color: string;
-  emissive: string;
-  orbitRadius: number;
-  orbitSpeed: number;
-  startAngle: number;
-  size: number;
-  lightIntensity: number;
-  description: string;
-}
-
+/* ── Modules ── */
+interface HubModuleDef { id: string; label: string; route: string; color: string; }
 const MODULES: HubModuleDef[] = [
-  { id: 'blackhole', label: 'Black Hole', route: '/blackhole', frag: FRAG_BLACKHOLE, color: '#8b5cf6', emissive: '#7c3aed', orbitRadius: 5.0, orbitSpeed: 0.12, startAngle: 0, size: 0.7, lightIntensity: 3, description: 'Burn dust tokens · Reclaim SOL' },
-  { id: 'league', label: 'Prism League', route: '/game', frag: FRAG_LEAGUE, color: '#06b6d4', emissive: '#0891b2', orbitRadius: 5.5, orbitSpeed: 0.1, startAngle: Math.PI * 2 / 6, size: 0.75, lightIntensity: 4, description: '3 game modes · Earn PRISM' },
-  { id: 'forge', label: 'Stellar Forge', route: '/forge', frag: FRAG_FORGE, color: '#f59e0b', emissive: '#d97706', orbitRadius: 5.2, orbitSpeed: 0.14, startAngle: Math.PI * 4 / 6, size: 0.65, lightIntensity: 5, description: 'Craft upgrades · Ship skins' },
-  { id: 'market', label: 'Nebula Market', route: '/market', frag: FRAG_NEBULA, color: '#ec4899', emissive: '#db2777', orbitRadius: 5.8, orbitSpeed: 0.08, startAngle: Math.PI * 6 / 6, size: 0.7, lightIntensity: 3, description: 'Leaderboards · Challenges' },
-  { id: 'constellation', label: 'Constellation', route: '/constellation', frag: FRAG_CRYSTAL, color: '#10b981', emissive: '#059669', orbitRadius: 5.0, orbitSpeed: 0.13, startAngle: Math.PI * 8 / 6, size: 0.6, lightIntensity: 3, description: 'Wallet connection graph' },
-  { id: 'shield', label: 'Scam Shield', route: '/scam-checker', frag: FRAG_SHIELD, color: '#ef4444', emissive: '#dc2626', orbitRadius: 5.4, orbitSpeed: 0.11, startAngle: Math.PI * 10 / 6, size: 0.6, lightIntensity: 4, description: 'Check contracts · Dark pool' },
+  { id: 'league',        label: 'Prism League',  route: '/game',          color: '#22d3ee' },
+  { id: 'blackhole',     label: 'Black Hole',    route: '/blackhole',     color: '#a855f7' },
+  { id: 'forge',         label: 'Coin Shop',     route: '/forge',         color: '#f59e0b' },
+  { id: 'constellation', label: 'Stellar Nexus', route: '/constellation', color: '#10b981' },
+  { id: 'market',        label: 'Prism Arena',   route: '/market',        color: '#ec4899' },
+  { id: 'leaderboard',   label: 'Leaderboard',   route: '/leaderboard',   color: '#fbbf24' },
 ];
 
-// ── Procedural Module Orb ──
-function ModuleOrb({ mod, onSelect, selected }: { mod: HubModuleDef; onSelect: (m: HubModuleDef) => void; selected: boolean }) {
-  const groupRef = useRef<Group>(null!);
-  const matRef = useRef<ShaderMaterial>(null!);
-  const [hovered, setHovered] = useState(false);
+/* ── Shared coin geometries ── */
+const _coinBody = (() => { const g = new THREE.CylinderGeometry(0.44, 0.44, 0.07, 48); g.rotateX(Math.PI / 2); return g; })();
+const _coinRim  = (() => { const g = new THREE.TorusGeometry(0.44, 0.035, 12, 48); g.rotateX(Math.PI / 2); return g; })();
+const _coinFace = new THREE.CircleGeometry(0.37, 48);
 
-  const material = useMemo(() => new ShaderMaterial({
-    vertexShader: SHARED_VERT,
-    fragmentShader: mod.frag,
-    uniforms: { uTime: { value: 0 } },
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending,
-    side: FrontSide,
-  }), [mod.frag]);
+/* ── Icon textures (canvas-drawn, lazy) ── */
+type DrawFn = (c: CanvasRenderingContext2D, s: number) => void;
 
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    material.uniforms.uTime.value = t;
-
-    if (!groupRef.current) return;
-    const angle = mod.startAngle + t * mod.orbitSpeed;
-    const r = mod.orbitRadius;
-    groupRef.current.position.x = Math.cos(angle) * r;
-    groupRef.current.position.z = Math.sin(angle) * r;
-    groupRef.current.position.y = Math.sin(t * 0.4 + mod.startAngle) * 0.4;
-  });
-
-  const handleClick = useCallback((e: any) => {
-    e.stopPropagation();
-    onSelect(mod);
-  }, [mod, onSelect]);
-
-  const scale = hovered ? 1.15 : 1;
-
-  return (
-    <group ref={groupRef}>
-      {/* Point light for local illumination */}
-      <pointLight color={mod.emissive} intensity={mod.lightIntensity * (hovered ? 1.5 : 1)} distance={4} />
-
-      {/* Outer glow shell */}
-      <mesh>
-        <sphereGeometry args={[mod.size * 1.6, 24, 24]} />
-        <meshBasicMaterial color={mod.color} transparent opacity={hovered ? 0.12 : 0.04} blending={AdditiveBlending} depthWrite={false} side={BackSide} />
-      </mesh>
-
-      {/* Main procedural sphere */}
-      <mesh
-        scale={scale}
-        material={material}
-        onClick={handleClick}
-        onPointerOver={() => { setHovered(true); document.body.style.cursor = 'pointer'; }}
-        onPointerOut={() => { setHovered(false); document.body.style.cursor = 'default'; }}
-      >
-        <sphereGeometry args={[mod.size, IS_MOBILE ? 32 : 48, IS_MOBILE ? 32 : 48]} />
-      </mesh>
-
-      {/* Inner core glow */}
-      <mesh>
-        <sphereGeometry args={[mod.size * 0.5, 16, 16]} />
-        <meshBasicMaterial color={mod.color} transparent opacity={0.6} blending={AdditiveBlending} depthWrite={false} />
-      </mesh>
-
-      {/* Label — HTML overlay */}
-      {/* Using drei Html causes perf issues on mobile with 6 modules, so use a simple sprite approach */}
-    </group>
-  );
+function makeIconTex(bg: string, draw: DrawFn): THREE.CanvasTexture {
+  const s = 256, cv = document.createElement('canvas');
+  cv.width = s; cv.height = s;
+  const c = cv.getContext('2d')!;
+  // dark circular background
+  c.fillStyle = bg;
+  c.beginPath(); c.arc(s / 2, s / 2, s / 2 - 2, 0, Math.PI * 2); c.fill();
+  // draw icon
+  draw(c, s);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
-// ── Orbit trail rings ──
-function OrbitRings() {
-  return (
-    <group rotation={[Math.PI / 2, 0, 0]}>
-      {MODULES.map((mod) => (
-        <mesh key={mod.id}>
-          <ringGeometry args={[mod.orbitRadius - 0.015, mod.orbitRadius + 0.015, 128]} />
-          <meshBasicMaterial color={mod.color} transparent opacity={0.06} side={DoubleSide} depthWrite={false} />
-        </mesh>
-      ))}
-    </group>
-  );
+const drawRocket: DrawFn = (c, s) => {
+  c.fillStyle = '#fff'; c.shadowColor = '#fff'; c.shadowBlur = 10;
+  const x = s / 2;
+  c.beginPath(); c.moveTo(x, s * .14); c.lineTo(x - s * .11, s * .4); c.lineTo(x + s * .11, s * .4); c.closePath(); c.fill();
+  c.fillRect(x - s * .09, s * .4, s * .18, s * .25);
+  c.beginPath(); c.moveTo(x - s * .09, s * .55); c.lineTo(x - s * .19, s * .72); c.lineTo(x - s * .09, s * .65); c.closePath(); c.fill();
+  c.beginPath(); c.moveTo(x + s * .09, s * .55); c.lineTo(x + s * .19, s * .72); c.lineTo(x + s * .09, s * .65); c.closePath(); c.fill();
+  c.shadowColor = '#f80'; c.fillStyle = '#ff8844';
+  c.beginPath(); c.moveTo(x - s * .06, s * .65); c.lineTo(x, s * .83); c.lineTo(x + s * .06, s * .65); c.closePath(); c.fill();
+  c.fillStyle = '#ffdd55'; c.beginPath(); c.moveTo(x - s * .03, s * .65); c.lineTo(x, s * .78); c.lineTo(x + s * .03, s * .65); c.closePath(); c.fill();
+  c.shadowColor = '#fff'; c.fillStyle = 'rgba(255,255,255,0.6)';
+  c.beginPath(); c.arc(x, s * .44, s * .03, 0, Math.PI * 2); c.fill();
+};
+
+const drawBlackHole: DrawFn = (c, s) => {
+  const x = s / 2, y = s / 2;
+  c.fillStyle = '#000'; c.shadowColor = '#a855f7'; c.shadowBlur = 15;
+  c.beginPath(); c.arc(x, y, s * .12, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#c084fc'; c.lineWidth = 3; c.shadowBlur = 20;
+  c.beginPath(); c.arc(x, y, s * .14, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = '#fb923c'; c.lineWidth = 5; c.shadowColor = '#f97316'; c.shadowBlur = 12;
+  c.beginPath(); c.ellipse(x, y, s * .3, s * .08, -0.25, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = '#a855f7'; c.lineWidth = 2; c.shadowColor = '#a855f7';
+  c.beginPath(); c.ellipse(x, y, s * .22, s * .06, -0.25, 0, Math.PI * 2); c.stroke();
+  c.fillStyle = '#c4b5fd'; c.shadowBlur = 8; c.globalAlpha = 0.5;
+  c.fillRect(x - 2, y - s * .38, 4, s * .2);
+  c.fillRect(x - 2, y + s * .18, 4, s * .2);
+  c.globalAlpha = 1;
+};
+
+const drawDiamond: DrawFn = (c, s) => {
+  const x = s / 2;
+  c.shadowColor = '#fbbf24'; c.shadowBlur = 12;
+  c.fillStyle = '#fef3c7';
+  c.beginPath(); c.moveTo(x - s * .22, s * .38); c.lineTo(x, s * .15); c.lineTo(x + s * .22, s * .38); c.closePath(); c.fill();
+  c.fillStyle = '#f59e0b';
+  c.beginPath(); c.moveTo(x - s * .22, s * .38); c.lineTo(x, s * .85); c.lineTo(x + s * .22, s * .38); c.closePath(); c.fill();
+  c.strokeStyle = 'rgba(255,255,255,0.4)'; c.lineWidth = 1;
+  c.beginPath(); c.moveTo(x - s * .22, s * .38); c.lineTo(x + s * .22, s * .38); c.stroke();
+  c.beginPath(); c.moveTo(x, s * .15); c.lineTo(x, s * .85); c.stroke();
+  c.fillStyle = 'rgba(255,255,255,0.6)'; c.beginPath(); c.arc(x, s * .38, s * .03, 0, Math.PI * 2); c.fill();
+};
+
+const drawConstellation: DrawFn = (c, s) => {
+  const cx = s / 2, cy = s / 2;
+  const pts: [number, number][] = [[cx, cy], [cx + s * .18, cy - s * .15], [cx - s * .17, cy - s * .12], [cx + s * .14, cy + s * .18], [cx - s * .16, cy + s * .15], [cx + s * .04, cy - s * .28]];
+  c.strokeStyle = 'rgba(110,231,183,0.5)'; c.lineWidth = 2; c.shadowColor = '#10b981'; c.shadowBlur = 6;
+  [[0,1],[0,2],[0,3],[0,4],[1,5],[1,2],[3,4]].forEach(([a, b]) => { c.beginPath(); c.moveTo(pts[a][0], pts[a][1]); c.lineTo(pts[b][0], pts[b][1]); c.stroke(); });
+  c.fillStyle = '#a7f3d0'; c.shadowBlur = 10;
+  pts.forEach(([px, py], i) => { c.beginPath(); c.arc(px, py, i === 0 ? s * .04 : s * .025, 0, Math.PI * 2); c.fill(); });
+};
+
+const drawPlanet: DrawFn = (c, s) => {
+  const x = s / 2, y = s / 2;
+  c.shadowColor = '#ec4899'; c.shadowBlur = 12;
+  const g = c.createRadialGradient(x - s * .05, y - s * .05, 0, x, y, s * .18);
+  g.addColorStop(0, '#fce7f3'); g.addColorStop(0.5, '#f472b6'); g.addColorStop(1, '#9d174d');
+  c.fillStyle = g; c.beginPath(); c.arc(x, y, s * .18, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#fbcfe8'; c.lineWidth = 4; c.shadowBlur = 8;
+  c.beginPath(); c.ellipse(x, y, s * .32, s * .07, -0.4, 0, Math.PI * 2); c.stroke();
+  c.strokeStyle = '#f9a8d4'; c.lineWidth = 2;
+  c.beginPath(); c.ellipse(x, y, s * .28, s * .05, -0.4, 0, Math.PI * 2); c.stroke();
+};
+
+const drawTrophy: DrawFn = (c, s) => {
+  const x = s / 2;
+  c.shadowColor = '#fbbf24'; c.shadowBlur = 10;
+  c.fillStyle = '#fbbf24';
+  c.beginPath(); c.moveTo(x - s * .18, s * .2); c.lineTo(x - s * .14, s * .55); c.quadraticCurveTo(x, s * .68, x + s * .14, s * .55);
+  c.lineTo(x + s * .18, s * .2); c.closePath(); c.fill();
+  c.fillStyle = '#92400e'; c.fillRect(x - s * .04, s * .6, s * .08, s * .12);
+  c.fillStyle = '#fbbf24'; c.fillRect(x - s * .12, s * .72, s * .24, s * .08);
+  c.strokeStyle = '#fbbf24'; c.lineWidth = 3; c.shadowBlur = 6;
+  c.beginPath(); c.arc(x - s * .22, s * .32, s * .07, -1, 1.2); c.stroke();
+  c.beginPath(); c.arc(x + s * .22, s * .32, s * .07, Math.PI - 1.2, Math.PI + 1); c.stroke();
+  c.fillStyle = 'rgba(255,255,255,0.5)'; c.beginPath(); c.arc(x, s * .38, s * .03, 0, Math.PI * 2); c.fill();
+};
+
+const drawCrystal: DrawFn = (c, s) => {
+  const x = s / 2, y = s / 2, r = s * .22;
+  c.shadowColor = '#22d3ee'; c.shadowBlur = 15; c.fillStyle = '#a5f3fc';
+  c.beginPath();
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 - Math.PI / 2; c[i === 0 ? 'moveTo' : 'lineTo'](x + Math.cos(a) * r, y + Math.sin(a) * r); }
+  c.closePath(); c.fill();
+  c.fillStyle = 'rgba(34,211,238,0.5)';
+  c.beginPath();
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 - Math.PI / 2; const r2 = (i % 2 === 0) ? r * .55 : r * .35; c[i === 0 ? 'moveTo' : 'lineTo'](x + Math.cos(a) * r2, y + Math.sin(a) * r2); }
+  c.closePath(); c.fill();
+  c.fillStyle = 'rgba(255,255,255,0.5)'; c.beginPath(); c.arc(x - s * .06, y - s * .06, s * .03, 0, Math.PI * 2); c.fill();
+};
+
+let _texMap: Record<string, THREE.CanvasTexture> | null = null;
+function getTextures() {
+  if (_texMap) return _texMap;
+  _texMap = {
+    league: makeIconTex('#0a2830', drawRocket),
+    blackhole: makeIconTex('#1a0828', drawBlackHole),
+    forge: makeIconTex('#2a1a05', drawDiamond),
+    constellation: makeIconTex('#052018', drawConstellation),
+    market: makeIconTex('#2a0818', drawPlanet),
+    leaderboard: makeIconTex('#2a2005', drawTrophy),
+    __center: makeIconTex('#0a2830', drawCrystal),
+  };
+  return _texMap;
 }
 
-// ── Nebula backdrop ──
-function NebulaBackdrop() {
-  const matRef = useRef<ShaderMaterial>(null!);
-  const mat = useMemo(() => new ShaderMaterial({
-    vertexShader: `varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
-    fragmentShader: `
-      precision highp float;
-      varying vec2 vUv;
-      uniform float uTime;
-      ${NOISE_GLSL}
-      void main(){
-        vec2 uv=vUv-0.5;
-        float r=length(uv);
-        float a=atan(uv.y,uv.x);
-        float n1=snoise(vec3(uv*3.0,uTime*0.03))*0.5+0.5;
-        float n2=snoise(vec3(uv*5.0+2.0,uTime*0.02))*0.5+0.5;
-        vec3 c1=vec3(0.05,0.0,0.15)*n1;
-        vec3 c2=vec3(0.1,0.02,0.08)*n2;
-        vec3 col=c1+c2;
-        col*=smoothstep(0.7,0.2,r);
-        gl_FragColor=vec4(col,1.0);
-      }
-    `,
-    uniforms: { uTime: { value: 0 } },
-    depthWrite: false,
-    transparent: false,
-  }), []);
-
-  useFrame(({ clock }) => { mat.uniforms.uTime.value = clock.getElapsedTime(); });
-
-  return (
-    <mesh position={[0, 0, -30]} material={mat}>
-      <planeGeometry args={[80, 80]} />
-    </mesh>
-  );
-}
-
-// ── Camera controller — auto-orbit + drag/touch rotate ──
-function CameraRig({ zoomTarget, isZooming, onZoomDone }: { zoomTarget: Vector3 | null; isZooming: boolean; onZoomDone: () => void }) {
-  const { camera, gl } = useThree();
-  const angleRef = useRef(0);
-  const dragRef = useRef({ active: false, startX: 0, angleStart: 0 });
-  const zoomProgress = useRef(0);
-  const homePos = useRef(new Vector3());
-
-  useEffect(() => {
-    const canvas = gl.domElement;
-    const onDown = (e: PointerEvent) => {
-      dragRef.current = { active: true, startX: e.clientX, angleStart: angleRef.current };
-    };
-    const onMove = (e: PointerEvent) => {
-      if (!dragRef.current.active) return;
-      const dx = e.clientX - dragRef.current.startX;
-      angleRef.current = dragRef.current.angleStart + dx * 0.005;
-    };
-    const onUp = () => { dragRef.current.active = false; };
-    canvas.addEventListener('pointerdown', onDown);
-    canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerup', onUp);
-    canvas.addEventListener('pointercancel', onUp);
-    return () => {
-      canvas.removeEventListener('pointerdown', onDown);
-      canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerup', onUp);
-      canvas.removeEventListener('pointercancel', onUp);
-    };
-  }, [gl]);
-
-  useFrame((_, delta) => {
-    if (isZooming && zoomTarget) {
-      zoomProgress.current = Math.min(1, zoomProgress.current + delta * 1.5);
-      const ease = 1 - Math.pow(1 - zoomProgress.current, 3);
-      const dest = zoomTarget.clone().add(new Vector3(0, 0.5, 2));
-      camera.position.lerpVectors(homePos.current, dest, ease);
-      camera.lookAt(zoomTarget);
-      if (zoomProgress.current >= 1) onZoomDone();
-      return;
-    }
-
-    zoomProgress.current = 0;
-
-    // Auto-rotate slowly when not dragging
-    if (!dragRef.current.active) {
-      angleRef.current += delta * 0.08;
-    }
-
-    const radius = IS_MOBILE ? 14 : 12;
-    const height = IS_MOBILE ? 4 : 3.5;
-    const a = angleRef.current;
-    camera.position.set(Math.cos(a) * radius, height, Math.sin(a) * radius);
-    camera.lookAt(0, 0, 0);
-    homePos.current.copy(camera.position);
-  });
-
-  return null;
-}
-
-// ── HUD overlays (pure HTML, not Three.js Html for performance) ──
-function HubHUD({ prismBalance, walletAddress, selectedModule, onModuleSelect, modules }: {
-  prismBalance: number;
-  walletAddress: string;
-  selectedModule: HubModuleDef | null;
-  onModuleSelect: (m: HubModuleDef | null) => void;
-  modules: HubModuleDef[];
+/* ── CoinBadge ── */
+function CoinBadge({ position, color, texId, isHovered, onClick, onHover, label }: {
+  position: [number, number, number]; color: string; texId: string;
+  isHovered: boolean; onClick: (e: any) => void; onHover: (h: boolean) => void; label: string;
 }) {
+  const outerRef = useRef<THREE.Group>(null);
+  const innerRef = useRef<THREE.Group>(null);
+  const scaleRef = useRef(1);
+  const col = useMemo(() => new THREE.Color(color), [color]);
+  const lightCol = useMemo(() => new THREE.Color(color).lerp(new THREE.Color(1, 1, 1), 0.35), [color]);
+  const tex = getTextures()[texId];
+
+  useFrame((_, dt) => {
+    const target = isHovered ? 1.18 : 1;
+    scaleRef.current += (target - scaleRef.current) * Math.min(dt * 10, 1);
+    if (outerRef.current) outerRef.current.scale.setScalar(scaleRef.current);
+    if (innerRef.current) innerRef.current.rotation.y += dt * 0.5;
+  });
+
+  return (
+    <group ref={outerRef} position={position}>
+      <group ref={innerRef}>
+        <mesh geometry={_coinBody}>
+          <meshPhysicalMaterial color={col} metalness={0.75} roughness={0.12} clearcoat={1} clearcoatRoughness={0.05} />
+        </mesh>
+        <mesh geometry={_coinRim}>
+          <meshStandardMaterial color={lightCol} metalness={0.85} roughness={0.08} />
+        </mesh>
+        <mesh geometry={_coinFace} position={[0, 0, 0.036]}>
+          <meshBasicMaterial map={tex} />
+        </mesh>
+        <mesh geometry={_coinFace} position={[0, 0, -0.036]} rotation={[0, Math.PI, 0]}>
+          <meshBasicMaterial map={tex} />
+        </mesh>
+      </group>
+      <mesh onClick={onClick} onPointerOver={(e: any) => { e.stopPropagation(); onHover(true); document.body.style.cursor = 'pointer'; }} onPointerOut={() => { onHover(false); document.body.style.cursor = ''; }}>
+        <sphereGeometry args={[0.52, 10, 10]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      {label && <Html center distanceFactor={5} position={[0, -0.7, 0]} style={{ pointerEvents: 'none', userSelect: 'none' }}>
+        <span style={{ color: isHovered ? color : 'rgba(255,255,255,0.35)', fontSize: 9, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase' as const, whiteSpace: 'nowrap' as const, textShadow: isHovered ? `0 0 14px ${color}80, 0 0 4px ${color}40` : '0 1px 6px rgba(0,0,0,0.9)', transition: 'color 0.3s', background: 'transparent' }}>{label}</span>
+      </Html>}
+    </group>
+  );
+}
+
+/* ── Orbital Rings ── */
+function OrbitalRings({ r }: { r: number }) {
+  const o1 = useRef<THREE.Mesh>(null);
+  const o2 = useRef<THREE.Mesh>(null);
+  useFrame(({ clock: { elapsedTime: t } }) => {
+    if (o1.current) { const a = t * .35; o1.current.position.set(Math.cos(a) * r * 1.1, Math.sin(a) * r * 1.1, 0); }
+    if (o2.current) { const a = -t * .25 + 2; o2.current.position.set(Math.cos(a) * r * .85, Math.sin(a) * r * .85, 0); }
+  });
   return (
     <>
-      {/* Top bar */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'max(env(safe-area-inset-top, 8px), 8px) 12px 8px', background: 'linear-gradient(to bottom, rgba(0,0,0,0.6), transparent)' }}>
-        <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, fontFamily: 'monospace' }}>
-          {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: 10, padding: '4px 12px' }}>
-          <span style={{ fontSize: 14 }}>💎</span>
-          <span style={{ color: '#c084fc', fontWeight: 700, fontSize: 14, fontFamily: 'monospace' }}>{prismBalance}</span>
-          <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: 9, fontWeight: 600, letterSpacing: 2 }}>PRISM</span>
-        </div>
-      </div>
-
-      {/* Bottom module labels — scrollable horizontal strip */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 10,
-        paddingBottom: 'max(env(safe-area-inset-bottom, 8px), 8px)',
-        background: 'linear-gradient(to top, rgba(0,0,0,0.7), transparent)',
-      }}>
-        {/* Selected module info */}
-        {selectedModule && (
-          <div style={{ textAlign: 'center', padding: '0 16px 8px', animation: 'fadeIn 0.3s' }}>
-            <p style={{ color: selectedModule.color, fontSize: 16, fontWeight: 800, textShadow: `0 0 20px ${selectedModule.color}` }}>
-              {selectedModule.label}
-            </p>
-            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 2 }}>
-              {selectedModule.description}
-            </p>
-          </div>
-        )}
-
-        {/* Module strip */}
-        <div style={{
-          display: 'flex', gap: 6, overflowX: 'auto', padding: '4px 12px',
-          WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none',
-        }}>
-          {/* Identity Card button */}
-          <button
-            onClick={() => onModuleSelect(null)}
-            style={{
-              flexShrink: 0, padding: '8px 14px', borderRadius: 10,
-              background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.2)',
-              color: '#22d3ee', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-              minHeight: 44,
-            }}
-          >
-            🪐 Identity Card
-          </button>
-          {modules.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => onModuleSelect(m)}
-              style={{
-                flexShrink: 0, padding: '8px 14px', borderRadius: 10,
-                background: selectedModule?.id === m.id ? `${m.color}20` : 'rgba(255,255,255,0.04)',
-                border: `1px solid ${selectedModule?.id === m.id ? `${m.color}40` : 'rgba(255,255,255,0.06)'}`,
-                color: selectedModule?.id === m.id ? m.color : 'rgba(255,255,255,0.5)',
-                fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', minHeight: 44,
-              }}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.12)', fontSize: 8, letterSpacing: 3, marginTop: 4, textTransform: 'uppercase' }}>
-          Drag to rotate · Tap module to enter
-        </p>
-      </div>
+      <mesh rotation={[1.2, 0, 0]}><torusGeometry args={[r * 1.1, .008, 8, 120]} /><meshBasicMaterial color="#22d3ee" transparent opacity={.1} /></mesh>
+      <mesh rotation={[1.0, .3, 0]}><torusGeometry args={[r * .85, .006, 8, 100]} /><meshBasicMaterial color="#8b5cf6" transparent opacity={.07} /></mesh>
+      <mesh rotation={[1.35, -.2, 0]}><torusGeometry args={[r * .95, .005, 8, 100]} /><meshBasicMaterial color="#f59e0b" transparent opacity={.05} /></mesh>
+      <group rotation={[1.2, 0, 0]}><mesh ref={o1}><sphereGeometry args={[.04, 12, 12]} /><meshBasicMaterial color="#22d3ee" /></mesh></group>
+      <group rotation={[1.0, .3, 0]}><mesh ref={o2}><sphereGeometry args={[.028, 12, 12]} /><meshBasicMaterial color="#8b5cf6" /></mesh></group>
     </>
   );
 }
 
-// ── Main Component ──
-
-interface CosmicHubProps {
-  walletAddress: string;
-  prismBalance?: PrismBalance | null;
-  onNavigateToCard: () => void;
+/* ── HubScene ── */
+function HubScene({ rot, onBadgeClick, onLogoClick, dragMovedRef, mobile }: {
+  rot: { x: number; y: number }; onBadgeClick: (m: HubModuleDef, sx: number, sy: number) => void;
+  onLogoClick: () => void; dragMovedRef: React.MutableRefObject<boolean>; mobile: boolean;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const [hov, setHov] = useState<string | null>(null);
+  const orbitR = mobile ? 1.7 : 2.4;
+  useFrame(() => {
+    if (!groupRef.current) return;
+    groupRef.current.rotation.x += (rot.x * Math.PI / 180 - groupRef.current.rotation.x) * .1;
+    groupRef.current.rotation.y += (rot.y * Math.PI / 180 - groupRef.current.rotation.y) * .1;
+  });
+  return (
+    <>
+      <ambientLight intensity={.35} />
+      <pointLight position={[-6, 5, 8]} intensity={2.5} color="#22d3ee" distance={30} decay={2} />
+      <pointLight position={[6, -4, 7]} intensity={1.8} color="#a855f7" distance={25} decay={2} />
+      <pointLight position={[0, 6, 10]} intensity={1.2} color="#fff" distance={25} decay={2} />
+      <pointLight position={[0, -6, 5]} intensity={.6} color="#f59e0b" distance={20} decay={2} />
+      <group ref={groupRef}>
+        <OrbitalRings r={orbitR} />
+        {/* Center coin */}
+        <CoinBadge position={[0, 0, 0]} color="#22d3ee" texId="__center" isHovered={hov === '__c'} label=""
+          onClick={(e: any) => { e.stopPropagation(); if (!dragMovedRef.current) onLogoClick(); }}
+          onHover={h => setHov(h ? '__c' : null)} />
+        <Html center distanceFactor={5} position={[0, -0.75, 0]} style={{ pointerEvents: 'none', userSelect: 'none' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            <img src="/phav.png" alt="" style={{ width: 28, height: 28, objectFit: 'contain', filter: 'drop-shadow(0 0 8px rgba(34,211,238,.6))' }} />
+            <span style={{ color: hov === '__c' ? 'rgba(34,211,238,.9)' : 'rgba(34,211,238,.5)', fontSize: 7, fontWeight: 800, letterSpacing: 2.5, textTransform: 'uppercase' as const, transition: 'color .3s' }}>MY CARD</span>
+          </div>
+        </Html>
+        {/* Module coins */}
+        {MODULES.map((mod, i) => {
+          const a = (i / MODULES.length) * Math.PI * 2 - Math.PI / 2;
+          return (
+            <CoinBadge key={mod.id} position={[Math.cos(a) * orbitR, Math.sin(a) * orbitR, 0]}
+              color={mod.color} texId={mod.id} isHovered={hov === mod.id} label={mod.label}
+              onClick={(e: any) => { e.stopPropagation(); if (dragMovedRef.current) return; const d = e.nativeEvent as PointerEvent | undefined; onBadgeClick(mod, d?.clientX ?? innerWidth / 2, d?.clientY ?? innerHeight / 2); }}
+              onHover={h => setHov(h ? mod.id : null)} />
+          );
+        })}
+      </group>
+    </>
+  );
 }
+
+/* ── Starfield ── */
+function useStarfield(ref: React.RefObject<HTMLCanvasElement | null>) {
+  useEffect(() => {
+    const cv = ref.current; if (!cv) return;
+    const ctx = cv.getContext('2d'); if (!ctx) return;
+    const dpr = Math.min(devicePixelRatio, 2);
+    let w = 0, h = 0;
+    const resize = () => { w = innerWidth; h = innerHeight; cv.width = w * dpr; cv.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+    resize(); addEventListener('resize', resize);
+    const stars = Array.from({ length: 280 }, () => ({ x: Math.random(), y: Math.random(), r: Math.random() < .65 ? .3 + Math.random() * .5 : .8 + Math.random() * 1.3, a: .08 + Math.random() * .6, ph: Math.random() * Math.PI * 2, sp: .3 + Math.random() * 1.5 }));
+    const shoots: { x: number; y: number; vx: number; vy: number; life: number; max: number; len: number }[] = [];
+    let ns = 2, t = 0, raf = 0;
+    function draw() {
+      t += .016; ctx!.clearRect(0, 0, w, h);
+      const bg = ctx!.createRadialGradient(w * .5, h * .35, 0, w * .5, h * .5, Math.max(w, h) * .9);
+      bg.addColorStop(0, '#0a0e1a'); bg.addColorStop(.3, '#070a14'); bg.addColorStop(1, '#030508');
+      ctx!.fillStyle = bg; ctx!.fillRect(0, 0, w, h);
+      for (const [nx, ny, nr, c] of [[.15, .25, .45, '90,40,160'], [.8, .6, .4, '20,60,130'], [.5, .8, .35, '34,211,238']] as const) {
+        const nb = ctx!.createRadialGradient(w * nx, h * ny, 0, w * nx, h * ny, w * nr);
+        nb.addColorStop(0, `rgba(${c},.02)`); nb.addColorStop(.5, `rgba(${c},.006)`); nb.addColorStop(1, 'transparent');
+        ctx!.fillStyle = nb; ctx!.fillRect(0, 0, w, h);
+      }
+      for (const s of stars) {
+        const sx = s.x * w, sy = s.y * h, al = s.a * (.45 + Math.sin(t * s.sp + s.ph) * .55);
+        if (al < .02) continue;
+        if (s.r > 1 && al > .25) { ctx!.strokeStyle = `rgba(200,220,255,${al * .1})`; ctx!.lineWidth = .5; const fl = s.r * 3; ctx!.beginPath(); ctx!.moveTo(sx - fl, sy); ctx!.lineTo(sx + fl, sy); ctx!.moveTo(sx, sy - fl); ctx!.lineTo(sx, sy + fl); ctx!.stroke(); }
+        ctx!.fillStyle = `rgba(210,225,255,${al})`; ctx!.beginPath(); ctx!.arc(sx, sy, s.r, 0, Math.PI * 2); ctx!.fill();
+      }
+      ns -= .016;
+      if (ns <= 0) { const a = (20 + Math.random() * 35) * Math.PI / 180; const sp = 7 + Math.random() * 9; shoots.push({ x: Math.random() * w * .7, y: Math.random() * h * .25, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0, max: 35 + Math.random() * 30, len: 50 + Math.random() * 80 }); ns = 2.5 + Math.random() * 5; }
+      for (let i = shoots.length - 1; i >= 0; i--) {
+        const sh = shoots[i]; sh.x += sh.vx; sh.y += sh.vy; sh.life++;
+        if (sh.life > sh.max) { shoots.splice(i, 1); continue; }
+        const p = sh.life / sh.max, al = Math.min(p * 5, 1) * (1 - Math.max((p - .4) / .6, 0)) * .9;
+        const mg = Math.sqrt(sh.vx ** 2 + sh.vy ** 2) || 1, dx = sh.vx / mg, dy = sh.vy / mg, f = Math.min(p * 5, 1);
+        const tX = sh.x - dx * sh.len * f, tY = sh.y - dy * sh.len * f;
+        const g = ctx!.createLinearGradient(tX, tY, sh.x, sh.y);
+        g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(.6, `rgba(180,210,255,${al * .2})`); g.addColorStop(1, `rgba(255,255,255,${al})`);
+        ctx!.strokeStyle = g; ctx!.lineWidth = 1.5; ctx!.beginPath(); ctx!.moveTo(tX, tY); ctx!.lineTo(sh.x, sh.y); ctx!.stroke();
+        ctx!.fillStyle = `rgba(255,255,255,${al})`; ctx!.beginPath(); ctx!.arc(sh.x, sh.y, 1.5, 0, Math.PI * 2); ctx!.fill();
+      }
+      const vig = ctx!.createRadialGradient(w * .5, h * .4, Math.min(w, h) * .25, w * .5, h * .5, Math.max(w, h) * .75);
+      vig.addColorStop(0, 'transparent'); vig.addColorStop(1, 'rgba(0,0,0,.3)');
+      ctx!.fillStyle = vig; ctx!.fillRect(0, 0, w, h);
+      raf = requestAnimationFrame(draw);
+    }
+    draw();
+    return () => { cancelAnimationFrame(raf); removeEventListener('resize', resize); };
+  }, [ref]);
+}
+
+/* ── Helpers + CSS ── */
+function clamp(v: number, a: number, b: number) { return Math.max(a, Math.min(b, v)); }
+function speedLines(x: number, y: number, color: string) {
+  const s: string[] = [];
+  for (let i = 0; i < 24; i++) { const d = (i / 24) * 360; s.push(`transparent ${d}deg ${d + 10}deg`, `${color}22 ${d + 10}deg ${d + 12}deg`, `transparent ${d + 12}deg ${d + 15}deg`); }
+  return `conic-gradient(from 0deg at ${x}px ${y}px, ${s.join(',')})`;
+}
+const HUB_CSS = `@keyframes hwF{0%{transform:translate(-50%,-50%) scale(1);opacity:.9}100%{transform:translate(-50%,-50%) scale(100);opacity:0}}@keyframes hwL{0%{transform:rotate(0);opacity:0}15%{opacity:.6}100%{transform:rotate(25deg);opacity:0}}@keyframes hwB{0%,50%{opacity:0}100%{opacity:1}}`;
+
+/* ── Main ── */
+export interface CosmicHubProps { walletAddress: string; prismBalance?: PrismBalance | null; onNavigateToCard: () => void; }
+interface WarpState { id: string; x: number; y: number; color: string; route: string; }
 
 export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCard }: CosmicHubProps) {
   const navigate = useNavigate();
-  const [selectedModule, setSelectedModule] = useState<HubModuleDef | null>(null);
-  const [isZooming, setIsZooming] = useState(false);
-  const [zoomTarget, setZoomTarget] = useState<Vector3 | null>(null);
+  const cvRef = useRef<HTMLCanvasElement>(null);
+  const [rot, setRot] = useState({ x: -15, y: 0 });
+  const rotRef = useRef({ x: -15, y: 0 });
+  const [drag, setDrag] = useState(false);
+  const [warp, setWarp] = useState<WarpState | null>(null);
+  const ds = useRef({ sx: 0, sy: 0, rx: 0, ry: 0 });
+  const dm = useRef(false);
+  const vel = useRef({ x: 0, y: 0 });
+  const lp = useRef({ x: 0, y: 0, t: 0 });
+  const iRef = useRef(0);
+  const aRef = useRef(0);
+  const wRef = useRef(0);
+  const [mobile, setMobile] = useState(typeof window !== 'undefined' && window.innerWidth <= 768);
 
-  const handleModuleSelect = useCallback((mod: HubModuleDef) => {
-    setSelectedModule(mod);
-    setIsZooming(true);
-    const angle = mod.startAngle;
-    setZoomTarget(new Vector3(Math.cos(angle) * mod.orbitRadius, 0, Math.sin(angle) * mod.orbitRadius));
+  useEffect(() => {
+    const onResize = () => setMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
+  useStarfield(cvRef);
 
-  const handleZoomDone = useCallback(() => {
-    if (!selectedModule) return;
-    setTimeout(() => {
-      navigate(selectedModule.route + (walletAddress ? `?address=${walletAddress}` : ''));
-    }, 150);
-  }, [selectedModule, navigate, walletAddress]);
+  useEffect(() => {
+    if (drag || warp) return;
+    const spin = () => { setRot(p => { const next = { ...p, y: p.y + .018 }; rotRef.current = next; return next; }); aRef.current = requestAnimationFrame(spin); };
+    aRef.current = requestAnimationFrame(spin);
+    return () => cancelAnimationFrame(aRef.current);
+  }, [drag, warp]);
+  useEffect(() => () => { cancelAnimationFrame(iRef.current); cancelAnimationFrame(aRef.current); clearTimeout(wRef.current); document.body.style.cursor = ''; }, []);
 
-  const handleHUDSelect = useCallback((mod: HubModuleDef | null) => {
-    if (!mod) { onNavigateToCard(); return; }
-    handleModuleSelect(mod);
-  }, [handleModuleSelect, onNavigateToCard]);
+  const onDown = useCallback((e: React.PointerEvent) => {
+    if (warp) return; cancelAnimationFrame(iRef.current);
+    ds.current = { sx: e.clientX, sy: e.clientY, rx: rotRef.current.x, ry: rotRef.current.y };
+    dm.current = false; vel.current = { x: 0, y: 0 }; lp.current = { x: e.clientX, y: e.clientY, t: performance.now() }; setDrag(true);
+  }, [warp]);
+  const onMove = useCallback((e: React.PointerEvent) => {
+    if (!drag || warp) return;
+    const dx = e.clientX - ds.current.sx, dy = e.clientY - ds.current.sy;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dm.current = true;
+    if (!dm.current) return;
+    const now = performance.now(), dt = now - lp.current.t;
+    if (dt > 0) vel.current = { x: -(e.clientY - lp.current.y) / dt * 12, y: (e.clientX - lp.current.x) / dt * 12 };
+    lp.current = { x: e.clientX, y: e.clientY, t: now };
+    const next = { x: clamp(ds.current.rx - dy * .15, -45, 30), y: ds.current.ry + dx * .2 };
+    rotRef.current = next;
+    setRot(next);
+  }, [drag, warp]);
+  const onUp = useCallback(() => {
+    if (!drag) return; setDrag(false);
+    if (dm.current) {
+      let vx = vel.current.x, vy = vel.current.y;
+      const tick = () => { vx *= .96; vy *= .96; if (Math.abs(vx) < .01 && Math.abs(vy) < .01) return; setRot(p => { const next = { x: clamp(p.x + vx * .15, -45, 30), y: p.y + vy * .15 }; rotRef.current = next; return next; }); iRef.current = requestAnimationFrame(tick); };
+      iRef.current = requestAnimationFrame(tick);
+    }
+  }, [drag]);
+  const onBadge = useCallback((m: HubModuleDef, sx: number, sy: number) => {
+    if (warp) return;
+    if (wRef.current) clearTimeout(wRef.current);
+    setWarp({ id: m.id, x: sx, y: sy, color: m.color, route: m.route });
+    wRef.current = window.setTimeout(() => { trackInternalNavigation(); navigate(m.route + (walletAddress ? `?address=${walletAddress}` : '')); }, 650);
+  }, [navigate, walletAddress, warp]);
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#030308', touchAction: 'none' }}>
-      <HubHUD
-        prismBalance={prismBalance?.balance ?? 0}
-        walletAddress={walletAddress}
-        selectedModule={selectedModule}
-        onModuleSelect={handleHUDSelect}
-        modules={MODULES}
-      />
-
-      <Canvas
-        camera={{ position: [0, 3.5, 12], fov: IS_MOBILE ? 55 : 48, near: 0.1, far: 200 }}
-        dpr={[1, IS_MOBILE ? 1.5 : 2]}
-        gl={{ antialias: !IS_MOBILE, alpha: false }}
-        style={{ width: '100%', height: '100%' }}
-      >
-        <color attach="background" args={['#030308']} />
-
-        {/* Ambient */}
-        <ambientLight intensity={0.08} />
-        <pointLight position={[0, 3, 0]} intensity={2} color="#22d3ee" distance={15} />
-
-        {/* Camera controller */}
-        <CameraRig zoomTarget={zoomTarget} isZooming={isZooming} onZoomDone={handleZoomDone} />
-
-        {/* Starfield with parallax */}
-        <Stars radius={120} depth={60} count={IS_MOBILE ? 2000 : 4000} factor={IS_MOBILE ? 3 : 4} saturation={0.1} fade speed={0.3} />
-
-        {/* Nebula backdrop */}
-        <NebulaBackdrop />
-
-        {/* Orbit rings */}
-        <OrbitRings />
-
-        {/* Center glow beacon */}
-        <mesh>
-          <sphereGeometry args={[0.3, 16, 16]} />
-          <meshBasicMaterial color="#22d3ee" transparent opacity={0.4} blending={AdditiveBlending} />
-        </mesh>
-        <mesh>
-          <sphereGeometry args={[0.8, 16, 16]} />
-          <meshBasicMaterial color="#22d3ee" transparent opacity={0.06} blending={AdditiveBlending} depthWrite={false} />
-        </mesh>
-
-        {/* Module orbs */}
-        {MODULES.map((mod) => (
-          <ModuleOrb key={mod.id} mod={mod} onSelect={handleModuleSelect} selected={selectedModule?.id === mod.id} />
-        ))}
-
-        {/* Post-processing */}
-        <EffectComposer multisampling={0}>
-          <Bloom intensity={1.2} luminanceThreshold={0.4} luminanceSmoothing={0.9} mipmapBlur />
-          <ChromaticAberration offset={new Vector2(0.0004, 0.0004)} blendFunction={BlendFunction.NORMAL} />
-          <Vignette darkness={0.5} />
-        </EffectComposer>
-      </Canvas>
+    <div style={{ position: 'fixed', inset: 0, background: '#030508', overflow: 'hidden' }}>
+      <style>{HUB_CSS}</style>
+      <canvas ref={cvRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
+      <div onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp}
+        style={{ position: 'absolute', inset: 0, zIndex: 10, cursor: drag ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <Canvas camera={{ position: [0, 0, mobile ? 5.5 : 7], fov: mobile ? 54 : 46 }} gl={{ alpha: true, antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 }} dpr={[1, mobile ? 1 : 1.5]} style={{ background: 'transparent' }}>
+          <HubScene rot={rot} onBadgeClick={onBadge} onLogoClick={() => { if (!dm.current) onNavigateToCard(); }} dragMovedRef={dm} mobile={mobile} />
+        </Canvas>
+      </div>
+      {/* Top bar */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'max(env(safe-area-inset-top,10px),10px) 16px 8px', background: 'linear-gradient(to bottom,rgba(3,5,8,.8),transparent)', pointerEvents: 'none' }}>
+        <div style={{ color: 'rgba(255,255,255,.18)', fontSize: 11, fontFamily: '"SF Mono","Fira Code",monospace', letterSpacing: .5, pointerEvents: 'auto' }}>{walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(139,92,246,.06)', border: '1px solid rgba(139,92,246,.1)', borderRadius: 12, padding: '5px 14px', pointerEvents: 'auto' }}>
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#c084fc', boxShadow: '0 0 6px rgba(192,132,252,.4)' }} />
+          <span style={{ color: '#c084fc', fontWeight: 700, fontSize: 14, fontFamily: '"SF Mono","Fira Code",monospace' }}>{prismBalance?.balance ?? 0}</span>
+          <span style={{ color: 'rgba(255,255,255,.12)', fontSize: 8, fontWeight: 700, letterSpacing: 2.5 }}>COINS</span>
+        </div>
+      </div>
+      {/* Bottom */}
+      <div style={{ position: 'absolute', bottom: '6%', left: 0, right: 0, textAlign: 'center', pointerEvents: 'none', zIndex: 20, opacity: warp ? 0 : 1, transition: 'opacity .3s' }}>
+        <h1 style={{ margin: 0, fontSize: 16, fontWeight: 800, letterSpacing: 5, textTransform: 'uppercase', background: 'linear-gradient(135deg,#22d3ee,#a78bfa,#22d3ee)', backgroundSize: '200% 100%', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' } as React.CSSProperties}>IDENTITY PRISM</h1>
+        <p style={{ margin: '6px 0 0', color: 'rgba(255,255,255,.1)', fontSize: 9, letterSpacing: 2 }}>DRAG TO ROTATE · TAP COIN TO ENTER</p>
+      </div>
+      {/* Warp */}
+      {warp && (<>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 55, background: speedLines(warp.x, warp.y, warp.color), animation: 'hwL .6s ease-in forwards', pointerEvents: 'none' }} />
+        <div style={{ position: 'fixed', zIndex: 60, left: warp.x, top: warp.y, width: 30, height: 30, borderRadius: '50%', background: `radial-gradient(circle,${warp.color},${warp.color}80,transparent)`, animation: 'hwF .6s cubic-bezier(.4,0,1,1) forwards', pointerEvents: 'none' }} />
+        <div style={{ position: 'fixed', inset: 0, zIndex: 65, background: '#030508', animation: 'hwB .65s ease-in forwards', pointerEvents: 'none' }} />
+      </>)}
     </div>
   );
 }

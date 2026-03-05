@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getHeliusRpcUrl } from '@/constants';
+import { goBack } from '@/lib/safeNavigate';
 
 interface AttestationData {
   protocol: string;
@@ -50,6 +51,7 @@ type VerifyState =
   | { status: 'error'; message: string };
 
 const Verify: React.FC = () => {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [state, setState] = useState<VerifyState>({ status: 'idle' });
   const [inputSig, setInputSig] = useState(searchParams.get('tx') || searchParams.get('sig') || '');
@@ -164,12 +166,12 @@ const Verify: React.FC = () => {
   return (
     <div className="verify-page-scroll relative z-10 min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
       {/* Header */}
-      <Link to="/" className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity">
-        <img src="/assets/icon.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />
+      <button onClick={() => goBack(navigate)} className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity">
+        <img src="/phav.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />
         <span className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
           Identity Prism
         </span>
-      </Link>
+      </button>
 
       <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-center mb-2">
         Verify On-Chain Attestation

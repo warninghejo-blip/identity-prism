@@ -181,13 +181,18 @@ export function checkDefenderAchievements(score: number, levelReached: number): 
   const achievements = getDefenderAchievements();
   const newlyUnlocked: DefenderAchievement[] = [];
 
+  // Use the higher of passed params vs stored stats so achievements unlock
+  // even if stats haven't been persisted yet for the current game session
+  const effectiveBestScore = Math.max(score, stats.bestScore);
+  const effectiveBestLevel = Math.max(levelReached, stats.bestLevel);
+
   for (const ach of achievements) {
     if (ach.unlocked) continue;
 
     let met = false;
     switch (ach.thresholdType) {
       case 'level_reached':
-        met = stats.bestLevel >= ach.threshold;
+        met = effectiveBestLevel >= ach.threshold;
         break;
       case 'games_played':
         met = stats.gamesPlayed >= ach.threshold;
@@ -196,7 +201,7 @@ export function checkDefenderAchievements(score: number, levelReached: number): 
         met = stats.totalKills >= ach.threshold;
         break;
       case 'best_score':
-        met = stats.bestScore >= ach.threshold;
+        met = effectiveBestScore >= ach.threshold;
         break;
     }
 

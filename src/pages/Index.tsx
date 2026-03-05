@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useSearchParams, useLocation, Link } from "react-router-dom";
+import { useSearchParams, useLocation } from "react-router-dom";
 const CelestialCard = React.lazy(() => import("@/components/CelestialCard").then(m => ({ default: m.CelestialCard })));
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
 import { useWalletData } from "@/hooks/useWalletData";
@@ -18,7 +18,7 @@ import { getRandomFunnyFact } from "@/utils/funnyFacts";
 import { isTapestryEnabled, publishIdentityToTapestry } from "@/lib/tapestry";
 import type { IdentityData } from "@/lib/tapestry";
 // html2canvas loaded dynamically in renderCardImage()
-const CosmicHub = React.lazy(() => import("@/components/CosmicHubV2"));
+const CosmicHub = React.lazy(() => import("@/components/CosmicHubV3"));
 import { getPrismBalance, earnPrism, canEarnFromScan, markScanEarned, type PrismBalance } from '@/lib/prismCoin';
 
 type ViewState = "landing" | "scanning" | "ready" | "hub";
@@ -79,16 +79,18 @@ const Index = () => {
   const locState = location.state as Record<string, unknown> | null;
   const shouldResumeFromBlackHole = Boolean(urlAddress) && (Boolean(locState?.fromBlackHole) || storedReturn);
   const shouldResumeFromGameJump = Boolean(locState?.fromGameJump);
+  const shouldResumeFromSubPage = Boolean(locState?.fromSubPage);
   const [fromBlackHole, setFromBlackHole] = useState(shouldResumeFromBlackHole);
   const returningFromBH = useRef(shouldResumeFromBlackHole);
   const returningFromGameJump = useRef(shouldResumeFromGameJump);
+  const returningFromSubPage = useRef(shouldResumeFromSubPage);
   const suppressLoadingRef = useRef(shouldResumeFromBlackHole || shouldResumeFromGameJump);
 
   const [isWarping, setIsWarping] = useState(false);
   const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(null);
   const [viewState, setViewState] = useState<ViewState>(
-    (returningFromBH.current || returningFromGameJump.current) && urlAddress
-      ? "ready"
+    (returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)
+      ? "hub"
       : (urlAddress ? "scanning" : "landing")
   );
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
@@ -117,7 +119,7 @@ const Index = () => {
   // Keep walletStable=false until disconnect settles to prevent connected UI flash.
   // Re-runs on isConnected to catch Phantom eager-connect that fires AFTER first render.
   useEffect(() => {
-    if (urlAddress || returningFromBH.current || returningFromGameJump.current) {
+    if (urlAddress || returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current) {
       setWalletStable(true);
       return;
     }
@@ -135,7 +137,7 @@ const Index = () => {
   // When returning from game/BlackHole with connected wallet but no URL address,
   // sync activeAddress from wallet so card + Update button stay visible.
   useEffect(() => {
-    if (!(returningFromBH.current || returningFromGameJump.current)) return;
+    if (!(returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)) return;
     if (activeAddress) return; // already set from URL
     if (isConnected && connectedAddress) {
       const addr = connectedAddress.toBase58();
@@ -232,9 +234,6 @@ const Index = () => {
   const isMobileBrowser = /android|iphone|ipad|ipod/i.test(userAgent);
   const isIosDevice = /iphone|ipad|ipod/i.test(userAgent);
   const isSeekerDevice = /seeker/i.test(userAgent);
-  const isWebView = /(WebView|Version\/.+(Chrome)\/(\d+)\.(\d+)\.(\d+)\.(\d+)|; wv\).+(Chrome)\/(\d+)\.(\d+)\.(\d+)\.(\d+))/i.test(
-    userAgent
-  );
   const useMobileWallet = isCapacitor || isMobileBrowser;
 
   const mobileWallet = useMemo(
@@ -540,13 +539,6 @@ const Index = () => {
     }
   }, [preferredDesktopWallet, desktopWalletReady, isConnected, connectedAddress, select, connect, setWalletModalVisible]);
 
-  // Reset active address if wallet disconnects (keep this for cleanup)
-  useEffect(() => {
-    if (!isConnected && !activeAddress) {
-       // Only reset if we don't have an active address (or if provider confirms disconnect)
-    }
-  }, [isConnected, activeAddress]);
-
   const previewMode = import.meta.env.DEV && searchParams.has("preview");
   const resolvedAddress = activeAddress;
   const walletData = useWalletData(resolvedAddress);
@@ -682,7 +674,7 @@ const Index = () => {
     } else {
       // After scan → go to Hub (not card). Card accessible from Hub.
       setViewState("hub");
-      // Load PRISM balance + earn scan reward (rate-limited: 1/hour)
+      // Load Coin balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
         getPrismBalance(resolvedAddress).then(setPrismBalance).catch(() => {});
         if (canEarnFromScan(resolvedAddress)) {
@@ -792,18 +784,23 @@ const Index = () => {
     setSkrQuoteError("SKR pricing unavailable — retrying...");
     setSkrQuoteLoading(false);
     // Schedule one more background retry after 10s
-    setTimeout(() => { fetchSkrQuote(); }, 10_000);
+    skrRetryTimerRef.current = window.setTimeout(() => { fetchSkrQuote(); }, 10_000);
   }, [proxyBase]);
+
+  const skrRetryTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     fetchSkrQuote();
     const interval = window.setInterval(fetchSkrQuote, 60_000);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      if (skrRetryTimerRef.current) window.clearTimeout(skrRetryTimerRef.current);
+    };
   }, [fetchSkrQuote]);
 
-  // Re-fetch SKR quote when returning to ready state (e.g. after BlackHole)
+  // Re-fetch SKR quote when entering hub or ready state (e.g. after scan or BlackHole)
   useEffect(() => {
-    if (viewState === "ready" && !skrQuote) {
+    if ((viewState === "ready" || viewState === "hub") && !skrQuote) {
       fetchSkrQuote();
     }
   }, [viewState, skrQuote, fetchSkrQuote]);
@@ -885,12 +882,13 @@ const Index = () => {
     setMintState("minting");
     let succeeded = false;
     // Safety: auto-reset spinner if wallet promise hangs (e.g. Seeker silently drops request)
+    // 30s to allow for card capture + wallet signing + finalize
     const safetyTimer = setTimeout(() => {
       if (!succeeded) {
         setMintState("idle");
         toast.info("Transaction timed out — please try again");
       }
-    }, 20_000);
+    }, 30_000);
     try {
       const cardImageUrl = await captureCardImage();
       const { mintIdentityPrism } = await import("@/lib/mintIdentityPrism");
@@ -1508,9 +1506,25 @@ function LandingOverlay({
             <img src="/phav.png" alt="Identity Prism" className="h-24 w-24 mx-auto mb-6 glow-logo" />
           </div>
           <p className="landing-eyebrow select-none">
-            Identity Prism v4.0
+            Identity Prism
           </p>
-          <h1 className="landing-title-v2">Decode your cosmic signature</h1>
+          <h1 className="landing-title-v2">Your Solana identity,<br />reimagined</h1>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
+            {[
+              { icon: '💎', text: 'Identity Score' },
+              { icon: '🎮', text: 'Play & Earn' },
+              { icon: '🛡️', text: 'Sybil Shield' },
+            ].map((f) => (
+              <span key={f.text} style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                fontSize: 10, color: 'rgba(255,255,255,0.25)', fontWeight: 600,
+                padding: '4px 10px', borderRadius: 20,
+                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.04)',
+              }}>
+                <span style={{ fontSize: 12 }}>{f.icon}</span> {f.text}
+              </span>
+            ))}
+          </div>
         </div>
         
         <div className="landing-actions-v2">

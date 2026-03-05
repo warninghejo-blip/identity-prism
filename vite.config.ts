@@ -23,7 +23,7 @@ export default defineConfig(({ mode }) => {
   return {
   server: {
     host: "::",
-    port: 8080,
+    port: 7474,
     proxy: {
       "/api": {
         target: apiProxyTarget,
@@ -67,6 +67,7 @@ export default defineConfig(({ mode }) => {
     },
   },
   build: {
+    sourcemap: false,
     modulePreload: { polyfill: true },
     cssCodeSplit: false,
     target: 'es2020',

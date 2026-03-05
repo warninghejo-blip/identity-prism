@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { goBack } from '@/lib/safeNavigate';
 import { ArrowLeft, Loader2, Clock, TrendingUp, Star } from 'lucide-react';
 import { getHeliusProxyUrl } from '@/constants';
 
@@ -139,7 +140,7 @@ function renderTimeline(
       const tx = Math.min(x - tooltipW / 2, w - tooltipW - 10);
       const ty = y - tooltipH - 12;
       ctx.beginPath();
-      ctx.roundRect(tx, ty, tooltipW, tooltipH, 6);
+      if (ctx.roundRect) { ctx.roundRect(tx, ty, tooltipW, tooltipH, 6); } else { ctx.rect(tx, ty, tooltipW, tooltipH); }
       ctx.fill();
       ctx.strokeStyle = tierColor + '60';
       ctx.lineWidth = 1;
@@ -244,7 +245,7 @@ export default function TimeWarp() {
       const demo: ScoreSnapshot[] = [];
       let score = 50;
       for (let i = 30; i >= 0; i--) {
-        score = Math.min(1200, score + Math.floor(Math.random() * 40));
+        score = Math.min(1400, score + Math.floor(Math.random() * 40));
         const tier = TIER_ORDER[Math.min(TIER_ORDER.length - 1, Math.floor(score / 130))];
         demo.push({
           date: new Date(now - i * 24 * 60 * 60 * 1000).toISOString(),
@@ -318,7 +319,7 @@ export default function TimeWarp() {
     <div className="fixed inset-0 bg-[#050510] text-white">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-[#050510]/80 backdrop-blur-sm border-b border-white/5">
-        <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
+        <button onClick={() => goBack(navigate)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
@@ -352,6 +353,12 @@ export default function TimeWarp() {
         <canvas
           ref={canvasRef}
           onMouseMove={handleMouseMove}
+          onTouchStart={(e) => {
+            const touch = e.touches[0];
+            if (touch) {
+              handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY, currentTarget: e.currentTarget } as any);
+            }
+          }}
           onMouseLeave={() => setHoveredIndex(null)}
           className="w-full cursor-crosshair"
         />

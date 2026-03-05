@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Component, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { ConnectionProvider } from '@solana/wallet-adapter-react';
 import { CustomWalletProvider } from './components/CustomWalletProvider';
@@ -14,6 +14,50 @@ import {
 import App from './App';
 import Index from './pages/Index';
 import NotFound from './pages/NotFound';
+
+/** Error boundary that catches lazy-import failures and retries once. */
+class LazyErrorBoundary extends Component<
+  { children: ReactNode; fallback?: ReactNode },
+  { hasError: boolean; retried: boolean }
+> {
+  state = { hasError: false, retried: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    // Dynamic import failures (e.g. after HMR reconnect) — retry once
+    if (!this.state.retried && error.message?.includes('dynamically imported module')) {
+      this.setState({ hasError: false, retried: true });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback ?? (
+        <div style={{ padding: 40, textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
+          <p style={{ marginBottom: 12 }}>Page failed to load.</p>
+          <button
+            onClick={() => { this.setState({ hasError: false, retried: false }); }}
+            style={{
+              padding: '8px 20px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)',
+              background: 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/** Wrap lazy component in error boundary */
+function lazyRoute(element: ReactNode) {
+  return <LazyErrorBoundary><React.Suspense fallback={null}>{element}</React.Suspense></LazyErrorBoundary>;
+}
 // wallet-adapter CSS imported eagerly in main.tsx to avoid lazy CSS dep
 import { mwaAuthorizationCache } from './lib/mwaAuthorizationCache';
 import { BLACKHOLE_ENABLED, getHeliusRpcUrl, MINT_CONFIG } from './constants';
@@ -27,10 +71,10 @@ const HomePage = React.lazy(() => import('./pages/HomePage'));
 const StellarForge = React.lazy(() => import('./pages/StellarForge'));
 const NebulaMarket = React.lazy(() => import('./pages/NebulaMarket'));
 const ConstellationNetwork = React.lazy(() => import('./pages/ConstellationNetwork'));
-const TimeWarp = React.lazy(() => import('./pages/TimeWarp'));
 const QuestsPage = React.lazy(() => import('./pages/QuestsPage'));
-const ScamChecker = React.lazy(() => import('./pages/ScamChecker'));
-const Marketplace = React.lazy(() => import('./pages/Marketplace'));
+// ScamChecker removed — redirects to /constellation below
+// Marketplace merged into StellarForge — redirect below
+const Leaderboard = React.lazy(() => import('./pages/Leaderboard'));
 
 const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -62,20 +106,21 @@ const router = createBrowserRouter([
       { index: true, element: <Index /> },
       { path: 'app', element: <Index /> },
       { path: 'app/*', element: <Index /> },
-      { path: 'home', element: <HomePage /> },
+      { path: 'home', element: lazyRoute(<HomePage />) },
       { path: 'share', element: <Index /> },
-      { path: 'game', element: <PrismLeague /> },
-      { path: 'preview', element: <PreviewDeck /> },
-      { path: 'preview/:tier', element: <PreviewDeck /> },
-      { path: 'verify', element: <Verify /> },
-      { path: 'compare', element: <Compare /> },
-      { path: 'forge', element: <StellarForge /> },
-      { path: 'market', element: <NebulaMarket /> },
-      { path: 'constellation', element: <ConstellationNetwork /> },
-      { path: 'timewarp', element: <TimeWarp /> },
-      { path: 'quests', element: <QuestsPage /> },
-      { path: 'scam-checker', element: <ScamChecker /> },
-      { path: 'marketplace', element: <Marketplace /> },
+      { path: 'game', element: lazyRoute(<PrismLeague />) },
+      { path: 'preview', element: lazyRoute(<PreviewDeck />) },
+      { path: 'preview/:tier', element: lazyRoute(<PreviewDeck />) },
+      { path: 'verify', element: lazyRoute(<Verify />) },
+      { path: 'compare', element: lazyRoute(<Compare />) },
+      { path: 'forge', element: lazyRoute(<StellarForge />) },
+      { path: 'market', element: lazyRoute(<NebulaMarket />) },
+      { path: 'constellation', element: lazyRoute(<ConstellationNetwork />) },
+      { path: 'timewarp', element: <Navigate to="/" replace /> },
+      { path: 'quests', element: lazyRoute(<QuestsPage />) },
+      { path: 'scam-checker', element: <Navigate to="/constellation" replace /> },
+      { path: 'marketplace', element: <Navigate to="/forge" replace /> },
+      { path: 'leaderboard', element: lazyRoute(<Leaderboard />) },
       { path: '*', element: <NotFound /> },
     ],
   },

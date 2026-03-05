@@ -311,7 +311,7 @@ export const rollLeagueEvents = (seed: string, rounds: number) => {
 };
 
 export const deriveTraitBoosts = (traits: WalletTraits | null, score: number): TraitBoosts => {
-  const scoreFactor = clamp(score / 1200, 0, 1);
+  const scoreFactor = clamp(score / 1400, 0, 1);
   const baseBoosts: TraitBoosts = {
     alpha: 0.05 + scoreFactor * 0.06,
     shield: 0.06 + scoreFactor * 0.03,

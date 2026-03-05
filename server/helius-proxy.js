@@ -199,6 +199,26 @@ function requireJwt(req, res) {
   }
 }
 
+/**
+ * Optional JWT: if token present and valid, returns { ok: true, address }.
+ * If no token, returns { ok: true, address: null } (caller must get address elsewhere).
+ * Only returns { ok: false } if token IS present but invalid/expired.
+ */
+function optionalJwt(req, res) {
+  const authHeader = req.headers['authorization'] ?? '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) {
+    return { ok: true, address: null };
+  }
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return { ok: true, address: payload.address };
+  } catch {
+    // Token present but invalid — still allow, just ignore the bad token
+    return { ok: true, address: null };
+  }
+}
+
 const TOKEN_ADDRESSES = {
   SEEKER_GENESIS_COLLECTION: 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te',
   SEEKER_MINT_AUTHORITY: 'GT2zuHVaZQYZSyQMgJPLzvkmyztfyXg2NJunqFp4p3A4',
@@ -228,26 +248,17 @@ const MEME_MINT_LOOKUP = Object.entries(MEME_COIN_MINTS).reduce((acc, [symbol, m
 }, {});
 const DEFI_POSITION_HINTS = ['kamino', 'drift', 'marginfi', 'mango', 'jito', 'solend', 'zeta'];
 const BLUE_CHIP_COLLECTIONS = [
-  'J1S9H3QjnRtBbbuD4HjPV6RpRhwuk4zKbxsnCHuTgh9w',
-  'SMBH3wF6pdt967Y62N7S5mB4tJSTH3KAsdJ82D3L2nd',
-  'SMB3ndYpSXY97H8MhpxYit3pD8TzYJ5v6ndP4D2L2nd',
-  '6v9UWGmEB5Hthst9KqEAgXW6XF6R6yv4t7Yf3YfD3A7t',
-  'BUjZjAS2vbbb9p56fAun4sFmPAt8W6JURG5L3AkVvHP9',
-  '4S8L8L1M5E1X5vM1Y1M1X5vM1Y1M1X5vM1Y1M1X5vM1Y',
-  '7TENEKwBnkpENuefriGPg4hBDR4WJ2Gyfw5AhdkMA4rq',
-  '9uBX3ASuCtv6S5o56yq7F9n7U6o9o7o9o7o9o7o9o7o9',
-  'GGSGP689TGoX6WJ9mSj2S8mH78S8S8S8S8S8S8S8S8S8S',
-  'CDgbhX61QFADQAeeYKP5BQ7nnzDyMkkR3NEhYF2ETn1k',
-  'Port7uDYB3P8meS5m7Yv62222222222222222222222',
-  'CocMmG5v88888888888888888888888888888888888',
-  'y00t9S9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD9mD',
-  'abc777777777777777777777777777777777777777',
-  'LILY5555555555555555555555555555555555555',
-  'PRM77777777777777777777777777777777777777',
-  'Jelly8888888888888888888888888888888888888',
-  '4Q2C5S930M9c9e96b',
-  'TFF77777777777777777777777777777777777777',
-  'DTP77777777777777777777777777777777777777',
+  'J1S9H3QjnRtBbbuD4HjPV6RpRhwuk4zKbxsnCHuTgh9w', // Mad Lads
+  'SMBH3wF6pdt967Y62N7S5mB4tJSTH3KAsdJ82D3L2nd', // SMB Gen2
+  'SMB3ndYpSXY97H8MhpxYit3pD8TzYJ5v6ndP4D2L2nd', // SMB Gen3
+  '6v9UWGmEB5Hthst9KqEAgXW6XF6R6yv4t7Yf3YfD3A7t', // Claynosaurz
+  'BUjZjAS2vbbb9p56fAun4sFmPAt8W6JURG5L3AkVvHP9', // Famous Fox Federation
+  '7TENEKwBnkpENuefriGPg4hBDR4WJ2Gyfw5AhdkMA4rq', // Okay Bears
+  'CDgbhX61QFADQAeeYKP5BQ7nnzDyMkkR3NEhYF2ETn1k', // Taiyo Robotics
+];
+const BLUE_CHIP_COLLECTION_NAMES = [
+  'mad lads', 'solana monkey business', 'claynosaurz', 'okay bears',
+  'famous fox federation', 'taiyo robotics',
 ];
 
 const PENDING_MINT_TTL_MS = 10 * 60 * 1000;
@@ -459,27 +470,31 @@ const persistLeaderboard = () => {
 };
 
 const submitLeaderboardEntry = (entry) => {
-  const { address, score, playedAt, txSignature } = entry;
+  const { address, score, playedAt, txSignature, gameType } = entry;
   if (!address || typeof score !== 'number' || score <= 0) return null;
-  const existing = leaderboardEntries.findIndex((e) => e.address === address);
+  const gt = gameType || 'orbit';
+  // Find existing entry for same address + gameType
+  const existing = leaderboardEntries.findIndex((e) => e.address === address && (e.gameType || 'orbit') === gt);
   if (existing !== -1) {
     if (score > leaderboardEntries[existing].score) {
-      leaderboardEntries[existing] = { address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || leaderboardEntries[existing].txSignature };
+      leaderboardEntries[existing] = { address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || leaderboardEntries[existing].txSignature, gameType: gt };
     } else if (txSignature && !leaderboardEntries[existing].txSignature) {
       leaderboardEntries[existing].txSignature = txSignature;
     } else {
       return leaderboardEntries[existing];
     }
   } else {
-    leaderboardEntries.push({ address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || undefined });
+    leaderboardEntries.push({ address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || undefined, gameType: gt });
   }
   leaderboardEntries.sort((a, b) => b.score - a.score);
   if (leaderboardEntries.length > LEADERBOARD_MAX_ENTRIES) leaderboardEntries.length = LEADERBOARD_MAX_ENTRIES;
   persistLeaderboard();
-  return leaderboardEntries.find((e) => e.address === address) || null;
+  return leaderboardEntries.find((e) => e.address === address && (e.gameType || 'orbit') === gt) || null;
 };
 
 loadLeaderboard();
+// Backfill gameType for old entries
+leaderboardEntries.forEach(e => { if (!e.gameType) e.gameType = 'orbit'; });
 
 // ── Server-side Coin balance persistence ──
 const COINS_STORE_FILE = process.env.COINS_STORE_FILE
@@ -522,6 +537,36 @@ const setCoinBalance = (address, coins) => {
 };
 
 loadCoinBalances();
+
+// ── Server-side Minted address tracking ──
+const MINTED_ADDRESSES_FILE = path.join(METADATA_DIR, 'minted-addresses.json');
+const mintedAddresses = new Set();
+
+const loadMintedAddresses = () => {
+  try {
+    if (!fs.existsSync(MINTED_ADDRESSES_FILE)) return;
+    const raw = fs.readFileSync(MINTED_ADDRESSES_FILE, 'utf8');
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    const addresses = Array.isArray(parsed?.addresses) ? parsed.addresses : (Array.isArray(parsed) ? parsed : []);
+    for (const addr of addresses) {
+      if (typeof addr === 'string' && addr.trim()) mintedAddresses.add(addr.trim());
+    }
+    console.log(`[minted] Loaded ${mintedAddresses.size} minted addresses`);
+  } catch (err) {
+    console.warn('[minted] Failed to load', err);
+  }
+};
+
+const saveMintedAddresses = () => {
+  try {
+    fs.writeFileSync(MINTED_ADDRESSES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), addresses: [...mintedAddresses] }, null, 2));
+  } catch (err) {
+    console.warn('[minted] Failed to persist', err);
+  }
+};
+
+loadMintedAddresses();
 
 // ── Server-side Score History (per wallet, last 20 scores) ──
 const SCORE_HISTORY_FILE = path.join(METADATA_DIR, 'score-history.json');
@@ -726,25 +771,25 @@ const pickHeliusKey = (seed) => {
 
 const buildRpcUrl = (apiKey) => {
   if (!HELIUS_RPC_BASE) return null;
+  // Don't use Helius URL without an API key — it will fail with 401
+  if (!apiKey) return null;
   const targetUrl = new URL(HELIUS_RPC_BASE);
-  if (apiKey) {
-    targetUrl.searchParams.set('api-key', apiKey);
-  }
+  targetUrl.searchParams.set('api-key', apiKey);
   return targetUrl.toString();
 };
 
 const getRpcUrl = (seed) => {
   if (!HELIUS_KEYS.length) {
-    return buildRpcUrl(null);
+    return buildRpcUrl(null) || ALCHEMY_RPC_URL || FALLBACK_RPC_URL || 'https://api.mainnet-beta.solana.com';
   }
   const apiKey = pickHeliusKey(seed);
-  if (!apiKey) return null;
+  if (!apiKey) return ALCHEMY_RPC_URL || FALLBACK_RPC_URL || 'https://api.mainnet-beta.solana.com';
   return buildRpcUrl(apiKey);
 };
 
 const getRpcUrls = (seed) => {
   if (!HELIUS_KEYS.length) {
-    const fallbackUrl = buildRpcUrl(null);
+    const fallbackUrl = buildRpcUrl(null) || ALCHEMY_RPC_URL || FALLBACK_RPC_URL || 'https://api.mainnet-beta.solana.com';
     return fallbackUrl ? [fallbackUrl] : [];
   }
   const startIndex = Math.max(0, getHeliusKeyIndex(seed));
@@ -848,9 +893,17 @@ const applyCors = (req, res) => {
   res.setHeader('X-Blockchain-Ids', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
 };
 
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB hard limit
 const readBody = (req) => new Promise((resolve, reject) => {
   let data = '';
+  let size = 0;
   req.on('data', (chunk) => {
+    size += chunk.length;
+    if (size > MAX_BODY_SIZE) {
+      req.destroy();
+      reject(new Error('Request body too large'));
+      return;
+    }
     data += chunk;
   });
   req.on('end', () => resolve(data));
@@ -867,10 +920,12 @@ const getBaseUrl = (req) => {
 };
 
 const respondJson = (res, status, payload) => {
+  if (res.headersSent) return;
   const body = JSON.stringify(payload);
   const acceptEncoding = String(res.req?.headers?.['accept-encoding'] ?? '');
   if (body.length > 256 && acceptEncoding.includes('gzip')) {
     zlib.gzip(Buffer.from(body), (err, compressed) => {
+      if (res.headersSent) return;
       if (err || !compressed) {
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(body);
@@ -1448,22 +1503,40 @@ const fetchIdentitySnapshot = async (address) => {
     const tokenInfo = asset.token_info || {};
     const decimals = tokenInfo.decimals ?? (isFungibleAsset(asset) ? 9 : 0);
 
+    // Skip burnt assets (matches frontend)
+    if (asset.burnt) return;
+
     const isExplicitNFT =
       iface.includes('NFT') ||
       iface.includes('PROGRAMMABLE') ||
-      iface === 'CUSTOM' ||
       asset.compression?.compressed === true;
-    const isLikelyNFT = decimals === 0 && (metadata.name || content.links?.image || grouping.length > 0);
+    const supply = tokenInfo.supply !== undefined ? tokenInfo.supply : -1;
+    const hasCollection = grouping.some((g) => g.group_key === 'collection');
+    const isLikelyNFT = decimals === 0 && hasCollection && supply === 1;
     const isKnownFungible =
       iface === 'FUNGIBLETOKEN' ||
       iface === 'FUNGIBLEASSET' ||
-      ((tokenInfo.supply || 0) > 1 && decimals > 0);
+      iface === 'FUNGIBLE_TOKEN' ||
+      iface === 'FUNGIBLE_ASSET' ||
+      (supply > 1 && decimals >= 0);
 
-    if (isExplicitNFT || (isLikelyNFT && !isKnownFungible)) {
+    const hasVerifiedCreator = creators.some((c) => c.verified === true);
+    const isMplCore = iface === 'MPLCOREASSET' || iface === 'MPLBUBBLEGUMV2';
+    const isRealNFT = isMplCore ? hasCollection : (hasVerifiedCreator && hasCollection);
+    const royaltyBps = asset.royalty?.basis_points ?? 0;
+    const hasRoyalty = royaltyBps >= 100;
+
+    if ((isExplicitNFT || isMplCore || (isLikelyNFT && !isKnownFungible)) && isRealNFT && hasRoyalty) {
       nftCount += 1;
       const collectionValue = collectionGroup?.group_value || '';
       if (BLUE_CHIP_COLLECTIONS.includes(collectionValue)) {
         isBlueChip = true;
+      }
+      // Name-based blue chip fallback (matches frontend)
+      if (!isBlueChip && name) {
+        if (BLUE_CHIP_COLLECTION_NAMES.some((bcn) => name.includes(bcn))) {
+          isBlueChip = true;
+        }
       }
     } else {
       uniqueTokenCount += 1;
@@ -1676,19 +1749,9 @@ const server = http.createServer(async (req, res) => {
         authChallenges.delete(nonce);
         respondJson(res, 401, { error: 'Challenge expired' }); return;
       }
-      // Verify Ed25519 signature using node:crypto
+      // Verify Ed25519 signature using the robust verifyWalletSignature helper
       const message = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
-      let verified = false;
-      try {
-        const pubkeyBytes = Buffer.from(new PublicKey(address).toBytes());
-        const keyObject = crypto.createPublicKey({ key: pubkeyBytes, format: 'raw', type: 'public', namedCurve: 'ed25519' });
-        const msgBytes = Buffer.from(message, 'utf8');
-        const sigBytes = Buffer.from(signature, 'base64');
-        verified = crypto.verify(null, msgBytes, keyObject, sigBytes);
-      } catch (verifyErr) {
-        console.warn('[auth] signature verify error', verifyErr?.message);
-        verified = false;
-      }
+      const verified = verifyWalletSignature(address, message, signature);
       if (!verified) { respondJson(res, 401, { error: 'Invalid signature' }); return; }
       authChallenges.delete(nonce); // one-time use
       const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL });
@@ -1701,6 +1764,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Reputation API ──
+  // Rate limit: 1 request per 10 seconds per IP for /api/reputation, /api/reputation/compare, /api/reputation/batch
+  if ((pathname === '/api/reputation' || pathname === '/api/reputation/compare' || pathname === '/api/reputation/batch')
+      && (req.method === 'GET' || req.method === 'POST')) {
+    const rlIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const rlKey = `repv1:${rlIp}`;
+    const lastReq = reputationRateLimit.get(rlKey) || 0;
+    if (Date.now() - lastReq < 10_000) {
+      return respondJson(res, 429, { error: 'Rate limited — 1 request per 10 seconds', retryAfterMs: 10_000 - (Date.now() - lastReq) });
+    }
+    reputationRateLimit.set(rlKey, Date.now());
+    if (reputationRateLimit.size > 5000) {
+      const cutoff = Date.now() - 20_000;
+      for (const [k, v] of reputationRateLimit) { if (v < cutoff) reputationRateLimit.delete(k); }
+    }
+  }
+
   if (pathname === '/api/reputation' && req.method === 'GET') {
     const address = String(url.searchParams.get('address') ?? '').trim();
     if (!address) {
@@ -1716,11 +1795,115 @@ const server = http.createServer(async (req, res) => {
     try {
       const snapshot = await fetchIdentitySnapshot(address);
       const { identity, stats, walletAgeDays, solBalance, txCount, tokenCount, nftCount } = snapshot;
+
+      // Fetch sybil trust grade in parallel (best-effort, don't fail if unavailable)
+      let trustGrade = null;
+      let trustScore = null;
+      let riskLevel = null;
+      let topPrograms = [];
+      try {
+        const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+        const pubkey = new PublicKey(address);
+
+        // Get trust data from sybil cache or compute lightweight version
+        const cachedSybil = sybilCache.get(address);
+        if (cachedSybil && Date.now() - cachedSybil.cachedAt < 3600_000) {
+          trustGrade = cachedSybil.analysis.trustGrade;
+          trustScore = cachedSybil.analysis.trustScore;
+          riskLevel = cachedSybil.analysis.riskLevel;
+          topPrograms = cachedSybil.analysis.metrics?.topPrograms || [];
+        } else {
+          // Lightweight trust estimation from identity data
+          let riskPts = 0;
+          if (walletAgeDays < 30) riskPts += 15;
+          if (txCount < 10) riskPts += 10;
+          if (solBalance < 0.01) riskPts += 8;
+          if (nftCount === 0) riskPts += 5;
+          if (tokenCount < 3) riskPts += 6;
+          // Trust bonus
+          if (walletAgeDays > 365) riskPts -= 5;
+          if (tokenCount >= 10) riskPts -= 3;
+          if (nftCount >= 5) riskPts -= 2;
+          riskPts = Math.max(0, Math.min(100, riskPts));
+          const ts = Math.max(0, 100 - riskPts);
+          trustScore = ts;
+          trustGrade = ts >= 90 ? 'A+' : ts >= 80 ? 'A' : ts >= 70 ? 'B' : ts >= 60 ? 'C' : ts >= 50 ? 'D' : 'F';
+          riskLevel = riskPts >= 75 ? 'critical' : riskPts >= 50 ? 'high' : riskPts >= 30 ? 'medium' : riskPts >= 10 ? 'low' : 'clean';
+        }
+
+        // Fetch top interacted programs from recent transactions
+        if (topPrograms.length === 0) {
+          try {
+            const recentSigs = await conn.getSignaturesForAddress(pubkey, { limit: 50 });
+            const sigBatch = recentSigs.slice(0, 20).map(s => s.signature);
+            if (sigBatch.length > 0) {
+              const programCounts = new Map();
+              for (let i = 0; i < sigBatch.length; i += 10) {
+                const batch = sigBatch.slice(i, i + 10);
+                try {
+                  const txs = await conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 });
+                  for (const tx of txs) {
+                    if (!tx?.transaction?.message?.instructions) continue;
+                    for (const ix of tx.transaction.message.instructions) {
+                      const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+                      if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') {
+                        programCounts.set(pid, (programCounts.get(pid) || 0) + 1);
+                      }
+                    }
+                  }
+                } catch { /* partial failure ok */ }
+              }
+              // Map known program IDs to human-readable names
+              const PROGRAM_NAMES = {
+                'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': 'Jupiter',
+                'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': 'Orca',
+                'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK': 'Raydium CLMM',
+                '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': 'Raydium AMM',
+                'SSwpkEEcbUqx4vtoEByFjSkhKdCT862DNVb52nZg1UZ': 'Saber',
+                'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68': 'Marinade',
+                'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': 'Marinade Finance',
+                'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD': 'Marinade',
+                'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA': 'Token Program',
+                'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL': 'ATA Program',
+                'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr': 'Memo',
+                'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s': 'Metaplex',
+                'BGUMAp9Gq7iTEuizy4pqAxsTkFQ1XyUbSreFdn6YqwPc': 'Bubblegum',
+                'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1': 'Tensor',
+                'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN': 'Tensor Swap',
+                'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K': 'Magic Eden V2',
+                'CMZYPASGWeTz7RNGHaRJfCq2XQ5pYK6nDvVQxzkH51zb': 'Solend',
+                'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY': 'Phoenix',
+                'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo': 'Meteora',
+                'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB': 'Phantom',
+                'FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH': 'Pyth Oracle',
+                'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb': 'Wormhole',
+                'SSwapUtytfBdBn1b9NUGG6foMVPtcWgpRU32HToDUZr': 'Step Finance',
+                'DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M': 'Jupiter DCA',
+                'jCebN34bUfdeUhR6bhNixjhCSnx9CY23HsmUkT7XjVV': 'Jito',
+              };
+              const entries = [...programCounts.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 8)
+                .map(([pid, count]) => ({
+                  programId: pid,
+                  name: PROGRAM_NAMES[pid] || null,
+                  interactions: count,
+                }));
+              topPrograms = entries;
+            }
+          } catch { /* ignore — non-critical */ }
+        }
+      } catch { /* ignore — trust data is optional */ }
+
       respondJson(res, 200, {
         address,
         score: identity.score,
         tier: identity.tier,
         badges: identity.badges,
+        trustGrade,
+        trustScore,
+        riskLevel,
+        topPrograms,
         stats: {
           walletAgeDays,
           solBalance: Math.round(solBalance * 1000) / 1000,
@@ -2164,21 +2347,31 @@ const server = http.createServer(async (req, res) => {
 
   // ── Leaderboard API ──
   if (pathname === '/api/game/leaderboard' && req.method === 'GET') {
-    respondJson(res, 200, { entries: leaderboardEntries.slice(0, 50) });
+    const gameTypeFilter = url.searchParams.get('gameType');
+    const filtered = gameTypeFilter
+      ? leaderboardEntries.filter(e => (e.gameType || 'orbit') === gameTypeFilter)
+      : leaderboardEntries;
+    respondJson(res, 200, { entries: filtered.slice(0, 50) });
     return;
   }
 
   if (pathname === '/api/game/leaderboard' && req.method === 'POST') {
+    const jwtAuth = optionalJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
-      const { address, score, playedAt, txSignature } = parsed;
+      const { address: bodyAddress, score, playedAt, txSignature, gameType } = parsed;
+      const address = jwtAuth.address || bodyAddress;
+      if (jwtAuth.address && bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
         respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
         return;
       }
-      const result = submitLeaderboardEntry({ address, score, playedAt, txSignature });
-      respondJson(res, 200, { entry: result, leaderboard: leaderboardEntries.slice(0, 50) });
+      const result = submitLeaderboardEntry({ address, score, playedAt, txSignature, gameType });
+      const gt = gameType || 'orbit';
+      const filtered = leaderboardEntries.filter(e => (e.gameType || 'orbit') === gt);
+      respondJson(res, 200, { entry: result, leaderboard: filtered.slice(0, 50) });
     } catch (error) {
       respondJson(res, 400, { error: 'Invalid JSON body' });
     }
@@ -2198,10 +2391,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/game/coins' && req.method === 'POST') {
+    const jwtAuth = optionalJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
-      const { address: addr, coins, delta } = parsed;
+      const { address: bodyAddr, coins, delta } = parsed;
+      const addr = jwtAuth.address || bodyAddr;
+      if (jwtAuth.address && bodyAddr && bodyAddr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!addr || typeof addr !== 'string') {
         respondJson(res, 400, { error: 'address (string) required' });
         return;
@@ -2231,10 +2428,13 @@ const server = http.createServer(async (req, res) => {
 
   // POST: claim a single achievement
   if (pathname === '/api/game/achievements' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
       const { address: addr, achievementId, reward } = parsed;
+      if (addr && addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!addr || typeof addr !== 'string' || !achievementId || typeof achievementId !== 'string') {
         respondJson(res, 400, { error: 'address (string) and achievementId (string) required' });
         return;
@@ -2294,10 +2494,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/game/revives' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
       const { address: addr, mode } = parsed;
+      if (addr && addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!addr || typeof addr !== 'string') {
         respondJson(res, 400, { error: 'address (string) required' });
         return;
@@ -2888,8 +3091,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // JWT auth guard (optional — skip if no Authorization header to stay backward-compatible during rollout)
-    const jwtAuth = req.headers['authorization'] ? requireJwt(req, res) : { ok: true, address: null };
+    // JWT auth guard (mandatory)
+    const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
 
     try {
@@ -2984,6 +3187,14 @@ const server = http.createServer(async (req, res) => {
           preflightCommitment: 'confirmed',
         });
         await connection.confirmTransaction(signature, 'confirmed');
+
+        // Track minted address
+        const finalOwner = owner || pending.owner;
+        if (finalOwner) {
+          mintedAddresses.add(finalOwner);
+          saveMintedAddresses();
+        }
+
         respondJson(res, 200, {
           signature,
           assetId: pending.assetId,
@@ -3000,7 +3211,7 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 500, {
           error: 'Treasury secret not configured',
           requestId,
-          hint: `Set TREASURY_SECRET or place key at ${TREASURY_SECRET_PATH}`,
+          hint: 'Set TREASURY_SECRET environment variable',
         });
         return;
       }
@@ -3308,6 +3519,12 @@ const server = http.createServer(async (req, res) => {
           },
           'confirmed'
         );
+        // Track minted address
+        if (owner) {
+          mintedAddresses.add(owner);
+          saveMintedAddresses();
+        }
+
         respondJson(res, 200, {
           signature,
           assetId: assetSigner.publicKey,
@@ -3352,8 +3569,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // JWT auth guard (optional during rollout)
-    const jwtAuth = req.headers['authorization'] ? requireJwt(req, res) : { ok: true, address: null };
+    // JWT auth guard (mandatory)
+    const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
 
     try {
@@ -3878,6 +4095,1265 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ═══ PRISM Balance ═══
+  if (pathname === '/api/prism/balance' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    respondJson(res, 200, getPrismBalance(address));
+    return;
+  }
+
+  // ═══ PRISM Earn (JWT optional — scoring endpoint, low risk) ═══
+  if (pathname === '/api/prism/earn' && req.method === 'POST') {
+    const jwtAuth = optionalJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { address: bodyAddress, source, amount, description } = JSON.parse(await readBody(req));
+      const address = jwtAuth.address || bodyAddress;
+      if (jwtAuth.address && bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
+      // Max amount caps per source to prevent abuse
+      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, burn_tokens: 500, burn_nfts: 500, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20 };
+      const maxAllowed = MAX_EARN_PER_CALL[source] || 50;
+      if (Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
+      // Per-source rate limit
+      const rlKey = `${address}:${source || 'unknown'}`;
+      const lastEarn = prismEarnRateLimit.get(rlKey) || 0;
+      if (Date.now() - lastEarn < PRISM_EARN_COOLDOWN_MS) {
+        return respondJson(res, 429, { error: 'Rate limited — try again later', cooldownMs: PRISM_EARN_COOLDOWN_MS - (Date.now() - lastEarn) });
+      }
+      // Global per-address rate limit (max 1 earn per 2 seconds regardless of source)
+      const globalKey = `${address}:__global__`;
+      const lastGlobal = prismEarnRateLimit.get(globalKey) || 0;
+      if (Date.now() - lastGlobal < 2000) {
+        return respondJson(res, 429, { error: 'Too many requests — slow down' });
+      }
+      prismEarnRateLimit.set(globalKey, Date.now());
+      prismEarnRateLimit.set(rlKey, Date.now());
+      if (prismEarnRateLimit.size > 5000) {
+        const cutoff = Date.now() - PRISM_EARN_COOLDOWN_MS * 2;
+        for (const [k, v] of prismEarnRateLimit) { if (v < cutoff) prismEarnRateLimit.delete(k); }
+      }
+      const earned = Math.max(0, Math.floor(Number(amount)));
+      if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
+      const bal = getPrismBalance(address);
+      bal.balance += earned;
+      bal.totalEarned += earned;
+      bal.lastUpdated = new Date().toISOString();
+      setCoinBalance(address, bal.balance);
+      const tx = {
+        id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        address, amount: earned, type: 'earn', source: source || 'unknown',
+        description: description || `Earned ${earned} Coins`,
+        timestamp: new Date().toISOString(),
+      };
+      const txs = prismTransactions.get(address) || [];
+      txs.unshift(tx);
+      if (txs.length > 500) txs.length = 500;
+      prismTransactions.set(address, txs);
+      debouncedSavePrism();
+      feedItems.unshift({
+        id: tx.id, type: source?.includes('burn') ? 'burn' : source?.includes('game') ? 'achievement' : 'scan',
+        address, description: description || `Earned ${earned} Coins from ${source}`,
+        timestamp: tx.timestamp,
+      });
+      if (feedItems.length > 200) feedItems.length = 200;
+      respondJson(res, 200, { balance: bal, earned });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ═══ PRISM Spend ═══
+  if (pathname === '/api/prism/spend' && req.method === 'POST') {
+    const jwtAuth = optionalJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { address: bodyAddress, source, amount, description } = JSON.parse(await readBody(req));
+      const address = jwtAuth.address || bodyAddress;
+      if (jwtAuth.address && bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
+      const spent = Math.max(0, Math.floor(Number(amount)));
+      const bal = getPrismBalance(address);
+      if (bal.balance < spent) return respondJson(res, 400, { error: 'insufficient balance' });
+      bal.balance -= spent;
+      bal.totalSpent += spent;
+      bal.lastUpdated = new Date().toISOString();
+      setCoinBalance(address, bal.balance);
+      const tx = {
+        id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        address, amount: spent, type: 'spend', source: source || 'unknown',
+        description: description || `Spent ${spent} Coins`,
+        timestamp: new Date().toISOString(),
+      };
+      const txs = prismTransactions.get(address) || [];
+      txs.unshift(tx);
+      if (txs.length > 500) txs.length = 500;
+      prismTransactions.set(address, txs);
+      debouncedSavePrism();
+      respondJson(res, 200, { balance: bal, spent });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ═══ PRISM Transaction History ═══
+  if (pathname === '/api/prism/transactions' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    const txs = (prismTransactions.get(address) || []).slice(0, limit);
+    respondJson(res, 200, txs);
+    return;
+  }
+
+  // ═══ Sybil Analysis (Comprehensive — 12 signals) ═══
+  if (pathname === '/api/sybil/analysis' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    const cached = sybilCache.get(address);
+    if (cached && Date.now() - cached.cachedAt < 3600_000) {
+      respondJson(res, 200, cached.analysis);
+      return;
+    }
+    try {
+      const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+      const pubkey = new PublicKey(address);
+
+      // Fetch balance, signatures, token accounts, and parsed txs in parallel
+      const [balanceResult, signaturesResult, tokenAccountsResult] = await Promise.allSettled([
+        conn.getBalance(pubkey),
+        conn.getSignaturesForAddress(pubkey, { limit: 200 }),
+        conn.getParsedTokenAccountsByOwner(pubkey, { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }),
+      ]);
+      const balance = balanceResult.status === 'fulfilled' ? balanceResult.value / 1e9 : 0;
+      const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
+      const tokenAccounts = tokenAccountsResult.status === 'fulfilled' ? tokenAccountsResult.value?.value || [] : [];
+
+      // Parse a subset of transactions for deeper analysis (max 30 to stay fast)
+      const sigBatch = signatures.slice(0, 30).map(s => s.signature);
+      let parsedTxs = [];
+      if (sigBatch.length > 0) {
+        try {
+          for (let i = 0; i < sigBatch.length; i += 10) {
+            const batch = sigBatch.slice(i, i + 10);
+            const txs = await conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 });
+            parsedTxs.push(...txs.filter(Boolean));
+          }
+        } catch { /* partial failure ok */ }
+      }
+
+      // ── Derive metrics from existing data ──
+
+      const timestamps = signatures.filter(s => s.blockTime).map(s => s.blockTime * 1000);
+      const nowMs = Date.now();
+
+      // 1. Wallet Age
+      const oldestTx = signatures.length > 0 ? signatures[signatures.length - 1] : null;
+      const walletAgeDays = oldestTx?.blockTime ? Math.floor((nowMs / 1000 - oldestTx.blockTime) / 86400) : 0;
+
+      // 2. Transaction Timing Variance (Coefficient of Variation)
+      let timingVariance = 1;
+      let timingCV = 999;
+      let isRobotic = false;
+      if (timestamps.length >= 10) {
+        const sorted = [...timestamps].sort((a, b) => a - b);
+        const intervals = [];
+        for (let i = 1; i < sorted.length; i++) intervals.push(sorted[i] - sorted[i - 1]);
+        const mean = intervals.reduce((s, v) => s + v, 0) / intervals.length;
+        if (mean > 0) {
+          const stdDev = Math.sqrt(intervals.reduce((s, v) => s + (v - mean) ** 2, 0) / intervals.length);
+          timingCV = stdDev / mean;
+          timingVariance = Math.min(1, timingCV / 1.5);
+          isRobotic = timingCV < 0.25 && intervals.length > 20;
+        }
+      }
+
+      // 3. Active Days Ratio
+      const uniqueDays = new Set(timestamps.map(t => new Date(t).toISOString().slice(0, 10)));
+      const activeDaysCount = uniqueDays.size;
+      const totalLifespanDays = Math.max(walletAgeDays, 1);
+      const activeDaysRatio = activeDaysCount / totalLifespanDays;
+
+      // 4. Token Diversity (from token accounts)
+      const uniqueTokenMints = new Set();
+      let nftCount = 0;
+      for (const acc of tokenAccounts) {
+        const info = acc.account?.data?.parsed?.info;
+        if (!info) continue;
+        const mint = info.mint;
+        const amount = parseFloat(info.tokenAmount?.uiAmountString || '0');
+        const decimals = info.tokenAmount?.decimals ?? 0;
+        if (amount > 0) {
+          uniqueTokenMints.add(mint);
+          // NFTs typically have decimals=0 and amount=1
+          if (decimals === 0 && amount === 1) nftCount++;
+        }
+      }
+      const tokenDiversityCount = uniqueTokenMints.size;
+
+      // 5. Incoming vs Outgoing flow analysis + dust transactions + program diversity
+      let incomingVolume = 0;
+      let outgoingVolume = 0;
+      let incomingCount = 0;
+      let outgoingCount = 0;
+      let dustTxCount = 0;
+      let totalSolTxCount = 0;
+      let historicalMaxBalance = balance; // start with current
+      let runningBalance = balance;
+      const allProgramIds = new Set();
+
+      for (const tx of parsedTxs) {
+        if (!tx?.meta || !tx?.transaction) continue;
+        if (tx.meta.err) continue;
+
+        // Collect program IDs for dApp interaction breadth
+        const ixs = tx.transaction.message?.instructions || [];
+        for (const ix of ixs) {
+          const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+          if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') {
+            allProgramIds.add(pid);
+          }
+        }
+        const innerIxs = tx.meta.innerInstructions || [];
+        for (const inner of innerIxs) {
+          for (const iix of (inner.instructions || [])) {
+            const pid = iix.programId?.toBase58?.() || (typeof iix.programId === 'string' ? iix.programId : '');
+            if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') {
+              allProgramIds.add(pid);
+            }
+          }
+        }
+
+        // SOL balance changes for target address
+        const accounts = tx.transaction.message?.accountKeys || [];
+        const pre = tx.meta.preBalances || [];
+        const post = tx.meta.postBalances || [];
+        for (let i = 0; i < accounts.length; i++) {
+          const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+          if (acc === address) {
+            const diffLamports = (post[i] || 0) - (pre[i] || 0);
+            const diffSol = diffLamports / 1e9;
+            if (Math.abs(diffSol) >= 0.0001) {
+              totalSolTxCount++;
+              if (diffSol > 0) { incomingVolume += diffSol; incomingCount++; }
+              else { outgoingVolume += Math.abs(diffSol); outgoingCount++; }
+              if (Math.abs(diffSol) < 0.001) dustTxCount++;
+            }
+            // Track historical balance (approximate from recent txs)
+            const preBal = (pre[i] || 0) / 1e9;
+            if (preBal > historicalMaxBalance) historicalMaxBalance = preBal;
+            break;
+          }
+        }
+      }
+
+      // 6. Connected wallet similarity (from funding sources — check cluster endpoint data)
+      // We'll use basic heuristic: check top funding source overlap
+      let clusterSimilarity = 0;
+      try {
+        const { parsed: fundingParsed } = await fetchParsedTransactions(address, 50);
+        const { incoming } = extractSolTransfers(fundingParsed, address);
+        // Check if top funder funded multiple wallets with similar timing
+        let topFunder = null, topAmount = 0;
+        for (const [addr, info] of incoming) {
+          if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
+        }
+        if (topFunder && topAmount >= 0.01) {
+          const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
+          const topFunderPct = topAmount / totalReceived;
+          // If >80% from one source, check if that source has many outgoing
+          if (topFunderPct > 0.8) {
+            try {
+              const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
+              const funderBatch = funderSigs.slice(0, 15).map(s => s.signature);
+              let funderParsed = [];
+              try {
+                const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
+                funderParsed = txs.filter(Boolean);
+              } catch {}
+              const siblings = new Set();
+              for (const tx of funderParsed) {
+                if (!tx?.meta || !tx?.transaction) continue;
+                const accounts = tx.transaction.message?.accountKeys || [];
+                const pre = tx.meta.preBalances || [];
+                const post = tx.meta.postBalances || [];
+                for (let i = 0; i < accounts.length; i++) {
+                  const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+                  const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+                  if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
+                    siblings.add(acc);
+                  }
+                }
+              }
+              if (siblings.size >= 3) {
+                clusterSimilarity = Math.min(1, siblings.size / 10);
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+
+      // ── Build Signals ──
+      const signals = [];
+
+      // Signal 1: Wallet Age — new wallets are suspicious
+      const isNewWallet = walletAgeDays < 30;
+      signals.push({
+        id: 'wallet_age', name: 'New Wallet', category: 'behavioral',
+        detected: isNewWallet, weight: 15,
+        severity: isNewWallet ? 'warning' : 'info',
+        value: `${walletAgeDays}d`,
+        description: isNewWallet ? `Wallet is only ${walletAgeDays} days old` : `Wallet is ${walletAgeDays} days old`,
+      });
+
+      // Signal 2: Uniform Timing — bot-like evenly spaced transactions
+      const uniformTiming = timingCV < 0.3 && timestamps.length >= 10;
+      signals.push({
+        id: 'uniform_timing', name: 'Uniform Timing Pattern', category: 'behavioral',
+        detected: uniformTiming, weight: 12,
+        severity: uniformTiming ? 'danger' : 'info',
+        value: timingCV < 999 ? `CV ${timingCV.toFixed(2)}` : 'N/A',
+        description: uniformTiming ? 'Transactions are suspiciously evenly spaced (bot-like)' : 'Transaction timing appears natural',
+      });
+
+      // Signal 3: Robotic Timing (stricter — CV < 0.25 with many txs)
+      signals.push({
+        id: 'robotic_timing', name: 'Robotic Transaction Timing', category: 'behavioral',
+        detected: isRobotic, weight: 18,
+        severity: isRobotic ? 'danger' : 'info',
+        value: isRobotic ? 'Detected' : 'Normal',
+        description: isRobotic ? 'Extreme timing uniformity detected (automated script)' : 'No robotic patterns',
+      });
+
+      // Signal 4: Low Activity Ratio — dormant wallet suddenly active
+      const lowActivityRatio = walletAgeDays > 60 && activeDaysRatio < 0.05;
+      signals.push({
+        id: 'low_activity_ratio', name: 'Low Activity Ratio', category: 'behavioral',
+        detected: lowActivityRatio, weight: 8,
+        severity: lowActivityRatio ? 'warning' : 'info',
+        value: `${(activeDaysRatio * 100).toFixed(1)}%`,
+        description: lowActivityRatio ? `Only active ${activeDaysCount} of ${totalLifespanDays} days (${(activeDaysRatio * 100).toFixed(1)}%)` : `Active ${activeDaysCount} of ${totalLifespanDays} days`,
+      });
+
+      // Signal 5: Fresh Wallet Burst — new + lots of txs
+      const freshBurst = walletAgeDays < 30 && signatures.length > 50;
+      signals.push({
+        id: 'fresh_wallet', name: 'Fresh Wallet Burst', category: 'behavioral',
+        detected: freshBurst, weight: 12,
+        severity: freshBurst ? 'warning' : 'info',
+        value: freshBurst ? `${signatures.length} txs in ${walletAgeDays}d` : `${signatures.length} txs`,
+        description: freshBurst ? `${signatures.length} transactions in only ${walletAgeDays} days` : 'Normal activity level for wallet age',
+      });
+
+      // Signal 6: Low Token Diversity
+      const lowTokenDiv = tokenDiversityCount < 3;
+      signals.push({
+        id: 'low_token_diversity', name: 'Low Token Diversity', category: 'financial',
+        detected: lowTokenDiv, weight: 6,
+        severity: lowTokenDiv ? 'warning' : 'info',
+        value: `${tokenDiversityCount} tokens`,
+        description: lowTokenDiv ? `Only ${tokenDiversityCount} unique tokens held` : `Holds ${tokenDiversityCount} unique tokens`,
+      });
+
+      // Signal 7: No NFT Holdings
+      const noNfts = nftCount === 0;
+      signals.push({
+        id: 'no_nft_holdings', name: 'No NFT Holdings', category: 'financial',
+        detected: noNfts, weight: 5,
+        severity: noNfts ? 'info' : 'info',
+        value: `${nftCount} NFTs`,
+        description: noNfts ? 'Wallet holds no NFTs' : `Holds ${nftCount} NFTs`,
+      });
+
+      // Signal 8: One-Directional Flow
+      const totalVolume = incomingVolume + outgoingVolume;
+      const flowRatio = totalVolume > 0 ? Math.max(incomingVolume, outgoingVolume) / totalVolume : 0.5;
+      const oneDirectional = totalVolume > 0.1 && flowRatio > 0.9;
+      signals.push({
+        id: 'one_directional_flow', name: 'One-Directional Flow', category: 'financial',
+        detected: oneDirectional, weight: 10,
+        severity: oneDirectional ? 'warning' : 'info',
+        value: oneDirectional
+          ? (incomingVolume > outgoingVolume ? `${(flowRatio * 100).toFixed(0)}% inbound` : `${(flowRatio * 100).toFixed(0)}% outbound`)
+          : `${(flowRatio * 100).toFixed(0)}% / ${(100 - flowRatio * 100).toFixed(0)}%`,
+        description: oneDirectional ? 'Heavily one-directional SOL flow (suspicious)' : 'Balanced SOL flow',
+      });
+
+      // Signal 9: Cluster Similarity — connected wallets from same funder
+      const highClusterSim = clusterSimilarity > 0.3;
+      signals.push({
+        id: 'cluster_similarity', name: 'Cluster Similarity', category: 'network',
+        detected: highClusterSim, weight: 15,
+        severity: highClusterSim ? 'danger' : 'info',
+        value: highClusterSim ? `${(clusterSimilarity * 100).toFixed(0)}% similar` : 'No cluster',
+        description: highClusterSim ? 'Wallet shares funding source with multiple similar wallets' : 'No suspicious wallet clusters detected',
+      });
+
+      // Signal 10: Dust Transactions — many tiny transactions indicate farming
+      const dustRatio = totalSolTxCount > 0 ? dustTxCount / totalSolTxCount : 0;
+      const highDust = totalSolTxCount >= 5 && dustRatio > 0.5;
+      signals.push({
+        id: 'dust_transactions', name: 'Dust Transactions', category: 'financial',
+        detected: highDust, weight: 8,
+        severity: highDust ? 'warning' : 'info',
+        value: `${(dustRatio * 100).toFixed(0)}% dust`,
+        description: highDust ? `${dustTxCount}/${totalSolTxCount} transactions are dust (<0.001 SOL)` : 'Normal transaction sizes',
+      });
+
+      // Signal 11: Low dApp Interaction Breadth
+      const uniquePrograms = allProgramIds.size;
+      const lowDappInteraction = uniquePrograms < 5 && signatures.length > 20;
+      signals.push({
+        id: 'low_dapp_interaction', name: 'Low dApp Interaction', category: 'behavioral',
+        detected: lowDappInteraction, weight: 7,
+        severity: lowDappInteraction ? 'warning' : 'info',
+        value: `${uniquePrograms} programs`,
+        description: lowDappInteraction ? `Only interacted with ${uniquePrograms} programs despite ${signatures.length} txs` : `Interacted with ${uniquePrograms} different programs`,
+      });
+
+      // Signal 12: Drained Balance — current balance is tiny vs historical max
+      const drainedBalance = historicalMaxBalance > 1 && balance < historicalMaxBalance * 0.01;
+      signals.push({
+        id: 'drained_balance', name: 'Drained Balance', category: 'financial',
+        detected: drainedBalance, weight: 8,
+        severity: drainedBalance ? 'warning' : 'info',
+        value: drainedBalance ? `${balance.toFixed(3)} / ${historicalMaxBalance.toFixed(1)} SOL` : `${balance.toFixed(2)} SOL`,
+        description: drainedBalance ? `Current balance (${balance.toFixed(3)}) is <1% of historical max (${historicalMaxBalance.toFixed(1)} SOL)` : 'Balance appears normal',
+      });
+
+      // ── Calculate Risk Score ──
+      let riskScore = signals.reduce((sum, s) => sum + (s.detected ? s.weight : 0), 0);
+      riskScore = Math.min(100, riskScore);
+
+      // Bonus: reduce score if wallet has positive trust indicators
+      let trustBonus = 0;
+      if (walletAgeDays > 365) trustBonus += 5;      // old wallet
+      if (tokenDiversityCount >= 10) trustBonus += 3; // diverse portfolio
+      if (nftCount >= 5) trustBonus += 2;             // active collector
+      if (uniquePrograms >= 10) trustBonus += 3;      // uses many dApps
+      if (activeDaysRatio > 0.3) trustBonus += 2;     // consistently active
+      riskScore = Math.max(0, riskScore - trustBonus);
+
+      const riskLevel = riskScore >= 75 ? 'critical' : riskScore >= 50 ? 'high' : riskScore >= 30 ? 'medium' : riskScore >= 10 ? 'low' : 'clean';
+      const trustScore = Math.max(0, 100 - riskScore);
+      const trustGrade = trustScore >= 90 ? 'A+' : trustScore >= 80 ? 'A' : trustScore >= 70 ? 'B' : trustScore >= 60 ? 'C' : trustScore >= 50 ? 'D' : 'F';
+
+      const analysis = {
+        address, riskScore, riskLevel, trustScore, trustGrade, signals,
+        metrics: {
+          walletAgeDays,
+          activeDaysCount, activeDaysRatio,
+          tokenDiversityCount, nftCount,
+          incomingVolume: Math.round(incomingVolume * 10000) / 10000,
+          outgoingVolume: Math.round(outgoingVolume * 10000) / 10000,
+          flowRatio: Math.round(flowRatio * 100),
+          dustRatio: Math.round(dustRatio * 100),
+          uniquePrograms,
+          balance: Math.round(balance * 10000) / 10000,
+          historicalMaxBalance: Math.round(historicalMaxBalance * 10000) / 10000,
+          txCount: signatures.length,
+          clusterSimilarity: Math.round(clusterSimilarity * 100),
+        },
+        behaviorProfile: {
+          txTimingVariance: timingVariance,
+          timingCV: timingCV < 999 ? Math.round(timingCV * 100) / 100 : null,
+          protocolDiversity: Math.min(1, uniquePrograms / 10),
+          activeDaysRatio: Math.round(activeDaysRatio * 100) / 100,
+        },
+        timestamp: new Date().toISOString(),
+      };
+      sybilCache.set(address, { analysis, cachedAt: Date.now() });
+      respondJson(res, 200, analysis);
+    } catch (e) {
+      respondJson(res, 500, { error: 'Sybil analysis failed', detail: e.message });
+    }
+    return;
+  }
+
+  // ═══ Sybil Funding Sources ═══
+  if (pathname === '/api/sybil/funding-sources' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    try {
+      const { parsed } = await fetchParsedTransactions(address, 100);
+      const { incoming } = extractSolTransfers(parsed, address);
+      const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
+      const sources = [...incoming.entries()]
+        .sort((a, b) => b[1].totalSol - a[1].totalSol)
+        .slice(0, 20)
+        .map(([addr, info]) => {
+          const known = KNOWN_LABELS[addr];
+          return {
+            address: addr, label: known?.label || null, type: known?.type || 'wallet',
+            totalSolReceived: Math.round(info.totalSol * 10000) / 10000,
+            transactionCount: info.count,
+            firstInteraction: new Date(info.firstTime).toISOString(),
+            lastInteraction: new Date(info.lastTime).toISOString(),
+            percentage: Math.round((info.totalSol / totalReceived) * 100),
+          };
+        });
+      respondJson(res, 200, { sources });
+    } catch (e) {
+      respondJson(res, 200, { sources: [], error: e.message });
+    }
+    return;
+  }
+
+  // ═══ Sybil Cluster Detection ═══
+  if (pathname === '/api/sybil/cluster' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    const cachedCluster = clusterCache.get(address);
+    if (cachedCluster && Date.now() - cachedCluster.ts < 1800_000) { respondJson(res, 200, cachedCluster.data); return; }
+    try {
+      const { parsed } = await fetchParsedTransactions(address, 50);
+      const { incoming } = extractSolTransfers(parsed, address);
+      let topFunder = null, topAmount = 0;
+      for (const [addr, info] of incoming) {
+        if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
+      }
+      if (!topFunder || topAmount < 0.01) {
+        const result = { clusterId: null };
+        clusterCache.set(address, { data: result, ts: Date.now() });
+        respondJson(res, 200, result);
+        return;
+      }
+      const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+      const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
+      const funderBatch = funderSigs.slice(0, 20).map(s => s.signature);
+      let funderParsed = [];
+      try {
+        const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
+        funderParsed = txs.filter(Boolean);
+      } catch {}
+      const siblings = new Set();
+      for (const tx of funderParsed) {
+        if (!tx?.meta || !tx?.transaction) continue;
+        const accounts = tx.transaction.message?.accountKeys || [];
+        const pre = tx.meta.preBalances || [];
+        const post = tx.meta.postBalances || [];
+        for (let i = 0; i < accounts.length; i++) {
+          const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+          const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+          if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
+            siblings.add(acc);
+          }
+        }
+      }
+      const known = KNOWN_LABELS[topFunder];
+      const result = siblings.size >= 2 ? {
+        clusterId: crypto.createHash('sha256').update(topFunder).digest('hex').slice(0, 16),
+        clusterSize: siblings.size + 1, sharedFundingSource: topFunder,
+        sharedFundingLabel: known?.label || null, siblingWallets: [...siblings].slice(0, 10),
+        confidence: Math.min(100, 30 + siblings.size * 10),
+      } : { clusterId: null };
+      clusterCache.set(address, { data: result, ts: Date.now() });
+      respondJson(res, 200, result);
+    } catch (e) {
+      respondJson(res, 200, { clusterId: null, error: e.message });
+    }
+    return;
+  }
+
+  // ═══ Sybil Circular Flow ═══
+  if (pathname === '/api/sybil/circular-flow' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    try {
+      const { parsed } = await fetchParsedTransactions(address, 50);
+      const { incoming, outgoing } = extractSolTransfers(parsed, address);
+      const cycle = [];
+      for (const [outAddr] of outgoing) {
+        if (incoming.has(outAddr)) { cycle.push(address, outAddr, address); break; }
+      }
+      respondJson(res, 200, { detected: cycle.length > 0, cycle });
+    } catch (e) {
+      respondJson(res, 200, { detected: false, cycle: [], error: e.message });
+    }
+    return;
+  }
+
+  // ═══ Sybil Dark Pool ═══
+  if (pathname === '/api/sybil/dark-pool' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    try {
+      const { parsed } = await fetchParsedTransactions(address, 100);
+      const scamInteractions = [];
+      const allPrograms = new Set();
+      for (const tx of parsed) {
+        if (!tx?.transaction) continue;
+        const ixs = tx.transaction.message?.instructions || [];
+        for (const ix of ixs) {
+          const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+          if (pid) allPrograms.add(pid);
+          if (KNOWN_SCAM_ADDRESSES.has(pid)) {
+            scamInteractions.push({ program: pid, signature: tx.transaction.signatures?.[0] || '', blockTime: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null });
+          }
+        }
+        const accounts = tx.transaction.message?.accountKeys || [];
+        for (const acc of accounts) {
+          const addr = typeof acc === 'string' ? acc : acc?.pubkey?.toBase58?.() || '';
+          if (KNOWN_SCAM_ADDRESSES.has(addr) && addr !== address) {
+            scamInteractions.push({ address: addr, signature: tx.transaction.signatures?.[0] || '', blockTime: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null });
+          }
+        }
+      }
+      respondJson(res, 200, { address, scamInteractions: scamInteractions.slice(0, 20), scamCount: scamInteractions.length, totalProgramsUsed: allPrograms.size, riskLevel: scamInteractions.length >= 5 ? 'high' : scamInteractions.length >= 1 ? 'medium' : 'clean' });
+    } catch (e) {
+      respondJson(res, 200, { address, scamInteractions: [], scamCount: 0, riskLevel: 'unknown', error: e.message });
+    }
+    return;
+  }
+
+  // ═══ Scam Check ═══
+  if (pathname === '/api/scam-check' && req.method === 'POST') {
+    try {
+      const { address } = JSON.parse(await readBody(req));
+      if (!address) return respondJson(res, 400, { error: 'contract address required' });
+      const isKnownScam = KNOWN_SCAM_ADDRESSES.has(address);
+      let programInfo = null;
+      try {
+        const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+        const info = await conn.getAccountInfo(new PublicKey(address));
+        if (info) { programInfo = { executable: info.executable, owner: info.owner?.toBase58(), lamports: info.lamports, dataSize: info.data?.length || 0 }; }
+      } catch {}
+      respondJson(res, 200, { address, isKnownScam, isExecutable: programInfo?.executable || false, programInfo, verdict: isKnownScam ? 'FLAGGED — Known scam contract' : programInfo?.executable ? 'Program found — not in blocklist' : 'Not a program account' });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ═══ Global Leaderboard ═══
+  if (pathname === '/api/leaderboard' && req.method === 'GET') {
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    const entryMap = new Map();
+    // Seed from score history
+    for (const [address, hist] of scoreHistory) {
+      const latest = hist.scores?.[0];
+      if (latest) {
+        entryMap.set(address, {
+          address,
+          totalCoins: getCoinBalance(address),
+          score: latest.score,
+          tier: latest.tier || 'unknown',
+          prismBalance: getCoinBalance(address),
+          isMinted: mintedAddresses.has(address),
+          badges: 0,
+          rank: 0,
+        });
+      }
+    }
+    // Add wallets that have coins but no score history
+    for (const [address] of coinBalances) {
+      if (!entryMap.has(address)) {
+        entryMap.set(address, {
+          address,
+          totalCoins: getCoinBalance(address),
+          score: 0,
+          tier: 'unknown',
+          prismBalance: getCoinBalance(address),
+          isMinted: mintedAddresses.has(address),
+          badges: 0,
+          rank: 0,
+        });
+      }
+    }
+    const entries = [...entryMap.values()].sort((a, b) => b.totalCoins - a.totalCoins || b.score - a.score || b.prismBalance - a.prismBalance);
+    entries.forEach((e, i) => { e.rank = i + 1; });
+    respondJson(res, 200, { entries: entries.slice(0, limit) });
+    return;
+  }
+
+  // ═══ Reputation API v2 — OPTIONS preflight ═══
+  if (pathname === '/api/v2/reputation' && req.method === 'OPTIONS') {
+    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key' });
+    res.end();
+    return;
+  }
+
+  // ═══ Reputation API v2 ═══
+  if (pathname === '/api/v2/reputation' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const apiKey = req.headers['x-api-key'] || url.searchParams.get('api_key');
+    const maxPerMin = apiKey ? 60 : 10;
+    const now = Date.now();
+    const rl = reputationV2RateLimit.get(ip) || { count: 0, resetAt: now + 60000 };
+    if (now > rl.resetAt) { rl.count = 0; rl.resetAt = now + 60000; }
+    rl.count++;
+    reputationV2RateLimit.set(ip, rl);
+    if (rl.count > maxPerMin) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+      res.end(JSON.stringify({ error: 'Rate limited', retryAfterSec: Math.ceil((rl.resetAt - now) / 1000) }));
+      return;
+    }
+    try {
+      const snapshot = await fetchIdentitySnapshot(address);
+      const identity = snapshot.identity;
+      if (!identity || identity.error) return respondJson(res, 404, { error: 'Could not resolve wallet identity', address });
+      let sybil = null;
+      const cachedSybil = sybilCache.get(address);
+      if (cachedSybil && now - cachedSybil.cachedAt < 3600_000) sybil = cachedSybil.analysis;
+      const history = getScoreHistory(address);
+      const latestScores = (history.scores || []).slice(0, 5);
+      const coinBal = getCoinBalance(address);
+      const response = {
+        version: '2.0', address,
+        identity: { score: identity.score, maxScore: 1400, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
+        stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
+        sybilRisk: sybil ? { score: sybil.riskScore, level: sybil.riskLevel, trustScore: sybil.trustScore, trustGrade: sybil.trustGrade, signalsDetected: sybil.signals?.filter(s => s.detected).length || 0, totalSignals: sybil.signals?.length || 0 } : null,
+        prism: coinBal > 0 ? { balance: coinBal, totalEarned: coinBal } : null,
+        scoreHistory: latestScores,
+        meta: { timestamp: new Date().toISOString(), cached: Boolean(cachedSybil), provider: 'Identity Prism', website: 'https://identityprism.xyz' },
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key', 'Cache-Control': 'public, max-age=300' });
+      res.end(JSON.stringify(response));
+    } catch (e) {
+      respondJson(res, 500, { error: 'Internal error', detail: e.message });
+    }
+    return;
+  }
+
+  // ═══ Marketplace Listings ═══
+  if (pathname === '/api/marketplace/listings' && req.method === 'GET') {
+    const category = url.searchParams.get('category');
+    const entries = [...marketplaceListings.values()]
+      .filter(l => l.status === 'approved' && (!category || l.category === category))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    respondJson(res, 200, { listings: entries });
+    return;
+  }
+
+  // ═══ Marketplace My Purchases ═══
+  if (pathname === '/api/marketplace/my-purchases' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    const owned = [];
+    for (const [key] of marketplacePurchases) {
+      if (key.startsWith(address + ':')) {
+        const listingId = key.split(':')[1];
+        const listing = marketplaceListings.get(listingId);
+        if (listing) owned.push(listing);
+      }
+    }
+    respondJson(res, 200, { purchases: owned });
+    return;
+  }
+
+  // ═══ Marketplace Upload ═══
+  if (pathname === '/api/marketplace/upload' && req.method === 'POST') {
+    try {
+      const { address, name, description, category, price, modelData, modelFormat, previewImage } = JSON.parse(await readBody(req));
+      if (!address || !name || !modelData || !price) return respondJson(res, 400, { error: 'address, name, modelData, price required' });
+      const format = (modelFormat || '').toLowerCase();
+      if (!['glb', 'gltf', 'obj'].includes(format)) return respondJson(res, 400, { error: 'Invalid format. Supported: GLB, GLTF, OBJ' });
+      if (modelData.length > 5 * 1024 * 1024 * 1.37) return respondJson(res, 400, { error: 'Model too large. Max 5MB.' });
+      const priceNum = Math.max(1, Math.floor(Number(price)));
+      if (priceNum > 10000) return respondJson(res, 400, { error: 'Price too high. Max 10000 Coins.' });
+      if (format === 'glb') {
+        let buf;
+        try { buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64'); } catch { return respondJson(res, 400, { error: 'Invalid base64 encoding' }); }
+        if (buf.length < 12) return respondJson(res, 400, { error: 'GLB file too small' });
+        const magic = buf.readUInt32LE(0);
+        if (magic !== 0x46546C67) return respondJson(res, 400, { error: 'Invalid GLB file — magic bytes mismatch.' });
+        const version = buf.readUInt32LE(4);
+        if (version !== 2) return respondJson(res, 400, { error: `Unsupported GLB version ${version}. Only glTF 2.0 supported.` });
+      }
+      const id = `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const modelsDir = path.join(process.cwd(), 'marketplace_models');
+      if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
+      const modelPath = path.join(modelsDir, `${id}.${format}`);
+      const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
+      fs.writeFileSync(modelPath, buf);
+      const listing = { id, seller: address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: previewImage ? previewImage.slice(0, 100000) : null, status: 'approved', purchaseCount: 0, createdAt: Date.now() };
+      marketplaceListings.set(id, listing);
+      saveMarketplace();
+      respondJson(res, 200, { listing, message: 'Model uploaded successfully!' });
+    } catch (e) { respondJson(res, 500, { error: 'Upload failed: ' + e.message }); }
+    return;
+  }
+
+  // ═══ Marketplace Purchase ═══
+  if (pathname === '/api/marketplace/purchase' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { address, listingId } = JSON.parse(await readBody(req));
+      if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      if (!address || !listingId) return respondJson(res, 400, { error: 'address and listingId required' });
+      const listing = marketplaceListings.get(listingId);
+      if (!listing) return respondJson(res, 404, { error: 'Listing not found' });
+      const purchaseKey = `${address}:${listingId}`;
+      if (marketplacePurchases.has(purchaseKey)) return respondJson(res, 400, { error: 'Already purchased' });
+      const bal = getPrismBalance(address);
+      if (bal.balance < listing.price) return respondJson(res, 400, { error: 'Insufficient Coin balance' });
+      bal.balance -= listing.price;
+      bal.totalSpent += listing.price;
+      bal.lastUpdated = new Date().toISOString();
+      setCoinBalance(address, bal.balance);
+      const sellerShare = Math.floor(listing.price * 0.8);
+      const sellerBal = getPrismBalance(listing.seller);
+      sellerBal.balance += sellerShare;
+      sellerBal.totalEarned += sellerShare;
+      sellerBal.lastUpdated = new Date().toISOString();
+      setCoinBalance(listing.seller, sellerBal.balance);
+      marketplacePurchases.set(purchaseKey, true);
+      listing.purchaseCount = (listing.purchaseCount || 0) + 1;
+      marketplaceListings.set(listingId, listing);
+      debouncedSavePrism();
+      saveMarketplace();
+      respondJson(res, 200, { success: true, listing, newBalance: bal.balance, message: `Purchased "${listing.name}" for ${listing.price} Coins` });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // P2P Challenge System
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── Challenge: Create ──
+  if (pathname === '/api/challenge/create' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const body = JSON.parse(await readBody(req));
+      const { type, gameMode, stakeAmount, opponent } = body;
+      const creator = jwtAuth.address;
+
+      // Validate type
+      if (!type || !['score', 'game'].includes(type)) {
+        return respondJson(res, 400, { error: 'type must be "score" or "game"' });
+      }
+      // Validate gameMode for game type
+      if (type === 'game') {
+        if (!gameMode || !['orbit', 'destroyer', 'gravity'].includes(gameMode)) {
+          return respondJson(res, 400, { error: 'gameMode must be "orbit", "destroyer", or "gravity" for game challenges' });
+        }
+      }
+      // Validate stakeAmount
+      const stake = Math.floor(Number(stakeAmount));
+      if (!Number.isFinite(stake) || stake <= 0) {
+        return respondJson(res, 400, { error: 'stakeAmount must be a positive number' });
+      }
+      if (stake > 1000) {
+        return respondJson(res, 400, { error: 'stakeAmount cannot exceed 1000 Coins' });
+      }
+      // Validate opponent if provided
+      if (opponent) {
+        if (opponent === creator) {
+          return respondJson(res, 400, { error: 'Cannot challenge yourself' });
+        }
+        try { new PublicKey(opponent); } catch { return respondJson(res, 400, { error: 'Invalid opponent address' }); }
+      }
+      // Check creator balance
+      const creatorBal = getPrismBalance(creator);
+      if (creatorBal.balance < stake) {
+        return respondJson(res, 400, { error: `Insufficient balance. Have ${creatorBal.balance} Coins, need ${stake}` });
+      }
+      // Lock PRISM from creator
+      creatorBal.balance -= stake;
+      creatorBal.totalSpent += stake;
+      creatorBal.lastUpdated = new Date().toISOString();
+      setCoinBalance(creator, creatorBal.balance);
+      debouncedSavePrism();
+
+      const challenge = {
+        id: `ch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        creator,
+        opponent: opponent || null,
+        type,
+        gameMode: type === 'game' ? gameMode : null,
+        stakeType: 'coins',
+        stakeAmount: stake,
+        status: 'open',
+        creatorScore: null,
+        opponentScore: null,
+        winner: null,
+        createdAt: Date.now(),
+        acceptedAt: null,
+        completedAt: null,
+      };
+      challenges.unshift(challenge);
+      saveChallenges();
+      console.log(`[challenges] Created ${challenge.id} by ${creator.slice(0, 8)}... (${type}, ${stake} Coins)`);
+      respondJson(res, 200, { ok: true, challenge });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ── Challenge: List open (public — no auth required) ──
+  if (pathname === '/api/challenge/list' && req.method === 'GET') {
+    try {
+      const open = (challenges || [])
+        .filter(c => c && c.status === 'open')
+        .slice(0, 50);
+      respondJson(res, 200, { ok: true, challenges: open });
+    } catch (e) {
+      console.warn('[challenges] list error', e?.message);
+      respondJson(res, 200, { ok: true, challenges: [] });
+    }
+    return;
+  }
+
+  // ── Challenge: My challenges (JWT optional — uses address query param) ──
+  if (pathname === '/api/challenge/my' && req.method === 'GET') {
+    const jwtAuth = optionalJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address || url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address query parameter required' });
+    try {
+      const my = (challenges || [])
+        .filter(c => c && (c.creator === address || c.opponent === address))
+        .slice(0, 50);
+      respondJson(res, 200, { ok: true, challenges: my });
+    } catch (e) {
+      console.warn('[challenges] my error', e?.message);
+      respondJson(res, 200, { ok: true, challenges: [] });
+    }
+    return;
+  }
+
+  // ── Challenge: Accept ──
+  if (pathname === '/api/challenge/accept' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { challengeId } = JSON.parse(await readBody(req));
+      const acceptor = jwtAuth.address;
+      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
+
+      const challenge = challenges.find(c => c.id === challengeId);
+      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
+      if (challenge.status !== 'open') return respondJson(res, 409, { error: 'Challenge no longer available' });
+      if (challenge.creator === acceptor) return respondJson(res, 400, { error: 'Cannot accept your own challenge' });
+      if (challenge.opponent && challenge.opponent !== acceptor) {
+        return respondJson(res, 403, { error: 'This challenge is for a specific opponent' });
+      }
+
+      // Lock challenge immediately to prevent race condition on double accept
+      challenge.status = 'accepted';
+      challenge.opponent = acceptor;
+      challenge.acceptedAt = Date.now();
+      saveChallenges();
+
+      // Check acceptor balance
+      const acceptorBal = getPrismBalance(acceptor);
+      if (acceptorBal.balance < challenge.stakeAmount) {
+        // Roll back lock — insufficient balance
+        challenge.status = 'open';
+        challenge.opponent = null;
+        challenge.acceptedAt = null;
+        saveChallenges();
+        return respondJson(res, 400, { error: `Insufficient balance. Have ${acceptorBal.balance} Coins, need ${challenge.stakeAmount}` });
+      }
+
+      // Lock PRISM from acceptor
+      acceptorBal.balance -= challenge.stakeAmount;
+      acceptorBal.totalSpent += challenge.stakeAmount;
+      acceptorBal.lastUpdated = new Date().toISOString();
+      setCoinBalance(acceptor, acceptorBal.balance);
+
+      if (challenge.type === 'score') {
+        // Score challenge: immediately resolve by fetching identity scores
+        try {
+          const [creatorSnap, opponentSnap] = await Promise.all([
+            fetchIdentitySnapshot(challenge.creator),
+            fetchIdentitySnapshot(acceptor),
+          ]);
+          challenge.creatorScore = creatorSnap?.identity?.score ?? 0;
+          challenge.opponentScore = opponentSnap?.identity?.score ?? 0;
+
+          // Determine winner
+          const totalPot = challenge.stakeAmount * 2;
+          const winnerPrize = Math.floor(totalPot * 0.95);
+          const fee = totalPot - winnerPrize;
+          if (challenge.creatorScore > challenge.opponentScore) {
+            challenge.winner = challenge.creator;
+            const winnerBal = getPrismBalance(challenge.creator);
+            winnerBal.balance += winnerPrize;
+            winnerBal.totalEarned += winnerPrize;
+            winnerBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(challenge.creator, winnerBal.balance);
+          } else if (challenge.opponentScore > challenge.creatorScore) {
+            challenge.winner = acceptor;
+            const winnerBal = getPrismBalance(acceptor);
+            winnerBal.balance += winnerPrize;
+            winnerBal.totalEarned += winnerPrize;
+            winnerBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(acceptor, winnerBal.balance);
+          } else {
+            // Tie — refund both (no fee)
+            challenge.winner = null;
+            const creatorBal = getPrismBalance(challenge.creator);
+            creatorBal.balance += challenge.stakeAmount;
+            creatorBal.totalSpent -= challenge.stakeAmount;
+            creatorBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(challenge.creator, creatorBal.balance);
+            acceptorBal.balance += challenge.stakeAmount;
+            acceptorBal.totalSpent -= challenge.stakeAmount;
+            acceptorBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(acceptor, acceptorBal.balance);
+          }
+          // Send 5% fee to treasury (not burned)
+          if (challenge.winner && fee > 0) {
+            const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+            const tBal = getPrismBalance(treasuryAddr);
+            tBal.balance += fee;
+            tBal.totalEarned += fee;
+            tBal.lastUpdated = new Date().toISOString();
+            setCoinBalance(treasuryAddr, tBal.balance);
+          }
+          challenge.status = 'completed';
+          challenge.completedAt = Date.now();
+        } catch (scoreErr) {
+          // Score fetch failed — refund both and cancel
+          console.warn('[challenges] Score fetch failed for', challengeId, scoreErr.message);
+          const creatorBal = getPrismBalance(challenge.creator);
+          creatorBal.balance += challenge.stakeAmount;
+          creatorBal.totalSpent -= challenge.stakeAmount;
+          creatorBal.lastUpdated = new Date().toISOString();
+          setCoinBalance(challenge.creator, creatorBal.balance);
+          acceptorBal.balance += challenge.stakeAmount;
+          acceptorBal.totalSpent -= challenge.stakeAmount;
+          acceptorBal.lastUpdated = new Date().toISOString();
+          setCoinBalance(acceptor, acceptorBal.balance);
+          challenge.status = 'cancelled';
+          challenge.completedAt = Date.now();
+          debouncedSavePrism();
+          saveChallenges();
+          return respondJson(res, 500, { ok: false, error: 'Failed to fetch identity scores. Both stakes refunded.' });
+        }
+      } else {
+        // Game challenge: set to playing, wait for score submissions
+        challenge.status = 'playing';
+      }
+
+      debouncedSavePrism();
+      saveChallenges();
+      console.log(`[challenges] Accepted ${challengeId} by ${acceptor.slice(0, 8)}... → status: ${challenge.status}`);
+      respondJson(res, 200, { ok: true, challenge });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ── Challenge: Submit score (game type only) ──
+  if (pathname === '/api/challenge/submit' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { challengeId, score } = JSON.parse(await readBody(req));
+      const submitter = jwtAuth.address;
+      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
+      if (typeof score !== 'number' || score < 0 || score > 100000) {
+        return respondJson(res, 400, { error: 'Invalid score' });
+      }
+      const scoreNum = Math.floor(Number(score));
+      if (!Number.isFinite(scoreNum) || scoreNum < 0) {
+        return respondJson(res, 400, { error: 'score must be a non-negative number' });
+      }
+
+      const challenge = challenges.find(c => c.id === challengeId);
+      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
+      if (challenge.type !== 'game') return respondJson(res, 400, { error: 'Score submission is for game challenges only' });
+      if (challenge.status !== 'playing') return respondJson(res, 400, { error: 'Challenge is not in playing state' });
+
+      if (submitter === challenge.creator) {
+        if (challenge.creatorScore !== null) return respondJson(res, 400, { error: 'Score already submitted' });
+        challenge.creatorScore = scoreNum;
+      } else if (submitter === challenge.opponent) {
+        if (challenge.opponentScore !== null) return respondJson(res, 400, { error: 'Score already submitted' });
+        challenge.opponentScore = scoreNum;
+      } else {
+        return respondJson(res, 403, { error: 'You are not a participant in this challenge' });
+      }
+
+      // If both scores submitted, resolve the challenge
+      if (challenge.creatorScore !== null && challenge.opponentScore !== null) {
+        const totalPot = challenge.stakeAmount * 2;
+        const winnerPrize = Math.floor(totalPot * 0.95);
+        const fee = totalPot - winnerPrize;
+        if (challenge.creatorScore > challenge.opponentScore) {
+          challenge.winner = challenge.creator;
+          const winnerBal = getPrismBalance(challenge.creator);
+          winnerBal.balance += winnerPrize;
+          winnerBal.totalEarned += winnerPrize;
+          winnerBal.lastUpdated = new Date().toISOString();
+          setCoinBalance(challenge.creator, winnerBal.balance);
+        } else if (challenge.opponentScore > challenge.creatorScore) {
+          challenge.winner = challenge.opponent;
+          const winnerBal = getPrismBalance(challenge.opponent);
+          winnerBal.balance += winnerPrize;
+          winnerBal.totalEarned += winnerPrize;
+          winnerBal.lastUpdated = new Date().toISOString();
+          setCoinBalance(challenge.opponent, winnerBal.balance);
+        } else {
+          // Tie — refund both (no fee)
+          challenge.winner = null;
+          const creatorBal = getPrismBalance(challenge.creator);
+          creatorBal.balance += challenge.stakeAmount;
+          creatorBal.totalSpent -= challenge.stakeAmount;
+          creatorBal.lastUpdated = new Date().toISOString();
+          setCoinBalance(challenge.creator, creatorBal.balance);
+          const opponentBal = getPrismBalance(challenge.opponent);
+          opponentBal.balance += challenge.stakeAmount;
+          opponentBal.totalSpent -= challenge.stakeAmount;
+          opponentBal.lastUpdated = new Date().toISOString();
+          setCoinBalance(challenge.opponent, opponentBal.balance);
+        }
+        // Send 5% fee to treasury (not burned)
+        if (challenge.winner && fee > 0) {
+          const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          const tBal = getPrismBalance(treasuryAddr);
+          tBal.balance += fee;
+          tBal.totalEarned += fee;
+          tBal.lastUpdated = new Date().toISOString();
+          setCoinBalance(treasuryAddr, tBal.balance);
+        }
+        challenge.status = 'completed';
+        challenge.completedAt = Date.now();
+        console.log(`[challenges] Completed ${challengeId}: creator=${challenge.creatorScore}, opponent=${challenge.opponentScore}, winner=${challenge.winner ? challenge.winner.slice(0, 8) + '...' : 'tie'}`);
+      }
+
+      debouncedSavePrism();
+      saveChallenges();
+      respondJson(res, 200, { ok: true, challenge });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ── Challenge: Cancel ──
+  if (pathname === '/api/challenge/cancel' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { challengeId } = JSON.parse(await readBody(req));
+      const canceller = jwtAuth.address;
+      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
+
+      const challenge = challenges.find(c => c.id === challengeId);
+      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
+      if (challenge.creator !== canceller) return respondJson(res, 403, { error: 'Only the creator can cancel a challenge' });
+      if (challenge.status !== 'open') return respondJson(res, 400, { error: 'Can only cancel open challenges (no opponent yet)' });
+
+      // Refund creator's stake (reverse the totalSpent from creation)
+      const creatorBal = getPrismBalance(challenge.creator);
+      creatorBal.balance += challenge.stakeAmount;
+      creatorBal.totalSpent -= challenge.stakeAmount;
+      creatorBal.lastUpdated = new Date().toISOString();
+      setCoinBalance(challenge.creator, creatorBal.balance);
+      debouncedSavePrism();
+
+      challenge.status = 'cancelled';
+      challenge.completedAt = Date.now();
+      saveChallenges();
+      console.log(`[challenges] Cancelled ${challengeId} by ${canceller.slice(0, 8)}... — stake refunded`);
+      respondJson(res, 200, { ok: true });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ═══ Serve Marketplace Model Files ═══
+  if (pathname.startsWith('/marketplace_models/') && req.method === 'GET') {
+    const modelsRoot = path.join(process.cwd(), 'marketplace_models');
+    const filePath = path.resolve(path.join(process.cwd(), pathname));
+    if (!filePath.startsWith(modelsRoot)) return respondJson(res, 403, { error: 'Forbidden' });
+    if (!fs.existsSync(filePath)) return respondJson(res, 404, { error: 'Model not found' });
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeTypes = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain' };
+    res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  // ═══ Identity Feed ═══
+  if (pathname === '/api/feed' && req.method === 'GET') {
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 30));
+    respondJson(res, 200, { items: feedItems.slice(0, limit) });
+    return;
+  }
+
+  // ═══ Constellation Network ═══
+  if (pathname === '/api/constellation' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    // Rate limit: max 1 fresh constellation query per address per 10 min (cache covers this),
+    // plus global limit of 10 non-cached queries per minute to protect RPC quota
+    const cachedConst = constellationCache.get(address);
+    if (cachedConst && Date.now() - cachedConst.ts < 600_000) { respondJson(res, 200, cachedConst.data); return; }
+    const constRlKey = `constellation:${address}`;
+    const lastConst = prismEarnRateLimit.get(constRlKey) || 0;
+    if (Date.now() - lastConst < 30_000) {
+      return respondJson(res, 429, { error: 'Constellation data is being fetched, try again in 30s' });
+    }
+    prismEarnRateLimit.set(constRlKey, Date.now());
+    try {
+      const { parsed } = await fetchParsedTransactions(address, 80);
+      const { incoming, outgoing, programIds } = extractSolTransfers(parsed, address);
+      const nodeMap = new Map();
+      nodeMap.set(address, { id: address, label: address.slice(0, 4) + '...' + address.slice(-4), size: 14, x: 0, y: 0, vx: 0, vy: 0, color: '#22d3ee', isCenter: true, solVolume: 0, txCount: 0 });
+      const allCounterparties = new Map();
+      for (const [addr, info] of incoming) {
+        // Double-check: skip any remaining program addresses
+        if (isProgramAddress(addr, programIds)) continue;
+        const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0, firstTime: Infinity, lastTime: 0 };
+        existing.solIn += info.totalSol; existing.count += info.count;
+        existing.firstTime = Math.min(existing.firstTime, info.firstTime || Date.now());
+        existing.lastTime = Math.max(existing.lastTime, info.lastTime || Date.now());
+        allCounterparties.set(addr, existing);
+      }
+      for (const [addr, info] of outgoing) {
+        if (isProgramAddress(addr, programIds)) continue;
+        const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0, firstTime: Infinity, lastTime: 0 };
+        existing.solOut += info.totalSol; existing.count += info.count;
+        existing.firstTime = Math.min(existing.firstTime, info.firstTime || Date.now());
+        existing.lastTime = Math.max(existing.lastTime, info.lastTime || Date.now());
+        allCounterparties.set(addr, existing);
+      }
+      // Filter out counterparties with negligible activity (< 0.001 SOL total)
+      const filtered = [...allCounterparties.entries()].filter(([, info]) => (info.solIn + info.solOut) >= 0.001);
+      const sorted = filtered.sort((a, b) => (b[1].solIn + b[1].solOut) - (a[1].solIn + a[1].solOut)).slice(0, 25);
+      const TIER_COLORS_MAP = { mercury: '#8B8B8B', mars: '#C1440E', venus: '#E8CDA0', earth: '#4B9CD3', neptune: '#3F54BE', uranus: '#73C2FB', saturn: '#E8D191', jupiter: '#C88B3A', sun: '#FFD700', binary_sun: '#22D3EE' };
+      const colorPalette = Object.values(TIER_COLORS_MAP);
+      const edges = [];
+      for (let i = 0; i < sorted.length; i++) {
+        const [addr, info] = sorted[i];
+        const known = KNOWN_LABELS[addr];
+        const angle = (i / sorted.length) * Math.PI * 2;
+        const dist = 80 + Math.random() * 100;
+        const totalVol = info.solIn + info.solOut;
+        nodeMap.set(addr, {
+          id: addr,
+          label: known?.label || (addr.slice(0, 4) + '...' + addr.slice(-4)),
+          size: Math.min(10, 3 + Math.log1p(totalVol) * 2),
+          x: Math.cos(angle) * dist + (Math.random() - 0.5) * 30,
+          y: Math.sin(angle) * dist + (Math.random() - 0.5) * 30,
+          vx: 0, vy: 0,
+          color: known ? '#f59e0b' : colorPalette[i % colorPalette.length],
+          isCenter: false,
+          tier: known?.type || null,
+          solVolume: Math.round(totalVol * 10000) / 10000,
+          txCount: info.count,
+        });
+        edges.push({
+          source: address,
+          target: addr,
+          weight: info.count,
+          totalSol: Math.round(totalVol * 10000) / 10000,
+          outSol: Math.round((info.solOut || 0) * 10000) / 10000,
+          inSol: Math.round((info.solIn || 0) * 10000) / 10000,
+          firstTx: info.firstTime !== Infinity ? info.firstTime : null,
+          lastTx: info.lastTime > 0 ? info.lastTime : null,
+        });
+      }
+      const result = { nodes: [...nodeMap.values()], edges };
+      constellationCache.set(address, { data: result, ts: Date.now() });
+      respondJson(res, 200, result);
+    } catch (e) {
+      respondJson(res, 200, { nodes: [], edges: [], error: e.message });
+    }
+    return;
+  }
+
   if (!pathname.startsWith('/rpc')) {
     respondJson(res, 404, { error: 'Not found' });
     return;
@@ -3991,211 +5467,69 @@ const server = http.createServer(async (req, res) => {
 // v5.0 API — PRISM Coin, Sybil Detection, Leaderboard, Feed, Constellation
 // ═══════════════════════════════════════════════════════════
 
-const prismBalances = new Map(); // address → { balance, totalEarned, totalSpent, lastUpdated }
-const prismTransactions = new Map(); // address → PrismTransaction[]
+// ── Unified economy: coinBalances is the single source of truth ──
+// "PRISM" is now just the UI name for coins. All earn/spend goes through coinBalances.
+const prismTransactions = new Map(); // address → PrismTransaction[] (kept for history)
 const leaderboardCache = { entries: [], lastUpdated: 0 };
 const feedItems = [];
 const sybilCache = new Map(); // address → { analysis, cachedAt }
 
-// Load persisted PRISM data
+// Migrate any old prism_data.json balances into coinBalances on first run
 const PRISM_DATA_FILE = path.join(process.cwd(), 'prism_data.json');
 try {
   if (fs.existsSync(PRISM_DATA_FILE)) {
     const raw = JSON.parse(fs.readFileSync(PRISM_DATA_FILE, 'utf8'));
-    if (raw.balances) for (const [k, v] of Object.entries(raw.balances)) prismBalances.set(k, v);
     if (raw.transactions) for (const [k, v] of Object.entries(raw.transactions)) prismTransactions.set(k, v);
-    console.log(`[prism] Loaded ${prismBalances.size} balances`);
+    // Migrate old prism balances into coinBalances (one-time merge)
+    if (raw.balances) {
+      let migrated = 0;
+      for (const [addr, bal] of Object.entries(raw.balances)) {
+        const prismBal = typeof bal === 'object' && bal !== null ? (bal.balance || 0) : 0;
+        if (prismBal > 0) {
+          const currentCoins = getCoinBalance(addr);
+          setCoinBalance(addr, currentCoins + prismBal);
+          migrated++;
+        }
+      }
+      if (migrated > 0) {
+        console.log(`[coins] Migrated ${migrated} PRISM balances into coinBalances`);
+        // Clear old prism balances from file to prevent double-migration
+        raw.balances = {};
+        fs.writeFileSync(PRISM_DATA_FILE, JSON.stringify(raw), 'utf8');
+      }
+    }
+    console.log(`[coins] Loaded ${prismTransactions.size} transaction histories`);
   }
 } catch { /* first run */ }
 
 function savePrismData() {
   try {
     const data = {
-      balances: Object.fromEntries(prismBalances),
+      balances: {}, // balances now live in coinBalances only
       transactions: Object.fromEntries(prismTransactions),
     };
     fs.writeFileSync(PRISM_DATA_FILE, JSON.stringify(data), 'utf8');
-  } catch (e) { console.warn('[prism] save error', e.message); }
+  } catch (e) { console.warn('[coins] save error', e.message); }
 }
 
 // Debounced save
 let prismSaveTimer = null;
 function debouncedSavePrism() {
   if (prismSaveTimer) clearTimeout(prismSaveTimer);
-  prismSaveTimer = setTimeout(savePrismData, 2000);
+  prismSaveTimer = setTimeout(() => { savePrismData(); persistCoinBalances(); }, 2000);
 }
 
+// getPrismBalance now wraps coinBalances — returns the structured object the client expects
 function getPrismBalance(address) {
-  return prismBalances.get(address) || { address, balance: 0, totalEarned: 0, totalSpent: 0, lastUpdated: new Date().toISOString() };
+  const coins = getCoinBalance(address);
+  return { address, balance: coins, totalEarned: coins, totalSpent: 0, lastUpdated: new Date().toISOString() };
 }
-
-// PRISM Balance
-router.get('/api/prism/balance', (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  respondJson(res, 200, getPrismBalance(address));
-});
 
 // PRISM earn rate-limit: max 1 earn per source per 5 min per address
 const prismEarnRateLimit = new Map(); // key: `${address}:${source}` → timestamp
+// Reputation v1 rate-limit: 1 request per 10 seconds per IP
+const reputationRateLimit = new Map(); // key: `repv1:${ip}` → timestamp
 const PRISM_EARN_COOLDOWN_MS = 5 * 60 * 1000;
-
-// PRISM Earn
-router.post('/api/prism/earn', async (req, res) => {
-  const { address, source, amount, description } = req.body || {};
-  if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
-  
-  // Rate limit check
-  const rlKey = `${address}:${source || 'unknown'}`;
-  const lastEarn = prismEarnRateLimit.get(rlKey) || 0;
-  if (Date.now() - lastEarn < PRISM_EARN_COOLDOWN_MS) {
-    return respondJson(res, 429, { error: 'Rate limited — try again later', cooldownMs: PRISM_EARN_COOLDOWN_MS - (Date.now() - lastEarn) });
-  }
-  prismEarnRateLimit.set(rlKey, Date.now());
-  // Cleanup old entries every 1000 earns
-  if (prismEarnRateLimit.size > 5000) {
-    const cutoff = Date.now() - PRISM_EARN_COOLDOWN_MS * 2;
-    for (const [k, v] of prismEarnRateLimit) { if (v < cutoff) prismEarnRateLimit.delete(k); }
-  }
-  
-  const earned = Math.max(0, Math.floor(Number(amount)));
-  if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
-  
-  const bal = getPrismBalance(address);
-  bal.balance += earned;
-  bal.totalEarned += earned;
-  bal.lastUpdated = new Date().toISOString();
-  prismBalances.set(address, bal);
-  
-  const tx = {
-    id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    address, amount: earned, type: 'earn', source: source || 'unknown',
-    description: description || `Earned ${earned} PRISM`,
-    timestamp: new Date().toISOString(),
-  };
-  const txs = prismTransactions.get(address) || [];
-  txs.unshift(tx);
-  if (txs.length > 500) txs.length = 500;
-  prismTransactions.set(address, txs);
-  
-  debouncedSavePrism();
-  
-  // Add to feed
-  feedItems.unshift({
-    id: tx.id, type: source?.includes('burn') ? 'burn' : source?.includes('game') ? 'achievement' : 'scan',
-    address, description: description || `Earned ${earned} PRISM from ${source}`,
-    timestamp: tx.timestamp,
-  });
-  if (feedItems.length > 200) feedItems.length = 200;
-  
-  respondJson(res, 200, { balance: bal, earned });
-});
-
-// PRISM Spend
-router.post('/api/prism/spend', async (req, res) => {
-  const { address, source, amount, description } = req.body || {};
-  if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
-  
-  const spent = Math.max(0, Math.floor(Number(amount)));
-  const bal = getPrismBalance(address);
-  if (bal.balance < spent) return respondJson(res, 400, { error: 'insufficient balance' });
-  
-  bal.balance -= spent;
-  bal.totalSpent += spent;
-  bal.lastUpdated = new Date().toISOString();
-  prismBalances.set(address, bal);
-  
-  const tx = {
-    id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    address, amount: spent, type: 'spend', source: source || 'unknown',
-    description: description || `Spent ${spent} PRISM`,
-    timestamp: new Date().toISOString(),
-  };
-  const txs = prismTransactions.get(address) || [];
-  txs.unshift(tx);
-  if (txs.length > 500) txs.length = 500;
-  prismTransactions.set(address, txs);
-  
-  debouncedSavePrism();
-  respondJson(res, 200, { balance: bal, spent });
-});
-
-// PRISM Transaction History
-router.get('/api/prism/transactions', (req, res) => {
-  const address = req.query?.address;
-  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 50));
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  const txs = (prismTransactions.get(address) || []).slice(0, limit);
-  respondJson(res, 200, txs);
-});
-
-// Sybil Analysis — basic server-side endpoint
-router.get('/api/sybil/analysis', async (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  
-  // Check cache (valid for 1 hour)
-  const cached = sybilCache.get(address);
-  if (cached && Date.now() - cached.cachedAt < 3600_000) {
-    return respondJson(res, 200, cached.analysis);
-  }
-  
-  try {
-    // Basic analysis from on-chain data
-    const conn = getConnection();
-    const pubkey = new PublicKey(address);
-    const [balanceResult, signaturesResult] = await Promise.allSettled([
-      conn.getBalance(pubkey),
-      conn.getSignaturesForAddress(pubkey, { limit: 100 }),
-    ]);
-    
-    const balance = balanceResult.status === 'fulfilled' ? balanceResult.value / 1e9 : 0;
-    const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
-    
-    // Analyze transaction timing
-    const timestamps = signatures.filter(s => s.blockTime).map(s => s.blockTime * 1000);
-    let timingVariance = 1;
-    let isRobotic = false;
-    if (timestamps.length >= 10) {
-      const sorted = [...timestamps].sort((a, b) => a - b);
-      const intervals = [];
-      for (let i = 1; i < sorted.length; i++) intervals.push(sorted[i] - sorted[i - 1]);
-      const mean = intervals.reduce((s, v) => s + v, 0) / intervals.length;
-      if (mean > 0) {
-        const stdDev = Math.sqrt(intervals.reduce((s, v) => s + (v - mean) ** 2, 0) / intervals.length);
-        const cv = stdDev / mean;
-        timingVariance = Math.min(1, cv / 1.5);
-        isRobotic = cv < 0.25 && intervals.length > 20;
-      }
-    }
-    
-    // Determine wallet age
-    const oldestTx = signatures.length > 0 ? signatures[signatures.length - 1] : null;
-    const walletAgeDays = oldestTx?.blockTime ? Math.floor((Date.now() / 1000 - oldestTx.blockTime) / 86400) : 0;
-    
-    // Build signals
-    const signals = [];
-    const freshBurst = walletAgeDays < 30 && signatures.length > 50;
-    signals.push({ id: 'fresh_wallet', name: 'Fresh Wallet Burst', detected: freshBurst, weight: 15, severity: freshBurst ? 'warning' : 'info' });
-    signals.push({ id: 'robotic_timing', name: 'Robotic Transaction Timing', detected: isRobotic, weight: 18, severity: isRobotic ? 'danger' : 'info' });
-    
-    let riskScore = signals.reduce((sum, s) => sum + (s.detected ? s.weight : 0), 0);
-    riskScore = Math.min(100, riskScore);
-    
-    const riskLevel = riskScore >= 75 ? 'critical' : riskScore >= 50 ? 'high' : riskScore >= 30 ? 'medium' : riskScore >= 10 ? 'low' : 'clean';
-    
-    const analysis = {
-      address, riskScore, riskLevel, signals,
-      behaviorProfile: { txTimingVariance: timingVariance, protocolDiversity: 0.5 },
-      timestamp: new Date().toISOString(),
-    };
-    
-    sybilCache.set(address, { analysis, cachedAt: Date.now() });
-    respondJson(res, 200, analysis);
-  } catch (e) {
-    respondJson(res, 500, { error: 'Sybil analysis failed', detail: e.message });
-  }
-});
 
 // Known CEX/Bridge/DEX addresses for labeling
 const KNOWN_LABELS = {
@@ -4213,9 +5547,7 @@ const KNOWN_LABELS = {
 };
 
 // Known scam contracts / rug-pull deployers
-const KNOWN_SCAM_ADDRESSES = new Set([
-  // Placeholder — in production, load from a maintained blocklist
-]);
+const KNOWN_SCAM_ADDRESSES = new Set([]);
 const scamListFile = path.join(process.cwd(), 'scam_addresses.json');
 try {
   if (fs.existsSync(scamListFile)) {
@@ -4227,12 +5559,10 @@ try {
 
 // Shared helper: fetch parsed transactions for an address
 async function fetchParsedTransactions(address, limit = 50) {
-  const conn = getConnection();
+  const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
   const pubkey = new PublicKey(address);
   const sigs = await conn.getSignaturesForAddress(pubkey, { limit });
   if (!sigs.length) return { signatures: sigs, parsed: [] };
-  
-  // Fetch parsed txs in batches of 10
   const parsed = [];
   for (let i = 0; i < sigs.length; i += 10) {
     const batch = sigs.slice(i, i + 10).map(s => s.signature);
@@ -4244,426 +5574,184 @@ async function fetchParsedTransactions(address, limit = 50) {
   return { signatures: sigs, parsed };
 }
 
-// Extract SOL transfers from parsed transactions
+// Well-known Solana program addresses to filter out of wallet-to-wallet connections
+const PROGRAM_ADDRESSES = new Set([
+  '11111111111111111111111111111111',                   // System Program
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',      // Token Program
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',      // Token 2022
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',     // Associated Token Account
+  'ComputeBudget111111111111111111111111111111',        // Compute Budget
+  'Vote111111111111111111111111111111111111111',         // Vote Program
+  'Stake11111111111111111111111111111111111111',         // Stake Program
+  'Config1111111111111111111111111111111111111',         // Config Program
+  'BPFLoader2111111111111111111111111111111111',         // BPF Loader
+  'BPFLoaderUpgradeab1e11111111111111111111111',        // BPF Loader Upgradeable
+  'NativeLoader1111111111111111111111111111111',         // Native Loader
+  'Sysvar1111111111111111111111111111111111111',         // Sysvar (prefix match below too)
+  'SysvarRent111111111111111111111111111111111',         // Sysvar Rent
+  'SysvarC1ock11111111111111111111111111111111',         // Sysvar Clock
+  'SysvarS1otHashes111111111111111111111111111',         // Sysvar Slot Hashes
+  'SysvarStakeHistory1111111111111111111111111',         // Sysvar Stake History
+  'SysvarRecentB1telephones11111111111111111111',        // Sysvar Recent Blockhashes
+  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',     // Memo Program v2
+  'Memo1UhkJBfCR6MNB7C3EUkApJBswJaqzS6vQRHJph4',      // Memo Program v1
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',      // Metaplex Token Metadata
+  'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',      // Metaplex Auth Rules
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',      // Jupiter v6
+  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX7H',      // Jupiter v4
+  'JUP3jqKEFnJHTnQ9pP1bTJjrm3W9RWoWTxJoQGMGifDN',    // Jupiter v3
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',    // Raydium AMM v4
+  '27haf8L6oxUeXrHrgEgsexjSY5hbVUWEmvv9Nyxg8vQv',     // Raydium AMM authority
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',     // Raydium CLMM
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',      // Orca Whirlpool
+  'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb',      // Wormhole
+  'So1endDq2YkqhipRh3WViPa8hFvz0XP1MXF1VZU8Q4Mw',    // Solend
+  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA',      // Marinade Finance
+  'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD',      // Marinade State
+  'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68',      // Mango v4
+  'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY',      // Phoenix DEX
+  'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1',    // Orca legacy
+  'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX',      // Serum/OpenBook
+  'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy',      // Stake Pool Program
+  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',      // Meteora DLMM
+  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB',    // Phantom fee wallet
+]);
+
+// Check if an address looks like a program (static set + dynamic per-tx programIds)
+function isProgramAddress(addr, txProgramIds) {
+  if (PROGRAM_ADDRESSES.has(addr)) return true;
+  if (txProgramIds && txProgramIds.has(addr)) return true;
+  // Sysvar addresses all start with 'Sysvar'
+  if (addr.startsWith('Sysvar')) return true;
+  return false;
+}
+
+// Extract SOL transfers from parsed transactions — wallet-to-wallet only
 function extractSolTransfers(parsed, targetAddress) {
-  const incoming = new Map(); // sender → { totalSol, count, firstTime, lastTime }
-  const outgoing = new Map(); // receiver → { totalSol, count }
+  const incoming = new Map();
+  const outgoing = new Map();
   const programIds = new Set();
-  
+
   for (const tx of parsed) {
     if (!tx?.meta || !tx?.transaction) continue;
+    if (tx.meta.err) continue; // skip failed transactions
     const blockTime = tx.blockTime ? tx.blockTime * 1000 : Date.now();
-    
-    // Collect program IDs for protocol diversity
+
+    // Collect all program IDs from this transaction's instructions
+    const txProgramIds = new Set();
     const ixs = tx.transaction.message?.instructions || [];
     for (const ix of ixs) {
-      if (ix.programId) programIds.add(ix.programId.toBase58());
+      if (ix.programId) {
+        const pid = typeof ix.programId === 'string' ? ix.programId : ix.programId.toBase58();
+        txProgramIds.add(pid);
+        programIds.add(pid);
+      }
     }
-    
-    // Parse SOL balance changes from pre/post balances
+    // Also collect from inner instructions (CPI calls)
+    const innerIxs = tx.meta.innerInstructions || [];
+    for (const inner of innerIxs) {
+      for (const iix of (inner.instructions || [])) {
+        if (iix.programId) {
+          const pid = typeof iix.programId === 'string' ? iix.programId : iix.programId.toBase58();
+          txProgramIds.add(pid);
+          programIds.add(pid);
+        }
+      }
+    }
+
     const accounts = tx.transaction.message?.accountKeys || [];
     const pre = tx.meta.preBalances || [];
     const post = tx.meta.postBalances || [];
-    
+
+    // Build a set of signer addresses for this transaction — signers are real wallets
+    const signerAddresses = new Set();
+    for (const acc of accounts) {
+      if (typeof acc === 'object' && acc?.signer) {
+        const addr = acc?.pubkey?.toBase58?.() || '';
+        if (addr) signerAddresses.add(addr);
+      }
+    }
+
+    // Find SOL balance changes for target address
+    let targetIdx = -1;
+    let targetDiff = 0;
     for (let i = 0; i < accounts.length; i++) {
       const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
-      const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
-      
-      if (acc === targetAddress && diff > 0.001) {
-        // Someone sent SOL to us — find likely sender (account with negative diff)
-        for (let j = 0; j < accounts.length; j++) {
-          if (j === i) continue;
-          const senderAcc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
-          const senderDiff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
-          if (senderDiff < -0.001 && senderAcc !== '11111111111111111111111111111111') {
-            const existing = incoming.get(senderAcc) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime };
-            existing.totalSol += Math.abs(diff);
-            existing.count += 1;
-            existing.firstTime = Math.min(existing.firstTime, blockTime);
-            existing.lastTime = Math.max(existing.lastTime, blockTime);
-            incoming.set(senderAcc, existing);
-            break;
-          }
-        }
-      } else if (acc === targetAddress && diff < -0.001) {
-        for (let j = 0; j < accounts.length; j++) {
-          if (j === i) continue;
-          const recvAcc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
-          const recvDiff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
-          if (recvDiff > 0.001) {
-            const existing = outgoing.get(recvAcc) || { totalSol: 0, count: 0 };
-            existing.totalSol += Math.abs(recvDiff);
-            existing.count += 1;
-            outgoing.set(recvAcc, existing);
-            break;
-          }
-        }
+      if (acc === targetAddress) {
+        targetIdx = i;
+        targetDiff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+        break;
+      }
+    }
+    if (targetIdx === -1 || Math.abs(targetDiff) < 0.001) continue;
+
+    // Find the best counterparty: prefer signers, exclude programs
+    // Collect all candidates with their balance diffs
+    const candidates = [];
+    for (let j = 0; j < accounts.length; j++) {
+      if (j === targetIdx) continue;
+      const acc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
+      if (!acc) continue;
+      const diff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
+      const isSigner = typeof accounts[j] === 'object' ? !!accounts[j]?.signer : signerAddresses.has(acc);
+      candidates.push({ addr: acc, diff, isSigner, isProgram: isProgramAddress(acc, txProgramIds) });
+    }
+
+    if (targetDiff > 0.001) {
+      // Target received SOL — find who sent it
+      // Best: a signer that lost SOL and is not a program
+      const senders = candidates
+        .filter(c => c.diff < -0.001 && !c.isProgram)
+        .sort((a, b) => {
+          // Prefer signers over non-signers
+          if (a.isSigner && !b.isSigner) return -1;
+          if (!a.isSigner && b.isSigner) return 1;
+          // Then prefer largest loss
+          return a.diff - b.diff; // more negative = larger loss = first
+        });
+
+      const sender = senders[0];
+      if (sender) {
+        const existing = incoming.get(sender.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime };
+        existing.totalSol += Math.abs(targetDiff);
+        existing.count += 1;
+        existing.firstTime = Math.min(existing.firstTime, blockTime);
+        existing.lastTime = Math.max(existing.lastTime, blockTime);
+        incoming.set(sender.addr, existing);
+      }
+    } else if (targetDiff < -0.001) {
+      // Target sent SOL — find who received it
+      const receivers = candidates
+        .filter(c => c.diff > 0.001 && !c.isProgram)
+        .sort((a, b) => {
+          // Prefer signers over non-signers
+          if (a.isSigner && !b.isSigner) return -1;
+          if (!a.isSigner && b.isSigner) return 1;
+          // Then prefer largest gain
+          return b.diff - a.diff;
+        });
+
+      const receiver = receivers[0];
+      if (receiver) {
+        const existing = outgoing.get(receiver.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime };
+        existing.totalSol += Math.abs(receiver.diff);
+        existing.count += 1;
+        existing.firstTime = Math.min(existing.firstTime, blockTime);
+        existing.lastTime = Math.max(existing.lastTime, blockTime);
+        outgoing.set(receiver.addr, existing);
       }
     }
   }
   return { incoming, outgoing, programIds };
 }
 
-// Sybil Funding Sources — real implementation
-router.get('/api/sybil/funding-sources', async (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  
-  try {
-    const { parsed } = await fetchParsedTransactions(address, 100);
-    const { incoming } = extractSolTransfers(parsed, address);
-    
-    const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
-    const sources = [...incoming.entries()]
-      .sort((a, b) => b[1].totalSol - a[1].totalSol)
-      .slice(0, 20)
-      .map(([addr, info]) => {
-        const known = KNOWN_LABELS[addr];
-        return {
-          address: addr,
-          label: known?.label || null,
-          type: known?.type || 'wallet',
-          totalSolReceived: Math.round(info.totalSol * 10000) / 10000,
-          transactionCount: info.count,
-          firstInteraction: new Date(info.firstTime).toISOString(),
-          lastInteraction: new Date(info.lastTime).toISOString(),
-          percentage: Math.round((info.totalSol / totalReceived) * 100),
-        };
-      });
-    
-    respondJson(res, 200, { sources });
-  } catch (e) {
-    respondJson(res, 200, { sources: [], error: e.message });
-  }
-});
-
-// Sybil Cluster Detection — finds wallets funded from same source
 const clusterCache = new Map();
-router.get('/api/sybil/cluster', async (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  
-  const cached = clusterCache.get(address);
-  if (cached && Date.now() - cached.ts < 1800_000) return respondJson(res, 200, cached.data);
-  
-  try {
-    const { parsed } = await fetchParsedTransactions(address, 50);
-    const { incoming } = extractSolTransfers(parsed, address);
-    
-    // Find the top funder
-    let topFunder = null;
-    let topAmount = 0;
-    for (const [addr, info] of incoming) {
-      if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
-    }
-    
-    if (!topFunder || topAmount < 0.01) {
-      const result = { clusterId: null };
-      clusterCache.set(address, { data: result, ts: Date.now() });
-      return respondJson(res, 200, result);
-    }
-    
-    // Check if the top funder also funded other wallets (siblings)
-    const conn = getConnection();
-    const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
-    const funderBatch = funderSigs.slice(0, 20).map(s => s.signature);
-    let funderParsed = [];
-    try {
-      const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
-      funderParsed = txs.filter(Boolean);
-    } catch {}
-    
-    const siblings = new Set();
-    for (const tx of funderParsed) {
-      if (!tx?.meta || !tx?.transaction) continue;
-      const accounts = tx.transaction.message?.accountKeys || [];
-      const pre = tx.meta.preBalances || [];
-      const post = tx.meta.postBalances || [];
-      for (let i = 0; i < accounts.length; i++) {
-        const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
-        const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
-        if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
-          siblings.add(acc);
-        }
-      }
-    }
-    
-    const known = KNOWN_LABELS[topFunder];
-    const result = siblings.size >= 2 ? {
-      clusterId: crypto.createHash('sha256').update(topFunder).digest('hex').slice(0, 16),
-      clusterSize: siblings.size + 1,
-      sharedFundingSource: topFunder,
-      sharedFundingLabel: known?.label || null,
-      siblingWallets: [...siblings].slice(0, 10),
-      confidence: Math.min(100, 30 + siblings.size * 10),
-    } : { clusterId: null };
-    
-    clusterCache.set(address, { data: result, ts: Date.now() });
-    respondJson(res, 200, result);
-  } catch (e) {
-    respondJson(res, 200, { clusterId: null, error: e.message });
-  }
-});
+const reputationV2RateLimit = new Map();
 
-// Sybil Circular Flow — detect A→B→C→A patterns
-router.get('/api/sybil/circular-flow', async (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  
-  try {
-    const { parsed } = await fetchParsedTransactions(address, 50);
-    const { incoming, outgoing } = extractSolTransfers(parsed, address);
-    
-    // Check: did any address I sent SOL to also send SOL to me? (A↔B loop)
-    const cycle = [];
-    for (const [outAddr] of outgoing) {
-      if (incoming.has(outAddr)) {
-        cycle.push(address, outAddr, address);
-        break;
-      }
-    }
-    
-    respondJson(res, 200, { detected: cycle.length > 0, cycle });
-  } catch (e) {
-    respondJson(res, 200, { detected: false, cycle: [], error: e.message });
-  }
-});
-
-// Dark Pool Warning — check wallet interactions with known scam contracts
-router.get('/api/sybil/dark-pool', async (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  
-  try {
-    const { parsed } = await fetchParsedTransactions(address, 100);
-    const scamInteractions = [];
-    const allPrograms = new Set();
-    
-    for (const tx of parsed) {
-      if (!tx?.transaction) continue;
-      const ixs = tx.transaction.message?.instructions || [];
-      for (const ix of ixs) {
-        const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
-        if (pid) allPrograms.add(pid);
-        if (KNOWN_SCAM_ADDRESSES.has(pid)) {
-          scamInteractions.push({
-            program: pid,
-            signature: tx.transaction.signatures?.[0] || '',
-            blockTime: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null,
-          });
-        }
-      }
-      // Also check if any counterparty is a known scam address
-      const accounts = tx.transaction.message?.accountKeys || [];
-      for (const acc of accounts) {
-        const addr = typeof acc === 'string' ? acc : acc?.pubkey?.toBase58?.() || '';
-        if (KNOWN_SCAM_ADDRESSES.has(addr) && addr !== address) {
-          scamInteractions.push({
-            address: addr,
-            signature: tx.transaction.signatures?.[0] || '',
-            blockTime: tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : null,
-          });
-        }
-      }
-    }
-    
-    respondJson(res, 200, {
-      address,
-      scamInteractions: scamInteractions.slice(0, 20),
-      scamCount: scamInteractions.length,
-      totalProgramsUsed: allPrograms.size,
-      riskLevel: scamInteractions.length >= 5 ? 'high' : scamInteractions.length >= 1 ? 'medium' : 'clean',
-    });
-  } catch (e) {
-    respondJson(res, 200, { address, scamInteractions: [], scamCount: 0, riskLevel: 'unknown', error: e.message });
-  }
-});
-
-// Contract Scanner — check if a specific contract/program is flagged
-router.post('/api/scam-check', async (req, res) => {
-  const { address } = req.body || {};
-  if (!address) return respondJson(res, 400, { error: 'contract address required' });
-  
-  const isKnownScam = KNOWN_SCAM_ADDRESSES.has(address);
-  
-  // Also try to fetch program account info
-  let programInfo = null;
-  try {
-    const conn = getConnection();
-    const info = await conn.getAccountInfo(new PublicKey(address));
-    if (info) {
-      programInfo = {
-        executable: info.executable,
-        owner: info.owner?.toBase58(),
-        lamports: info.lamports,
-        dataSize: info.data?.length || 0,
-      };
-    }
-  } catch {}
-  
-  respondJson(res, 200, {
-    address,
-    isKnownScam,
-    isExecutable: programInfo?.executable || false,
-    programInfo,
-    verdict: isKnownScam ? 'FLAGGED — Known scam contract' : programInfo?.executable ? 'Program found — not in blocklist' : 'Not a program account',
-  });
-});
-
-// Global Leaderboard — combines identity scores + PRISM earnings
-router.get('/api/leaderboard', (req, res) => {
-  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 50));
-  
-  // Build from score-history (identity scores) merged with PRISM balances
-  const entryMap = new Map();
-  
-  // Add wallets from score-history (has real tier data)
-  for (const [address, hist] of scoreHistory) {
-    const latest = hist.scores?.[0];
-    if (latest) {
-      entryMap.set(address, {
-        address,
-        score: latest.score,
-        tier: latest.tier || 'unknown',
-        prismBalance: prismBalances.get(address)?.balance || 0,
-        badges: 0,
-        rank: 0,
-      });
-    }
-  }
-  
-  // Add wallets from PRISM balances that aren't in score-history
-  for (const [address, bal] of prismBalances) {
-    if (!entryMap.has(address)) {
-      entryMap.set(address, {
-        address,
-        score: 0,
-        tier: 'unknown',
-        prismBalance: bal.balance,
-        badges: 0,
-        rank: 0,
-      });
-    }
-  }
-  
-  const entries = [...entryMap.values()]
-    .sort((a, b) => b.score - a.score || b.prismBalance - a.prismBalance);
-  entries.forEach((e, i) => { e.rank = i + 1; });
-  
-  respondJson(res, 200, { entries: entries.slice(0, limit) });
-});
-
-// ═══ Identity Reputation API v2 — Public REST endpoint ═══
-// Other dApps can query wallet reputation via this endpoint.
-// Rate limited: 10 req/min per IP without API key, 60 req/min with key.
-const reputationV2RateLimit = new Map(); // ip → { count, resetAt }
-
-router.get('/api/v2/reputation', async (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
-
-  // Rate limit by IP
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-  const apiKey = req.headers['x-api-key'] || req.query?.api_key;
-  const maxPerMin = apiKey ? 60 : 10;
-  const now = Date.now();
-  const rl = reputationV2RateLimit.get(ip) || { count: 0, resetAt: now + 60000 };
-  if (now > rl.resetAt) { rl.count = 0; rl.resetAt = now + 60000; }
-  rl.count++;
-  reputationV2RateLimit.set(ip, rl);
-  if (rl.count > maxPerMin) {
-    res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
-    res.end(JSON.stringify({ error: 'Rate limited', retryAfterSec: Math.ceil((rl.resetAt - now) / 1000) }));
-    return;
-  }
-
-  try {
-    // Get identity data
-    const identity = await calculateIdentity(address);
-    if (!identity || identity.error) {
-      return respondJson(res, 404, { error: 'Could not resolve wallet identity', address });
-    }
-
-    // Get sybil analysis (cached)
-    let sybil = null;
-    const cachedSybil = sybilCache.get(address);
-    if (cachedSybil && now - cachedSybil.cachedAt < 3600_000) {
-      sybil = cachedSybil.analysis;
-    }
-
-    // Get score history
-    const history = getScoreHistory(address);
-    const latestScores = (history.scores || []).slice(0, 5);
-
-    // Get PRISM balance
-    const prismBal = prismBalances.get(address);
-
-    // Build comprehensive response
-    const response = {
-      version: '2.0',
-      address,
-      identity: {
-        score: identity.score,
-        maxScore: 1200,
-        tier: identity.tier,
-        badges: identity.badges || [],
-        badgeCount: identity.badges?.length || 0,
-      },
-      stats: {
-        solBalance: identity.stats?.solBalance ?? null,
-        walletAgeDays: identity.stats?.walletAgeDays ?? null,
-        transactionCount: identity.stats?.txCount ?? null,
-        tokenCount: identity.stats?.tokenCount ?? null,
-        nftCount: identity.stats?.nftCount ?? null,
-      },
-      sybilRisk: sybil ? {
-        score: sybil.riskScore,
-        level: sybil.riskLevel,
-        signalsDetected: sybil.signals?.filter(s => s.detected).length || 0,
-        totalSignals: sybil.signals?.length || 0,
-      } : null,
-      prism: prismBal ? {
-        balance: prismBal.balance,
-        totalEarned: prismBal.totalEarned,
-      } : null,
-      scoreHistory: latestScores,
-      meta: {
-        timestamp: new Date().toISOString(),
-        cached: Boolean(cachedSybil),
-        provider: 'Identity Prism',
-        website: 'https://identityprism.xyz',
-      },
-    };
-
-    // CORS headers for cross-origin API usage
-    res.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
-      'Cache-Control': 'public, max-age=300',
-    });
-    res.end(JSON.stringify(response));
-  } catch (e) {
-    respondJson(res, 500, { error: 'Internal error', detail: e.message });
-  }
-});
-
-// Reputation API v2 — OPTIONS preflight
-router.options('/api/v2/reputation', (req, res) => {
-  res.writeHead(204, {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
-  });
-  res.end();
-});
-
-// ═══ Prism Marketplace — User Model Uploads ═══
+// ═══ Prism Marketplace ═══
 const MARKETPLACE_FILE = path.join(process.cwd(), 'marketplace_data.json');
-const marketplaceListings = new Map(); // id → listing
-const marketplacePurchases = new Map(); // `${address}:${listingId}` → true
-
+const marketplaceListings = new Map();
+const marketplacePurchases = new Map();
 try {
   if (fs.existsSync(MARKETPLACE_FILE)) {
     const raw = JSON.parse(fs.readFileSync(MARKETPLACE_FILE, 'utf8'));
@@ -4672,255 +5760,128 @@ try {
     console.log(`[marketplace] Loaded ${marketplaceListings.size} listings`);
   }
 } catch {}
-
 function saveMarketplace() {
   try {
-    fs.writeFileSync(MARKETPLACE_FILE, JSON.stringify({
-      listings: Object.fromEntries(marketplaceListings),
-      purchases: Object.fromEntries(marketplacePurchases),
-    }), 'utf8');
+    fs.writeFileSync(MARKETPLACE_FILE, JSON.stringify({ listings: Object.fromEntries(marketplaceListings), purchases: Object.fromEntries(marketplacePurchases) }), 'utf8');
   } catch (e) { console.warn('[marketplace] save error', e.message); }
 }
 
-// List all marketplace items
-router.get('/api/marketplace/listings', (req, res) => {
-  const category = req.query?.category; // 'ship' | 'planet' | 'badge' | all
-  const entries = [...marketplaceListings.values()]
-    .filter(l => l.status === 'approved' && (!category || l.category === category))
-    .sort((a, b) => b.createdAt - a.createdAt);
-  respondJson(res, 200, { listings: entries });
-});
-
-// Get purchases for a wallet
-router.get('/api/marketplace/my-purchases', (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  const owned = [];
-  for (const [key] of marketplacePurchases) {
-    if (key.startsWith(address + ':')) {
-      const listingId = key.split(':')[1];
-      const listing = marketplaceListings.get(listingId);
-      if (listing) owned.push(listing);
-    }
-  }
-  respondJson(res, 200, { purchases: owned });
-});
-
-// Upload a new model
-router.post('/api/marketplace/upload', async (req, res) => {
-  const { address, name, description, category, price, modelData, modelFormat, previewImage } = req.body || {};
-  if (!address || !name || !modelData || !price) {
-    return respondJson(res, 400, { error: 'address, name, modelData, price required' });
-  }
-
-  // Validate format (GLB/GLTF only)
-  const format = (modelFormat || '').toLowerCase();
-  if (!['glb', 'gltf', 'obj'].includes(format)) {
-    return respondJson(res, 400, { error: 'Invalid format. Supported: GLB, GLTF, OBJ' });
-  }
-
-  // Validate model size (max 5MB base64)
-  if (modelData.length > 5 * 1024 * 1024 * 1.37) {
-    return respondJson(res, 400, { error: 'Model too large. Max 5MB.' });
-  }
-
-  // Validate price
-  const priceNum = Math.max(1, Math.floor(Number(price)));
-  if (priceNum > 10000) {
-    return respondJson(res, 400, { error: 'Price too high. Max 10000 PRISM.' });
-  }
-
-  // Validate GLB magic bytes (first 4 bytes should be "glTF" = 0x676C5446)
-  if (format === 'glb') {
-    try {
-      const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
-      if (buf.length < 12) return respondJson(res, 400, { error: 'GLB file too small' });
-      const magic = buf.readUInt32LE(0);
-      if (magic !== 0x46546C67) {
-        return respondJson(res, 400, { error: 'Invalid GLB file — magic bytes mismatch. Ensure this is a valid .glb file.' });
-      }
-      const version = buf.readUInt32LE(4);
-      if (version !== 2) {
-        return respondJson(res, 400, { error: `Unsupported GLB version ${version}. Only glTF 2.0 supported.` });
-      }
-    } catch (e) {
-      return respondJson(res, 400, { error: 'Could not parse GLB file: ' + e.message });
-    }
-  }
-
-  const id = `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-  // Save model file to disk
-  const modelsDir = path.join(process.cwd(), 'marketplace_models');
-  if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
-  const modelPath = path.join(modelsDir, `${id}.${format}`);
-  try {
-    const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
-    fs.writeFileSync(modelPath, buf);
-  } catch (e) {
-    return respondJson(res, 500, { error: 'Failed to save model file' });
-  }
-
-  const listing = {
-    id,
-    seller: address,
-    name: name.slice(0, 60),
-    description: (description || '').slice(0, 200),
-    category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship',
-    price: priceNum,
-    format,
-    modelUrl: `/marketplace_models/${id}.${format}`,
-    previewImage: previewImage ? previewImage.slice(0, 100000) : null,
-    status: 'approved', // auto-approve for now, add moderation later
-    purchaseCount: 0,
-    createdAt: Date.now(),
-  };
-
-  marketplaceListings.set(id, listing);
-  saveMarketplace();
-
-  respondJson(res, 200, { listing, message: 'Model uploaded successfully!' });
-});
-
-// Purchase a model
-router.post('/api/marketplace/purchase', async (req, res) => {
-  const { address, listingId } = req.body || {};
-  if (!address || !listingId) return respondJson(res, 400, { error: 'address and listingId required' });
-
-  const listing = marketplaceListings.get(listingId);
-  if (!listing) return respondJson(res, 404, { error: 'Listing not found' });
-
-  const purchaseKey = `${address}:${listingId}`;
-  if (marketplacePurchases.has(purchaseKey)) {
-    return respondJson(res, 400, { error: 'Already purchased' });
-  }
-
-  // Check PRISM balance
-  const bal = getPrismBalance(address);
-  if (bal.balance < listing.price) {
-    return respondJson(res, 400, { error: 'Insufficient PRISM balance' });
-  }
-
-  // Deduct from buyer
-  bal.balance -= listing.price;
-  bal.totalSpent += listing.price;
-  bal.lastUpdated = new Date().toISOString();
-  prismBalances.set(address, bal);
-
-  // Credit seller (80% — 20% platform fee)
-  const sellerShare = Math.floor(listing.price * 0.8);
-  const sellerBal = getPrismBalance(listing.seller);
-  sellerBal.balance += sellerShare;
-  sellerBal.totalEarned += sellerShare;
-  sellerBal.lastUpdated = new Date().toISOString();
-  prismBalances.set(listing.seller, sellerBal);
-
-  // Record purchase
-  marketplacePurchases.set(purchaseKey, true);
-  listing.purchaseCount = (listing.purchaseCount || 0) + 1;
-  marketplaceListings.set(listingId, listing);
-
-  debouncedSavePrism();
-  saveMarketplace();
-
-  respondJson(res, 200, {
-    success: true,
-    listing,
-    newBalance: bal.balance,
-    message: `Purchased "${listing.name}" for ${listing.price} PRISM`,
-  });
-});
-
-// Serve marketplace model files
-router.get('/marketplace_models/*', (req, res) => {
-  const filePath = path.join(process.cwd(), req.url);
-  if (!fs.existsSync(filePath)) return respondJson(res, 404, { error: 'Model not found' });
-  const ext = path.extname(filePath).toLowerCase();
-  const mimeTypes = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain' };
-  res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
-  fs.createReadStream(filePath).pipe(res);
-});
-
-// Identity Feed
-router.get('/api/feed', (req, res) => {
-  const limit = Math.min(100, Math.max(1, Number(req.query?.limit) || 30));
-  respondJson(res, 200, { items: feedItems.slice(0, limit) });
-});
-
-// Constellation Network — real tx graph from on-chain data
 const constellationCache = new Map();
-router.get('/api/constellation', async (req, res) => {
-  const address = req.query?.address;
-  if (!address) return respondJson(res, 400, { error: 'address required' });
-  
-  const cached = constellationCache.get(address);
-  if (cached && Date.now() - cached.ts < 600_000) return respondJson(res, 200, cached.data);
-  
-  try {
-    const { parsed } = await fetchParsedTransactions(address, 80);
-    const { incoming, outgoing, programIds } = extractSolTransfers(parsed, address);
-    
-    // Build node map: center + all counterparties
-    const nodeMap = new Map();
-    nodeMap.set(address, { id: address, label: address.slice(0, 4) + '...' + address.slice(-4), size: 14, x: 0, y: 0, vx: 0, vy: 0, color: '#22d3ee', isCenter: true });
-    
-    const allCounterparties = new Map();
-    for (const [addr, info] of incoming) {
-      const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0 };
-      existing.solIn += info.totalSol;
-      existing.count += info.count;
-      allCounterparties.set(addr, existing);
-    }
-    for (const [addr, info] of outgoing) {
-      const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0 };
-      existing.solOut += info.totalSol;
-      existing.count += info.count;
-      allCounterparties.set(addr, existing);
-    }
-    
-    // Sort by total interaction volume, take top 25
-    const sorted = [...allCounterparties.entries()]
-      .sort((a, b) => (b[1].solIn + b[1].solOut) - (a[1].solIn + a[1].solOut))
-      .slice(0, 25);
-    
-    const TIER_COLORS = { mercury: '#8B8B8B', mars: '#C1440E', venus: '#E8CDA0', earth: '#4B9CD3', neptune: '#3F54BE', uranus: '#73C2FB', saturn: '#E8D191', jupiter: '#C88B3A', sun: '#FFD700', binary_sun: '#22D3EE' };
-    const colorPalette = Object.values(TIER_COLORS);
-    
-    const edges = [];
-    for (let i = 0; i < sorted.length; i++) {
-      const [addr, info] = sorted[i];
-      const known = KNOWN_LABELS[addr];
-      const angle = (i / sorted.length) * Math.PI * 2;
-      const dist = 80 + Math.random() * 100;
-      const totalVol = info.solIn + info.solOut;
-      
-      nodeMap.set(addr, {
-        id: addr,
-        label: known?.label || (addr.slice(0, 4) + '...' + addr.slice(-4)),
-        size: Math.min(10, 3 + Math.log1p(totalVol) * 2),
-        x: Math.cos(angle) * dist + (Math.random() - 0.5) * 30,
-        y: Math.sin(angle) * dist + (Math.random() - 0.5) * 30,
-        vx: 0, vy: 0,
-        color: known ? '#f59e0b' : colorPalette[i % colorPalette.length],
-        isCenter: false,
-        tier: known?.type || null,
-      });
-      
-      edges.push({
-        source: address,
-        target: addr,
-        weight: info.count,
-        totalSol: Math.round((info.solIn + info.solOut) * 10000) / 10000,
-      });
-    }
-    
-    const result = { nodes: [...nodeMap.values()], edges };
-    constellationCache.set(address, { data: result, ts: Date.now() });
-    respondJson(res, 200, result);
-  } catch (e) {
-    respondJson(res, 200, { nodes: [], edges: [], error: e.message });
+
+// ═══ P2P Challenge System ═══
+const CHALLENGES_FILE = path.join(METADATA_DIR, 'challenges.json');
+const challenges = [];
+
+// Load persisted challenges
+try {
+  if (fs.existsSync(CHALLENGES_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(CHALLENGES_FILE, 'utf8'));
+    const arr = Array.isArray(raw?.challenges) ? raw.challenges : (Array.isArray(raw) ? raw : []);
+    challenges.push(...arr);
+    console.log(`[challenges] Loaded ${challenges.length} challenges`);
   }
-});
+} catch { /* first run */ }
+
+function saveChallenges() {
+  try {
+    fs.writeFileSync(CHALLENGES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2));
+  } catch (e) { console.warn('[challenges] save error', e.message); }
+}
+
+// Cleanup: remove old challenges + cancel stale ones (every 30 minutes)
+setInterval(() => {
+  const now = Date.now();
+  const cutoff = now - 7 * 24 * 60 * 60 * 1000; // 7 days
+  const stalePlayingCutoff = now - 24 * 60 * 60 * 1000; // 24 hours
+  let removed = 0;
+  let staleCancelled = 0;
+
+  // Cancel stale "playing" challenges (stuck for >24h) and refund both players
+  challenges.forEach(ch => {
+    if (ch.status === 'playing' && ch.acceptedAt < stalePlayingCutoff) {
+      // Refund creator
+      const creatorBal = getPrismBalance(ch.creator);
+      creatorBal.balance += ch.stakeAmount;
+      creatorBal.totalSpent -= ch.stakeAmount;
+      creatorBal.lastUpdated = new Date().toISOString();
+      setCoinBalance(ch.creator, creatorBal.balance);
+      // Refund opponent
+      if (ch.opponent) {
+        const opponentBal = getPrismBalance(ch.opponent);
+        opponentBal.balance += ch.stakeAmount;
+        opponentBal.totalSpent -= ch.stakeAmount;
+        opponentBal.lastUpdated = new Date().toISOString();
+        setCoinBalance(ch.opponent, opponentBal.balance);
+      }
+      ch.status = 'cancelled';
+      ch.completedAt = Date.now();
+      staleCancelled++;
+    }
+  });
+
+  // Cancel stale "open" challenges (no one accepted for >7 days) and refund creator
+  challenges.forEach(ch => {
+    if (ch.status === 'open' && ch.createdAt < cutoff) {
+      const creatorBal = getPrismBalance(ch.creator);
+      creatorBal.balance += ch.stakeAmount;
+      creatorBal.totalSpent -= ch.stakeAmount;
+      creatorBal.lastUpdated = new Date().toISOString();
+      setCoinBalance(ch.creator, creatorBal.balance);
+      ch.status = 'cancelled';
+      ch.completedAt = Date.now();
+      staleCancelled++;
+    }
+  });
+
+  if (staleCancelled > 0) {
+    console.log(`[challenges] Auto-cancelled ${staleCancelled} stale challenges (playing >24h or open >7d)`);
+    debouncedSavePrism();
+  }
+
+  // Remove completed/cancelled challenges older than 7 days
+  for (let i = challenges.length - 1; i >= 0; i--) {
+    const c = challenges[i];
+    if ((c.status === 'completed' || c.status === 'cancelled') && c.createdAt < cutoff) {
+      challenges.splice(i, 1);
+      removed++;
+    }
+  }
+  if (removed > 0 || staleCancelled > 0) {
+    if (removed > 0) console.log(`[challenges] Cleaned up ${removed} old challenges`);
+    saveChallenges();
+  }
+}, 30 * 60 * 1000);
+
+// Periodic cache cleanup to prevent unbounded memory growth (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  // sybilCache: 1h TTL
+  for (const [k, v] of sybilCache) {
+    if (now - v.cachedAt > 3600_000) sybilCache.delete(k);
+  }
+  // clusterCache: 30min TTL
+  for (const [k, v] of clusterCache) {
+    if (now - v.ts > 1800_000) clusterCache.delete(k);
+  }
+  // constellationCache: 10min TTL
+  for (const [k, v] of constellationCache) {
+    if (now - v.ts > 600_000) constellationCache.delete(k);
+  }
+  // reputationV2RateLimit: 2min TTL
+  for (const [k, v] of reputationV2RateLimit) {
+    if (now > v.resetAt + 120_000) reputationV2RateLimit.delete(k);
+  }
+  // reputationRateLimit (v1): 20s TTL
+  for (const [k, v] of reputationRateLimit) {
+    if (now - v > 20_000) reputationRateLimit.delete(k);
+  }
+  // Hard cap: evict oldest if still too large
+  if (sybilCache.size > 500) { const it = sybilCache.keys(); for (let i = sybilCache.size - 500; i > 0; i--) sybilCache.delete(it.next().value); }
+  if (clusterCache.size > 300) { const it = clusterCache.keys(); for (let i = clusterCache.size - 300; i > 0; i--) clusterCache.delete(it.next().value); }
+  if (constellationCache.size > 300) { const it = constellationCache.keys(); for (let i = constellationCache.size - 300; i > 0; i--) constellationCache.delete(it.next().value); }
+  if (reputationV2RateLimit.size > 1000) { const it = reputationV2RateLimit.keys(); for (let i = reputationV2RateLimit.size - 1000; i > 0; i--) reputationV2RateLimit.delete(it.next().value); }
+  if (reputationRateLimit.size > 1000) { const it = reputationRateLimit.keys(); for (let i = reputationRateLimit.size - 1000; i > 0; i--) reputationRateLimit.delete(it.next().value); }
+}, 300_000);
 
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;

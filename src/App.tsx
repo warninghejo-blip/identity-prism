@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Outlet, useLocation } from "react-router-dom";
+import { cleanupOverlays } from '@/lib/safeNavigate';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,6 +24,7 @@ const App = () => {
   // Index.tsx has its own sophisticated preloader dismissal with curtain animations,
   // so we only auto-dismiss for other child routes.
   useEffect(() => {
+    cleanupOverlays();
     const isIndexRoute = location.pathname === '/' || location.pathname.startsWith('/app') || location.pathname === '/share';
     if (isIndexRoute) return; // Index.tsx handles its own preloader
     const el = document.getElementById('app-preloader');

@@ -20,11 +20,31 @@ export interface SybilAnalysis {
   address: string;
   riskScore: number;           // 0-100, higher = more likely sybil
   riskLevel: SybilRiskLevel;
+  trustScore: number;          // 100 - riskScore (after trust bonus)
+  trustGrade: string;          // A+, A, B, C, D, F
   signals: SybilSignal[];
   fundingSources: FundingSource[];
   clusterInfo: ClusterInfo | null;
   behaviorProfile: BehaviorProfile;
+  metrics?: SybilMetrics;
   timestamp: string;
+}
+
+export interface SybilMetrics {
+  walletAgeDays: number;
+  activeDaysCount: number;
+  activeDaysRatio: number;
+  tokenDiversityCount: number;
+  nftCount: number;
+  incomingVolume: number;
+  outgoingVolume: number;
+  flowRatio: number;
+  dustRatio: number;
+  uniquePrograms: number;
+  balance: number;
+  historicalMaxBalance: number;
+  txCount: number;
+  clusterSimilarity: number;
 }
 
 export type SybilRiskLevel = 'clean' | 'low' | 'medium' | 'high' | 'critical';
@@ -37,6 +57,8 @@ export interface SybilSignal {
   severity: 'info' | 'warning' | 'danger';
   detected: boolean;
   details?: string;
+  category?: 'behavioral' | 'financial' | 'network';
+  value?: string;
 }
 
 export interface FundingSource {
@@ -93,16 +115,16 @@ const KNOWN_ADDRESSES: Record<string, { label: string; type: FundingSource['type
 // ── Signal definitions ──
 
 const SIGNAL_DEFS: Omit<SybilSignal, 'detected' | 'details'>[] = [
-  { id: 'single_funder', name: 'Single Funding Source', description: 'Over 90% of SOL came from one address', weight: 20, severity: 'danger' },
-  { id: 'fresh_wallet', name: 'Fresh Wallet Burst', description: 'Wallet <30 days old with >100 transactions', weight: 15, severity: 'warning' },
-  { id: 'robotic_timing', name: 'Robotic Transaction Timing', description: 'Transactions have suspiciously uniform spacing', weight: 18, severity: 'danger' },
-  { id: 'uniform_amounts', name: 'Uniform Transaction Amounts', description: 'Most transactions use identical amounts', weight: 12, severity: 'warning' },
-  { id: 'low_token_diversity', name: 'Low Token Diversity', description: 'Wallet holds very few unique tokens despite activity', weight: 10, severity: 'warning' },
-  { id: 'mint_and_dump', name: 'Mint-and-Dump Pattern', description: 'NFTs minted and immediately transferred/sold', weight: 15, severity: 'danger' },
-  { id: 'shallow_defi', name: 'Shallow DeFi Touches', description: 'Minimal DeFi interactions (just enough for airdrops)', weight: 12, severity: 'warning' },
-  { id: 'cluster_member', name: 'Cluster Detected', description: 'Wallet is part of a group funded from same source', weight: 25, severity: 'danger' },
-  { id: 'no_organic_activity', name: 'No Organic Activity', description: 'No social, governance, or community interactions', weight: 8, severity: 'info' },
-  { id: 'circular_flow', name: 'Circular Fund Flow', description: 'Funds cycle between a small set of wallets', weight: 20, severity: 'danger' },
+  { id: 'single_funder', name: 'Single Funding Source', description: 'Over 90% of SOL came from one address', weight: 15, severity: 'danger' },
+  { id: 'fresh_wallet', name: 'Fresh Wallet Burst', description: 'Wallet <30 days old with >100 transactions', weight: 10, severity: 'warning' },
+  { id: 'robotic_timing', name: 'Robotic Transaction Timing', description: 'Transactions have suspiciously uniform spacing', weight: 12, severity: 'danger' },
+  { id: 'uniform_amounts', name: 'Uniform Transaction Amounts', description: 'Most transactions use identical amounts', weight: 8, severity: 'warning' },
+  { id: 'low_token_diversity', name: 'Low Token Diversity', description: 'Wallet holds very few unique tokens despite activity', weight: 7, severity: 'warning' },
+  { id: 'mint_and_dump', name: 'Mint-and-Dump Pattern', description: 'NFTs minted and immediately transferred/sold', weight: 10, severity: 'danger' },
+  { id: 'shallow_defi', name: 'Shallow DeFi Touches', description: 'Minimal DeFi interactions (just enough for airdrops)', weight: 8, severity: 'warning' },
+  { id: 'cluster_member', name: 'Cluster Detected', description: 'Wallet is part of a group funded from same source', weight: 15, severity: 'danger' },
+  { id: 'no_organic_activity', name: 'No Organic Activity', description: 'No social, governance, or community interactions', weight: 5, severity: 'info' },
+  { id: 'circular_flow', name: 'Circular Fund Flow', description: 'Funds cycle between a small set of wallets', weight: 10, severity: 'danger' },
 ];
 
 // ── API helper ──

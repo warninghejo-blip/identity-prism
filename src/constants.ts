@@ -124,7 +124,7 @@ export const SCORING = {
   TX_COUNT_MULTIPLIER: 0.2,
   TX_COUNT_CAP: 100,
 
-  MAX_SCORE: 1200,
+  MAX_SCORE: 1400,
   BLUE_CHIP_THRESHOLD: 10,
 } as const;
 
@@ -136,7 +136,7 @@ export const RARITY_THRESHOLDS = {
   MYTHIC: 851,
 } as const;
 
-export const MAX_SCORE_CAP = 1200;
+export const MAX_SCORE_CAP = 1400;
 
 export const TOKEN_ADDRESSES = {
   SEEKER_GENESIS_COLLECTION: 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te',

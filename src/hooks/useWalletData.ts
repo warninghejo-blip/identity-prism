@@ -263,7 +263,7 @@ export function useWalletData(address?: string) {
           if (oldest.blockTime) firstTxDate = new Date(oldest.blockTime * 1000);
         }
         const walletAgeDays = Math.floor((Date.now() - firstTxDate.getTime()) / (1000 * 60 * 60 * 24));
-        const avgTxPerDay30d = txCount / Math.max(1, walletAgeDays);
+        const avgTxPerDay30d = txCount / Math.max(1, Math.min(30, walletAgeDays));
 
         interface DASAsset {
           id: string;
@@ -510,12 +510,15 @@ export function useWalletData(address?: string) {
             const isPreorderMint = mint === TOKEN_ADDRESSES.CHAPTER2_PREORDER;
             if (isPreorderMint) hasPreorder = true;
             if (Object.values(LST_MINTS).some((m: string) => m === mint)) hasLstExposure = true;
-            const memeSymbol = MEME_MINT_LOOKUP[mint];
-            if (memeSymbol) {
-              const amount = info.tokenAmount.uiAmount || 0;
-              if (amount > 0) {
-                memeHoldingsSet.add(memeSymbol);
-                memeValueUSD += amount * (MEME_COIN_PRICES_USD[memeSymbol] || 0);
+            if (!assets.some((a: { id: string }) => a.id === mint)) {
+              // Only count meme value from SPL fallback if NOT already counted from DAS
+              const memeSymbol = MEME_MINT_LOOKUP[mint];
+              if (memeSymbol) {
+                const amount = info.tokenAmount.uiAmount || 0;
+                if (amount > 0) {
+                  memeHoldingsSet.add(memeSymbol);
+                  memeValueUSD += amount * (MEME_COIN_PRICES_USD[memeSymbol] || 0);
+                }
               }
             }
             if (!assets.some((a: { id: string }) => a.id === mint)) {
@@ -557,8 +560,8 @@ export function useWalletData(address?: string) {
           totalValueUSD >= 500 ? "comet" :
           totalValueUSD >= 50 ? "meteor" : "stardust";
 
-        const solBonusApplied = solBalance >= 5 ? 150 : solBalance >= 1 ? 70 : solBalance >= 0.1 ? 30 : 0;
-        const walletAgeBonus = Math.min(Math.floor((walletAgeDays / 365) * 100), 300);
+        const solBonusApplied = solBalance >= 10 ? 100 : solBalance >= 5 ? 85 : solBalance >= 1 ? 60 : solBalance >= 0.5 ? 40 : solBalance >= 0.1 ? 20 : 0;
+        const walletAgeBonus = walletAgeDays > 730 ? 250 : walletAgeDays > 365 ? 180 : walletAgeDays > 180 ? 120 : walletAgeDays > 90 ? 70 : walletAgeDays > 30 ? 35 : walletAgeDays > 7 ? 15 : 0;
 
         const isTxTitan = txCount > 5000;
         const diamondHands = walletAgeDays >= 365 && solBalance >= 1;
@@ -583,7 +586,10 @@ export function useWalletData(address?: string) {
           uniqueTokenCount, nftCount, txCount, memeCoinsHeld, isMemeLord,
           hyperactiveDegen: avgTxPerDay30d >= 8,
           diamondHands,
-          avgTxPerDay30d, daysSinceLastTx: null,
+          avgTxPerDay30d,
+          daysSinceLastTx: signatures.length > 0 && signatures[0].blockTime
+            ? Math.floor((Date.now() - signatures[0].blockTime * 1000) / (1000 * 60 * 60 * 24))
+            : null,
           solBalance, solBonusApplied, walletAgeDays, walletAgeBonus,
           planetTier: "mercury", totalAssetsCount,
           solTier, totalValueUSD, cosmicRank,

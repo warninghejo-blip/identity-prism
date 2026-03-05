@@ -1,6 +1,7 @@
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { CelestialCard } from "@/components/CelestialCard";
 import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
+import { goBack } from '@/lib/safeNavigate';
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 
@@ -82,6 +83,7 @@ function buildPreviewWalletData(tier: PlanetTier): WalletData {
 }
 
 export default function PreviewDeck() {
+  const navigate = useNavigate();
   const { tier: tierParam } = useParams();
   const [searchParams] = useSearchParams();
   const normalizedTier = tierParam?.toLowerCase().replace("-", "_");
@@ -109,12 +111,10 @@ export default function PreviewDeck() {
         <div className="max-w-7xl mx-auto">
           {!isCapture && !isStoreCapture && (
             <div className="preview-header flex items-center justify-between mb-12">
-              <Link to="/">
-                <Button variant="ghost" className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/30">
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back to Scanner
-                </Button>
-              </Link>
+              <button onClick={() => goBack(navigate)} className="inline-flex items-center text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/30 rounded-md px-3 py-2 text-sm font-medium">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back
+              </button>
               <div className="text-center">
                 <p className="text-xs tracking-[0.4em] uppercase text-cyan-200/60">System Preview</p>
                 <h2 className="text-3xl font-black text-white mt-1">

@@ -1,13 +1,14 @@
 /**
  * Prism Marketplace — Upload, browse, and purchase user 3D models.
  * Models are validated (GLB format, magic bytes), stored on server,
- * purchasable with PRISM coins (80% to seller, 20% platform fee).
+ * purchasable with Coins coins (80% to seller, 20% platform fee).
  * Mobile-first layout.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { goBack } from '@/lib/safeNavigate';
 import {
   ArrowLeft, Upload, ShoppingBag, Download, Loader2, Check,
   Package, Star, Coins, AlertTriangle,
@@ -96,7 +97,7 @@ function ListingCard({ listing, owned, onBuy, buying }: {
           disabled={buying}
         >
           {buying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Coins className="w-3 h-3 mr-1" />}
-          {listing.price} PRISM
+          {listing.price} Coins
         </Button>
       )}
     </div>
@@ -185,7 +186,7 @@ function UploadTab({ walletAddress, onUploaded }: { walletAddress: string; onUpl
         </h3>
 
         <p className="text-white/25 text-xs leading-relaxed">
-          Upload a .glb, .gltf, or .obj model (max 5MB). Other players can purchase it with PRISM coins.
+          Upload a .glb, .gltf, or .obj model (max 5MB). Other players can purchase it with Coins coins.
           You earn 80% of each sale.
         </p>
 
@@ -238,7 +239,7 @@ function UploadTab({ walletAddress, onUploaded }: { walletAddress: string; onUpl
             </select>
           </div>
           <div className="w-28">
-            <p className="text-white/30 text-[10px] mb-1 uppercase tracking-wider">Price (PRISM)</p>
+            <p className="text-white/30 text-[10px] mb-1 uppercase tracking-wider">Price (Coins)</p>
             <input
               type="number"
               value={price}
@@ -335,7 +336,7 @@ export default function Marketplace() {
       {/* Header */}
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/5">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
+          <button onClick={() => goBack(navigate)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
             <ArrowLeft className="w-4 h-4" /> Back
           </button>
           <div className="flex items-center gap-2">

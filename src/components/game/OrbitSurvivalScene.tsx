@@ -1396,7 +1396,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
 
       // Physics — BH gravity on asteroids (strong pull + deflect near core)
       let nvx = a.vx, nvy = a.vy;
-      let destroyed = false;
+      const destroyed = false;
       for (let bi = 0; bi < currentBHs.length; bi++) {
         const bh = currentBHs[bi];
         const bdx = bh.x - a.x, bdy = bh.y - a.y;

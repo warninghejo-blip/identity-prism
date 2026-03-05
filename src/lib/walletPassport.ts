@@ -69,14 +69,14 @@ export async function generatePassportImage(data: PassportData): Promise<string>
   ctx.strokeStyle = tierColor + '40';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(8, 8, W - 16, H - 16, 16);
+  if (ctx.roundRect) { ctx.roundRect(8, 8, W - 16, H - 16, 16); } else { ctx.rect(8, 8, W - 16, H - 16); }
   ctx.stroke();
 
   // Inner glow border
   ctx.strokeStyle = tierColor + '15';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(14, 14, W - 28, H - 28, 12);
+  if (ctx.roundRect) { ctx.roundRect(14, 14, W - 28, H - 28, 12); } else { ctx.rect(14, 14, W - 28, H - 28); }
   ctx.stroke();
 
   // Header — "IDENTITY PRISM PASSPORT"
@@ -158,7 +158,7 @@ export async function generatePassportImage(data: PassportData): Promise<string>
     const riskColor = riskColors[data.sybilRiskLevel] || '#666';
     ctx.fillStyle = riskColor + '20';
     ctx.beginPath();
-    ctx.roundRect(40, 258, 120, 26, 6);
+    if (ctx.roundRect) { ctx.roundRect(40, 258, 120, 26, 6); } else { ctx.rect(40, 258, 120, 26); }
     ctx.fill();
     ctx.strokeStyle = riskColor + '40';
     ctx.lineWidth = 1;
@@ -169,11 +169,11 @@ export async function generatePassportImage(data: PassportData): Promise<string>
     ctx.fillText(`🛡️ SYBIL: ${data.sybilRiskLevel.toUpperCase()}`, 50, 275);
   }
 
-  // PRISM balance
+  // Coins balance
   if (data.prismBalance !== undefined) {
     ctx.fillStyle = 'rgba(139,92,246,0.15)';
     ctx.beginPath();
-    ctx.roundRect(W - 160, 258, 120, 26, 6);
+    if (ctx.roundRect) { ctx.roundRect(W - 160, 258, 120, 26, 6); } else { ctx.rect(W - 160, 258, 120, 26); }
     ctx.fill();
     ctx.strokeStyle = 'rgba(139,92,246,0.3)';
     ctx.lineWidth = 1;
@@ -181,7 +181,7 @@ export async function generatePassportImage(data: PassportData): Promise<string>
     ctx.fillStyle = '#c084fc';
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(`💎 ${data.prismBalance} PRISM`, W - 50, 275);
+    ctx.fillText(`🪙 ${data.prismBalance} Coins`, W - 50, 275);
   }
 
   // Badge count
@@ -241,7 +241,7 @@ export async function sharePassport(dataUrl: string, address: string): Promise<b
     if (navigator.share && navigator.canShare?.({ files: [file] })) {
       await navigator.share({
         title: 'My Identity Prism Passport',
-        text: `Check out my Solana Identity — ${TIER_LABELS[address] || 'Identity Prism'}`,
+        text: 'Check out my Solana Identity Prism passport!',
         files: [file],
       });
       return true;

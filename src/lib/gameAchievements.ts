@@ -36,7 +36,7 @@ export interface PlayerStats {
   lastPlayed: string;
 }
 
-export const ACHIEVEMENT_DEFS: Omit<Achievement, 'unlocked' | 'unlockedAt' | 'mintTxSignature'>[] = [
+export const ACHIEVEMENT_DEFS: Omit<Achievement, 'unlocked' | 'unlockedAt' | 'claimed' | 'claimedAt' | 'mintTxSignature'>[] = [
   {
     id: 'first_orbit',
     name: 'First Orbit',
