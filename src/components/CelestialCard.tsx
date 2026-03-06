@@ -15,7 +15,7 @@ import { BLACKHOLE_ENABLED } from '@/constants';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
 import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
-import { useCompositeScore } from '@/hooks/useCompositeScore';
+import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
 
@@ -331,7 +331,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     : 1;
   const nextTierLabel = currentThreshold.next ? (TIER_LABELS[currentThreshold.next] || '') : null;
   const ptsToNext = currentThreshold.next ? Math.max(0, currentThreshold.max + 1 - displayScore) : 0;
-  const badgeItems = getBadgeItems(safeTraits);
+  const badgeItems = getBadgeItems(safeTraits, sybilRisk, compositeData.details);
   const activeBadges = badgeItems.filter((badge) => badge.isActive);
   const inactiveBadges = badgeItems.filter((badge) => !badge.isActive);
   const orderedBadges = [...activeBadges, ...inactiveBadges];
@@ -1008,7 +1008,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     </div>
                   ) : (
                     (() => {
-                      const allCats: BadgeCategory[] = ['onchain', 'trust', 'activity', 'project', 'social'];
+                      const allCats: BadgeCategory[] = ['onchain', 'sybilTrust', 'humanProof', 'identityPrism', 'social', 'engagement'];
                       const catData = allCats.map(cat => ({
                         cat,
                         badges: badgeItems.filter(b => b.category === cat),
@@ -1020,10 +1020,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     })().map(({ cat, badges: catBadges, activeCount }) => {
                       const catMeta: Record<BadgeCategory, { icon: string; label: string }> = {
                         onchain: { icon: '\u26D3\uFE0F', label: 'ON-CHAIN' },
-                        trust: { icon: '\uD83D\uDEE1\uFE0F', label: 'TRUST' },
-                        activity: { icon: '\uD83C\uDFAE', label: 'ACTIVITY' },
-                        project: { icon: '◈', label: 'IDENTITY PRISM' },
+                        sybilTrust: { icon: '\uD83D\uDEE1\uFE0F', label: 'SYBIL TRUST' },
+                        humanProof: { icon: '\uD83C\uDFAE', label: 'HUMAN PROOF' },
+                        identityPrism: { icon: '\u25C8', label: 'IDENTITY PRISM' },
                         social: { icon: '\uD83E\uDD1D', label: 'SOCIAL' },
+                        engagement: { icon: '\u26A1', label: 'ENGAGEMENT' },
                       };
                       const meta = catMeta[cat];
                       return (
@@ -1127,21 +1128,14 @@ function StatItem({
 }
 
 type BadgeKey =
-  | 'og'
-  | 'whale'
-  | 'collector'
-  | 'binary'
-  | 'early'
-  | 'titan'
-  | 'maxi'
-  | 'seeker'
-  | 'visionary'
-  | 'bluechip'
-  | 'defi_king'
-  | 'meme_lord'
-  | 'diamond_hands';
+  | 'veteran' | 'whale' | 'defi_architect'
+  | 'verified_human' | 'clean_record'
+  | 'game_master' | 'achievement_hunter' | 'high_scorer'
+  | 'seeker' | 'visionary' | 'binary'
+  | 'arena_champion' | 'star_navigator'
+  | 'quest_hunter' | 'streak_lord' | 'explorer';
 
-type BadgeCategory = 'onchain' | 'trust' | 'activity' | 'project' | 'social';
+type BadgeCategory = 'onchain' | 'sybilTrust' | 'humanProof' | 'identityPrism' | 'social' | 'engagement';
 
 type BadgeItem = {
   key: BadgeKey;
@@ -1153,19 +1147,22 @@ type BadgeItem = {
 };
 
 const BADGE_TEXTURES: Record<BadgeKey, string> = {
-  og: '/badges/og_member.png',
+  veteran: '/badges/og_member.png',
   whale: '/badges/whale.png',
-  collector: '/badges/collector.png',
-  binary: '/badges/binary_sun.png',
-  early: '/badges/early_adopter.png',
-  titan: '/badges/tx_titan.png',
-  maxi: '/badges/solana_maxi.png',
+  defi_architect: '/badges/defi_king.png',
+  verified_human: '/badges/blue_chip.png',
+  clean_record: '/badges/diamond_hands.png',
+  game_master: '/badges/tx_titan.png',
+  achievement_hunter: '/badges/collector.png',
+  high_scorer: '/badges/solana_maxi.png',
   seeker: '/badges/seeker_of_truth.png',
   visionary: '/badges/visionary.png',
-  bluechip: '/badges/blue_chip.png',
-  defi_king: '/badges/defi_king.png',
-  meme_lord: '/badges/meme_lord.png',
-  diamond_hands: '/badges/diamond_hands.png',
+  binary: '/badges/binary_sun.png',
+  arena_champion: '/badges/meme_lord.png',
+  star_navigator: '/badges/early_adopter.png',
+  quest_hunter: '/badges/early_adopter.png',
+  streak_lord: '/badges/diamond_hands.png',
+  explorer: '/badges/collector.png',
 };
 
 // Preload badge images so they render instantly
@@ -1176,21 +1173,34 @@ if (typeof window !== 'undefined') {
   });
 }
 
-function getBadgeItems(traits: WalletTraits): BadgeItem[] {
+function getBadgeItems(
+  traits: WalletTraits,
+  sybilRisk: { trustScore: number; riskScore: number } | null,
+  details: ScoreDetails | null,
+): BadgeItem[] {
   return [
-    { key: 'og', label: 'OG Member', isActive: traits.isOG, texture: BADGE_TEXTURES.og, description: 'Present since the genesis of the system.', category: 'onchain' },
-    { key: 'whale', label: 'Whale', isActive: traits.isWhale, texture: BADGE_TEXTURES.whale, description: 'Commands a massive gravitational pull of SOL.', category: 'onchain' },
-    { key: 'titan', label: 'Tx Titan', isActive: traits.isTxTitan, texture: BADGE_TEXTURES.titan, description: 'Thousands of transactions. A network pillar.', category: 'onchain' },
-    { key: 'maxi', label: 'Solana Maxi', isActive: traits.isSolanaMaxi, texture: BADGE_TEXTURES.maxi, description: 'Bleeds purple and green. Pure loyalty.', category: 'onchain' },
-    { key: 'early', label: 'Early Adopter', isActive: traits.isEarlyAdopter, texture: BADGE_TEXTURES.early, description: 'Arrived before the starlight reached the rest.', category: 'onchain' },
-    { key: 'diamond_hands', label: 'Diamond Hands', isActive: traits.diamondHands, texture: BADGE_TEXTURES.diamond_hands, description: 'Never sells. Holds through every storm.', category: 'trust' },
-    { key: 'bluechip', label: 'Blue Chip', isActive: traits.isBlueChip, texture: BADGE_TEXTURES.bluechip, description: 'Holds tokens from blue-chip Solana collections.', category: 'trust' },
-    { key: 'defi_king', label: 'DeFi King', isActive: traits.isDeFiKing, texture: BADGE_TEXTURES.defi_king, description: 'A master of decentralized finance protocols.', category: 'activity' },
-    { key: 'meme_lord', label: 'Meme Lord', isActive: traits.isMemeLord, texture: BADGE_TEXTURES.meme_lord, description: 'Wields the power of meme coins with reckless abandon.', category: 'activity' },
-    { key: 'seeker', label: 'Seeker of Truth', isActive: traits.hasSeeker, texture: BADGE_TEXTURES.seeker, description: 'Possesses the ancient Seeker device.', category: 'project' },
-    { key: 'visionary', label: 'Visionary', isActive: traits.hasPreorder, texture: BADGE_TEXTURES.visionary, description: 'Foresaw the future of the ecosystem.', category: 'project' },
-    { key: 'binary', label: 'Binary Sun', isActive: traits.hasCombo, texture: BADGE_TEXTURES.binary, description: 'A rare celestial phenomenon. Dual power.', category: 'project' },
-    { key: 'collector', label: 'Collector', isActive: traits.isCollector, texture: BADGE_TEXTURES.collector, description: 'A museum of NFTs orbits this wallet.', category: 'social' },
+    // ON-CHAIN — wallet age, balance, DeFi usage
+    { key: 'veteran', label: 'Veteran', isActive: traits.walletAgeDays >= 730 && traits.txCount > 1000, texture: BADGE_TEXTURES.veteran, description: 'Battle-tested wallet with 2+ years and 1000+ transactions.', category: 'onchain' },
+    { key: 'whale', label: 'Whale', isActive: traits.solBalance >= 50, texture: BADGE_TEXTURES.whale, description: 'Commands massive gravitational pull of 50+ SOL.', category: 'onchain' },
+    { key: 'defi_architect', label: 'DeFi Architect', isActive: traits.isDeFiKing && traits.solBalance >= 5 && traits.txCount > 500, texture: BADGE_TEXTURES.defi_architect, description: 'Master of DeFi with 5+ SOL and 500+ transactions.', category: 'onchain' },
+    // SYBIL TRUST — wallet authenticity
+    { key: 'verified_human', label: 'Verified Human', isActive: (sybilRisk?.trustScore ?? 0) >= 80, texture: BADGE_TEXTURES.verified_human, description: 'Trust score 80+. Wallet verified as authentic.', category: 'sybilTrust' },
+    { key: 'clean_record', label: 'Clean Record', isActive: sybilRisk != null && sybilRisk.riskScore < 10, texture: BADGE_TEXTURES.clean_record, description: 'Risk score under 10. Pristine on-chain record.', category: 'sybilTrust' },
+    // HUMAN PROOF — games and achievements
+    { key: 'game_master', label: 'Game Master', isActive: (details?.humanProof.gameTypesCount ?? 0) >= 3, texture: BADGE_TEXTURES.game_master, description: 'Played 3+ different game types.', category: 'humanProof' },
+    { key: 'achievement_hunter', label: 'Achievement Hunter', isActive: (details?.humanProof.achievementCount ?? 0) >= 10, texture: BADGE_TEXTURES.achievement_hunter, description: 'Unlocked 10+ cosmic achievements.', category: 'humanProof' },
+    { key: 'high_scorer', label: 'High Scorer', isActive: (details?.humanProof.gameScoreTotal ?? 0) >= 40, texture: BADGE_TEXTURES.high_scorer, description: 'Reached legendary scores across all games.', category: 'humanProof' },
+    // IDENTITY PRISM — project-specific
+    { key: 'seeker', label: 'Seeker of Truth', isActive: traits.hasSeeker, texture: BADGE_TEXTURES.seeker, description: 'Possesses the ancient Seeker device.', category: 'identityPrism' },
+    { key: 'visionary', label: 'Visionary', isActive: traits.hasPreorder, texture: BADGE_TEXTURES.visionary, description: 'Foresaw the future of the ecosystem.', category: 'identityPrism' },
+    { key: 'binary', label: 'Binary Sun', isActive: traits.hasCombo, texture: BADGE_TEXTURES.binary, description: 'A rare celestial phenomenon. Dual power.', category: 'identityPrism' },
+    // SOCIAL — P2P and community
+    { key: 'arena_champion', label: 'Arena Champion', isActive: (details?.social.challengesWon ?? 0) >= 5, texture: BADGE_TEXTURES.arena_champion, description: 'Won 5+ P2P challenges.', category: 'social' },
+    { key: 'star_navigator', label: 'Star Navigator', isActive: (details?.social.constellationExplored ?? 0) >= 10, texture: BADGE_TEXTURES.star_navigator, description: 'Explored 10+ wallet constellations.', category: 'social' },
+    // ENGAGEMENT — app activity
+    { key: 'quest_hunter', label: 'Quest Hunter', isActive: (details?.engagement.questsCompleted ?? 0) >= 10, texture: BADGE_TEXTURES.quest_hunter, description: 'Completed 10+ quests.', category: 'engagement' },
+    { key: 'streak_lord', label: 'Streak Lord', isActive: (details?.engagement.streakDays ?? 0) >= 7, texture: BADGE_TEXTURES.streak_lord, description: '7+ day activity streak.', category: 'engagement' },
+    { key: 'explorer', label: 'Explorer', isActive: (details?.engagement.scanCount ?? 0) >= 20 && (details?.social.compareCount ?? 0) >= 5 && (details?.social.constellationExplored ?? 0) >= 3, texture: BADGE_TEXTURES.explorer, description: 'Used every tool: 20+ scans, 5+ compares, 3+ constellations.', category: 'engagement' },
   ];
 }
 
