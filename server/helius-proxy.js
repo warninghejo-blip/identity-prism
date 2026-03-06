@@ -6437,7 +6437,6 @@ const server = http.createServer(async (req, res) => {
 // ── Unified economy: coinBalances is the single source of truth ──
 // "PRISM" is now just the UI name for coins. All earn/spend goes through coinBalances.
 const prismTransactions = new Map(); // address → PrismTransaction[] (kept for history)
-const leaderboardCache = { entries: [], lastUpdated: 0 };
 const feedItems = [];
 const sybilCache = new Map(); // address → { analysis, cachedAt }
 
