@@ -15,8 +15,6 @@ import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2
 import { getAppBaseUrl, getHeliusProxyUrl, getMetadataBaseUrl, getHeliusRpcUrl, getCollectionMint, MINT_CONFIG, SEEKER_TOKEN } from "@/constants";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
-import { isTapestryEnabled, publishIdentityToTapestry } from "@/lib/tapestry";
-import type { IdentityData } from "@/lib/tapestry";
 // html2canvas loaded dynamically in renderCardImage()
 const CosmicHub = React.lazy(() => import("@/components/CosmicHubV3"));
 import { getPrismBalance, earnPrism, canEarnFromScan, markScanEarned, type PrismBalance } from '@/lib/prismCoin';
@@ -1073,49 +1071,6 @@ const Index = () => {
     }
   }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);
 
-  // ── Tapestry Social Graph ──
-  const [tapestryPublishing, setTapestryPublishing] = useState(false);
-  const [tapestryPublished, setTapestryPublished] = useState(false);
-
-  const handlePublishTapestry = useCallback(async () => {
-    if (!traits || !address || !isTapestryEnabled()) return;
-    setTapestryPublishing(true);
-    try {
-      // Derive rarity from score
-      const rarity = score >= 851 ? 'mythic' : score >= 651 ? 'legendary' : score >= 451 ? 'epic' : score >= 201 ? 'rare' : 'common';
-      // Derive active badges from trait flags
-      const badgeLabels: string[] = [];
-      if (traits.isOG) badgeLabels.push('OG Member');
-      if (traits.isWhale) badgeLabels.push('Whale');
-      if (traits.isCollector) badgeLabels.push('Collector');
-      if (traits.hasCombo) badgeLabels.push('Binary Sun');
-      if (traits.isEarlyAdopter) badgeLabels.push('Early Adopter');
-      if (traits.isTxTitan) badgeLabels.push('Tx Titan');
-      if (traits.isSolanaMaxi) badgeLabels.push('Solana Maxi');
-      if (traits.hasSeeker) badgeLabels.push('Seeker of Truth');
-      if (traits.hasPreorder) badgeLabels.push('Visionary');
-
-      const identityData: IdentityData = {
-        walletAddress: address,
-        score,
-        planetTier: traits.planetTier,
-        rarity,
-        badges: badgeLabels,
-        walletAgeDays: traits.walletAgeDays,
-        txCount: traits.txCount,
-        nftCount: traits.nftCount,
-        tokenCount: traits.uniqueTokenCount,
-      };
-      await publishIdentityToTapestry(identityData);
-      setTapestryPublished(true);
-      toast.success('Identity published to Tapestry social graph!');
-    } catch (err: unknown) {
-      console.warn('Tapestry publish error:', err);
-      toast.error('Tapestry service unavailable', { description: 'Please try again later.' });
-    } finally {
-      setTapestryPublishing(false);
-    }
-  }, [traits, address, score]);
 
   const showReadyView =
     previewMode ||
@@ -1357,21 +1312,6 @@ const Index = () => {
                             <span>Mint your Identity first to unlock Update</span>
                           </div>
                         )}
-                        <Button
-                          variant="ghost"
-                          onClick={handlePublishTapestry}
-                          disabled={tapestryPublishing || tapestryPublished || !isTapestryEnabled()}
-                          className="mint-share-btn"
-                          title={!isTapestryEnabled() ? 'Tapestry API key not configured' : undefined}
-                        >
-                          {tapestryPublishing ? (
-                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" />PUBLISHING...</>
-                          ) : tapestryPublished ? (
-                            <>✓ PUBLISHED TO TAPESTRY</>
-                          ) : (
-                            <>🌐 PUBLISH TO TAPESTRY</>
-                          )}
-                        </Button>
                         <Button
                           variant="ghost"
                           onClick={handleShare}

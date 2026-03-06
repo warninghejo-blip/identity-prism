@@ -158,9 +158,18 @@ function truncAddr(a: string) {
   return a.length > 8 ? `${a.slice(0, 4)}...${a.slice(-4)}` : a;
 }
 
-/* ── Mini Identity Passport ── */
+/* ── Mini Identity Passport (Elite Passport) ── */
+const MINI_BARS = [
+  { key: 'onchain' as const, label: 'On-Chain', max: 400, color: '#22d3ee' },
+  { key: 'sybilTrust' as const, label: 'Trust', max: 250, color: '#a78bfa' },
+  { key: 'humanProof' as const, label: 'Human', max: 150, color: '#34d399' },
+  { key: 'social' as const, label: 'Social', max: 100, color: '#fb923c' },
+  { key: 'engagement' as const, label: 'Activity', max: 100, color: '#f472b6' },
+];
+
 function MiniPassport({
-  walletAddress, score, tier, coins, sybilGrade, onClick, maxScore = 1400,
+  walletAddress, score, tier, coins, sybilGrade, onClick, maxScore = 1000,
+  breakdown,
 }: {
   walletAddress: string;
   score: number;
@@ -169,109 +178,146 @@ function MiniPassport({
   sybilGrade: string | null;
   onClick: () => void;
   maxScore?: number;
+  breakdown?: { onchain: number; sybilTrust: number; humanProof: number; social: number; engagement: number };
 }) {
   const tierColor = TIER_COLORS[tier] ?? TIER_COLORS.mercury;
   const gradeColor = SYBIL_GRADE_COLORS[sybilGrade ?? 'N/A'] ?? '#64748b';
   const tierLabel = tier === 'binary_sun' ? 'BINARY SUN' : tier.toUpperCase();
+  const docNo = walletAddress.slice(0, 8).toUpperCase();
 
   // Score ring (SVG)
   const pct = Math.min(score / maxScore, 1);
-  const r = 32;
+  const r = 36;
   const circ = 2 * Math.PI * r;
   const strokeDash = circ * pct;
+
+  // MRZ line
+  const mrzTier = tierLabel.replace(/\s/g, '');
+  const mrzAddr = walletAddress.slice(0, 8).toUpperCase();
+  const mrz = `P<SLNA${mrzTier}<<<${mrzAddr}<<<`;
 
   return (
     <motion.button
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      className="relative w-full rounded-2xl overflow-hidden bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] cursor-pointer hover:bg-white/[0.07] transition-all duration-500 hover:border-cyan-500/20 text-left pointer-events-auto"
+      className="passport-holo-shimmer relative w-full rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-white/[0.01] backdrop-blur-xl border border-white/[0.1] cursor-pointer hover:bg-white/[0.08] transition-all duration-500 hover:border-white/[0.2] text-left pointer-events-auto group"
     >
-      {/* Top gradient bar */}
-      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500" />
+      {/* Security band — animated gradient */}
+      <div className="absolute top-0 left-0 w-full h-[3px]" style={{ background: `linear-gradient(90deg, ${tierColor.text}60, #a78bfa80, ${tierColor.text}60)` }} />
 
-      <div className="p-5 pt-4">
-        {/* Header: IDENTITY PASSPORT */}
-        <div className="flex items-center justify-between mb-4">
+      {/* Subtle corner glow */}
+      <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full blur-3xl opacity-20 transition-opacity duration-700 group-hover:opacity-40" style={{ background: tierColor.text }} />
+
+      <div className="relative p-5 pt-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-2">
-            <Eye size={14} className="text-cyan-400/70" />
-            <span className="text-[10px] font-bold tracking-[0.2em] text-white/40 uppercase">Identity Passport</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ color: tierColor.text }}>
+              <path d="M12 2L2 20h20L12 2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+              <path d="M12 8l-4 8h8l-4-8z" fill="currentColor" opacity="0.3" />
+            </svg>
+            <span className="text-[9px] font-bold tracking-[0.25em] uppercase" style={{ color: `${tierColor.text}99` }}>Identity Passport</span>
           </div>
-          <ArrowRight size={14} className="text-white/20" />
+          <div className="flex items-center gap-1.5">
+            <span className="text-[8px] text-white/20 font-mono">{docNo}</span>
+            <ArrowRight size={12} className="text-white/20 group-hover:text-white/50 group-hover:translate-x-0.5 transition-all" />
+          </div>
         </div>
 
-        {/* Main content: Score ring + Info */}
-        <div className="flex items-center gap-4">
-          {/* Score Ring */}
-          <div className="relative flex-shrink-0">
-            <svg width="80" height="80" viewBox="0 0 80 80">
-              {/* Background circle */}
-              <circle cx="40" cy="40" r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="4" />
-              {/* Progress arc */}
+        <div className="w-full h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent mb-3" />
+
+        {/* Score ring centered */}
+        <div className="flex justify-center mb-3">
+          <div className="relative">
+            <svg width="96" height="96" viewBox="0 0 96 96">
+              {/* Background track */}
+              <circle cx="48" cy="48" r={r} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="5" />
+              {/* Tier glow ring */}
               <circle
-                cx="40" cy="40" r={r}
+                cx="48" cy="48" r={r}
                 fill="none"
                 stroke={tierColor.text}
-                strokeWidth="4"
+                strokeWidth="5"
                 strokeLinecap="round"
                 strokeDasharray={`${strokeDash} ${circ}`}
-                transform="rotate(-90 40 40)"
-                style={{ filter: `drop-shadow(0 0 6px ${tierColor.glow})`, transition: 'stroke-dasharray 1s ease-out' }}
+                transform="rotate(-90 48 48)"
+                style={{ filter: `drop-shadow(0 0 8px ${tierColor.glow})`, transition: 'stroke-dasharray 1.2s ease-out' }}
               />
-              {/* Score text */}
-              <text x="40" y="36" textAnchor="middle" fill={tierColor.text} fontSize="18" fontWeight="bold" fontFamily="monospace">
+              {/* Score number */}
+              <text x="48" y="43" textAnchor="middle" fill={tierColor.text} fontSize="22" fontWeight="bold" fontFamily="monospace" style={{ filter: `drop-shadow(0 0 4px ${tierColor.glow})` }}>
                 {score}
               </text>
-              <text x="40" y="50" textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize="8" fontWeight="600" letterSpacing="0.5">
-                SCORE
+              <text x="48" y="57" textAnchor="middle" fill="rgba(255,255,255,0.25)" fontSize="9" fontWeight="600" letterSpacing="0.5">
+                / {maxScore}
               </text>
             </svg>
           </div>
+        </div>
 
-          {/* Info block */}
-          <div className="flex-1 min-w-0 space-y-2.5">
-            {/* Tier */}
-            <div>
-              <div className="text-[10px] text-white/30 font-medium tracking-wider mb-0.5">RANK</div>
-              <div
-                className="text-sm font-black tracking-wider"
-                style={{ color: tierColor.text, textShadow: `0 0 12px ${tierColor.glow}` }}
-              >
-                {tierLabel}
-              </div>
+        {/* Tier label — centered, prominent */}
+        <div className="text-center mb-3">
+          <div
+            className="text-base font-black tracking-[0.15em] uppercase"
+            style={{ color: tierColor.text, textShadow: `0 0 16px ${tierColor.glow}, 0 0 32px ${tierColor.glow}` }}
+          >
+            {tierLabel}
+          </div>
+          <div className="text-[9px] text-white/20 mt-0.5 tracking-wider">COMPOSITE RANK</div>
+        </div>
+
+        {/* Composite Breakdown mini-bars */}
+        {breakdown && (
+          <div className="space-y-1.5 mb-3">
+            {MINI_BARS.map(bar => {
+              const val = breakdown[bar.key] || 0;
+              const barPct = Math.min(100, (val / bar.max) * 100);
+              return (
+                <div key={bar.key} className="flex items-center gap-2">
+                  <span className="text-[8px] text-white/30 w-[38px] text-right font-medium truncate">{bar.label}</span>
+                  <div className="flex-1 h-1 rounded-full bg-white/[0.06] overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${barPct}%`, backgroundColor: bar.color }} />
+                  </div>
+                  <span className="text-[8px] font-mono w-[28px]" style={{ color: bar.color }}>{val}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Stats row: Sybil Grade + Coins + Address */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {/* Sybil Grade pill */}
+            <div
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md"
+              style={{ background: `${gradeColor}15`, border: `1px solid ${gradeColor}25` }}
+            >
+              <Shield size={10} style={{ color: gradeColor }} />
+              <span className="text-[10px] font-black" style={{ color: gradeColor }}>
+                {sybilGrade ?? '...'}
+              </span>
             </div>
 
-            {/* Sybil + Coins row */}
-            <div className="flex items-center gap-3">
-              {/* Sybil Grade */}
-              <div className="flex items-center gap-1.5">
-                <Shield size={12} style={{ color: gradeColor }} />
-                <span className="text-[10px] text-white/30 font-medium">Sybil</span>
-                <span
-                  className="text-xs font-black"
-                  style={{ color: gradeColor }}
-                >
-                  {sybilGrade ?? '...'}
-                </span>
-              </div>
-
-              {/* Divider */}
-              <div className="w-px h-3 bg-white/10" />
-
-              {/* Coins */}
-              <div className="flex items-center gap-1">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24">
-                  <circle cx="12" cy="12" r="10"/>
-                  <path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/>
-                </svg>
-                <span className="text-xs font-bold text-amber-400">{coins}</span>
-              </div>
+            {/* Coins */}
+            <div className="flex items-center gap-1">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="#fbbf24">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/>
+              </svg>
+              <span className="text-[10px] font-bold text-amber-400">{coins}</span>
             </div>
+          </div>
 
-            {/* Address */}
-            <div className="text-[10px] text-white/25 font-mono tracking-wider">
-              {truncAddr(walletAddress)}
-            </div>
+          <div className="text-[9px] text-white/20 font-mono tracking-wider">
+            {truncAddr(walletAddress)}
+          </div>
+        </div>
+
+        {/* MRZ line */}
+        <div className="mt-2.5 pt-2 border-t border-white/[0.04]">
+          <div className="text-[8px] font-mono text-white/[0.1] tracking-[0.06em] truncate select-none">
+            {mrz}
           </div>
         </div>
       </div>
@@ -402,6 +448,7 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
                 sybilGrade={sybilGrade}
                 onClick={onNavigateToCard}
                 maxScore={compositeData.score > 0 ? 1000 : 1400}
+                breakdown={compositeData.score > 0 ? compositeData.breakdown : undefined}
               />
             ) : (
               <NoCardFallback onClick={onNavigateToCard} />

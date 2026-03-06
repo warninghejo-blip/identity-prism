@@ -1151,9 +1151,9 @@ const persistQuestProgress = () => {
 // Composite Score Engine (0-1000)
 // ═══════════════════════════════════════════════════════════════════════════
 const COMPOSITE_TIER_MAP = [
-  [100, 'mercury'], [200, 'mars'], [350, 'venus'], [500, 'earth'],
-  [650, 'neptune'], [750, 'uranus'], [850, 'saturn'], [930, 'jupiter'],
-  [980, 'sun'], [Infinity, 'binary_sun'],
+  [99, 'mercury'], [219, 'mars'], [349, 'venus'], [479, 'earth'],
+  [599, 'neptune'], [699, 'uranus'], [799, 'saturn'], [879, 'jupiter'],
+  [949, 'sun'], [Infinity, 'binary_sun'],
 ];
 
 function getCompositeTier(score) {
@@ -1164,10 +1164,12 @@ function getCompositeTier(score) {
 }
 
 function calculateCompositeScore(input) {
-  const { onchainScore = 0, trustScore = 0, gameScores = [], gameTypes = new Set(), achievementCount = 0, challengesWon = 0, constellationExplored = 0, compareCount = 0, questsCompleted = 0, streakDays = 0, scanCount = 0 } = input;
+  const { onchainScore = 0, trustScore = 0, gameScores = [], gameTypes = new Set(), achievementCount = 0, challengesWon = 0, constellationExplored = 0, compareCount = 0, questsCompleted = 0, streakDays = 0, scanCount = 0, hasSeeker = false, hasPreorder = false, hasCombo = false } = input;
 
-  // On-chain (40%, max 400)
-  const onchain = Math.min(400, Math.round((onchainScore / 1400) * 400));
+  // On-chain (40%, max 400) — base + badge bonus
+  const basePts = Math.round((onchainScore / 1400) * 400);
+  const badgeBonus = (hasSeeker ? 15 : 0) + (hasPreorder ? 15 : 0) + (hasCombo ? 30 : 0);
+  const onchain = Math.min(400, basePts + badgeBonus);
 
   // Sybil Trust (25%, max 250)
   const sybilTrust = Math.min(250, Math.round((trustScore / 100) * 250));
@@ -1176,7 +1178,8 @@ function calculateCompositeScore(input) {
   const gameScoreTotal = gameScores.length > 0
     ? Math.min(80, Math.round(Math.log2(1 + gameScores.reduce((a, b) => a + b, 0)) * 8))
     : 0;
-  const gameDiversity = Math.min(30, gameTypes.size * 5);
+  const gameTypesCount = gameTypes.size;
+  const gameDiversity = Math.min(30, gameTypesCount * 5);
   const achievementPts = Math.min(40, achievementCount * 5);
   const humanProof = Math.min(150, gameScoreTotal + gameDiversity + achievementPts);
 
@@ -1199,6 +1202,13 @@ function calculateCompositeScore(input) {
     compositeScore: total,
     compositeTier: tier,
     breakdown: { onchain, sybilTrust, humanProof, social, engagement },
+    details: {
+      onchain: { identityScore: onchainScore, identityMax: 1400, basePts, badgeBonus, hasSeeker, hasPreorder, hasCombo },
+      sybilTrust: { trustScore, trustMax: 100 },
+      humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount },
+      social: { challengesWon, challengePts, constellationExplored, constellationPts, compareCount, comparePts },
+      engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts },
+    },
   };
 }
 
@@ -1228,6 +1238,7 @@ function buildCompositeInput(address) {
     streakDays = qp.streakDays || 0;
   }
 
+  const traits = walletEntry.traits || {};
   return {
     onchainScore,
     trustScore,
@@ -1240,6 +1251,9 @@ function buildCompositeInput(address) {
     questsCompleted,
     streakDays,
     scanCount: walletEntry.scanCount || 0,
+    hasSeeker: Boolean(traits.hasSeeker),
+    hasPreorder: Boolean(traits.hasPreorder),
+    hasCombo: Boolean(traits.hasCombo),
   };
 }
 
@@ -2490,11 +2504,14 @@ const server = http.createServer(async (req, res) => {
           new PublicKey(trimmed);
           const snapshot = await fetchIdentitySnapshot(trimmed);
           const { identity, walletAgeDays, solBalance, txCount, tokenCount, nftCount } = snapshot;
+          const comp = (walletDatabase.get(trimmed) || {}).composite || calculateCompositeScore(buildCompositeInput(trimmed));
           results.push({
             address: trimmed,
             score: identity.score,
             tier: identity.tier,
             badges: identity.badges,
+            compositeScore: comp.compositeScore,
+            compositeTier: comp.compositeTier,
             stats: { walletAgeDays, solBalance: Math.round(solBalance * 1000) / 1000, txCount, tokenCount, nftCount },
           });
         } catch (error) {
@@ -2529,22 +2546,27 @@ const server = http.createServer(async (req, res) => {
         fetchIdentitySnapshot(a),
         fetchIdentitySnapshot(b),
       ]);
-      const format = (snap, addr) => ({
-        address: addr,
-        score: snap.identity.score,
-        tier: snap.identity.tier,
-        badges: snap.identity.badges,
-        stats: {
-          walletAgeDays: snap.walletAgeDays,
-          solBalance: Math.round(snap.solBalance * 1000) / 1000,
-          txCount: snap.txCount,
-          tokenCount: snap.tokenCount,
-          nftCount: snap.nftCount,
-        },
-      });
+      const format = (snap, addr) => {
+        const comp = (walletDatabase.get(addr) || {}).composite || calculateCompositeScore(buildCompositeInput(addr));
+        return {
+          address: addr,
+          score: snap.identity.score,
+          tier: snap.identity.tier,
+          badges: snap.identity.badges,
+          compositeScore: comp.compositeScore,
+          compositeTier: comp.compositeTier,
+          stats: {
+            walletAgeDays: snap.walletAgeDays,
+            solBalance: Math.round(snap.solBalance * 1000) / 1000,
+            txCount: snap.txCount,
+            tokenCount: snap.tokenCount,
+            nftCount: snap.nftCount,
+          },
+        };
+      };
       const resultA = format(snapA, a);
       const resultB = format(snapB, b);
-      const diff = resultA.score - resultB.score;
+      const diff = resultA.compositeScore - resultB.compositeScore;
       respondJson(res, 200, {
         wallets: [resultA, resultB],
         scoreDiff: diff,
@@ -3126,33 +3148,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Tapestry proxy — avoids CORS issues with direct browser calls ──
-  if (pathname.startsWith('/api/tapestry/') && (req.method === 'POST' || req.method === 'GET')) {
-    const tapestryKey = process.env.TAPESTRY_API_KEY || process.env.VITE_TAPESTRY_API_KEY || '';
-    if (!tapestryKey) {
-      respondJson(res, 503, { error: 'Tapestry API key not configured on server' });
-      return;
-    }
-    const tapestryPath = pathname.replace('/api/tapestry', '');
-    const tapestryUrl = `https://api.usetapestry.dev/api/v1${tapestryPath}?apiKey=${tapestryKey}`;
-    try {
-      const body = req.method === 'POST' ? await readBody(req) : null;
-      const upstream = await fetch(tapestryUrl, {
-        method: req.method,
-        headers: { 'Content-Type': 'application/json' },
-        ...(body ? { body } : {}),
-      });
-      const text = await upstream.text();
-      res.writeHead(upstream.status, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      });
-      res.end(text);
-    } catch (error) {
-      respondJson(res, 502, { error: 'Tapestry upstream error', detail: error instanceof Error ? error.message : String(error) });
-    }
-    return;
-  }
 
   if (pathname === '/api/actions/render') {
     const viewParam = String(url.searchParams.get('view') ?? 'front').trim();
@@ -5509,6 +5504,7 @@ const server = http.createServer(async (req, res) => {
         compositeScore: compositeData.compositeScore,
         compositeTier: compositeData.compositeTier,
         scoreBreakdown: compositeData.breakdown,
+        scoreDetails: compositeData.details || null,
         identity: { score: identity.score, maxScore: 1400, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
         stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
         sybilAnalysis: sybil ? { trustScore: sybil.trustScore, trustGrade: sybil.trustGrade, riskScore: sybil.riskScore, riskLevel: sybil.riskLevel, signalsDetected: sybil.signals?.filter(s => s.detected).length || 0, totalSignals: sybil.signals?.length || 0 } : null,
@@ -5844,14 +5840,15 @@ const server = http.createServer(async (req, res) => {
       const acceptorBal = isSolBet ? null : getPrismBalance(acceptor);
 
       if (challenge.type === 'score') {
-        // Score challenge: immediately resolve by fetching identity scores
+        // Score challenge: resolve using composite scores (matches card display)
         try {
-          const [creatorSnap, opponentSnap] = await Promise.all([
-            fetchIdentitySnapshot(challenge.creator),
-            fetchIdentitySnapshot(acceptor),
-          ]);
-          challenge.creatorScore = creatorSnap?.identity?.score ?? 0;
-          challenge.opponentScore = opponentSnap?.identity?.score ?? 0;
+          // Ensure composite scores are up-to-date
+          triggerCompositeUpdate(challenge.creator);
+          triggerCompositeUpdate(acceptor);
+          const creatorComposite = (walletDatabase.get(challenge.creator) || {}).composite || calculateCompositeScore(buildCompositeInput(challenge.creator));
+          const acceptorComposite = (walletDatabase.get(acceptor) || {}).composite || calculateCompositeScore(buildCompositeInput(acceptor));
+          challenge.creatorScore = creatorComposite.compositeScore ?? 0;
+          challenge.opponentScore = acceptorComposite.compositeScore ?? 0;
 
           // Determine winner — SOL bets use 10% fee, Coin bets use 5%
           const totalPot = challenge.stakeAmount * 2;

@@ -172,10 +172,7 @@ export const BLUE_CHIP_COLLECTIONS = [
 // Also match by collection name (case-insensitive) for broader coverage
 export const BLUE_CHIP_COLLECTION_NAMES = [
   'mad lads', 'solana monkey business', 'claynosaurz', 'okay bears',
-  'famous fox federation', 'tensorians', 'degenerate ape academy',
-  'y00ts', 'abc', 'cets on creck', 'primates', 'portals',
-  'galactic geckos', 'taiyo robotics', 'degen ape academy',
-  'froganas', 'jelly rascals', 'lily',
+  'famous fox federation', 'taiyo robotics',
 ];
 
 export const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';

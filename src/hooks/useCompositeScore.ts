@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getHeliusProxyUrl } from '@/constants';
 
 interface CompositeBreakdown {
   onchain: number;
@@ -8,10 +9,19 @@ interface CompositeBreakdown {
   engagement: number;
 }
 
+export interface ScoreDetails {
+  onchain: { identityScore: number; identityMax: number; basePts: number; badgeBonus: number; hasSeeker: boolean; hasPreorder: boolean; hasCombo: boolean };
+  sybilTrust: { trustScore: number; trustMax: number };
+  humanProof: { gameScoreTotal: number; gameDiversity: number; achievementPts: number; achievementCount: number; gameTypesCount: number };
+  social: { challengesWon: number; challengePts: number; constellationExplored: number; constellationPts: number; compareCount: number; comparePts: number };
+  engagement: { questsCompleted: number; questPts: number; streakDays: number; streakPts: number; scanCount: number; scanPts: number };
+}
+
 interface CompositeData {
   score: number;
   tier: string;
   breakdown: CompositeBreakdown;
+  details: ScoreDetails | null;
   isLoading: boolean;
 }
 
@@ -23,6 +33,7 @@ export function useCompositeScore(address: string | null): CompositeData {
     score: 0,
     tier: 'mercury',
     breakdown: { onchain: 0, sybilTrust: 0, humanProof: 0, social: 0, engagement: 0 },
+    details: null,
     isLoading: true,
   });
 
@@ -45,7 +56,7 @@ export function useCompositeScore(address: string | null): CompositeData {
       }
     } catch {}
 
-    const proxyUrl = import.meta.env.VITE_HELIUS_PROXY_URL || '';
+    const proxyUrl = getHeliusProxyUrl() || '';
     fetch(`${proxyUrl}/api/wallet-database?address=${address}`)
       .then(r => r.ok ? r.json() : null)
       .then(wallet => {
@@ -59,6 +70,7 @@ export function useCompositeScore(address: string | null): CompositeData {
           score: composite.compositeScore,
           tier: composite.compositeTier,
           breakdown: composite.breakdown,
+          details: wallet.scoreDetails || composite.details || null,
         };
         setData({ ...result, isLoading: false });
         try {

@@ -151,6 +151,38 @@ body:has(.prism-league-page) #root > * {
   100% { transform: translate3d(2%, -1%, 0) scale(1.02); }
 }
 
+/* Passport holographic shimmer */
+.passport-holo-shimmer {
+  position: relative;
+}
+.passport-holo-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(251, 191, 36, 0.04) 35%,
+    rgba(103, 232, 249, 0.06) 45%,
+    rgba(192, 132, 252, 0.04) 55%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: passport-shimmer 6s ease-in-out infinite;
+  pointer-events: none;
+  border-radius: inherit;
+}
+@keyframes passport-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Battle result particle float */
+@keyframes particle-float {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--px), var(--py)) scale(0); opacity: 0; }
+}
+
 /* Forge frame animations */
 @keyframes supernova-rotate {
   0% { filter: hue-rotate(0deg); }

@@ -6,6 +6,7 @@ import { SolanaMobileWalletAdapterWalletName } from "@solana-mobile/wallet-adapt
 import { Button } from "@/components/ui/button";
 import { useWalletData } from "@/hooks/useWalletData";
 import { toast } from "sonner";
+import BattleResultOverlay from "@/components/BattleResultOverlay";
 import {
   ArrowLeft,
   Trophy,
@@ -58,7 +59,6 @@ import {
   type Achievement,
   type PlayerStats,
 } from "@/lib/gameAchievements";
-import { publishGameScore, isTapestryEnabled } from "@/lib/tapestry";
 import {
   generateFairSeed,
   verifyGameSessionSeed,
@@ -331,6 +331,7 @@ interface ChallengeResult {
   opponentScore: number | null;
   winner: string | null;
   stakeAmount: number;
+  stakeType?: 'coins' | 'sol';
   gameMode?: string;
 }
 
@@ -367,6 +368,59 @@ async function submitChallengeScore(challengeId: string, score: number): Promise
   }
 }
 
+/* ── Waiting for Opponent Banner with polling ── */
+function WaitingForOpponentBanner({
+  challengeId,
+  address,
+  onResultReceived,
+}: {
+  challengeId: string;
+  address: string;
+  onResultReceived: (ch: ChallengeResult) => void;
+}) {
+  const [dots, setDots] = useState('');
+  const receivedRef = useRef(false);
+
+  useEffect(() => {
+    const dotInterval = setInterval(() => {
+      setDots((d) => (d.length >= 3 ? '' : d + '.'));
+    }, 500);
+    return () => clearInterval(dotInterval);
+  }, []);
+
+  useEffect(() => {
+    if (!address || receivedRef.current) return;
+    const base = getServerBase();
+    if (!base) return;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(address)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const list: ChallengeResult[] = Array.isArray(data) ? data : data.challenges ?? [];
+        const ch = list.find((c) => c.id === challengeId);
+        if (ch && ch.status === 'completed' && !receivedRef.current) {
+          receivedRef.current = true;
+          onResultReceived(ch);
+        }
+      } catch { /* ignore */ }
+    };
+
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [challengeId, address, onResultReceived]);
+
+  return (
+    <div className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-cyan-400/30 bg-cyan-500/8">
+      <Swords className="w-4 h-4 text-cyan-400 animate-pulse" />
+      <span className="text-sm text-cyan-300 font-medium">
+        Waiting for opponent{dots}
+      </span>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════
    Main component
    ═══════════════════════════════════════════════════ */
@@ -385,6 +439,7 @@ const PrismLeague = () => {
   const [challengeResult, setChallengeResult] = useState<ChallengeResult | null>(null);
   const [challengeSubmitting, setChallengeSubmitting] = useState(false);
   const challengeSubmittedRef = useRef(false);
+  const [showBattleResult, setShowBattleResult] = useState(false);
 
   const wallet = useWallet();
   const { publicKey, connected, wallets: availableWallets, select, connect, disconnect } = wallet;
@@ -868,21 +923,6 @@ const PrismLeague = () => {
           setMbVerified(true);
         }
 
-        // Auto-publish to Tapestry social graph for connected wallets
-        if (isTapestryEnabled() && address && finalScore > 0) {
-          publishGameScore({
-            walletAddress: address,
-            score: finalScore,
-            survivalTime: formatTime(finalScore),
-            sessionProofId: proof?.id,
-            sessionProofHash: proof?.hash,
-            sessionSeed: proof?.seed ?? curSeed ?? undefined,
-            sessionSlot: proof?.slot ?? (curSlot > 0 ? curSlot : undefined),
-            sessionProofUrl: proof?.proofUrl ?? undefined,
-          }).catch(() => {
-            /* Tapestry publish is best-effort */
-          });
-        }
       };
 
       void verifyAndPublish();
@@ -981,19 +1021,10 @@ const PrismLeague = () => {
           if (result.ok && result.challenge) {
             setChallengeResult(result.challenge);
             if (result.challenge.status === 'completed') {
-              // Determine win/lose/tie
-              const isWinner = result.challenge.winner === playerAddr;
-              const isTie = result.challenge.winner === null;
-              if (isWinner) {
-                const prize = Math.floor(result.challenge.stakeAmount * 2 * 0.95);
-                toast.success(`Challenge Won! +${prize} Coins`);
-                hapticSuccess();
-              } else if (isTie) {
-                toast.info(`Challenge Tied! Stake refunded.`);
-              } else {
-                toast.error(`Challenge Lost!`);
-                hapticError();
-              }
+              // Show BattleResultOverlay after 1.5s (let user see game over screen first)
+              setTimeout(() => setShowBattleResult(true), 1500);
+              if (result.challenge.winner === playerAddr) hapticSuccess();
+              else hapticError();
             } else {
               toast.success('Score submitted! Waiting for opponent...');
             }
@@ -1191,21 +1222,6 @@ const PrismLeague = () => {
           });
         }
 
-        if (isTapestryEnabled() && address) {
-          try {
-            await publishGameScore({
-              walletAddress: address,
-              score,
-              survivalTime: gameMode === "destroyer" ? formatPoints(score) : formatTime(score),
-              txSignature: result.txSignature,
-              sessionProofId: sessionProof?.id,
-              sessionProofHash: sessionProof?.hash,
-              sessionSeed: sessionProof?.seed ?? mbSeed ?? undefined,
-              sessionSlot: sessionProof?.slot ?? (mbSlot > 0 ? mbSlot : undefined),
-              sessionProofUrl: sessionProof?.proofUrl ?? undefined,
-            });
-          } catch { /* Tapestry publish is best-effort */ }
-        }
       } else {
         toast.error(result.error || "Failed to commit score");
       }
@@ -2118,7 +2134,7 @@ const PrismLeague = () => {
               {/* Scrollable content */}
               <div className="flex-1 overflow-y-auto px-5 pb-2 flex flex-col items-center w-full">
 
-                {/* ── Challenge result overlay ── */}
+                {/* ── Challenge status ── */}
                 {activeChallengeId && (
                   <div className="w-full mb-3">
                     {challengeSubmitting ? (
@@ -2126,45 +2142,15 @@ const PrismLeague = () => {
                         <span className="w-4 h-4 border-2 border-amber-400/40 border-t-amber-400 rounded-full animate-spin" />
                         <span className="text-sm text-amber-300 font-medium">Submitting challenge score...</span>
                       </div>
-                    ) : challengeResult ? (
-                      challengeResult.status === 'completed' ? (
-                        (() => {
-                          const playerAddr = address || 'anonymous';
-                          const isWinner = challengeResult.winner === playerAddr;
-                          const isTie = challengeResult.winner === null;
-                          const myScore = playerAddr === challengeResult.creator ? challengeResult.creatorScore : challengeResult.opponentScore;
-                          const theirScore = playerAddr === challengeResult.creator ? challengeResult.opponentScore : challengeResult.creatorScore;
-                          const prize = Math.floor(challengeResult.stakeAmount * 2 * 0.95);
-                          return (
-                            <div
-                              className={`px-4 py-3.5 rounded-xl border text-center ${
-                                isWinner ? 'border-green-400/40 bg-green-500/10' : isTie ? 'border-yellow-400/40 bg-yellow-500/10' : 'border-red-400/40 bg-red-500/10'
-                              }`}
-                              style={{ boxShadow: isWinner ? '0 0 20px rgba(74,222,128,0.15)' : isTie ? '0 0 20px rgba(250,204,21,0.15)' : '0 0 20px rgba(239,68,68,0.15)' }}
-                            >
-                              <div className="flex items-center justify-center gap-2 mb-2">
-                                <Swords className={`w-5 h-5 ${isWinner ? 'text-green-400' : isTie ? 'text-yellow-400' : 'text-red-400'}`} />
-                                <span className={`text-lg font-black uppercase tracking-wider ${isWinner ? 'text-green-300' : isTie ? 'text-yellow-300' : 'text-red-300'}`}>
-                                  {isWinner ? 'YOU WON!' : isTie ? 'TIE' : 'YOU LOST'}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-center gap-3 text-sm mb-1.5">
-                                <span className="text-white/70">Your score: <strong className="text-white">{myScore != null ? (gameMode === 'destroyer' ? formatPoints(myScore) : formatTime(myScore)) : '-'}</strong></span>
-                                <span className="text-white/30">vs</span>
-                                <span className="text-white/70">Opponent: <strong className="text-white">{theirScore != null ? (gameMode === 'destroyer' ? formatPoints(theirScore) : formatTime(theirScore)) : '-'}</strong></span>
-                              </div>
-                              <div className={`text-xs font-bold ${isWinner ? 'text-green-400' : isTie ? 'text-yellow-400' : 'text-red-400/70'}`}>
-                                {isWinner ? `+${prize} Coins` : isTie ? 'Stake refunded' : `Lost ${challengeResult.stakeAmount} Coins`}
-                              </div>
-                            </div>
-                          );
-                        })()
-                      ) : (
-                        <div className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-cyan-400/30 bg-cyan-500/8">
-                          <Swords className="w-4 h-4 text-cyan-400" />
-                          <span className="text-sm text-cyan-300 font-medium">Score submitted. Waiting for opponent...</span>
-                        </div>
-                      )
+                    ) : challengeResult && challengeResult.status !== 'completed' ? (
+                      <WaitingForOpponentBanner
+                        challengeId={activeChallengeId}
+                        address={address || ''}
+                        onResultReceived={(ch) => {
+                          setChallengeResult(ch);
+                          setShowBattleResult(true);
+                        }}
+                      />
                     ) : null}
                   </div>
                 )}
@@ -2343,6 +2329,24 @@ const PrismLeague = () => {
         </div>
         </div>
       </div>
+      {/* BattleResultOverlay */}
+      {showBattleResult && challengeResult && challengeResult.status === 'completed' && (
+        <BattleResultOverlay
+          challenge={{
+            id: challengeResult.id,
+            creator: challengeResult.creator,
+            opponent: challengeResult.opponent,
+            creatorScore: challengeResult.creatorScore,
+            opponentScore: challengeResult.opponentScore,
+            winner: challengeResult.winner,
+            stakeAmount: challengeResult.stakeAmount,
+            stakeType: challengeResult.stakeType ?? 'coins',
+            status: challengeResult.status,
+          }}
+          myAddress={address || ''}
+          onReturn={() => navigate('/market?tab=challenges')}
+        />
+      )}
     </div>
   );
 };

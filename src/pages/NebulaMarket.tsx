@@ -19,6 +19,8 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { getHeliusProxyUrl } from '@/constants';
 import { useWalletData, calculateScore, type WalletTraits } from '@/hooks/useWalletData';
+import ChallengeReadyModal from '@/components/ChallengeReadyModal';
+import BattleResultOverlay, { type ChallengeResult } from '@/components/BattleResultOverlay';
 
 // ── Types ──
 
@@ -878,6 +880,10 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
   const [formBetType, setFormBetType] = useState<'coins' | 'sol'>('coins');
   const [formOpponent, setFormOpponent] = useState('');
 
+  // Challenge flow modals
+  const [readyModal, setReadyModal] = useState<{ challenge: { id: string; gameMode: string | null; stakeAmount: number; stakeType: 'coins' | 'sol' }; role: 'creator' | 'acceptor' } | null>(null);
+  const [battleResult, setBattleResult] = useState<ChallengeResult | null>(null);
+
   // Track previous "mine" for change detection
   const prevMineRef = useRef<string>('');
 
@@ -1036,12 +1042,24 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
 
       if (res.ok) {
         trackChallengeCreate();
-        toast.success(`Challenge created! ${isSol ? formStake + ' SOL' : formStake + ' Coins'} staked`);
+        const resData = await res.json().catch(() => ({}));
         setCreating(false);
         setFormOpponent('');
         setFormStake(isSol ? 0.1 : 10);
         fetchOpen();
         fetchMine();
+
+        if (formType === 'game') {
+          const createdChallenge = {
+            id: resData.challenge?.id ?? resData.id ?? '',
+            gameMode: formGameMode,
+            stakeAmount: formStake,
+            stakeType: formBetType,
+          };
+          setReadyModal({ challenge: createdChallenge, role: 'creator' });
+        } else {
+          toast.success(`Challenge created! ${isSol ? formStake + ' SOL' : formStake + ' Coins'} staked`);
+        }
       } else {
         const err = await res.json().catch(() => ({ error: 'Failed to create challenge' }));
         toast.error(err.error || 'Failed to create challenge');
@@ -1116,9 +1134,22 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
 
       if (res.ok) {
         trackChallengeAccept();
-        toast.success('Challenge accepted! Good luck.');
+        const resData = await res.json().catch(() => ({}));
         fetchOpen();
         fetchMine();
+
+        if (challenge?.type === 'game' && challenge.gameMode) {
+          // Game challenge — show ready modal then navigate to game
+          setReadyModal({
+            challenge: { id: challenge.id, gameMode: challenge.gameMode, stakeAmount: challenge.stakeAmount, stakeType: challenge.stakeType },
+            role: 'acceptor',
+          });
+        } else if (resData.challenge?.status === 'completed') {
+          // Score challenge — show battle result overlay
+          setBattleResult(resData.challenge);
+        } else {
+          toast.success('Challenge accepted! Good luck.');
+        }
       } else {
         const err = await res.json().catch(() => ({ error: 'Failed to accept' }));
         toast.error(err.error || 'Failed to accept challenge');
@@ -1405,6 +1436,8 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
                   >
                     {acceptingId === c.id ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : c.type === 'game' ? (
+                      <><Swords className="w-3.5 h-3.5 mr-1" /> Accept & Play</>
                     ) : (
                       <><Check className="w-3.5 h-3.5 mr-1" /> Accept</>
                     )}
@@ -1535,6 +1568,31 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
             );
           })}
         </div>
+      )}
+
+      {/* Challenge flow modals */}
+      {readyModal && (
+        <ChallengeReadyModal
+          isOpen
+          challenge={readyModal.challenge}
+          onConfirm={() => {
+            const { id, gameMode } = readyModal.challenge;
+            setReadyModal(null);
+            navigate(`/game?challengeId=${id}&mode=${gameMode}`);
+          }}
+          onClose={() => setReadyModal(null)}
+        />
+      )}
+      {battleResult && (
+        <BattleResultOverlay
+          challenge={battleResult}
+          myAddress={myAddress}
+          onReturn={() => {
+            setBattleResult(null);
+            fetchOpen();
+            fetchMine();
+          }}
+        />
       )}
     </div>
   );
