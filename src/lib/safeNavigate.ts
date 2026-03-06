@@ -35,12 +35,14 @@ export function goBack(navigate: NavigateFunction, fallback = '/app') {
   cleanupOverlays();
 
   const depth = getInternalNavDepth();
-  // Only go back if we have tracked internal navigation history
   if (depth > 0) {
     setInternalNavDepth(depth - 1);
     navigate(-1);
+  } else if (window.history.length > 1) {
+    // Browser has history — safe to go back without leaving the app
+    navigate(-1);
   } else {
-    // Pass state so Index.tsx knows we're returning from a sub-page and shouldn't disconnect wallet
+    // No history at all (e.g. opened via direct URL) — fallback
     navigate(fallback, { replace: true, state: { fromSubPage: true } });
   }
 }

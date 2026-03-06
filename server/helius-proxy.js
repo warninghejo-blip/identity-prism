@@ -33,6 +33,13 @@ import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-w
 import jwt from 'jsonwebtoken';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
+import {
+  initFirebase,
+  isAvailable as fbAvailable,
+  setDoc as fbSet,
+  getAllDocs as fbGetAll,
+  batchSet as fbBatchSet,
+} from './services/firebase.js';
 
 const loadEnvFile = (filePath) => {
   try {
@@ -88,6 +95,7 @@ const getCachedSkrPriceUsd = async () => {
 };
 
 loadEnvFile(process.env.ENV_PATH ?? path.join(process.cwd(), '.env'));
+initFirebase();
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = (process.env.HOST ?? '0.0.0.0').trim() || '0.0.0.0';
@@ -103,7 +111,7 @@ const DAS_METHODS = new Set([
   'getAssetsByGroup', 'getAssetsByCreator', 'getAssetsByAuthority', 'searchAssets',
   'getSignaturesForAsset', 'getTokenAccounts', 'getNftEditions',
 ]);
-const CORS_ORIGIN = process.env.CORS_ORIGIN ?? '*';
+const CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'https://identityprism.xyz';
 const METADATA_DIR = process.env.METADATA_DIR
   ? path.resolve(process.env.METADATA_DIR)
   : path.join(process.cwd(), 'metadata');
@@ -168,14 +176,91 @@ setInterval(() => {
  * Verify a Solana wallet signature (Ed25519) using node:crypto.
  * Returns true if signature of `message` is valid for `address`.
  */
-function verifyWalletSignature(address, message, signatureBase64) {
+function verifyWalletSignature(address, message, signatureRaw) {
   try {
-    const nacl = require('tweetnacl');
     const pubkeyBytes = new PublicKey(address).toBytes();
     const msgBytes = Buffer.from(message, 'utf8');
-    const sigBytes = Buffer.from(signatureBase64, 'base64');
-    return nacl.sign.detached.verify(msgBytes, sigBytes, pubkeyBytes);
-  } catch {
+
+    // Try multiple signature decodings: hex (128 chars) → base64 (88 chars) → raw base64
+    const encodings = [];
+    const isHex = /^[0-9a-fA-F]+$/.test(signatureRaw) && signatureRaw.length === 128;
+    if (isHex) {
+      encodings.push({ name: 'hex', bytes: Buffer.from(signatureRaw, 'hex') });
+      // Also try base64 decoding of the same string as fallback
+      encodings.push({ name: 'base64-fallback', bytes: Buffer.from(signatureRaw, 'base64') });
+    } else {
+      encodings.push({ name: 'base64', bytes: Buffer.from(signatureRaw, 'base64') });
+      // Also try hex decoding as fallback
+      if (/^[0-9a-fA-F]+$/.test(signatureRaw)) {
+        encodings.push({ name: 'hex-fallback', bytes: Buffer.from(signatureRaw, 'hex') });
+      }
+    }
+
+    console.log('[auth:verify]', {
+      address: address.slice(0, 8),
+      msgLen: msgBytes.length,
+      pubkeyLen: pubkeyBytes.length,
+      rawSigLen: signatureRaw.length,
+      encodingsCount: encodings.length,
+      primaryEncoding: encodings[0]?.name,
+      primarySigLen: encodings[0]?.bytes.length,
+    });
+
+    // Build SPKI key once
+    const ed25519SpkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+    let spkiKey = null;
+    try {
+      spkiKey = crypto.createPublicKey({
+        key: Buffer.concat([ed25519SpkiPrefix, Buffer.from(pubkeyBytes)]),
+        format: 'der',
+        type: 'spki',
+      });
+    } catch (e) {
+      console.warn('[auth:verify] SPKI key creation failed:', e.message);
+    }
+
+    let nacl = null;
+    try { nacl = require('tweetnacl'); } catch { /* ignore */ }
+
+    for (const { name, bytes: sigBytes } of encodings) {
+      if (sigBytes.length !== 64) {
+        console.log(`[auth:verify] ${name}: skip (len=${sigBytes.length}, need 64)`);
+        continue;
+      }
+
+      // Try Node.js native Ed25519
+      if (spkiKey) {
+        try {
+          const result = crypto.verify(null, msgBytes, spkiKey, sigBytes);
+          if (result) {
+            console.log(`[auth:verify] ${name} + native crypto: PASS`);
+            return true;
+          }
+          console.log(`[auth:verify] ${name} + native crypto: fail`);
+        } catch (e) {
+          console.warn(`[auth:verify] ${name} + native crypto error:`, e.message);
+        }
+      }
+
+      // Try tweetnacl
+      if (nacl) {
+        try {
+          const result = nacl.sign.detached.verify(msgBytes, sigBytes, pubkeyBytes);
+          if (result) {
+            console.log(`[auth:verify] ${name} + tweetnacl: PASS`);
+            return true;
+          }
+          console.log(`[auth:verify] ${name} + tweetnacl: fail`);
+        } catch (e) {
+          console.warn(`[auth:verify] ${name} + tweetnacl error:`, e.message);
+        }
+      }
+    }
+
+    console.warn('[auth:verify] All verification attempts failed');
+    return false;
+  } catch (e) {
+    console.error('[auth:verify] ERROR:', e.message);
     return false;
   }
 }
@@ -218,6 +303,19 @@ function optionalJwt(req, res) {
     // Token present but invalid — still allow, just ignore the bad token
     return { ok: true, address: null };
   }
+}
+
+/**
+ * Admin key check: requires X-Admin-Key header matching ADMIN_KEY env var.
+ * Returns true if authorized, false (and sends 403) if not.
+ */
+function requireAdminKey(req, res) {
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== process.env.ADMIN_KEY) {
+    respondJson(res, 403, { error: 'Forbidden' });
+    return false;
+  }
+  return true;
 }
 
 const TOKEN_ADDRESSES = {
@@ -275,13 +373,19 @@ const prunePendingMints = () => {
   }
 };
 
-const storePendingMint = ({ requestId, owner, assetId, assetSecret, transaction }) => {
+const storePendingMint = ({ requestId, owner, assetId, assetSecret, transaction, score, tier, traits, stats, metadataUri, isRemint }) => {
   prunePendingMints();
   pendingMintSigners.set(requestId, {
     owner,
     assetId,
     assetSecret,
     transaction,
+    score,
+    tier,
+    traits,
+    stats,
+    metadataUri,
+    isRemint,
     createdAt: Date.now(),
   });
 };
@@ -377,9 +481,10 @@ const persistGameSessionProofs = () => {
       updatedAt: new Date().toISOString(),
       sessions: Array.from(gameSessionProofs.values()),
     };
-    fs.writeFileSync(GAME_SESSION_STORE_FILE, JSON.stringify(payload, null, 2));
+    fs.promises.writeFile(GAME_SESSION_STORE_FILE, JSON.stringify(payload, null, 2))
+      .catch(error => console.warn('[game-session] Failed to persist proofs', error));
   } catch (error) {
-    console.warn('[game-session] Failed to persist proofs', error);
+    console.warn('[game-session] Failed to serialize proofs', error);
   }
 };
 
@@ -462,12 +567,13 @@ const loadLeaderboard = () => {
   }
 };
 
+let leaderboardCache = null;
+let leaderboardCacheTime = 0;
+
 const persistLeaderboard = () => {
-  try {
-    fs.writeFileSync(LEADERBOARD_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), entries: leaderboardEntries }, null, 2));
-  } catch (err) {
-    console.warn('[leaderboard] Failed to persist', err);
-  }
+  leaderboardCache = null; // invalidate cache on write
+  fs.promises.writeFile(LEADERBOARD_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), entries: leaderboardEntries }, null, 2))
+    .catch(err => console.warn('[leaderboard] Failed to persist', err));
 };
 
 const submitLeaderboardEntry = (entry) => {
@@ -504,7 +610,24 @@ const COINS_STORE_FILE = process.env.COINS_STORE_FILE
 
 const coinBalances = new Map();
 
-const loadCoinBalances = () => {
+const loadCoinBalances = async () => {
+  // Try Firestore first
+  if (fbAvailable()) {
+    try {
+      const docs = await fbGetAll('coinBalances');
+      if (docs.size > 0) {
+        for (const [addr, data] of docs) {
+          const bal = typeof data.balance === 'number' ? data.balance : data;
+          if (typeof bal === 'number') coinBalances.set(addr, bal);
+        }
+        console.log(`[coins] Loaded ${coinBalances.size} balances from Firestore`);
+        return;
+      }
+    } catch (err) {
+      console.warn('[coins] Firestore load failed, falling back to JSON:', err.message);
+    }
+  }
+  // Fallback to JSON
   try {
     if (!fs.existsSync(COINS_STORE_FILE)) return;
     const raw = fs.readFileSync(COINS_STORE_FILE, 'utf8');
@@ -514,20 +637,25 @@ const loadCoinBalances = () => {
     for (const [addr, bal] of Object.entries(entries)) {
       if (typeof bal === 'number') coinBalances.set(addr, bal);
     }
-    console.log(`[coins] Loaded ${coinBalances.size} balances`);
+    console.log(`[coins] Loaded ${coinBalances.size} balances from JSON`);
+    // Auto-migrate to Firestore
+    if (coinBalances.size > 0 && fbAvailable()) {
+      console.log('[coins] Migrating JSON data to Firestore...');
+      const entries = [...coinBalances.entries()].map(([addr, bal]) => [addr, { balance: bal, updatedAt: new Date().toISOString() }]);
+      fbBatchSet('coinBalances', entries)
+        .then(() => console.log('[coins] Migration complete'))
+        .catch(err => console.warn('[coins] Migration failed:', err.message));
+    }
   } catch (err) {
     console.warn('[coins] Failed to load', err);
   }
 };
 
 const persistCoinBalances = () => {
-  try {
-    const obj = {};
-    for (const [k, v] of coinBalances) obj[k] = v;
-    fs.writeFileSync(COINS_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), balances: obj }, null, 2));
-  } catch (err) {
-    console.warn('[coins] Failed to persist', err);
-  }
+  const obj = {};
+  for (const [k, v] of coinBalances) obj[k] = v;
+  fs.promises.writeFile(COINS_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), balances: obj }, null, 2))
+    .catch(err => console.warn('[coins] Failed to persist', err));
 };
 
 const getCoinBalance = (address) => coinBalances.get(address) || 0;
@@ -535,9 +663,13 @@ const getCoinBalance = (address) => coinBalances.get(address) || 0;
 const setCoinBalance = (address, coins) => {
   coinBalances.set(address, coins);
   persistCoinBalances();
+  if (fbAvailable()) {
+    fbSet('coinBalances', address, { balance: coins, updatedAt: new Date().toISOString() })
+      .catch(() => {});
+  }
 };
 
-loadCoinBalances();
+// coinBalances loaded async in initData()
 
 // ── Server-side Minted address tracking ──
 const MINTED_ADDRESSES_FILE = path.join(METADATA_DIR, 'minted-addresses.json');
@@ -560,21 +692,36 @@ const loadMintedAddresses = () => {
 };
 
 const saveMintedAddresses = () => {
-  try {
-    fs.writeFileSync(MINTED_ADDRESSES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), addresses: [...mintedAddresses] }, null, 2));
-  } catch (err) {
-    console.warn('[minted] Failed to persist', err);
-  }
+  fs.promises.writeFile(MINTED_ADDRESSES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), addresses: [...mintedAddresses] }, null, 2))
+    .catch(err => console.warn('[minted] Failed to persist', err));
 };
 
-loadMintedAddresses();
+// mintedAddresses loaded in initData()
 
 // ── Server-side Score History (per wallet, last 20 scores) ──
 const SCORE_HISTORY_FILE = path.join(METADATA_DIR, 'score-history.json');
 const scoreHistory = new Map(); // address -> { scores: [{ score, tier, date }], lastUpdated }
 const SCORE_HISTORY_MAX = 20;
 
-const loadScoreHistory = () => {
+const loadScoreHistory = async () => {
+  // Try Firestore first
+  if (fbAvailable()) {
+    try {
+      const docs = await fbGetAll('scoreHistory');
+      if (docs.size > 0) {
+        for (const [addr, data] of docs) {
+          if (Array.isArray(data.scores)) {
+            scoreHistory.set(addr, { scores: data.scores.slice(0, SCORE_HISTORY_MAX), lastUpdated: data.lastUpdated || null });
+          }
+        }
+        console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets from Firestore`);
+        return;
+      }
+    } catch (err) {
+      console.warn('[score-history] Firestore load failed, falling back to JSON:', err.message);
+    }
+  }
+  // Fallback to JSON
   try {
     if (!fs.existsSync(SCORE_HISTORY_FILE)) return;
     const raw = fs.readFileSync(SCORE_HISTORY_FILE, 'utf8');
@@ -586,7 +733,14 @@ const loadScoreHistory = () => {
         scoreHistory.set(addr, { scores: entry.scores.slice(0, SCORE_HISTORY_MAX), lastUpdated: entry.lastUpdated || null });
       }
     }
-    console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets`);
+    console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets from JSON`);
+    // Auto-migrate to Firestore
+    if (scoreHistory.size > 0 && fbAvailable()) {
+      console.log('[score-history] Migrating JSON data to Firestore...');
+      fbBatchSet('scoreHistory', [...scoreHistory.entries()])
+        .then(() => console.log('[score-history] Migration complete'))
+        .catch(err => console.warn('[score-history] Migration failed:', err.message));
+    }
   } catch (err) {
     console.warn('[score-history] Failed to load', err);
   }
@@ -614,10 +768,236 @@ const addScoreEntry = (address, score, tier) => {
   entry.lastUpdated = now;
   scoreHistory.set(address, entry);
   persistScoreHistory();
+  if (fbAvailable()) {
+    fbSet('scoreHistory', address, { scores: entry.scores, lastUpdated: entry.lastUpdated })
+      .catch(() => {});
+  }
   return entry;
 };
 
-loadScoreHistory();
+// scoreHistory loaded async in initData()
+
+// ── Server-side Wallet Database (comprehensive wallet data) ──
+const WALLET_DB_FILE = path.join(METADATA_DIR, 'wallet-database.json');
+const walletDatabase = new Map(); // address -> wallet data object
+
+const loadWalletDatabase = async () => {
+  // Try Firestore first
+  if (fbAvailable()) {
+    try {
+      const docs = await fbGetAll('wallets');
+      if (docs.size > 0) {
+        for (const [addr, data] of docs) {
+          if (addr && typeof data === 'object') walletDatabase.set(addr, data);
+        }
+        console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from Firestore`);
+        return;
+      }
+    } catch (err) {
+      console.warn('[wallet-db] Firestore load failed, falling back to JSON:', err.message);
+    }
+  }
+  // Fallback to JSON
+  try {
+    if (!fs.existsSync(WALLET_DB_FILE)) return;
+    const raw = fs.readFileSync(WALLET_DB_FILE, 'utf8');
+    if (!raw.trim()) return;
+    const parsed = JSON.parse(raw);
+    const wallets = parsed?.wallets || {};
+    for (const [addr, entry] of Object.entries(wallets)) {
+      if (addr && typeof entry === 'object') walletDatabase.set(addr, entry);
+    }
+    console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from JSON`);
+    // Auto-migrate to Firestore
+    if (walletDatabase.size > 0 && fbAvailable()) {
+      console.log('[wallet-db] Migrating JSON data to Firestore...');
+      fbBatchSet('wallets', [...walletDatabase.entries()])
+        .then(() => console.log('[wallet-db] Migration complete'))
+        .catch(err => console.warn('[wallet-db] Migration failed:', err.message));
+    }
+  } catch (err) {
+    console.warn('[wallet-db] Failed to load', err);
+  }
+};
+
+const persistWalletDatabase = () => {
+  // JSON (synchronous fallback)
+  try {
+    const obj = {};
+    for (const [k, v] of walletDatabase) obj[k] = v;
+    fs.writeFileSync(WALLET_DB_FILE, JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      totalWallets: walletDatabase.size,
+      wallets: obj,
+    }, null, 2));
+  } catch (err) {
+    console.warn('[wallet-db] Failed to persist', err);
+  }
+  // Firestore (async, fire-and-forget)
+  if (fbAvailable()) {
+    fbBatchSet('wallets', [...walletDatabase.entries()]).catch(err =>
+      console.warn('[wallet-db] Firestore batch write failed:', err.message));
+  }
+};
+
+let walletDbSaveTimer = null;
+const saveWalletDatabaseDebounced = () => {
+  if (walletDbSaveTimer) clearTimeout(walletDbSaveTimer);
+  walletDbSaveTimer = setTimeout(persistWalletDatabase, 500);
+};
+
+const updateWalletEntry = (address, updates) => {
+  const existing = walletDatabase.get(address) || { address };
+  const merged = { ...existing, ...updates, address };
+  walletDatabase.set(address, merged);
+  saveWalletDatabaseDebounced();
+  if (fbAvailable()) {
+    fbSet('wallets', address, merged).catch(() => {});
+  }
+};
+
+// walletDatabase loaded async in initData()
+
+// ── Backfill wallet database from existing data (sync: scoreHistory + coinBalances) ──
+const backfillWalletDatabaseSync = () => {
+  if (walletDatabase.size > 0) return; // already has data
+  let count = 0;
+  for (const [address, hist] of scoreHistory) {
+    const scores = hist.scores || [];
+    walletDatabase.set(address, {
+      address,
+      firstSeenAt: scores.length > 0 ? scores[scores.length - 1]?.date : new Date().toISOString(),
+      lastSeenAt: hist.lastUpdated || new Date().toISOString(),
+      scanCount: scores.length,
+      score: scores[0]?.score || 0,
+      tier: scores[0]?.tier || 'unknown',
+      coins: getCoinBalance(address),
+      source: 'backfill-local',
+    });
+    count++;
+  }
+  for (const [address] of coinBalances) {
+    if (!walletDatabase.has(address) && address !== 'anonymous') {
+      walletDatabase.set(address, {
+        address,
+        coins: getCoinBalance(address),
+        source: 'backfill-local',
+      });
+      count++;
+    }
+  }
+  for (const address of mintedAddresses) {
+    const w = walletDatabase.get(address) || { address, source: 'backfill-local' };
+    if (!w.mint) w.mint = { minted: true, mintedAt: null, assetId: null, txSignature: null, metadataUri: '', remints: 0, lastRemintAt: null };
+    walletDatabase.set(address, w);
+  }
+  if (count > 0) {
+    persistWalletDatabase();
+    console.log(`[wallet-db] Backfilled ${count} wallets from local data`);
+  }
+};
+// backfillWalletDatabaseSync called from initData()
+
+// ── Async init: load data from Firestore (fallback JSON) ──
+const initData = async () => {
+  await loadCoinBalances();
+  loadMintedAddresses();
+  await loadScoreHistory();
+  await loadWalletDatabase();
+  backfillWalletDatabaseSync();
+};
+
+// ── Async backfill: DAS API + sybil batch (runs after server start) ──
+const backfillWalletDatabaseAsync = async () => {
+  // 8b: Fetch all NFTs from collection via DAS API getAssetsByGroup
+  if (!CORE_COLLECTION) {
+    console.log('[wallet-db] Skipping DAS backfill: CORE_COLLECTION not set');
+    return;
+  }
+  const rpcUrl = getRpcUrl('backfill');
+  if (!rpcUrl) return;
+
+  console.log('[wallet-db] Starting async DAS backfill...');
+  let dasCount = 0;
+  try {
+    let page = 1;
+    let hasMore = true;
+    while (hasMore) {
+      const dasRes = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: `backfill-${page}`,
+          method: 'getAssetsByGroup',
+          params: { groupKey: 'collection', groupValue: CORE_COLLECTION, page, limit: 1000 },
+        }),
+      });
+      const dasJson = await dasRes.json();
+      const items = dasJson?.result?.items || [];
+      if (items.length === 0) { hasMore = false; break; }
+
+      for (const item of items) {
+        const owner = item.ownership?.owner;
+        if (!owner) continue;
+        const assetId = item.id;
+        const attrs = item.content?.metadata?.attributes || [];
+        const attrMap = {};
+        for (const a of attrs) attrMap[a.trait_type] = a.value;
+
+        const w = walletDatabase.get(owner) || { address: owner, source: 'backfill-das' };
+        w.mint = {
+          minted: true,
+          assetId,
+          mintedAt: w.mint?.mintedAt || null,
+          txSignature: w.mint?.txSignature || null,
+          metadataUri: item.content?.json_uri || w.mint?.metadataUri || '',
+          remints: w.mint?.remints || 0,
+          lastRemintAt: w.mint?.lastRemintAt || null,
+        };
+        if (attrMap['Score'] != null) w.score = parseInt(attrMap['Score'], 10) || w.score;
+        if (attrMap['Tier']) w.tier = attrMap['Tier'];
+        if (!w.stats) {
+          w.stats = {
+            nfts: parseInt(attrMap['NFTs'], 10) || 0,
+            tokens: parseInt(attrMap['Tokens'], 10) || 0,
+            transactions: parseInt(attrMap['Transactions'], 10) || 0,
+            walletAgeYears: Math.floor((parseInt(attrMap['Wallet Age (days)'], 10) || 0) / 365),
+          };
+        }
+        walletDatabase.set(owner, w);
+        dasCount++;
+      }
+      if (items.length < 1000) hasMore = false;
+      else page++;
+    }
+    if (dasCount > 0) {
+      persistWalletDatabase();
+      console.log(`[wallet-db] DAS backfill: enriched ${dasCount} wallet entries`);
+    }
+  } catch (err) {
+    console.warn('[wallet-db] DAS backfill failed', err.message || err);
+  }
+
+  // 8c: Batch sybil analysis for wallets without sybil data (throttled 2 req/sec)
+  const walletsNeedingSybil = [];
+  for (const [addr, w] of walletDatabase) {
+    if (!w.sybil && addr.length >= 32) walletsNeedingSybil.push(addr);
+  }
+  if (walletsNeedingSybil.length > 0) {
+    console.log(`[wallet-db] Sybil backfill: ${walletsNeedingSybil.length} wallets need analysis`);
+    let sybilCount = 0;
+    for (const addr of walletsNeedingSybil) {
+      try {
+        const sybilRes = await fetch(`http://127.0.0.1:${PORT}/api/sybil/analysis?address=${addr}`);
+        if (sybilRes.ok) sybilCount++;
+      } catch { /* ignore individual failures */ }
+      // Throttle: 500ms between requests (2 req/sec)
+      await new Promise(r => setTimeout(r, 500));
+    }
+    console.log(`[wallet-db] Sybil backfill complete: ${sybilCount}/${walletsNeedingSybil.length} analyzed`);
+  }
+};
 
 // ── Server-side Achievement tracking (unlocked + claimed per wallet) ──
 const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
@@ -653,15 +1033,12 @@ const loadAchievementData = () => {
 };
 
 const persistAchievementData = () => {
-  try {
-    const obj = {};
-    for (const [k, v] of achievementData) {
-      obj[k] = { unlocked: [...v.unlocked], claimed: [...v.claimed] };
-    }
-    fs.writeFileSync(ACHIEVEMENTS_STORE_FILE, JSON.stringify({ version: 2, updatedAt: new Date().toISOString(), data: obj }, null, 2));
-  } catch (err) {
-    console.warn('[achievements] Failed to persist', err);
+  const obj = {};
+  for (const [k, v] of achievementData) {
+    obj[k] = { unlocked: [...v.unlocked], claimed: [...v.claimed] };
   }
+  fs.promises.writeFile(ACHIEVEMENTS_STORE_FILE, JSON.stringify({ version: 2, updatedAt: new Date().toISOString(), data: obj }, null, 2))
+    .catch(err => console.warn('[achievements] Failed to persist', err));
 };
 
 const getWalletAchievements = (address) => {
@@ -714,13 +1091,10 @@ const loadReviveData = () => {
 };
 
 const persistReviveData = () => {
-  try {
-    const obj = {};
-    for (const [k, v] of reviveData) obj[k] = v;
-    fs.writeFileSync(REVIVES_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
-  } catch (err) {
-    console.warn('[revives] Failed to persist', err);
-  }
+  const obj = {};
+  for (const [k, v] of reviveData) obj[k] = v;
+  fs.promises.writeFile(REVIVES_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2))
+    .catch(err => console.warn('[revives] Failed to persist', err));
 };
 
 const getToday = () => new Date().toISOString().slice(0, 10);
@@ -753,6 +1127,143 @@ const useRevive = (address, gameMode) => {
 };
 
 loadReviveData();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Quest Progress Store
+// ═══════════════════════════════════════════════════════════════════════════
+const QUEST_PROGRESS_FILE = path.join(METADATA_DIR, 'quest-progress.json');
+const questProgress = new Map();
+try {
+  if (fs.existsSync(QUEST_PROGRESS_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(QUEST_PROGRESS_FILE, 'utf8'));
+    if (raw.data) for (const [k, v] of Object.entries(raw.data)) questProgress.set(k, v);
+    console.log(`[quests] Loaded ${questProgress.size} quest records`);
+  }
+} catch {}
+const persistQuestProgress = () => {
+  const obj = {};
+  for (const [k, v] of questProgress) obj[k] = v;
+  fs.promises.writeFile(QUEST_PROGRESS_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2))
+    .catch(err => console.warn('[quests] Failed to persist', err));
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Composite Score Engine (0-1000)
+// ═══════════════════════════════════════════════════════════════════════════
+const COMPOSITE_TIER_MAP = [
+  [100, 'mercury'], [200, 'mars'], [350, 'venus'], [500, 'earth'],
+  [650, 'neptune'], [750, 'uranus'], [850, 'saturn'], [930, 'jupiter'],
+  [980, 'sun'], [Infinity, 'binary_sun'],
+];
+
+function getCompositeTier(score) {
+  for (const [threshold, tier] of COMPOSITE_TIER_MAP) {
+    if (score <= threshold) return tier;
+  }
+  return 'binary_sun';
+}
+
+function calculateCompositeScore(input) {
+  const { onchainScore = 0, trustScore = 0, gameScores = [], gameTypes = new Set(), achievementCount = 0, challengesWon = 0, constellationExplored = 0, compareCount = 0, questsCompleted = 0, streakDays = 0, scanCount = 0 } = input;
+
+  // On-chain (40%, max 400)
+  const onchain = Math.min(400, Math.round((onchainScore / 1400) * 400));
+
+  // Sybil Trust (25%, max 250)
+  const sybilTrust = Math.min(250, Math.round((trustScore / 100) * 250));
+
+  // Human Proof (15%, max 150)
+  const gameScoreTotal = gameScores.length > 0
+    ? Math.min(80, Math.round(Math.log2(1 + gameScores.reduce((a, b) => a + b, 0)) * 8))
+    : 0;
+  const gameDiversity = Math.min(30, gameTypes.size * 5);
+  const achievementPts = Math.min(40, achievementCount * 5);
+  const humanProof = Math.min(150, gameScoreTotal + gameDiversity + achievementPts);
+
+  // Social (10%, max 100)
+  const challengePts = Math.min(40, challengesWon * 5);
+  const constellationPts = Math.min(35, constellationExplored * 2);
+  const comparePts = Math.min(25, compareCount * 3);
+  const social = Math.min(100, challengePts + constellationPts + comparePts);
+
+  // Engagement (10%, max 100)
+  const questPts = Math.min(50, questsCompleted * 2);
+  const streakPts = Math.min(30, streakDays * 3);
+  const scanPts = Math.min(20, scanCount > 0 ? Math.round(Math.log2(1 + scanCount) * 5) : 0);
+  const engagement = Math.min(100, questPts + streakPts + scanPts);
+
+  const total = onchain + sybilTrust + humanProof + social + engagement;
+  const tier = getCompositeTier(total);
+
+  return {
+    compositeScore: total,
+    compositeTier: tier,
+    breakdown: { onchain, sybilTrust, humanProof, social, engagement },
+  };
+}
+
+function buildCompositeInput(address) {
+  const walletEntry = walletDatabase.get(address) || {};
+  const onchainScore = walletEntry.score || 0;
+  const trustScore = walletEntry.sybil?.trustScore || 0;
+  const socialStats = walletEntry.socialStats || {};
+
+  // Game scores from leaderboard
+  const playerEntries = leaderboardEntries.filter(e => e.address === address);
+  const gameScores = playerEntries.map(e => e.score || 0);
+  const gameTypes = new Set(playerEntries.map(e => e.gameType || 'orbit'));
+
+  // Achievements
+  const achEntry = achievementData.get(address);
+  const achievementCount = achEntry ? achEntry.unlocked.size : 0;
+
+  // Quest progress
+  const qp = questProgress.get(address);
+  let questsCompleted = 0;
+  let streakDays = 0;
+  if (qp && qp.quests) {
+    for (const q of Object.values(qp.quests)) {
+      if (q.completed) questsCompleted++;
+    }
+    streakDays = qp.streakDays || 0;
+  }
+
+  return {
+    onchainScore,
+    trustScore,
+    gameScores,
+    gameTypes,
+    achievementCount,
+    challengesWon: socialStats.challengesWon || 0,
+    constellationExplored: socialStats.constellationExplored || 0,
+    compareCount: socialStats.compareCount || 0,
+    questsCompleted,
+    streakDays,
+    scanCount: walletEntry.scanCount || 0,
+  };
+}
+
+function triggerCompositeUpdate(address) {
+  try {
+    const input = buildCompositeInput(address);
+    const result = calculateCompositeScore(input);
+    const existing = walletDatabase.get(address) || {};
+    existing.composite = result;
+    walletDatabase.set(address, existing);
+    saveWalletDatabaseDebounced();
+  } catch (err) {
+    console.warn('[composite] Failed to update for', address, err.message);
+  }
+}
+
+function backfillCompositeScores() {
+  let count = 0;
+  for (const [address] of walletDatabase) {
+    triggerCompositeUpdate(address);
+    count++;
+  }
+  console.log(`[composite] Backfilled ${count} wallets`);
+}
 
 const getHeliusKeyIndex = (seed = '') => {
   if (!HELIUS_KEYS.length) return -1;
@@ -1725,8 +2236,9 @@ const server = http.createServer(async (req, res) => {
       if (!address) { respondJson(res, 400, { error: 'address required' }); return; }
       try { new PublicKey(address); } catch { respondJson(res, 400, { error: 'Invalid address' }); return; }
       const nonce = crypto.randomBytes(16).toString('hex');
-      authChallenges.set(nonce, { address, expiresAt: Date.now() + AUTH_CHALLENGE_TTL_MS });
       const message = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
+      authChallenges.set(nonce, { address, message, expiresAt: Date.now() + AUTH_CHALLENGE_TTL_MS });
+      console.log('[auth:challenge] issued:', { address: address.slice(0, 8), nonce: nonce.slice(0, 8), msgLen: message.length });
       respondJson(res, 200, { nonce, message });
     } catch (e) {
       respondJson(res, 500, { error: 'Challenge failed' });
@@ -1738,22 +2250,53 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/auth/token' && req.method === 'POST') {
     try {
       const body = await readBody(req);
+      console.log('[auth:token] raw body length:', body?.length);
       const parsed = safeParseJson(body);
-      const { address, nonce, signature } = parsed ?? {};
+      const address = typeof parsed?.address === 'string' ? parsed.address.trim() : '';
+      const { nonce, signature } = parsed ?? {};
+      console.log('[auth:token] parsed:', { address: address?.slice(0, 8), nonce: nonce?.slice(0, 8), sigLen: signature?.length, sigType: typeof signature });
       if (!address || !nonce || !signature) {
         respondJson(res, 400, { error: 'address, nonce, and signature required' }); return;
       }
       const challenge = authChallenges.get(nonce);
-      if (!challenge) { respondJson(res, 401, { error: 'Invalid or expired nonce' }); return; }
-      if (challenge.address !== address) { respondJson(res, 401, { error: 'Address mismatch' }); return; }
+      if (!challenge) {
+        console.warn('[auth:token] nonce not found in authChallenges. Map size:', authChallenges.size);
+        respondJson(res, 401, { error: 'Invalid or expired nonce' }); return;
+      }
+      if (challenge.address !== address) {
+        console.warn('[auth:token] address mismatch:', { expected: challenge.address.slice(0, 8), got: address.slice(0, 8) });
+        respondJson(res, 401, { error: 'Address mismatch' }); return;
+      }
       if (challenge.expiresAt < Date.now()) {
         authChallenges.delete(nonce);
         respondJson(res, 401, { error: 'Challenge expired' }); return;
       }
-      // Verify Ed25519 signature using the robust verifyWalletSignature helper
-      const message = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
-      const verified = verifyWalletSignature(address, message, signature);
-      if (!verified) { respondJson(res, 401, { error: 'Invalid signature' }); return; }
+      // Use the STORED challenge message (the one wallet actually signed)
+      const challengeMessage = challenge.message;
+      // Also reconstruct for comparison logging
+      const reconstructed = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
+      const messagesMatch = challengeMessage === reconstructed;
+      console.log('[auth:token] message match:', messagesMatch, 'msgLen:', challengeMessage.length);
+
+      // Try stored message first (wallet signed THIS), then reconstructed as fallback
+      let verified = verifyWalletSignature(address, challengeMessage, signature);
+      if (!verified && !messagesMatch) {
+        console.warn('[auth] Stored message failed, trying reconstructed...');
+        verified = verifyWalletSignature(address, reconstructed, signature);
+      }
+      if (!verified) {
+        // Log detailed info for debugging
+        console.warn('[auth] Signature verification failed', {
+          address: address.slice(0, 8),
+          nonce: nonce.slice(0, 8),
+          sigLen: signature?.length,
+          sigType: typeof signature,
+          sigPreview: typeof signature === 'string' ? signature.slice(0, 16) + '...' : 'N/A',
+          messagesMatch,
+          challengeMsgLen: challengeMessage.length,
+        });
+        respondJson(res, 401, { error: 'Invalid signature' }); return;
+      }
       authChallenges.delete(nonce); // one-time use
       const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL });
       console.info('[auth] JWT issued', { address: address.slice(0, 8) });
@@ -2348,28 +2891,37 @@ const server = http.createServer(async (req, res) => {
 
   // ── Leaderboard API ──
   if (pathname === '/api/game/leaderboard' && req.method === 'GET') {
-    const gameTypeFilter = url.searchParams.get('gameType');
+    const gameTypeFilter = url.searchParams.get('gameType') || '';
+    const cacheKey = `lb:${gameTypeFilter}`;
+    if (leaderboardCache && leaderboardCache.key === cacheKey && Date.now() - leaderboardCacheTime < 10_000) {
+      respondJson(res, 200, leaderboardCache.data);
+      return;
+    }
     const filtered = gameTypeFilter
       ? leaderboardEntries.filter(e => (e.gameType || 'orbit') === gameTypeFilter)
       : leaderboardEntries;
-    respondJson(res, 200, { entries: filtered.slice(0, 50) });
+    const data = { entries: filtered.slice(0, 50) };
+    leaderboardCache = { key: cacheKey, data };
+    leaderboardCacheTime = Date.now();
+    respondJson(res, 200, data);
     return;
   }
 
   if (pathname === '/api/game/leaderboard' && req.method === 'POST') {
-    const jwtAuth = optionalJwt(req, res);
+    const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
       const { address: bodyAddress, score, playedAt, txSignature, gameType } = parsed;
-      const address = jwtAuth.address || bodyAddress;
-      if (jwtAuth.address && bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      const address = jwtAuth.address;
+      if (bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
         respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
         return;
       }
       const result = submitLeaderboardEntry({ address, score, playedAt, txSignature, gameType });
+      triggerCompositeUpdate(address);
       const gt = gameType || 'orbit';
       const filtered = leaderboardEntries.filter(e => (e.gameType || 'orbit') === gt);
       respondJson(res, 200, { entry: result, leaderboard: filtered.slice(0, 50) });
@@ -2392,21 +2944,24 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/game/coins' && req.method === 'POST') {
-    const jwtAuth = optionalJwt(req, res);
+    const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
-      const { address: bodyAddr, coins, delta } = parsed;
-      const addr = jwtAuth.address || bodyAddr;
-      if (jwtAuth.address && bodyAddr && bodyAddr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      const { address: bodyAddr, delta } = parsed;
+      const addr = jwtAuth.address;
+      if (bodyAddr && bodyAddr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!addr || typeof addr !== 'string') {
         respondJson(res, 400, { error: 'address (string) required' });
         return;
       }
+      if (typeof delta !== 'number' || !Number.isFinite(delta)) {
+        respondJson(res, 400, { error: 'delta (number) required' });
+        return;
+      }
       const current = getCoinBalance(addr);
-      // Accept the higher of client-reported total or server total
-      const newBalance = Math.max(current, typeof coins === 'number' ? coins : current + (typeof delta === 'number' ? delta : 0));
+      const newBalance = Math.max(0, current + delta);
       setCoinBalance(addr, newBalance);
       respondJson(res, 200, { address: addr, coins: newBalance });
     } catch {
@@ -2460,6 +3015,8 @@ const server = http.createServer(async (req, res) => {
 
   // PUT: sync unlocked achievements (batch, idempotent)
   if (pathname === '/api/game/achievements' && req.method === 'PUT') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
@@ -2468,6 +3025,7 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 400, { error: 'address (string) and unlocked (array) required' });
         return;
       }
+      if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       markAchievementsUnlocked(addr, ids);
       const entry = getWalletAchievements(addr);
       respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
@@ -2537,6 +3095,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/score-history' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
@@ -2545,7 +3105,20 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 400, { error: 'address (string) and score (number) required' });
         return;
       }
+      if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      if (score < 0 || score > 1500) return respondJson(res, 400, { error: 'Score must be between 0 and 1500' });
       const entry = addScoreEntry(addr, score, tier || 'mercury');
+      // ── Update wallet database ──
+      const wExisting = walletDatabase.get(addr) || {};
+      updateWalletEntry(addr, {
+        firstSeenAt: wExisting.firstSeenAt || new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        scanCount: (wExisting.scanCount || 0) + 1,
+        score,
+        tier: tier || 'mercury',
+        source: 'live',
+      });
+      triggerCompositeUpdate(addr);
       respondJson(res, 200, { address: addr, scores: entry.scores, lastUpdated: entry.lastUpdated });
     } catch {
       respondJson(res, 400, { error: 'Invalid JSON body' });
@@ -3194,6 +3767,23 @@ const server = http.createServer(async (req, res) => {
         if (finalOwner) {
           mintedAddresses.add(finalOwner);
           saveMintedAddresses();
+          // ── Record mint in wallet database ──
+          const wMint = walletDatabase.get(finalOwner) || { address: finalOwner };
+          wMint.mint = {
+            minted: true,
+            assetId: pending.assetId,
+            mintedAt: new Date().toISOString(),
+            txSignature: signature,
+            metadataUri: pending.metadataUri || '',
+            remints: (wMint.mint?.remints || 0) + (pending.isRemint ? 1 : 0),
+            lastRemintAt: pending.isRemint ? new Date().toISOString() : (wMint.mint?.lastRemintAt || null),
+          };
+          if (pending.score != null) wMint.score = pending.score;
+          if (pending.tier) wMint.tier = pending.tier;
+          if (pending.traits) wMint.traits = pending.traits;
+          if (pending.stats) wMint.stats = pending.stats;
+          walletDatabase.set(finalOwner, wMint);
+          saveWalletDatabaseDebounced();
         }
 
         respondJson(res, 200, {
@@ -3524,6 +4114,23 @@ const server = http.createServer(async (req, res) => {
         if (owner) {
           mintedAddresses.add(owner);
           saveMintedAddresses();
+          // ── Record admin mint in wallet database ──
+          const wAdmin = walletDatabase.get(owner) || { address: owner };
+          wAdmin.mint = {
+            minted: true,
+            assetId: assetSigner.publicKey,
+            mintedAt: new Date().toISOString(),
+            txSignature: signature,
+            metadataUri: metadataUri || '',
+            remints: (wAdmin.mint?.remints || 0) + (remintMode ? 1 : 0),
+            lastRemintAt: remintMode ? new Date().toISOString() : (wAdmin.mint?.lastRemintAt || null),
+          };
+          if (payload?.score != null) wAdmin.score = payload.score;
+          if (payload?.tier) wAdmin.tier = payload.tier;
+          if (payload?.traits) wAdmin.traits = payload.traits;
+          if (payload?.stats) wAdmin.stats = payload.stats;
+          walletDatabase.set(owner, wAdmin);
+          saveWalletDatabaseDebounced();
         }
 
         respondJson(res, 200, {
@@ -3542,6 +4149,12 @@ const server = http.createServer(async (req, res) => {
         assetId: assetSigner.publicKey,
         assetSecret: Array.from(assetKeypair.secretKey),
         transaction: serialized,
+        score: payload?.score,
+        tier: payload?.tier,
+        traits: payload?.traits,
+        stats: payload?.stats,
+        metadataUri: payload?.metadataUri || metadataUri,
+        isRemint: remintMode,
       });
 
       respondJson(res, 200, {
@@ -3822,6 +4435,8 @@ const server = http.createServer(async (req, res) => {
       respondJson(res, 405, { error: 'Method not allowed' });
       return;
     }
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
 
     try {
       if (!COLLECTION_AUTHORITY_SECRET) {
@@ -3939,6 +4554,8 @@ const server = http.createServer(async (req, res) => {
       respondJson(res, 405, { error: 'Method not allowed' });
       return;
     }
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const body = await readBody(req);
       let payload = {};
@@ -4028,6 +4645,8 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/metadata')) {
     if (req.method === 'POST' && (pathname === '/metadata' || pathname === '/metadata/')) {
+      const jwtAuth = requireJwt(req, res);
+      if (!jwtAuth.ok) return;
       try {
         const body = await readBody(req);
         let payload = {};
@@ -4143,6 +4762,9 @@ const server = http.createServer(async (req, res) => {
       bal.totalEarned += earned;
       bal.lastUpdated = new Date().toISOString();
       setCoinBalance(address, bal.balance);
+      // ── Sync coins to wallet database ──
+      const wEarn = walletDatabase.get(address);
+      if (wEarn) { wEarn.coins = bal.balance; saveWalletDatabaseDebounced(); }
       const tx = {
         id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         address, amount: earned, type: 'earn', source: source || 'unknown',
@@ -4160,6 +4782,13 @@ const server = http.createServer(async (req, res) => {
         timestamp: tx.timestamp,
       });
       if (feedItems.length > 200) feedItems.length = 200;
+      // Track social stats for challenge wins
+      if (source === 'challenge_win') {
+        const wCh = walletDatabase.get(address) || {};
+        const ssCh = wCh.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
+        ssCh.challengesWon = (ssCh.challengesWon || 0) + 1;
+        updateWalletEntry(address, { socialStats: ssCh });
+      }
       respondJson(res, 200, { balance: bal, earned });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
@@ -4181,6 +4810,9 @@ const server = http.createServer(async (req, res) => {
       bal.totalSpent += spent;
       bal.lastUpdated = new Date().toISOString();
       setCoinBalance(address, bal.balance);
+      // ── Sync coins to wallet database ──
+      const wSpend = walletDatabase.get(address);
+      if (wSpend) { wSpend.coins = bal.balance; saveWalletDatabaseDebounced(); }
       const tx = {
         id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         address, amount: spent, type: 'spend', source: source || 'unknown',
@@ -4211,11 +4843,18 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sybil/analysis' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
+    // Rate limit: 30s per IP (heavy endpoint — 13+ RPC calls)
+    const sybilIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const sybilRlKey = `sybil:${sybilIp}`;
+    if (Date.now() - (reputationRateLimit.get(sybilRlKey) || 0) < 30_000) {
+      return respondJson(res, 429, { error: 'Rate limited. Try again in 30 seconds.' });
+    }
     const cached = sybilCache.get(address);
     if (cached && Date.now() - cached.cachedAt < 3600_000) {
       respondJson(res, 200, cached.analysis);
       return;
     }
+    reputationRateLimit.set(sybilRlKey, Date.now());
     try {
       const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
       const pubkey = new PublicKey(address);
@@ -4230,13 +4869,13 @@ const server = http.createServer(async (req, res) => {
       const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
       const tokenAccounts = tokenAccountsResult.status === 'fulfilled' ? tokenAccountsResult.value?.value || [] : [];
 
-      // Paginate to find the true oldest tx (up to 10 pages, 10s timeout) — same depth as fetchIdentitySnapshot
+      // Paginate to find the true oldest tx (up to 10 pages, 30s timeout) — matches fetchIdentitySnapshot depth
       let oldestSig = signatures.length > 0 ? signatures[signatures.length - 1] : null;
       if (signatures.length === 1000) {
         const ageStart = Date.now();
         let cursor = oldestSig?.signature;
         for (let page = 0; page < 9 && cursor; page++) {
-          if (Date.now() - ageStart > 10000) break;
+          if (Date.now() - ageStart > 30_000) break;
           try {
             const older = await conn.getSignaturesForAddress(pubkey, { limit: 1000, before: cursor });
             if (!older.length) break;
@@ -4594,6 +5233,28 @@ const server = http.createServer(async (req, res) => {
         timestamp: new Date().toISOString(),
       };
       sybilCache.set(address, { analysis, cachedAt: Date.now() });
+      // ── Update wallet database with sybil data ──
+      const wSybil = walletDatabase.get(address) || {};
+      const sybilUpdate = {
+        sybil: {
+          riskScore: analysis.riskScore,
+          riskLevel: analysis.riskLevel,
+          trustScore: analysis.trustScore,
+          trustGrade: analysis.trustGrade,
+          updatedAt: new Date().toISOString(),
+        },
+      };
+      if (analysis.metrics) {
+        sybilUpdate.stats = {
+          tokens: analysis.metrics.tokenDiversityCount,
+          nfts: analysis.metrics.nftCount,
+          transactions: analysis.metrics.txCount,
+          solBalance: analysis.metrics.balance,
+          walletAgeYears: Math.floor((analysis.metrics.walletAgeDays || 0) / 365),
+        };
+      }
+      updateWalletEntry(address, sybilUpdate);
+      triggerCompositeUpdate(address);
       respondJson(res, 200, analysis);
     } catch (e) {
       respondJson(res, 500, { error: 'Sybil analysis failed', detail: e.message });
@@ -4808,7 +5469,17 @@ const server = http.createServer(async (req, res) => {
     if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
     const apiKey = req.headers['x-api-key'] || url.searchParams.get('api_key');
-    const maxPerMin = apiKey ? 60 : 10;
+    // API key validation
+    const API_KEY_REGISTRY = new Map(
+      (process.env.REPUTATION_API_KEYS || '').split(',').filter(Boolean).map(k => [k.trim(), true])
+    );
+    let maxPerMin = 10; // no key
+    if (apiKey) {
+      if (!API_KEY_REGISTRY.has(apiKey) && API_KEY_REGISTRY.size > 0) {
+        return respondJson(res, 401, { error: 'Invalid API key' });
+      }
+      maxPerMin = 60;
+    }
     const now = Date.now();
     const rl = reputationV2RateLimit.get(ip) || { count: 0, resetAt: now + 60000 };
     if (now > rl.resetAt) { rl.count = 0; rl.resetAt = now + 60000; }
@@ -4829,11 +5500,19 @@ const server = http.createServer(async (req, res) => {
       const history = getScoreHistory(address);
       const latestScores = (history.scores || []).slice(0, 5);
       const coinBal = getCoinBalance(address);
+      // Composite score
+      const compositeData = (walletDatabase.get(address) || {}).composite || calculateCompositeScore(buildCompositeInput(address));
+      const achEntry = achievementData.get(address);
       const response = {
-        version: '2.0', address,
+        version: '2.1', address,
+        onchainScore: identity.score,
+        compositeScore: compositeData.compositeScore,
+        compositeTier: compositeData.compositeTier,
+        scoreBreakdown: compositeData.breakdown,
         identity: { score: identity.score, maxScore: 1400, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
         stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
-        sybilRisk: sybil ? { score: sybil.riskScore, level: sybil.riskLevel, trustScore: sybil.trustScore, trustGrade: sybil.trustGrade, signalsDetected: sybil.signals?.filter(s => s.detected).length || 0, totalSignals: sybil.signals?.length || 0 } : null,
+        sybilAnalysis: sybil ? { trustScore: sybil.trustScore, trustGrade: sybil.trustGrade, riskScore: sybil.riskScore, riskLevel: sybil.riskLevel, signalsDetected: sybil.signals?.filter(s => s.detected).length || 0, totalSignals: sybil.signals?.length || 0 } : null,
+        achievements: { unlocked: achEntry ? achEntry.unlocked.size : 0, claimed: achEntry ? achEntry.claimed.size : 0 },
         prism: coinBal > 0 ? { balance: coinBal, totalEarned: coinBal } : null,
         scoreHistory: latestScores,
         meta: { timestamp: new Date().toISOString(), cached: Boolean(cachedSybil), provider: 'Identity Prism', website: 'https://identityprism.xyz' },
@@ -4843,6 +5522,32 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       respondJson(res, 500, { error: 'Internal error', detail: e.message });
     }
+    return;
+  }
+
+  // ═══ Quest Sync ═══
+  if (pathname === '/api/quest/sync' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { address, quests } = JSON.parse(await readBody(req));
+      if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      const addr = jwtAuth.address;
+      if (!quests || typeof quests !== 'object') return respondJson(res, 400, { error: 'quests object required' });
+      const existing = questProgress.get(addr) || {};
+      questProgress.set(addr, { ...existing, quests, updatedAt: new Date().toISOString() });
+      persistQuestProgress();
+      triggerCompositeUpdate(addr);
+      respondJson(res, 200, { ok: true });
+    } catch { respondJson(res, 400, { error: 'Invalid JSON body' }); }
+    return;
+  }
+
+  if (pathname === '/api/quest/progress' && req.method === 'GET') {
+    const addr = url.searchParams.get('address');
+    if (!addr) return respondJson(res, 400, { error: 'address required' });
+    const qp = questProgress.get(addr) || { quests: {} };
+    respondJson(res, 200, qp);
     return;
   }
 
@@ -4874,8 +5579,11 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Marketplace Upload ═══
   if (pathname === '/api/marketplace/upload' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const { address, name, description, category, price, modelData, modelFormat, previewImage } = JSON.parse(await readBody(req));
+      if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !name || !modelData || !price) return respondJson(res, 400, { error: 'address, name, modelData, price required' });
       const format = (modelFormat || '').toLowerCase();
       if (!['glb', 'gltf', 'obj'].includes(format)) return respondJson(res, 400, { error: 'Invalid format. Supported: GLB, GLTF, OBJ' });
@@ -4897,7 +5605,7 @@ const server = http.createServer(async (req, res) => {
       const modelPath = path.join(modelsDir, `${id}.${format}`);
       const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
       fs.writeFileSync(modelPath, buf);
-      const listing = { id, seller: address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: previewImage ? previewImage.slice(0, 100000) : null, status: 'approved', purchaseCount: 0, createdAt: Date.now() };
+      const listing = { id, seller: jwtAuth.address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: previewImage ? previewImage.slice(0, 100000) : null, status: 'pending', purchaseCount: 0, createdAt: Date.now() };
       marketplaceListings.set(id, listing);
       saveMarketplace();
       respondJson(res, 200, { listing, message: 'Model uploaded successfully!' });
@@ -5445,18 +6153,24 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/constellation' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
-    // Rate limit: max 1 fresh constellation query per address per 10 min (cache covers this),
-    // plus global limit of 10 non-cached queries per minute to protect RPC quota
+    // Rate limit: 30s per IP (heavy — up to 1000 tx parsing)
+    const constIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const constIpRlKey = `const:${constIp}`;
+    if (Date.now() - (reputationRateLimit.get(constIpRlKey) || 0) < 30_000) {
+      return respondJson(res, 429, { error: 'Rate limited. Try again in 30 seconds.' });
+    }
     const cachedConst = constellationCache.get(address);
     if (cachedConst && Date.now() - cachedConst.ts < 600_000) { respondJson(res, 200, cachedConst.data); return; }
     const constRlKey = `constellation:${address}`;
     const lastConst = prismEarnRateLimit.get(constRlKey) || 0;
-    if (Date.now() - lastConst < 30_000) {
-      return respondJson(res, 429, { error: 'Constellation data is being fetched, try again in 30s' });
+    if (Date.now() - lastConst < 10_000) {
+      return respondJson(res, 429, { error: 'Constellation data is being fetched, try again in 10s' });
     }
+    reputationRateLimit.set(constIpRlKey, Date.now());
     prismEarnRateLimit.set(constRlKey, Date.now());
     try {
-      const { parsed } = await fetchParsedTransactions(address, 80);
+      const parsedLimit = Math.min(parseInt(url.searchParams.get('limit') || '500', 10) || 500, 500);
+      const { parsed } = await fetchParsedTransactions(address, parsedLimit);
       const { incoming, outgoing, programIds } = extractSolTransfers(parsed, address);
       const nodeMap = new Map();
       const centerTier = url.searchParams.get('tier') || null;
@@ -5481,7 +6195,7 @@ const server = http.createServer(async (req, res) => {
       }
       // Filter out counterparties with negligible activity (< 0.001 SOL total)
       const filtered = [...allCounterparties.entries()].filter(([, info]) => (info.solIn + info.solOut) >= 0.001);
-      const sorted = filtered.sort((a, b) => (b[1].solIn + b[1].solOut) - (a[1].solIn + a[1].solOut)).slice(0, 25);
+      const sorted = filtered.sort((a, b) => (b[1].solIn + b[1].solOut) - (a[1].solIn + a[1].solOut));
       const TIER_COLORS_MAP = { mercury: '#8B8B8B', mars: '#C1440E', venus: '#E8CDA0', earth: '#4B9CD3', neptune: '#3F54BE', uranus: '#73C2FB', saturn: '#E8D191', jupiter: '#C88B3A', sun: '#FFD700', binary_sun: '#22D3EE' };
       const colorPalette = Object.values(TIER_COLORS_MAP);
       const edges = [];
@@ -5504,6 +6218,13 @@ const server = http.createServer(async (req, res) => {
           solVolume: Math.round(totalVol * 10000) / 10000,
           txCount: info.count,
         });
+        // Merge txTypes from both incoming and outgoing maps for this counterparty
+        const txTypeSet = new Set();
+        const inInfo = incoming.get(addr);
+        const outInfo = outgoing.get(addr);
+        if (inInfo?.txTypeSet) for (const t of inInfo.txTypeSet) txTypeSet.add(t);
+        if (outInfo?.txTypeSet) for (const t of outInfo.txTypeSet) txTypeSet.add(t);
+        const txTypes = txTypeSet.size > 0 ? [...txTypeSet] : ['transfer'];
         edges.push({
           source: address,
           target: addr,
@@ -5513,14 +6234,90 @@ const server = http.createServer(async (req, res) => {
           inSol: Math.round((info.solIn || 0) * 10000) / 10000,
           firstTx: info.firstTime !== Infinity ? info.firstTime : null,
           lastTx: info.lastTime > 0 ? info.lastTime : null,
+          txTypes,
         });
       }
       const result = { nodes: [...nodeMap.values()], edges };
       constellationCache.set(address, { data: result, ts: Date.now() });
+      // Track social stats: constellation explored
+      const wConst = walletDatabase.get(address) || {};
+      const ss = wConst.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
+      ss.constellationExplored = (ss.constellationExplored || 0) + 1;
+      updateWalletEntry(address, { socialStats: ss });
+      triggerCompositeUpdate(address);
       respondJson(res, 200, result);
     } catch (e) {
       respondJson(res, 200, { nodes: [], edges: [], error: e.message });
     }
+    return;
+  }
+
+  // ═══ Wallet Database API ═══
+  if (pathname === '/api/wallet-database/stats' && req.method === 'GET') {
+    let totalMinted = 0;
+    let totalScore = 0;
+    let scoreCount = 0;
+    const tierDist = {};
+    const sybilDist = { clean: 0, low: 0, medium: 0, high: 0, critical: 0 };
+    let totalSybilRisk = 0;
+    let sybilCount = 0;
+    for (const w of walletDatabase.values()) {
+      if (w.mint?.minted) totalMinted++;
+      if (typeof w.score === 'number') { totalScore += w.score; scoreCount++; }
+      if (w.tier) tierDist[w.tier] = (tierDist[w.tier] || 0) + 1;
+      if (w.sybil?.riskLevel) {
+        sybilDist[w.sybil.riskLevel] = (sybilDist[w.sybil.riskLevel] || 0) + 1;
+        totalSybilRisk += w.sybil.riskScore || 0;
+        sybilCount++;
+      }
+    }
+    respondJson(res, 200, {
+      totalWallets: walletDatabase.size,
+      totalMinted,
+      avgScore: scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0,
+      tierDistribution: tierDist,
+      sybilDistribution: sybilDist,
+      avgSybilRisk: sybilCount > 0 ? Math.round(totalSybilRisk / sybilCount) : 0,
+    });
+    return;
+  }
+
+  if (pathname === '/api/wallet-database/export' && req.method === 'GET') {
+    if (!requireAdminKey(req, res)) return;
+    const obj = {};
+    for (const [k, v] of walletDatabase) obj[k] = v;
+    respondJson(res, 200, {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      totalWallets: walletDatabase.size,
+      wallets: obj,
+    });
+    return;
+  }
+
+  if (pathname === '/api/wallet-database' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (address) {
+      const w = walletDatabase.get(address);
+      if (!w) return respondJson(res, 404, { error: 'Wallet not found' });
+      respondJson(res, 200, w);
+      return;
+    }
+    // Paginated list requires admin key
+    if (!requireAdminKey(req, res)) return;
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 1), 500);
+    const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10) || 0, 0);
+    const sort = url.searchParams.get('sort') || 'lastSeenAt';
+    const entries = [...walletDatabase.values()];
+    entries.sort((a, b) => {
+      if (sort === 'score') return (b.score || 0) - (a.score || 0);
+      if (sort === 'scanCount') return (b.scanCount || 0) - (a.scanCount || 0);
+      if (sort === 'coins') return (b.coins || 0) - (a.coins || 0);
+      // default: lastSeenAt descending
+      return (b.lastSeenAt || '').localeCompare(a.lastSeenAt || '');
+    });
+    const page = entries.slice(offset, offset + limit);
+    respondJson(res, 200, { total: entries.length, limit, offset, wallets: page });
     return;
   }
 
@@ -5805,6 +6602,50 @@ function isProgramAddress(addr, txProgramIds) {
   return false;
 }
 
+// ── Transaction type classification by program IDs ──
+const TX_TYPE_PROGRAMS = {
+  defi: new Set([
+    'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',  // Jupiter v6
+    'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX7H',  // Jupiter v4
+    'JUP3jqKEFnJHTnQ9pP1bTJjrm3W9RWoWTxJoQGMGifDN', // Jupiter v3
+    '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', // Raydium AMM v4
+    'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', // Raydium CLMM
+    'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool
+    'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1', // Orca legacy
+    'So1endDq2YkqhipRh3WViPa8hFvz0XP1MXF1VZU8Q4Mw', // Solend
+    'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68',  // Mango v4
+    'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY',  // Phoenix DEX
+    'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX',  // Serum/OpenBook
+    'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo', // Meteora DLMM
+    'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA',  // Marinade Finance (DeFi)
+    'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb',  // Wormhole
+  ]),
+  nft: new Set([
+    'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',  // Metaplex Token Metadata
+    'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',  // Metaplex Auth Rules
+    'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN',  // Tensor Swap
+    'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K',  // Magic Eden v2
+    'hausS13jsjafwWwGqZTUQRmWyvyxn9EQpqMwV1PBBmk',  // Metaplex Auction House
+    'CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz', // Solanart
+  ]),
+  staking: new Set([
+    'Stake11111111111111111111111111111111111111',      // Native Stake
+    'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy',  // Stake Pool Program
+    'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD',  // Marinade State (staking)
+  ]),
+};
+
+function classifyTxType(txProgramIdSet) {
+  const types = new Set();
+  for (const pid of txProgramIdSet) {
+    if (TX_TYPE_PROGRAMS.defi.has(pid)) types.add('defi');
+    if (TX_TYPE_PROGRAMS.nft.has(pid)) types.add('nft');
+    if (TX_TYPE_PROGRAMS.staking.has(pid)) types.add('staking');
+  }
+  if (types.size === 0) types.add('transfer');
+  return [...types];
+}
+
 // Extract SOL transfers from parsed transactions — wallet-to-wallet only
 function extractSolTransfers(parsed, targetAddress) {
   const incoming = new Map();
@@ -5891,11 +6732,12 @@ function extractSolTransfers(parsed, targetAddress) {
 
       const sender = senders[0];
       if (sender) {
-        const existing = incoming.get(sender.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime };
+        const existing = incoming.get(sender.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set() };
         existing.totalSol += Math.abs(targetDiff);
         existing.count += 1;
         existing.firstTime = Math.min(existing.firstTime, blockTime);
         existing.lastTime = Math.max(existing.lastTime, blockTime);
+        for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
         incoming.set(sender.addr, existing);
       }
     } else if (targetDiff < -0.001) {
@@ -5912,11 +6754,12 @@ function extractSolTransfers(parsed, targetAddress) {
 
       const receiver = receivers[0];
       if (receiver) {
-        const existing = outgoing.get(receiver.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime };
+        const existing = outgoing.get(receiver.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set() };
         existing.totalSol += Math.abs(receiver.diff);
         existing.count += 1;
         existing.firstTime = Math.min(existing.firstTime, blockTime);
         existing.lastTime = Math.max(existing.lastTime, blockTime);
+        for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
         outgoing.set(receiver.addr, existing);
       }
     }
@@ -5940,9 +6783,8 @@ try {
   }
 } catch {}
 function saveMarketplace() {
-  try {
-    fs.writeFileSync(MARKETPLACE_FILE, JSON.stringify({ listings: Object.fromEntries(marketplaceListings), purchases: Object.fromEntries(marketplacePurchases) }), 'utf8');
-  } catch (e) { console.warn('[marketplace] save error', e.message); }
+  fs.promises.writeFile(MARKETPLACE_FILE, JSON.stringify({ listings: Object.fromEntries(marketplaceListings), purchases: Object.fromEntries(marketplacePurchases) }), 'utf8')
+    .catch(e => console.warn('[marketplace] save error', e.message));
 }
 
 const constellationCache = new Map();
@@ -6064,11 +6906,29 @@ setInterval(() => {
 
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
-server.listen(PORT, HOST, () => {
-  const providers = [];
-  if (ALCHEMY_RPC_URL) providers.push('alchemy');
-  if (HELIUS_KEYS.length) providers.push(`helius(${HELIUS_KEYS.length} keys)`);
-  else if (HELIUS_RPC_BASE) providers.push('helius(no-key)');
-  if (FALLBACK_RPC_URL) providers.push('solana-public');
-  console.log(`[helius-proxy] listening on ${HOST}:${PORT} | RPC chain: ${providers.join(' → ') || 'none'} (gzip, keep-alive 65s)`);
+
+// Load data from Firestore (fallback JSON), then start server
+initData().then(() => {
+  server.listen(PORT, HOST, () => {
+    const providers = [];
+    if (ALCHEMY_RPC_URL) providers.push('alchemy');
+    if (HELIUS_KEYS.length) providers.push(`helius(${HELIUS_KEYS.length} keys)`);
+    else if (HELIUS_RPC_BASE) providers.push('helius(no-key)');
+    if (FALLBACK_RPC_URL) providers.push('solana-public');
+    console.log(`[helius-proxy] listening on ${HOST}:${PORT} | RPC chain: ${providers.join(' → ') || 'none'} (gzip, keep-alive 65s)`);
+    // Start async wallet database backfill (non-blocking)
+    backfillWalletDatabaseAsync().catch(err => console.warn('[wallet-db] Async backfill error', err.message || err));
+    // Backfill composite scores for existing wallets (non-blocking)
+    setTimeout(backfillCompositeScores, 3000);
+  });
+}).catch(err => {
+  console.error('[init] Failed to load data:', err);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err, origin) => {
+  console.error(`[fatal:${origin}]`, err.stack || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal:unhandledRejection]', reason);
 });

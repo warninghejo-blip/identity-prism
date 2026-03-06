@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
+import { trackChallengeCreate, trackChallengeAccept } from '@/lib/analytics';
 import {
   ArrowLeft, Search, Users, Zap,
   ChevronRight, Loader2, ArrowUpDown, Trophy,
@@ -766,15 +767,22 @@ async function obtainJwt(
     const { nonce, message } = await challengeRes.json() as { nonce: string; message: string };
 
     const msgBytes = new TextEncoder().encode(message);
+    console.log('[auth] signing message:', { address: address.slice(0, 8), msgLen: msgBytes.length, nonce: nonce.slice(0, 8), message });
     const signatureBytes = await wallet.signMessage(msgBytes);
-    const signatureBase64 = btoa(String.fromCharCode(...signatureBytes));
+    const sigArr = signatureBytes instanceof Uint8Array ? signatureBytes : new Uint8Array(signatureBytes as ArrayLike<number>);
+    // Use hex encoding — bullet-proof, no base64 edge cases
+    const signatureHex = Array.from(sigArr, (b: number) => b.toString(16).padStart(2, '0')).join('');
+    console.log('[auth] signature:', { len: sigArr.length, hexLen: signatureHex.length, first8: Array.from(sigArr.slice(0, 8)) });
 
     const tokenRes = await fetch(`${base}/api/auth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, nonce, signature: signatureBase64 }),
+      body: JSON.stringify({ address, nonce, signature: signatureHex }),
     });
-    if (!tokenRes.ok) return null;
+    if (!tokenRes.ok) {
+      try { const err = await tokenRes.json(); console.error('[auth] token failed:', err); } catch {}
+      return null;
+    }
     const { token } = await tokenRes.json() as { token: string };
 
     const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
@@ -1027,6 +1035,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
       });
 
       if (res.ok) {
+        trackChallengeCreate();
         toast.success(`Challenge created! ${isSol ? formStake + ' SOL' : formStake + ' Coins'} staked`);
         setCreating(false);
         setFormOpponent('');
@@ -1106,6 +1115,7 @@ function ChallengesTab({ myAddress }: { myAddress: string }) {
       });
 
       if (res.ok) {
+        trackChallengeAccept();
         toast.success('Challenge accepted! Good luck.');
         fetchOpen();
         fetchMine();

@@ -3,7 +3,7 @@
  *
  * Ship sprite (ship.png) flies horizontally. Tap/Space = upward thrust (Flappy Bird).
  * Gravity always pulls down. Constant tapping to stay airborne.
- * Obstacles: asteroid columns, laser beams, asteroid fields.
+ * Obstacles: asteroid columns, comets, asteroid fields, dynamic columns.
  * Cinematic starfield + nebula background, engine trail, crystal collecting.
  * Coins accumulate passively per second + crystal bonuses.
  * Canvas 2D for max mobile performance.
@@ -59,16 +59,15 @@ interface LevelTheme {
   floorColor: string; ceilColor: string;
   accentColor: string; crystalColor: string;
   obstacleColor: string; obstacleHighlight: string;
-  laserColor: string;
   scoreThreshold: number;
 }
 
 const LEVEL_THEMES: LevelTheme[] = [
-  { name: 'Nebula', bg1: '#06081a', bg2: '#0d1428', floorColor: 'rgba(34,211,238,0.06)', ceilColor: 'rgba(168,85,247,0.04)', accentColor: '#22d3ee', crystalColor: '#a855f7', obstacleColor: '#374151', obstacleHighlight: '#6b7280', laserColor: '#ef4444', scoreThreshold: 0 },
-  { name: 'Asteroid Belt', bg1: '#0f0a05', bg2: '#1a1008', floorColor: 'rgba(245,158,11,0.06)', ceilColor: 'rgba(239,68,68,0.04)', accentColor: '#f59e0b', crystalColor: '#fbbf24', obstacleColor: '#57534e', obstacleHighlight: '#a8a29e', laserColor: '#f97316', scoreThreshold: 500 },
-  { name: 'Black Hole', bg1: '#050008', bg2: '#0a0014', floorColor: 'rgba(139,92,246,0.08)', ceilColor: 'rgba(236,72,153,0.04)', accentColor: '#8b5cf6', crystalColor: '#ec4899', obstacleColor: '#4c1d95', obstacleHighlight: '#7c3aed', laserColor: '#d946ef', scoreThreshold: 1200 },
-  { name: 'Warp Zone', bg1: '#000a0f', bg2: '#001420', floorColor: 'rgba(6,182,212,0.08)', ceilColor: 'rgba(16,185,129,0.06)', accentColor: '#06b6d4', crystalColor: '#10b981', obstacleColor: '#134e4a', obstacleHighlight: '#2dd4bf', laserColor: '#14b8a6', scoreThreshold: 2000 },
-  { name: 'Prism Realm', bg1: '#0f0510', bg2: '#1a0820', floorColor: 'rgba(251,191,36,0.08)', ceilColor: 'rgba(34,211,238,0.06)', accentColor: '#fbbf24', crystalColor: '#22d3ee', obstacleColor: '#713f12', obstacleHighlight: '#fbbf24', laserColor: '#fbbf24', scoreThreshold: 3000 },
+  { name: 'Nebula', bg1: '#06081a', bg2: '#0d1428', floorColor: 'rgba(34,211,238,0.06)', ceilColor: 'rgba(168,85,247,0.04)', accentColor: '#22d3ee', crystalColor: '#a855f7', obstacleColor: '#374151', obstacleHighlight: '#6b7280', scoreThreshold: 0 },
+  { name: 'Asteroid Belt', bg1: '#0f0a05', bg2: '#1a1008', floorColor: 'rgba(245,158,11,0.06)', ceilColor: 'rgba(239,68,68,0.04)', accentColor: '#f59e0b', crystalColor: '#fbbf24', obstacleColor: '#57534e', obstacleHighlight: '#a8a29e', scoreThreshold: 500 },
+  { name: 'Black Hole', bg1: '#050008', bg2: '#0a0014', floorColor: 'rgba(139,92,246,0.08)', ceilColor: 'rgba(236,72,153,0.04)', accentColor: '#8b5cf6', crystalColor: '#ec4899', obstacleColor: '#4c1d95', obstacleHighlight: '#7c3aed', scoreThreshold: 1200 },
+  { name: 'Warp Zone', bg1: '#000a0f', bg2: '#001420', floorColor: 'rgba(6,182,212,0.08)', ceilColor: 'rgba(16,185,129,0.06)', accentColor: '#06b6d4', crystalColor: '#10b981', obstacleColor: '#134e4a', obstacleHighlight: '#2dd4bf', scoreThreshold: 2000 },
+  { name: 'Prism Realm', bg1: '#0f0510', bg2: '#1a0820', floorColor: 'rgba(251,191,36,0.08)', ceilColor: 'rgba(34,211,238,0.06)', accentColor: '#fbbf24', crystalColor: '#22d3ee', obstacleColor: '#713f12', obstacleHighlight: '#fbbf24', scoreThreshold: 3000 },
 ];
 
 function getThemeForScore(score: number): LevelTheme {
@@ -90,12 +89,16 @@ interface AsteroidColumn {
   crackSeeds: number[];  // seeds for crack pattern rendering
 }
 
-interface LaserBeam {
+interface Comet {
   x: number;
   y: number;
-  width: number;
-  warning: number;
-  active: boolean;
+  vx: number;
+  vy: number;
+  size: number;
+  rotation: number;
+  rotSpeed: number;
+  shape: number[];
+  width: number; // bounding for generic filters
 }
 
 interface AsteroidField {
@@ -122,7 +125,7 @@ interface DynamicColumn {
 
 type ObstacleUnion =
   | { kind: 'column'; data: AsteroidColumn }
-  | { kind: 'laser'; data: LaserBeam }
+  | { kind: 'comet'; data: Comet }
   | { kind: 'field'; data: AsteroidField }
   | { kind: 'dynamic'; data: DynamicColumn };
 
@@ -310,7 +313,7 @@ export default function GravityRunnerScene({
     ];
     s.starLayers = [];
     for (let layer = 0; layer < 4; layer++) {
-      const count = layer === 0 ? 120 : layer === 1 ? 80 : layer === 2 ? 50 : 30;
+      const count = layer === 0 ? 50 : layer === 1 ? 35 : layer === 2 ? 20 : 12;
       const stars: StarDot[] = [];
       for (let i = 0; i < count; i++) {
         const colorTemplate = STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)];
@@ -431,13 +434,26 @@ export default function GravityRunnerScene({
           kind: 'column',
           data: { x: spawnX, gapY, gapH, width: colW, passed: false, jagged, crackSeeds },
         });
-      } else if (roll < (canDynamic ? 0.82 : 0.78)) {
-        // Laser beam — clamp to middle 70%
+      } else if (roll < (canDynamic ? 0.80 : 0.75)) {
+        // Comet — fast diagonal asteroid
         const margin = playH * 0.15;
         const y = ceilY + margin + Math.random() * (playH - margin * 2);
+        const cometSize = 10 + Math.random() * 10;
+        const sides = 6 + Math.floor(Math.random() * 3);
+        const shape: number[] = [];
+        for (let j = 0; j < sides; j++) shape.push(0.55 + Math.random() * 0.45);
+        const goingUp = Math.random() < 0.5;
         s.obstacles.push({
-          kind: 'laser',
-          data: { x: spawnX, y, width: W * 0.45, warning: 45, active: false },
+          kind: 'comet',
+          data: {
+            x: spawnX, y, width: cometSize * 2,
+            vx: -(s.speed * 1.6 + Math.random() * 2),
+            vy: (goingUp ? -1 : 1) * (1.2 + Math.random() * 1.8),
+            size: cometSize,
+            rotation: Math.random() * Math.PI * 2,
+            rotSpeed: (Math.random() - 0.5) * 0.08,
+            shape,
+          },
         });
       } else {
         // Asteroid field
@@ -526,10 +542,13 @@ export default function GravityRunnerScene({
       return false;
     }
 
-    function checkLaserCollision(laser: LaserBeam): boolean {
-      if (!laser.active) return false;
-      const { x, y, w, h } = shipHitbox();
-      return rectOverlap(x, y, w, h, laser.x, laser.y - 4, laser.width, 8);
+    function checkCometCollision(comet: Comet): boolean {
+      const sx = s.playerX + SHIP_W / 2;
+      const sy = s.playerY + SHIP_H / 2;
+      const dx = sx - comet.x;
+      const dy = sy - comet.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      return dist < comet.size + SHIP_W * 0.3;
     }
 
     function checkFieldCollision(field: AsteroidField): boolean {
@@ -586,11 +605,7 @@ export default function GravityRunnerScene({
         s.alive = true;
         s.screenShake = 0;
         s.velY = FLAP_VEL * 0.5; // gentle upward push on revive
-        s.obstacles = s.obstacles.filter(o => {
-          if (o.kind === 'column') return o.data.x > s.playerX + 200;
-          if (o.kind === 'laser') return o.data.x > s.playerX + 200;
-          return o.data.x > s.playerX + 200;
-        });
+        s.obstacles = s.obstacles.filter(o => o.data.x > s.playerX + 200);
       }
 
       if (!s.alive) return;
@@ -637,12 +652,16 @@ export default function GravityRunnerScene({
 
       // Move obstacles
       for (const o of s.obstacles) {
-        o.data.x -= s.speed;
-        if (o.kind === 'laser') {
-          if (o.data.warning > 0) {
-            o.data.warning--;
-            if (o.data.warning <= 0) o.data.active = true;
-          }
+        if (o.kind === 'comet') {
+          // Comets move independently
+          o.data.x += o.data.vx;
+          o.data.y += o.data.vy;
+          o.data.rotation += o.data.rotSpeed;
+          // Bounce off floor/ceiling
+          if (o.data.y - o.data.size < ceilY) { o.data.vy = Math.abs(o.data.vy); }
+          if (o.data.y + o.data.size > floorY) { o.data.vy = -Math.abs(o.data.vy); }
+        } else {
+          o.data.x -= s.speed;
         }
         if (o.kind === 'dynamic') {
           // Grow dynamic column towards max height
@@ -682,7 +701,7 @@ export default function GravityRunnerScene({
       // Collision checks
       for (const o of s.obstacles) {
         if (o.kind === 'column' && checkColumnCollision(o.data)) { die(); return; }
-        if (o.kind === 'laser' && checkLaserCollision(o.data)) { die(); return; }
+        if (o.kind === 'comet' && checkCometCollision(o.data)) { die(); return; }
         if (o.kind === 'field' && checkFieldCollision(o.data)) { die(); return; }
         if (o.kind === 'dynamic' && checkDynamicCollision(o.data)) { die(); return; }
       }
@@ -757,7 +776,7 @@ export default function GravityRunnerScene({
         alpha: 0.9,
         size: 3 + Math.random() * 4,
       });
-      if (s.trail.length > 30) s.trail.shift();
+      if (s.trail.length > 15) s.trail.shift();
       for (const t of s.trail) t.alpha *= 0.86;
 
       // Score = time survived in seconds (FPS-independent)
@@ -844,16 +863,6 @@ export default function GravityRunnerScene({
           ctx.beginPath();
           ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
           ctx.fill();
-          // Larger stars get a soft glow
-          if (star.size > 1.0 && alpha > 0.3) {
-            ctx.save();
-            ctx.globalAlpha = alpha * 0.15;
-            ctx.beginPath();
-            ctx.arc(star.x, star.y, star.size * 3, 0, Math.PI * 2);
-            ctx.fillStyle = star.color.replace('A', '0.25');
-            ctx.fill();
-            ctx.restore();
-          }
         }
       }
 
@@ -898,18 +907,16 @@ export default function GravityRunnerScene({
       ctx.stroke();
       ctx.globalAlpha = 1;
 
-      // ── Engine trail ──
+      // ── Engine trail (simple circles — no RadialGradient for perf) ──
       for (const t of s.trail) {
-        if (t.alpha < 0.03) continue;
-        const gradient = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.size * 2.5);
-        gradient.addColorStop(0, `rgba(34,211,238,${t.alpha * 0.6})`);
-        gradient.addColorStop(0.4, `rgba(96,165,250,${t.alpha * 0.3})`);
-        gradient.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = gradient;
+        if (t.alpha < 0.05) continue;
+        ctx.globalAlpha = t.alpha * 0.5;
+        ctx.fillStyle = '#22d3ee';
         ctx.beginPath();
-        ctx.arc(t.x, t.y, t.size * 2.5, 0, Math.PI * 2);
+        ctx.arc(t.x, t.y, t.size, 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.globalAlpha = 1;
 
       // ── Obstacles ──
       for (const o of s.obstacles) {
@@ -937,55 +944,47 @@ export default function GravityRunnerScene({
           }
         }
 
-        if (o.kind === 'laser') {
-          const laser = o.data;
-          if (!laser.active) {
-            // Warning phase — pulsing dotted line
-            const pulse = 0.3 + Math.abs(Math.sin(s.frameCount * 0.15)) * 0.5;
-            ctx.strokeStyle = theme.laserColor;
-            ctx.globalAlpha = pulse;
-            ctx.lineWidth = 1;
-            ctx.setLineDash([6, 10]);
-            ctx.beginPath();
-            ctx.moveTo(laser.x, laser.y);
-            ctx.lineTo(laser.x + laser.width, laser.y);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 1;
+        if (o.kind === 'comet') {
+          const comet = o.data;
+          ctx.save();
+          ctx.translate(comet.x, comet.y);
 
-            // Warning indicators at edges
-            ctx.fillStyle = theme.laserColor;
-            ctx.globalAlpha = pulse;
-            ctx.font = 'bold 11px sans-serif';
-            ctx.fillText('⚠', laser.x - 16, laser.y + 4);
-            ctx.fillText('⚠', laser.x + laser.width + 4, laser.y + 4);
-            ctx.globalAlpha = 1;
-          } else {
-            // Active laser beam
-            ctx.shadowColor = theme.laserColor;
-            ctx.shadowBlur = 18;
-            // Outer glow
-            ctx.strokeStyle = theme.laserColor;
-            ctx.globalAlpha = 0.25;
-            ctx.lineWidth = 14;
+          // Comet trail — simple fading dots (no gradients)
+          const trailLen = 6;
+          for (let ti = 1; ti <= trailLen; ti++) {
+            const tx = -comet.vx * ti * 0.6;
+            const ty = -comet.vy * ti * 0.6;
+            const ta = 0.3 * (1 - ti / trailLen);
+            ctx.globalAlpha = ta;
+            ctx.fillStyle = theme.accentColor;
             ctx.beginPath();
-            ctx.moveTo(laser.x, laser.y);
-            ctx.lineTo(laser.x + laser.width, laser.y);
-            ctx.stroke();
-            // Mid glow
-            ctx.globalAlpha = 0.6;
-            ctx.lineWidth = 5;
-            ctx.stroke();
-            // Core beam
-            ctx.globalAlpha = 1;
-            ctx.lineWidth = 2;
-            ctx.strokeStyle = '#fff';
-            ctx.beginPath();
-            ctx.moveTo(laser.x, laser.y);
-            ctx.lineTo(laser.x + laser.width, laser.y);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
+            ctx.arc(tx, ty, comet.size * (0.5 - ti * 0.06), 0, Math.PI * 2);
+            ctx.fill();
           }
+
+          // Comet body — irregular rock shape
+          ctx.globalAlpha = 1;
+          ctx.rotate(comet.rotation);
+          ctx.fillStyle = theme.obstacleColor;
+          ctx.beginPath();
+          const sides = comet.shape.length;
+          for (let i = 0; i < sides; i++) {
+            const angle = (i / sides) * Math.PI * 2;
+            const r = comet.size * comet.shape[i];
+            const px = Math.cos(angle) * r;
+            const py = Math.sin(angle) * r;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          // Highlight edge
+          ctx.strokeStyle = theme.accentColor;
+          ctx.globalAlpha = 0.4;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.restore();
         }
 
         if (o.kind === 'field') {
@@ -998,8 +997,6 @@ export default function GravityRunnerScene({
             ctx.rotate(rock.rot + s.frameCount * 0.003);
             const sides = rock.shape.length;
             ctx.fillStyle = theme.obstacleColor;
-            ctx.shadowColor = theme.accentColor;
-            ctx.shadowBlur = 5;
             ctx.beginPath();
             for (let i = 0; i < sides; i++) {
               const angle = (i / sides) * Math.PI * 2;
@@ -1011,7 +1008,6 @@ export default function GravityRunnerScene({
             }
             ctx.closePath();
             ctx.fill();
-            ctx.shadowBlur = 0;
             ctx.strokeStyle = theme.obstacleHighlight;
             ctx.globalAlpha = 0.25;
             ctx.lineWidth = 0.8;
@@ -1032,29 +1028,23 @@ export default function GravityRunnerScene({
           const drawH = dc.currentH + pulseExtra;
           const drawY = dc.fromTop ? ceilY : floorY - drawH;
 
-          // Warning glow while growing
+          // Warning glow while growing (simple overlay)
           if (dc.currentH < dc.maxH) {
             ctx.save();
             ctx.globalAlpha = 0.15 + Math.sin(s.frameCount * 0.12) * 0.1;
-            ctx.shadowColor = '#ef4444';
-            ctx.shadowBlur = 15;
             ctx.fillStyle = '#ef4444';
             ctx.fillRect(dc.x - 2, drawY, dc.width + 4, drawH);
-            ctx.shadowBlur = 0;
             ctx.restore();
           }
 
           drawAsteroidPillar(ctx, dc.x, drawY, dc.width, drawH, dc.jagged, dc.crackSeeds, theme, dc.fromTop, s.frameCount);
 
-          // Glowing tip for dynamic columns
+          // Glowing tip for dynamic columns (simple rect)
           const tipY = dc.fromTop ? drawY + drawH : drawY;
           ctx.save();
-          ctx.shadowColor = theme.accentColor;
-          ctx.shadowBlur = 12;
           ctx.fillStyle = theme.accentColor;
           ctx.globalAlpha = 0.5 + Math.sin(s.frameCount * 0.08) * 0.2;
           ctx.fillRect(dc.x - 1, tipY - 2, dc.width + 2, 4);
-          ctx.shadowBlur = 0;
           ctx.globalAlpha = 1;
           ctx.restore();
         }
@@ -1067,9 +1057,6 @@ export default function GravityRunnerScene({
         ctx.save();
         ctx.translate(c.x, c.y);
         ctx.scale(scale, scale);
-        // Outer glow
-        ctx.shadowColor = theme.crystalColor;
-        ctx.shadowBlur = 16;
         // PRISM diamond shape
         ctx.fillStyle = theme.crystalColor;
         ctx.beginPath();
@@ -1096,7 +1083,6 @@ export default function GravityRunnerScene({
         ctx.arc(CRYSTAL_SIZE * 0.12, -CRYSTAL_SIZE * 0.18, 1.5, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
         ctx.restore();
       }
 
@@ -1107,16 +1093,10 @@ export default function GravityRunnerScene({
 
       if (shipLoadedRef.current && shipImgRef.current) {
         ctx.rotate(Math.PI / 2);
-        // Ship glow
-        ctx.shadowColor = '#22d3ee';
-        ctx.shadowBlur = s.alive ? 14 : 6;
         ctx.drawImage(shipImgRef.current, -SHIP_W / 2, -SHIP_H / 2, SHIP_W, SHIP_H);
-        ctx.shadowBlur = 0;
       } else {
         // Fallback: draw a triangle ship
         ctx.fillStyle = '#22d3ee';
-        ctx.shadowColor = '#22d3ee';
-        ctx.shadowBlur = 12;
         ctx.beginPath();
         ctx.moveTo(SHIP_W / 2, 0);
         ctx.lineTo(-SHIP_W / 2, -SHIP_H / 2);
@@ -1124,7 +1104,6 @@ export default function GravityRunnerScene({
         ctx.lineTo(-SHIP_W / 2, SHIP_H / 2);
         ctx.closePath();
         ctx.fill();
-        ctx.shadowBlur = 0;
       }
       ctx.restore();
 
@@ -1146,10 +1125,7 @@ export default function GravityRunnerScene({
         ctx.fillStyle = theme.accentColor;
         ctx.font = 'bold 16px sans-serif';
         ctx.textAlign = 'center';
-        ctx.shadowColor = theme.accentColor;
-        ctx.shadowBlur = 25;
         ctx.fillText(`⟐ ${theme.name} ⟐`, W / 2, 75);
-        ctx.shadowBlur = 0;
         ctx.globalAlpha = 1;
         ctx.textAlign = 'start';
       }

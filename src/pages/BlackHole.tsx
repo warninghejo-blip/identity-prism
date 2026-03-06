@@ -1021,10 +1021,11 @@ const BlackHole = () => {
         // Quest auto-tracking
         import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
           const qs = getQuestState(addr);
-          incrementQuest(qs, 'daily_burn', safeTargets.length);
-          incrementQuest(qs, 'ot_first_burn');
-          incrementQuest(qs, 'weekly_burn5', safeTargets.length);
-          incrementQuest(qs, 'ot_burn100', safeTargets.length);
+          const onComplete = (q: { name: string }) => toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
+          incrementQuest(qs, 'daily_burn', safeTargets.length, onComplete);
+          incrementQuest(qs, 'ot_first_burn', 1, onComplete);
+          incrementQuest(qs, 'weekly_burn5', safeTargets.length, onComplete);
+          incrementQuest(qs, 'ot_burn100', safeTargets.length, onComplete);
         }).catch(() => {});
       }
 

@@ -16,7 +16,7 @@ app:
     - purpose: icon
       uri: ../dapp-store/media/app_icon.png
 release:
-  address: 8FhukmBa19nh6KhiNY5BvchhtpVumJyao3S6jZB6ucp9
+  address: GpXexniJaCJ7F1Hhibwa7PLSB1SAuzocNZYz8f3xTk9d
   media:
     - purpose: icon
       uri: ../dapp-store/media/release_icon.png
@@ -54,8 +54,8 @@ release:
   android_details:
     cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
     min_sdk: 24
-    version: 1.0.32
-    version_code: 43
+    version: 1.0.33
+    version_code: 44
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
@@ -65,8 +65,8 @@ solana_mobile_dapp_publisher_portal:
        and badges.
     3. Flip the card to see detailed stats (SOL balance, wallet age, transaction count, NFTs). 4. Tap 'MINT IDENTITY' to mint your card as an on-chain NFT (requires ~0.01 SOL). 5. Use 'SHARE TO TWITTER' to post your identity on X. 6. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
 lastSubmittedVersionOnChain:
-  address: 8FhukmBa19nh6KhiNY5BvchhtpVumJyao3S6jZB6ucp9
-  version_code: 24
-  apk_hash: CjkIgySfpPonYFg+V/2Aeolo3M/X0o0caVnDjh1KpW4=
+  address: GpXexniJaCJ7F1Hhibwa7PLSB1SAuzocNZYz8f3xTk9d
+  version_code: 44
+  apk_hash: AszgQN7DAeJDxNizFv+2QQRQjiUWMWmaislzN2zlHDA=
 lastUpdatedVersionOnStore:
-  address: 8FhukmBa19nh6KhiNY5BvchhtpVumJyao3S6jZB6ucp9
+  address: GpXexniJaCJ7F1Hhibwa7PLSB1SAuzocNZYz8f3xTk9d

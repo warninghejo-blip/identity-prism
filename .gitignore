@@ -15,6 +15,8 @@ dist-ssr
 # Secrets & credentials
 .env
 .env.*
+firebase-service-account.json
+*-firebase-adminsdk-*.json
 !.env.example
 secrets/
 twitter-bot/.env
@@ -90,6 +92,9 @@ game_achive_framed/
 
 # Metadata (generated)
 metadata/
+
+# Firebase
+android/app/google-services.json
 
 # Keys directory (NEVER push private keys)
 keys/

@@ -1,7 +1,7 @@
 /**
  * Coins — unified in-game currency for Identity Prism.
  * Earned through gameplay, burns, scans, achievements, quests.
- * Spent in Coin Shop on card frames, auras, ship skins, titles.
+ * Spent in Prism Shop on card frames, auras, ship skins, titles.
  *
  * Persistence: server-side via /api/prism/* endpoints (backed by coinBalances).
  * Fallback: localStorage for offline/anonymous use.

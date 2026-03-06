@@ -20,6 +20,8 @@ import type { IdentityData } from "@/lib/tapestry";
 // html2canvas loaded dynamically in renderCardImage()
 const CosmicHub = React.lazy(() => import("@/components/CosmicHubV3"));
 import { getPrismBalance, earnPrism, canEarnFromScan, markScanEarned, type PrismBalance } from '@/lib/prismCoin';
+import { trackWalletConnect, trackWalletDisconnect, trackMint } from '@/lib/analytics';
+const OnboardingModal = React.lazy(() => import('@/components/OnboardingModal'));
 
 type ViewState = "landing" | "scanning" | "ready" | "hub";
 type PaymentToken = "SOL" | "SKR";
@@ -88,6 +90,7 @@ const Index = () => {
 
   const [isWarping, setIsWarping] = useState(false);
   const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
     (returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)
       ? "hub"
@@ -391,6 +394,7 @@ const Index = () => {
         if (resolved) {
           setActiveAddress(resolved);
           setViewState("scanning");
+          trackWalletConnect('mobile');
           toast.success("Wallet Connected");
           return;
         }
@@ -454,6 +458,7 @@ const Index = () => {
         if (import.meta.env.DEV) console.log("[MobileConnect] Success! Resolved Address:", resolvedAddress);
         setActiveAddress(resolvedAddress);
         setViewState("scanning");
+        trackWalletConnect('mwa');
         toast.success("Wallet Connected");
       } else {
         console.error("[MobileConnect] Failure: No public key and no cache.");
@@ -527,6 +532,7 @@ const Index = () => {
       if (resolved) {
         setActiveAddress(resolved);
         setViewState("scanning");
+        trackWalletConnect('desktop');
       }
     } catch (err) {
       console.error("[DesktopConnect] Connection error:", err);
@@ -674,6 +680,10 @@ const Index = () => {
     } else {
       // After scan → go to Hub (not card). Card accessible from Hub.
       setViewState("hub");
+      // Show onboarding for first-time users
+      if (!localStorage.getItem('ip_onboarding_v1')) {
+        setShowOnboarding(true);
+      }
       // Load Coin balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
         getPrismBalance(resolvedAddress).then(setPrismBalance).catch(() => {});
@@ -710,6 +720,7 @@ const Index = () => {
     try { localStorage.removeItem('walletName'); } catch { /* ignore */ }
     setActiveAddress(undefined);
     setViewState("landing");
+    trackWalletDisconnect();
   };
 
   const [mintState, setMintState] = useState<"idle" | "minting" | "success" | "error">("idle");
@@ -903,12 +914,14 @@ const Index = () => {
       
       if (import.meta.env.DEV) console.log("Mint success:", result);
       succeeded = true;
+      trackMint(true);
       setMintState("success");
       setTimeout(() => setMintState("idle"), 4000);
       toast.success("Identity minted!", {
         description: `Tx: ${result.signature.slice(0, 8)}...`,
       });
     } catch (err) {
+      trackMint(false, (err as Error)?.message);
       const error = err as Error & {
         code?: string;
         requiredLamports?: number;
@@ -1198,6 +1211,8 @@ const Index = () => {
             walletAddress={activeAddress}
             prismBalance={prismBalance}
             onNavigateToCard={() => setViewState("ready")}
+            identityScore={walletData.score}
+            planetTier={walletData.traits?.planetTier}
           />
         </React.Suspense>
       ) : isNftMode ? (
@@ -1449,7 +1464,7 @@ const Index = () => {
   );
 };
 
-function LandingOverlay({ 
+function LandingOverlay({
   fadeOut,
   passthrough,
   isScanning,
@@ -1463,7 +1478,7 @@ function LandingOverlay({
   onDesktopConnect,
   desktopWalletReady,
   scanningMessageIndex
-}: { 
+}: {
   fadeOut?: boolean;
   passthrough?: boolean;
   isScanning: boolean;
@@ -1497,121 +1512,99 @@ function LandingOverlay({
         </div>
       </div>
 
-      {/* Landing content — underneath, hidden when scanning */}
-      <div className={`landing-wrap-v2${isScanning ? ' landing-hidden' : ''}`}>
-      <div className="landing-main">
-        <div className="landing-card-v2 glass-panel">
-        <div className="landing-header-v2">
-          <div className="glow-icon-container">
-            <img src="/phav.png" alt="Identity Prism" className="h-24 w-24 mx-auto mb-6 glow-logo" />
-          </div>
-          <p className="landing-eyebrow select-none">
-            Identity Prism
-          </p>
-          <h1 className="landing-title-v2">Your Solana identity,<br />reimagined</h1>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
-            {[
-              { icon: '💎', text: 'Identity Score' },
-              { icon: '🎮', text: 'Play & Earn' },
-              { icon: '🛡️', text: 'Sybil Shield' },
-            ].map((f) => (
-              <span key={f.text} style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                fontSize: 10, color: 'rgba(255,255,255,0.25)', fontWeight: 600,
-                padding: '4px 10px', borderRadius: 20,
-                background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.04)',
-              }}>
-                <span style={{ fontSize: 12 }}>{f.icon}</span> {f.text}
-              </span>
-            ))}
-          </div>
+      {/* Landing content — immersive cosmic start */}
+      <div className={`landing-wrap-v3${isScanning ? ' landing-hidden' : ''}`}>
+        {/* Ambient background effects */}
+        <div className="landing-cosmos-bg">
+          <div className="landing-stars" />
+          <div className="landing-nebula landing-nebula-1" />
+          <div className="landing-nebula landing-nebula-2" />
+          <div className="landing-nebula landing-nebula-3" />
         </div>
-        
-        <div className="landing-actions-v2">
-          {isConnected && onEnter ? (
-             <div className="w-full flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-500">
-                <div className="wallet-connected-banner mx-auto max-w-[320px] p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-center">
-                   <p className="text-cyan-200 text-[10px] mb-1 uppercase tracking-widest font-bold">Wallet Connected</p>
-                   <p className="text-white font-mono text-sm font-medium truncate max-w-[200px] mx-auto">
-                      {connectedAddress?.slice(0, 4)}...{connectedAddress?.slice(-4)}
-                   </p>
+
+        {/* CSS 3D Prism — spinning in background */}
+        <div className="landing-prism-container">
+          <div className="landing-prism-scene">
+            <div className="landing-prism-body">
+              <div className="landing-prism-face landing-prism-face-1" />
+              <div className="landing-prism-face landing-prism-face-2" />
+              <div className="landing-prism-face landing-prism-face-3" />
+              <div className="landing-prism-face landing-prism-face-4" />
+            </div>
+          </div>
+          {/* Prism glow */}
+          <div className="landing-prism-glow" />
+        </div>
+
+        {/* Center content — floats above prism */}
+        <div className="landing-center-content">
+          {/* Logo */}
+          <img src="/phav.png" alt="Identity Prism" className="landing-v3-logo" />
+
+          {/* Title */}
+          <p className="landing-v3-eyebrow">IDENTITY PRISM</p>
+          <h1 className="landing-v3-title">
+            Your Solana identity,<br />reimagined
+          </h1>
+
+          {/* Wallet Connect / Enter */}
+          <div className={`landing-v3-actions${isConnected ? ' connected' : ''}`}>
+            {isConnected && onEnter ? (
+              <div className="landing-v3-connected">
+                {/* Connected badge */}
+                <div className="landing-v3-wallet-badge">
+                  <span className="landing-v3-dot" />
+                  <span className="landing-v3-addr">
+                    {connectedAddress?.slice(0, 4)}...{connectedAddress?.slice(-4)}
+                  </span>
                 </div>
-                
-                <Button 
-                  className="w-full h-12 bg-cyan-500 hover:bg-cyan-400 text-black font-bold tracking-[0.2em] text-sm shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all hover:scale-105"
+
+                <Button
+                  className="landing-v3-enter-btn"
                   onClick={onEnter}
                 >
                   ENTER COSMOS
                 </Button>
-                
-                <div className="flex items-center gap-3 text-white/30 text-[10px] uppercase tracking-widest mt-2">
-                  <div className="h-px w-12 bg-white/10" />
-                  <span>or</span>
-                  <div className="h-px w-12 bg-white/10" />
-                </div>
 
-                <Button 
-                  variant="ghost" 
-                  className="text-red-400/60 hover:text-red-300 hover:bg-red-500/10 text-xs uppercase tracking-wider h-8 gap-2"
+                <button
+                  className="landing-v3-disconnect"
                   onClick={onDisconnect}
                 >
                   <LogOut className="w-3 h-3" />
                   Disconnect
-                </Button>
-             </div>
-          ) : (
-            <div className="flex justify-center w-full">
-              {useMobileWallet ? (
-                <Button
-                  className="w-full h-12 bg-cyan-500 hover:bg-cyan-400 text-black font-bold tracking-[0.2em] text-sm shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all hover:scale-105"
-                  onClick={onMobileConnect}
-                  disabled={!mobileWalletReady}
-                >
-                  {mobileWalletReady ? "CONNECT WALLET" : "GET WALLET"}
-                </Button>
-              ) : (
-                <Button
-                  className="w-full h-12 bg-cyan-500 hover:bg-cyan-400 text-black font-bold tracking-[0.2em] text-sm shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all hover:scale-105"
-                  onClick={onDesktopConnect}
-                >
-                  {desktopWalletReady ? "CONNECT WALLET" : "GET WALLET"}
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
-        </div>
-      </div>
-      <div className="landing-footer">
-        <p className="landing-footer-copy">
-          Identity Prism is a Solana dApp that transforms wallet activity into a cosmic identity card
-        </p>
-        <div className="landing-footer-panel">
-          <div className="landing-footer-column">
-            <span className="landing-footer-title">Legal</span>
-            <a className="landing-footer-link" href="/privacy.html">
-              Privacy Policy
-            </a>
-            <a className="landing-footer-link" href="/terms.html">
-              Terms of Use
-            </a>
+                </button>
+              </div>
+            ) : (
+              <div className="landing-v3-connect">
+                {useMobileWallet ? (
+                  <Button
+                    className="landing-v3-connect-btn"
+                    onClick={onMobileConnect}
+                    disabled={!mobileWalletReady}
+                  >
+                    {mobileWalletReady ? "CONNECT WALLET" : "GET WALLET"}
+                  </Button>
+                ) : (
+                  <Button
+                    className="landing-v3-connect-btn"
+                    onClick={onDesktopConnect}
+                  >
+                    {desktopWalletReady ? "CONNECT WALLET" : "GET WALLET"}
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
-          <div className="landing-footer-column">
-            <span className="landing-footer-title">Connect</span>
-            <a className="landing-footer-link" href="mailto:support@identityprism.xyz">
-              support@identityprism.xyz
-            </a>
-            <a
-              className="landing-footer-link"
-              href="https://x.com/Identity_Prism"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Twitter
-            </a>
+
+          {/* Subtle footer links */}
+          <div className="landing-v3-footer">
+            <a href="/privacy.html" className="landing-v3-link">Privacy</a>
+            <span className="landing-v3-sep" />
+            <a href="/terms.html" className="landing-v3-link">Terms</a>
+            <span className="landing-v3-sep" />
+            <a href="https://x.com/Identity_Prism" target="_blank" rel="noreferrer" className="landing-v3-link">Twitter</a>
           </div>
         </div>
-      </div>
       </div>
     </div>
   );
@@ -1710,6 +1703,12 @@ function PreviewGallery() {
           </div>
         ))}
       </div>
+      {/* Onboarding Modal */}
+      {showOnboarding && (
+        <React.Suspense fallback={null}>
+          <OnboardingModal onClose={() => setShowOnboarding(false)} />
+        </React.Suspense>
+      )}
     </div>
   );
 }

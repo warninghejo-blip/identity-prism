@@ -67,6 +67,7 @@ import {
   type GameSessionProof,
 } from "@/lib/magicblock";
 import { createWormholeTunnel, fadeOutWormholeTunnel } from "@/lib/wormholeTunnel";
+import { trackGameStart, trackGameOver } from "@/lib/analytics";
 // earnPrism removed — unified economy uses coins directly
 import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, getAppBaseUrl } from "@/constants";
 import {
@@ -767,6 +768,7 @@ const PrismLeague = () => {
     runStartedAtRef.current = Date.now();
 
     /* Start game immediately — fetch MagicBlock seed in background (non-blocking) */
+    trackGameStart(gameMode);
     setGameState("playing");
 
     const controller = new AbortController();
@@ -788,6 +790,7 @@ const PrismLeague = () => {
       if (victory) { hapticSuccess(); } else { sfxGameOver(); hapticHeavy(); }
       setShowContinue(false);
       setIsVictory(victory);
+      trackGameOver(gameMode, finalScore, victory);
       setGameState("gameover");
       setScore(finalScore);
       setCoins(finalCoins);
@@ -1661,7 +1664,7 @@ const PrismLeague = () => {
                 {/* Coins info */}
                 <div className="w-full mb-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/8 via-cyan-500/5 to-purple-500/8 border border-purple-500/15 text-center">
                   <span className="text-[11px] text-purple-200/50 font-medium">
-                    Earn Coins by playing → spend in the <strong className="text-purple-300/80">Coin Shop</strong> or wager in Challenges
+                    Earn Coins by playing → spend in the <strong className="text-purple-300/80">Prism Shop</strong> or wager in Challenges
                   </span>
                 </div>
 

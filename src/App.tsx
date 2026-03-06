@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Outlet, useLocation } from "react-router-dom";
 import { cleanupOverlays } from '@/lib/safeNavigate';
+import { trackPageView } from '@/lib/analytics';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,6 +26,7 @@ const App = () => {
   // so we only auto-dismiss for other child routes.
   useEffect(() => {
     cleanupOverlays();
+    trackPageView(location.pathname);
     const isIndexRoute = location.pathname === '/' || location.pathname.startsWith('/app') || location.pathname === '/share';
     if (isIndexRoute) return; // Index.tsx handles its own preloader
     const el = document.getElementById('app-preloader');

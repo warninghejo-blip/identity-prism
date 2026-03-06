@@ -1,0 +1,142 @@
+import { useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { goBack } from '@/lib/safeNavigate';
+import { useNavigate } from 'react-router-dom';
+
+const TIER_LABELS: Record<string, string> = {
+  mercury: 'Mercury', mars: 'Mars', venus: 'Venus', earth: 'Earth',
+  neptune: 'Neptune', uranus: 'Uranus', saturn: 'Saturn', jupiter: 'Jupiter',
+  sun: 'Sun', binary_sun: 'Binary Sun',
+};
+
+const TIER_COLORS: Record<string, string> = {
+  mercury: '#94a3b8', mars: '#ef4444', venus: '#f59e0b', earth: '#22c55e',
+  neptune: '#3b82f6', uranus: '#06b6d4', saturn: '#a855f7', jupiter: '#f97316',
+  sun: '#eab308', binary_sun: '#ec4899',
+};
+
+interface WalletData {
+  address: string;
+  score?: number;
+  tier?: string;
+  scanCount?: number;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  coins?: number;
+  sybil?: { trustScore?: number; trustGrade?: string };
+  composite?: {
+    compositeScore: number;
+    compositeTier: string;
+    breakdown: { onchain: number; sybilTrust: number; humanProof: number; social: number; engagement: number };
+  };
+  stats?: { tokens?: number; nfts?: number; transactions?: number; solBalance?: number };
+}
+
+export default function ProfilePage() {
+  const { address } = useParams<{ address: string }>();
+  const navigate = useNavigate();
+  const [data, setData] = useState<WalletData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!address) return;
+    setLoading(true);
+    const proxyUrl = import.meta.env.VITE_HELIUS_PROXY_URL || '';
+    fetch(`${proxyUrl}/api/wallet-database?address=${address}`)
+      .then(r => {
+        if (!r.ok) throw new Error('Wallet not found');
+        return r.json();
+      })
+      .then(d => { setData(d); setError(''); })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [address]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-white/50 animate-pulse">Loading profile...</div>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <p className="text-white/50">{error || 'Profile not found'}</p>
+        <button onClick={() => goBack(navigate)} className="text-cyan-400 hover:underline">Go back</button>
+      </div>
+    );
+  }
+
+  const tier = data.composite?.compositeTier || data.tier || 'mercury';
+  const tierColor = TIER_COLORS[tier] || '#94a3b8';
+  const compositeScore = data.composite?.compositeScore ?? 0;
+  const breakdown = data.composite?.breakdown;
+
+  const barData = breakdown ? [
+    { label: 'On-Chain', value: breakdown.onchain, max: 400, color: '#22d3ee' },
+    { label: 'Sybil Trust', value: breakdown.sybilTrust, max: 250, color: '#a78bfa' },
+    { label: 'Human Proof', value: breakdown.humanProof, max: 150, color: '#34d399' },
+    { label: 'Social', value: breakdown.social, max: 100, color: '#fb923c' },
+    { label: 'Engagement', value: breakdown.engagement, max: 100, color: '#f472b6' },
+  ] : [];
+
+  return (
+    <div className="max-w-lg mx-auto px-4 py-8 space-y-6">
+      <button onClick={() => goBack(navigate)} className="text-white/40 hover:text-white/70 text-sm">← Back</button>
+
+      <div className="text-center space-y-2">
+        <div className="text-5xl" style={{ color: tierColor }}>●</div>
+        <h1 className="text-xl font-bold text-white">{TIER_LABELS[tier] || tier}</h1>
+        <p className="text-white/40 text-xs font-mono">{address}</p>
+        <div className="text-3xl font-bold" style={{ color: tierColor }}>{compositeScore}<span className="text-sm text-white/30">/1000</span></div>
+      </div>
+
+      {barData.length > 0 && (
+        <div className="space-y-3 bg-white/5 rounded-xl p-4">
+          {barData.map(b => (
+            <div key={b.label}>
+              <div className="flex justify-between text-xs mb-1">
+                <span className="text-white/60">{b.label}</span>
+                <span style={{ color: b.color }}>{b.value}/{b.max}</span>
+              </div>
+              <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${(b.value / b.max) * 100}%`, backgroundColor: b.color }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="On-Chain Score" value={`${data.score || 0}/1400`} />
+        <StatCard label="Sybil Grade" value={data.sybil?.trustGrade || '—'} />
+        <StatCard label="Scans" value={String(data.scanCount || 0)} />
+        <StatCard label="Coins" value={String(data.coins || 0)} />
+        {data.stats && (
+          <>
+            <StatCard label="Tokens" value={String(data.stats.tokens || 0)} />
+            <StatCard label="NFTs" value={String(data.stats.nfts || 0)} />
+          </>
+        )}
+      </div>
+
+      <div className="text-center">
+        <Link to={`/compare?address=${address}`} className="inline-block px-6 py-2 rounded-lg bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition">
+          Compare with me
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-white/5 rounded-lg p-3 text-center">
+      <div className="text-xs text-white/40">{label}</div>
+      <div className="text-lg font-semibold text-white">{value}</div>
+    </div>
+  );
+}

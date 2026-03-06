@@ -72,6 +72,9 @@ const StellarForge = React.lazy(() => import('./pages/StellarForge'));
 const NebulaMarket = React.lazy(() => import('./pages/NebulaMarket'));
 const ConstellationNetwork = React.lazy(() => import('./pages/ConstellationNetwork'));
 const QuestsPage = React.lazy(() => import('./pages/QuestsPage'));
+const TimeWarp = React.lazy(() => import('./pages/TimeWarp'));
+const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
+const WalletRequired = React.lazy(() => import('./components/WalletRequired'));
 // ScamChecker removed — redirects to /constellation below
 // Marketplace merged into StellarForge — redirect below
 const Leaderboard = React.lazy(() => import('./pages/Leaderboard'));
@@ -116,8 +119,9 @@ const router = createBrowserRouter([
       { path: 'forge', element: lazyRoute(<StellarForge />) },
       { path: 'market', element: lazyRoute(<NebulaMarket />) },
       { path: 'constellation', element: lazyRoute(<ConstellationNetwork />) },
-      { path: 'timewarp', element: <Navigate to="/" replace /> },
-      { path: 'quests', element: lazyRoute(<QuestsPage />) },
+      { path: 'timewarp', element: lazyRoute(<TimeWarp />) },
+      { path: 'quests', element: lazyRoute(<WalletRequired><QuestsPage /></WalletRequired>) },
+      { path: 'profile/:address', element: lazyRoute(<ProfilePage />) },
       { path: 'scam-checker', element: <Navigate to="/constellation" replace /> },
       { path: 'marketplace', element: <Navigate to="/forge" replace /> },
       { path: 'leaderboard', element: lazyRoute(<Leaderboard />) },
@@ -178,7 +182,7 @@ export default function AppShell() {
       )}
       <CustomWalletProvider
         wallets={wallets}
-        autoConnect={false}
+        autoConnect={true}
         localStorageKey="walletAdapter"
       >
         <DebugWallet />

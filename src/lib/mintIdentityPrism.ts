@@ -466,6 +466,10 @@ export async function mintIdentityPrism({
     collectionMint: collectionMint.toBase58(),
     admin: adminMode,
     paymentToken,
+    score: metadata.score,
+    tier: metadata.planetTier,
+    traits: metadata.traits,
+    stats: metadata.stats,
     ...(remint ? { remint: true, ...(burnSignature ? { burnSignature } : {}), ...(burnAssetId ? { burnAssetId } : {}) } : {}),
   };
   console.info('[mint] sending mint-cnft payload', { coreMintUrl, remint, burnAssetId: burnAssetId?.slice(0, 16), payloadKeys: Object.keys(mintPayload) });

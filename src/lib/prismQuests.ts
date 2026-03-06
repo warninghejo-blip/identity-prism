@@ -172,12 +172,30 @@ export function getQuestProgress(state: QuestState, questId: string): QuestProgr
 }
 
 /**
+ * Sync quest progress to server (fire-and-forget).
+ */
+export function syncQuestsToServer(address: string, quests: Record<string, QuestProgress>): void {
+  const proxyUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_HELIUS_PROXY_URL) || '';
+  const jwt = localStorage.getItem('ip_jwt') || '';
+  fetch(`${proxyUrl}/api/quest/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+    },
+    body: JSON.stringify({ address, quests }),
+  }).catch(() => {}); // fire-and-forget
+}
+
+/**
  * Increment progress on a quest. Returns updated state and whether it was just completed.
+ * Optional onComplete callback fires when quest is first completed.
  */
 export function incrementQuest(
   state: QuestState,
   questId: string,
   amount = 1,
+  onComplete?: (quest: Quest) => void,
 ): { state: QuestState; justCompleted: boolean } {
   const quest = ALL_QUESTS.find((q) => q.id === questId);
   if (!quest) return { state, justCompleted: false };
@@ -207,6 +225,7 @@ export function incrementQuest(
   };
 
   saveQuestState(newState);
+  if (justCompleted && onComplete && quest) onComplete(quest);
   return { state: newState, justCompleted };
 }
 
@@ -224,6 +243,10 @@ export function claimQuestReward(state: QuestState, questId: string): QuestState
     ),
   };
   saveQuestState(newState);
+  // Sync to server after claim
+  const questMap: Record<string, QuestProgress> = {};
+  for (const p of newState.progress) questMap[p.questId] = p;
+  syncQuestsToServer(newState.address, questMap);
   return newState;
 }
 

@@ -1,5 +1,5 @@
 /**
- * Coin Shop — unified shop + marketplace.
+ * Prism Shop — unified shop + marketplace.
  * Tabs: Shop (buy items with Coins) | Creator Market (user sprites) | Equipped (loadout)
  */
 
@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
+import { trackForgePurchase } from '@/lib/analytics';
 import {
   ArrowLeft, ShoppingBag, Check, Lock, Sparkles, Coins,
   Upload, Download, Loader2, Package, AlertTriangle,
@@ -74,14 +75,6 @@ const SHOP_FILTERS: { id: ShopFilter; label: string; icon: string }[] = [
 ];
 
 // ── Visual Preview Renderers ──
-const FRAME_STYLES: Record<string, React.CSSProperties> = {
-  nebula: { border: '3px solid transparent', borderImage: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 50%, #c084fc 100%) 1', boxShadow: '0 0 12px rgba(168,85,247,0.3), inset 0 0 12px rgba(168,85,247,0.1)' },
-  solar_flare: { border: '3px solid transparent', borderImage: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 40%, #ef4444 100%) 1', boxShadow: '0 0 16px rgba(245,158,11,0.4), inset 0 0 8px rgba(245,158,11,0.15)' },
-  void: { border: '3px solid rgba(30,0,60,0.8)', boxShadow: '0 0 20px rgba(100,0,200,0.3), inset 0 0 20px rgba(0,0,0,0.5), 0 0 40px rgba(80,0,160,0.15)' },
-  quantum: { border: '2px dashed rgba(34,211,238,0.5)', boxShadow: '0 0 12px rgba(34,211,238,0.2), inset 0 0 8px rgba(34,211,238,0.1)' },
-  supernova: { border: '3px solid transparent', borderImage: 'linear-gradient(135deg, #fbbf24, #ef4444, #ec4899, #a855f7, #3b82f6) 1', boxShadow: '0 0 25px rgba(251,191,36,0.3), 0 0 50px rgba(239,68,68,0.15)' },
-  event_horizon: { border: '4px solid rgba(0,0,0,0.9)', boxShadow: '0 0 30px rgba(100,0,200,0.4), inset 0 0 30px rgba(0,0,0,0.7), 0 0 60px rgba(139,92,246,0.2)' },
-};
 
 const AURA_STYLES: Record<string, { color: string; shadow: string }> = {
   frost: { color: '#67e8f9', shadow: '0 0 20px rgba(103,232,249,0.5), 0 0 40px rgba(103,232,249,0.2)' },
@@ -494,11 +487,13 @@ export default function StellarForge() {
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
       setBalance(result.balance);
+      trackForgePurchase(item.name, item.price);
       toast.success(`Acquired ${item.name}!`, { description: `−${item.price} Coins` });
       import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
         const qs = getQuestState(walletAddress);
-        incrementQuest(qs, 'weekly_forge');
-        incrementQuest(qs, 'ot_forge5');
+        const onComplete = (q: { name: string }) => toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
+        incrementQuest(qs, 'weekly_forge', 1, onComplete);
+        incrementQuest(qs, 'ot_forge5', 1, onComplete);
       }).catch(() => {});
     } catch {
       toast.error('Purchase failed');
@@ -603,7 +598,7 @@ export default function StellarForge() {
             <h1 className="text-base font-black tracking-tight" style={{
               background: 'linear-gradient(135deg, #c084fc 0%, #f472b6 40%, #fbbf24 100%)',
               WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-            }}>Stellar Forge</h1>
+            }}>Prism Shop</h1>
             <p className="text-[9px] text-white/20 font-medium tracking-widest uppercase">Customize Your Identity</p>
           </div>
           <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-amber-500/15" style={{

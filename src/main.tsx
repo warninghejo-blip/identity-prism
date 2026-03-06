@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Buffer } from 'buffer';
+import { initAnalytics } from './lib/analytics';
 import './index.css';
 import '@solana/wallet-adapter-react-ui/styles.css';
 
@@ -18,6 +19,7 @@ if (!globalThis.Buffer) globalThis.Buffer = Buffer;
 // React can mount and show the Suspense fallback almost instantly.
 const AppShell = React.lazy(() => import('./AppShell'));
 
+initAnalytics();
 console.log("[IdentityPrism] v2.0.1");
 const root = document.getElementById("root");
 ReactDOM.createRoot(root!).render(

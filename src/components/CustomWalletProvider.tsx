@@ -138,7 +138,8 @@ export const CustomWalletProvider = ({
             setPublicKey(null);
             setConnecting(false);
             setDisconnecting(false);
-            setWalletName(null); 
+            // Don't clear walletName here — let autoConnect re-establish
+            // walletName is cleared only on explicit disconnect() call
         };
         const handleErrorEvent = (error: WalletError) => handleError(error, adapter);
 

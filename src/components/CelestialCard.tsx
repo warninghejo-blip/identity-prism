@@ -14,6 +14,8 @@ import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { BLACKHOLE_ENABLED } from '@/constants';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { createWormholeTunnel } from '@/lib/wormholeTunnel';
+import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
+import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
 
@@ -49,37 +51,7 @@ interface CelestialCardProps {
   onSceneReady?: () => void;
 }
 
-const TIER_COLORS: Record<string, string> = {
-  mercury: 'text-stone-300',
-  mars: 'text-orange-400',
-  venus: 'text-yellow-300',
-  earth: 'text-blue-400',
-  neptune: 'text-cyan-400',
-  uranus: 'text-sky-300',
-  saturn: 'text-amber-300',
-  jupiter: 'text-orange-300',
-  sun: 'text-yellow-400',
-  binary_sun: 'text-amber-400',
-};
-
-const TIER_HEX: Record<string, string> = {
-  mercury: '#a8a29e', mars: '#fb923c', venus: '#fde047', earth: '#60a5fa',
-  neptune: '#22d3ee', uranus: '#7dd3fc', saturn: '#fcd34d', jupiter: '#fdba74',
-  sun: '#facc15', binary_sun: '#fbbf24',
-};
-
-const TIER_LABELS: Record<string, string> = {
-  mercury: 'MERCURY',
-  mars: 'MARS',
-  venus: 'VENUS',
-  earth: 'EARTH',
-  neptune: 'NEPTUNE',
-  uranus: 'URANUS',
-  saturn: 'SATURN',
-  jupiter: 'JUPITER',
-  sun: 'SUN',
-  binary_sun: 'BINARY SUN',
-};
+import { TIER_COLORS_TW as TIER_COLORS, TIER_HEX, TIER_LABELS } from '@/lib/constants/tierColors';
 
 export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(function CelestialCard(
   { data, captureMode = false, captureView = 'front', captureTab = 'stats', fromBlackHole = false, onSceneReady },
@@ -116,6 +88,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : 'stats';
   const navigate = useNavigate();
+  const compositeData = useCompositeScore(isCapture ? null : address);
 
   // Fetch sybil risk and forge loadout
   useEffect(() => {
@@ -753,6 +726,18 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="Total Value" value={`$${safeTraits.totalValueUSD < 1000 ? safeTraits.totalValueUSD.toFixed(0) : (safeTraits.totalValueUSD / 1000).toFixed(1) + 'k'}`} captureKey="value" bar={Math.min(safeTraits.totalValueUSD / 10000, 1)} />
                   <StatItem icon={<SparklesIcon className="w-3.5 h-3.5" />} label="Cosmic Rank" value={`${{'stardust':'✨','meteor':'☄️','comet':'💫','nebula':'🌌','supernova':'💥','quasar':'🔮'}[safeTraits.cosmicRank] || '✨'} ${safeTraits.cosmicRank.charAt(0).toUpperCase() + safeTraits.cosmicRank.slice(1)}`} captureKey="rank" bar={(['stardust','meteor','comet','nebula','supernova','quasar'].indexOf(safeTraits.cosmicRank) + 1) / 6} />
                 </div>
+
+                {/* Composite Score Breakdown */}
+                {!isCapture && compositeData.score > 0 && (
+                  <div className="mb-4 rounded-2xl border border-white/[0.06] bg-gradient-to-br from-white/[0.02] via-transparent to-white/[0.01] p-3.5">
+                    <div className="flex items-center gap-1.5 mb-2.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                      <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">Composite Score</span>
+                      <span className="ml-auto text-sm font-bold text-purple-300">{compositeData.score}<span className="text-[9px] text-white/20">/1000</span></span>
+                    </div>
+                    <CompositeScoreBreakdown breakdown={compositeData.breakdown} compact />
+                  </div>
+                )}
 
                 {/* Score History — premium sparkline */}
                 {scoreHistory.length >= 1 && (

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { goBack } from '@/lib/safeNavigate';
+import { trackCompare } from '@/lib/analytics';
+import { toast } from 'sonner';
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { useWalletData, calculateScore, type WalletTraits } from "@/hooks/useWalletData";
 import { Button } from "@/components/ui/button";
@@ -268,14 +270,16 @@ export default function Compare() {
     if (!a || !b) return;
     setAddrA(a);
     setAddrB(b);
+    trackCompare();
     setSearchParams({ a, b });
     const myAddr = wallet.publicKey?.toBase58();
     if (myAddr) {
       import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
         const qs = getQuestState(myAddr);
-        incrementQuest(qs, 'weekly_compare3');
-        incrementQuest(qs, 'ot_compare10');
-        incrementQuest(qs, 'daily_explore');
+        const onComplete = (q: { name: string }) => toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
+        incrementQuest(qs, 'weekly_compare3', 1, onComplete);
+        incrementQuest(qs, 'ot_compare10', 1, onComplete);
+        incrementQuest(qs, 'daily_explore', 1, onComplete);
       }).catch(() => {});
     }
   }, [inputA, inputB, setSearchParams, wallet.publicKey]);
