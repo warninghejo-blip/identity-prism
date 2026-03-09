@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
-import { ArrowLeft, Gift, Check, Clock, Flame, Star, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Gift, Check, Clock, Flame, Star, ChevronRight, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import {
@@ -24,6 +24,8 @@ import {
 } from '@/lib/prismQuests';
 import { earnPrism, getPrismBalance, type PrismBalance } from '@/lib/prismCoin';
 import PageShell from '@/components/PageShell';
+import { computeRangerXP, getRangerRank, getRankProgress, getNextRank, gatherXPSources } from '@/lib/rangerRanks';
+import { getCompletedQuests } from '@/lib/textQuests';
 
 type QuestTab = 'daily' | 'weekly' | 'milestones';
 
@@ -201,6 +203,54 @@ export default function QuestsPage() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
+        {/* Ranger Rank */}
+        {walletAddress && (() => {
+          const sources = gatherXPSources(walletAddress);
+          const xp = computeRangerXP(sources);
+          const rank = getRangerRank(xp);
+          const progress = getRankProgress(xp);
+          const next = getNextRank(xp);
+          return (
+            <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{rank.icon}</span>
+                  <div>
+                    <span className={`text-sm font-bold ${rank.color}`}>{rank.name}</span>
+                    <span className="text-white/20 text-[10px] ml-2">{xp} XP</span>
+                  </div>
+                </div>
+                {next && (
+                  <span className="text-white/20 text-[10px]">{next.xpNeeded} XP to {next.rank.name}</span>
+                )}
+              </div>
+              <div className="mt-2 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-purple-500 to-cyan-400 transition-all" style={{ width: `${progress * 100}%` }} />
+              </div>
+              {rank.perks.length > 0 && (
+                <div className="mt-1.5 flex gap-2 flex-wrap">
+                  {rank.perks.map((p, i) => (
+                    <span key={i} className="text-[9px] text-purple-300/50 px-1.5 py-0.5 bg-purple-500/5 rounded">{p}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Text Adventures */}
+        <button
+          onClick={() => navigate('/text-quest')}
+          className="w-full mb-5 p-4 rounded-xl bg-gradient-to-r from-cyan-500/10 to-purple-500/10 border border-cyan-500/20 flex items-center gap-3 hover:from-cyan-500/15 hover:to-purple-500/15 transition-all text-left"
+        >
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-xl flex-shrink-0">🚀</div>
+          <div className="flex-1 min-w-0">
+            <div className="text-white font-bold text-sm">Text Adventures</div>
+            <div className="text-white/30 text-[10px]">SR2-inspired branching quests with multiple endings</div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-white/20" />
+        </button>
+
         {/* Title + streak */}
         <div className="flex items-center justify-between mb-6">
           <div>

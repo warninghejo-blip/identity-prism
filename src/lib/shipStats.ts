@@ -4,6 +4,7 @@
  */
 
 import type { WalletTraits } from '@/hooks/useWalletData';
+import { getModuleBonuses, type ForgeLoadout } from '@/lib/forgeItems';
 
 // ── Types ──
 
@@ -184,7 +185,18 @@ function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipSt
 
 export function deriveShipStats(traits: WalletTraits | null, loadout: ForgeLoadoutLike | null): ShipStats {
   const base = deriveBaseStats(traits);
-  return applyBonuses(base, loadout);
+  const withEquip = applyBonuses(base, loadout);
+
+  // Apply micromodule bonuses if loadout has installedModules
+  if (loadout && 'installedModules' in loadout) {
+    const modBonuses = getModuleBonuses(loadout as ForgeLoadout);
+    withEquip.speed = Math.min(100, Math.max(0, withEquip.speed + modBonuses.speed));
+    withEquip.shield = Math.min(100, Math.max(0, withEquip.shield + modBonuses.shield));
+    withEquip.firepower = Math.min(100, Math.max(0, withEquip.firepower + modBonuses.firepower));
+    withEquip.luck = Math.min(100, Math.max(0, withEquip.luck + modBonuses.luck));
+  }
+
+  return withEquip;
 }
 
 /** Default stats for unauthenticated players */

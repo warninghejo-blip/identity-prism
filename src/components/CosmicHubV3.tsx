@@ -15,6 +15,7 @@ import type { PlanetTier } from '@/hooks/useWalletData';
 import {
   Trophy, Flame, Store, Swords, Medal, ScrollText, ArrowRight, Shield, Eye, Search, Zap,
 } from 'lucide-react';
+import { computeRangerXP, getRangerRank, getRankProgress, getNextRank, gatherXPSources } from '@/lib/rangerRanks';
 
 /* ── Tier color map ── */
 const TIER_COLORS: Record<string, { text: string; glow: string; bg: string }> = {
@@ -186,8 +187,16 @@ function MiniPassport({
         </div>
         {/* Tier + score + coins */}
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-black tracking-[0.12em] uppercase mb-0.5" style={{ color: tierColor.text, textShadow: `0 0 12px ${tierColor.glow}` }}>
-            {tierLabel}
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <span className="text-xs font-black tracking-[0.12em] uppercase" style={{ color: tierColor.text, textShadow: `0 0 12px ${tierColor.glow}` }}>
+              {tierLabel}
+            </span>
+            {(() => {
+              const xp = computeRangerXP(gatherXPSources(walletAddress));
+              const r = getRangerRank(xp);
+              if (r.id === 'cadet' && xp === 0) return null;
+              return <span className="text-[9px]" title={r.name}>{r.icon}</span>;
+            })()}
           </div>
           <div className="text-[9px] text-white/30 mb-1">{score}/{maxScore}</div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -241,6 +250,23 @@ function MiniPassport({
         <div className="text-center mb-3">
           <div className="text-base font-black tracking-[0.15em] uppercase" style={{ color: tierColor.text, textShadow: `0 0 16px ${tierColor.glow}, 0 0 32px ${tierColor.glow}` }}>{tierLabel}</div>
           <div className="text-[9px] text-white/20 mt-0.5 tracking-wider">COMPOSITE RANK</div>
+          {/* Ranger Rank */}
+          {(() => {
+            const sources = gatherXPSources(walletAddress);
+            const xp = computeRangerXP(sources);
+            const rank = getRangerRank(xp);
+            const progress = getRankProgress(xp);
+            if (rank.id === 'cadet' && xp === 0) return null;
+            return (
+              <div className="mt-1.5 flex items-center justify-center gap-1.5">
+                <span className="text-sm">{rank.icon}</span>
+                <span className={`text-[10px] font-bold ${rank.color}`}>{rank.name}</span>
+                <div className="w-12 h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-purple-500" style={{ width: `${progress * 100}%` }} />
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {breakdown && (

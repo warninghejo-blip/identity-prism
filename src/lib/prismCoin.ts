@@ -42,13 +42,15 @@ export type PrismEarnSource =
   | 'quest_milestone'
   | 'challenge_win'
   | 'first_mint'
-  | 'referral';
+  | 'referral'
+  | 'text_quest';
 
 export type PrismSpendSource =
   | 'forge_frame'
   | 'forge_aura'
   | 'forge_ship_skin'
   | 'forge_title'
+  | 'forge_module'
   | 'challenge_entry';
 
 // ── Earn rates ──
@@ -67,6 +69,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   challenge_win: 30,       // per challenge won
   first_mint: 100,         // one-time bonus for first mint
   referral: 20,            // per referred user who scans
+  text_quest: 1,           // text quest reward (custom amount)
 };
 
 // ── Local storage keys ──

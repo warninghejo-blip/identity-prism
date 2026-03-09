@@ -28,9 +28,15 @@ import {
   getItemById,
   FRAME_STYLES,
   AURA_GLOW_MAP,
+  MICROMODULE_DEFS,
+  MODULE_TIER_COLORS,
+  installModule,
+  getItemModules,
+  getModuleById,
   type ForgeCategory,
   type ForgeItem,
   type ForgeLoadout,
+  type Micromodule,
 } from '@/lib/forgeItems';
 import { getPrismBalance, spendPrism, type PrismBalance } from '@/lib/prismCoin';
 import { getHeliusProxyUrl } from '@/constants';
@@ -946,6 +952,8 @@ export default function StellarForge() {
   const [balance, setBalance] = useState<PrismBalance | null>(null);
   const [loadout, setLoadout] = useState<ForgeLoadout | null>(null);
   const [purchasing, setPurchasing] = useState<string | null>(null);
+  const [moduleModal, setModuleModal] = useState<{ itemId: string; item: ForgeItem } | null>(null);
+  const [confirmModule, setConfirmModule] = useState<{ itemId: string; mod: Micromodule } | null>(null);
 
   // Market state
   const [listings, setListings] = useState<MarketListing[]>([]);
@@ -1037,6 +1045,27 @@ export default function StellarForge() {
     const labels: Record<ForgeCategory, string> = { frame: 'Frame', aura: 'Aura', ship_skin: 'Ship Skin', title: 'Title' };
     toast.success(`Unequipped ${labels[category]}`);
   }, [loadout]);
+
+  const handleInstallModule = useCallback(async (itemId: string, moduleId: string) => {
+    if (!loadout || !balance || !walletAddress) return;
+    const mod = getModuleById(moduleId);
+    if (!mod) return;
+    if (balance.balance < mod.price) { toast.error('Not enough Coins'); return; }
+    try {
+      const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
+      if (!result) { toast.error('Purchase failed'); return; }
+      const newLoadout = installModule(loadout, itemId, moduleId);
+      if (!newLoadout) { toast.error('Cannot install module'); return; }
+      saveLocalLoadout(newLoadout);
+      setLoadout(newLoadout);
+      setBalance(result.balance);
+      setConfirmModule(null);
+      setModuleModal(null);
+      toast.success(`Installed ${mod.name}!`, { description: 'This upgrade is permanent.' });
+    } catch {
+      toast.error('Install failed');
+    }
+  }, [loadout, balance, walletAddress]);
 
   const isOwned = useCallback((id: string) => loadout?.ownedItems.some((o) => o.itemId === id) ?? false, [loadout]);
   const isEquipped = useCallback((id: string) => {
@@ -1416,6 +1445,64 @@ export default function StellarForge() {
               );
             })}
 
+            {/* ── Micromodules Section ── */}
+            <div className="mt-8">
+              <h3 className="text-white/30 text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
+                <Zap className="w-3.5 h-3.5 text-amber-400" /> Micromodules
+              </h3>
+              <p className="text-white/15 text-[10px] mb-4">
+                Permanent upgrades for equipped items. Max 3 per item. Cannot be removed after install.
+              </p>
+
+              {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura').length === 0 ? (
+                <p className="text-white/10 text-xs italic py-4 text-center">Equip a frame or aura to install modules</p>
+              ) : (
+                <div className="space-y-3">
+                  {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura').map((item) => {
+                    const modules = loadout ? getItemModules(loadout, item.id) : [];
+                    const rarityColor = RARITY_COLORS[item.rarity];
+                    return (
+                      <div key={item.id} className="rounded-xl p-3 border border-white/[0.06] bg-white/[0.02]">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-sm">{CATEGORY_ICONS[item.category]}</span>
+                          <span className="text-white text-xs font-bold">{item.name}</span>
+                          <span className="text-[9px] ml-auto" style={{ color: rarityColor }}>{modules.length}/3 slots</span>
+                        </div>
+                        <div className="flex gap-2">
+                          {[0, 1, 2].map((slotIdx) => {
+                            const mod = modules[slotIdx];
+                            if (mod) {
+                              const tierColor = MODULE_TIER_COLORS[mod.tier];
+                              return (
+                                <div key={slotIdx} className="flex-1 rounded-lg p-2 text-center" style={{
+                                  background: `${tierColor}10`,
+                                  border: `1px solid ${tierColor}25`,
+                                }}>
+                                  <span className="text-sm block">{mod.icon}</span>
+                                  <span className="text-[9px] font-bold block mt-0.5" style={{ color: tierColor }}>{mod.name}</span>
+                                  <span className="text-[8px] text-white/30">+{mod.statBonus.value} {mod.statBonus.stat}</span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <button
+                                key={slotIdx}
+                                onClick={() => setModuleModal({ itemId: item.id, item })}
+                                className="flex-1 rounded-lg border border-dashed border-white/[0.08] p-2 flex flex-col items-center justify-center hover:border-purple-500/30 hover:bg-purple-500/5 transition-all"
+                              >
+                                <Plus className="w-3 h-3 text-white/15" />
+                                <span className="text-[8px] text-white/10 mt-0.5">Install</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Purchased market items */}
             {myPurchases.size > 0 && (
               <div className="mt-8">
@@ -1431,6 +1518,90 @@ export default function StellarForge() {
               </div>
             )}
           </>
+        )}
+
+        {/* ── Module Selection Modal ── */}
+        {moduleModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => { setModuleModal(null); setConfirmModule(null); }}>
+            <div className="bg-[#0a0e1a] border border-white/10 rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
+              {confirmModule ? (
+                <>
+                  <h3 className="text-white font-bold text-base mb-2">Confirm Installation</h3>
+                  <div className="p-3 rounded-xl mb-3" style={{
+                    background: `${MODULE_TIER_COLORS[confirmModule.mod.tier]}10`,
+                    border: `1px solid ${MODULE_TIER_COLORS[confirmModule.mod.tier]}25`,
+                  }}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-lg">{confirmModule.mod.icon}</span>
+                      <span className="text-white font-bold text-sm">{confirmModule.mod.name}</span>
+                    </div>
+                    <p className="text-white/40 text-xs mb-2">{confirmModule.mod.description}</p>
+                    <p className="text-green-400 text-xs font-bold">+{confirmModule.mod.statBonus.value} {confirmModule.mod.statBonus.stat}</p>
+                    {confirmModule.mod.tradeoff && (
+                      <p className="text-red-400 text-xs">-{confirmModule.mod.tradeoff.value} {confirmModule.mod.tradeoff.stat}</p>
+                    )}
+                  </div>
+                  <div className="p-3 rounded-xl bg-red-500/5 border border-red-500/20 mb-4">
+                    <p className="text-red-400 text-xs font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5" /> This is permanent! Module cannot be removed.
+                    </p>
+                  </div>
+                  <div className="flex gap-3">
+                    <Button variant="outline" className="flex-1 h-10 text-xs" onClick={() => setConfirmModule(null)}>Cancel</Button>
+                    <Button className="flex-1 h-10 text-xs bg-purple-600 hover:bg-purple-500 font-bold" onClick={() => handleInstallModule(confirmModule.itemId, confirmModule.mod.id)}>
+                      <Coins className="w-3 h-3 mr-1" /> Install ({confirmModule.mod.price})
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-white font-bold text-base mb-1">Install Module</h3>
+                  <p className="text-white/30 text-xs mb-4">Select a module for {moduleModal.item.name}</p>
+                  <div className="space-y-2">
+                    {MICROMODULE_DEFS
+                      .filter(m => m.compatibleCategories.includes(moduleModal.item.category))
+                      .filter(m => !(loadout?.installedModules[moduleModal.itemId] || []).includes(m.id))
+                      .map((mod) => {
+                        const tierColor = MODULE_TIER_COLORS[mod.tier];
+                        const canAfford = (balance?.balance ?? 0) >= mod.price;
+                        return (
+                          <button
+                            key={mod.id}
+                            onClick={() => canAfford ? setConfirmModule({ itemId: moduleModal.itemId, mod }) : toast.error('Not enough Coins')}
+                            className="w-full text-left p-3 rounded-xl border transition-all hover:bg-white/[0.03]"
+                            style={{
+                              borderColor: `${tierColor}20`,
+                              opacity: canAfford ? 1 : 0.4,
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">{mod.icon}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-white text-xs font-bold">{mod.name}</span>
+                                  <span className="text-[8px] font-black px-1.5 py-0.5 rounded" style={{ color: tierColor, background: `${tierColor}15` }}>
+                                    {mod.tier.toUpperCase()}
+                                  </span>
+                                </div>
+                                <p className="text-white/25 text-[10px] mt-0.5">{mod.description}</p>
+                                <div className="flex items-center gap-3 mt-1">
+                                  <span className="text-green-400 text-[10px] font-bold">+{mod.statBonus.value} {mod.statBonus.stat}</span>
+                                  {mod.tradeoff && <span className="text-red-400 text-[10px]">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 text-amber-400 text-xs font-bold">
+                                <Coins className="w-3 h-3" /> {mod.price}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                  <Button variant="outline" className="w-full mt-4 h-10 text-xs" onClick={() => setModuleModal(null)}>Close</Button>
+                </>
+              )}
+            </div>
+          </div>
         )}
       </main>
 

@@ -7,6 +7,20 @@
 
 export type ForgeCategory = 'frame' | 'aura' | 'ship_skin' | 'title';
 
+// ── Micromodule Types ──
+
+export interface Micromodule {
+  id: string;
+  name: string;
+  description: string;
+  tier: 'blue' | 'yellow' | 'red';
+  price: number;
+  statBonus: { stat: 'speed' | 'shield' | 'firepower' | 'luck'; value: number };
+  tradeoff?: { stat: 'speed' | 'shield' | 'firepower' | 'luck'; value: number };
+  icon: string;
+  compatibleCategories: ForgeCategory[];
+}
+
 export interface ForgeItem {
   id: string;
   name: string;
@@ -31,6 +45,7 @@ export interface ForgeLoadout {
   equippedShipSkin: string | null;
   equippedTitle: string | null;
   ownedItems: OwnedItem[];
+  installedModules: Record<string, string[]>; // itemId → moduleId[] (max 3)
 }
 
 // ── Item Catalog ──
@@ -184,6 +199,7 @@ export function getLocalLoadout(address: string): ForgeLoadout {
     equippedShipSkin: null,
     equippedTitle: null,
     ownedItems: [],
+    installedModules: {},
   };
 }
 
@@ -261,4 +277,88 @@ export function unequipItem(loadout: ForgeLoadout, category: ForgeCategory): For
     return { ...o, equipped: oDef?.category === category ? false : o.equipped };
   });
   return updated;
+}
+
+// ── Micromodule Catalog ──
+
+export const MICROMODULE_DEFS: Micromodule[] = [
+  // Speed modules
+  { id: 'mod_speed_1', name: 'Thruster Boost',  description: 'Basic engine enhancement',           tier: 'blue',   price: 2000,  statBonus: { stat: 'speed', value: 5 },     icon: '🔥', compatibleCategories: ['frame', 'aura'] },
+  { id: 'mod_speed_2', name: 'Warp Coils',      description: 'Advanced warp drive components',      tier: 'yellow', price: 8000,  statBonus: { stat: 'speed', value: 12 },    tradeoff: { stat: 'shield', value: 3 },    icon: '⚡', compatibleCategories: ['frame', 'aura'] },
+  { id: 'mod_speed_3', name: 'Quantum Engine',   description: 'Experimental quantum propulsion',     tier: 'red',    price: 30000, statBonus: { stat: 'speed', value: 25 },    tradeoff: { stat: 'shield', value: 8 },    icon: '🌀', compatibleCategories: ['frame'] },
+  // Shield modules
+  { id: 'mod_shield_1', name: 'Plating Mk.I',    description: 'Reinforced hull plating',            tier: 'blue',   price: 2000,  statBonus: { stat: 'shield', value: 5 },    icon: '🛡️', compatibleCategories: ['frame', 'aura'] },
+  { id: 'mod_shield_2', name: 'Deflector Array',  description: 'Energy deflection system',            tier: 'yellow', price: 8000,  statBonus: { stat: 'shield', value: 12 },   tradeoff: { stat: 'speed', value: 3 },     icon: '🔷', compatibleCategories: ['frame', 'aura'] },
+  { id: 'mod_shield_3', name: 'Fortress Core',    description: 'Impenetrable defense matrix',         tier: 'red',    price: 30000, statBonus: { stat: 'shield', value: 25 },   tradeoff: { stat: 'speed', value: 8 },     icon: '🏰', compatibleCategories: ['frame'] },
+  // Firepower modules
+  { id: 'mod_fire_1', name: 'Targeting Chip',    description: 'Enhanced targeting computer',         tier: 'blue',   price: 2000,  statBonus: { stat: 'firepower', value: 5 }, icon: '🎯', compatibleCategories: ['aura', 'frame'] },
+  { id: 'mod_fire_2', name: 'Arsenal Pack',      description: 'Expanded weapons array',              tier: 'yellow', price: 8000,  statBonus: { stat: 'firepower', value: 12 },tradeoff: { stat: 'luck', value: 3 },      icon: '💥', compatibleCategories: ['aura', 'frame'] },
+  { id: 'mod_fire_3', name: 'Devastator Core',   description: 'Planet-cracking weapon system',       tier: 'red',    price: 30000, statBonus: { stat: 'firepower', value: 25 },tradeoff: { stat: 'luck', value: 8 },      icon: '☢️', compatibleCategories: ['aura'] },
+  // Luck modules
+  { id: 'mod_luck_1', name: 'Scanner Lens',      description: 'Improved anomaly detection',          tier: 'blue',   price: 2000,  statBonus: { stat: 'luck', value: 5 },      icon: '🔍', compatibleCategories: ['aura', 'frame'] },
+  { id: 'mod_luck_2', name: 'Probability Matrix', description: 'Quantum probability manipulation',    tier: 'yellow', price: 8000,  statBonus: { stat: 'luck', value: 12 },     tradeoff: { stat: 'firepower', value: 3 }, icon: '🎲', compatibleCategories: ['aura', 'frame'] },
+  { id: 'mod_luck_3', name: 'Quantum Oracle',     description: 'Prescient decision engine',           tier: 'red',    price: 30000, statBonus: { stat: 'luck', value: 25 },     tradeoff: { stat: 'firepower', value: 8 }, icon: '🔮', compatibleCategories: ['aura'] },
+];
+
+export const MODULE_TIER_COLORS: Record<Micromodule['tier'], string> = {
+  blue: '#3b82f6',
+  yellow: '#eab308',
+  red: '#ef4444',
+};
+
+export function getModuleById(id: string): Micromodule | undefined {
+  return MICROMODULE_DEFS.find((m) => m.id === id);
+}
+
+/** Install a module into an item slot (permanent, max 3 per item). */
+export function installModule(loadout: ForgeLoadout, itemId: string, moduleId: string): ForgeLoadout | null {
+  const item = getItemById(itemId);
+  const mod = getModuleById(moduleId);
+  if (!item || !mod) return null;
+
+  // Check compatibility
+  if (!mod.compatibleCategories.includes(item.category)) return null;
+
+  // Check ownership
+  if (!loadout.ownedItems.some((o) => o.itemId === itemId)) return null;
+
+  const currentModules = loadout.installedModules[itemId] || [];
+
+  // Max 3 modules per item
+  if (currentModules.length >= 3) return null;
+
+  // No duplicate module on same item
+  if (currentModules.includes(moduleId)) return null;
+
+  return {
+    ...loadout,
+    installedModules: {
+      ...loadout.installedModules,
+      [itemId]: [...currentModules, moduleId],
+    },
+  };
+}
+
+/** Get modules installed on an item. */
+export function getItemModules(loadout: ForgeLoadout, itemId: string): Micromodule[] {
+  const ids = loadout.installedModules[itemId] || [];
+  return ids.map(getModuleById).filter((m): m is Micromodule => m != null);
+}
+
+/** Get total stat bonuses from all installed modules across equipped items. */
+export function getModuleBonuses(loadout: ForgeLoadout): { speed: number; shield: number; firepower: number; luck: number } {
+  const bonuses = { speed: 0, shield: 0, firepower: 0, luck: 0 };
+  const equippedItems = [loadout.equippedFrame, loadout.equippedAura, loadout.equippedShipSkin, loadout.equippedTitle].filter(Boolean) as string[];
+
+  for (const itemId of equippedItems) {
+    const modules = getItemModules(loadout, itemId);
+    for (const mod of modules) {
+      bonuses[mod.statBonus.stat] += mod.statBonus.value;
+      if (mod.tradeoff) {
+        bonuses[mod.tradeoff.stat] -= mod.tradeoff.value;
+      }
+    }
+  }
+
+  return bonuses;
 }

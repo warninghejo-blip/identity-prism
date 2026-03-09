@@ -79,6 +79,8 @@ const WalletRequired = React.lazy(() => import('./components/WalletRequired'));
 // ScamChecker removed — redirects to /constellation below
 // Marketplace merged into StellarForge — redirect below
 const Leaderboard = React.lazy(() => import('./pages/Leaderboard'));
+const TextQuestPage = React.lazy(() => import('./pages/TextQuestPage'));
+const VisualCompare = React.lazy(() => import('./pages/VisualCompare'));
 
 const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -128,6 +130,8 @@ const router = createBrowserRouter([
       { path: 'scam-checker', element: <Navigate to="/constellation" replace /> },
       { path: 'marketplace', element: <Navigate to="/forge" replace /> },
       { path: 'leaderboard', element: lazyRoute(<Leaderboard />) },
+      { path: 'text-quest', element: lazyRoute(<WalletRequired><TextQuestPage /></WalletRequired>) },
+      { path: 'visual-compare', element: lazyRoute(<VisualCompare />) },
       { path: '*', element: <NotFound /> },
     ],
   },
