@@ -954,6 +954,7 @@ export default function StellarForge() {
   const [purchasing, setPurchasing] = useState<string | null>(null);
   const [moduleModal, setModuleModal] = useState<{ itemId: string; item: ForgeItem } | null>(null);
   const [confirmModule, setConfirmModule] = useState<{ itemId: string; mod: Micromodule } | null>(null);
+  const [installingModule, setInstallingModule] = useState(false);
 
   // Market state
   const [listings, setListings] = useState<MarketListing[]>([]);
@@ -1047,10 +1048,11 @@ export default function StellarForge() {
   }, [loadout]);
 
   const handleInstallModule = useCallback(async (itemId: string, moduleId: string) => {
-    if (!loadout || !balance || !walletAddress) return;
+    if (!loadout || !balance || !walletAddress || installingModule) return;
     const mod = getModuleById(moduleId);
     if (!mod) return;
     if (balance.balance < mod.price) { toast.error('Not enough Coins'); return; }
+    setInstallingModule(true);
     try {
       const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
       if (!result) { toast.error('Purchase failed'); return; }
@@ -1064,8 +1066,10 @@ export default function StellarForge() {
       toast.success(`Installed ${mod.name}!`, { description: 'This upgrade is permanent.' });
     } catch {
       toast.error('Install failed');
+    } finally {
+      setInstallingModule(false);
     }
-  }, [loadout, balance, walletAddress]);
+  }, [loadout, balance, walletAddress, installingModule]);
 
   const isOwned = useCallback((id: string) => loadout?.ownedItems.some((o) => o.itemId === id) ?? false, [loadout]);
   const isEquipped = useCallback((id: string) => {
@@ -1466,7 +1470,7 @@ export default function StellarForge() {
                         <div className="flex items-center gap-2 mb-2">
                           <span className="text-sm">{CATEGORY_ICONS[item.category]}</span>
                           <span className="text-white text-xs font-bold">{item.name}</span>
-                          <span className="text-[9px] ml-auto" style={{ color: rarityColor }}>{modules.length}/3 slots</span>
+                          <span className={`text-[9px] ml-auto ${modules.length >= 3 ? 'text-green-400' : ''}`} style={modules.length < 3 ? { color: rarityColor } : undefined}>{modules.length >= 3 ? 'Full' : `${modules.length}/3 slots`}</span>
                         </div>
                         <div className="flex gap-2">
                           {[0, 1, 2].map((slotIdx) => {
@@ -1548,8 +1552,8 @@ export default function StellarForge() {
                   </div>
                   <div className="flex gap-3">
                     <Button variant="outline" className="flex-1 h-10 text-xs" onClick={() => setConfirmModule(null)}>Cancel</Button>
-                    <Button className="flex-1 h-10 text-xs bg-purple-600 hover:bg-purple-500 font-bold" onClick={() => handleInstallModule(confirmModule.itemId, confirmModule.mod.id)}>
-                      <Coins className="w-3 h-3 mr-1" /> Install ({confirmModule.mod.price})
+                    <Button className="flex-1 h-10 text-xs bg-purple-600 hover:bg-purple-500 font-bold" onClick={() => handleInstallModule(confirmModule.itemId, confirmModule.mod.id)} disabled={installingModule}>
+                      <Coins className="w-3 h-3 mr-1" /> {installingModule ? 'Installing...' : `Install (${confirmModule.mod.price})`}
                     </Button>
                   </div>
                 </>
@@ -1567,8 +1571,9 @@ export default function StellarForge() {
                         return (
                           <button
                             key={mod.id}
-                            onClick={() => canAfford ? setConfirmModule({ itemId: moduleModal.itemId, mod }) : toast.error('Not enough Coins')}
-                            className="w-full text-left p-3 rounded-xl border transition-all hover:bg-white/[0.03]"
+                            onClick={() => canAfford ? setConfirmModule({ itemId: moduleModal.itemId, mod }) : undefined}
+                            disabled={!canAfford}
+                            className={`w-full text-left p-3 rounded-xl border transition-all ${canAfford ? 'hover:bg-white/[0.03] cursor-pointer' : 'cursor-not-allowed'}`}
                             style={{
                               borderColor: `${tierColor}20`,
                               opacity: canAfford ? 1 : 0.4,

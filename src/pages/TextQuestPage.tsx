@@ -159,6 +159,7 @@ export default function TextQuestPage() {
   const [activeQuest, setActiveQuest] = useState<TextQuest | null>(null);
   const [questState, setQuestState] = useState<QuestSaveState | null>(null);
   const [rewardClaimed, setRewardClaimed] = useState(false);
+  const [claimingReward, setClaimingReward] = useState(false);
 
   // Ship stats for skill checks
   const { traits: walletTraits } = useWalletData(walletAddress || undefined);
@@ -211,15 +212,18 @@ export default function TextQuestPage() {
   }, [activeQuest, questState, shipStats, walletAddress]);
 
   const handleClaimReward = useCallback(async () => {
-    if (!questState?.reward || !walletAddress || rewardClaimed) return;
+    if (!questState?.reward || !walletAddress || rewardClaimed || claimingReward) return;
+    setClaimingReward(true);
     try {
       await earnPrism(walletAddress, 'text_quest', questState.reward.coins, `Quest: ${activeQuest?.title}`);
       setRewardClaimed(true);
       toast.success(`+${questState.reward.coins} Coins!`);
     } catch {
       toast.error('Failed to claim reward');
+    } finally {
+      setClaimingReward(false);
     }
-  }, [questState, walletAddress, rewardClaimed, activeQuest]);
+  }, [questState, walletAddress, rewardClaimed, claimingReward, activeQuest]);
 
   const handleBack = useCallback(() => {
     if (activeQuest) {
@@ -392,8 +396,9 @@ export default function TextQuestPage() {
                   <Button
                     className="w-full h-12 bg-amber-500 hover:bg-amber-400 text-black font-bold"
                     onClick={handleClaimReward}
+                    disabled={claimingReward}
                   >
-                    Claim Reward
+                    {claimingReward ? 'Claiming...' : 'Claim Reward'}
                   </Button>
                 )}
                 {rewardClaimed && (
