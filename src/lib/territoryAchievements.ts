@@ -38,15 +38,15 @@ export interface TerritoryStats {
 }
 
 export const TERRITORY_ACHIEVEMENT_DEFS: Omit<TerritoryAchievement, 'unlocked' | 'unlockedAt' | 'claimed' | 'claimedAt'>[] = [
-  { id: 'terr_first_capture', name: 'First Claim', description: 'Capture 1 zone', icon: '🏴', image: '/achievements/terr_first_capture.png', threshold: 1, thresholdType: 'zones_captured', tier: 'bronze' },
-  { id: 'terr_explorer', name: 'Territory Explorer', description: 'Capture 5 zones total', icon: '🗺️', image: '/achievements/terr_explorer.png', threshold: 5, thresholdType: 'zones_captured', tier: 'bronze' },
-  { id: 'terr_holder_30', name: 'Zone Holder', description: 'Hold 3 zones simultaneously', icon: '🏰', image: '/achievements/terr_holder_30.png', threshold: 3, thresholdType: 'simultaneous_zones', tier: 'silver' },
-  { id: 'terr_survivor_60', name: 'Territory Survivor', description: 'Survive 60 seconds', icon: '⏱️', image: '/achievements/terr_survivor_60.png', threshold: 60, thresholdType: 'survival_time', tier: 'silver' },
-  { id: 'terr_defender', name: 'Zone Defender', description: 'Defend 20 zones from asteroids', icon: '🛡️', image: '/achievements/terr_defender.png', threshold: 20, thresholdType: 'zones_defended', tier: 'gold' },
-  { id: 'terr_dominator', name: 'Dominator', description: 'Hold all zones simultaneously', icon: '👑', image: '/achievements/terr_dominator.png', threshold: 5, thresholdType: 'simultaneous_zones', tier: 'gold' },
-  { id: 'terr_survivor_120', name: 'Territory Veteran', description: 'Survive 120 seconds', icon: '🎖️', image: '/achievements/terr_survivor_120.png', threshold: 120, thresholdType: 'survival_time', tier: 'gold' },
-  { id: 'terr_survivor_300', name: 'Territory Legend', description: 'Survive 300 seconds', icon: '🌟', image: '/achievements/terr_survivor_300.png', threshold: 300, thresholdType: 'survival_time', tier: 'diamond' },
-  { id: 'terr_supreme', name: 'Supreme Commander', description: 'Score 3000+', icon: '🏆', image: '/achievements/terr_supreme.png', threshold: 3000, thresholdType: 'best_score', tier: 'diamond' },
+  { id: 'terr_first_capture', name: 'First Claim', description: 'Capture 1 zone', icon: '🏴', image: '', threshold: 1, thresholdType: 'zones_captured', tier: 'bronze' },
+  { id: 'terr_explorer', name: 'Territory Explorer', description: 'Capture 5 zones total', icon: '🗺️', image: '', threshold: 5, thresholdType: 'zones_captured', tier: 'bronze' },
+  { id: 'terr_holder_30', name: 'Zone Holder', description: 'Hold 3 zones simultaneously', icon: '🏰', image: '', threshold: 3, thresholdType: 'simultaneous_zones', tier: 'silver' },
+  { id: 'terr_survivor_60', name: 'Territory Survivor', description: 'Survive 60 seconds', icon: '⏱️', image: '', threshold: 60, thresholdType: 'survival_time', tier: 'silver' },
+  { id: 'terr_defender', name: 'Zone Defender', description: 'Defend 20 zones from asteroids', icon: '🛡️', image: '', threshold: 20, thresholdType: 'zones_defended', tier: 'gold' },
+  { id: 'terr_dominator', name: 'Dominator', description: 'Hold all zones simultaneously', icon: '👑', image: '', threshold: 5, thresholdType: 'simultaneous_zones', tier: 'gold' },
+  { id: 'terr_survivor_120', name: 'Territory Veteran', description: 'Survive 120 seconds', icon: '🎖️', image: '', threshold: 120, thresholdType: 'survival_time', tier: 'gold' },
+  { id: 'terr_survivor_300', name: 'Territory Legend', description: 'Survive 300 seconds', icon: '🌟', image: '', threshold: 300, thresholdType: 'survival_time', tier: 'diamond' },
+  { id: 'terr_supreme', name: 'Supreme Commander', description: 'Score 3000+', icon: '🏆', image: '', threshold: 3000, thresholdType: 'best_score', tier: 'diamond' },
 ];
 
 export function getTerritoryStats(): TerritoryStats {

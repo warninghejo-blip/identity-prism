@@ -38,15 +38,15 @@ export interface WarsStats {
 }
 
 export const WARS_ACHIEVEMENT_DEFS: Omit<WarsAchievement, 'unlocked' | 'unlockedAt' | 'claimed' | 'claimedAt'>[] = [
-  { id: 'wars_first_wave', name: 'First Wave', description: 'Use impulse wave 1 time', icon: '🌊', image: '/achievements/wars_first_wave.png', threshold: 1, thresholdType: 'impulse_waves', tier: 'bronze' },
-  { id: 'wars_wave_rider', name: 'Wave Rider', description: 'Use 50 impulse waves total', icon: '🏄', image: '/achievements/wars_wave_rider.png', threshold: 50, thresholdType: 'impulse_waves', tier: 'bronze' },
-  { id: 'wars_survivor_30', name: 'War Survivor', description: 'Survive 30 seconds', icon: '⚔️', image: '/achievements/wars_survivor_30.png', threshold: 30, thresholdType: 'survival_time', tier: 'silver' },
-  { id: 'wars_survivor_60', name: 'Battle Hardened', description: 'Survive 60 seconds', icon: '🛡️', image: '/achievements/wars_survivor_60.png', threshold: 60, thresholdType: 'survival_time', tier: 'silver' },
-  { id: 'wars_deflector', name: 'Deflector', description: 'Push away 100 asteroids total', icon: '💨', image: '/achievements/wars_deflector.png', threshold: 100, thresholdType: 'asteroids_pushed', tier: 'gold' },
-  { id: 'wars_survivor_120', name: 'War Veteran', description: 'Survive 120 seconds', icon: '🎖️', image: '/achievements/wars_survivor_120.png', threshold: 120, thresholdType: 'survival_time', tier: 'gold' },
-  { id: 'wars_chain_master', name: 'Chain Reaction', description: 'Push 5 asteroids with 1 wave', icon: '⛓️', image: '/achievements/wars_chain_master.png', threshold: 5, thresholdType: 'chain_push', tier: 'gold' },
-  { id: 'wars_survivor_300', name: 'War Legend', description: 'Survive 300 seconds', icon: '👑', image: '/achievements/wars_survivor_300.png', threshold: 300, thresholdType: 'survival_time', tier: 'diamond' },
-  { id: 'wars_grandmaster', name: 'Grandmaster', description: 'Score 3000+', icon: '🏆', image: '/achievements/wars_grandmaster.png', threshold: 3000, thresholdType: 'best_score', tier: 'diamond' },
+  { id: 'wars_first_wave', name: 'First Wave', description: 'Use impulse wave 1 time', icon: '🌊', image: '', threshold: 1, thresholdType: 'impulse_waves', tier: 'bronze' },
+  { id: 'wars_wave_rider', name: 'Wave Rider', description: 'Use 50 impulse waves total', icon: '🏄', image: '', threshold: 50, thresholdType: 'impulse_waves', tier: 'bronze' },
+  { id: 'wars_survivor_30', name: 'War Survivor', description: 'Survive 30 seconds', icon: '⚔️', image: '', threshold: 30, thresholdType: 'survival_time', tier: 'silver' },
+  { id: 'wars_survivor_60', name: 'Battle Hardened', description: 'Survive 60 seconds', icon: '🛡️', image: '', threshold: 60, thresholdType: 'survival_time', tier: 'silver' },
+  { id: 'wars_deflector', name: 'Deflector', description: 'Push away 100 asteroids total', icon: '💨', image: '', threshold: 100, thresholdType: 'asteroids_pushed', tier: 'gold' },
+  { id: 'wars_survivor_120', name: 'War Veteran', description: 'Survive 120 seconds', icon: '🎖️', image: '', threshold: 120, thresholdType: 'survival_time', tier: 'gold' },
+  { id: 'wars_chain_master', name: 'Chain Reaction', description: 'Push 5 asteroids with 1 wave', icon: '⛓️', image: '', threshold: 5, thresholdType: 'chain_push', tier: 'gold' },
+  { id: 'wars_survivor_300', name: 'War Legend', description: 'Survive 300 seconds', icon: '👑', image: '', threshold: 300, thresholdType: 'survival_time', tier: 'diamond' },
+  { id: 'wars_grandmaster', name: 'Grandmaster', description: 'Score 3000+', icon: '🏆', image: '', threshold: 3000, thresholdType: 'best_score', tier: 'diamond' },
 ];
 
 export function getWarsStats(): WarsStats {
