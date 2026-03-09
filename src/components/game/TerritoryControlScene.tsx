@@ -168,7 +168,17 @@ function spawnAstTowardZone(el: number, zone: CaptureZone, sx: number, sy: numbe
    Game World — Territory Control
    ═══════════════════════════════════════════════════ */
 
-function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProps) {
+export interface TerritorySessionStats {
+  zonesCaptured: number;
+  zonesDefended: number;
+  maxSimultaneous: number;
+}
+
+interface TerritoryWorldProps extends Omit<GameProps, 'onGameOver'> {
+  onGameOver: (score: number, coins: number, extraStats?: TerritorySessionStats) => void;
+}
+
+function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits, shipSkin, shipStats }: TerritoryWorldProps) {
   const asteroidPool = useRef<AsteroidData[]>([]);
   useMemo(() => { asteroidPool.current = createAsteroidPool(); }, []);
 
@@ -203,6 +213,10 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
   const zoneIdx = useRef(0);
   const captureAccum = useRef(0);
   const zonesFullyCaptured = useRef(0);
+  // Session tracking for achievements
+  const sessionCaptures = useRef(0);
+  const sessionDefended = useRef(0);
+  const maxSimultaneous = useRef(0);
 
   const sCol = traits?.planetTier ? TIER_COLORS[traits.planetTier] || "#22d3ee" : "#22d3ee";
   const sSc = traits?.planetTier === "binary_sun" ? 1.08 : 1;
@@ -242,6 +256,7 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
     shieldT.current = 0; slowmoT.current = 0; phaseT.current = 0;
     bonusPoints.current = 0; coinBank.current = 0; coinAccum.current = 0;
     zoneSpawnTimer.current = 0; zoneIdx.current = 0; captureAccum.current = 0; zonesFullyCaptured.current = 0;
+    sessionCaptures.current = 0; sessionDefended.current = 0; maxSimultaneous.current = 0;
     onCoins(0); elapsed.current = 0; spawnT.current = 0; physAccum.current = 0;
     overRef.current = false; scoreRef.current = -1; shake.current = 0; explAct.current = false;
     pickupEffect.current.active = false;
@@ -272,7 +287,8 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
       if (slowmoT.current > 0) slowmoT.current -= dt;
       if (phaseT.current > 0) phaseT.current -= dt;
 
-      const tSpeed = clamp(INIT_SPEED + el * SPEED_GAIN * .8, INIT_SPEED, MAX_SPEED * .85);
+      const speedMult = 1 + (shipStats?.speed || 0) / 200;
+      const tSpeed = clamp((INIT_SPEED + el * SPEED_GAIN * .8) * speedMult, INIT_SPEED, MAX_SPEED * .85 * speedMult);
       curSpeed.current = slerp(curSpeed.current, tSpeed, 3, dt);
 
       let heading = shipHead.current;
@@ -348,7 +364,8 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < z.radius) {
         insideAnyZone = true;
-        z.captureProgress = Math.min(1, z.captureProgress + dt * .15);
+        const capSpeedBonus = 1 + (shipStats?.speed || 0) / 200; // faster capture with speed
+        z.captureProgress = Math.min(1, z.captureProgress + dt * .15 * capSpeedBonus);
 
         // Points while inside
         const pps = z.pointsPerSec * (1 + z.captureProgress * 2);
@@ -371,6 +388,7 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
         // Fully captured bonus
         if (z.captureProgress >= 1 && z.life < z.maxLife - 1) {
           zonesFullyCaptured.current++;
+          sessionCaptures.current++;
           bonusPoints.current += 50;
           coinBank.current += 20;
           onCoins(coinBank.current);
@@ -382,13 +400,18 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
       }
     }
 
+    // Track max simultaneous captured zones
+    const capturedNow = zones.current.filter(z => z.active && z.captureProgress >= 0.8).length;
+    if (capturedNow > maxSimultaneous.current) maxSimultaneous.current = capturedNow;
+
     // Score
     const sc = Math.floor(el) + bonusPoints.current;
     if (sc !== scoreRef.current) { scoreRef.current = sc; onScore(sc); }
 
-    // Power-up spawning
+    // Power-up spawning (luck = faster spawns)
+    const luckFactor = 1 + (shipStats?.luck || 0) / 150;
     pwTimer.current += dt;
-    if (pwTimer.current >= PWR_SPAWN_INTERVAL && pws.current.length < PWR_MAX) {
+    if (pwTimer.current >= PWR_SPAWN_INTERVAL / luckFactor && pws.current.length < PWR_MAX) {
       pws.current.push(spawnPowerUp(px, py, heading)); pwTimer.current = 0;
     }
     const nextPW: PowerUp[] = [];
@@ -397,7 +420,8 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
       if (pw.life >= pw.maxLife) continue;
       const pdx = pw.x - px, pdy = pw.y - py;
       if (Math.sqrt(pdx * pdx + pdy * pdy) < PWR_PICKUP_R) {
-        if (pw.type === "shield") shieldT.current = SHIELD_DUR;
+        const shdMult = 1 + (shipStats?.shield || 0) / 100;
+        if (pw.type === "shield") shieldT.current = SHIELD_DUR * shdMult;
         else if (pw.type === "slowmo") slowmoT.current = SLOWMO_DUR;
         else if (pw.type === "phase") phaseT.current = PHASE_DUR;
         else if (pw.type === "coin") { bonusPoints.current += COIN_BONUS; coinBank.current += COIN_BONUS; onCoins(coinBank.current); onScore(Math.floor(el) + bonusPoints.current); }
@@ -479,7 +503,7 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
           if (hasShield) { shieldT.current = 0; shake.current = Math.max(shake.current, 1); a.active = false; continue; }
           overRef.current = true; shake.current = 2;
           explPos.current = { x: sx, y: sy }; explAct.current = true;
-          onGameOver(Math.floor(el) + bonusPoints.current, coinBank.current);
+          onGameOver(Math.floor(el) + bonusPoints.current, coinBank.current, { zonesCaptured: sessionCaptures.current, zonesDefended: sessionCaptures.current, maxSimultaneous: maxSimultaneous.current });
           return;
         }
         nearMiss.current = Math.max(nearMiss.current, 1 - (Math.sqrt(dd2) - cd) / NEAR_MISS_D);
@@ -498,7 +522,7 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
       <Dust />
       <BHVisuals bhRef={bhs} />
       <ZoneVisuals zonesRef={zones} />
-      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} />
+      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} skinId={shipSkin} />
       <PowerUpVisuals pwRef={pws} />
       <PickupEffect pickupRef={pickupEffect} />
       <AsteroidInstances pool={asteroidPool} geos={geos} />
@@ -508,7 +532,11 @@ function TerritoryWorld({ gameState, onGameOver, onScore, onCoins, traits }: Gam
   );
 }
 
-export default function TerritoryControlScene(props: GameProps) {
+export interface TerritoryControlSceneProps extends Omit<GameProps, 'onGameOver'> {
+  onGameOver: (score: number, coins: number, extraStats?: TerritorySessionStats) => void;
+}
+
+export default function TerritoryControlScene(props: TerritoryControlSceneProps) {
   return (
     <GameCanvas>
       <TerritoryWorld {...props} />

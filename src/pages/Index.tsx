@@ -12,6 +12,7 @@ import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorization
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from "lucide-react";
+import LandingOverlay from "@/components/LandingOverlay";
 import { getAppBaseUrl, getHeliusProxyUrl, getMetadataBaseUrl, getHeliusRpcUrl, getCollectionMint, MINT_CONFIG, SEEKER_TOKEN } from "@/constants";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { getRandomFunnyFact } from "@/utils/funnyFacts";
@@ -25,11 +26,7 @@ type ViewState = "landing" | "scanning" | "ready" | "hub";
 type PaymentToken = "SOL" | "SKR";
 
 const MWA_AUTH_CACHE_KEY = "SolanaMobileWalletAdapterDefaultAuthorizationCache";
-const SCANNING_MESSAGES = [
-  "Aligning star maps",
-  "Decoding Solana signatures",
-  "Synchronizing cosmic ledger",
-];
+// SCANNING_MESSAGES moved to LandingOverlay.tsx
 
 const getCachedMwaAddress = async () => {
   try {
@@ -334,7 +331,7 @@ const Index = () => {
   useEffect(() => {
     if (viewState !== "scanning") return;
     const interval = window.setInterval(() => {
-      setScanningMessageIndex((prev) => (prev + 1) % SCANNING_MESSAGES.length);
+      setScanningMessageIndex((prev) => (prev + 1) % 3); // 3 messages in LandingOverlay
     }, 1600);
     return () => window.clearInterval(interval);
   }, [viewState]);
@@ -973,6 +970,62 @@ const Index = () => {
     }
   }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
 
+  const handleMintWithCoins = useCallback(async () => {
+    if (!wallet || !wallet.publicKey || !traits) return;
+    setMintState("minting");
+    let succeeded = false;
+    const safetyTimer = setTimeout(() => {
+      if (!succeeded) {
+        setMintState("idle");
+        toast.info("Transaction timed out — please try again");
+      }
+    }, 60_000);
+    try {
+      const cardImageUrl = await captureCardImage();
+      const { mintIdentityPrism } = await import("@/lib/mintIdentityPrism");
+      const result = await mintIdentityPrism({
+        wallet,
+        address: wallet.publicKey.toBase58(),
+        traits,
+        score,
+        cardImageUrl,
+        paymentToken: "SOL",
+        paidWithCoins: true,
+      });
+      if (import.meta.env.DEV) console.log("Mint-for-coins success:", result);
+      succeeded = true;
+      trackMint(true);
+      setMintState("success");
+      setTimeout(() => setMintState("idle"), 4000);
+      // Refresh coin balance after spending
+      getPrismBalance(wallet.publicKey.toBase58()).then(setPrismBalance).catch(() => {});
+      toast.success("Identity minted!", {
+        description: `Tx: ${result.signature.slice(0, 8)}... · 10,000 coins spent`,
+      });
+    } catch (err) {
+      trackMint(false, (err as Error)?.message);
+      const error = err as Error & { code?: string };
+      const msg = error?.message ?? String(err);
+      const code = error?.code ?? "";
+      const errName = (err as { name?: string })?.name ?? "";
+      console.error("Mint-for-coins error:", { message: msg, code, name: errName });
+      const isUserCancel =
+        /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(msg + " " + code) ||
+        errName === "WalletSignTransactionError" ||
+        errName === "WalletSendTransactionError" ||
+        msg === "Unknown error" ||
+        msg === "";
+      if (isUserCancel) {
+        toast.info("Transaction cancelled");
+      } else {
+        toast.error("Mint failed", { description: msg });
+      }
+    } finally {
+      clearTimeout(safetyTimer);
+      if (!succeeded) setMintState("idle");
+    }
+  }, [wallet, traits, score, captureCardImage, prismBalance]);
+
   const handleRemint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
     setRemintState("updating");
@@ -1285,6 +1338,46 @@ const Index = () => {
                         {isConnected && (
                           <div className="mint-action-row" style={{ marginTop: '0.25rem' }}>
                             <Button
+                              onClick={handleMintWithCoins}
+                              disabled={
+                                mintState === "minting" ||
+                                isLoading ||
+                                !isConnected ||
+                                !prismBalance ||
+                                prismBalance.balance < 10000
+                              }
+                              variant="outline"
+                              className="mint-primary-btn"
+                              style={{
+                                background: 'rgba(234,179,8,0.08)',
+                                borderColor: 'rgba(234,179,8,0.35)',
+                                color: 'rgba(234,179,8,0.9)',
+                                opacity: (!prismBalance || prismBalance.balance < 10000) ? 0.4 : 1,
+                              }}
+                              title={
+                                !prismBalance || prismBalance.balance < 10000
+                                  ? `Need 10,000 coins (have ${prismBalance?.balance ?? 0})`
+                                  : 'Mint using 10,000 Prism Coins + ~0.002 SOL gas'
+                              }
+                            >
+                              {mintState === "idle" && <span>MINT WITH 10,000 COINS</span>}
+                              {mintState === "minting" && <Loader2 className="h-5 w-5 animate-spin" />}
+                              {mintState === "success" && <span>IDENTITY SECURED</span>}
+                            </Button>
+                          </div>
+                        )}
+                        {isConnected && (
+                          <div className="mint-meta" style={{ marginTop: '-0.1rem', textAlign: 'center', width: '100%' }}>
+                            <span>
+                              {prismBalance
+                                ? `${prismBalance.balance.toLocaleString()} coins available · 10,000 to mint`
+                                : 'Earn coins to unlock coin-based minting'}
+                            </span>
+                          </div>
+                        )}
+                        {isConnected && (
+                          <div className="mint-action-row" style={{ marginTop: '0.25rem' }}>
+                            <Button
                               onClick={handleRemint}
                               disabled={
                                 remintState === "updating" ||
@@ -1403,152 +1496,6 @@ const Index = () => {
     </div>
   );
 };
-
-function LandingOverlay({
-  fadeOut,
-  passthrough,
-  isScanning,
-  isConnected,
-  onEnter,
-  onDisconnect,
-  connectedAddress,
-  useMobileWallet,
-  onMobileConnect,
-  mobileWalletReady,
-  onDesktopConnect,
-  desktopWalletReady,
-  scanningMessageIndex
-}: {
-  fadeOut?: boolean;
-  passthrough?: boolean;
-  isScanning: boolean;
-  isConnected?: boolean;
-  onEnter?: () => void;
-  onDisconnect?: () => void;
-  connectedAddress?: string;
-  useMobileWallet?: boolean;
-  onMobileConnect?: () => void;
-  mobileWalletReady?: boolean;
-  onDesktopConnect?: () => void;
-  desktopWalletReady?: boolean;
-  scanningMessageIndex?: number;
-}) {
-  const activeMessage = SCANNING_MESSAGES[scanningMessageIndex ?? 0] ?? SCANNING_MESSAGES[0];
-
-  return (
-    <div className={`landing-persistent-shell${passthrough ? ' passthrough' : ''}${fadeOut ? ' fade-out' : ''}`}>
-      {/* Scanning overlay — absolutely positioned on top */}
-      <div className={`warp-overlay scanning-overlay scanning-layer${isScanning ? ' visible' : ''}`}>
-        <div className="warp-content">
-          <img src="/phav.png" alt="Identity Prism" className="scanning-logo" />
-          <div className="scanning-progress">
-            <div className="scanning-bar"></div>
-          </div>
-          <div className="scanning-status">
-            <span key={`scan-${scanningMessageIndex ?? 0}`} className="scanning-status-line">
-              {activeMessage}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Landing content — immersive cosmic start */}
-      <div className={`landing-wrap-v3${isScanning ? ' landing-hidden' : ''}`}>
-        {/* Ambient background effects */}
-        <div className="landing-cosmos-bg">
-          <div className="landing-stars" />
-          <div className="landing-nebula landing-nebula-1" />
-          <div className="landing-nebula landing-nebula-2" />
-          <div className="landing-nebula landing-nebula-3" />
-        </div>
-
-        {/* CSS 3D Prism — spinning in background */}
-        <div className="landing-prism-container">
-          <div className="landing-prism-scene">
-            <div className="landing-prism-body">
-              <div className="landing-prism-face landing-prism-face-1" />
-              <div className="landing-prism-face landing-prism-face-2" />
-              <div className="landing-prism-face landing-prism-face-3" />
-              <div className="landing-prism-face landing-prism-face-4" />
-            </div>
-          </div>
-          {/* Prism glow */}
-          <div className="landing-prism-glow" />
-        </div>
-
-        {/* Center content — floats above prism */}
-        <div className="landing-center-content">
-          {/* Logo */}
-          <img src="/phav.png" alt="Identity Prism" className="landing-v3-logo" />
-
-          {/* Title */}
-          <p className="landing-v3-eyebrow">IDENTITY PRISM</p>
-          <h1 className="landing-v3-title">
-            Your Solana identity,<br />reimagined
-          </h1>
-
-          {/* Wallet Connect / Enter */}
-          <div className={`landing-v3-actions${isConnected ? ' connected' : ''}`}>
-            {isConnected && onEnter ? (
-              <div className="landing-v3-connected">
-                {/* Connected badge */}
-                <div className="landing-v3-wallet-badge">
-                  <span className="landing-v3-dot" />
-                  <span className="landing-v3-addr">
-                    {connectedAddress?.slice(0, 4)}...{connectedAddress?.slice(-4)}
-                  </span>
-                </div>
-
-                <Button
-                  className="landing-v3-enter-btn"
-                  onClick={onEnter}
-                >
-                  ENTER COSMOS
-                </Button>
-
-                <button
-                  className="landing-v3-disconnect"
-                  onClick={onDisconnect}
-                >
-                  <LogOut className="w-3 h-3" />
-                  Disconnect
-                </button>
-              </div>
-            ) : (
-              <div className="landing-v3-connect">
-                {useMobileWallet ? (
-                  <Button
-                    className="landing-v3-connect-btn"
-                    onClick={onMobileConnect}
-                    disabled={!mobileWalletReady}
-                  >
-                    {mobileWalletReady ? "CONNECT WALLET" : "GET WALLET"}
-                  </Button>
-                ) : (
-                  <Button
-                    className="landing-v3-connect-btn"
-                    onClick={onDesktopConnect}
-                  >
-                    {desktopWalletReady ? "CONNECT WALLET" : "GET WALLET"}
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Subtle footer links */}
-          <div className="landing-v3-footer">
-            <a href="/privacy.html" className="landing-v3-link">Privacy</a>
-            <span className="landing-v3-sep" />
-            <a href="/terms.html" className="landing-v3-link">Terms</a>
-            <span className="landing-v3-sep" />
-            <a href="https://x.com/Identity_Prism" target="_blank" rel="noreferrer" className="landing-v3-link">Twitter</a>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default Index;
 

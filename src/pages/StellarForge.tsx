@@ -10,8 +10,9 @@ import { goBack } from '@/lib/safeNavigate';
 import { trackForgePurchase } from '@/lib/analytics';
 import {
   ArrowLeft, ShoppingBag, Check, Lock, Sparkles, Coins,
-  Upload, Download, Loader2, Package, AlertTriangle,
+  Upload, Download, Loader2, Package, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap,
 } from 'lucide-react';
+import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import {
@@ -147,18 +148,24 @@ function ItemPreview({ item }: { item: ForgeItem }) {
   }
 
   if (item.category === 'ship_skin') {
-    const tint = SHIP_TINTS[item.preview] || { filter: 'none', shadow: 'none' };
+    const tint = SHIP_TINTS[item.preview];
+    const hasCustomTexture = !tint;
+    const textureSrc = hasCustomTexture
+      ? `/textures/ships/ship_${item.preview}.png`
+      : '/textures/ship.png';
     return (
       <div className="w-full h-28 rounded-lg flex items-center justify-center"
         style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
         <img
-          src="/textures/ship.png"
+          src={textureSrc}
           alt={item.name}
           style={{
-            width: 56, height: 56, objectFit: 'contain',
-            filter: tint.filter,
-            transform: 'rotate(0deg)',
-            ...(tint.shadow ? { filter: `${tint.filter} drop-shadow(${tint.shadow.split(',')[0].replace('0 0', '0 0')})` } : {}),
+            width: hasCustomTexture ? 48 : 56, height: hasCustomTexture ? 64 : 56, objectFit: 'contain',
+            ...(tint ? {
+              filter: tint.shadow ? `${tint.filter} drop-shadow(${tint.shadow.split(',')[0].replace('0 0', '0 0')})` : tint.filter,
+            } : {
+              filter: `drop-shadow(0 0 8px ${rarityColor}40)`,
+            }),
           }}
         />
       </div>
@@ -331,7 +338,9 @@ function ListingCard({ listing, owned, onBuy, buying }: {
 }
 
 // ── Upload Section ──
-function UploadSection({ walletAddress, onUploaded }: { walletAddress: string; onUploaded: () => void }) {
+const LISTING_FEE = 10;
+
+function UploadSection({ walletAddress, onUploaded, coinBalance }: { walletAddress: string; onUploaded: () => void; coinBalance: number }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -408,10 +417,518 @@ function UploadSection({ walletAddress, onUploaded }: { walletAddress: string; o
         </div>
       </div>
       {error && <div className="flex items-center gap-2 text-red-400 text-xs"><AlertTriangle className="w-3 h-3" /> {error}</div>}
-      <Button className="w-full h-12 bg-purple-600 hover:bg-purple-500 font-bold" onClick={handleUpload} disabled={!file || !name.trim() || uploading || Number(price) < 1 || Number(price) > 10000}>
+      {/* Listing fee notice */}
+      <div className="flex items-center justify-between px-3 py-2.5 rounded-xl" style={{
+        background: coinBalance < LISTING_FEE ? 'rgba(239,68,68,0.06)' : 'rgba(251,191,36,0.05)',
+        border: `1px solid ${coinBalance < LISTING_FEE ? 'rgba(239,68,68,0.2)' : 'rgba(251,191,36,0.15)'}`,
+      }}>
+        <div className="flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill={coinBalance < LISTING_FEE ? '#f87171' : '#fbbf24'}><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/></svg>
+          <span className="text-xs font-bold" style={{ color: coinBalance < LISTING_FEE ? '#f87171' : '#fbbf24' }}>
+            Listing fee: {LISTING_FEE} coins
+          </span>
+        </div>
+        {coinBalance < LISTING_FEE && (
+          <span className="text-[10px] text-red-400/70">Insufficient balance</span>
+        )}
+      </div>
+      <Button className="w-full h-12 bg-purple-600 hover:bg-purple-500 font-bold" onClick={handleUpload} disabled={!file || !name.trim() || uploading || Number(price) < 1 || Number(price) > 10000 || coinBalance < LISTING_FEE}>
         {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
         {uploading ? 'Uploading...' : 'Upload Model'}
       </Button>
+    </div>
+  );
+}
+
+// ── Coin Packages ──
+
+const COIN_PACKAGES = [
+  { coins: 1000,   solPrice: 0.001,  label: 'Starter' },    // ~$0.10 — base rate
+  { coins: 5000,   solPrice: 0.0045, label: 'Explorer' },   // ~$0.45 — 10% discount
+  { coins: 15000,  solPrice: 0.012,  label: 'Voyager' },    // ~$1.20 — 20% discount
+  { coins: 50000,  solPrice: 0.035,  label: 'Commander' },  // ~$3.50 — 30% discount
+];
+
+function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
+  const wallet = useWallet();
+  const [buyingIdx, setBuyingIdx] = useState<number | null>(null);
+  const [status, setStatus] = useState<{ purchasedToday: number; remainingToday: number } | null>(null);
+
+  useEffect(() => {
+    if (!walletAddress) return;
+    const base = getApiBase();
+    fetch(`${base}/api/prism/buy/status?address=${walletAddress}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setStatus(d); })
+      .catch(() => {});
+  }, [walletAddress]);
+
+  const handleBuy = useCallback(async (pkgIndex: number) => {
+    if (buyingIdx !== null || !walletAddress || !wallet.publicKey || !wallet.signTransaction) return;
+    const pkg = COIN_PACKAGES[pkgIndex];
+    setBuyingIdx(pkgIndex);
+
+    try {
+      // 1. Send SOL to treasury
+      const { Connection: SolConn, PublicKey: SolPK, SystemProgram: SolSP, Transaction: SolTx } = await import('@solana/web3.js');
+      const base = getApiBase();
+      const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
+      const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+      const tx = new SolTx().add(
+        SolSP.transfer({ fromPubkey: new SolPK(walletAddress), toPubkey: new SolPK(treasuryAddr), lamports: Math.floor(pkg.solPrice * 1e9) })
+      );
+      tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+      tx.feePayer = new SolPK(walletAddress);
+      const signed = await wallet.signTransaction(tx);
+      const sig = await conn.sendRawTransaction(signed.serialize());
+      toast.info('Confirming transaction...');
+      await conn.confirmTransaction(sig, 'confirmed');
+
+      // 2. Get JWT
+      const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
+      let jwt = getCachedJwt(walletAddress);
+      if (!jwt) {
+        jwt = await obtainJwt(wallet);
+        if (!jwt) { toast.error('Authentication failed'); setBuyingIdx(null); return; }
+      }
+
+      // 3. POST to buy endpoint
+      const res = await fetch(`${base}/api/prism/buy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ packageIndex: pkgIndex, txSignature: sig }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`Purchased ${pkg.coins} Coins!`);
+        if (status) setStatus({ ...status, purchasedToday: status.purchasedToday + pkg.coins, remainingToday: status.remainingToday - pkg.coins });
+        onPurchased();
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
+        toast.error(err.error || 'Purchase failed');
+      }
+    } catch (e: any) {
+      if (e?.message?.includes('User rejected')) {
+        toast.info('Transaction cancelled');
+      } else {
+        toast.error(e?.message || 'Purchase failed');
+      }
+    }
+    setBuyingIdx(null);
+  }, [walletAddress, wallet, buyingIdx, status, onPurchased]);
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5">
+          <Plus className="w-3.5 h-3.5 text-amber-400" />
+          Buy Coins
+        </h3>
+        {status && (
+          <span className="text-[10px] text-white/20">
+            {status.remainingToday.toLocaleString()} remaining today
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {COIN_PACKAGES.map((pkg, i) => (
+          <button
+            key={i}
+            onClick={() => handleBuy(i)}
+            disabled={buyingIdx !== null || !walletAddress}
+            className="relative overflow-hidden rounded-xl bg-white/[0.04] border border-white/[0.08] p-3 text-left hover:bg-white/[0.07] hover:border-amber-400/20 transition-all duration-300 disabled:opacity-50"
+          >
+            <div className="text-[10px] text-amber-400/60 font-bold uppercase mb-1">{pkg.label}</div>
+            <div className="flex items-center gap-1 mb-1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/></svg>
+              <span className="text-lg font-black text-white">{pkg.coins.toLocaleString()}</span>
+            </div>
+            <div className="text-[11px] font-bold text-purple-400">{pkg.solPrice} SOL</div>
+            {buyingIdx === i && (
+              <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-xl">
+                <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Prism Vault (Staking) ──
+
+const VAULT_TIERS = [
+  {
+    id: 'bronze',
+    label: 'Bronze',
+    min: 500,
+    lock: 7,
+    yieldPerDay: 0.5,
+    boost: 10,
+    color: '#cd7f32',
+    glow: 'rgba(205,127,50,0.25)',
+    icon: '🥉',
+  },
+  {
+    id: 'silver',
+    label: 'Silver',
+    min: 2000,
+    lock: 30,
+    yieldPerDay: 0.8,
+    boost: 20,
+    color: '#c0c0c0',
+    glow: 'rgba(192,192,192,0.2)',
+    icon: '🥈',
+  },
+  {
+    id: 'gold',
+    label: 'Gold',
+    min: 5000,
+    lock: 90,
+    yieldPerDay: 1.2,
+    boost: 35,
+    color: '#fbbf24',
+    glow: 'rgba(251,191,36,0.3)',
+    icon: '🥇',
+  },
+] as const;
+
+type VaultTierId = 'bronze' | 'silver' | 'gold';
+
+interface VaultStatus {
+  staked: boolean;
+  tier?: VaultTierId;
+  amount?: number;
+  stakedAt?: number;
+  lockDays?: number;
+  unlocksAt?: number;
+  unclaimedYield?: number;
+  earlyUnstakePenalty?: number;
+}
+
+function formatTimeLeft(ms: number): string {
+  if (ms <= 0) return 'Unlocked';
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
+function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
+  walletAddress: string;
+  balance: number;
+  onBalanceChange: () => void;
+}) {
+  const wallet = useWallet();
+  const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
+  const [selectedTier, setSelectedTier] = useState<VaultTierId>('bronze');
+  const [stakeAmount, setStakeAmount] = useState('');
+  const [staking, setStaking] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const [unstaking, setUnstaking] = useState(false);
+  const [showUnstakeWarning, setShowUnstakeWarning] = useState(false);
+
+  const tier = VAULT_TIERS.find(t => t.id === selectedTier)!;
+
+  // Fetch vault status
+  useEffect(() => {
+    if (!walletAddress) return;
+    setLoadingStatus(true);
+    const base = getApiBase();
+    fetch(`${base}/api/prism/vault/status?address=${walletAddress}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setVaultStatus(d); else setVaultStatus({ staked: false }); })
+      .catch(() => setVaultStatus({ staked: false }))
+      .finally(() => setLoadingStatus(false));
+  }, [walletAddress]);
+
+  const getJwt = async () => {
+    const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
+    let jwt = getCachedJwt(walletAddress);
+    if (!jwt) jwt = await obtainJwt(wallet);
+    return jwt;
+  };
+
+  const handleStake = useCallback(async () => {
+    const amount = Number(stakeAmount);
+    if (!amount || amount < tier.min) { toast.error(`Minimum stake is ${tier.min} coins for ${tier.label}`); return; }
+    if (amount > balance) { toast.error('Insufficient balance'); return; }
+    if (!walletAddress) { toast.error('Connect wallet first'); return; }
+    setStaking(true);
+    try {
+      const jwt = await getJwt();
+      if (!jwt) { toast.error('Authentication failed'); return; }
+      const base = getApiBase();
+      const res = await fetch(`${base}/api/prism/vault/stake`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ amount, tier: selectedTier }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Stake failed');
+      toast.success(`Staked ${amount} coins in ${tier.label} Vault!`);
+      setVaultStatus(data.status || { staked: true, tier: selectedTier, amount });
+      setStakeAmount('');
+      onBalanceChange();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Stake failed');
+    } finally { setStaking(false); }
+  }, [stakeAmount, tier, balance, walletAddress, selectedTier, onBalanceChange, wallet]);
+
+  const handleClaim = useCallback(async () => {
+    if (!walletAddress) return;
+    setClaiming(true);
+    try {
+      const jwt = await getJwt();
+      if (!jwt) { toast.error('Authentication failed'); return; }
+      const base = getApiBase();
+      const res = await fetch(`${base}/api/prism/vault/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Claim failed');
+      toast.success(`Claimed ${data.claimed ?? ''} coins!`);
+      setVaultStatus(v => v ? { ...v, unclaimedYield: 0 } : v);
+      onBalanceChange();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Claim failed');
+    } finally { setClaiming(false); }
+  }, [walletAddress, onBalanceChange, wallet]);
+
+  const handleUnstake = useCallback(async () => {
+    if (!walletAddress) return;
+    setUnstaking(true);
+    setShowUnstakeWarning(false);
+    try {
+      const jwt = await getJwt();
+      if (!jwt) { toast.error('Authentication failed'); return; }
+      const base = getApiBase();
+      const res = await fetch(`${base}/api/prism/vault/unstake`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unstake failed');
+      toast.success(data.message || 'Unstaked successfully');
+      setVaultStatus({ staked: false });
+      onBalanceChange();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Unstake failed');
+    } finally { setUnstaking(false); }
+  }, [walletAddress, onBalanceChange, wallet]);
+
+  const stakedTierInfo = vaultStatus?.tier ? VAULT_TIERS.find(t => t.id === vaultStatus.tier) : null;
+  const isLocked = vaultStatus?.unlocksAt ? Date.now() < vaultStatus.unlocksAt : false;
+  const timeLeft = vaultStatus?.unlocksAt ? vaultStatus.unlocksAt - Date.now() : 0;
+  const stakeAmountNum = Number(stakeAmount);
+  const canStake = stakeAmountNum >= tier.min && stakeAmountNum <= balance && !staking;
+
+  return (
+    <div className="mb-6">
+      {/* Section header */}
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5">
+          <Shield className="w-3.5 h-3.5 text-amber-400" />
+          Prism Vault — Staking
+        </h3>
+        <span className="text-[10px] text-white/20">Earn yield on your coins</span>
+      </div>
+
+      {loadingStatus ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="w-5 h-5 animate-spin text-purple-400/40" />
+        </div>
+      ) : vaultStatus?.staked ? (
+        /* ── Active Stake Card ── */
+        <div className="rounded-2xl p-4 border" style={{
+          background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}08, ${stakedTierInfo?.color ?? '#fbbf24'}03)`,
+          borderColor: `${stakedTierInfo?.color ?? '#fbbf24'}25`,
+          boxShadow: `0 0 30px ${stakedTierInfo?.glow ?? 'rgba(251,191,36,0.1)'}`,
+        }}>
+          {/* Tier badge + lock status */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{
+                background: `${stakedTierInfo?.color ?? '#fbbf24'}15`,
+                border: `1px solid ${stakedTierInfo?.color ?? '#fbbf24'}25`,
+              }}>
+                {stakedTierInfo?.icon ?? '🏆'}
+              </div>
+              <div>
+                <p className="text-white font-bold text-sm">{stakedTierInfo?.label ?? vaultStatus.tier} Vault</p>
+                <p className="text-white/30 text-[10px]">{vaultStatus.amount?.toLocaleString()} coins staked</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{
+              background: isLocked ? 'rgba(239,68,68,0.08)' : 'rgba(74,222,128,0.08)',
+              border: `1px solid ${isLocked ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.2)'}`,
+            }}>
+              <Clock className="w-3 h-3" style={{ color: isLocked ? '#f87171' : '#4ade80' }} />
+              <span className="text-[10px] font-bold" style={{ color: isLocked ? '#f87171' : '#4ade80' }}>
+                {isLocked ? formatTimeLeft(timeLeft) : 'Unlocked'}
+              </span>
+            </div>
+          </div>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <TrendingUp className="w-3.5 h-3.5 mx-auto mb-1" style={{ color: stakedTierInfo?.color ?? '#fbbf24' }} />
+              <p className="text-white font-black text-sm">{stakedTierInfo?.yieldPerDay ?? 0}%</p>
+              <p className="text-white/25 text-[9px]">per day</p>
+            </div>
+            <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <Coins className="w-3.5 h-3.5 mx-auto mb-1 text-amber-400" />
+              <p className="text-white font-black text-sm">{Math.floor(vaultStatus.unclaimedYield ?? 0)}</p>
+              <p className="text-white/25 text-[9px]">unclaimed</p>
+            </div>
+            <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <Zap className="w-3.5 h-3.5 mx-auto mb-1 text-purple-400" />
+              <p className="text-white font-black text-sm">+{stakedTierInfo?.boost ?? 0}%</p>
+              <p className="text-white/25 text-[9px]">boost</p>
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex gap-2">
+            <Button
+              className="flex-1 h-10 text-xs font-bold"
+              style={{
+                background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}, ${stakedTierInfo?.color ?? '#fbbf24'}cc)`,
+                color: '#000',
+                boxShadow: `0 4px 15px ${stakedTierInfo?.glow ?? 'rgba(251,191,36,0.3)'}`,
+              }}
+              onClick={handleClaim}
+              disabled={claiming || (vaultStatus.unclaimedYield ?? 0) < 1}
+            >
+              {claiming ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Coins className="w-3 h-3 mr-1" />}
+              Claim Yield
+            </Button>
+            <Button
+              variant="outline"
+              className="h-10 px-4 text-xs font-bold border-red-500/20 text-red-400/70 hover:bg-red-500/10"
+              onClick={() => {
+                if (isLocked) setShowUnstakeWarning(true);
+                else handleUnstake();
+              }}
+              disabled={unstaking}
+            >
+              {unstaking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Unstake'}
+            </Button>
+          </div>
+
+          {/* Early unstake warning */}
+          {showUnstakeWarning && (
+            <div className="mt-3 p-3 rounded-xl flex flex-col gap-2" style={{
+              background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
+            }}>
+              <div className="flex items-center gap-2 text-red-400 text-xs font-bold">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                25% penalty will be burned on early unstake
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" className="flex-1 h-8 text-[10px] border-white/10 text-white/40" onClick={() => setShowUnstakeWarning(false)}>Cancel</Button>
+                <Button size="sm" className="flex-1 h-8 text-[10px] bg-red-600 hover:bg-red-500 text-white" onClick={handleUnstake} disabled={unstaking}>
+                  {unstaking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm Unstake'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ── Stake UI ── */
+        <div>
+          {/* Tier cards */}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {VAULT_TIERS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setSelectedTier(t.id)}
+                className="rounded-xl p-3 text-left transition-all duration-300 hover:scale-[1.02]"
+                style={{
+                  background: selectedTier === t.id
+                    ? `linear-gradient(135deg, ${t.color}18, ${t.color}08)`
+                    : 'rgba(255,255,255,0.03)',
+                  border: `1px solid ${selectedTier === t.id ? t.color + '35' : 'rgba(255,255,255,0.06)'}`,
+                  boxShadow: selectedTier === t.id ? `0 0 20px ${t.glow}` : 'none',
+                }}
+              >
+                <div className="text-xl mb-1.5">{t.icon}</div>
+                <p className="text-white font-bold text-xs mb-1" style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.7)' }}>{t.label}</p>
+                <div className="space-y-0.5">
+                  <p className="text-[9px]" style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}>Min: {t.min.toLocaleString()}</p>
+                  <p className="text-[9px]" style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}>{t.lock}d lock</p>
+                  <p className="text-[9px] font-bold" style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.3)' }}>{t.yieldPerDay}%/day</p>
+                  <p className="text-[9px]" style={{ color: selectedTier === t.id ? '#c084fc' : 'rgba(192,132,252,0.4)' }}>+{t.boost}% boost</p>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Amount input */}
+          <div className="relative mb-3">
+            <input
+              type="number"
+              value={stakeAmount}
+              onChange={(e) => setStakeAmount(e.target.value)}
+              placeholder={`Stake amount (min ${tier.min.toLocaleString()})`}
+              min={tier.min}
+              max={balance}
+              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40 pr-20"
+              style={{ fontSize: 16 }}
+            />
+            <button
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-2 py-1 rounded-lg"
+              style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)' }}
+              onClick={() => setStakeAmount(String(balance))}
+            >MAX</button>
+          </div>
+
+          {/* Projected yield info */}
+          {stakeAmountNum >= tier.min && (
+            <div className="mb-3 px-3 py-2 rounded-xl flex items-center justify-between" style={{
+              background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)',
+            }}>
+              <span className="text-[10px] text-white/30">Est. daily yield</span>
+              <span className="text-[10px] font-bold" style={{ color: tier.color }}>
+                +{(stakeAmountNum * tier.yieldPerDay / 100).toFixed(1)} coins/day
+              </span>
+            </div>
+          )}
+
+          {/* Stake button */}
+          <Button
+            className="w-full h-12 font-bold text-sm"
+            style={canStake ? {
+              background: `linear-gradient(135deg, ${tier.color}, ${tier.color}cc)`,
+              color: '#000',
+              boxShadow: `0 4px 20px ${tier.glow}`,
+            } : {
+              background: 'rgba(255,255,255,0.05)',
+              color: 'rgba(255,255,255,0.25)',
+            }}
+            onClick={handleStake}
+            disabled={!canStake || staking}
+          >
+            {staking
+              ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Staking...</>
+              : <><Shield className="w-4 h-4 mr-2" /> Stake {stakeAmountNum >= tier.min ? stakeAmountNum.toLocaleString() : ''} coins</>
+            }
+          </Button>
+          {stakeAmountNum > 0 && stakeAmountNum < tier.min && (
+            <p className="text-red-400/60 text-[10px] mt-2 text-center">Minimum for {tier.label} is {tier.min.toLocaleString()} coins</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -560,9 +1077,8 @@ export default function StellarForge() {
   }, [loadout]);
 
   return (
-    <div className="h-screen flex flex-col text-white" style={{
-      background: 'linear-gradient(180deg, #05070a 0%, #0a0e1a 30%, #0d0a18 60%, #08060f 100%)',
-    }}>
+    <PageShell className="text-white">
+      <div className="min-h-screen flex flex-col">
       {/* ── Ambient background effects ── */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         {/* Floating orb 1 */}
@@ -652,6 +1168,23 @@ export default function StellarForge() {
         {/* ═══ ARMORY TAB ═══ */}
         {topTab === 'shop' && (
           <>
+            {/* Buy Coins Section */}
+            <BuyCoinsSection
+              walletAddress={walletAddress}
+              onPurchased={() => {
+                if (walletAddress) getPrismBalance(walletAddress).then(setBalance);
+              }}
+            />
+
+            {/* Prism Vault — Staking */}
+            <PrismVaultSection
+              walletAddress={walletAddress}
+              balance={balance?.balance ?? 0}
+              onBalanceChange={() => {
+                if (walletAddress) getPrismBalance(walletAddress).then(setBalance);
+              }}
+            />
+
             {/* Category filters — glass pills */}
             <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
               {SHOP_FILTERS.map((f) => (
@@ -723,7 +1256,7 @@ export default function StellarForge() {
               {showUpload ? 'Hide Upload Form' : 'Upload Your Sprite'}
             </button>
 
-            {showUpload && <UploadSection walletAddress={walletAddress} onUploaded={() => { fetchMarket(); setShowUpload(false); }} />}
+            {showUpload && <UploadSection walletAddress={walletAddress} coinBalance={balance?.balance ?? 0} onUploaded={() => { fetchMarket(); setShowUpload(false); }} />}
 
             {/* Category filter */}
             <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
@@ -913,6 +1446,7 @@ export default function StellarForge() {
           50% { transform: translate(-8%, -6%) scale(1.08); }
         }
       `}</style>
-    </div>
+      </div>
+    </PageShell>
   );
 }

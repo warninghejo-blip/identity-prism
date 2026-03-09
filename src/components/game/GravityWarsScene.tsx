@@ -124,7 +124,17 @@ function ChainFlashVisuals({ poolRef }: { poolRef: React.MutableRefObject<ChainF
    Game World — Gravity Wars
    ═══════════════════════════════════════════════════ */
 
-function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameProps) {
+export interface WarsSessionStats {
+  wavesUsed: number;
+  asteroidsPushed: number;
+  bestChain: number;
+}
+
+interface WarsWorldProps extends Omit<GameProps, 'onGameOver'> {
+  onGameOver: (score: number, coins: number, extraStats?: WarsSessionStats) => void;
+}
+
+function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits, shipSkin, shipStats }: WarsWorldProps) {
   const asteroidPool = useRef<AsteroidData[]>([]);
   useMemo(() => { asteroidPool.current = createAsteroidPool(); }, []);
 
@@ -161,6 +171,10 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
   const chainTimer = useRef(0);
   const smallExplosions = useRef<SmallExplosion[]>([]);
   const totalDestroyed = useRef(0);
+  // Session tracking for achievements
+  const sessionWavesUsed = useRef(0);
+  const sessionAsteroidsPushed = useRef(0);
+  const bestSessionChain = useRef(0);
 
   const sCol = traits?.planetTier ? TIER_COLORS[traits.planetTier] || "#22d3ee" : "#22d3ee";
   const sSc = traits?.planetTier === "binary_sun" ? 1.08 : 1;
@@ -174,9 +188,10 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
 
     const fireImpulse = () => {
       if (impulseCooldown.current > 0) return;
+      const fpMult = 1 + (shipStats?.firepower || 0) / 150; // impulse radius x1.0 to x1.67
       const wave: ImpulseWave = {
         x: shipPos.current.x, y: shipPos.current.y,
-        radius: 0, maxRadius: IMPULSE_MAX_RADIUS,
+        radius: 0, maxRadius: IMPULSE_MAX_RADIUS * fpMult,
         strength: IMPULSE_STRENGTH,
         life: 0, active: true,
       };
@@ -184,6 +199,7 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
       if (idx >= 0) impulseWaves.current[idx] = wave;
       else if (impulseWaves.current.length < MAX_WAVES) impulseWaves.current.push(wave);
       impulseCooldown.current = IMPULSE_COOLDOWN;
+      sessionWavesUsed.current++;
       shake.current = Math.max(shake.current, .3);
     };
 
@@ -235,6 +251,7 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
     shieldT.current = 0; slowmoT.current = 0; phaseT.current = 0;
     bonusPoints.current = 0; coinBank.current = 0; coinAccum.current = 0;
     impulseCooldown.current = 0; chainCount.current = 0; chainTimer.current = 0; totalDestroyed.current = 0;
+    sessionWavesUsed.current = 0; sessionAsteroidsPushed.current = 0; bestSessionChain.current = 0;
     onCoins(0); elapsed.current = 0; spawnT.current = 0; physAccum.current = 0;
     overRef.current = false; scoreRef.current = -1; shake.current = 0; explAct.current = false;
     pickupEffect.current.active = false;
@@ -267,7 +284,8 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
         if (chainTimer.current <= 0) chainCount.current = 0;
       }
 
-      const tSpeed = clamp(INIT_SPEED + el * SPEED_GAIN, INIT_SPEED, MAX_SPEED);
+      const speedMult = 1 + (shipStats?.speed || 0) / 200; // x1.0 to x1.5
+      const tSpeed = clamp((INIT_SPEED + el * SPEED_GAIN) * speedMult, INIT_SPEED, MAX_SPEED * speedMult);
       curSpeed.current = slerp(curSpeed.current, tSpeed, 3, dt);
 
       let heading = shipHead.current;
@@ -355,9 +373,10 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
 
     nearMiss.current = Math.max(0, nearMiss.current - dt * 3);
 
-    // Power-up spawning
+    // Power-up spawning (luck = faster spawns)
+    const luckFactor = 1 + (shipStats?.luck || 0) / 150;
     pwTimer.current += dt;
-    if (pwTimer.current >= PWR_SPAWN_INTERVAL && pws.current.length < PWR_MAX) {
+    if (pwTimer.current >= PWR_SPAWN_INTERVAL / luckFactor && pws.current.length < PWR_MAX) {
       pws.current.push(spawnPowerUp(px, py, heading)); pwTimer.current = 0;
     }
     const nextPW: PowerUp[] = [];
@@ -366,7 +385,8 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
       if (pw.life >= pw.maxLife) continue;
       const pdx = pw.x - px, pdy = pw.y - py;
       if (Math.sqrt(pdx * pdx + pdy * pdy) < PWR_PICKUP_R) {
-        if (pw.type === "shield") shieldT.current = SHIELD_DUR;
+        const shdMult = 1 + (shipStats?.shield || 0) / 100; // x1.0 to x2.0
+        if (pw.type === "shield") shieldT.current = SHIELD_DUR * shdMult;
         else if (pw.type === "slowmo") slowmoT.current = SLOWMO_DUR;
         else if (pw.type === "phase") phaseT.current = PHASE_DUR;
         else if (pw.type === "coin") { bonusPoints.current += COIN_BONUS; coinBank.current += COIN_BONUS; onCoins(coinBank.current); onScore(Math.floor(el) + bonusPoints.current); }
@@ -450,10 +470,12 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
           // Both destroyed!
           a.active = false; b.active = false;
           totalDestroyed.current += 2;
+          sessionAsteroidsPushed.current += 2;
 
           // Chain scoring
           chainCount.current++;
           chainTimer.current = 3;
+          if (chainCount.current > bestSessionChain.current) bestSessionChain.current = chainCount.current;
           const chainMult = Math.min(chainCount.current, 15);
           const pts = 10 * chainMult;
           bonusPoints.current += pts;
@@ -489,9 +511,11 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
         if (dx * dx + dy * dy < BH_CORE_R * BH_CORE_R * .5) {
           a.active = false;
           totalDestroyed.current++;
+          sessionAsteroidsPushed.current++;
           bonusPoints.current += 20;
           chainCount.current++;
           chainTimer.current = 3;
+          if (chainCount.current > bestSessionChain.current) bestSessionChain.current = chainCount.current;
           const exp: SmallExplosion = { x: a.x, y: a.y, t: 0, active: true, color: "#8844ff" };
           const idx = smallExplosions.current.findIndex(e => !e.active);
           if (idx >= 0) smallExplosions.current[idx] = exp;
@@ -514,7 +538,7 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
           if (hasShield) { shieldT.current = 0; shake.current = Math.max(shake.current, 1); a.active = false; continue; }
           overRef.current = true; shake.current = 2;
           explPos.current = { x: sx, y: sy }; explAct.current = true;
-          onGameOver(Math.floor(el) + bonusPoints.current, coinBank.current);
+          onGameOver(Math.floor(el) + bonusPoints.current, coinBank.current, { wavesUsed: sessionWavesUsed.current, asteroidsPushed: sessionAsteroidsPushed.current, bestChain: bestSessionChain.current });
           return;
         }
         nearMiss.current = Math.max(nearMiss.current, 1 - (Math.sqrt(dd2) - cd) / NEAR_MISS_D);
@@ -532,7 +556,7 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
       <SpaceBG />
       <Dust />
       <BHVisuals bhRef={bhs} />
-      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} />
+      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} skinId={shipSkin} />
       <PowerUpVisuals pwRef={pws} />
       <PickupEffect pickupRef={pickupEffect} />
       <AsteroidInstances pool={asteroidPool} geos={geos} />
@@ -545,7 +569,11 @@ function GravityWorld({ gameState, onGameOver, onScore, onCoins, traits }: GameP
   );
 }
 
-export default function GravityWarsScene(props: GameProps) {
+export interface GravityWarsSceneProps extends Omit<GameProps, 'onGameOver'> {
+  onGameOver: (score: number, coins: number, extraStats?: WarsSessionStats) => void;
+}
+
+export default function GravityWarsScene(props: GravityWarsSceneProps) {
   return (
     <GameCanvas>
       <GravityWorld {...props} />

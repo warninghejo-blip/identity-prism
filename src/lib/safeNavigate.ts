@@ -30,21 +30,14 @@ export function trackInternalNavigation() {
   setInternalNavDepth(getInternalNavDepth() + 1);
 }
 
-export function goBack(navigate: NavigateFunction, fallback = '/app') {
+export function goBack(navigate: NavigateFunction, _fallback = '/') {
   // Clean up any lingering wormhole tunnels that might block UI
   cleanupOverlays();
 
-  const depth = getInternalNavDepth();
-  if (depth > 0) {
-    setInternalNavDepth(depth - 1);
-    navigate(-1);
-  } else if (window.history.length > 1) {
-    // Browser has history — safe to go back without leaving the app
-    navigate(-1);
-  } else {
-    // No history at all (e.g. opened via direct URL) — fallback
-    navigate(fallback, { replace: true, state: { fromSubPage: true } });
-  }
+  // Always navigate to home/hub — prevents "kicking out" of the app
+  // and provides consistent UX: Back = return to main menu
+  setInternalNavDepth(0);
+  navigate('/', { replace: true, state: { fromSubPage: true } });
 }
 
 export function cleanupOverlays() {

@@ -4,6 +4,7 @@ import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import * as THREE from "three";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import { WalletTraits } from "@/hooks/useWalletData";
+import type { ShipStats } from "@/lib/shipStats";
 
 /* ═══════════════════════════════════════════════════
    Types
@@ -22,6 +23,8 @@ export interface GameProps {
   traits: WalletTraits | null;
   walletScore: number;
   hasMintedId?: boolean;
+  shipSkin?: string | null;
+  shipStats?: ShipStats;
 }
 
 export interface AsteroidData {
@@ -428,13 +431,21 @@ export function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> })
    Ship
    ═══════════════════════════════════════════════════ */
 
-export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
+/** Resolve ship texture path from skin id */
+export function getShipTexturePath(skinId?: string | null): string {
+  if (!skinId) return '/textures/ship.png';
+  const key = skinId.replace('ship_', '');
+  return `/textures/ships/ship_${key}.png`;
+}
+
+export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, skinId }: {
   posRef: React.MutableRefObject<{ x: number; y: number }>;
   headRef: React.MutableRefObject<number>;
   color: string; scale: number;
   nearRef: React.MutableRefObject<number>;
   shieldRef: React.MutableRefObject<number>;
   phaseRef: React.MutableRefObject<number>;
+  skinId?: string | null;
 }) {
   const gRef = useRef<THREE.Group>(null);
   const shRef = useRef<THREE.Mesh>(null);
@@ -443,7 +454,8 @@ export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseR
   const exRef = useRef<THREE.Points>(null);
   const shipMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const N = EXHAUST_N;
-  const shipTex = useLoader(THREE.TextureLoader, '/textures/ship.png');
+  const texPath = getShipTexturePath(skinId);
+  const shipTex = useLoader(THREE.TextureLoader, texPath);
   if (shipTex.minFilter !== THREE.LinearFilter) { shipTex.minFilter = THREE.LinearFilter; shipTex.magFilter = THREE.LinearFilter; shipTex.generateMipmaps = false; shipTex.needsUpdate = true; }
   const exSt = useMemo(() => {
     const p = new Float32Array(N * 3);

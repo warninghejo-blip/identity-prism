@@ -23,6 +23,7 @@ import {
   type QuestState,
 } from '@/lib/prismQuests';
 import { earnPrism, getPrismBalance, type PrismBalance } from '@/lib/prismCoin';
+import PageShell from '@/components/PageShell';
 
 type QuestTab = 'daily' | 'weekly' | 'milestones';
 
@@ -177,9 +178,9 @@ export default function QuestsPage() {
   }, [dailyReset]);
 
   return (
-    <div className="min-h-screen bg-[#050510] text-white">
+    <PageShell className="text-white">
       {/* Header */}
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/5">
+      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <button onClick={() => goBack(navigate)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
             <ArrowLeft className="w-4 h-4" />
@@ -272,6 +273,6 @@ export default function QuestsPage() {
           </div>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

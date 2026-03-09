@@ -3,19 +3,17 @@
  * 3D rotating glass prism background + Glassmorphism Bento Box navigation grid.
  * Mini Identity Passport replaces the old "My Card" button.
  */
-import { useCallback, useRef, useEffect, useState, Suspense } from 'react';
+import { useCallback, useRef, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { Float, MeshTransmissionMaterial, Sparkles, Stars, Environment } from '@react-three/drei';
-import * as THREE from 'three';
+import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { getHeliusProxyUrl } from '@/constants';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import type { PlanetTier } from '@/hooks/useWalletData';
 import {
-  Trophy, Flame, Store, Network, Swords, Medal, ScrollText, ArrowRight, Shield, Eye, Clock,
+  Trophy, Flame, Store, Swords, Medal, ScrollText, ArrowRight, Shield, Eye, Search, Zap,
 } from 'lucide-react';
 
 /* ── Tier color map ── */
@@ -48,56 +46,6 @@ export interface CosmicHubProps {
   planetTier?: PlanetTier;
 }
 
-/* ── 3D Components ── */
-
-function LocalEnvironment() {
-  return (
-    <Environment resolution={128}>
-      <group>
-        <mesh position={[0, 10, -10]}><planeGeometry args={[20, 20]} /><meshBasicMaterial color="#3b82f6" /></mesh>
-        <mesh position={[10, 0, 0]} rotation={[0, -Math.PI / 2, 0]}><planeGeometry args={[20, 20]} /><meshBasicMaterial color="#ec4899" /></mesh>
-        <mesh position={[-10, 0, 0]} rotation={[0, Math.PI / 2, 0]}><planeGeometry args={[20, 20]} /><meshBasicMaterial color="#8b5cf6" /></mesh>
-        <mesh position={[0, -10, 0]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[20, 20]} /><meshBasicMaterial color="#020617" /></mesh>
-      </group>
-    </Environment>
-  );
-}
-
-function PrismCore() {
-  const prismRef = useRef<THREE.Mesh>(null);
-  useFrame((state) => {
-    if (prismRef.current) {
-      prismRef.current.rotation.y += 0.003;
-      prismRef.current.rotation.x = Math.sin(state.clock.elapsedTime * 0.5) * 0.1;
-    }
-  });
-
-  return (
-    <Float speed={2} rotationIntensity={0.5} floatIntensity={2}>
-      <mesh ref={prismRef} scale={1.5}>
-        <octahedronGeometry args={[2, 0]} />
-        <MeshTransmissionMaterial
-          backside
-          samples={4}
-          thickness={1.5}
-          chromaticAberration={0.8}
-          anisotropy={0.2}
-          distortion={0.2}
-          distortionScale={0.5}
-          temporalDistortion={0.1}
-          ior={1.2}
-          color="#e0e7ff"
-          resolution={256}
-        />
-      </mesh>
-      <mesh scale={0.8}>
-        <octahedronGeometry args={[1, 0]} />
-        <meshBasicMaterial color="#8b5cf6" wireframe transparent opacity={0.2} />
-      </mesh>
-    </Float>
-  );
-}
-
 /* ── Navigation module definitions ── */
 interface ModuleDef {
   id: string;
@@ -108,23 +56,25 @@ interface ModuleDef {
   colorClass: string;
 }
 
+const HubIcon = ({ name }: { name: string }) => (
+  <img src={`/hub/${name}.png`} alt={name} className="w-7 h-7 object-contain" loading="lazy" />
+);
+
 const MODULES: ModuleDef[] = [
   { id: 'league', label: 'Prism League', route: '/game', desc: 'Compete in arcade games',
-    icon: <Trophy size={24} />, colorClass: 'from-cyan-500 to-blue-400' },
-  { id: 'constellation', label: 'Stellar Nexus', route: '/constellation', desc: 'Explore wallet connections',
-    icon: <Network size={24} />, colorClass: 'from-emerald-500 to-teal-400' },
-  { id: 'market', label: 'Prism Arena', route: '/market', desc: 'Battle & explore wallets',
-    icon: <Swords size={24} />, colorClass: 'from-pink-500 to-rose-400' },
+    icon: <HubIcon name="league" />, colorClass: 'from-cyan-500 to-blue-400' },
+  { id: 'scanner', label: 'Prism Scanner', route: '/scan', desc: 'Scan & explore wallets',
+    icon: <HubIcon name="scanner" />, colorClass: 'from-cyan-500 to-sky-400' },
+  { id: 'arena', label: 'Prism Arena', route: '/arena', desc: 'P2P battles & challenges',
+    icon: <HubIcon name="arena" />, colorClass: 'from-pink-500 to-rose-400' },
   { id: 'blackhole', label: 'Black Hole', route: '/blackhole', desc: 'Destroy your identity',
-    icon: <Flame size={24} />, colorClass: 'from-purple-500 to-indigo-400' },
+    icon: <HubIcon name="blackhole" />, colorClass: 'from-purple-500 to-indigo-400' },
   { id: 'shop', label: 'Prism Shop', route: '/forge', desc: 'Customize your card',
-    icon: <Store size={24} />, colorClass: 'from-amber-500 to-yellow-400' },
+    icon: <HubIcon name="shop" />, colorClass: 'from-amber-500 to-yellow-400' },
   { id: 'leaderboard', label: 'Leaderboard', route: '/leaderboard', desc: 'Top identity scores',
-    icon: <Medal size={24} />, colorClass: 'from-yellow-500 to-orange-400' },
+    icon: <HubIcon name="leaderboard" />, colorClass: 'from-yellow-500 to-orange-400' },
   { id: 'quests', label: 'Quests', route: '/quests', desc: 'Daily missions & rewards',
-    icon: <ScrollText size={24} />, colorClass: 'from-violet-500 to-purple-400' },
-  { id: 'timewarp', label: 'Score History', route: '/timewarp', desc: 'Track your score over time',
-    icon: <Clock size={24} />, colorClass: 'from-sky-500 to-blue-400' },
+    icon: <HubIcon name="quests" />, colorClass: 'from-violet-500 to-purple-400' },
 ];
 
 /* ── NavCard component ── */
@@ -169,7 +119,7 @@ const MINI_BARS = [
 
 function MiniPassport({
   walletAddress, score, tier, coins, sybilGrade, onClick, maxScore = 1000,
-  breakdown,
+  breakdown, onBuyCoins, boostRate,
 }: {
   walletAddress: string;
   score: number;
@@ -179,6 +129,8 @@ function MiniPassport({
   onClick: () => void;
   maxScore?: number;
   breakdown?: { onchain: number; sybilTrust: number; humanProof: number; social: number; engagement: number };
+  onBuyCoins?: () => void;
+  boostRate?: number;
 }) {
   const tierColor = TIER_COLORS[tier] ?? TIER_COLORS.mercury;
   const gradeColor = SYBIL_GRADE_COLORS[sybilGrade ?? 'N/A'] ?? '#64748b';
@@ -306,6 +258,39 @@ function MiniPassport({
                 <path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/>
               </svg>
               <span className="text-[10px] font-bold text-amber-400">{coins}</span>
+              {onBuyCoins && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onBuyCoins(); }}
+                  className="w-4 h-4 rounded-full bg-amber-400/20 border border-amber-400/30 flex items-center justify-center text-amber-400 text-[10px] font-bold hover:bg-amber-400/30 transition-colors ml-0.5"
+                  title="Buy Coins"
+                >
+                  +
+                </button>
+              )}
+              {/* Staking boost badge */}
+              {boostRate != null && boostRate > 0 && (
+                <div
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md ml-1"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(168,85,247,0.25), rgba(251,146,60,0.25))',
+                    border: '1px solid rgba(168,85,247,0.45)',
+                    boxShadow: '0 0 8px rgba(168,85,247,0.35), 0 0 16px rgba(251,146,60,0.15)',
+                  }}
+                  title={`Staking boost: +${boostRate}%`}
+                >
+                  <Zap size={8} style={{ color: '#fb923c', filter: 'drop-shadow(0 0 4px rgba(251,146,60,0.8))' }} />
+                  <span
+                    className="text-[9px] font-black tracking-tight"
+                    style={{
+                      background: 'linear-gradient(90deg, #a855f7, #fb923c)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent',
+                    }}
+                  >
+                    +{boostRate}%
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -353,6 +338,7 @@ function NoCardFallback({ onClick }: { onClick: () => void }) {
 export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCard, identityScore, planetTier }: CosmicHubProps) {
   const navigate = useNavigate();
   const [sybilGrade, setSybilGrade] = useState<string | null>(null);
+  const [boostRate, setBoostRate] = useState<number>(0);
   const compositeData = useCompositeScore(walletAddress || null);
 
   // Fetch sybil grade
@@ -363,6 +349,18 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.trustGrade) setSybilGrade(d.trustGrade);
+      })
+      .catch(() => {});
+  }, [walletAddress]);
+
+  // Fetch staking boost rate
+  useEffect(() => {
+    if (!walletAddress) return;
+    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    fetch(`${base}/api/prism/vault/status?address=${walletAddress}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (typeof d?.boostRate === 'number' && d.boostRate > 0) setBoostRate(d.boostRate);
       })
       .catch(() => {});
   }, [walletAddress]);
@@ -382,18 +380,13 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="fixed inset-0 bg-[#030308] overflow-hidden font-sans text-white selection:bg-purple-500/30"
     >
-      {/* --- 3D Background --- */}
+      {/* --- 2D Starfield + Nebula Background --- */}
       <div className="absolute inset-0 z-0">
-        <Canvas camera={{ position: [0, 0, 8], fov: 50 }} dpr={[1, 1.5]}>
-          <color attach="background" args={['#030308']} />
-          <fog attach="fog" args={['#030308', 5, 20]} />
-          <Suspense fallback={null}>
-            <LocalEnvironment />
-            <PrismCore />
-            <Stars radius={50} depth={50} count={2000} factor={3} saturation={1} fade speed={1} />
-            <Sparkles count={60} scale={10} size={3} speed={0.2} opacity={0.4} color="#a78bfa" />
-          </Suspense>
-        </Canvas>
+        <CosmicStarfield mode="drift" />
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="landing-nebula landing-nebula-1" />
+          <div className="landing-nebula landing-nebula-2" />
+        </div>
       </div>
 
       {/* --- 2D UI Overlay --- */}
@@ -418,15 +411,7 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 text-xs font-mono text-white/60 select-all">
-              {truncAddr(walletAddress)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] px-3 py-1.5 text-xs font-bold text-amber-400">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/></svg>
-              {prismBalance?.balance ?? 0}
-            </span>
-          </div>
+          <div className="w-16" />
         </motion.header>
 
         {/* Main Content */}
@@ -449,6 +434,8 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
                 onClick={onNavigateToCard}
                 maxScore={compositeData.score > 0 ? 1000 : 1400}
                 breakdown={compositeData.score > 0 ? compositeData.breakdown : undefined}
+                onBuyCoins={() => navigate('/forge')}
+                boostRate={boostRate}
               />
             ) : (
               <NoCardFallback onClick={onNavigateToCard} />

@@ -540,11 +540,12 @@ function DPowerUpVisuals({ poolRef }: { poolRef: React.MutableRefObject<DPowerUp
    Shooter Ship (bottom, H/V movement)
    ═══════════════════════════════════════════════════ */
 
-function ShooterShip({ posRef, color, shieldActive, invulnRef }: {
+function ShooterShip({ posRef, color, shieldActive, invulnRef, skinId }: {
   posRef: React.MutableRefObject<{ x: number; y: number }>;
   color: string;
   shieldActive: React.MutableRefObject<boolean>;
   invulnRef: React.MutableRefObject<number>;
+  skinId?: string | null;
 }) {
   const gRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
@@ -577,7 +578,8 @@ function ShooterShip({ posRef, color, shieldActive, invulnRef }: {
     for (let i = 0; i < TRAIL_N; i++) mesh.setMatrixAt(i, dummy.matrix);
     mesh.instanceMatrix.needsUpdate = true;
   }, []);
-  const shipTex = useLoader(THREE.TextureLoader, '/textures/ship.png');
+  const texPath = skinId ? `/textures/ships/ship_${skinId.replace('ship_', '')}.png` : '/textures/ship.png';
+  const shipTex = useLoader(THREE.TextureLoader, texPath);
   shipTex.colorSpace = THREE.SRGBColorSpace;
 
   useFrame((s, delta) => {
@@ -662,7 +664,7 @@ function FixedCam({ shake }: { shake: React.MutableRefObject<number> }) {
    Game World — Cosmic Defender (top-down shooter)
    ═══════════════════════════════════════════════════ */
 
-function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onActiveBonuses, reviveRef, traits, hasMintedId }: GameProps) {
+function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onActiveBonuses, reviveRef, traits, hasMintedId, shipSkin, shipStats }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   // Throttled score/coins updates — batch React setState to max once per 100ms
   const _scoreDirty = useRef(false);
@@ -880,8 +882,9 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
       const { x: dx, y: dy } = inputDir.current;
       if (dx !== 0 || dy !== 0) {
         const len = Math.sqrt(dx * dx + dy * dy);
-        shipPos.current.x += (dx / len) * SHIP_SPEED * dt;
-        shipPos.current.y += (dy / len) * SHIP_SPEED * dt;
+        const spdMult = 1 + (shipStats?.speed || 0) / 200; // x1.0 to x1.5
+        shipPos.current.x += (dx / len) * SHIP_SPEED * spdMult * dt;
+        shipPos.current.y += (dy / len) * SHIP_SPEED * spdMult * dt;
       }
       const bw = visBounds.current.hw - 1, bh = visBounds.current.hh;
       shipPos.current.x = clamp(shipPos.current.x, -bw, bw);
@@ -981,7 +984,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
             levelPause.current = 0.8;
             const bonus = lvl.id * 10;
             scoreRef.current += bonus;
-            coinBank.current += lvl.id * 3 * coinMult;
+            coinBank.current += lvl.id * 5 * coinMult;
             onScore(scoreRef.current);
             onCoins(coinBank.current);
           }
@@ -1007,7 +1010,8 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
 
     // Auto-fire (skip during level pause)
     if (autoFire.current && fireCooldown.current <= 0 && !levelComplete.current) {
-      const cd = firerateT.current > 0 ? FAST_FIRE_CD : BASE_FIRE_CD;
+      const fpMult = 1 - (shipStats?.firepower || 0) / 300; // down to 0.67x cooldown
+      const cd = (firerateT.current > 0 ? FAST_FIRE_CD : BASE_FIRE_CD) * fpMult;
       const hasDouble = doubleT.current > 0;
       let firedType: 'rocket' | 'double' | 'single' = 'single';
 
@@ -1231,7 +1235,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
           case "quantum_core": firerateT.current = FIRERATE_DUR; break;
           case "photon_burst": doubleT.current = DOUBLE_DUR; break;
           case "nova_rockets": rocketAmmo.current += ROCKET_AMMO; break;
-          case "prism_shield": shieldActive.current = true; shieldHits.current = 1; break;
+          case "prism_shield": shieldActive.current = true; shieldHits.current = 1 + Math.floor((shipStats?.shield || 0) / 20); break; // +0-5 extra hits
           case "nebula_bomb":
             // Kill all enemies on screen EXCEPT bosses
             for (let ni = 0; ni < enemies.current.length; ni++) {
@@ -1292,9 +1296,10 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
             const mult = Math.min(combo.current, 3);
             const pts = ENEMY_STATS[e.type].score * mult;
             scoreRef.current += pts;
-            coinBank.current += Math.max(1, Math.floor(pts / 5)) * coinMult;
+            const luckCoinMult = 1 + (shipStats?.luck || 0) / 200; // up to +50% coins
+            coinBank.current += Math.max(1, Math.floor(pts / 3 * luckCoinMult)) * coinMult;
             // Flat bonus coins for boss kills
-            if (isBoss(e.type)) { coinBank.current += ({ boss1: 50, boss2: 100, boss3: 150, boss4: 250 } as Record<string,number>)[e.type] ?? 50; }
+            if (isBoss(e.type)) { coinBank.current += Math.floor((({ boss1: 50, boss2: 100, boss3: 150, boss4: 250 } as Record<string,number>)[e.type] ?? 50) * luckCoinMult); }
             flushScoreCoins(scoreRef.current, coinBank.current);
             shake.current = Math.max(shake.current, isBoss(e.type) ? 1.5 : .3);
             // Drop powerup (15% chance, higher for bosses)
@@ -1399,7 +1404,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
       <FixedCam shake={shake} />
       <SpaceBG />
       <Dust />
-      <ShooterShip posRef={shipPos} color={sCol} shieldActive={shieldActive} invulnRef={invulnT} />
+      <ShooterShip posRef={shipPos} color={sCol} shieldActive={shieldActive} invulnRef={invulnT} skinId={shipSkin} />
       <ProjectileVisuals poolRef={projectiles} color={sCol} />
       <EnemyVisuals poolRef={enemies} shipPos={shipPos} />
       <EnemyBulletVisuals poolRef={enemyBullets} />

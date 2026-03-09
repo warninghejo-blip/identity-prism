@@ -23,6 +23,8 @@ interface GameProps {
   traits: WalletTraits | null;
   walletScore: number;
   hasMintedId?: boolean;
+  shipSkin?: string | null;
+  shipStats?: { speed: number; shield: number; firepower: number; luck: number };
 }
 
 interface AsteroidData {
@@ -678,13 +680,14 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
    Ship
    ═══════════════════════════════════════════════════ */
 
-function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
+function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, skinId }: {
   posRef: React.MutableRefObject<{ x: number; y: number }>;
   headRef: React.MutableRefObject<number>;
   color: string; scale: number;
   nearRef: React.MutableRefObject<number>;
   shieldRef: React.MutableRefObject<number>;
   phaseRef: React.MutableRefObject<number>;
+  skinId?: string | null;
 }) {
   const gRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
@@ -717,7 +720,8 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef }: {
     for (let i = 0; i < TRAIL_N; i++) mesh.setMatrixAt(i, dummy.matrix);
     mesh.instanceMatrix.needsUpdate = true;
   }, []);
-  const shipTex = useLoader(THREE.TextureLoader, '/textures/ship.png');
+  const texPath = skinId ? `/textures/ships/ship_${skinId.replace('ship_', '')}.png` : '/textures/ship.png';
+  const shipTex = useLoader(THREE.TextureLoader, texPath);
   shipTex.colorSpace = THREE.SRGBColorSpace;
 
   useFrame((s, delta) => {
@@ -1090,7 +1094,7 @@ function AsteroidInstances({ pool, geos }: {
   );
 }
 
-function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef, traits, hasMintedId }: GameProps) {
+function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef, traits, hasMintedId, shipSkin, shipStats }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   const asteroidPool = useRef<AsteroidData[]>([]);
 
@@ -1128,6 +1132,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
   const elapsed = useRef(0);
   const spawnT = useRef(0);
   const overRef = useRef(false);
+  const tabHiddenRef = useRef(false);
   const scoreRef = useRef(-1);
   const shake = useRef(0);
   const explPos = useRef({ x: 0, y: 0 });
@@ -1197,6 +1202,16 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
     onScore(0);
   }, [gameState]);
 
+  useEffect(() => {
+    const handler = () => {
+      if (document.hidden) {
+        tabHiddenRef.current = true;
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
   const physAccum = useRef(0);
   const PHYS_DT = IS_MOBILE ? 1 / 60 : 1 / 90; // fixed physics timestep
 
@@ -1218,6 +1233,14 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
       }
     }
     if (gameState !== "playing" || overRef.current) return;
+    // Tab was hidden — skip this frame to prevent time jump
+    if (tabHiddenRef.current) {
+      if (!document.hidden) {
+        tabHiddenRef.current = false;
+        physAccum.current = 0;
+      }
+      return;
+    }
     const frameDt = Math.min(delta, .1);
     physAccum.current += frameDt;
     // Cap max sub-steps to prevent spiral of death
@@ -1237,7 +1260,8 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
       if (slowmoT.current > 0) slowmoT.current -= dt;
       if (phaseT.current > 0) phaseT.current -= dt;
 
-      const tSpeed = clamp(INIT_SPEED + el * SPEED_GAIN, INIT_SPEED, MAX_SPEED);
+      const speedMult = 1 + (shipStats?.speed || 0) / 200; // x1.0 to x1.5
+      const tSpeed = clamp((INIT_SPEED + el * SPEED_GAIN) * speedMult, INIT_SPEED, MAX_SPEED * speedMult);
       curSpeed.current = slerp(curSpeed.current, tSpeed, 3, dt);
 
       let heading = shipHead.current;
@@ -1327,8 +1351,10 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
 
     nearMiss.current = Math.max(0, nearMiss.current - dt * 3);
 
+    const luckFactor = 1 + (shipStats?.luck || 0) / 150; // x1.0 to x1.67
+    const pwInterval = PWR_SPAWN_INTERVAL / luckFactor; // shorter interval = more spawns
     pwTimer.current += dt;
-    if (pwTimer.current >= PWR_SPAWN_INTERVAL && pws.current.length < PWR_MAX) {
+    if (pwTimer.current >= pwInterval && pws.current.length < PWR_MAX) {
       pws.current.push(spawnPowerUp(px, py, heading));
       pwTimer.current = 0;
     }
@@ -1341,7 +1367,8 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
       if (pw.life >= pw.maxLife) continue;
       const pdx = pw.x - px, pdy = pw.y - py;
       if (Math.sqrt(pdx * pdx + pdy * pdy) < PWR_PICKUP_R) {
-        if (pw.type === "shield") shieldT.current = SHIELD_DUR;
+        const shieldMult = 1 + (shipStats?.shield || 0) / 100; // x1.0 to x2.0
+        if (pw.type === "shield") shieldT.current = SHIELD_DUR * shieldMult;
         else if (pw.type === "slowmo") slowmoT.current = SLOWMO_DUR;
         else if (pw.type === "phase") phaseT.current = PHASE_DUR;
         else if (pw.type === "coin") {
@@ -1561,7 +1588,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
       <Comets />
 
       <BHVisuals bhRef={bhs} />
-      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} />
+      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} skinId={shipSkin} />
       <PowerUpVisuals pwRef={pws} />
       <PickupEffect pickupRef={pickupEffect} />
 

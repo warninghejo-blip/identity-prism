@@ -36,39 +36,53 @@ export interface ForgeLoadout {
 // ── Item Catalog ──
 
 export const FORGE_FRAMES: ForgeItem[] = [
-  { id: 'frame_nebula', name: 'Nebula Frame', category: 'frame', price: 50, rarity: 'common', description: 'Soft purple nebula border around your card', preview: 'nebula' },
-  { id: 'frame_solar_flare', name: 'Solar Flare', category: 'frame', price: 120, rarity: 'rare', description: 'Animated golden flare edges', preview: 'solar_flare' },
-  { id: 'frame_void', name: 'Void Edge', category: 'frame', price: 200, rarity: 'epic', description: 'Dark matter distortion border', preview: 'void' },
-  { id: 'frame_quantum', name: 'Quantum Lattice', category: 'frame', price: 300, rarity: 'epic', description: 'Glitching holographic wireframe', preview: 'quantum' },
-  { id: 'frame_supernova', name: 'Supernova', category: 'frame', price: 500, rarity: 'legendary', description: 'Explosive radiant border with particle trails', preview: 'supernova' },
-  { id: 'frame_event_horizon', name: 'Event Horizon', category: 'frame', price: 750, rarity: 'legendary', description: 'Warped spacetime distortion around the card', preview: 'event_horizon', unlockCondition: 'Burn 100+ tokens in Black Hole' },
+  { id: 'frame_nebula', name: 'Nebula Frame', category: 'frame', price: 200, rarity: 'common', description: 'Soft purple nebula border around your card', preview: 'nebula' },
+  { id: 'frame_solar_flare', name: 'Solar Flare', category: 'frame', price: 600, rarity: 'rare', description: 'Animated golden flare edges', preview: 'solar_flare' },
+  { id: 'frame_void', name: 'Void Edge', category: 'frame', price: 1200, rarity: 'epic', description: 'Dark matter distortion border', preview: 'void' },
+  { id: 'frame_quantum', name: 'Quantum Lattice', category: 'frame', price: 1600, rarity: 'epic', description: 'Glitching holographic wireframe', preview: 'quantum' },
+  { id: 'frame_supernova', name: 'Supernova', category: 'frame', price: 3000, rarity: 'legendary', description: 'Explosive radiant border with particle trails', preview: 'supernova' },
+  { id: 'frame_event_horizon', name: 'Event Horizon', category: 'frame', price: 5000, rarity: 'legendary', description: 'Warped spacetime distortion around the card', preview: 'event_horizon', unlockCondition: 'Burn 100+ tokens in Black Hole' },
 ];
 
 export const FORGE_AURAS: ForgeItem[] = [
-  { id: 'aura_frost', name: 'Frost Aura', category: 'aura', price: 80, rarity: 'common', description: 'Ice crystal particles orbit your planet', preview: 'frost' },
-  { id: 'aura_ember', name: 'Ember Aura', category: 'aura', price: 80, rarity: 'common', description: 'Warm fire particles around your planet', preview: 'ember' },
-  { id: 'aura_electric', name: 'Electric Storm', category: 'aura', price: 150, rarity: 'rare', description: 'Lightning arcs around your planet', preview: 'electric' },
-  { id: 'aura_plasma', name: 'Plasma Field', category: 'aura', price: 250, rarity: 'epic', description: 'Swirling plasma energy field', preview: 'plasma' },
-  { id: 'aura_dark_matter', name: 'Dark Matter', category: 'aura', price: 400, rarity: 'legendary', description: 'Gravitational lensing distortion effect', preview: 'dark_matter' },
-  { id: 'aura_binary_pulse', name: 'Binary Pulse', category: 'aura', price: 600, rarity: 'legendary', description: 'Twin energy beams connecting binary suns', preview: 'binary_pulse', unlockCondition: 'Reach Binary Sun tier' },
+  { id: 'aura_frost', name: 'Frost Aura', category: 'aura', price: 300, rarity: 'common', description: 'Ice crystal particles orbit your planet', preview: 'frost' },
+  { id: 'aura_ember', name: 'Ember Aura', category: 'aura', price: 300, rarity: 'common', description: 'Warm fire particles around your planet', preview: 'ember' },
+  { id: 'aura_electric', name: 'Electric Storm', category: 'aura', price: 800, rarity: 'rare', description: 'Lightning arcs around your planet', preview: 'electric' },
+  { id: 'aura_plasma', name: 'Plasma Field', category: 'aura', price: 1400, rarity: 'epic', description: 'Swirling plasma energy field', preview: 'plasma' },
+  { id: 'aura_dark_matter', name: 'Dark Matter', category: 'aura', price: 2400, rarity: 'legendary', description: 'Gravitational lensing distortion effect', preview: 'dark_matter' },
+  { id: 'aura_binary_pulse', name: 'Binary Pulse', category: 'aura', price: 4000, rarity: 'legendary', description: 'Twin energy beams connecting binary suns', preview: 'binary_pulse', unlockCondition: 'Reach Binary Sun tier' },
 ];
 
 export const FORGE_SHIP_SKINS: ForgeItem[] = [
-  { id: 'ship_stealth', name: 'Stealth Fighter', category: 'ship_skin', price: 60, rarity: 'common', description: 'Dark matte hull with red accents', preview: 'stealth' },
-  { id: 'ship_chrome', name: 'Chrome Viper', category: 'ship_skin', price: 100, rarity: 'rare', description: 'Reflective chrome hull', preview: 'chrome' },
-  { id: 'ship_neon', name: 'Neon Racer', category: 'ship_skin', price: 150, rarity: 'rare', description: 'Glowing neon outlines', preview: 'neon' },
-  { id: 'ship_phantom', name: 'Phantom Wing', category: 'ship_skin', price: 250, rarity: 'epic', description: 'Semi-transparent ghostly ship', preview: 'phantom' },
-  { id: 'ship_prism', name: 'Prism Cruiser', category: 'ship_skin', price: 400, rarity: 'legendary', description: 'Rainbow prismatic hull that shifts color', preview: 'prism' },
-  { id: 'ship_golden', name: 'Golden Sovereign', category: 'ship_skin', price: 600, rarity: 'legendary', description: 'Ornate golden ship with particle trail', preview: 'golden', unlockCondition: 'Win 10 Cosmic Defender games' },
+  { id: 'ship_stealth', name: 'Stealth Fighter', category: 'ship_skin', price: 240, rarity: 'common', description: 'Dark matte hull with red accents', preview: 'stealth' },
+  { id: 'ship_chrome', name: 'Chrome Viper', category: 'ship_skin', price: 600, rarity: 'rare', description: 'Reflective chrome hull', preview: 'chrome' },
+  { id: 'ship_neon', name: 'Neon Racer', category: 'ship_skin', price: 800, rarity: 'rare', description: 'Glowing neon outlines', preview: 'neon' },
+  { id: 'ship_phantom', name: 'Phantom Wing', category: 'ship_skin', price: 1400, rarity: 'epic', description: 'Semi-transparent ghostly ship', preview: 'phantom' },
+  { id: 'ship_prism', name: 'Prism Cruiser', category: 'ship_skin', price: 2400, rarity: 'legendary', description: 'Rainbow prismatic hull that shifts color', preview: 'prism' },
+  { id: 'ship_golden', name: 'Golden Sovereign', category: 'ship_skin', price: 4000, rarity: 'legendary', description: 'Ornate golden ship with particle trail', preview: 'golden', unlockCondition: 'Win 10 Cosmic Defender games' },
+  // ── New ship skins (Set A) ──
+  { id: 'ship_crystal', name: 'Crystal Sentinel', category: 'ship_skin', price: 500, rarity: 'rare', description: 'Amethyst crystal hull with Solana core', preview: 'crystal' },
+  { id: 'ship_cargo', name: 'Cargo Hauler', category: 'ship_skin', price: 350, rarity: 'common', description: 'Heavy industrial mining vessel', preview: 'cargo' },
+  { id: 'ship_fighter', name: 'Starfighter Mk.II', category: 'ship_skin', price: 700, rarity: 'rare', description: 'Sleek teal interceptor with energy wings', preview: 'fighter' },
+  { id: 'ship_stealth_v2', name: 'Shadow Wraith', category: 'ship_skin', price: 1200, rarity: 'epic', description: 'Ultra-dark stealth bomber with purple circuits', preview: 'stealth_v2' },
+  { id: 'ship_fortress', name: 'Stellar Fortress', category: 'ship_skin', price: 1800, rarity: 'epic', description: 'Golden cathedral-class capital ship', preview: 'fortress' },
+  { id: 'ship_manta', name: 'Void Manta', category: 'ship_skin', price: 2800, rarity: 'legendary', description: 'Bio-organic manta ray with cosmic tentacles', preview: 'manta' },
+  // ── New ship skins (Set B — variants) ──
+  { id: 'ship_crystal_b', name: 'Emerald Sentinel', category: 'ship_skin', price: 550, rarity: 'rare', description: 'Green crystal variant with dual core', preview: 'crystal_b' },
+  { id: 'ship_cargo_b', name: 'Cargo Titan', category: 'ship_skin', price: 400, rarity: 'common', description: 'Heavy-duty cargo variant with extra thrusters', preview: 'cargo_b' },
+  { id: 'ship_fighter_b', name: 'Starfighter Mk.III', category: 'ship_skin', price: 750, rarity: 'rare', description: 'Silver interceptor with reinforced armor', preview: 'fighter_b' },
+  { id: 'ship_stealth_v2_b', name: 'Crimson Wraith', category: 'ship_skin', price: 1300, rarity: 'epic', description: 'Red-accented stealth variant with plasma drives', preview: 'stealth_v2_b' },
+  { id: 'ship_fortress_b', name: 'Phoenix Citadel', category: 'ship_skin', price: 2000, rarity: 'epic', description: 'Golden winged fortress with jeweled hull', preview: 'fortress_b' },
+  { id: 'ship_trident', name: 'Teal Trident', category: 'ship_skin', price: 3200, rarity: 'legendary', description: 'Three-pronged cosmic interceptor', preview: 'trident' },
 ];
 
 export const FORGE_TITLES: ForgeItem[] = [
-  { id: 'title_explorer', name: 'Explorer', category: 'title', price: 30, rarity: 'common', description: 'Title: "Explorer"', preview: 'Explorer' },
-  { id: 'title_guardian', name: 'Cosmic Guardian', category: 'title', price: 100, rarity: 'rare', description: 'Title: "Cosmic Guardian"', preview: 'Cosmic Guardian' },
-  { id: 'title_destroyer', name: 'Destroyer of Dust', category: 'title', price: 150, rarity: 'rare', description: 'Title: "Destroyer of Dust"', preview: 'Destroyer of Dust', unlockCondition: 'Burn 50 tokens' },
-  { id: 'title_architect', name: 'Stellar Architect', category: 'title', price: 200, rarity: 'epic', description: 'Title: "Stellar Architect"', preview: 'Stellar Architect' },
-  { id: 'title_sovereign', name: 'Prism Sovereign', category: 'title', price: 350, rarity: 'epic', description: 'Title: "Prism Sovereign"', preview: 'Prism Sovereign', unlockCondition: 'Own 5+ Forge items' },
-  { id: 'title_ascended', name: 'The Ascended', category: 'title', price: 1000, rarity: 'legendary', description: 'Title: "The Ascended"', preview: 'The Ascended', unlockCondition: 'Score 1000+ identity points' },
+  { id: 'title_explorer', name: 'Explorer', category: 'title', price: 150, rarity: 'common', description: 'Title: "Explorer"', preview: 'Explorer' },
+  { id: 'title_guardian', name: 'Cosmic Guardian', category: 'title', price: 500, rarity: 'rare', description: 'Title: "Cosmic Guardian"', preview: 'Cosmic Guardian' },
+  { id: 'title_destroyer', name: 'Destroyer of Dust', category: 'title', price: 800, rarity: 'rare', description: 'Title: "Destroyer of Dust"', preview: 'Destroyer of Dust', unlockCondition: 'Burn 50 tokens' },
+  { id: 'title_architect', name: 'Stellar Architect', category: 'title', price: 1200, rarity: 'epic', description: 'Title: "Stellar Architect"', preview: 'Stellar Architect' },
+  { id: 'title_sovereign', name: 'Prism Sovereign', category: 'title', price: 2000, rarity: 'epic', description: 'Title: "Prism Sovereign"', preview: 'Prism Sovereign', unlockCondition: 'Own 5+ Forge items' },
+  { id: 'title_ascended', name: 'The Ascended', category: 'title', price: 6000, rarity: 'legendary', description: 'Title: "The Ascended"', preview: 'The Ascended', unlockCondition: 'Score 1000+ identity points' },
 ];
 
 export const ALL_FORGE_ITEMS: ForgeItem[] = [

@@ -60,6 +60,7 @@ export interface MintIdentityPrismArgs {
   score: number;
   cardImageUrl?: string;
   paymentToken?: 'SOL' | 'SKR';
+  paidWithCoins?: boolean;
   remint?: boolean;
   burnSignature?: string;
   burnAssetId?: string;
@@ -285,6 +286,7 @@ export async function mintIdentityPrism({
   score,
   cardImageUrl,
   paymentToken = 'SOL',
+  paidWithCoins = false,
   remint,
   burnSignature,
   burnAssetId,
@@ -344,6 +346,35 @@ export async function mintIdentityPrism({
 
   // Obtain JWT auth token (non-blocking — proceeds without if signMessage unavailable)
   const authToken = await getAuthToken(wallet, coreMintUrl);
+
+  // ── Coins payment: deduct 10,000 coins before proceeding ──
+  if (paidWithCoins) {
+    if (!authToken) {
+      throw new Error('Authentication required for coins payment. Please try again.');
+    }
+    const coinsMintRes = await fetch(`${coreMintUrl}/api/prism/mint-for-coins`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ address }),
+    });
+    if (!coinsMintRes.ok) {
+      const errorText = await coinsMintRes.text();
+      let errorMessage = `Coins deduction failed: ${coinsMintRes.status}`;
+      try {
+        const errorJson = JSON.parse(errorText) as { error?: string; message?: string };
+        errorMessage = errorJson.error ?? errorJson.message ?? errorMessage;
+      } catch { errorMessage = errorText || errorMessage; }
+      throw new Error(errorMessage);
+    }
+    const coinsPayload = (await coinsMintRes.json()) as { proceedWithMint?: boolean; error?: string };
+    if (!coinsPayload.proceedWithMint) {
+      throw new Error(coinsPayload.error ?? 'Coins deduction rejected by server. Please check your balance.');
+    }
+    console.info('[mint] coins payment accepted — skipping SOL payment step');
+  }
 
   const parseOptionalPublicKey = (value: string | null, label: string) => {
     if (!value) return null;
@@ -471,8 +502,9 @@ export async function mintIdentityPrism({
     traits: metadata.traits,
     stats: metadata.stats,
     ...(remint ? { remint: true, ...(burnSignature ? { burnSignature } : {}), ...(burnAssetId ? { burnAssetId } : {}) } : {}),
+    ...(paidWithCoins ? { paidWithCoins: true } : {}),
   };
-  console.info('[mint] sending mint-cnft payload', { coreMintUrl, remint, burnAssetId: burnAssetId?.slice(0, 16), payloadKeys: Object.keys(mintPayload) });
+  console.info('[mint] sending mint-cnft payload', { coreMintUrl, remint, paidWithCoins, burnAssetId: burnAssetId?.slice(0, 16), payloadKeys: Object.keys(mintPayload) });
 
   const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) authHeaders['Authorization'] = `Bearer ${authToken}`;
@@ -543,9 +575,9 @@ export async function mintIdentityPrism({
   if (requiresWalletTx) {
     const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
     const feeLamports = feeForMessage.value ?? 0;
-    // Remint mode has no payment — only rent + tx fee are required
+    // Remint and coins-paid modes have no SOL payment — only rent + tx fee are required
     const configuredLamports =
-      remint ? 0 : (paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0);
+      (remint || paidWithCoins) ? 0 : (paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0);
     const transferLamports = transaction.instructions.reduce((total, instruction) => {
       if (!instruction.programId.equals(SystemProgram.programId)) return total;
       try {

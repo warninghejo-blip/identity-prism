@@ -69,7 +69,8 @@ const Verify = React.lazy(() => import('./pages/Verify'));
 const Compare = React.lazy(() => import('./pages/Compare'));
 const HomePage = React.lazy(() => import('./pages/HomePage'));
 const StellarForge = React.lazy(() => import('./pages/StellarForge'));
-const NebulaMarket = React.lazy(() => import('./pages/NebulaMarket'));
+const PrismScanner = React.lazy(() => import('./pages/PrismScanner'));
+const PrismArena = React.lazy(() => import('./pages/PrismArena'));
 const ConstellationNetwork = React.lazy(() => import('./pages/ConstellationNetwork'));
 const QuestsPage = React.lazy(() => import('./pages/QuestsPage'));
 const TimeWarp = React.lazy(() => import('./pages/TimeWarp'));
@@ -117,7 +118,9 @@ const router = createBrowserRouter([
       { path: 'verify', element: lazyRoute(<Verify />) },
       { path: 'compare', element: lazyRoute(<Compare />) },
       { path: 'forge', element: lazyRoute(<StellarForge />) },
-      { path: 'market', element: lazyRoute(<NebulaMarket />) },
+      { path: 'scan', element: lazyRoute(<PrismScanner />) },
+      { path: 'arena', element: lazyRoute(<PrismArena />) },
+      { path: 'market', element: <Navigate to="/arena" replace /> },
       { path: 'constellation', element: lazyRoute(<ConstellationNetwork />) },
       { path: 'timewarp', element: lazyRoute(<TimeWarp />) },
       { path: 'quests', element: lazyRoute(<WalletRequired><QuestsPage /></WalletRequired>) },

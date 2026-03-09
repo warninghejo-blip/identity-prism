@@ -27,11 +27,13 @@ interface GravityRunnerProps {
   gameState: 'start' | 'playing' | 'gameover';
   onScore: (score: number) => void;
   onCoins: (coins: number) => void;
-  onGameOver: (score: number, coins: number) => void;
+  onGameOver: (score: number, coins: number, extraStats?: { columns: number; crystals: number }) => void;
   reviveRef: React.MutableRefObject<boolean>;
   traits: any;
   walletScore: number;
   hasMintedId: boolean;
+  shipSkin?: string | null;
+  shipStats?: { speed: number; shield: number; firepower: number; luck: number };
 }
 
 // ── Game constants ──
@@ -157,14 +159,8 @@ interface StarLayer {
   speed: number;
 }
 
-export default function GravityRunnerScene({
-  gameState,
-  onScore,
-  onCoins,
-  onGameOver,
-  reviveRef,
-  hasMintedId,
-}: GravityRunnerProps) {
+export default function GravityRunnerScene(props: GravityRunnerProps) {
+  const { gameState, onScore, onCoins, onGameOver, reviveRef, hasMintedId } = props;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const shipImgRef = useRef<HTMLImageElement | null>(null);
@@ -193,14 +189,17 @@ export default function GravityRunnerScene({
     levelBanner: 0,
     prevLevelName: '',
     columnsPassedForBonus: 0,
+    crystalsCollected: 0,
     startTime: 0,
     lastTickTime: 0,
+    _grazed: false,
   });
 
   // Load ship texture
   useEffect(() => {
     const img = new Image();
-    img.src = '/textures/ship.png';
+    const skinKey = props.shipSkin ? props.shipSkin.replace('ship_', '') : '';
+    img.src = skinKey ? `/textures/ships/ship_${skinKey}.png` : '/textures/ship.png';
     img.onload = () => {
       shipImgRef.current = img;
       shipLoadedRef.current = true;
@@ -298,6 +297,8 @@ export default function GravityRunnerScene({
     s.levelBanner = 0;
     s.prevLevelName = '';
     s.columnsPassedForBonus = 0;
+    s.crystalsCollected = 0;
+    s._grazed = false;
     s.startTime = performance.now();
     s.lastTickTime = s.startTime;
 
@@ -594,7 +595,7 @@ export default function GravityRunnerScene({
           size: 2 + Math.random() * 5,
         });
       }
-      onGameOver(s.score, s.coins);
+      onGameOver(s.score, s.coins, { columns: s.columnsPassedForBonus, crystals: s.crystalsCollected });
     }
 
     // ── Tick ──
@@ -616,8 +617,9 @@ export default function GravityRunnerScene({
 
       s.frameCount++;
       // Progressive speed: increases by SPEED_RAMP_AMOUNT every SPEED_RAMP_INTERVAL frames
+      const spdBonus = 1 + (props.shipStats?.speed || 0) / 400; // slight initial speed boost x1.0-x1.25
       const rampSteps = Math.floor(s.frameCount / SPEED_RAMP_INTERVAL);
-      s.speed = Math.min(MAX_SPEED, BASE_SPEED + rampSteps * SPEED_RAMP_AMOUNT);
+      s.speed = Math.min(MAX_SPEED, (BASE_SPEED * spdBonus) + rampSteps * SPEED_RAMP_AMOUNT);
 
       // Level theme changes
       const theme = getThemeForScore(s.score);
@@ -695,15 +697,27 @@ export default function GravityRunnerScene({
       s.nextCrystal--;
       if (s.nextCrystal <= 0) {
         spawnCrystal();
-        s.nextCrystal = CRYSTAL_INTERVAL;
+        const crystalLuck = 1 + (props.shipStats?.luck || 0) / 150; // x1.0 to x1.67
+        s.nextCrystal = Math.max(15, Math.floor(CRYSTAL_INTERVAL / crystalLuck));
       }
 
-      // Collision checks
+      // Collision checks (shield stat gives graze chance to survive)
+      const grazeChance = (props.shipStats?.shield || 0) / 50; // 0-2 → 0%-100% graze
       for (const o of s.obstacles) {
-        if (o.kind === 'column' && checkColumnCollision(o.data)) { die(); return; }
-        if (o.kind === 'comet' && checkCometCollision(o.data)) { die(); return; }
-        if (o.kind === 'field' && checkFieldCollision(o.data)) { die(); return; }
-        if (o.kind === 'dynamic' && checkDynamicCollision(o.data)) { die(); return; }
+        const hit = (o.kind === 'column' && checkColumnCollision(o.data))
+          || (o.kind === 'comet' && checkCometCollision(o.data))
+          || (o.kind === 'field' && checkFieldCollision(o.data))
+          || (o.kind === 'dynamic' && checkDynamicCollision(o.data));
+        if (hit) {
+          if (grazeChance > 0 && Math.random() < grazeChance * 0.5 && !s._grazed) {
+            // Graze — survive once, brief invuln
+            s._grazed = true;
+            s.screenShake = 3;
+            s.particles.push({ x: s.playerX + SHIP_W, y: s.playerY + SHIP_H / 2, vx: 0, vy: -2, life: 15, maxLife: 15, color: '#22d3ee', size: 8 });
+          } else {
+            die(); return;
+          }
+        }
       }
 
       // Columns passed — bonus coins (columns + dynamics)
@@ -712,8 +726,8 @@ export default function GravityRunnerScene({
         if (passable && !o.data.passed && o.data.x + o.data.width < s.playerX) {
           o.data.passed = true;
           s.columnsPassedForBonus++;
-          // +3 coins per column passed
-          s.coins += 3 * coinMult;
+          // +2 coins per column passed
+          s.coins += 2 * coinMult;
           onCoins(s.coins);
           // Celebratory particles
           s.particles.push({
@@ -731,7 +745,8 @@ export default function GravityRunnerScene({
         const dy = (s.playerY + SHIP_H / 2) - c.y;
         if (Math.sqrt(dx * dx + dy * dy) < CRYSTAL_SIZE + SHIP_W * 0.4) {
           c.collected = true;
-          s.coins += 5 * coinMult;
+          s.crystalsCollected++;
+          s.coins += 2 * coinMult;
           onCoins(s.coins);
           for (let i = 0; i < 10; i++) {
             s.particles.push({

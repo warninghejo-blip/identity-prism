@@ -9,54 +9,18 @@ import { useWalletData, calculateScore, type WalletTraits } from "@/hooks/useWal
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Wallet, Search, Trophy, ArrowUpDown, Loader2, Swords, Shield, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-
-const TIER_LABELS: Record<string, string> = {
-  mercury: "MERCURY", mars: "MARS", venus: "VENUS", earth: "EARTH",
-  neptune: "NEPTUNE", uranus: "URANUS", saturn: "SATURN", jupiter: "JUPITER",
-  sun: "SUN", binary_sun: "BINARY SUN",
-};
-
-const TIER_COLORS: Record<string, string> = {
-  mercury: "text-stone-300", mars: "text-orange-400", venus: "text-yellow-300",
-  earth: "text-blue-400", neptune: "text-cyan-400", uranus: "text-sky-300",
-  saturn: "text-amber-300", jupiter: "text-orange-300", sun: "text-yellow-400",
-  binary_sun: "text-amber-400",
-};
-
-const TIER_HEX: Record<string, string> = {
-  mercury: "#a8a29e", mars: "#fb923c", venus: "#fde047", earth: "#60a5fa",
-  neptune: "#22d3ee", uranus: "#7dd3fc", saturn: "#fcd34d", jupiter: "#fdba74",
-  sun: "#facc15", binary_sun: "#fbbf24",
-};
-
-const TIER_BG: Record<string, string> = {
-  mercury: "from-stone-500/10 to-stone-600/5", mars: "from-orange-500/10 to-red-600/5",
-  venus: "from-yellow-500/10 to-amber-600/5", earth: "from-blue-500/10 to-green-600/5",
-  neptune: "from-cyan-500/10 to-blue-600/5", uranus: "from-sky-500/10 to-cyan-600/5",
-  saturn: "from-amber-500/10 to-yellow-600/5", jupiter: "from-orange-500/10 to-amber-600/5",
-  sun: "from-yellow-500/10 to-orange-600/5", binary_sun: "from-amber-400/10 to-yellow-500/5",
-};
-
-interface CompareRow {
-  label: string;
-  valueA: string | number;
-  valueB: string | number;
-  numA: number;
-  numB: number;
-  higherIsBetter: boolean;
-}
-
-function buildCompareRows(a: WalletTraits, b: WalletTraits): CompareRow[] {
-  return [
-    { label: "SOL Balance", valueA: a.solBalance.toFixed(2), valueB: b.solBalance.toFixed(2), numA: a.solBalance, numB: b.solBalance, higherIsBetter: true },
-    { label: "Wallet Age", valueA: `${a.walletAgeDays}d`, valueB: `${b.walletAgeDays}d`, numA: a.walletAgeDays, numB: b.walletAgeDays, higherIsBetter: true },
-    { label: "Transactions", valueA: a.txCount.toLocaleString(), valueB: b.txCount.toLocaleString(), numA: a.txCount, numB: b.txCount, higherIsBetter: true },
-    { label: "NFTs", valueA: a.nftCount, valueB: b.nftCount, numA: a.nftCount, numB: b.nftCount, higherIsBetter: true },
-    { label: "Tokens", valueA: a.uniqueTokenCount, valueB: b.uniqueTokenCount, numA: a.uniqueTokenCount, numB: b.uniqueTokenCount, higherIsBetter: true },
-    { label: "Total Assets", valueA: a.totalAssetsCount, valueB: b.totalAssetsCount, numA: a.totalAssetsCount, numB: b.totalAssetsCount, higherIsBetter: true },
-    { label: "Avg Tx/Day", valueA: a.avgTxPerDay30d.toFixed(1), valueB: b.avgTxPerDay30d.toFixed(1), numA: a.avgTxPerDay30d, numB: b.avgTxPerDay30d, higherIsBetter: true },
-  ];
-}
+import PageShell from "@/components/PageShell";
+import {
+  TIER_LABELS,
+  TIER_TEXT_COLORS as TIER_COLORS,
+  TIER_HEX,
+  TIER_BG,
+  buildCompareRows,
+  MiniPlanet,
+  BattleBar,
+  formatAddr,
+  getBadgeCount,
+} from '@/components/prism/shared';
 
 const ALL_BADGES: [string, (t: WalletTraits) => boolean][] = [
   ["OG Member", t => t.isOG], ["Whale", t => t.isWhale], ["Collector", t => t.isCollector],
@@ -67,15 +31,6 @@ const ALL_BADGES: [string, (t: WalletTraits) => boolean][] = [
   ["Hyperactive", t => t.hyperactiveDegen], ["Seeker", t => t.hasSeeker],
   ["Visionary", t => t.hasPreorder],
 ];
-
-function getBadgeCount(traits: WalletTraits): number {
-  return ALL_BADGES.filter(([, fn]) => fn(traits)).length;
-}
-
-function formatAddr(addr: string) {
-  if (!addr || addr.length < 12) return addr;
-  return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
-}
 
 // ── AnimatedScore — easeOutExpo counter ──
 function AnimatedScore({ value, className }: { value: number; className?: string }) {
@@ -96,27 +51,6 @@ function AnimatedScore({ value, className }: { value: number; className?: string
     return () => cancelAnimationFrame(frameRef.current);
   }, [value]);
   return <span className={className}>{display}</span>;
-}
-
-// ── MiniPlanet — CSS planet with tier color + rotation ──
-function MiniPlanet({ tier, size = 40 }: { tier: string; size?: number }) {
-  const color = TIER_HEX[tier] || "#60a5fa";
-  return (
-    <div className="relative" style={{ width: size, height: size }}>
-      <div
-        className="absolute inset-0 rounded-full animate-spin"
-        style={{
-          background: `radial-gradient(circle at 35% 35%, ${color}dd, ${color}88 50%, ${color}44 100%)`,
-          boxShadow: `0 0 ${size * 0.4}px ${color}60, inset -${size * 0.1}px -${size * 0.1}px ${size * 0.3}px rgba(0,0,0,0.4)`,
-          animationDuration: '20s',
-        }}
-      />
-      <div
-        className="absolute rounded-full opacity-30"
-        style={{ left: '10%', top: '20%', width: '25%', height: '15%', background: `${color}cc`, filter: 'blur(3px)' }}
-      />
-    </div>
-  );
 }
 
 // ── RadarChart — SVG spider chart ──
@@ -186,54 +120,6 @@ function BadgeCard({ name, hasA, hasB }: { name: string; hasA: boolean; hasB: bo
       <div className="flex justify-center gap-2 mt-1">
         <span className={`w-2 h-2 rounded-full ${hasA ? 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.5)]' : 'bg-white/10'}`} />
         <span className={`w-2 h-2 rounded-full ${hasB ? 'bg-purple-400 shadow-[0_0_6px_rgba(168,85,247,0.5)]' : 'bg-white/10'}`} />
-      </div>
-    </div>
-  );
-}
-
-// ── BattleBar — dual-direction animated comparison bar ──
-function BattleBar({ label, valA, valB, maxVal, displayA, displayB, showValues }: {
-  label: string; valA: number; valB: number; maxVal: number;
-  displayA?: string; displayB?: string; showValues?: boolean;
-}) {
-  const total = valA + valB || 1;
-  const pctA = Math.max(5, (valA / total) * 100);
-  const pctB = Math.max(5, (valB / total) * 100);
-  const aWins = valA > valB;
-  const bWins = valB > valA;
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between px-1">
-        <span className={`text-[10px] tabular-nums font-bold ${aWins ? 'text-cyan-400' : 'text-white/40'}`}>
-          {displayA ?? (showValues ? valA : valA.toLocaleString())}
-          {aWins && <Zap className="w-2.5 h-2.5 inline ml-0.5 text-cyan-400" />}
-        </span>
-        <span className="text-[9px] uppercase tracking-wider text-white/25 font-bold">{label}</span>
-        <span className={`text-[10px] tabular-nums font-bold ${bWins ? 'text-purple-400' : 'text-white/40'}`}>
-          {bWins && <Zap className="w-2.5 h-2.5 inline mr-0.5 text-purple-400" />}
-          {displayB ?? (showValues ? valB : valB.toLocaleString())}
-        </span>
-      </div>
-      <div className="flex h-2 rounded-full overflow-hidden bg-white/[0.04] gap-px">
-        <motion.div
-          initial={{ width: '50%' }}
-          animate={{ width: `${pctA}%` }}
-          transition={{ delay: 0.6, duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className={`h-full rounded-l-full ${aWins
-            ? 'bg-gradient-to-r from-cyan-500 to-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.4)]'
-            : 'bg-gradient-to-r from-cyan-800/50 to-cyan-700/40'
-          }`}
-        />
-        <motion.div
-          initial={{ width: '50%' }}
-          animate={{ width: `${pctB}%` }}
-          transition={{ delay: 0.6, duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className={`h-full rounded-r-full ${bWins
-            ? 'bg-gradient-to-l from-purple-500 to-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.4)]'
-            : 'bg-gradient-to-l from-purple-800/50 to-purple-700/40'
-          }`}
-        />
       </div>
     </div>
   );
@@ -311,9 +197,9 @@ export default function Compare() {
   const bWins = scoreB > scoreA;
 
   return (
-    <div className="h-screen flex flex-col bg-[#05070a] text-white">
+    <PageShell className="text-white">
       {/* Header */}
-      <header className="flex-none sticky top-0 z-20 bg-black/80 backdrop-blur-xl border-b border-white/[0.06]">
+      <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <button onClick={() => goBack(navigate)} className="text-white/50 hover:text-white transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -584,6 +470,6 @@ export default function Compare() {
           </div>
         )}
       </main>
-    </div>
+    </PageShell>
   );
 }
