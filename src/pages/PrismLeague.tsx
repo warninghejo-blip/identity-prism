@@ -35,22 +35,18 @@ import { hapticHeavy, hapticMedium, hapticSuccess, hapticError } from "@/lib/hap
 import OrbitSurvivalScene from "@/components/game/OrbitSurvivalScene";
 import AsteroidDestroyerScene from "@/components/game/AsteroidDestroyerScene";
 import GravityRunnerScene from "@/components/game/GravityRunnerScene";
-import GravityWarsScene from "@/components/game/GravityWarsScene";
-import TerritoryControlScene from "@/components/game/TerritoryControlScene";
-import AsteroidMiningScene from "@/components/game/AsteroidMiningScene";
+import CosmicMineScene from "@/components/game/CosmicMineScene";
 import { FpsOverlay } from "@/components/game/GameShared";
 import { deriveShipStats, getEquipmentBonusLabel, DEFAULT_SHIP_STATS } from "@/lib/shipStats";
 import type { ForgeLoadout } from "@/lib/forgeItems";
 
-type GameMode = "orbit" | "destroyer" | "gravity" | "wars" | "territory" | "mining";
+type GameMode = "orbit" | "destroyer" | "gravity" | "mining";
 
 const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string; cover?: string }[] = [
   { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit", cover: "/games/orbit_cover.png" },
   { id: "destroyer", name: "Cosmic Defender", icon: "💥", desc: "4 sectors of enemies & bosses. Auto-fire, collect powerups!", controls: "WASD/Arrows to move, auto-fire. Touch: drag to move", cover: "/games/wars_cover.png" },
   { id: "gravity", name: "Gravity Runner", icon: "🔄", desc: "Tap to fly, collect crystals, dodge asteroid columns!", controls: "Tap/Space to thrust upward", cover: "/games/gravity_cover.png" },
-  { id: "wars", name: "Gravity Wars", icon: "⚡", desc: "Orbit + impulse waves to push asteroids away", controls: "Tap = impulse wave, Double-tap = reverse orbit", cover: "/games/wars_cover.png" },
-  { id: "territory", name: "Territory Control", icon: "🏴", desc: "Capture and hold zones while orbiting", controls: "Tap/Click to reverse orbit, enter zones to capture" },
-  { id: "mining", name: "Asteroid Mining", icon: "⛏️", desc: "Mine resources in the asteroid belt", controls: "Mouse/Touch to move, auto-laser mines nearest rock", cover: "/games/mining_cover.png" },
+  { id: "mining", name: "Cosmic Mine", icon: "⛏️", desc: "Tap to mine ore, buy upgrades, prestige for stars", controls: "Tap asteroid to mine, buy upgrades below", cover: "/games/mining_cover.png" },
 ];
 import {
   commitScoreOnchain,
@@ -75,6 +71,7 @@ import {
   type GameSessionProof,
 } from "@/lib/magicblock";
 import { createWormholeTunnel, fadeOutWormholeTunnel } from "@/lib/wormholeTunnel";
+import { goBack } from "@/lib/safeNavigate";
 import { trackGameStart, trackGameOver } from "@/lib/analytics";
 // earnPrism removed — unified economy uses coins directly
 import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, getAppBaseUrl } from "@/constants";
@@ -98,22 +95,6 @@ import {
   GRAVITY_COIN_REWARDS,
   type GravityAchievement,
 } from "@/lib/gravityAchievements";
-import {
-  checkWarsAchievements,
-  updateWarsStats,
-  getWarsAchievements,
-  getWarsAchievementProgress,
-  claimWarsReward,
-  WARS_COIN_REWARDS,
-} from "@/lib/warsAchievements";
-import {
-  checkTerritoryAchievements,
-  updateTerritoryStats,
-  getTerritoryAchievements,
-  getTerritoryAchievementProgress,
-  claimTerritoryReward,
-  TERRITORY_COIN_REWARDS,
-} from "@/lib/territoryAchievements";
 import {
   checkMiningAchievements,
   updateMiningStats,
@@ -215,8 +196,6 @@ function writeWalletCoins(walletAddress: string, coins: number) {
 const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
 const DEFENDER_LEADERBOARD_KEY = "identity_prism_defender_board_v1";
 const GRAVITY_LEADERBOARD_KEY = "prism_league_gravity_leaderboard_v1";
-const WARS_LEADERBOARD_KEY = "prism_league_wars_leaderboard_v1";
-const TERRITORY_LEADERBOARD_KEY = "prism_league_territory_leaderboard_v1";
 const MINING_LEADERBOARD_KEY = "prism_league_mining_leaderboard_v1";
 const ONCHAIN_BONUS_MULTIPLIER = 1.5;
 const COIN_BONUS = 25;
@@ -361,26 +340,6 @@ const readGravityLeaderboard = (): LeaderboardEntry[] => {
 };
 const writeGravityLeaderboard = (lb: LeaderboardEntry[]) => {
   try { window.localStorage.setItem(GRAVITY_LEADERBOARD_KEY, JSON.stringify(lb)); } catch { /* storage full */ }
-};
-
-const readWarsLeaderboard = (): LeaderboardEntry[] => {
-  try {
-    const raw = window.localStorage.getItem(WARS_LEADERBOARD_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-};
-const writeWarsLeaderboard = (lb: LeaderboardEntry[]) => {
-  try { window.localStorage.setItem(WARS_LEADERBOARD_KEY, JSON.stringify(lb)); } catch { /* */ }
-};
-
-const readTerritoryLeaderboard = (): LeaderboardEntry[] => {
-  try {
-    const raw = window.localStorage.getItem(TERRITORY_LEADERBOARD_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-};
-const writeTerritoryLeaderboard = (lb: LeaderboardEntry[]) => {
-  try { window.localStorage.setItem(TERRITORY_LEADERBOARD_KEY, JSON.stringify(lb)); } catch { /* */ }
 };
 
 const readMiningLeaderboard = (): LeaderboardEntry[] => {
@@ -629,8 +588,6 @@ const PrismLeague = () => {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
   const [defenderLeaderboard, setDefenderLeaderboard] = useState<LeaderboardEntry[]>(() => readDefenderLeaderboard());
   const [gravityLeaderboard, setGravityLeaderboard] = useState<LeaderboardEntry[]>(() => readGravityLeaderboard());
-  const [warsLeaderboard, setWarsLeaderboard] = useState<LeaderboardEntry[]>(() => readWarsLeaderboard());
-  const [territoryLeaderboard, setTerritoryLeaderboard] = useState<LeaderboardEntry[]>(() => readTerritoryLeaderboard());
   const [miningLeaderboard, setMiningLeaderboard] = useState<LeaderboardEntry[]>(() => readMiningLeaderboard());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
@@ -696,9 +653,7 @@ const PrismLeague = () => {
 
   // Gravity-specific state
   const [gravityAchievements, setGravityAchievements] = useState<GravityAchievement[]>(() => getGravityAchievements());
-  // Wars / Territory / Mining achievements
-  const [warsAchievementsState, setWarsAchievementsState] = useState(() => getWarsAchievements());
-  const [territoryAchievementsState, setTerritoryAchievementsState] = useState(() => getTerritoryAchievements());
+  // Mining achievements
   const [miningAchievementsState, setMiningAchievementsState] = useState(() => getMiningAchievements());
   const defenderKills = useRef(0);
   const defenderLevel = useRef(0);
@@ -720,11 +675,7 @@ const PrismLeague = () => {
 
   // Gravity session stats — populated by GravityRunnerScene via onGameOver extraStats
   const gravitySessionStatsRef = useRef<{ columns: number; crystals: number }>({ columns: 0, crystals: 0 });
-  // Wars session stats
-  const warsSessionStatsRef = useRef<{ wavesUsed: number; asteroidsPushed: number; bestChain: number }>({ wavesUsed: 0, asteroidsPushed: 0, bestChain: 0 });
-  // Territory session stats
-  const territorySessionStatsRef = useRef<{ zonesCaptured: number; zonesDefended: number; maxSimultaneous: number }>({ zonesCaptured: 0, zonesDefended: 0, maxSimultaneous: 0 });
-  // Mining session stats
+  // Mining session stats (Cosmic Mine idle clicker)
   const miningSessionStatsRef = useRef<{ asteroidsMined: number; darkMatter: number; piratesDestroyed: number }>({ asteroidsMined: 0, darkMatter: 0, piratesDestroyed: 0 });
 
   // Continue/Revive feature — free revives for ID holders: 3 per DAY (persisted)
@@ -1097,34 +1048,6 @@ const PrismLeague = () => {
         }
         // Reset session stats ref for next run
         gravitySessionStatsRef.current = { columns: 0, crystals: 0 };
-      } else if (gameMode === "wars") {
-        const ws = warsSessionStatsRef.current;
-        const survivalTime = finalScore; // wars score ≈ survival time + bonus
-        const wStats = updateWarsStats(survivalTime, finalScore, ws.wavesUsed, ws.asteroidsPushed, ws.bestChain);
-        const wNew = checkWarsAchievements(wStats, ws.wavesUsed, survivalTime, finalScore, ws.bestChain);
-        setWarsAchievementsState(getWarsAchievements());
-        if (wNew.length > 0) {
-          const allAchs = getWarsAchievements();
-          wNew.forEach(id => {
-            const a = allAchs.find(x => x.id === id);
-            if (a) toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
-          });
-        }
-        warsSessionStatsRef.current = { wavesUsed: 0, asteroidsPushed: 0, bestChain: 0 };
-      } else if (gameMode === "territory") {
-        const ts = territorySessionStatsRef.current;
-        const survivalTime = finalScore;
-        const tStats = updateTerritoryStats(survivalTime, finalScore, ts.zonesCaptured, ts.zonesDefended, ts.maxSimultaneous);
-        const tNew = checkTerritoryAchievements(tStats, survivalTime, finalScore, ts.zonesCaptured, ts.maxSimultaneous);
-        setTerritoryAchievementsState(getTerritoryAchievements());
-        if (tNew.length > 0) {
-          const allAchs = getTerritoryAchievements();
-          tNew.forEach(id => {
-            const a = allAchs.find(x => x.id === id);
-            if (a) toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
-          });
-        }
-        territorySessionStatsRef.current = { zonesCaptured: 0, zonesDefended: 0, maxSimultaneous: 0 };
       } else if (gameMode === "mining") {
         const ms = miningSessionStatsRef.current;
         const survivalTime = finalScore;
@@ -1175,28 +1098,6 @@ const PrismLeague = () => {
           next.sort((a, b) => b.score - a.score);
           next = next.slice(0, 20);
           writeGravityLeaderboard(next);
-          return next;
-        });
-      } else if (gameMode === "wars") {
-        setWarsLeaderboard((prev) => {
-          const existing = prev.findIndex((e) => e.address === playerAddr);
-          let next = [...prev];
-          if (existing !== -1) { if (finalScore > next[existing].score) next[existing] = newEntry; }
-          else { next.push(newEntry); }
-          next.sort((a, b) => b.score - a.score);
-          next = next.slice(0, 20);
-          writeWarsLeaderboard(next);
-          return next;
-        });
-      } else if (gameMode === "territory") {
-        setTerritoryLeaderboard((prev) => {
-          const existing = prev.findIndex((e) => e.address === playerAddr);
-          let next = [...prev];
-          if (existing !== -1) { if (finalScore > next[existing].score) next[existing] = newEntry; }
-          else { next.push(newEntry); }
-          next.sort((a, b) => b.score - a.score);
-          next = next.slice(0, 20);
-          writeTerritoryLeaderboard(next);
           return next;
         });
       } else if (gameMode === "mining") {
@@ -1288,24 +1189,6 @@ const PrismLeague = () => {
       if (extraStats) {
         gravitySessionStatsRef.current = extraStats;
       }
-      handleGameOver(finalScore, finalCoins, undefined);
-    },
-    [handleGameOver]
-  );
-
-  // Wars-specific game over handler
-  const handleWarsGameOver = useCallback(
-    (finalScore: number, finalCoins: number, extraStats?: { wavesUsed: number; asteroidsPushed: number; bestChain: number }) => {
-      if (extraStats) warsSessionStatsRef.current = extraStats;
-      handleGameOver(finalScore, finalCoins, undefined);
-    },
-    [handleGameOver]
-  );
-
-  // Territory-specific game over handler
-  const handleTerritoryGameOver = useCallback(
-    (finalScore: number, finalCoins: number, extraStats?: { zonesCaptured: number; zonesDefended: number; maxSimultaneous: number }) => {
-      if (extraStats) territorySessionStatsRef.current = extraStats;
       handleGameOver(finalScore, finalCoins, undefined);
     },
     [handleGameOver]
@@ -1576,12 +1459,10 @@ const PrismLeague = () => {
       createWormholeTunnel('game-return');
     }, 240));
 
-    const returnAddress = locationState?.returnAddress || address;
-    const target = returnAddress ? `/app?address=${encodeURIComponent(returnAddress)}` : '/app';
     transitionTimersRef.current.push(window.setTimeout(() => {
-      navigate(target, { state: { fromGameJump: true } });
+      goBack(navigate);
     }, 2740));
-  }, [isJumpingBack, clearTransitionTimers, locationState?.returnAddress, address, navigate]);
+  }, [isJumpingBack, clearTransitionTimers, navigate]);
 
   return (
     <div className="prism-league-page relative w-full h-screen overflow-hidden bg-black">
@@ -1599,14 +1480,8 @@ const PrismLeague = () => {
         {gameMode === "gravity" && (
           <GravityRunnerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGravityGameOver} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
         )}
-        {gameMode === "wars" && (
-          <GravityWarsScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleWarsGameOver} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
-        )}
-        {gameMode === "territory" && (
-          <TerritoryControlScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleTerritoryGameOver} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
-        )}
         {gameMode === "mining" && (
-          <AsteroidMiningScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleMiningGameOver} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
+          <CosmicMineScene gameState={gameState} onGameOver={handleMiningGameOver} traits={traits} hasMintedId={hasMintedId} shipStats={shipStats} />
         )}
       </div>
 
@@ -1819,6 +1694,27 @@ const PrismLeague = () => {
           {/* ═══ START SCREEN ═══ */}
           {gameState === "start" && (
             <div className="absolute inset-0 pointer-events-auto flex flex-col items-center pt-2 pb-4">
+              {/* Floating carousel arrows — outside card, on screen edges */}
+              <button
+                className="fixed left-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg"
+                onClick={() => {
+                  const idx = GAME_MODES.findIndex(m => m.id === gameMode);
+                  const prev = (idx - 1 + GAME_MODES.length) % GAME_MODES.length;
+                  setGameMode(GAME_MODES[prev].id);
+                }}
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <button
+                className="fixed right-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg"
+                onClick={() => {
+                  const idx = GAME_MODES.findIndex(m => m.id === gameMode);
+                  const next = (idx + 1) % GAME_MODES.length;
+                  setGameMode(GAME_MODES[next].id);
+                }}
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
               <div className="max-w-md w-full mx-4 rounded-[32px] border border-white/10 bg-[#020408]/95 backdrop-blur-xl shadow-[0_0_60px_-8px_rgba(0,150,255,0.25),0_0_120px_-20px_rgba(100,200,255,0.1)] overflow-y-auto league-scroll" style={{maxHeight:'calc(100svh - 16px)'}}>
               <div className="px-5 py-6 pb-16 md:px-7 md:py-7 md:pb-20 flex flex-col items-center text-center">
                 {/* Hero Title */}
@@ -1839,74 +1735,49 @@ const PrismLeague = () => {
                 </div>
 
                 {/* Game Mode Carousel — swipeable */}
-                <div className="w-full mb-4 relative">
-                  {/* Arrow buttons */}
-                  <button
-                    className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-white/[0.06] border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all -ml-1"
-                    onClick={() => {
+                <div
+                  className="w-full mb-4 relative touch-pan-y"
+                  onTouchStart={(e) => {
+                    const touch = e.touches[0];
+                    (e.currentTarget as any)._swipeStartX = touch.clientX;
+                    (e.currentTarget as any)._swipeStartY = touch.clientY;
+                  }}
+                  onTouchEnd={(e) => {
+                    const startX = (e.currentTarget as any)._swipeStartX;
+                    const startY = (e.currentTarget as any)._swipeStartY;
+                    if (startX == null) return;
+                    const touch = e.changedTouches[0];
+                    const dx = touch.clientX - startX;
+                    const dy = touch.clientY - startY;
+                    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
                       const idx = GAME_MODES.findIndex(m => m.id === gameMode);
-                      const prev = (idx - 1 + GAME_MODES.length) % GAME_MODES.length;
-                      setGameMode(GAME_MODES[prev].id);
-                    }}
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-white/[0.06] border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all -mr-1"
-                    onClick={() => {
-                      const idx = GAME_MODES.findIndex(m => m.id === gameMode);
-                      const next = (idx + 1) % GAME_MODES.length;
-                      setGameMode(GAME_MODES[next].id);
-                    }}
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-
-                  {/* Swipeable card area */}
-                  <div
-                    className="mx-8 touch-pan-y"
-                    onTouchStart={(e) => {
-                      const touch = e.touches[0];
-                      (e.currentTarget as any)._swipeStartX = touch.clientX;
-                      (e.currentTarget as any)._swipeStartY = touch.clientY;
-                    }}
-                    onTouchEnd={(e) => {
-                      const startX = (e.currentTarget as any)._swipeStartX;
-                      const startY = (e.currentTarget as any)._swipeStartY;
-                      if (startX == null) return;
-                      const touch = e.changedTouches[0];
-                      const dx = touch.clientX - startX;
-                      const dy = touch.clientY - startY;
-                      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
-                        const idx = GAME_MODES.findIndex(m => m.id === gameMode);
-                        if (dx < 0) {
-                          setGameMode(GAME_MODES[(idx + 1) % GAME_MODES.length].id);
-                        } else {
-                          setGameMode(GAME_MODES[(idx - 1 + GAME_MODES.length) % GAME_MODES.length].id);
-                        }
+                      if (dx < 0) {
+                        setGameMode(GAME_MODES[(idx + 1) % GAME_MODES.length].id);
+                      } else {
+                        setGameMode(GAME_MODES[(idx - 1 + GAME_MODES.length) % GAME_MODES.length].id);
                       }
-                    }}
-                  >
-                    {/* Current game card */}
-                    {(() => {
-                      const mode = GAME_MODES.find(m => m.id === gameMode)!;
-                      return (
-                        <div className="relative rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/15 via-cyan-500/5 to-purple-500/10 px-5 py-4 text-center transition-all duration-300 shadow-[0_0_24px_rgba(6,182,212,0.15)]">
-                          <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-purple-500/5 rounded-2xl" />
-                          <div className="relative">
-                            {mode.cover ? (
-                              <img src={mode.cover} alt={mode.name} className="w-full h-24 object-cover rounded-lg mb-2 opacity-80" loading="lazy" />
-                            ) : (
-                              <span className="text-3xl mb-2 block">{mode.icon}</span>
-                            )}
-                            <div className="text-sm font-black text-cyan-200 tracking-wide mb-1">{mode.name}</div>
-                            <div className="text-[11px] text-white/40 leading-relaxed">{mode.desc}</div>
-                            <div className="mt-2 text-[10px] text-cyan-400/50 font-medium">{mode.controls}</div>
-                          </div>
+                    }
+                  }}
+                >
+                  {/* Current game card */}
+                  {(() => {
+                    const mode = GAME_MODES.find(m => m.id === gameMode)!;
+                    return (
+                      <div className="relative rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/15 via-cyan-500/5 to-purple-500/10 px-5 py-4 text-center transition-all duration-300 shadow-[0_0_24px_rgba(6,182,212,0.15)]">
+                        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-purple-500/5 rounded-2xl" />
+                        <div className="relative">
+                          {mode.cover ? (
+                            <img src={mode.cover} alt={mode.name} className="w-full h-24 object-cover rounded-lg mb-2 opacity-80" loading="lazy" />
+                          ) : (
+                            <span className="text-3xl mb-2 block">{mode.icon}</span>
+                          )}
+                          <div className="text-sm font-black text-cyan-200 tracking-wide mb-1">{mode.name}</div>
+                          <div className="text-[11px] text-white/40 leading-relaxed">{mode.desc}</div>
+                          <div className="mt-2 text-[10px] text-cyan-400/50 font-medium">{mode.controls}</div>
                         </div>
-                      );
-                    })()}
-                  </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Dot indicators */}
                   <div className="flex justify-center gap-1.5 mt-2.5">
