@@ -57,6 +57,59 @@ interface ConstellationData {
   edges: GraphEdge[];
 }
 
+interface BezierEdge extends GraphEdge {
+  cpX: number;
+  cpY: number;
+}
+
+function computeEdgeControlPoints(edges: GraphEdge[], nodeMap: Map<string, GraphNode>): BezierEdge[] {
+  // Count parallel edges between same node pairs for fan-out
+  const pairCount = new Map<string, number>();
+  const pairIdx = new Map<string, number>();
+  for (const e of edges) {
+    const key = [e.source, e.target].sort().join('|');
+    pairCount.set(key, (pairCount.get(key) || 0) + 1);
+  }
+
+  const result: BezierEdge[] = [];
+  for (const edge of edges) {
+    const s = nodeMap.get(edge.source);
+    const t = nodeMap.get(edge.target);
+    if (!s || !t) { result.push({ ...edge, cpX: 0, cpY: 0 }); continue; }
+
+    const mx = (s.x + t.x) / 2;
+    const my = (s.y + t.y) / 2;
+    const dx = t.x - s.x;
+    const dy = t.y - s.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1) { result.push({ ...edge, cpX: mx, cpY: my }); continue; }
+
+    // Perpendicular unit vector
+    const px = -dy / len;
+    const py = dx / len;
+
+    // Amplitude: proportional to distance
+    let amplitude = Math.min(40, Math.max(15, len * 0.15));
+
+    // Fan-out for parallel edges
+    const key = [edge.source, edge.target].sort().join('|');
+    const count = pairCount.get(key) || 1;
+    if (count > 1) {
+      const idx = pairIdx.get(key) || 0;
+      pairIdx.set(key, idx + 1);
+      const fanOffset = (idx - (count - 1) / 2) * 20;
+      amplitude += fanOffset;
+    }
+
+    result.push({
+      ...edge,
+      cpX: mx + px * amplitude,
+      cpY: my + py * amplitude,
+    });
+  }
+  return result;
+}
+
 interface SybilSignal {
   id: string;
   name: string;
@@ -306,11 +359,12 @@ function createStarfieldBackground(w: number, h: number): HTMLCanvasElement {
     { x: w * 0.75, y: h * 0.65, r: w * 0.3, color: '20, 50, 80' },
     { x: w * 0.5, y: h * 0.8, r: w * 0.25, color: '60, 20, 40' },
     { x: w * 0.15, y: h * 0.7, r: w * 0.2, color: '15, 40, 60' },
+    { x: w * 0.85, y: h * 0.2, r: w * 0.22, color: '20, 60, 60' },
   ];
   for (const neb of nebulaColors) {
     const nebGrad = ctx.createRadialGradient(neb.x, neb.y, 0, neb.x, neb.y, neb.r);
-    nebGrad.addColorStop(0, `rgba(${neb.color}, 0.04)`);
-    nebGrad.addColorStop(0.5, `rgba(${neb.color}, 0.015)`);
+    nebGrad.addColorStop(0, `rgba(${neb.color}, 0.06)`);
+    nebGrad.addColorStop(0.5, `rgba(${neb.color}, 0.02)`);
     nebGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = nebGrad;
     ctx.fillRect(0, 0, w, h);
@@ -326,6 +380,32 @@ function createStarfieldBackground(w: number, h: number): HTMLCanvasElement {
     ctx.beginPath();
     ctx.arc(sx, sy, starSize, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // Bright stars with diffraction spikes (crosses)
+  const brightCount = Math.floor(starCount * 0.02);
+  for (let i = 0; i < brightCount; i++) {
+    const bx = Math.random() * w;
+    const by = Math.random() * h;
+    const bSize = 1.5 + Math.random() * 2;
+    const bOpacity = 0.5 + Math.random() * 0.3;
+    // Star body
+    ctx.fillStyle = `rgba(255, 255, 255, ${bOpacity})`;
+    ctx.beginPath();
+    ctx.arc(bx, by, bSize, 0, Math.PI * 2);
+    ctx.fill();
+    // Diffraction spikes
+    const spikeLen = bSize * 4;
+    ctx.strokeStyle = `rgba(255, 255, 255, ${bOpacity * 0.3})`;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(bx - spikeLen, by);
+    ctx.lineTo(bx + spikeLen, by);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(bx, by - spikeLen);
+    ctx.lineTo(bx, by + spikeLen);
+    ctx.stroke();
   }
 
   return offscreen;
@@ -383,6 +463,7 @@ function renderGraph(
   activeFilter: TxType | 'all',
   showFlow: boolean,
   highlightEdgeKey: string | null,
+  hoveredId: string | null,
 ) {
   ctx.clearRect(0, 0, width, height);
 
@@ -415,8 +496,11 @@ function renderGraph(
 
   const visibleNodes = nodes.filter(n => visibleNodeIds.has(n.id));
 
-  // ── Draw edges ──
-  for (const edge of visibleEdges) {
+  // ── Compute Bezier control points ──
+  const bezierEdges = computeEdgeControlPoints(visibleEdges, nodeMap);
+
+  // ── Draw edges (Bezier curves) ──
+  for (const edge of bezierEdges) {
     const source = nodeMap.get(edge.source);
     const target = nodeMap.get(edge.target);
     if (!source || !target) continue;
@@ -431,32 +515,51 @@ function renderGraph(
     const edgeColor = getEdgeColor(edge);
     const edgeRgb = hexToRgb(edgeColor);
 
-    // Soft glow line
+    const cpX = edge.cpX;
+    const cpY = edge.cpY;
+
+    // Edge gradient for highlighted/selected edges
+    let strokeColor: string | CanvasGradient;
+    let glowColor: string;
+    if (isHighlighted || isSelected) {
+      const srcRgb = hexToRgb(source.color);
+      const tgtRgb = hexToRgb(target.color);
+      const grad = ctx.createLinearGradient(source.x, source.y, target.x, target.y);
+      grad.addColorStop(0, `rgba(${srcRgb.r},${srcRgb.g},${srcRgb.b},${alpha})`);
+      grad.addColorStop(1, `rgba(${tgtRgb.r},${tgtRgb.g},${tgtRgb.b},${alpha})`);
+      strokeColor = grad;
+      glowColor = `rgba(${edgeRgb.r},${edgeRgb.g},${edgeRgb.b},${alpha * 0.45})`;
+    } else {
+      strokeColor = `rgba(${edgeRgb.r},${edgeRgb.g},${edgeRgb.b},${alpha})`;
+      glowColor = `rgba(${edgeRgb.r},${edgeRgb.g},${edgeRgb.b},${alpha * 0.45})`;
+    }
+
+    // Soft glow line (Bezier)
     const glowLineW = isHighlighted ? 10 : isSelected ? Math.min(8, 3 + w * 0.2) : Math.min(5, 1.5 + w * 0.12);
-    const glowAlpha = alpha * 0.45;
-    ctx.strokeStyle = `rgba(${edgeRgb.r},${edgeRgb.g},${edgeRgb.b},${glowAlpha})`;
+    ctx.strokeStyle = glowColor;
     ctx.lineWidth = glowLineW;
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
-    ctx.lineTo(target.x, target.y);
+    ctx.quadraticCurveTo(cpX, cpY, target.x, target.y);
     ctx.stroke();
 
-    // Main edge line
+    // Main edge line (Bezier)
     const lineW = isHighlighted ? 3 : isSelected ? Math.min(2.5, 0.8 + w * 0.08) : Math.min(1.5, 0.3 + w * 0.05);
-    ctx.strokeStyle = `rgba(${edgeRgb.r},${edgeRgb.g},${edgeRgb.b},${alpha})`;
+    ctx.strokeStyle = strokeColor;
     ctx.lineWidth = lineW;
     if (w < 3) ctx.setLineDash([4, 6]);
     else ctx.setLineDash([]);
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
-    ctx.lineTo(target.x, target.y);
+    ctx.quadraticCurveTo(cpX, cpY, target.x, target.y);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Diamond midpoint on strong connections
+    // Diamond midpoint on strong connections (on Bezier midpoint)
     if (w >= 8) {
-      const mx = (source.x + target.x) / 2;
-      const my = (source.y + target.y) / 2;
+      // Bezier midpoint at t=0.5
+      const mx = 0.25 * source.x + 0.5 * cpX + 0.25 * target.x;
+      const my = 0.25 * source.y + 0.5 * cpY + 0.25 * target.y;
       const diamondSize = Math.min(4, 2 + w * 0.05);
       ctx.fillStyle = `rgba(${edgeRgb.r},${edgeRgb.g},${edgeRgb.b},${isSelected ? 0.7 : 0.4})`;
       ctx.beginPath();
@@ -468,30 +571,31 @@ function renderGraph(
       ctx.fill();
     }
 
-    // SOL amount
+    // SOL amount (at Bezier midpoint)
     if ((edge.totalSol ?? 0) > 0.5 && zoom > 0.8) {
-      const mx = (source.x + target.x) / 2;
-      const my = (source.y + target.y) / 2;
+      const mx = 0.25 * source.x + 0.5 * cpX + 0.25 * target.x;
+      const my = 0.25 * source.y + 0.5 * cpY + 0.25 * target.y;
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.font = '8px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(`${(edge.totalSol ?? 0).toFixed(1)} SOL`, mx, my - 5);
     }
 
-    // Directional arrows
+    // Directional arrows (tangent along Bezier at t=1)
     const outSol = edge.outSol ?? edge.totalSol ?? 0;
     const inSolVal = edge.inSol ?? 0;
     const arrowAlpha = isSelected ? 0.7 : Math.min(0.5, 0.15 + w * 0.02);
     const arrowSize = isSelected ? 10 : Math.min(8, 5 + w * 0.15);
 
+    // Arrow direction = tangent at endpoint = (target - controlPoint) for t=1
     if (outSol > 0) {
-      drawArrowHead(ctx, source.x, source.y, target.x, target.y, target.size, edgeColor, arrowAlpha, arrowSize);
+      drawArrowHead(ctx, cpX, cpY, target.x, target.y, target.size, edgeColor, arrowAlpha, arrowSize);
     }
     if (inSolVal > 0) {
-      drawArrowHead(ctx, target.x, target.y, source.x, source.y, source.size, edgeColor, arrowAlpha * 0.7, arrowSize * 0.85);
+      drawArrowHead(ctx, cpX, cpY, source.x, source.y, source.size, edgeColor, arrowAlpha * 0.7, arrowSize * 0.85);
     }
 
-    // ── Flow particles ──
+    // ── Flow particles along Bezier ──
     if (showFlow && outSol > 0) {
       const dx = target.x - source.x;
       const dy = target.y - source.y;
@@ -501,12 +605,28 @@ function renderGraph(
         const speed = 0.0005 + Math.min(0.002, edge.totalSol * 0.0001);
         for (let p = 0; p < particleCount; p++) {
           const t = ((frame * speed + p / particleCount) % 1);
-          const px = source.x + dx * t;
-          const py = source.y + dy * t;
-          ctx.fillStyle = edgeColor;
-          ctx.globalAlpha = 0.8;
+          // Quadratic Bezier: P(t) = (1-t)²·P0 + 2(1-t)t·CP + t²·P1
+          const mt = 1 - t;
+          const px = mt * mt * source.x + 2 * mt * t * cpX + t * t * target.x;
+          const py = mt * mt * source.y + 2 * mt * t * cpY + t * t * target.y;
+          // Trail effect: draw line from previous position
+          const tPrev = Math.max(0, t - 0.05);
+          const mtP = 1 - tPrev;
+          const ppx = mtP * mtP * source.x + 2 * mtP * tPrev * cpX + tPrev * tPrev * target.x;
+          const ppy = mtP * mtP * source.y + 2 * mtP * tPrev * cpY + tPrev * tPrev * target.y;
+
+          ctx.globalAlpha = 0.4;
+          ctx.strokeStyle = edgeColor;
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.moveTo(ppx, ppy);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+
+          ctx.fillStyle = edgeColor;
+          ctx.globalAlpha = 0.85;
+          ctx.beginPath();
+          ctx.arc(px, py, 2.2, 0, Math.PI * 2);
           ctx.fill();
           ctx.globalAlpha = 1;
         }
@@ -517,6 +637,7 @@ function renderGraph(
   // ── Draw nodes ──
   for (const node of visibleNodes) {
     const isSelected = node.id === selectedId;
+    const isHovered = node.id === hoveredId;
     const isCenter = node.isCenter;
     const pulseScale = isCenter
       ? 1 + Math.sin(frame * 0.04) * 0.08
@@ -526,9 +647,12 @@ function renderGraph(
     const r = node.size * pulseScale;
     const rgb = hexToRgb(node.color);
 
+    // Hover glow amplification (×2.5)
+    const hoverMul = isHovered ? 2.5 : 1;
+
     // Outer soft glow
-    const outerGlowR = r * (isCenter ? 7 : isSelected ? 5.5 : 4);
-    const outerAlpha = isCenter ? 0.12 : isSelected ? 0.08 : 0.04;
+    const outerGlowR = r * (isCenter ? 7 : isSelected ? 5.5 : 4) * (isHovered ? 1.3 : 1);
+    const outerAlpha = (isCenter ? 0.12 : isSelected ? 0.08 : 0.04) * hoverMul;
     const outerGrad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, outerGlowR);
     outerGrad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${outerAlpha})`);
     outerGrad.addColorStop(0.4, `rgba(${rgb.r},${rgb.g},${rgb.b},${outerAlpha * 0.3})`);
@@ -539,8 +663,8 @@ function renderGraph(
     ctx.fill();
 
     // Mid glow
-    const midGlowR = r * (isCenter ? 3.5 : 2.5);
-    const midAlpha = isCenter ? 0.2 : isSelected ? 0.15 : 0.08;
+    const midGlowR = r * (isCenter ? 3.5 : 2.5) * (isHovered ? 1.2 : 1);
+    const midAlpha = (isCenter ? 0.2 : isSelected ? 0.15 : 0.08) * hoverMul;
     const midGrad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, midGlowR);
     midGrad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${midAlpha})`);
     midGrad.addColorStop(0.6, `rgba(${rgb.r},${rgb.g},${rgb.b},${midAlpha * 0.2})`);
@@ -626,12 +750,39 @@ function renderGraph(
       ctx.globalAlpha = 1;
     }
 
-    // Selection ring (non-center only since center has its own)
+    // Orbital rings for active nodes (txCount > 5)
+    if (node.txCount > 5 && !isCenter) {
+      const orbitalR = r + 6 + Math.min(4, node.txCount * 0.1);
+      const orbitalSpeed = 0.02 + Math.min(0.04, node.txCount * 0.002);
+      const orbitalAngle = frame * orbitalSpeed;
+      const arcLen = Math.PI * 0.6;
+      ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.35)`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, orbitalR, orbitalAngle, orbitalAngle + arcLen);
+      ctx.stroke();
+      // Second arc on opposite side
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, orbitalR, orbitalAngle + Math.PI, orbitalAngle + Math.PI + arcLen * 0.7);
+      ctx.stroke();
+    }
+
+    // Selection ring — pulsating with expanding fade-out
     if (isSelected && !isCenter) {
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 1.5;
+      const selPulse = 0.5 + 0.5 * Math.sin(frame * 0.08);
+      ctx.strokeStyle = `rgba(251,191,36,${0.4 + selPulse * 0.4})`;
+      ctx.lineWidth = 1.5 + selPulse * 0.5;
       ctx.beginPath();
       ctx.arc(node.x, node.y, r + 8, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Expanding ring with fade-out
+      const expandT = (frame * 0.015) % 1;
+      const expandR = r + 8 + expandT * 20;
+      ctx.strokeStyle = `rgba(251,191,36,${0.4 * (1 - expandT)})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, expandR, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -705,6 +856,8 @@ export default function ConstellationNetwork() {
   const panStartRef = useRef({ x: 0, y: 0 });
   const panOffsetStartRef = useRef({ x: 0, y: 0 });
   const dragNodeRef = useRef<GraphNode | null>(null);
+  const hoveredNodeRef = useRef<string | null>(null);
+  const hoverFrameRef = useRef(0);
   const pointerDownPosRef = useRef({ x: 0, y: 0 });
   const didDragRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
@@ -834,6 +987,21 @@ export default function ConstellationNetwork() {
         x: panOffsetStartRef.current.x + dx,
         y: panOffsetStartRef.current.y + dy,
       };
+    }
+    // Hover detection — throttled to every 2 frames
+    hoverFrameRef.current++;
+    if (hoverFrameRef.current % 2 === 0 && !dragNodeRef.current && !isPanningRef.current) {
+      const { gx, gy } = screenToGraph(e.clientX, e.clientY);
+      let foundHover: string | null = null;
+      for (const node of nodesRef.current) {
+        const dx = node.x - gx;
+        const dy = node.y - gy;
+        if (dx * dx + dy * dy <= (node.size + 5) * (node.size + 5)) {
+          foundHover = node.id;
+          break;
+        }
+      }
+      hoveredNodeRef.current = foundHover;
     }
   }, [screenToGraph]);
 
@@ -1060,6 +1228,7 @@ export default function ConstellationNetwork() {
         activeFilterRef.current,
         showFlowRef.current,
         highlightEdgeRef.current,
+        hoveredNodeRef.current,
       );
       animRef.current = requestAnimationFrame(animate);
     };

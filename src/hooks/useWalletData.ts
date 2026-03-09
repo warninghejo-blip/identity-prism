@@ -46,6 +46,12 @@ export interface WalletTraits {
   solTier: "shrimp" | "dolphin" | "whale" | null;
   totalValueUSD: number;
   cosmicRank: "stardust" | "meteor" | "comet" | "nebula" | "supernova" | "quasar";
+  // Enhanced TX data (Helius)
+  swapCount?: number;
+  nftTradeCount?: number;
+  stakingCount?: number;
+  defiProtocols?: string[];
+  isDeFiUser?: boolean;
 }
 
 export interface WalletData {
@@ -112,11 +118,26 @@ export function calculateScore(traits: WalletTraits): number {
   if (traits.isCollector) score += 25;    // 10+ NFTs
   if (traits.isEarlyAdopter) score += 20; // 2+ years old
   if (traits.isSolanaMaxi) score += 30;   // 100 SOL + 100 tx
+
+  // 8. Enhanced TX Signals (Max 60)
+  const swaps = traits.swapCount ?? 0;
+  if (swaps > 100) score += 40;
+  else if (swaps > 50) score += 30;
+  else if (swaps > 10) score += 20;
+  else if (swaps > 0) score += 10;
+
+  const nftTrades = traits.nftTradeCount ?? 0;
+  score += Math.min(nftTrades * 2, 15);
+
+  const protocols = traits.defiProtocols?.length ?? 0;
+  if (protocols >= 3) score += 20;
+  else if (protocols >= 2) score += 12;
+  else if (protocols >= 1) score += 6;
   
   // Log breakdown for debugging
   if (import.meta.env.DEV) console.log(`%c[Scoring] Total: ${Math.round(score)} | SOL: ${sol} | Age: ${age}d | Tx: ${tx} | NFTs: ${nfts} | Seeker: ${traits.hasSeeker} | Preorder: ${traits.hasPreorder} | Combo: ${traits.hasCombo}`, "color: #a855f7; font-weight: bold;");
   
-  return Math.min(Math.round(score), 1400);
+  return Math.min(Math.round(score), 1460);
 }
 
 const SOL_LAMPORTS = 1_000_000_000;
@@ -594,6 +615,20 @@ export function useWalletData(address?: string) {
           planetTier: "mercury", totalAssetsCount,
           solTier, totalValueUSD, cosmicRank,
         };
+
+        // Enhanced TX data (non-blocking, best-effort)
+        try {
+          const etxRes = await fetch(`${getHeliusProxyUrl()}/api/enhanced-tx?address=${address}`, { headers: getHeliusProxyHeaders(), signal: AbortSignal.timeout(10000) });
+          if (etxRes.ok) {
+            const etx = await etxRes.json();
+            if (etx.swapCount != null) traits.swapCount = etx.swapCount;
+            if (etx.nftTradeCount != null) traits.nftTradeCount = etx.nftTradeCount;
+            if (etx.stakingCount != null) traits.stakingCount = etx.stakingCount;
+            if (Array.isArray(etx.defiProtocols)) traits.defiProtocols = etx.defiProtocols;
+            if (etx.isDeFiUser != null) traits.isDeFiUser = etx.isDeFiUser;
+            if (etx.isDeFiKing) traits.isDeFiKing = true; // Enhance existing isDeFiKing
+          }
+        } catch { /* enhanced TX is best-effort */ }
 
         const score = calculateScore(traits);
         

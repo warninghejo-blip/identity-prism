@@ -1,4 +1,4 @@
-const MAX_SCORE = 1400;
+const MAX_SCORE = 1460;
 
 const SCORING = {
   SEEKER_GENESIS_BONUS: 200,
@@ -69,6 +69,21 @@ const calculateScore = (traits) => {
   if (traits.isEarlyAdopter) score += 20;
   if (traits.isSolanaMaxi) score += 30;
 
+  // Enhanced TX Signals (Max 60) — mirrors frontend
+  const swaps = traits.swapCount ?? 0;
+  if (swaps > 100) score += 40;
+  else if (swaps > 50) score += 30;
+  else if (swaps > 10) score += 20;
+  else if (swaps > 0) score += 10;
+
+  const nftTrades = traits.nftTradeCount ?? 0;
+  score += Math.min(nftTrades * 2, 15);
+
+  const protocolCount = Array.isArray(traits.defiProtocols) ? traits.defiProtocols.length : 0;
+  if (protocolCount >= 3) score += 20;
+  else if (protocolCount >= 2) score += 12;
+  else if (protocolCount >= 1) score += 6;
+
   return Math.min(Math.round(score), MAX_SCORE);
 };
 
@@ -86,6 +101,10 @@ export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, 
     isDeFiKing = false,
     isMemeLord = false,
     uniqueTokenCount = tokenCount,
+    swapCount = 0,
+    nftTradeCount = 0,
+    stakingCount = 0,
+    defiProtocols = [],
   } = extraTraits ?? {};
   const hasCombo = hasSeeker && hasPreorder;
 
@@ -113,6 +132,10 @@ export const calculateIdentity = (txCount, firstTxTime, solBalance, tokenCount, 
     diamondHands,
     solBalance,
     walletAgeDays,
+    swapCount,
+    nftTradeCount,
+    stakingCount,
+    defiProtocols,
   };
 
   const score = calculateScore(traits);
