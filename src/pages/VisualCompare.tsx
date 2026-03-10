@@ -34,6 +34,111 @@ const TIER_PALETTES: Record<string, {
 const PLANET_TIERS: PlanetTier[] = ['mercury', 'mars', 'venus', 'earth', 'neptune', 'uranus', 'saturn', 'jupiter'];
 const SUN_TIERS: PlanetTier[] = ['sun', 'binary_sun'];
 
+// ── SR2 Original Assets ──
+
+const SR2_STAR_MAP: Record<string, string> = {
+  sun: '/sr2/Star00.png',
+  binary_sun: '/sr2/StarBlue.png',
+};
+
+const SR2_STAR_VARIANTS = [
+  { id: 'Star00', label: 'Yellow Star', src: '/sr2/Star00.png' },
+  { id: 'StarBlue', label: 'Blue Star', src: '/sr2/StarBlue.png' },
+  { id: 'StarRed', label: 'Red Star', src: '/sr2/StarRed.png' },
+  { id: 'StarGreen', label: 'Green Star', src: '/sr2/StarGreen.png' },
+  { id: 'star01', label: 'Star 01', src: '/sr2/star01.png' },
+  { id: 'star02', label: 'Star 02', src: '/sr2/star02.png' },
+  { id: 'Terron', label: 'Terron', src: '/sr2/Terron.png' },
+];
+
+const SR2_PLANET_TEXTURE: Record<string, string> = {
+  mercury: '/sr2/mercury.jpg',
+  mars: '/sr2/planet_01.jpg',
+  venus: '/sr2/planet_05.jpg',
+  earth: '/sr2/planet_10.jpg',
+  neptune: '/sr2/neptune.jpg',
+  uranus: '/sr2/planet_20.jpg',
+  saturn: '/sr2/saturn.jpg',
+  jupiter: '/sr2/jupiter.jpg',
+};
+
+// ── SR2 Original Star Image ──
+
+function SR2OriginalStar({ src, size }: { src: string; size: number }) {
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: size + 40, height: size + 40 }}>
+      <img
+        src={src}
+        alt="SR2 Star"
+        className="object-contain"
+        style={{ width: size, height: size }}
+      />
+    </div>
+  );
+}
+
+// ── SR2 Original Planet (texture on CSS sphere) ──
+
+function SR2OriginalPlanet({ tier, size, rotate, atmosphere }: { tier: string; size: number; rotate: boolean; atmosphere: boolean }) {
+  const p = TIER_PALETTES[tier] || TIER_PALETTES.mercury;
+  const texture = SR2_PLANET_TEXTURE[tier];
+
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: size + 40, height: size + 40 }}>
+      {atmosphere && (
+        <div className="absolute rounded-full" style={{
+          width: size + 20,
+          height: size + 20,
+          background: `radial-gradient(circle, ${p.atmo}, transparent 70%)`,
+          boxShadow: `0 0 ${size / 3}px ${size / 6}px ${p.atmo}`,
+        }} />
+      )}
+      <div className="relative rounded-full overflow-hidden" style={{
+        width: size,
+        height: size,
+        backgroundImage: texture ? `url(${texture})` : undefined,
+        backgroundColor: texture ? undefined : p.base,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        boxShadow: `inset -${size / 5}px -${size / 8}px ${size / 4}px rgba(0,0,0,0.6), 0 0 ${size / 4}px ${p.atmo}`,
+      }}>
+        {/* Sphere lighting overlay */}
+        <div className="absolute inset-0 rounded-full" style={{
+          background: 'radial-gradient(circle at 35% 35%, rgba(255,255,255,0.15), transparent 60%, rgba(0,0,0,0.4))',
+        }} />
+        {/* Terminator */}
+        <div className="absolute inset-0 rounded-full" style={{
+          background: 'linear-gradient(to right, transparent 35%, rgba(0,0,0,0.15) 55%, rgba(0,0,0,0.6) 100%)',
+        }} />
+        {/* Rotation animation for texture */}
+        {rotate && (
+          <div className="absolute inset-0 rounded-full" style={{
+            backgroundImage: texture ? `url(${texture})` : undefined,
+            backgroundSize: '200% 100%',
+            animation: 'sr2-texture-scroll 20s linear infinite',
+            opacity: 0.5,
+            mixBlendMode: 'overlay',
+          }} />
+        )}
+      </div>
+      {/* Rings (Saturn) */}
+      {p.rings && (
+        <div className="absolute" style={{
+          width: size * 1.6,
+          height: size * 0.4,
+          borderRadius: '50%',
+          border: `2px solid ${p.mid}40`,
+          boxShadow: `0 0 8px ${p.mid}30, inset 0 0 6px ${p.mid}20`,
+          transform: 'rotateX(70deg)',
+          top: '50%', left: '50%',
+          marginTop: -(size * 0.2),
+          marginLeft: -(size * 0.8),
+        }} />
+      )}
+    </div>
+  );
+}
+
 // ── SR2-Style CSS Planet ──
 
 function SR2Planet({ tier, size, rotate, atmosphere }: { tier: string; size: number; rotate: boolean; atmosphere: boolean }) {
@@ -272,45 +377,90 @@ export default function VisualCompare() {
           </div>
         </div>
 
-        {/* Comparison Grid */}
-        <div className="grid grid-cols-2 gap-4">
+        {/* Comparison Grid — 3 columns */}
+        <div className="grid grid-cols-3 gap-3">
           {/* Left: Current Three.js */}
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3">
             <div className="text-center mb-3">
               <span className="text-[10px] font-bold text-cyan-400/60 uppercase tracking-widest">Current (Three.js)</span>
             </div>
-            <div className="flex items-center justify-center min-h-[250px]" style={{ background: 'radial-gradient(ellipse, rgba(10,15,30,0.5), transparent)' }}>
+            <div className="flex items-center justify-center min-h-[220px]" style={{ background: 'radial-gradient(ellipse, rgba(10,15,30,0.5), transparent)' }}>
               {isPlanet ? (
-                <ThreeJSPlanet tier={selectedTier} size={size} />
+                <ThreeJSPlanet tier={selectedTier} size={Math.min(size, 160)} />
               ) : (
-                <div className="text-center text-white/20 text-xs p-8">
+                <div className="text-center text-white/20 text-xs p-6">
                   <p>Sun requires StellarProfile</p>
-                  <p className="text-[10px] mt-1">Use SR2-style comparison →</p>
+                  <p className="text-[10px] mt-1">See SR2 panels →</p>
                 </div>
               )}
             </div>
             <div className="text-center mt-2 text-white/15 text-[9px]">
-              Three.js + GLSL shaders + R3F
+              Three.js + GLSL + R3F
             </div>
           </div>
 
-          {/* Right: SR2-style CSS */}
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+          {/* Middle: SR2-style CSS */}
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3">
             <div className="text-center mb-3">
               <span className="text-[10px] font-bold text-amber-400/60 uppercase tracking-widest">SR2 Style (CSS)</span>
             </div>
-            <div className="flex items-center justify-center min-h-[250px]" style={{ background: 'radial-gradient(ellipse, rgba(10,15,30,0.5), transparent)' }}>
+            <div className="flex items-center justify-center min-h-[220px]" style={{ background: 'radial-gradient(ellipse, rgba(10,15,30,0.5), transparent)' }}>
               {isSun ? (
-                <SR2Sun tier={selectedTier} size={size * 0.8} rotate={rotate} />
+                <SR2Sun tier={selectedTier} size={Math.min(size, 140) * 0.8} rotate={rotate} />
               ) : (
-                <SR2Planet tier={selectedTier} size={size} rotate={rotate} atmosphere={atmosphere} />
+                <SR2Planet tier={selectedTier} size={Math.min(size, 160)} rotate={rotate} atmosphere={atmosphere} />
               )}
             </div>
             <div className="text-center mt-2 text-white/15 text-[9px]">
-              Pure CSS gradients + animations
+              CSS gradients + animations
+            </div>
+          </div>
+
+          {/* Right: SR2 Original Assets */}
+          <div className="rounded-2xl border border-green-500/10 bg-green-500/[0.02] p-3">
+            <div className="text-center mb-3">
+              <span className="text-[10px] font-bold text-green-400/60 uppercase tracking-widest">SR2 Original</span>
+            </div>
+            <div className="flex items-center justify-center min-h-[220px]" style={{ background: 'radial-gradient(ellipse, rgba(10,15,30,0.5), transparent)' }}>
+              {isSun ? (
+                <SR2OriginalStar src={SR2_STAR_MAP[selectedTier] || '/sr2/Star00.png'} size={Math.min(size, 160)} />
+              ) : (
+                <SR2OriginalPlanet tier={selectedTier} size={Math.min(size, 160)} rotate={rotate} atmosphere={atmosphere} />
+              )}
+            </div>
+            <div className="text-center mt-2 text-white/15 text-[9px]">
+              Game assets (GI → PNG)
             </div>
           </div>
         </div>
+
+        {/* SR2 Star Gallery (when sun selected) */}
+        {isSun && (
+          <div className="mt-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+            <p className="text-white/20 text-[10px] uppercase tracking-wider mb-3">SR2 Star Gallery</p>
+            <div className="flex gap-3 overflow-x-auto pb-2">
+              {SR2_STAR_VARIANTS.map((star) => (
+                <div key={star.id} className="flex-shrink-0 text-center">
+                  <img src={star.src} alt={star.label} className="w-24 h-24 object-contain rounded-xl bg-black/30" />
+                  <p className="text-white/25 text-[9px] mt-1">{star.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SR2 Planet Texture Preview (when planet selected) */}
+        {isPlanet && SR2_PLANET_TEXTURE[selectedTier] && (
+          <div className="mt-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+            <p className="text-white/20 text-[10px] uppercase tracking-wider mb-3">SR2 Planet Texture: {selectedTier}</p>
+            <img
+              src={SR2_PLANET_TEXTURE[selectedTier]}
+              alt={`${selectedTier} texture`}
+              className="w-full max-w-md h-32 object-cover rounded-xl"
+            />
+            <p className="text-white/15 text-[9px] mt-2">Equirectangular projection from game DATA/PUMaps/</p>
+          </div>
+        )}
 
         {/* Palette info */}
         <div className="mt-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
@@ -356,6 +506,10 @@ export default function VisualCompare() {
         @keyframes sr2-bridge-pulse {
           0%, 100% { opacity: 0.4; height: 3px; }
           50% { opacity: 0.8; height: 6px; }
+        }
+        @keyframes sr2-texture-scroll {
+          from { background-position: 0% center; }
+          to { background-position: 200% center; }
         }
       `}</style>
     </PageShell>
