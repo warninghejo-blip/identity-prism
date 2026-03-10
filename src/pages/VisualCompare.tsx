@@ -298,6 +298,170 @@ function ThreeJSPlanet({ tier, size }: { tier: PlanetTier; size: number }) {
   );
 }
 
+// ── SR2 Ship Data ──
+
+const SR2_SHIP_RACES = [
+  {
+    name: 'Humans',
+    color: 'text-blue-400',
+    ships: [
+      { id: '2PeopleL', label: 'Light', src: '/sr2/ships/2PeopleL.png' },
+      { id: '2PeopleP', label: 'Medium', src: '/sr2/ships/2PeopleP.png' },
+      { id: '2PeopleT', label: 'Transport', src: '/sr2/ships/2PeopleT.png' },
+      { id: '2PeopleW', label: 'Warship', src: '/sr2/ships/2PeopleW.png' },
+      { id: '2PeopleD', label: 'Dreadnought', src: '/sr2/ships/2PeopleD.png' },
+      { id: '2PeopleR', label: 'Ranger', src: '/sr2/ships/2PeopleR.png' },
+    ],
+  },
+  {
+    name: 'Peleng',
+    color: 'text-green-400',
+    ships: [
+      { id: '2PelengL', label: 'Light', src: '/sr2/ships/2PelengL.png' },
+      { id: '2PelengP', label: 'Medium', src: '/sr2/ships/2PelengP.png' },
+      { id: '2PelengT', label: 'Transport', src: '/sr2/ships/2PelengT.png' },
+      { id: '2PelengW', label: 'Warship', src: '/sr2/ships/2PelengW.png' },
+      { id: '2PelengD', label: 'Dreadnought', src: '/sr2/ships/2PelengD.png' },
+      { id: '2PelengR', label: 'Ranger', src: '/sr2/ships/2PelengR.png' },
+    ],
+  },
+  {
+    name: 'Faeyan',
+    color: 'text-yellow-400',
+    ships: [
+      { id: '2FeiL', label: 'Light', src: '/sr2/ships/2FeiL.png' },
+      { id: '2FeiP', label: 'Medium', src: '/sr2/ships/2FeiP.png' },
+      { id: '2FeiT', label: 'Transport', src: '/sr2/ships/2FeiT.png' },
+      { id: '2FeiW', label: 'Warship', src: '/sr2/ships/2FeiW.png' },
+      { id: '2FeiD', label: 'Dreadnought', src: '/sr2/ships/2FeiD.png' },
+      { id: '2FeiR', label: 'Ranger', src: '/sr2/ships/2FeiR.png' },
+    ],
+  },
+  {
+    name: 'Gaal',
+    color: 'text-cyan-400',
+    ships: [
+      { id: '2GaalL', label: 'Light', src: '/sr2/ships/2GaalL.png' },
+      { id: '2GaalP', label: 'Medium', src: '/sr2/ships/2GaalP.png' },
+      { id: '2GaalT', label: 'Transport', src: '/sr2/ships/2GaalT.png' },
+      { id: '2GaalW', label: 'Warship', src: '/sr2/ships/2GaalW.png' },
+      { id: '2GaalD', label: 'Dreadnought', src: '/sr2/ships/2GaalD.png' },
+      { id: '2GaalR', label: 'Ranger', src: '/sr2/ships/2GaalR.png' },
+    ],
+  },
+  {
+    name: 'Maloc',
+    color: 'text-red-400',
+    ships: [
+      { id: '2MalocL', label: 'Light', src: '/sr2/ships/2MalocL.png' },
+      { id: '2MalocP', label: 'Medium', src: '/sr2/ships/2MalocP.png' },
+      { id: '2MalocT', label: 'Transport', src: '/sr2/ships/2MalocT.png' },
+      { id: '2MalocW', label: 'Warship', src: '/sr2/ships/2MalocW.png' },
+      { id: '2MalocD', label: 'Dreadnought', src: '/sr2/ships/2MalocD.png' },
+      { id: '2MalocR', label: 'Ranger', src: '/sr2/ships/2MalocR.png' },
+    ],
+  },
+  {
+    name: 'Special',
+    color: 'text-purple-400',
+    ships: [
+      { id: '2blazer1', label: 'Blazer', src: '/sr2/ships/2blazer1.png' },
+      { id: '2keller1', label: 'Keller', src: '/sr2/ships/2keller1.png' },
+      { id: '2terron1', label: 'Terron', src: '/sr2/ships/2terron1.png' },
+      { id: '2StarDestroyer', label: 'Destroyer', src: '/sr2/ships/2StarDestroyer.png' },
+      { id: 'RangerOldFag', label: 'Veteran', src: '/sr2/ships/RangerOldFag.png' },
+      { id: '2PirateSpecial1', label: 'Pirate', src: '/sr2/ships/2PirateSpecial1.png' },
+    ],
+  },
+];
+
+function ShipGallery() {
+  const [expandedRace, setExpandedRace] = useState<string | null>(null);
+
+  return (
+    <div className="mt-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+      <p className="text-white/20 text-[10px] uppercase tracking-wider mb-3">SR2 Ship Portraits (extracted from ships.pkg)</p>
+      <div className="space-y-3">
+        {SR2_SHIP_RACES.map((race) => (
+          <div key={race.name}>
+            <button
+              onClick={() => setExpandedRace(expandedRace === race.name ? null : race.name)}
+              className="flex items-center gap-2 w-full text-left"
+            >
+              <span className={`text-xs font-bold ${race.color}`}>{race.name}</span>
+              <span className="text-white/15 text-[9px]">({race.ships.length} ships)</span>
+              <span className="text-white/20 text-[10px] ml-auto">{expandedRace === race.name ? '-' : '+'}</span>
+            </button>
+            {expandedRace === race.name && (
+              <div className="flex gap-2 mt-2 overflow-x-auto pb-2">
+                {race.ships.map((ship) => (
+                  <div key={ship.id} className="flex-shrink-0 text-center">
+                    <div className="w-20 h-20 bg-black/40 rounded-lg border border-white/[0.06] flex items-center justify-center overflow-hidden">
+                      <img src={ship.src} alt={ship.label} className="w-16 h-16 object-contain" />
+                    </div>
+                    <p className="text-white/25 text-[8px] mt-1">{ship.label}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Quest Art Gallery ──
+
+const QUEST_ART_SAMPLES = [
+  { quest: 'Prison Break', images: ['prison_00', 'prison_03', 'prison_05', 'prison_08', 'prison_12'] },
+  { quest: 'Dominator Factory', images: ['robots_00', 'robots_02', 'robots_04', 'build_00'] },
+  { quest: 'Election Day', images: ['election_00', 'election_02', 'election_04'] },
+  { quest: 'Alien Zoo', images: ['xenopark_00', 'gobsaur_00', 'xenolog_00', 'newflora_00'] },
+  { quest: "Smuggler's Run", images: ['drugs_00', 'drugs_02', 'drugs_04'] },
+  { quest: 'Pirate Ambush', images: ['penetrator_pirate', 'battle_army', 'galaxy_aliens', 'spy_city'] },
+  { quest: 'Abandoned Station', images: ['commando_ship', 'citadel_interior', 'tomb_ruins', 'energy_pilot'] },
+  { quest: 'Dark Matter', images: ['stealth_anomaly', 'depth_submarine', 'kiberrazum_ai', 'energy_controls'] },
+];
+
+function QuestArtGallery() {
+  const [expandedQuest, setExpandedQuest] = useState<string | null>(null);
+
+  return (
+    <div className="mt-6 p-4 rounded-xl bg-white/[0.02] border border-amber-500/10">
+      <p className="text-white/20 text-[10px] uppercase tracking-wider mb-3">SR2 Quest Illustrations (extracted from PQI.pkg — 605 total)</p>
+      <div className="space-y-3">
+        {QUEST_ART_SAMPLES.map((q) => (
+          <div key={q.quest}>
+            <button
+              onClick={() => setExpandedQuest(expandedQuest === q.quest ? null : q.quest)}
+              className="flex items-center gap-2 w-full text-left"
+            >
+              <span className="text-xs font-bold text-amber-400/70">{q.quest}</span>
+              <span className="text-white/15 text-[9px]">({q.images.length} shown)</span>
+              <span className="text-white/20 text-[10px] ml-auto">{expandedQuest === q.quest ? '-' : '+'}</span>
+            </button>
+            {expandedQuest === q.quest && (
+              <div className="flex gap-2 mt-2 overflow-x-auto pb-2">
+                {q.images.map((img) => (
+                  <div key={img} className="flex-shrink-0 text-center">
+                    <img
+                      src={`/quests/${img}.jpg`}
+                      alt={img}
+                      className="w-28 h-28 object-cover rounded-lg border border-white/[0.06]"
+                    />
+                    <p className="text-white/20 text-[8px] mt-1 max-w-[112px] truncate">{img}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ──
 
 export default function VisualCompare() {
@@ -461,6 +625,12 @@ export default function VisualCompare() {
             <p className="text-white/15 text-[9px] mt-2">Equirectangular projection from game DATA/PUMaps/</p>
           </div>
         )}
+
+        {/* SR2 Ships Gallery */}
+        <ShipGallery />
+
+        {/* SR2 Quest Art Gallery */}
+        <QuestArtGallery />
 
         {/* Palette info */}
         <div className="mt-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
