@@ -41,6 +41,10 @@ const STAT_LABELS: Record<string, string> = {
   luck: 'Luck',
 };
 
+function isImagePath(src?: string): boolean {
+  return !!src && src.startsWith('/quests/');
+}
+
 // ── Typewriter Hook ──
 function useTypewriter(text: string, speed = 25) {
   const [displayed, setDisplayed] = useState('');
@@ -100,12 +104,16 @@ function QuestListCard({
     <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm overflow-hidden hover:bg-white/[0.05] transition-all">
       {/* Header with image */}
       <div className="p-4 pb-2 flex items-start gap-3">
-        <div className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl flex-shrink-0" style={{
-          background: `${diffColor}10`,
-          border: `1px solid ${diffColor}20`,
-        }}>
-          {quest.image}
-        </div>
+        {isImagePath(quest.image) ? (
+          <img src={quest.image} alt={quest.title} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" style={{ border: `1px solid ${diffColor}30` }} />
+        ) : (
+          <div className="w-14 h-14 rounded-xl flex items-center justify-center text-3xl flex-shrink-0" style={{
+            background: `${diffColor}10`,
+            border: `1px solid ${diffColor}20`,
+          }}>
+            {quest.image}
+          </div>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-white font-bold text-sm">{quest.title}</h3>
@@ -310,17 +318,29 @@ export default function TextQuestPage() {
               }}>{activeQuest.difficulty}</span>
             </div>
 
-            {/* Node image (emoji) */}
+            {/* Node image */}
             {currentNode.image && (
               <div className="flex justify-center">
-                <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-4xl"
-                  style={{
-                    background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.1), rgba(5,7,10,0.95))',
-                    border: '1px solid rgba(168,85,247,0.15)',
-                    boxShadow: '0 0 40px rgba(168,85,247,0.1)',
-                  }}>
-                  {currentNode.image}
-                </div>
+                {isImagePath(currentNode.image) ? (
+                  <img
+                    src={currentNode.image}
+                    alt=""
+                    className="w-full max-w-md h-48 rounded-2xl object-cover"
+                    style={{
+                      border: '1px solid rgba(168,85,247,0.15)',
+                      boxShadow: '0 0 40px rgba(168,85,247,0.1)',
+                    }}
+                  />
+                ) : (
+                  <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-4xl"
+                    style={{
+                      background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.1), rgba(5,7,10,0.95))',
+                      border: '1px solid rgba(168,85,247,0.15)',
+                      boxShadow: '0 0 40px rgba(168,85,247,0.1)',
+                    }}>
+                    {currentNode.image}
+                  </div>
+                )}
               </div>
             )}
 
