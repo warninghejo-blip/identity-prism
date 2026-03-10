@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
-import { ArrowLeft, Gift, Check, Clock, Flame, Star, ChevronRight, Rocket } from 'lucide-react';
+import { ArrowLeft, Gift, Check, Clock, Flame, Star, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import {
@@ -238,18 +238,6 @@ export default function QuestsPage() {
           );
         })()}
 
-        {/* Text Adventures */}
-        <button
-          onClick={() => navigate('/text-quest')}
-          className="w-full mb-5 p-4 rounded-xl bg-gradient-to-r from-cyan-500/10 to-purple-500/10 border border-cyan-500/20 flex items-center gap-3 hover:from-cyan-500/15 hover:to-purple-500/15 transition-all text-left"
-        >
-          <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center text-xl flex-shrink-0">🚀</div>
-          <div className="flex-1 min-w-0">
-            <div className="text-white font-bold text-sm">Text Adventures</div>
-            <div className="text-white/30 text-[10px]">SR2-inspired branching quests with multiple endings</div>
-          </div>
-          <ChevronRight className="w-4 h-4 text-white/20" />
-        </button>
 
         {/* Title + streak */}
         <div className="flex items-center justify-between mb-6">

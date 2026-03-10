@@ -41,6 +41,14 @@ const STAT_LABELS: Record<string, string> = {
   luck: 'Luck',
 };
 
+function getDailyQuestIndex(walletAddress: string): number {
+  const d = new Date();
+  const seed = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}:${walletAddress}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return hash % TEXT_QUEST_DATA.length;
+}
+
 function isImagePath(src?: string): boolean {
   return !!src && src.startsWith('/quests/');
 }
@@ -270,41 +278,42 @@ export default function TextQuestPage() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
-        {/* ═══ QUEST LIST ═══ */}
-        {!activeQuest && (
-          <>
-            <div className="mb-6">
-              <h1 className="text-xl font-black">🚀 Text Adventures</h1>
-              <p className="text-white/30 text-xs mt-1">SR2-inspired branching quests with multiple endings</p>
-            </div>
-
-            {/* Ship stats mini display */}
-            <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-              <p className="text-white/20 text-[9px] uppercase tracking-wider mb-2">Your Ship Stats (affect skill checks)</p>
-              <div className="flex gap-3">
-                {(['speed', 'shield', 'firepower', 'luck'] as const).map((stat) => (
-                  <div key={stat} className="flex-1 text-center">
-                    <div className="text-white font-bold text-sm">{shipStats[stat]}</div>
-                    <div className="text-white/20 text-[8px] uppercase">{stat}</div>
-                  </div>
-                ))}
+        {/* ═══ TODAY'S QUEST ═══ */}
+        {!activeQuest && (() => {
+          const dailyIdx = getDailyQuestIndex(walletAddress || 'anonymous');
+          const dailyQuest = TEXT_QUEST_DATA[dailyIdx];
+          const dailySave = questSaves[dailyQuest.id] ?? null;
+          return (
+            <>
+              <div className="mb-6">
+                <h1 className="text-xl font-black">🚀 Today's Quest</h1>
+                <p className="text-white/30 text-xs mt-1">A new adventure awaits you each day</p>
               </div>
-            </div>
 
-            <div className="space-y-3">
-              {TEXT_QUEST_DATA.map((quest) => (
-                <QuestListCard
-                  key={quest.id}
-                  quest={quest}
-                  save={questSaves[quest.id] ?? null}
-                  onStart={() => handleStart(quest)}
-                  onResume={() => handleStart(quest)}
-                  onReplay={() => handleReplay(quest)}
-                />
-              ))}
-            </div>
-          </>
-        )}
+              {/* Ship stats mini display */}
+              <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                <p className="text-white/20 text-[9px] uppercase tracking-wider mb-2">Your Ship Stats (affect skill checks)</p>
+                <div className="flex gap-3">
+                  {(['speed', 'shield', 'firepower', 'luck'] as const).map((stat) => (
+                    <div key={stat} className="flex-1 text-center">
+                      <div className="text-white font-bold text-sm">{shipStats[stat]}</div>
+                      <div className="text-white/20 text-[8px] uppercase">{stat}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <QuestListCard
+                quest={dailyQuest}
+                save={dailySave}
+                onStart={() => handleStart(dailyQuest)}
+                onResume={() => handleStart(dailyQuest)}
+                onReplay={() => handleReplay(dailyQuest)}
+              />
+              <p className="text-center text-white/20 text-[10px] mt-3">Quest changes daily</p>
+            </>
+          );
+        })()}
 
         {/* ═══ ACTIVE QUEST ═══ */}
         {activeQuest && questState && currentNode && (

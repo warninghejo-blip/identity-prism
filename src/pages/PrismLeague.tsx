@@ -40,13 +40,14 @@ import { FpsOverlay } from "@/components/game/GameShared";
 import { deriveShipStats, getEquipmentBonusLabel, DEFAULT_SHIP_STATS } from "@/lib/shipStats";
 import type { ForgeLoadout } from "@/lib/forgeItems";
 
-type GameMode = "orbit" | "destroyer" | "gravity" | "mining";
+type GameMode = "orbit" | "destroyer" | "gravity" | "mining" | "text_quest";
 
 const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string; cover?: string }[] = [
   { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit", cover: "/games/orbit_cover.png" },
   { id: "destroyer", name: "Cosmic Defender", icon: "💥", desc: "4 sectors of enemies & bosses. Auto-fire, collect powerups!", controls: "WASD/Arrows to move, auto-fire. Touch: drag to move", cover: "/games/wars_cover.png" },
   { id: "gravity", name: "Gravity Runner", icon: "🔄", desc: "Tap to fly, collect crystals, dodge asteroid columns!", controls: "Tap/Space to thrust upward", cover: "/games/gravity_cover.png" },
   { id: "mining", name: "Cosmic Mine", icon: "⛏️", desc: "Tap to mine ore, buy upgrades, prestige for stars", controls: "Tap asteroid to mine, buy upgrades below", cover: "/games/mining_cover.png" },
+  { id: "text_quest", name: "Text Adventures", icon: "📖", desc: "SR2-inspired branching quests", controls: "Read and make choices" },
 ];
 import {
   commitScoreOnchain,
@@ -858,6 +859,10 @@ const PrismLeague = () => {
   }, [address, leaderboard, defenderLeaderboard, gravityLeaderboard, gameMode]);
 
   const handleStart = () => {
+    if (gameMode === 'text_quest') {
+      navigate('/text-quest');
+      return;
+    }
     initAudio();
     // Start music after a short delay so AudioContext is definitely running
     setTimeout(() => startMusic(gameMode === 'destroyer' ? 'defender' : gameMode === 'orbit' ? 'orbit' : 'menu'), 300);

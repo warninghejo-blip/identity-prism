@@ -66,7 +66,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [suckingIn, setSuckingIn] = useState(false);
   const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(false);
-  const [scoreHistory, setScoreHistory] = useState<{ score: number; tier: string; date: string }[]>([]);
+
   const [showDetails, setShowDetails] = useState(false);
   const [showSybil, setShowSybil] = useState(false);
   const [sybilRisk, setSybilRisk] = useState<{
@@ -234,29 +234,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
   useEffect(() => () => clearTransitionTimers(), [clearTransitionTimers]);
 
-  // Fetch score history from server
-  useEffect(() => {
-    if (!address || isCapture) return;
-    const base = getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-    if (!base) return;
-    fetch(`${base}/api/score-history?address=${encodeURIComponent(address)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.scores?.length) setScoreHistory(data.scores); })
-      .catch(() => {});
-  }, [address, isCapture]);
-
-  // Auto-save current score to history when card loads with a real score
-  useEffect(() => {
-    if (!address || !score || score <= 0 || isCapture) return;
-    const base = getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-    if (!base) return;
-    const tier = traits?.planetTier || 'mercury';
-    fetch(`${base}/api/score-history`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, score, tier }),
-    }).catch(() => {});
-  }, [address, score, isCapture]);
 
   // 3D Tilt removed — card stays flat
 
@@ -364,7 +341,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           style={{
             backfaceVisibility: 'hidden',
             zIndex: isFlipped ? 0 : 20,
-            padding: forgeFrame && FRAME_STYLES[forgeFrame] ? 2 : 0,
+            padding: forgeFrame && FRAME_STYLES[forgeFrame] ? 4 : 0,
             background: (forgeFrame && FRAME_STYLES[forgeFrame]?.gradient) || 'transparent',
             borderRadius: 40,
             boxShadow: (() => {
@@ -377,7 +354,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           }}
         >
         <div
-          className={`celestial-card-face w-full h-full rounded-[38px] overflow-hidden ${forgeFrame && FRAME_STYLES[forgeFrame] ? '' : 'border-2'} bg-[#020408] backface-hidden flex flex-col`}
+          className={`celestial-card-face w-full h-full rounded-[36px] overflow-hidden ${forgeFrame && FRAME_STYLES[forgeFrame] ? '' : 'border-2'} bg-[#020408] backface-hidden flex flex-col`}
           style={{
             backfaceVisibility: 'hidden',
             borderColor: forgeFrame && FRAME_STYLES[forgeFrame] ? undefined : 'rgba(6,182,212,0.3)',
@@ -750,80 +727,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   )}
                 </div>
 
-                {/* Score History — premium sparkline */}
-                {scoreHistory.length >= 1 && (
-                  <div className="mb-4 rounded-2xl border border-white/[0.06] bg-gradient-to-br from-white/[0.02] via-transparent to-white/[0.01] p-3.5 relative overflow-hidden">
-                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.02),transparent_70%)]" />
-                    <div className="relative z-10">
-                      <div className="flex items-center justify-between mb-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                          <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">Score History</span>
-                        </div>
-                        <span className="text-[9px] text-white/20 font-mono">{scoreHistory.length} {scoreHistory.length === 1 ? 'scan' : 'scans'}</span>
-                      </div>
-                      {(() => {
-                        const pts = [...scoreHistory].reverse();
-                        const maxS = Math.max(...pts.map(p => p.score), 1);
-                        const minS = Math.min(...pts.map(p => p.score), 0);
-                        const isFlat = maxS === minS;
-                        const range = Math.max(maxS - minS, 1);
-                        const w = Math.max(pts.length - 1, 1) * 20;
-                        const svgW = Math.max(w, 100);
 
-                        if (pts.length === 1 || isFlat) {
-                          return (
-                            <div className="flex flex-col items-center justify-center h-12 gap-1">
-                              <div className="flex items-center gap-2">
-                                <div className="h-px w-8 bg-gradient-to-r from-transparent to-cyan-500/30" />
-                                <span className="text-sm font-bold font-mono text-cyan-300/80">{pts[pts.length - 1].score}</span>
-                                <div className="h-px w-8 bg-gradient-to-l from-transparent to-cyan-500/30" />
-                              </div>
-                              <span className="text-[8px] text-white/20">{isFlat && pts.length > 1 ? 'Stable score' : pts.length === 1 ? 'Scan again to see trends' : 'Current score'}</span>
-                            </div>
-                          );
-                        }
-
-                        const points = pts.map((p, i) => {
-                          const x = (i / Math.max(pts.length - 1, 1)) * svgW;
-                          const y = 44 - ((p.score - minS) / range) * 38;
-                          return `${x},${y}`;
-                        }).join(' ');
-                        const areaPoints = `0,46 ${points} ${svgW},46`;
-                        const lastX = ((pts.length - 1) / Math.max(pts.length - 1, 1)) * svgW;
-                        const lastY = 44 - ((pts[pts.length - 1].score - minS) / range) * 38;
-                        return (
-                          <>
-                            <svg viewBox={`0 0 ${svgW} 48`} className="w-full h-12" preserveAspectRatio="none">
-                              <defs>
-                                <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="0%" stopColor="rgba(34,211,238,0.12)" />
-                                  <stop offset="100%" stopColor="rgba(34,211,238,0)" />
-                                </linearGradient>
-                                <filter id="sparkGlow">
-                                  <feGaussianBlur stdDeviation="1.5" result="blur" />
-                                  <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                                </filter>
-                              </defs>
-                              <polyline points={areaPoints} fill="url(#sparkGrad)" stroke="none" />
-                              <polyline points={points} fill="none" stroke="rgba(34,211,238,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" filter="url(#sparkGlow)" />
-                              {pts.map((p, i) => {
-                                const cx = (i / Math.max(pts.length - 1, 1)) * svgW;
-                                const cy = 44 - ((p.score - minS) / range) * 38;
-                                return <circle key={i} cx={cx} cy={cy} r="1.5" fill="rgba(34,211,238,0.25)" stroke="rgba(34,211,238,0.5)" strokeWidth="0.5" />;
-                              })}
-                              <circle cx={lastX} cy={lastY} r="2.5" fill="#22d3ee" filter="url(#sparkGlow)" />
-                            </svg>
-                            <div className="flex items-center justify-between mt-1.5">
-                              <span className="text-[8px] text-white/15 font-mono">low {minS}</span>
-                              <span className="text-[8px] text-white/25 font-mono font-bold">peak {maxS}</span>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                )}
 
                 {/* Sybil Analysis Section — Collapsible */}
                 {sybilRisk && (() => {

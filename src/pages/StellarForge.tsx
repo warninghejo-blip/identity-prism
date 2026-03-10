@@ -105,20 +105,28 @@ function ItemPreview({ item }: { item: ForgeItem }) {
   const rarityColor = RARITY_COLORS[item.rarity];
 
   if (item.category === 'frame') {
-    const frameStyle = FRAME_STYLES[item.preview] || {};
+    const frameStyle = FRAME_STYLES[item.id] || {};
     return (
       <div className="w-full h-28 rounded-lg flex items-center justify-center"
         style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
-        {/* Mini card with frame applied */}
-        <div className="w-16 h-22 rounded-md" style={{
-          background: 'linear-gradient(135deg, #0a1020, #0d1428)',
-          ...frameStyle,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 6,
-          width: 56, height: 76,
+        {/* Outer border = frame gradient */}
+        <div style={{
+          padding: 4,
+          borderRadius: 10,
+          background: frameStyle.gradient || 'transparent',
+          boxShadow: frameStyle.boxShadow || 'none',
+          animation: frameStyle.animation || undefined,
         }}>
-          <div style={{ width: 20, height: 20, borderRadius: '50%', background: `radial-gradient(circle, ${rarityColor}60, ${rarityColor}20)`, marginBottom: 4 }} />
-          <div style={{ width: 28, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 2 }} />
-          <div style={{ width: 20, height: 2, borderRadius: 1, background: 'rgba(255,255,255,0.08)' }} />
+          {/* Inner mini card */}
+          <div style={{
+            background: 'linear-gradient(135deg, #0a1020, #0d1428)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 6,
+            width: 56, height: 76, borderRadius: 7,
+          }}>
+            <div style={{ width: 20, height: 20, borderRadius: '50%', background: `radial-gradient(circle, ${rarityColor}60, ${rarityColor}20)`, marginBottom: 4 }} />
+            <div style={{ width: 28, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 2 }} />
+            <div style={{ width: 20, height: 2, borderRadius: 1, background: 'rgba(255,255,255,0.08)' }} />
+          </div>
         </div>
       </div>
     );
@@ -208,17 +216,66 @@ function ItemPreview({ item }: { item: ForgeItem }) {
   );
 }
 
+// ── Mini Card Preview (CSS-only, no Three.js) ──
+function MiniCardPreview({ frameId, auraId, titleName }: { frameId?: string | null; auraId?: string | null; titleName?: string | null }) {
+  const fs = frameId ? FRAME_STYLES[frameId] : null;
+  const auraGlow = auraId ? AURA_GLOW_MAP[auraId] : null;
+  return (
+    <div className="flex flex-col items-center py-3">
+      <div style={{
+        padding: fs ? 4 : 0,
+        borderRadius: 14,
+        background: fs?.gradient || 'transparent',
+        boxShadow: [fs?.boxShadow, auraGlow].filter(Boolean).join(', ') || 'none',
+        animation: fs?.animation || undefined,
+      }}>
+        <div style={{
+          width: 100, height: 140, borderRadius: fs ? 11 : 14,
+          background: 'linear-gradient(135deg, #080a12, #0d1428)',
+          border: fs ? 'none' : '1px solid rgba(255,255,255,0.08)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          position: 'relative', overflow: 'hidden',
+        }}>
+          {/* Planet placeholder */}
+          <div style={{
+            width: 36, height: 36, borderRadius: '50%',
+            background: 'radial-gradient(circle at 35% 35%, rgba(34,211,238,0.3), rgba(6,182,212,0.1), transparent)',
+            boxShadow: '0 0 20px rgba(34,211,238,0.15)',
+            marginBottom: 8,
+          }} />
+          {/* Name placeholder bars */}
+          <div style={{ width: 48, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 4 }} />
+          <div style={{ width: 32, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', marginBottom: 6 }} />
+          {/* Title badge */}
+          {titleName && (
+            <div style={{
+              padding: '2px 8px', borderRadius: 6,
+              background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)',
+            }}>
+              <span style={{ fontSize: 7, fontWeight: 800, color: '#c084fc' }}>{titleName}</span>
+            </div>
+          )}
+        </div>
+      </div>
+      <p className="text-[8px] text-white/20 mt-2">Preview</p>
+    </div>
+  );
+}
+
 // ── Shop Item Card (AAA) ──
 function ItemCard({
-  item, owned, equipped, canAfford, onPurchase, onEquip,
+  item, owned, equipped, canAfford, onPurchase, onEquip, onHover,
 }: {
   item: ForgeItem; owned: boolean; equipped: boolean; canAfford: boolean;
-  onPurchase: () => void; onEquip: () => void;
+  onPurchase: () => void; onEquip: () => void; onHover?: (item: ForgeItem | null) => void;
 }) {
   const rarityColor = RARITY_COLORS[item.rarity];
   return (
     <div
       className="relative rounded-2xl p-[1px] transition-all duration-500 hover:scale-[1.03] group"
+      onMouseEnter={() => onHover?.(item)}
+      onMouseLeave={() => onHover?.(null)}
+      onClick={() => onHover?.(item)}
       style={{
         background: equipped
           ? `linear-gradient(135deg, ${rarityColor}60, ${rarityColor}20, ${rarityColor}40)`
@@ -565,13 +622,42 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
 
 // ── Prism Vault (Staking) ──
 
+const YIELD_BRACKETS = [
+  { upTo: 5000,     baseDailyRate: 0.010 },
+  { upTo: 20000,    baseDailyRate: 0.007 },
+  { upTo: 50000,    baseDailyRate: 0.005 },
+  { upTo: 100000,   baseDailyRate: 0.0035 },
+  { upTo: Infinity, baseDailyRate: 0.002 },
+];
+
+function calcClientDailyYield(amount: number, tierMultiplier: number): number {
+  let remaining = amount;
+  let daily = 0;
+  let prevUpTo = 0;
+  for (const b of YIELD_BRACKETS) {
+    const sliceMax = b.upTo - prevUpTo;
+    const slice = Math.min(remaining, sliceMax);
+    if (slice <= 0) break;
+    daily += slice * b.baseDailyRate * tierMultiplier;
+    remaining -= slice;
+    prevUpTo = b.upTo;
+  }
+  return daily;
+}
+
+function rateRangeLabel(mult: number): string {
+  const high = (YIELD_BRACKETS[0].baseDailyRate * mult * 100).toFixed(1);
+  const low = (YIELD_BRACKETS[YIELD_BRACKETS.length - 1].baseDailyRate * mult * 100).toFixed(1);
+  return `${high}–${low}%/day`;
+}
+
 const VAULT_TIERS = [
   {
     id: 'bronze',
     label: 'Bronze',
     min: 500,
     lock: 7,
-    yieldPerDay: 0.5,
+    rateMultiplier: 1.0,
     boost: 10,
     color: '#cd7f32',
     glow: 'rgba(205,127,50,0.25)',
@@ -582,7 +668,7 @@ const VAULT_TIERS = [
     label: 'Silver',
     min: 2000,
     lock: 30,
-    yieldPerDay: 0.8,
+    rateMultiplier: 1.4,
     boost: 20,
     color: '#c0c0c0',
     glow: 'rgba(192,192,192,0.2)',
@@ -593,7 +679,7 @@ const VAULT_TIERS = [
     label: 'Gold',
     min: 5000,
     lock: 90,
-    yieldPerDay: 1.2,
+    rateMultiplier: 2.0,
     boost: 35,
     color: '#fbbf24',
     glow: 'rgba(251,191,36,0.3)',
@@ -612,6 +698,8 @@ interface VaultStatus {
   unlocksAt?: number;
   unclaimedYield?: number;
   earlyUnstakePenalty?: number;
+  dailyYield?: number;
+  effectiveRate?: number;
 }
 
 function formatTimeLeft(ms: number): string {
@@ -649,7 +737,21 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
     const base = getApiBase();
     fetch(`${base}/api/prism/vault/status?address=${walletAddress}`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setVaultStatus(d); else setVaultStatus({ staked: false }); })
+      .then(d => {
+        if (d?.staking) {
+          setVaultStatus({
+            staked: true,
+            tier: d.staking.tier,
+            amount: d.staking.amount,
+            unlocksAt: d.staking.lockEnd,
+            unclaimedYield: d.unclaimedYield ?? 0,
+            dailyYield: d.dailyYield ?? 0,
+            effectiveRate: d.effectiveRate ?? 0,
+          });
+        } else {
+          setVaultStatus({ staked: false });
+        }
+      })
       .catch(() => setVaultStatus({ staked: false }))
       .finally(() => setLoadingStatus(false));
   }, [walletAddress]);
@@ -789,8 +891,8 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
           <div className="grid grid-cols-3 gap-2 mb-4">
             <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
               <TrendingUp className="w-3.5 h-3.5 mx-auto mb-1" style={{ color: stakedTierInfo?.color ?? '#fbbf24' }} />
-              <p className="text-white font-black text-sm">{stakedTierInfo?.yieldPerDay ?? 0}%</p>
-              <p className="text-white/25 text-[9px]">per day</p>
+              <p className="text-white font-black text-sm">{vaultStatus.dailyYield ?? 0}</p>
+              <p className="text-white/25 text-[9px]">coins/day</p>
             </div>
             <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
               <Coins className="w-3.5 h-3.5 mx-auto mb-1 text-amber-400" />
@@ -873,7 +975,7 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
                 <div className="space-y-0.5">
                   <p className="text-[9px]" style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}>Min: {t.min.toLocaleString()}</p>
                   <p className="text-[9px]" style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}>{t.lock}d lock</p>
-                  <p className="text-[9px] font-bold" style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.3)' }}>{t.yieldPerDay}%/day</p>
+                  <p className="text-[9px] font-bold" style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.3)' }}>{rateRangeLabel(t.rateMultiplier)}</p>
                   <p className="text-[9px]" style={{ color: selectedTier === t.id ? '#c084fc' : 'rgba(192,132,252,0.4)' }}>+{t.boost}% boost</p>
                 </div>
               </button>
@@ -906,7 +1008,7 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
             }}>
               <span className="text-[10px] text-white/30">Est. daily yield</span>
               <span className="text-[10px] font-bold" style={{ color: tier.color }}>
-                +{(stakeAmountNum * tier.yieldPerDay / 100).toFixed(1)} coins/day
+                +{calcClientDailyYield(stakeAmountNum, tier.rateMultiplier).toFixed(1)} coins/day
               </span>
             </div>
           )}
@@ -949,6 +1051,7 @@ export default function StellarForge() {
 
   const [topTab, setTopTab] = useState<TopTab>('shop');
   const [shopFilter, setShopFilter] = useState<ShopFilter>('all');
+  const [previewItem, setPreviewItem] = useState<ForgeItem | null>(null);
   const [balance, setBalance] = useState<PrismBalance | null>(null);
   const [loadout, setLoadout] = useState<ForgeLoadout | null>(null);
   const [purchasing, setPurchasing] = useState<string | null>(null);
@@ -1223,7 +1326,7 @@ export default function StellarForge() {
               {SHOP_FILTERS.map((f) => (
                 <button
                   key={f.id}
-                  onClick={() => setShopFilter(f.id)}
+                  onClick={() => { setShopFilter(f.id); setPreviewItem(null); }}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all duration-300"
                   style={shopFilter === f.id ? {
                     background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(139,92,246,0.15))',
@@ -1241,6 +1344,15 @@ export default function StellarForge() {
               ))}
             </div>
 
+            {/* Card preview for frame/aura/title */}
+            {previewItem && (previewItem.category === 'frame' || previewItem.category === 'aura' || previewItem.category === 'title') && (
+              <MiniCardPreview
+                frameId={previewItem.category === 'frame' ? previewItem.id : loadout?.equippedFrame}
+                auraId={previewItem.category === 'aura' ? previewItem.id : loadout?.equippedAura}
+                titleName={previewItem.category === 'title' ? previewItem.preview : (loadout?.equippedTitle ? getItemById(loadout.equippedTitle)?.preview : null)}
+              />
+            )}
+
             {/* Items grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {filteredItems.map((item) => (
@@ -1252,6 +1364,7 @@ export default function StellarForge() {
                   canAfford={(balance?.balance ?? 0) >= item.price}
                   onPurchase={() => handlePurchase(item)}
                   onEquip={() => handleEquip(item)}
+                  onHover={setPreviewItem}
                 />
               ))}
             </div>

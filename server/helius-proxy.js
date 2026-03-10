@@ -3318,10 +3318,16 @@ const server = http.createServer(async (req, res) => {
     const tierConfig = STAKING_TIERS[stake.tier] || {};
     const unclaimedYield = calcUnclaimedYield(stake);
     const timeLeft = Math.max(0, (stake.lockEnd || 0) - Date.now());
+    const dailyYield = stake.startTime < BRACKETS_DEPLOY_TS
+      ? Math.floor((tierConfig.rateMultiplier ? calcDailyYieldForAmount(stake.amount, tierConfig.rateMultiplier) : 0))
+      : Math.floor(calcDailyYieldForAmount(stake.amount, tierConfig.rateMultiplier || 1));
+    const effectiveRate = getEffectiveRate(stake.amount, tierConfig.rateMultiplier || 1);
     respondJson(res, 200, {
       staking: { amount: stake.amount, tier: stake.tier, startTime: stake.startTime, lockEnd: stake.lockEnd, lastClaimTime: stake.lastClaimTime },
       unclaimedYield, timeLeft, boostRate: tierConfig.boostRate || 0,
-      dailyYield: Math.floor(tierConfig.dailyRate * stake.amount),
+      dailyYield,
+      effectiveRate: +(effectiveRate * 100).toFixed(3),
+      rateSchedule: getRateSchedule(tierConfig.rateMultiplier || 1),
     });
     return;
   }
@@ -7313,10 +7319,49 @@ const MAX_DELTA_PER_GAME = { orbit: 800, destroyer: 1500, gravity: 800, wars: 80
 
 // ═══ Staking (Prism Vault) ═══
 const STAKING_TIERS = {
-  bronze: { minStake: 500, lockDays: 7, dailyRate: 0.005, boostRate: 0.10 },
-  silver: { minStake: 2000, lockDays: 30, dailyRate: 0.008, boostRate: 0.20 },
-  gold:   { minStake: 5000, lockDays: 90, dailyRate: 0.012, boostRate: 0.35 },
+  bronze: { minStake: 500, lockDays: 7, rateMultiplier: 1.0, boostRate: 0.10 },
+  silver: { minStake: 2000, lockDays: 30, rateMultiplier: 1.4, boostRate: 0.20 },
+  gold:   { minStake: 5000, lockDays: 90, rateMultiplier: 2.0, boostRate: 0.35 },
 };
+
+const YIELD_BRACKETS = [
+  { upTo: 5000,     baseDailyRate: 0.010 },  // 1.0%
+  { upTo: 20000,    baseDailyRate: 0.007 },  // 0.7%
+  { upTo: 50000,    baseDailyRate: 0.005 },  // 0.5%
+  { upTo: 100000,   baseDailyRate: 0.0035 }, // 0.35%
+  { upTo: Infinity, baseDailyRate: 0.002 },  // 0.2%
+];
+
+// Stakes created before this timestamp use old flat rate; after use brackets
+const BRACKETS_DEPLOY_TS = Date.now();
+
+function calcDailyYieldForAmount(amount, tierMultiplier) {
+  let remaining = amount;
+  let dailyYield = 0;
+  let prevUpTo = 0;
+  for (const bracket of YIELD_BRACKETS) {
+    const sliceMax = bracket.upTo - prevUpTo;
+    const slice = Math.min(remaining, sliceMax);
+    if (slice <= 0) break;
+    dailyYield += slice * bracket.baseDailyRate * tierMultiplier;
+    remaining -= slice;
+    prevUpTo = bracket.upTo;
+  }
+  return dailyYield;
+}
+
+function getEffectiveRate(amount, tierMultiplier) {
+  if (amount <= 0) return 0;
+  return calcDailyYieldForAmount(amount, tierMultiplier) / amount;
+}
+
+function getRateSchedule(tierMultiplier) {
+  return YIELD_BRACKETS.map(b => ({
+    upTo: b.upTo === Infinity ? null : b.upTo,
+    rate: +(b.baseDailyRate * tierMultiplier * 100).toFixed(3),
+  }));
+}
+
 function getStakingBoost(address) {
   const w = walletDatabase.get(address);
   const stake = w?.staking;
@@ -7330,7 +7375,16 @@ function calcUnclaimedYield(stake) {
   const daysSinceClaim = (now - lastClaim) / (1000 * 60 * 60 * 24);
   const tier = STAKING_TIERS[stake.tier];
   if (!tier) return 0;
-  return Math.floor(daysSinceClaim * tier.dailyRate * stake.amount);
+  // Old stakes (before bracket deploy) use legacy flat rate for backward compat
+  if (stake.startTime < BRACKETS_DEPLOY_TS) {
+    // Legacy rates
+    const legacyRates = { bronze: 0.005, silver: 0.008, gold: 0.012 };
+    const legacyRate = legacyRates[stake.tier] || 0.005;
+    return Math.floor(daysSinceClaim * legacyRate * stake.amount);
+  }
+  // New bracket-based yield
+  const dailyYield = calcDailyYieldForAmount(stake.amount, tier.rateMultiplier);
+  return Math.floor(daysSinceClaim * dailyYield);
 }
 
 // ═══ Tournament System ═══

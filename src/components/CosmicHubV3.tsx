@@ -54,33 +54,34 @@ interface ModuleDef {
   route: string;
   desc: string;
   icon: ReactNode;
+  iconName: string;
   colorClass: string;
 }
 
-const HubIcon = ({ name }: { name: string }) => (
-  <img src={`/hub/${name}.png`} alt={name} className="w-7 h-7 object-contain" loading="lazy" />
+const HubIcon = ({ name, className = 'w-7 h-7' }: { name: string; className?: string }) => (
+  <img src={`/hub/${name}.png`} alt={name} className={`${className} object-contain`} loading="lazy" />
 );
 
 const MODULES: ModuleDef[] = [
   { id: 'league', label: 'Prism League', route: '/game', desc: 'Compete in arcade games',
-    icon: <HubIcon name="league" />, colorClass: 'from-cyan-500 to-blue-400' },
+    icon: <HubIcon name="league" />, iconName: 'league', colorClass: 'from-cyan-500 to-blue-400' },
   { id: 'scanner', label: 'Prism Scanner', route: '/scan', desc: 'Scan & explore wallets',
-    icon: <HubIcon name="scanner" />, colorClass: 'from-cyan-500 to-sky-400' },
+    icon: <HubIcon name="scanner" />, iconName: 'scanner', colorClass: 'from-cyan-500 to-sky-400' },
   { id: 'arena', label: 'Prism Arena', route: '/arena', desc: 'P2P battles & challenges',
-    icon: <HubIcon name="arena" />, colorClass: 'from-pink-500 to-rose-400' },
+    icon: <HubIcon name="arena" />, iconName: 'arena', colorClass: 'from-pink-500 to-rose-400' },
   { id: 'blackhole', label: 'Black Hole', route: '/blackhole', desc: 'Destroy your identity',
-    icon: <HubIcon name="blackhole" />, colorClass: 'from-purple-500 to-indigo-400' },
+    icon: <HubIcon name="blackhole" />, iconName: 'blackhole', colorClass: 'from-purple-500 to-indigo-400' },
   { id: 'shop', label: 'Prism Shop', route: '/forge', desc: 'Customize your card',
-    icon: <HubIcon name="shop" />, colorClass: 'from-amber-500 to-yellow-400' },
+    icon: <HubIcon name="shop" />, iconName: 'shop', colorClass: 'from-amber-500 to-yellow-400' },
   { id: 'leaderboard', label: 'Leaderboard', route: '/leaderboard', desc: 'Top identity scores',
-    icon: <HubIcon name="leaderboard" />, colorClass: 'from-yellow-500 to-orange-400' },
+    icon: <HubIcon name="leaderboard" />, iconName: 'leaderboard', colorClass: 'from-yellow-500 to-orange-400' },
   { id: 'quests', label: 'Quests', route: '/quests', desc: 'Daily missions & rewards',
-    icon: <HubIcon name="quests" />, colorClass: 'from-violet-500 to-purple-400' },
+    icon: <HubIcon name="quests" />, iconName: 'quests', colorClass: 'from-violet-500 to-purple-400' },
 ];
 
 /* ── NavCard component ── */
-function NavCard({ label, desc, icon, colorClass, delay, onClick }: {
-  label: string; desc: string; icon: ReactNode; colorClass: string; delay: number; onClick: () => void;
+function NavCard({ label, desc, icon, iconName, colorClass, delay, onClick }: {
+  label: string; desc: string; icon: ReactNode; iconName: string; colorClass: string; delay: number; onClick: () => void;
 }) {
   return (
     <motion.div
@@ -88,15 +89,13 @@ function NavCard({ label, desc, icon, colorClass, delay, onClick }: {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay }}
       onClick={onClick}
-      className="group relative overflow-hidden rounded-2xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-2 lg:p-5 cursor-pointer hover:bg-white/[0.08] transition-all duration-500 hover:scale-[1.02] hover:border-white/[0.15] pointer-events-auto"
+      className="group relative overflow-hidden rounded-2xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-2.5 lg:p-5 cursor-pointer hover:bg-white/[0.08] transition-all duration-500 hover:scale-[1.02] hover:border-white/[0.15] pointer-events-auto"
     >
       <div className={`absolute top-0 left-0 w-1 h-full bg-gradient-to-b ${colorClass} opacity-40 group-hover:opacity-100 transition-opacity`} />
-      {/* Mobile: centered icon + name */}
-      <div className="flex flex-col items-center gap-1 lg:hidden">
-        <div className="p-1.5 rounded-lg bg-white/[0.05] border border-white/[0.08] text-white/80">
-          {icon}
-        </div>
-        <span className="text-[10px] font-bold text-white/70 text-center leading-tight">{label}</span>
+      {/* Mobile: icon left, text right — compact horizontal */}
+      <div className="flex items-center gap-2.5 lg:hidden">
+        <HubIcon name={iconName} className="w-9 h-9 flex-shrink-0" />
+        <span className="text-[11px] font-bold text-white/80 leading-tight">{label}</span>
       </div>
       {/* Desktop: full card */}
       <div className="hidden lg:block">
@@ -175,49 +174,99 @@ function MiniPassport({
       <div className="absolute top-0 left-0 w-full h-[3px]" style={{ background: `linear-gradient(90deg, ${tierColor.text}60, #a78bfa80, ${tierColor.text}60)` }} />
       <div className="absolute -top-12 -right-12 w-32 h-32 rounded-full blur-3xl opacity-20 transition-opacity duration-700 group-hover:opacity-40" style={{ background: tierColor.text }} />
 
-      {/* ═══ MOBILE: compact horizontal layout ═══ */}
-      <div className="lg:hidden relative p-3 flex items-center gap-3">
-        {/* Score ring 48x48 */}
-        <div className="flex-shrink-0">
-          <svg width="48" height="48" viewBox="0 0 48 48">
-            <circle cx="24" cy="24" r={rMobile} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="3" />
-            <circle cx="24" cy="24" r={rMobile} fill="none" stroke={tierColor.text} strokeWidth="3" strokeLinecap="round" strokeDasharray={`${strokeDashMobile} ${circMobile}`} transform="rotate(-90 24 24)" style={{ filter: `drop-shadow(0 0 6px ${tierColor.glow})` }} />
-            <text x="24" y="26" textAnchor="middle" fill={tierColor.text} fontSize="12" fontWeight="bold" fontFamily="monospace">{score}</text>
-          </svg>
-        </div>
-        {/* Tier + score + coins */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <span className="text-xs font-black tracking-[0.12em] uppercase" style={{ color: tierColor.text, textShadow: `0 0 12px ${tierColor.glow}` }}>
-              {tierLabel}
-            </span>
-            {(() => {
-              const xp = computeRangerXP(gatherXPSources(walletAddress));
-              const r = getRangerRank(xp);
-              if (r.id === 'cadet' && xp === 0) return null;
-              return <span className="text-[9px]" title={r.name}>{r.icon}</span>;
-            })()}
+      {/* ═══ MOBILE: expanded passport layout ═══ */}
+      <div className="lg:hidden relative p-3">
+        {/* Row 1: Score ring + Tier + coins (existing) */}
+        <div className="flex items-center gap-3">
+          <div className="flex-shrink-0">
+            <svg width="48" height="48" viewBox="0 0 48 48">
+              <circle cx="24" cy="24" r={rMobile} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="3" />
+              <circle cx="24" cy="24" r={rMobile} fill="none" stroke={tierColor.text} strokeWidth="3" strokeLinecap="round" strokeDasharray={`${strokeDashMobile} ${circMobile}`} transform="rotate(-90 24 24)" style={{ filter: `drop-shadow(0 0 6px ${tierColor.glow})` }} />
+              <text x="24" y="26" textAnchor="middle" fill={tierColor.text} fontSize="12" fontWeight="bold" fontFamily="monospace">{score}</text>
+            </svg>
           </div>
-          <div className="text-[9px] text-white/30 mb-1">{score}/{maxScore}</div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="#fbbf24"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/></svg>
-              <span className="text-[10px] font-bold text-amber-400">{coins}</span>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <span className="text-xs font-black tracking-[0.12em] uppercase" style={{ color: tierColor.text, textShadow: `0 0 12px ${tierColor.glow}` }}>
+                {tierLabel}
+              </span>
+              {(() => {
+                const xp = computeRangerXP(gatherXPSources(walletAddress));
+                const rk = getRangerRank(xp);
+                if (rk.id === 'cadet' && xp === 0) return null;
+                return <span className="text-[9px]" title={rk.name}>{rk.icon}</span>;
+              })()}
             </div>
-            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{ background: `${gradeColor}15`, border: `1px solid ${gradeColor}25` }}>
-              <Shield size={9} style={{ color: gradeColor }} />
-              <span className="text-[9px] font-black" style={{ color: gradeColor }}>{sybilGrade ?? '...'}</span>
-            </div>
-            {boostRate != null && boostRate > 0 && (
-              <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-md" style={{ background: 'linear-gradient(135deg, rgba(168,85,247,0.25), rgba(251,146,60,0.25))', border: '1px solid rgba(168,85,247,0.45)' }}>
-                <Zap size={8} style={{ color: '#fb923c' }} />
-                <span className="text-[8px] font-black" style={{ background: 'linear-gradient(90deg, #a855f7, #fb923c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>+{boostRate}%</span>
+            <div className="text-[9px] text-white/30 mb-1">{score}/{maxScore}</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="#fbbf24"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/></svg>
+                <span className="text-[10px] font-bold text-amber-400">{coins}</span>
               </div>
-            )}
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md" style={{ background: `${gradeColor}15`, border: `1px solid ${gradeColor}25` }}>
+                <Shield size={9} style={{ color: gradeColor }} />
+                <span className="text-[9px] font-black" style={{ color: gradeColor }}>{sybilGrade ?? '...'}</span>
+              </div>
+              {boostRate != null && boostRate > 0 && (
+                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-md" style={{ background: 'linear-gradient(135deg, rgba(168,85,247,0.25), rgba(251,146,60,0.25))', border: '1px solid rgba(168,85,247,0.45)' }}>
+                  <Zap size={8} style={{ color: '#fb923c' }} />
+                  <span className="text-[8px] font-black" style={{ background: 'linear-gradient(90deg, #a855f7, #fb923c)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>+{boostRate}%</span>
+                </div>
+              )}
+            </div>
           </div>
+          <ArrowRight size={14} className="flex-shrink-0 text-white/20 group-hover:text-white/50 transition-all" />
         </div>
-        <div className="flex-shrink-0 text-[8px] text-white/20 font-mono">{truncAddr(walletAddress)}</div>
-        <ArrowRight size={14} className="flex-shrink-0 text-white/20 group-hover:text-white/50 transition-all" />
+
+        {/* Row 2: Compact breakdown bars */}
+        {breakdown && (
+          <div className="mt-2 flex gap-1.5">
+            {MINI_BARS.map(bar => {
+              const val = breakdown[bar.key] || 0;
+              const barPct = Math.min(100, (val / bar.max) * 100);
+              return (
+                <div key={bar.key} className="flex-1 min-w-0">
+                  <div className="flex justify-between items-baseline mb-0.5">
+                    <span className="text-[7px] text-white/25 font-medium truncate">{bar.label}</span>
+                    <span className="text-[7px] font-mono text-white/35">{val}</span>
+                  </div>
+                  <div className="h-[3px] rounded-full bg-white/[0.06] overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-700" style={{ width: `${barPct}%`, background: bar.color }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Row 3: Ranger rank progress */}
+        {(() => {
+          const sources = gatherXPSources(walletAddress);
+          const xp = computeRangerXP(sources);
+          const rank = getRangerRank(xp);
+          const progress = getRankProgress(xp);
+          const next = getNextRank(xp);
+          if (rank.id === 'cadet' && xp === 0) return null;
+          return (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-sm flex-shrink-0">{rank.icon}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className={`text-[8px] font-bold ${rank.color}`}>{rank.name}</span>
+                  {next && <span className="text-[7px] text-white/20 font-mono">{next.xpNeeded} XP to {next.rank.name}</span>}
+                </div>
+                <div className="h-[3px] rounded-full bg-white/[0.06] overflow-hidden">
+                  <div className="h-full rounded-full bg-purple-500 transition-all duration-700" style={{ width: `${progress * 100}%` }} />
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Row 4: MRZ line */}
+        <div className="mt-2 pt-1.5 border-t border-white/[0.04]">
+          <div className="text-[8px] font-mono text-white/[0.08] tracking-[0.08em] truncate select-none">{mrz}</div>
+        </div>
       </div>
 
       {/* ═══ DESKTOP: full vertical passport ═══ */}
@@ -420,7 +469,7 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
         </motion.header>
 
         {/* Main Content — mobile: vertical stack, desktop: side-by-side */}
-        <div className="flex-1 w-full max-w-5xl mx-auto px-4 lg:px-5 pb-6 lg:pb-8 flex flex-col lg:flex-row gap-3 lg:gap-6 items-start justify-center">
+        <div className="flex-1 w-full max-w-5xl mx-auto px-4 lg:px-5 pt-2 pb-6 lg:pb-8 flex flex-col lg:flex-row gap-2 lg:gap-6 items-start lg:justify-center">
 
           {/* Passport — top on mobile, left sidebar on desktop */}
           <motion.div
@@ -447,14 +496,15 @@ export default function CosmicHub({ walletAddress, prismBalance, onNavigateToCar
             )}
           </motion.div>
 
-          {/* Navigation Grid — 4 cols mobile, 3 cols desktop */}
-          <div className="w-full lg:flex-1 grid grid-cols-4 lg:grid-cols-3 gap-2 lg:gap-3">
+          {/* Navigation Grid — 2 cols mobile, 3 cols desktop */}
+          <div className="w-full lg:flex-1 grid grid-cols-2 lg:grid-cols-3 gap-2 lg:gap-3">
             {MODULES.map((m, i) => (
               <NavCard
                 key={m.id}
                 label={m.label}
                 desc={m.desc}
                 icon={m.icon}
+                iconName={m.iconName}
                 colorClass={m.colorClass}
                 delay={0.3 + i * 0.08}
                 onClick={() => goTo(m.route)}
