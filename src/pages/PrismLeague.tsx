@@ -1199,13 +1199,13 @@ const PrismLeague = () => {
     [handleGameOver]
   );
 
-  // Mining-specific game over handler
+  // Mining-specific game over handler — skip Continue screen (idle game, no revive)
   const handleMiningGameOver = useCallback(
     (finalScore: number, finalCoins: number, extraStats?: { asteroidsMined: number; darkMatter: number; piratesDestroyed: number }) => {
       if (extraStats) miningSessionStatsRef.current = extraStats;
-      handleGameOver(finalScore, finalCoins, undefined);
+      finalizeDeath(finalScore, finalCoins, true);
     },
-    [handleGameOver]
+    [finalizeDeath]
   );
 
   const handleContinue = useCallback(async () => {
@@ -2516,7 +2516,7 @@ const PrismLeague = () => {
                   <button
                     className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
                     style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.2)', color: 'rgba(34,211,238,0.7)' }}
-                    onClick={() => { stopAllAudio(); const idx = GAME_MODES.findIndex(m => m.id === gameMode); const next = GAME_MODES[(idx + 1) % GAME_MODES.length]; setGameMode(next.id); setGameState("start"); }}
+                    onClick={() => { stopAllAudio(); const idx = GAME_MODES.findIndex(m => m.id === gameMode); let ni = (idx + 1) % GAME_MODES.length; if (GAME_MODES[ni].id === 'text_quest') ni = (ni + 1) % GAME_MODES.length; setGameMode(GAME_MODES[ni].id); setGameState("start"); }}
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                     Next Mode

@@ -23,6 +23,7 @@ import {
   type TextQuest,
   type QuestSaveState,
 } from '@/lib/textQuests';
+import { getHeliusRpcUrl, getCollectionMint } from '@/constants';
 import { deriveShipStats, DEFAULT_SHIP_STATS, type ShipStats } from '@/lib/shipStats';
 import { getLocalLoadout } from '@/lib/forgeItems';
 import { earnPrism } from '@/lib/prismCoin';
@@ -43,10 +44,14 @@ const STAT_LABELS: Record<string, string> = {
 
 function getDailyQuestIndex(walletAddress: string): number {
   const d = new Date();
-  const seed = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}:${walletAddress}`;
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
-  return hash % TEXT_QUEST_DATA.length;
+  // FNV-1a hash for better distribution across small moduli
+  const seed = `PRISM:${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}:${walletAddress}`;
+  let hash = 2166136261; // FNV offset basis
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619); // FNV prime
+  }
+  return ((hash >>> 0) % TEXT_QUEST_DATA.length);
 }
 
 function isImagePath(src?: string): boolean {
@@ -97,12 +102,14 @@ function QuestListCard({
   onStart,
   onResume,
   onReplay,
+  canReplay = false,
 }: {
   quest: TextQuest;
   save: QuestSaveState | null;
   onStart: () => void;
   onResume: () => void;
   onReplay: () => void;
+  canReplay?: boolean;
 }) {
   const diffColor = DIFFICULTY_COLORS[quest.difficulty];
   const isCompleted = save?.completed;
@@ -145,10 +152,12 @@ function QuestListCard({
             </span>
           )}
         </div>
-        {isCompleted ? (
+        {isCompleted && canReplay ? (
           <Button size="sm" variant="outline" className="h-7 text-[10px] border-white/10 text-white/40" onClick={onReplay}>
-            <RotateCcw className="w-3 h-3 mr-1" /> Replay
+            <RotateCcw className="w-3 h-3 mr-1" /> Retry
           </Button>
+        ) : isCompleted ? (
+          <span className="text-[10px] text-green-400/50 flex items-center gap-1"><Trophy className="w-3 h-3" /> Done</span>
         ) : isInProgress ? (
           <Button size="sm" className="h-7 text-[10px] bg-purple-600 hover:bg-purple-500" onClick={onResume}>
             Continue <ChevronRight className="w-3 h-3 ml-0.5" />
@@ -176,6 +185,26 @@ export default function TextQuestPage() {
   const [questState, setQuestState] = useState<QuestSaveState | null>(null);
   const [rewardClaimed, setRewardClaimed] = useState(false);
   const [claimingReward, setClaimingReward] = useState(false);
+  const [hasMintedId, setHasMintedId] = useState(false);
+
+  // Check minted ID
+  useEffect(() => {
+    if (!walletAddress) return;
+    const heliusUrl = getHeliusRpcUrl();
+    const collectionMint = getCollectionMint();
+    if (!heliusUrl || !collectionMint) return;
+    (async () => {
+      try {
+        const res = await fetch(heliusUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 'mint-check', method: 'searchAssets', params: { ownerAddress: walletAddress, grouping: ['collection', collectionMint], page: 1, limit: 1 } }),
+        });
+        const data = await res.json();
+        setHasMintedId((data?.result?.total ?? 0) > 0);
+      } catch { /* silent */ }
+    })();
+  }, [walletAddress]);
 
   // Ship stats for skill checks
   const { traits: walletTraits } = useWalletData(walletAddress || undefined);
@@ -212,13 +241,25 @@ export default function TextQuestPage() {
   }, [walletAddress]);
 
   const handleReplay = useCallback((quest: TextQuest) => {
-    if (walletAddress) resetQuest(quest.id, walletAddress);
+    if (!walletAddress) return;
+    // Mark replay as used in localStorage
+    try { localStorage.setItem(`quest_replay_v1_${walletAddress}_${quest.id}`, '1'); } catch {}
+    resetQuest(quest.id, walletAddress);
     const state = startQuest(quest);
     setActiveQuest(quest);
     setQuestState(state);
     setRewardClaimed(false);
-    if (walletAddress) saveQuestState(state, walletAddress);
+    saveQuestState(state, walletAddress);
   }, [walletAddress]);
+
+  // canReplay: only if has minted ID, quest completed, first attempt earned nothing, and replay not yet used
+  const getCanReplay = useCallback((questId: string, save: QuestSaveState | null): boolean => {
+    if (!hasMintedId || !save?.completed || !walletAddress) return false;
+    // Already replayed?
+    try { if (localStorage.getItem(`quest_replay_v1_${walletAddress}_${questId}`)) return false; } catch {}
+    // Only allow replay if first attempt earned no reward (failed ending)
+    return !save.reward || (save.reward.coins ?? 0) === 0;
+  }, [hasMintedId, walletAddress]);
 
   const handleChoice = useCallback((choiceIndex: number) => {
     if (!activeQuest || !questState) return;
@@ -246,7 +287,7 @@ export default function TextQuestPage() {
       setActiveQuest(null);
       setQuestState(null);
     } else {
-      goBack(navigate);
+      navigate('/game');
     }
   }, [activeQuest, navigate]);
 
@@ -309,6 +350,7 @@ export default function TextQuestPage() {
                 onStart={() => handleStart(dailyQuest)}
                 onResume={() => handleStart(dailyQuest)}
                 onReplay={() => handleReplay(dailyQuest)}
+                canReplay={getCanReplay(dailyQuest.id, dailySave)}
               />
               <p className="text-center text-white/20 text-[10px] mt-3">Quest changes daily</p>
             </>
@@ -334,7 +376,7 @@ export default function TextQuestPage() {
                   <img
                     src={currentNode.image}
                     alt=""
-                    className="w-full max-w-md h-48 rounded-2xl object-cover"
+                    className="w-full max-w-md max-h-56 rounded-2xl object-contain"
                     style={{
                       border: '1px solid rgba(168,85,247,0.15)',
                       boxShadow: '0 0 40px rgba(168,85,247,0.1)',
@@ -434,11 +476,13 @@ export default function TextQuestPage() {
                   <p className="text-center text-green-400/60 text-xs">Reward claimed!</p>
                 )}
                 <div className="flex gap-3">
-                  <Button variant="outline" className="flex-1 h-10 text-xs border-white/10" onClick={() => handleReplay(activeQuest)}>
-                    <RotateCcw className="w-3 h-3 mr-1" /> Replay
-                  </Button>
+                  {getCanReplay(activeQuest.id, questState) && (
+                    <Button variant="outline" className="flex-1 h-10 text-xs border-white/10" onClick={() => handleReplay(activeQuest)}>
+                      <RotateCcw className="w-3 h-3 mr-1" /> Retry
+                    </Button>
+                  )}
                   <Button variant="outline" className="flex-1 h-10 text-xs border-white/10" onClick={handleBack}>
-                    Quest List
+                    Back
                   </Button>
                 </div>
               </div>
