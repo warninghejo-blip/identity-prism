@@ -656,6 +656,17 @@ const loadCoinBalances = async () => {
           if (typeof bal === 'number') coinBalances.set(addr, bal);
         }
         console.log(`[coins] Loaded ${coinBalances.size} balances from Firestore`);
+        // totalBurned is stored in JSON file, load it even with Firestore
+        try {
+          if (fs.existsSync(COINS_STORE_FILE)) {
+            const raw = fs.readFileSync(COINS_STORE_FILE, 'utf8');
+            if (raw.trim()) {
+              const parsed = JSON.parse(raw);
+              if (typeof parsed?.totalBurned === 'number') { totalBurned = parsed.totalBurned; globalThis._totalBurned = totalBurned; }
+            }
+          }
+        } catch { /* ignore */ }
+        console.log(`[coins] totalBurned restored: ${totalBurned}`);
         return;
       }
     } catch (err) {
@@ -3787,8 +3798,14 @@ const server = http.createServer(async (req, res) => {
             // Set mintBonus FIRST to prevent race
             await fbSet('referrals', refDoc.id, { mintBonus: true });
             const referrer = refData.referrer;
-            const rBal = getCoinBalance(referrer);
-            setCoinBalance(referrer, rBal + 100);
+            try {
+              const rBal = getCoinBalance(referrer);
+              setCoinBalance(referrer, rBal + 100);
+            } catch (coinErr) {
+              // Rollback Firestore if coin award fails
+              await fbSet('referrals', refDoc.id, { mintBonus: false }).catch(() => {});
+              throw coinErr;
+            }
             const rStats = await fbGet('referralStats', referrer);
             await fbSet('referralStats', referrer, {
               totalEarned: (rStats?.totalEarned || 0) + 100,
@@ -6991,13 +7008,14 @@ const server = http.createServer(async (req, res) => {
       if (modelData.length > 5 * 1024 * 1024 * 1.37) return respondJson(res, 400, { error: 'Model too large. Max 5MB.' });
       const priceNum = Math.max(1, Math.floor(Number(price)));
       if (priceNum > 10000) return respondJson(res, 400, { error: 'Price too high. Max 10000 Coins.' });
+      // Decode base64 once for validation + later write
+      let modelBuf;
+      try { modelBuf = Buffer.from(modelData.split(',').pop() || modelData, 'base64'); } catch { return respondJson(res, 400, { error: 'Invalid base64 encoding' }); }
       if (format === 'glb') {
-        let buf;
-        try { buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64'); } catch { return respondJson(res, 400, { error: 'Invalid base64 encoding' }); }
-        if (buf.length < 12) return respondJson(res, 400, { error: 'GLB file too small' });
-        const magic = buf.readUInt32LE(0);
+        if (modelBuf.length < 12) return respondJson(res, 400, { error: 'GLB file too small' });
+        const magic = modelBuf.readUInt32LE(0);
         if (magic !== 0x46546C67) return respondJson(res, 400, { error: 'Invalid GLB file — magic bytes mismatch.' });
-        const version = buf.readUInt32LE(4);
+        const version = modelBuf.readUInt32LE(4);
         if (version !== 2) return respondJson(res, 400, { error: `Unsupported GLB version ${version}. Only glTF 2.0 supported.` });
       }
       // All validation passed — now charge listing fee
@@ -7012,8 +7030,7 @@ const server = http.createServer(async (req, res) => {
       const modelsDir = path.join(process.cwd(), 'marketplace_models');
       if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
       const modelPath = path.join(modelsDir, `${id}.${format}`);
-      const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
-      await fs.promises.writeFile(modelPath, buf);
+      await fs.promises.writeFile(modelPath, modelBuf);
       const listing = { id, seller: jwtAuth.address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: previewImage ? previewImage.slice(0, 100000) : null, status: 'pending', purchaseCount: 0, createdAt: Date.now() };
       marketplaceListings.set(id, listing);
       saveMarketplace();
@@ -7202,8 +7219,10 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/challenge/accept' && req.method === 'POST') {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
+    let _acceptSolTxSig = null;
     try {
       const { challengeId, solTxSignature } = JSON.parse(await readBody(req));
+      _acceptSolTxSig = solTxSignature || null;
       const acceptor = jwtAuth.address;
       if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
 
@@ -7367,7 +7386,10 @@ const server = http.createServer(async (req, res) => {
       saveChallenges();
       console.log(`[challenges] Accepted ${challengeId} by ${acceptor.slice(0, 8)}... → status: ${challenge.status}`);
       respondJson(res, 200, { ok: true, challenge });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    } catch (e) {
+      if (_acceptSolTxSig && globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx.delete(_acceptSolTxSig);
+      respondJson(res, 400, { error: 'Invalid request body' });
+    }
     return;
   }
 
