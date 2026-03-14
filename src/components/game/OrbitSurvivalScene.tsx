@@ -1337,7 +1337,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
     if (sc !== scoreRef.current) { scoreRef.current = sc; onScore(sc); }
 
     // Time-based coin accumulation: 1/sec base, +1/sec every 30s, ×coinMult for minted ID
-    const coinsPerSec = (1 + Math.floor(el / 30)) * coinMult;
+    const coinsPerSec = Math.min(10, 1 + Math.floor(el / 30)) * coinMult;
     coinAccum.current += coinsPerSec * dt;
     const wholeCoins = Math.floor(coinAccum.current);
     if (wholeCoins > 0) {

@@ -311,7 +311,7 @@ export const rollLeagueEvents = (seed: string, rounds: number) => {
 };
 
 export const deriveTraitBoosts = (traits: WalletTraits | null, score: number): TraitBoosts => {
-  const scoreFactor = clamp(score / 1400, 0, 1);
+  const scoreFactor = clamp(score / 1000, 0, 1);
   const baseBoosts: TraitBoosts = {
     alpha: 0.05 + scoreFactor * 0.06,
     shield: 0.06 + scoreFactor * 0.03,
@@ -420,8 +420,8 @@ export const evaluateLeagueStanding = ({
 }: EvaluateLeagueStandingInput): LeagueStanding => {
   const rounds = Math.max(history.length, 1);
   const wins = history.filter((round) => round.pnl > 0).length;
-  const winRate = wins / rounds;
-  const roi = initialCapital > 0 ? (finalCapital - initialCapital) / initialCapital : 0;
+  const winRate = (wins / rounds) * 100; // 0-100%
+  const roi = initialCapital > 0 ? clamp((finalCapital - initialCapital) / initialCapital, -1, 10) : 0;
   const maxDrawdown = history.reduce((maxValue, round) => Math.max(maxValue, round.drawdown), 0);
   const returns = history.map((round) => round.returnRate);
   const volatility = standardDeviation(returns);
@@ -430,7 +430,7 @@ export const evaluateLeagueStanding = ({
 
   const basePoints =
     roi * 620 +
-    winRate * 240 +
+    (winRate / 100) * 240 +
     clamp(1 - maxDrawdown, 0, 1) * 200 +
     consistency * 130 +
     LEAGUE_DIFFICULTIES[difficulty].scoreBonus;

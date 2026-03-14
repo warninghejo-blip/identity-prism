@@ -1,16 +1,17 @@
 /**
- * Prism Shop — unified shop + marketplace.
- * Tabs: Shop (buy items with Coins) | Creator Market (user sprites) | Equipped (loadout)
+ * Prism Shop — unified shop.
+ * Tabs: Shop (buy items with Coins) | Equipped (loadout)
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { trackForgePurchase } from '@/lib/analytics';
 import {
   ArrowLeft, ShoppingBag, Check, Lock, Sparkles, Coins,
-  Upload, Download, Loader2, Package, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap,
+  Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap,
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
@@ -27,10 +28,10 @@ import {
   unequipItem,
   getItemById,
   FRAME_STYLES,
-  AURA_GLOW_MAP,
   MICROMODULE_DEFS,
   MODULE_TIER_COLORS,
   installModule,
+  uninstallModule,
   getItemModules,
   getModuleById,
   type ForgeCategory,
@@ -38,11 +39,13 @@ import {
   type ForgeLoadout,
   type Micromodule,
 } from '@/lib/forgeItems';
-import { getPrismBalance, spendPrism, type PrismBalance } from '@/lib/prismCoin';
+import { computeShipStats, type ShipStats } from '@/lib/shipStats';
+import { fetchWalletPreview, type WalletPreview } from '@/components/prism/shared';
+import { getPrismBalance, spendPrism, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
 import { getHeliusProxyUrl } from '@/constants';
 
-type TopTab = 'shop' | 'market' | 'equipped';
-type ShopFilter = ForgeCategory | 'all';
+type TopTab = 'shop' | 'equipped' | 'hangar';
+type ShopFilter = ForgeCategory | 'all' | 'modules';
 
 function getApiBase(): string {
   const proxy = getHeliusProxyUrl();
@@ -51,27 +54,30 @@ function getApiBase(): string {
   return '';
 }
 
-// ── Market types ──
-interface MarketListing {
-  id: string;
-  seller: string;
-  name: string;
-  description: string;
-  category: string;
-  price: number;
-  format: string;
-  modelUrl: string;
-  previewImage: string | null;
-  purchaseCount: number;
-  createdAt: number;
-}
 
-const MARKET_CATEGORIES = [
-  { id: 'ship', label: 'Ships', icon: '🚀' },
-  { id: 'planet', label: 'Planets', icon: '🪐' },
-  { id: 'badge', label: 'Badges', icon: '🏅' },
-  { id: 'decoration', label: 'Decor', icon: '✨' },
-];
+// ── Stat thresholds: milestones with gameplay effects ──
+const STAT_THRESHOLDS: Record<string, { at: number; label: string; effect: string; color: string }[]> = {
+  speed: [
+    { at: 25, label: 'Agile', effect: '+10% move speed', color: '#67e8f9' },
+    { at: 50, label: 'Swift', effect: '+20% evasion', color: '#22d3ee' },
+    { at: 75, label: 'Hyperdrive', effect: '+35% speed + afterburner', color: '#06b6d4' },
+  ],
+  shield: [
+    { at: 25, label: 'Armored', effect: '+1 hit point', color: '#93c5fd' },
+    { at: 50, label: 'Fortified', effect: '+2 HP + regen', color: '#3b82f6' },
+    { at: 75, label: 'Invincible', effect: '+3 HP + auto-shield', color: '#2563eb' },
+  ],
+  firepower: [
+    { at: 25, label: 'Armed', effect: '+15% damage', color: '#fca5a5' },
+    { at: 50, label: 'Deadly', effect: '+30% damage + spread', color: '#ef4444' },
+    { at: 75, label: 'Devastator', effect: '+50% damage + piercing', color: '#dc2626' },
+  ],
+  luck: [
+    { at: 25, label: 'Lucky', effect: '+15% coin drops', color: '#fde68a' },
+    { at: 50, label: 'Blessed', effect: '+30% drops + rare items', color: '#fbbf24' },
+    { at: 75, label: 'Fated', effect: '+50% drops + crits', color: '#f59e0b' },
+  ],
+};
 
 const SHOP_FILTERS: { id: ShopFilter; label: string; icon: string }[] = [
   { id: 'all', label: 'All', icon: '🛒' },
@@ -79,6 +85,7 @@ const SHOP_FILTERS: { id: ShopFilter; label: string; icon: string }[] = [
   { id: 'aura', label: 'Auras', icon: CATEGORY_ICONS.aura },
   { id: 'ship_skin', label: 'Ships', icon: CATEGORY_ICONS.ship_skin },
   { id: 'title', label: 'Titles', icon: CATEGORY_ICONS.title },
+  { id: 'modules', label: 'Modules', icon: '🔧' },
 ];
 
 // ── Visual Preview Renderers ──
@@ -92,14 +99,6 @@ const AURA_STYLES: Record<string, { color: string; shadow: string }> = {
   binary_pulse: { color: '#22d3ee', shadow: '0 0 20px rgba(34,211,238,0.5), 0 0 40px rgba(251,191,36,0.3)' },
 };
 
-const SHIP_TINTS: Record<string, { filter: string; shadow: string }> = {
-  stealth: { filter: 'brightness(0.6) saturate(0.3) hue-rotate(0deg)', shadow: '0 0 8px rgba(239,68,68,0.3)' },
-  chrome: { filter: 'brightness(1.3) saturate(0.1) contrast(1.2)', shadow: '0 0 12px rgba(200,200,255,0.4)' },
-  neon: { filter: 'brightness(1.1) saturate(1.5) hue-rotate(90deg)', shadow: '0 0 15px rgba(0,255,100,0.4), 0 0 30px rgba(0,200,255,0.2)' },
-  phantom: { filter: 'brightness(1.2) saturate(0.5) opacity(0.6)', shadow: '0 0 20px rgba(200,200,255,0.3)' },
-  prism: { filter: 'brightness(1.1) saturate(2) hue-rotate(0deg)', shadow: '0 0 15px rgba(255,100,100,0.3), 0 0 30px rgba(100,100,255,0.2)' },
-  golden: { filter: 'brightness(1.2) saturate(1.5) sepia(0.6) hue-rotate(-10deg)', shadow: '0 0 20px rgba(251,191,36,0.5)' },
-};
 
 function ItemPreview({ item }: { item: ForgeItem }) {
   const rarityColor = RARITY_COLORS[item.rarity];
@@ -162,24 +161,15 @@ function ItemPreview({ item }: { item: ForgeItem }) {
   }
 
   if (item.category === 'ship_skin') {
-    const tint = SHIP_TINTS[item.preview];
-    const hasCustomTexture = !tint;
-    const textureSrc = hasCustomTexture
-      ? `/textures/ships/ship_${item.preview}.png`
-      : '/textures/ship.png';
     return (
       <div className="w-full h-28 rounded-lg flex items-center justify-center"
         style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
         <img
-          src={textureSrc}
+          src={`/textures/ships/ship_${item.preview}.png`}
           alt={item.name}
           style={{
-            width: hasCustomTexture ? 48 : 56, height: hasCustomTexture ? 64 : 56, objectFit: 'contain',
-            ...(tint ? {
-              filter: tint.shadow ? `${tint.filter} drop-shadow(${tint.shadow.split(',')[0].replace('0 0', '0 0')})` : tint.filter,
-            } : {
-              filter: `drop-shadow(0 0 8px ${rarityColor}40)`,
-            }),
+            width: 48, height: 64, objectFit: 'contain',
+            filter: `drop-shadow(0 0 8px ${rarityColor}40)`,
           }}
         />
       </div>
@@ -216,66 +206,17 @@ function ItemPreview({ item }: { item: ForgeItem }) {
   );
 }
 
-// ── Mini Card Preview (CSS-only, no Three.js) ──
-function MiniCardPreview({ frameId, auraId, titleName }: { frameId?: string | null; auraId?: string | null; titleName?: string | null }) {
-  const fs = frameId ? FRAME_STYLES[frameId] : null;
-  const auraGlow = auraId ? AURA_GLOW_MAP[auraId] : null;
-  return (
-    <div className="flex flex-col items-center py-3">
-      <div style={{
-        padding: fs ? 4 : 0,
-        borderRadius: 14,
-        background: fs?.gradient || 'transparent',
-        boxShadow: [fs?.boxShadow, auraGlow].filter(Boolean).join(', ') || 'none',
-        animation: fs?.animation || undefined,
-      }}>
-        <div style={{
-          width: 100, height: 140, borderRadius: fs ? 11 : 14,
-          background: 'linear-gradient(135deg, #080a12, #0d1428)',
-          border: fs ? 'none' : '1px solid rgba(255,255,255,0.08)',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          position: 'relative', overflow: 'hidden',
-        }}>
-          {/* Planet placeholder */}
-          <div style={{
-            width: 36, height: 36, borderRadius: '50%',
-            background: 'radial-gradient(circle at 35% 35%, rgba(34,211,238,0.3), rgba(6,182,212,0.1), transparent)',
-            boxShadow: '0 0 20px rgba(34,211,238,0.15)',
-            marginBottom: 8,
-          }} />
-          {/* Name placeholder bars */}
-          <div style={{ width: 48, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 4 }} />
-          <div style={{ width: 32, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', marginBottom: 6 }} />
-          {/* Title badge */}
-          {titleName && (
-            <div style={{
-              padding: '2px 8px', borderRadius: 6,
-              background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)',
-            }}>
-              <span style={{ fontSize: 7, fontWeight: 800, color: '#c084fc' }}>{titleName}</span>
-            </div>
-          )}
-        </div>
-      </div>
-      <p className="text-[8px] text-white/20 mt-2">Preview</p>
-    </div>
-  );
-}
-
 // ── Shop Item Card (AAA) ──
 function ItemCard({
-  item, owned, equipped, canAfford, onPurchase, onEquip, onHover,
+  item, owned, equipped, canAfford, onPurchase, onEquip,
 }: {
   item: ForgeItem; owned: boolean; equipped: boolean; canAfford: boolean;
-  onPurchase: () => void; onEquip: () => void; onHover?: (item: ForgeItem | null) => void;
+  onPurchase: () => void; onEquip: () => void;
 }) {
   const rarityColor = RARITY_COLORS[item.rarity];
   return (
     <div
       className="relative rounded-2xl p-[1px] transition-all duration-500 hover:scale-[1.03] group"
-      onMouseEnter={() => onHover?.(item)}
-      onMouseLeave={() => onHover?.(null)}
-      onClick={() => onHover?.(item)}
       style={{
         background: equipped
           ? `linear-gradient(135deg, ${rarityColor}60, ${rarityColor}20, ${rarityColor}40)`
@@ -363,154 +304,8 @@ function ItemCard({
   );
 }
 
-// ── Market Listing Card ──
-function ListingCard({ listing, owned, onBuy, buying }: {
-  listing: MarketListing; owned: boolean; onBuy: () => void; buying: boolean;
-}) {
-  const catIcon = MARKET_CATEGORIES.find(c => c.id === listing.category)?.icon || '📦';
-  return (
-    <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 hover:bg-white/[0.05] transition-all">
-      <div className="w-full aspect-square rounded-lg mb-3 bg-gradient-to-br from-purple-500/10 to-cyan-500/10 flex items-center justify-center overflow-hidden">
-        {listing.previewImage ? (
-          <img src={listing.previewImage} alt={listing.name} className="w-full h-full object-cover" />
-        ) : (
-          <span className="text-4xl">{catIcon}</span>
-        )}
-      </div>
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="min-w-0">
-          <h3 className="text-white font-bold text-sm truncate">{listing.name}</h3>
-          <p className="text-white/30 text-[10px] truncate">{listing.description || 'No description'}</p>
-        </div>
-        <span className="text-[10px] text-white/20 font-mono uppercase flex-shrink-0">.{listing.format}</span>
-      </div>
-      <div className="flex items-center justify-between text-[10px] text-white/20 mb-3">
-        <span>{listing.seller.slice(0, 4)}...{listing.seller.slice(-4)}</span>
-        <span className="flex items-center gap-1"><Download className="w-3 h-3" /> {listing.purchaseCount}</span>
-      </div>
-      {owned ? (
-        <div className="flex items-center gap-2 text-green-400 text-xs font-bold py-2"><Check className="w-4 h-4" /> Owned</div>
-      ) : (
-        <Button size="sm" className="w-full h-10 text-xs font-bold bg-purple-600 hover:bg-purple-500" onClick={onBuy} disabled={buying}>
-          {buying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Coins className="w-3 h-3 mr-1" />}
-          {listing.price} Coins
-        </Button>
-      )}
-    </div>
-  );
-}
 
-// ── Upload Section ──
-const LISTING_FEE = 10;
-
-function UploadSection({ walletAddress, onUploaded, coinBalance }: { walletAddress: string; onUploaded: () => void; coinBalance: number }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('ship');
-  const [price, setPrice] = useState('50');
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const ext = f.name.split('.').pop()?.toLowerCase() || '';
-    if (!['png', 'webp', 'jpg', 'jpeg', 'svg'].includes(ext)) { setError('Only .png, .webp, .jpg, .svg files supported'); e.target.value = ''; return; }
-    if (f.size > 2 * 1024 * 1024) { setError('File too large (max 2 MB)'); e.target.value = ''; return; }
-    setFile(f); setError('');
-    if (!name) setName(f.name.replace(/\.[^.]+$/, ''));
-  };
-
-  const handleUpload = useCallback(async () => {
-    if (!file || !name.trim() || !walletAddress) return;
-    setUploading(true); setError('');
-    try {
-      const reader = new FileReader();
-      const base64 = await new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      const ext = file.name.split('.').pop()?.toLowerCase() || 'png';
-      const base = getApiBase();
-      const res = await fetch(`${base}/api/marketplace/upload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: walletAddress, name: name.trim(), description: description.trim(), category, price: Number(price) || 50, modelData: base64, modelFormat: ext }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
-      toast.success('Model uploaded!', { description: `"${name}" is now listed` });
-      setFile(null); setName(''); setDescription('');
-      onUploaded();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Upload failed';
-      setError(msg); toast.error(msg);
-    } finally { setUploading(false); }
-  }, [file, name, description, category, price, walletAddress, onUploaded]);
-
-  return (
-    <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.08] space-y-4 mb-5">
-      <h3 className="text-white font-bold text-sm flex items-center gap-2">
-        <Upload className="w-4 h-4 text-purple-400" /> Upload Your Sprite
-      </h3>
-      <p className="text-white/25 text-xs">Upload .png/.webp with transparent background (max 2MB). You earn 80% of each sale.</p>
-      <div>
-        <input ref={fileRef} type="file" accept=".png,.webp,.jpg,.jpeg,.svg" onChange={handleFileChange} className="hidden" />
-        <Button variant="outline" className="w-full h-12 border-dashed border-white/10 text-white/40 hover:text-white hover:border-purple-500/30" onClick={() => fileRef.current?.click()}>
-          {file ? `📦 ${file.name} (${(file.size / 1024).toFixed(0)} KB)` : '📁 Choose file'}
-        </Button>
-      </div>
-      <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Model name..." maxLength={60}
-        className="w-full px-3 py-3 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-white/20 focus:outline-none focus:border-purple-500/50" style={{ fontSize: 16 }} />
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <p className="text-white/30 text-[10px] mb-1 uppercase tracking-wider">Category</p>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}
-            className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none">
-            {MARKET_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
-          </select>
-        </div>
-        <div className="w-28">
-          <p className="text-white/30 text-[10px] mb-1 uppercase tracking-wider">Price</p>
-          <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} min={1} max={10000}
-            className="w-full px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none text-center font-mono" />
-        </div>
-      </div>
-      {error && <div className="flex items-center gap-2 text-red-400 text-xs"><AlertTriangle className="w-3 h-3" /> {error}</div>}
-      {/* Listing fee notice */}
-      <div className="flex items-center justify-between px-3 py-2.5 rounded-xl" style={{
-        background: coinBalance < LISTING_FEE ? 'rgba(239,68,68,0.06)' : 'rgba(251,191,36,0.05)',
-        border: `1px solid ${coinBalance < LISTING_FEE ? 'rgba(239,68,68,0.2)' : 'rgba(251,191,36,0.15)'}`,
-      }}>
-        <div className="flex items-center gap-2">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill={coinBalance < LISTING_FEE ? '#f87171' : '#fbbf24'}><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/></svg>
-          <span className="text-xs font-bold" style={{ color: coinBalance < LISTING_FEE ? '#f87171' : '#fbbf24' }}>
-            Listing fee: {LISTING_FEE} coins
-          </span>
-        </div>
-        {coinBalance < LISTING_FEE && (
-          <span className="text-[10px] text-red-400/70">Insufficient balance</span>
-        )}
-      </div>
-      <Button className="w-full h-12 bg-purple-600 hover:bg-purple-500 font-bold" onClick={handleUpload} disabled={!file || !name.trim() || uploading || Number(price) < 1 || Number(price) > 10000 || coinBalance < LISTING_FEE}>
-        {uploading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
-        {uploading ? 'Uploading...' : 'Upload Model'}
-      </Button>
-    </div>
-  );
-}
-
-// ── Coin Packages ──
-
-const COIN_PACKAGES = [
-  { coins: 1000,   solPrice: 0.001,  label: 'Starter' },    // ~$0.10 — base rate
-  { coins: 5000,   solPrice: 0.0045, label: 'Explorer' },   // ~$0.45 — 10% discount
-  { coins: 15000,  solPrice: 0.012,  label: 'Voyager' },    // ~$1.20 — 20% discount
-  { coins: 50000,  solPrice: 0.035,  label: 'Commander' },  // ~$3.50 — 30% discount
-];
+// COIN_PACKAGES imported from prismCoin.ts
 
 function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
   const wallet = useWallet();
@@ -655,7 +450,7 @@ const VAULT_TIERS = [
   {
     id: 'bronze',
     label: 'Bronze',
-    min: 500,
+    min: 10000,
     lock: 7,
     rateMultiplier: 1.0,
     boost: 10,
@@ -666,7 +461,7 @@ const VAULT_TIERS = [
   {
     id: 'silver',
     label: 'Silver',
-    min: 2000,
+    min: 30000,
     lock: 30,
     rateMultiplier: 1.4,
     boost: 20,
@@ -677,7 +472,7 @@ const VAULT_TIERS = [
   {
     id: 'gold',
     label: 'Gold',
-    min: 5000,
+    min: 75000,
     lock: 90,
     rateMultiplier: 2.0,
     boost: 35,
@@ -1049,52 +844,41 @@ export default function StellarForge() {
   const { publicKey } = useWallet();
   const walletAddress = address || publicKey?.toBase58() || '';
 
+  useEffect(() => { fadeOutTransition(); }, []);
+
+  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(null);
+  useEffect(() => {
+    if (!walletAddress) { setWalletPreview(null); return; }
+    fetchWalletPreview(walletAddress).then(setWalletPreview);
+  }, [walletAddress]);
+
   const [topTab, setTopTab] = useState<TopTab>('shop');
   const [shopFilter, setShopFilter] = useState<ShopFilter>('all');
-  const [previewItem, setPreviewItem] = useState<ForgeItem | null>(null);
   const [balance, setBalance] = useState<PrismBalance | null>(null);
   const [loadout, setLoadout] = useState<ForgeLoadout | null>(null);
   const [purchasing, setPurchasing] = useState<string | null>(null);
   const [moduleModal, setModuleModal] = useState<{ itemId: string; item: ForgeItem } | null>(null);
   const [confirmModule, setConfirmModule] = useState<{ itemId: string; mod: Micromodule } | null>(null);
   const [installingModule, setInstallingModule] = useState(false);
-
-  // Market state
-  const [listings, setListings] = useState<MarketListing[]>([]);
-  const [myPurchases, setMyPurchases] = useState<Set<string>>(new Set());
-  const [marketLoading, setMarketLoading] = useState(false);
-  const [buying, setBuying] = useState<string | null>(null);
-  const [marketCat, setMarketCat] = useState<string | null>(null);
-  const [showUpload, setShowUpload] = useState(false);
+  const [hasIdentityCard, setHasIdentityCard] = useState(false);
+  const [moduleInstallTarget, setModuleInstallTarget] = useState<Micromodule | null>(null);
 
   // Load data
   useEffect(() => {
     if (!walletAddress) return;
     getPrismBalance(walletAddress).then(setBalance);
     setLoadout(getLocalLoadout(walletAddress));
-  }, [walletAddress]);
-
-  // Fetch market data
-  const fetchMarket = useCallback(async () => {
-    setMarketLoading(true);
+    // Check identity card status
     const base = getApiBase();
-    try {
-      const [listRes, purchRes] = await Promise.all([
-        fetch(`${base}/api/marketplace/listings`).then(r => r.ok ? r.json() : { listings: [] }),
-        walletAddress ? fetch(`${base}/api/marketplace/my-purchases?address=${walletAddress}`).then(r => r.ok ? r.json() : { purchases: [] }) : { purchases: [] },
-      ]);
-      setListings(listRes.listings || []);
-      setMyPurchases(new Set((purchRes.purchases || []).map((p: any) => p.id)));
-    } catch {}
-    setMarketLoading(false);
+    fetch(`${base}/api/identity/status?address=${walletAddress}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.hasCard) setHasIdentityCard(true); })
+      .catch(() => {});
   }, [walletAddress]);
-
-  useEffect(() => {
-    if (topTab === 'market') fetchMarket();
-  }, [topTab, fetchMarket]);
 
   // Shop logic
   const filteredItems = useMemo(() => {
+    if (shopFilter === 'modules') return []; // modules rendered separately
     if (shopFilter === 'all') return ALL_FORGE_ITEMS;
     return ALL_FORGE_ITEMS.filter((i) => i.category === shopFilter);
   }, [shopFilter]);
@@ -1159,8 +943,8 @@ export default function StellarForge() {
     try {
       const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
       if (!result) { toast.error('Purchase failed'); return; }
-      const newLoadout = installModule(loadout, itemId, moduleId);
-      if (!newLoadout) { toast.error('Cannot install module'); return; }
+      const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
+      if (!newLoadout) { toast.error('Cannot install module — check slot limits or identity card requirement'); return; }
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
       setBalance(result.balance);
@@ -1172,7 +956,7 @@ export default function StellarForge() {
     } finally {
       setInstallingModule(false);
     }
-  }, [loadout, balance, walletAddress, installingModule]);
+  }, [loadout, balance, walletAddress, installingModule, hasIdentityCard]);
 
   const isOwned = useCallback((id: string) => loadout?.ownedItems.some((o) => o.itemId === id) ?? false, [loadout]);
   const isEquipped = useCallback((id: string) => {
@@ -1180,30 +964,6 @@ export default function StellarForge() {
     return loadout.equippedFrame === id || loadout.equippedAura === id ||
            loadout.equippedShipSkin === id || loadout.equippedTitle === id;
   }, [loadout]);
-
-  // Market buy
-  const handleMarketBuy = useCallback(async (listing: MarketListing) => {
-    if (!walletAddress) { toast.error('Connect wallet first'); return; }
-    setBuying(listing.id);
-    try {
-      const base = getApiBase();
-      const res = await fetch(`${base}/api/marketplace/purchase`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: walletAddress, listingId: listing.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      toast.success(data.message);
-      setMyPurchases(prev => new Set([...prev, listing.id]));
-      if (data.newBalance !== undefined) setBalance(b => b ? { ...b, balance: data.newBalance } : b);
-      fetchMarket();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Purchase failed');
-    } finally { setBuying(null); }
-  }, [walletAddress, fetchMarket]);
-
-  const filteredListings = marketCat ? listings.filter(l => l.category === marketCat) : listings;
 
   // Equipped items for loadout tab
   const equippedItems = useMemo(() => {
@@ -1243,7 +1003,7 @@ export default function StellarForge() {
         borderBottom: '1px solid rgba(168,85,247,0.08)',
       }}>
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => goBack(navigate)} className="w-9 h-9 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]">
+          <button onClick={() => { startFadeTransition(() => goBack(navigate)); }} className="w-9 h-9 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]">
             <ArrowLeft className="w-4 h-4 text-white/60" />
           </button>
           <div className="flex-1">
@@ -1276,8 +1036,8 @@ export default function StellarForge() {
         <div className="max-w-2xl mx-auto px-3 flex gap-1 py-1.5">
           {([
             { id: 'shop' as TopTab, label: 'Armory', icon: '🛡️' },
-            { id: 'market' as TopTab, label: 'Bazaar', icon: '🎨' },
             { id: 'equipped' as TopTab, label: 'Loadout', icon: '⚔️' },
+            { id: 'hangar' as TopTab, label: 'Hangar', icon: '🚀' },
           ]).map((t) => (
             <button
               key={t.id}
@@ -1301,32 +1061,24 @@ export default function StellarForge() {
 
       {/* ── Content ── */}
       <main className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full px-4 py-5 pb-24 relative z-10">
-        {/* ═══ ARMORY TAB ═══ */}
-        {topTab === 'shop' && (
-          <>
-            {/* Buy Coins Section */}
-            <BuyCoinsSection
-              walletAddress={walletAddress}
-              onPurchased={() => {
-                if (walletAddress) getPrismBalance(walletAddress).then(setBalance);
-              }}
-            />
+        {!walletAddress && (
+          <div className="text-center py-16 space-y-3">
+            <div className="text-4xl">🔗</div>
+            <p className="text-white/50 text-sm">Connect your wallet to access the Forge</p>
+          </div>
+        )}
 
-            {/* Prism Vault — Staking */}
-            <PrismVaultSection
-              walletAddress={walletAddress}
-              balance={balance?.balance ?? 0}
-              onBalanceChange={() => {
-                if (walletAddress) getPrismBalance(walletAddress).then(setBalance);
-              }}
-            />
+        {/* ═══ ARMORY TAB ═══ */}
+        {walletAddress && topTab === 'shop' && (
+          <>
+            {/* Buy Coins & Staking → moved to /vault page */}
 
             {/* Category filters — glass pills */}
             <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
               {SHOP_FILTERS.map((f) => (
                 <button
                   key={f.id}
-                  onClick={() => { setShopFilter(f.id); setPreviewItem(null); }}
+                  onClick={() => setShopFilter(f.id)}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all duration-300"
                   style={shopFilter === f.id ? {
                     background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(139,92,246,0.15))',
@@ -1344,13 +1096,14 @@ export default function StellarForge() {
               ))}
             </div>
 
-            {/* Card preview for frame/aura/title */}
-            {previewItem && (previewItem.category === 'frame' || previewItem.category === 'aura' || previewItem.category === 'title') && (
-              <MiniCardPreview
-                frameId={previewItem.category === 'frame' ? previewItem.id : loadout?.equippedFrame}
-                auraId={previewItem.category === 'aura' ? previewItem.id : loadout?.equippedAura}
-                titleName={previewItem.category === 'title' ? previewItem.preview : (loadout?.equippedTitle ? getItemById(loadout.equippedTitle)?.preview : null)}
-              />
+            {/* Hint: how to earn coins */}
+            {balance && balance.balance === 0 && (
+              <button
+                onClick={() => navigate('/vault')}
+                className="w-full mb-4 px-4 py-2.5 rounded-xl text-[11px] text-amber-300/60 bg-amber-500/[0.06] border border-amber-500/10 hover:bg-amber-500/10 transition-colors text-left"
+              >
+                💡 Earn Coins by playing games, completing quests, or <span className="underline">buy in the Vault</span>
+              </button>
             )}
 
             {/* Items grid */}
@@ -1364,11 +1117,10 @@ export default function StellarForge() {
                   canAfford={(balance?.balance ?? 0) >= item.price}
                   onPurchase={() => handlePurchase(item)}
                   onEquip={() => handleEquip(item)}
-                  onHover={setPreviewItem}
                 />
               ))}
             </div>
-            {filteredItems.length === 0 && (
+            {filteredItems.length === 0 && shopFilter !== 'modules' && (
               <div className="text-center py-24">
                 <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{
                   background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(139,92,246,0.05))',
@@ -1379,89 +1131,103 @@ export default function StellarForge() {
                 <p className="text-white/20 text-sm font-medium">No items in this category</p>
               </div>
             )}
-          </>
-        )}
 
-        {/* ═══ BAZAAR TAB ═══ */}
-        {topTab === 'market' && (
-          <>
-            {/* Upload toggle — premium button */}
-            <button
-              onClick={() => setShowUpload(!showUpload)}
-              className="w-full mb-5 px-5 py-3.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all duration-300"
-              style={{
-                background: showUpload
-                  ? 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(236,72,153,0.1))'
-                  : 'rgba(168,85,247,0.04)',
-                border: `1px dashed rgba(168,85,247,${showUpload ? '0.3' : '0.15'})`,
-                color: showUpload ? '#c084fc' : 'rgba(192,132,252,0.6)',
-                boxShadow: showUpload ? '0 0 20px rgba(168,85,247,0.1)' : 'none',
-              }}
-            >
-              <Upload className="w-4 h-4" />
-              {showUpload ? 'Hide Upload Form' : 'Upload Your Sprite'}
-            </button>
-
-            {showUpload && <UploadSection walletAddress={walletAddress} coinBalance={balance?.balance ?? 0} onUploaded={() => { fetchMarket(); setShowUpload(false); }} />}
-
-            {/* Category filter */}
-            <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
-              <button
-                onClick={() => setMarketCat(null)}
-                className="px-4 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all duration-300"
-                style={!marketCat ? {
-                  background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(139,92,246,0.15))',
-                  color: '#c084fc', border: '1px solid rgba(168,85,247,0.3)',
-                } : {
-                  background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.35)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                }}
-              >All</button>
-              {MARKET_CATEGORIES.map((c) => (
-                <button key={c.id} onClick={() => setMarketCat(c.id)}
-                  className="px-4 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all duration-300"
-                  style={marketCat === c.id ? {
-                    background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(139,92,246,0.15))',
-                    color: '#c084fc', border: '1px solid rgba(168,85,247,0.3)',
-                  } : {
-                    background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.35)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                  }}>
-                  {c.icon} {c.label}
-                </button>
-              ))}
-            </div>
-
-            {marketLoading ? (
-              <div className="flex justify-center py-24">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{
-                  background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.15)',
-                }}>
-                  <Loader2 className="w-5 h-5 animate-spin text-purple-400/50" />
-                </div>
+            {/* ── Modules Grid ── */}
+            {shopFilter === 'modules' && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {MICROMODULE_DEFS.map((mod) => {
+                  const tierColor = MODULE_TIER_COLORS[mod.tier];
+                  return (
+                    <div key={mod.id} className="rounded-xl overflow-hidden border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.06] transition-all duration-300">
+                      <div className="p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xl">{mod.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold text-white/90 truncate">{mod.name}</div>
+                            <div className="text-[9px] font-bold uppercase tracking-wider" style={{ color: tierColor }}>{mod.tier} tier</div>
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-white/40 mb-2">{mod.description}</p>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-[10px] font-bold text-green-400">+{mod.statBonus.value} {mod.statBonus.stat}</span>
+                          {mod.tradeoff && <span className="text-[10px] font-bold text-red-400/60">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
+                        </div>
+                        <button
+                          onClick={() => setModuleInstallTarget(mod)}
+                          disabled={!walletAddress || !balance || balance.balance < mod.price}
+                          className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300"
+                          style={{
+                            background: balance && balance.balance >= mod.price
+                              ? `linear-gradient(135deg, ${tierColor}30, ${tierColor}15)`
+                              : 'rgba(255,255,255,0.04)',
+                            color: balance && balance.balance >= mod.price ? tierColor : 'rgba(255,255,255,0.25)',
+                            border: `1px solid ${balance && balance.balance >= mod.price ? `${tierColor}40` : 'rgba(255,255,255,0.06)'}`,
+                          }}
+                        >
+                          <Coins className="w-3 h-3 inline mr-1" /> {mod.price.toLocaleString()}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ) : filteredListings.length === 0 ? (
-              <div className="text-center py-20">
-                <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{
-                  background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.1)',
-                }}>
-                  <Package className="w-7 h-7 text-purple-400/25" />
+            )}
+
+            {/* Module Install Target Modal — pick item to install on */}
+            {moduleInstallTarget && (
+              <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setModuleInstallTarget(null)}>
+                <div className="bg-[#0d1117] border border-white/10 rounded-2xl p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+                  <h3 className="text-sm font-bold text-white mb-1">Install {moduleInstallTarget.name}</h3>
+                  <p className="text-[10px] text-white/40 mb-3">Select an owned item to install this module on:</p>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {loadout?.ownedItems
+                      .map(o => getItemById(o.itemId))
+                      .filter((item): item is ForgeItem => item != null && moduleInstallTarget.compatibleCategories.includes(item.category))
+                      .map(item => {
+                        const currentMods = loadout ? (loadout.installedModules[item.id] || []) : [];
+                        const maxSlots = item.maxModuleSlots ?? 3;
+                        const isFull = currentMods.length >= maxSlots;
+                        const alreadyHas = currentMods.includes(moduleInstallTarget.id);
+                        const needsCard = item.category === 'ship_skin' && !hasIdentityCard;
+                        const disabled = isFull || alreadyHas || needsCard;
+                        return (
+                          <button
+                            key={item.id}
+                            disabled={disabled}
+                            onClick={() => {
+                              setModuleInstallTarget(null);
+                              setConfirmModule({ itemId: item.id, mod: moduleInstallTarget });
+                            }}
+                            className="w-full flex items-center gap-3 p-2.5 rounded-xl border transition-all duration-200 text-left"
+                            style={{
+                              background: disabled ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)',
+                              borderColor: disabled ? 'rgba(255,255,255,0.04)' : 'rgba(168,85,247,0.2)',
+                              opacity: disabled ? 0.4 : 1,
+                            }}
+                          >
+                            <span className="text-sm">{CATEGORY_ICONS[item.category]}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] font-bold text-white/80 truncate">{item.name}</div>
+                              <div className="text-[9px] text-white/30">
+                                Slots: {currentMods.map(() => '■').join('')}{Array(maxSlots - currentMods.length).fill('□').join('')}
+                                {' '}({currentMods.length}/{maxSlots})
+                                {needsCard && ' — Identity Card required'}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+                  <button onClick={() => setModuleInstallTarget(null)} className="w-full mt-3 py-2 rounded-lg text-xs font-bold text-white/40 bg-white/5 hover:bg-white/10 transition-colors">Cancel</button>
                 </div>
-                <p className="text-white/25 text-sm font-medium mb-1">No models yet</p>
-                <p className="text-white/10 text-xs">Be the first to upload!</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                {filteredListings.map((l) => (
-                  <ListingCard key={l.id} listing={l} owned={myPurchases.has(l.id)} onBuy={() => handleMarketBuy(l)} buying={buying === l.id} />
-                ))}
               </div>
             )}
           </>
         )}
 
+
         {/* ═══ LOADOUT TAB ═══ */}
-        {topTab === 'equipped' && (
+        {walletAddress && topTab === 'equipped' && (
           <>
             <p className="text-white/25 text-xs mb-5 font-medium">Your current loadout. Tap an item to change or unequip.</p>
 
@@ -1568,25 +1334,32 @@ export default function StellarForge() {
                 <Zap className="w-3.5 h-3.5 text-amber-400" /> Micromodules
               </h3>
               <p className="text-white/15 text-[10px] mb-4">
-                Permanent upgrades for equipped items. Max 3 per item. Cannot be removed after install.
+                Permanent upgrades for equipped items. Cannot be removed after install.
               </p>
 
-              {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura').length === 0 ? (
-                <p className="text-white/10 text-xs italic py-4 text-center">Equip a frame or aura to install modules</p>
+              {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura' || i.category === 'ship_skin').length === 0 ? (
+                <p className="text-white/10 text-xs italic py-4 text-center">Equip a frame, aura, or ship to install modules</p>
               ) : (
                 <div className="space-y-3">
-                  {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura').map((item) => {
+                  {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura' || i.category === 'ship_skin').map((item) => {
                     const modules = loadout ? getItemModules(loadout, item.id) : [];
                     const rarityColor = RARITY_COLORS[item.rarity];
+                    const maxSlots = item.maxModuleSlots ?? 3;
+                    const needsCard = item.category === 'ship_skin' && !hasIdentityCard;
                     return (
                       <div key={item.id} className="rounded-xl p-3 border border-white/[0.06] bg-white/[0.02]">
                         <div className="flex items-center gap-2 mb-2">
                           <span className="text-sm">{CATEGORY_ICONS[item.category]}</span>
                           <span className="text-white text-xs font-bold">{item.name}</span>
-                          <span className={`text-[9px] ml-auto ${modules.length >= 3 ? 'text-green-400' : ''}`} style={modules.length < 3 ? { color: rarityColor } : undefined}>{modules.length >= 3 ? 'Full' : `${modules.length}/3 slots`}</span>
+                          <span className={`text-[9px] ml-auto ${modules.length >= maxSlots ? 'text-green-400' : ''}`} style={modules.length < maxSlots ? { color: rarityColor } : undefined}>
+                            {modules.length >= maxSlots ? 'Full' : `${modules.length}/${maxSlots} slots`}
+                          </span>
                         </div>
+                        {needsCard && (
+                          <p className="text-[9px] text-amber-400/60 mb-2">Identity Card required to install modules on ships</p>
+                        )}
                         <div className="flex gap-2">
-                          {[0, 1, 2].map((slotIdx) => {
+                          {Array.from({ length: maxSlots }).map((_, slotIdx) => {
                             const mod = modules[slotIdx];
                             if (mod) {
                               const tierColor = MODULE_TIER_COLORS[mod.tier];
@@ -1604,8 +1377,9 @@ export default function StellarForge() {
                             return (
                               <button
                                 key={slotIdx}
-                                onClick={() => setModuleModal({ itemId: item.id, item })}
-                                className="flex-1 rounded-lg border border-dashed border-white/[0.08] p-2 flex flex-col items-center justify-center hover:border-purple-500/30 hover:bg-purple-500/5 transition-all"
+                                onClick={() => !needsCard && setModuleModal({ itemId: item.id, item })}
+                                disabled={needsCard}
+                                className="flex-1 rounded-lg border border-dashed border-white/[0.08] p-2 flex flex-col items-center justify-center hover:border-purple-500/30 hover:bg-purple-500/5 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                               >
                                 <Plus className="w-3 h-3 text-white/15" />
                                 <span className="text-[8px] text-white/10 mt-0.5">Install</span>
@@ -1620,22 +1394,212 @@ export default function StellarForge() {
               )}
             </div>
 
-            {/* Purchased market items */}
-            {myPurchases.size > 0 && (
-              <div className="mt-8">
-                <h3 className="text-white/30 text-xs font-bold uppercase tracking-widest mb-4">Purchased Models</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {listings.filter(l => myPurchases.has(l.id)).map((l) => (
-                    <ListingCard key={l.id} listing={l} owned={true} onBuy={() => {}} buying={false} />
-                  ))}
-                </div>
-                {listings.filter(l => myPurchases.has(l.id)).length === 0 && (
-                  <p className="text-white/10 text-xs italic">No purchased models yet</p>
-                )}
-              </div>
-            )}
           </>
         )}
+
+        {/* ═══ HANGAR TAB ═══ */}
+        {walletAddress && topTab === 'hangar' && loadout && (() => {
+          const equippedShipId = loadout.equippedShipSkin;
+          const equippedShip = equippedShipId ? getItemById(equippedShipId) : null;
+          // Show default ship when nothing equipped (same as in games: /textures/ship.png)
+          const displayShipId = equippedShipId;
+          const displayShip = equippedShip;
+          const skinKey = displayShipId ? displayShipId.replace('ship_', '') : null;
+          const shipModules = displayShipId ? getItemModules(loadout, displayShipId) : [];
+          const maxSlots = displayShip?.maxModuleSlots ?? 1;
+
+          // Compute ship stats from compositeScore (consistent with card score)
+          const stats = computeShipStats(walletPreview, loadout);
+
+          // All owned ships
+          const ownedShips = ALL_FORGE_ITEMS.filter(i =>
+            i.category === 'ship_skin' && loadout.ownedItems.some(o => o.itemId === i.id)
+          );
+
+          const handleRemoveModule = (moduleId: string) => {
+            if (!displayShipId) return;
+            const updated = uninstallModule(loadout, displayShipId, moduleId);
+            if (updated) {
+              saveLocalLoadout(updated);
+              setLoadout(updated);
+              const mod = getModuleById(moduleId);
+              toast.success(`Removed ${mod?.name ?? 'module'}`);
+            }
+          };
+
+          const handleSwitchShip = (shipId: string) => {
+            const updated = equipItem(loadout, shipId);
+            saveLocalLoadout(updated);
+            setLoadout(updated);
+            const ship = getItemById(shipId);
+            toast.success(`Switched to ${ship?.name ?? 'ship'}`);
+          };
+
+          const statBars: { key: keyof ShipStats; label: string; color: string }[] = [
+            { key: 'speed', label: 'Speed', color: '#22d3ee' },
+            { key: 'shield', label: 'Shield', color: '#3b82f6' },
+            { key: 'firepower', label: 'Firepower', color: '#ef4444' },
+            { key: 'luck', label: 'Luck', color: '#fbbf24' },
+          ];
+
+          return (
+            <div className="space-y-4">
+              {/* Ship Preview */}
+              <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-transparent p-5 text-center">
+                <div className="flex justify-center mb-3">
+                  <img
+                    src={skinKey ? `/textures/ships/ship_${skinKey}.png` : '/textures/ship.png'}
+                    alt={displayShip?.name ?? 'Standard Shuttle'}
+                    className="w-32 h-32 object-contain"
+                    style={{ filter: displayShip ? `drop-shadow(0 0 16px ${RARITY_COLORS[displayShip.rarity]}60)` : 'drop-shadow(0 0 12px rgba(255,255,255,0.15))' }}
+                  />
+                </div>
+                {displayShip ? (
+                  <>
+                    <h3 className="text-white font-bold text-base">{displayShip.name}</h3>
+                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block"
+                      style={{ color: RARITY_COLORS[displayShip.rarity], background: `${RARITY_COLORS[displayShip.rarity]}12`, border: `1px solid ${RARITY_COLORS[displayShip.rarity]}25` }}>
+                      {displayShip.rarity}
+                    </span>
+                    <p className="text-white/30 text-xs mt-2">
+                      Slots: {Array(maxSlots).fill(null).map((_, i) => i < shipModules.length ? '◆' : '◇').join('')} ({shipModules.length}/{maxSlots})
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-white/50 font-bold text-base">Standard Shuttle</h3>
+                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block text-white/20 bg-white/[0.04] border border-white/[0.08]">
+                      default
+                    </span>
+                    <p className="text-white/15 text-[10px] mt-2">Purchase a ship in the Armory to customize</p>
+                  </>
+                )}
+              </div>
+
+              {/* Installed Modules */}
+              {displayShip && (
+                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                  <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Installed Modules</h4>
+                  <div className="space-y-2">
+                    {shipModules.map((mod) => {
+                      const tierColor = MODULE_TIER_COLORS[mod.tier];
+                      return (
+                        <div key={mod.id} className="flex items-center gap-3 p-2.5 rounded-xl" style={{ background: `${tierColor}08`, border: `1px solid ${tierColor}20` }}>
+                          <span className="text-lg">{mod.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-xs font-bold text-white/80">{mod.name}</span>
+                            <span className="text-[10px] ml-2 font-bold" style={{ color: '#4ade80' }}>+{mod.statBonus.value} {mod.statBonus.stat}</span>
+                            {mod.tradeoff && <span className="text-[10px] ml-1 text-red-400/60">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
+                          </div>
+                          <button
+                            onClick={() => handleRemoveModule(mod.id)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {shipModules.length < maxSlots && (
+                      <button
+                        onClick={() => displayShipId && setModuleModal({ itemId: displayShipId, item: displayShip })}
+                        className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/[0.08] text-white/20 text-xs hover:border-purple-500/30 hover:bg-purple-500/5 transition-all"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add Module
+                      </button>
+                    )}
+                    {shipModules.length === 0 && maxSlots > 0 && (
+                      <p className="text-white/10 text-[10px] text-center py-1">No modules installed yet</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Ship Stats */}
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Ship Stats</h4>
+                {!walletPreview && walletAddress && (
+                  <p className="text-white/15 text-[10px] mb-3 flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Loading wallet data...
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {statBars.map(({ key, label, color }) => {
+                    const val = stats[key];
+                    // Threshold effects
+                    const thresholds = STAT_THRESHOLDS[key];
+                    const activeThreshold = thresholds.filter(t => val >= t.at).pop();
+                    const nextThreshold = thresholds.find(t => val < t.at);
+                    return (
+                      <div key={key}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[11px] font-bold text-white/60">{label}</span>
+                          <div className="flex items-center gap-2">
+                            {activeThreshold && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ color: activeThreshold.color, background: `${activeThreshold.color}15` }}>
+                                {activeThreshold.label}
+                              </span>
+                            )}
+                            <span className="text-[11px] font-black tabular-nums" style={{ color }}>{val}</span>
+                          </div>
+                        </div>
+                        <div className="relative h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${val}%`, background: `linear-gradient(90deg, ${color}80, ${color})` }} />
+                          {/* Threshold markers */}
+                          {thresholds.map(t => (
+                            <div key={t.at} className="absolute top-0 h-full w-px" style={{ left: `${t.at}%`, background: val >= t.at ? `${t.color}60` : 'rgba(255,255,255,0.08)' }} />
+                          ))}
+                        </div>
+                        {nextThreshold && (
+                          <p className="text-[10px] text-white/40 mt-0.5">
+                            +{nextThreshold.at - val} to unlock: <span className="font-medium" style={{ color: nextThreshold.color }}>{nextThreshold.label}</span> — {nextThreshold.effect}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Ship Grid */}
+              {ownedShips.length > 1 && (
+                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                  <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Your Ships</h4>
+                  <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
+                    {ownedShips.map((ship) => {
+                      const sk = ship.id.replace('ship_', '');
+                      const isActive = ship.id === equippedShipId;
+                      const rc = RARITY_COLORS[ship.rarity];
+                      return (
+                        <button
+                          key={ship.id}
+                          onClick={() => !isActive && handleSwitchShip(ship.id)}
+                          className="flex-shrink-0 flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all duration-200"
+                          style={{
+                            border: `1px solid ${isActive ? `${rc}40` : 'rgba(255,255,255,0.06)'}`,
+                            background: isActive ? `${rc}10` : 'transparent',
+                            minWidth: 72,
+                          }}
+                        >
+                          <img
+                            src={`/textures/ships/ship_${sk}.png`}
+                            alt={ship.name}
+                            className="w-12 h-12 object-contain"
+                            style={{ filter: isActive ? `drop-shadow(0 0 8px ${rc}60)` : 'brightness(0.6)' }}
+                          />
+                          <span className="text-[9px] font-bold truncate w-full text-center" style={{ color: isActive ? rc : 'rgba(255,255,255,0.3)' }}>
+                            {ship.name.replace('Ship: ', '')}
+                          </span>
+                          {isActive && <Check className="w-3 h-3" style={{ color: rc }} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── Module Selection Modal ── */}
         {moduleModal && (

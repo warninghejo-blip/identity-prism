@@ -39,6 +39,8 @@ interface Enemy {
   hitFlash: number; // >0 = flash white briefly on hit
   r: number;
   rx: number; ry: number; rz: number;
+  cascadeTimer: number;
+  enraged: boolean;
 }
 
 interface EnemyBullet {
@@ -184,6 +186,7 @@ function spawnEnemy(type: EnemyType, x?: number, levelIdx = 0): Enemy {
     cloakAlpha: type === "cloaker" ? 0.15 : 1,
     hitFlash: 0,
     r: s.r, rx: 0, ry: 0, rz: rnd(0, 6.28),
+    cascadeTimer: 0, enraged: false,
   };
 }
 
@@ -696,6 +699,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
       id: i, x: 0, y: 99, vx: 0, vy: 0, hp: 0, maxHp: 0, type: "scout" as EnemyType,
       active: false, dying: 0, shootTimer: 0, phaseTimer: 0, shieldHp: 0, cloakAlpha: 1,
       hitFlash: 0, r: 0.5, rx: 0, ry: 0, rz: 0,
+      cascadeTimer: 0, enraged: false,
     }))
   );
   const enemyBullets = useRef<EnemyBullet[]>(
@@ -1060,7 +1064,7 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
       e.dying -= dt;
       // Boss cascade: spawn explosions at random offsets every 0.08s during dying
       if (isBoss(e.type) && e.dying > 0) {
-        e.cascadeTimer = (e.cascadeTimer || 0) + dt;
+        e.cascadeTimer += dt;
         if (e.cascadeTimer >= 0.08) {
           e.cascadeTimer -= 0.08;
           const ox = (Math.random() - .5) * e.r * 4;
@@ -1121,8 +1125,9 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
           e.x = rnd(-visBounds.current.hw + 3, visBounds.current.hw - 3);
           e.y = rnd(HALF_H * 0.2, HALF_H * 0.55);
         }
-        // Boss3 (Warlord): enrage at 50% HP — faster movement
-        if (e.type === "boss3" && e.hp < e.maxHp * 0.5) {
+        // Boss3 (Warlord): enrage at 50% HP — faster movement (apply once)
+        if (e.type === "boss3" && e.hp < e.maxHp * 0.5 && !e.enraged) {
+          e.enraged = true;
           e.vx *= 1.4;
         }
         // Boss4 (Nexus): regenerate shield over time (1 HP every 3s)
@@ -1368,8 +1373,15 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
               for (let _bi = 0; _bi < enemyBullets.current.length; _bi++) enemyBullets.current[_bi].active = false;
             }
             sfxEnemyDestroy();
-            scoreRef.current += ENEMY_STATS[e.type].score;
-            onScore(scoreRef.current);
+            combo.current++;
+            comboTimer.current = 3;
+            const shMult = Math.min(combo.current, 3);
+            const shPts = ENEMY_STATS[e.type].score * shMult;
+            scoreRef.current += shPts;
+            const shLuckMult = 1 + (shipStats?.luck || 0) / 200;
+            coinBank.current += Math.max(1, Math.floor(shPts / 3 * shLuckMult)) * coinMult;
+            if (isBoss(e.type)) { coinBank.current += Math.floor((({ boss1: 50, boss2: 100, boss3: 150, boss4: 250 } as Record<string,number>)[e.type] ?? 50) * shLuckMult); }
+            flushScoreCoins(scoreRef.current, coinBank.current);
           }
         } else {
           overRef.current = true; shake.current = 2;

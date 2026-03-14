@@ -4,7 +4,8 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { SolanaMobileWalletAdapterWalletName } from "@solana-mobile/wallet-adapter-mobile";
 import { Button } from "@/components/ui/button";
-import { useWalletData } from "@/hooks/useWalletData";
+import { fetchWalletPreview, type WalletPreview } from '@/components/prism/shared';
+import { invalidateCompositeCache } from "@/hooks/useCompositeScore";
 import { toast } from "sonner";
 import BattleResultOverlay from "@/components/BattleResultOverlay";
 import {
@@ -35,19 +36,18 @@ import { hapticHeavy, hapticMedium, hapticSuccess, hapticError } from "@/lib/hap
 import OrbitSurvivalScene from "@/components/game/OrbitSurvivalScene";
 import AsteroidDestroyerScene from "@/components/game/AsteroidDestroyerScene";
 import GravityRunnerScene from "@/components/game/GravityRunnerScene";
-import CosmicMineScene from "@/components/game/CosmicMineScene";
+
 import { FpsOverlay } from "@/components/game/GameShared";
-import { deriveShipStats, getEquipmentBonusLabel, DEFAULT_SHIP_STATS } from "@/lib/shipStats";
+import { computeShipStats, getEquipmentBonusLabel, DEFAULT_SHIP_STATS } from "@/lib/shipStats";
 import type { ForgeLoadout } from "@/lib/forgeItems";
 
-type GameMode = "orbit" | "destroyer" | "gravity" | "mining" | "text_quest";
+type GameMode = "orbit" | "destroyer" | "gravity" | "text_quest";
 
 const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string; cover?: string }[] = [
   { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit", cover: "/games/orbit_cover.png" },
   { id: "destroyer", name: "Cosmic Defender", icon: "💥", desc: "4 sectors of enemies & bosses. Auto-fire, collect powerups!", controls: "WASD/Arrows to move, auto-fire. Touch: drag to move", cover: "/games/wars_cover.png" },
   { id: "gravity", name: "Gravity Runner", icon: "🔄", desc: "Tap to fly, collect crystals, dodge asteroid columns!", controls: "Tap/Space to thrust upward", cover: "/games/gravity_cover.png" },
-  { id: "mining", name: "Cosmic Mine", icon: "⛏️", desc: "Tap to mine ore, buy upgrades, prestige for stars", controls: "Tap asteroid to mine, buy upgrades below", cover: "/games/mining_cover.png" },
-  { id: "text_quest", name: "Text Adventures", icon: "📖", desc: "SR2-inspired branching quests", controls: "Read and make choices" },
+  { id: "text_quest", name: "Text Adventures", icon: "📖", desc: "SR2-inspired branching quests", controls: "Read and make choices", cover: "/games/quest_cover.png" },
 ];
 import {
   commitScoreOnchain,
@@ -71,7 +71,7 @@ import {
   registerGameSessionProof,
   type GameSessionProof,
 } from "@/lib/magicblock";
-import { createWormholeTunnel, fadeOutWormholeTunnel } from "@/lib/wormholeTunnel";
+import { startFadeTransition, fadeOutTransition } from "@/lib/fadeTransition";
 import { goBack } from "@/lib/safeNavigate";
 import { trackGameStart, trackGameOver } from "@/lib/analytics";
 // earnPrism removed — unified economy uses coins directly
@@ -96,14 +96,6 @@ import {
   GRAVITY_COIN_REWARDS,
   type GravityAchievement,
 } from "@/lib/gravityAchievements";
-import {
-  checkMiningAchievements,
-  updateMiningStats,
-  getMiningAchievements,
-  getMiningAchievementProgress,
-  claimMiningReward,
-  MINING_COIN_REWARDS,
-} from "@/lib/miningAchievements";
 
 /* ═══════════════════════════════════════════════════
    Leaderboard types & server sync
@@ -197,7 +189,6 @@ function writeWalletCoins(walletAddress: string, coins: number) {
 const LEADERBOARD_STORAGE_KEY = "identity_prism_orbit_survival_board_v3";
 const DEFENDER_LEADERBOARD_KEY = "identity_prism_defender_board_v1";
 const GRAVITY_LEADERBOARD_KEY = "prism_league_gravity_leaderboard_v1";
-const MINING_LEADERBOARD_KEY = "prism_league_mining_leaderboard_v1";
 const ONCHAIN_BONUS_MULTIPLIER = 1.5;
 const COIN_BONUS = 25;
 async function syncCoinsToServer(walletAddress: string, coins: number, delta: number, mode?: GameMode): Promise<void> {
@@ -343,15 +334,6 @@ const writeGravityLeaderboard = (lb: LeaderboardEntry[]) => {
   try { window.localStorage.setItem(GRAVITY_LEADERBOARD_KEY, JSON.stringify(lb)); } catch { /* storage full */ }
 };
 
-const readMiningLeaderboard = (): LeaderboardEntry[] => {
-  try {
-    const raw = window.localStorage.getItem(MINING_LEADERBOARD_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-};
-const writeMiningLeaderboard = (lb: LeaderboardEntry[]) => {
-  try { window.localStorage.setItem(MINING_LEADERBOARD_KEY, JSON.stringify(lb)); } catch { /* */ }
-};
 
 const isMobileDevice = () =>
   typeof window !== "undefined" && /android|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -440,9 +422,10 @@ function WaitingForOpponentBanner({
     const base = getServerBase();
     if (!base) return;
 
+    const controller = new AbortController();
     const poll = async () => {
       try {
-        const res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(address)}`);
+        const res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(address)}`, { signal: controller.signal });
         if (!res.ok) return;
         const data = await res.json();
         const list: ChallengeResult[] = Array.isArray(data) ? data : data.challenges ?? [];
@@ -455,7 +438,7 @@ function WaitingForOpponentBanner({
     };
 
     const interval = setInterval(poll, 5000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); controller.abort(); };
   }, [challengeId, address, onResultReceived]);
 
   return (
@@ -492,19 +475,38 @@ const PrismLeague = () => {
   const { publicKey, connected, wallets: availableWallets, select, connect, disconnect } = wallet;
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const address = publicKey?.toBase58();
-  const { traits } = useWalletData(address);
 
-  // Load forge loadout from localStorage
-  const forgeLoadout = useMemo<ForgeLoadout | null>(() => {
-    if (!address) return null;
-    try {
-      const raw = localStorage.getItem(`prism_forge_loadout_v1_${address}`);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+  // Load wallet preview (compositeScore-based)
+  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(null);
+  useEffect(() => {
+    if (!address) { setWalletPreview(null); return; }
+    fetchWalletPreview(address).then(setWalletPreview);
   }, [address]);
 
-  // Derive ship stats from wallet traits + forge loadout
-  const shipStats = useMemo(() => deriveShipStats(traits, forgeLoadout), [traits, forgeLoadout]);
+  // Load forge loadout from localStorage (re-reads on focus/visibility change)
+  const [forgeLoadout, setForgeLoadout] = useState<ForgeLoadout | null>(null);
+  useEffect(() => {
+    const load = () => {
+      if (!address) { setForgeLoadout(null); return; }
+      try {
+        const raw = localStorage.getItem(`prism_forge_loadout_v1_${address}`);
+        setForgeLoadout(raw ? JSON.parse(raw) : null);
+      } catch { setForgeLoadout(null); }
+    };
+    load();
+    window.addEventListener('focus', load);
+    document.addEventListener('visibilitychange', load);
+    return () => {
+      window.removeEventListener('focus', load);
+      document.removeEventListener('visibilitychange', load);
+    };
+  }, [address]);
+
+  // Derive ship stats from compositeScore + forge loadout
+  const shipStats = useMemo(() => computeShipStats(walletPreview, forgeLoadout), [walletPreview, forgeLoadout]);
+
+  // Minimal traits adapter for game scenes (they only use planetTier)
+  const traits = useMemo(() => walletPreview ? { planetTier: walletPreview.compositeTier } as any : null, [walletPreview]);
   const equippedSkin = forgeLoadout?.equippedShipSkin || null;
 
   const isMobile = useMemo(isMobileDevice, []);
@@ -589,7 +591,6 @@ const PrismLeague = () => {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
   const [defenderLeaderboard, setDefenderLeaderboard] = useState<LeaderboardEntry[]>(() => readDefenderLeaderboard());
   const [gravityLeaderboard, setGravityLeaderboard] = useState<LeaderboardEntry[]>(() => readGravityLeaderboard());
-  const [miningLeaderboard, setMiningLeaderboard] = useState<LeaderboardEntry[]>(() => readMiningLeaderboard());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
   const [isJumpingBack, setIsJumpingBack] = useState(false);
@@ -654,8 +655,6 @@ const PrismLeague = () => {
 
   // Gravity-specific state
   const [gravityAchievements, setGravityAchievements] = useState<GravityAchievement[]>(() => getGravityAchievements());
-  // Mining achievements
-  const [miningAchievementsState, setMiningAchievementsState] = useState(() => getMiningAchievements());
   const defenderKills = useRef(0);
   const defenderLevel = useRef(0);
   const [defLevelInfo, setDefLevelInfo] = useState<{ level: number; wave: number; name: string; banner: boolean }>({ level: 1, wave: 0, name: "", banner: false });
@@ -676,8 +675,43 @@ const PrismLeague = () => {
 
   // Gravity session stats — populated by GravityRunnerScene via onGameOver extraStats
   const gravitySessionStatsRef = useRef<{ columns: number; crystals: number }>({ columns: 0, crystals: 0 });
-  // Mining session stats (Cosmic Mine idle clicker)
-  const miningSessionStatsRef = useRef<{ asteroidsMined: number; darkMatter: number; piratesDestroyed: number }>({ asteroidsMined: 0, darkMatter: 0, piratesDestroyed: 0 });
+
+  // Tournament state
+  const [activeTournament, setActiveTournament] = useState<{
+    id: string; mode: string; endsAt: number; entryCount: number;
+    isEnded: boolean; userJoined: boolean; prizePool: number;
+  } | null>(null);
+
+  // Fetch active tournament on mount & when address changes
+  useEffect(() => {
+    const fetchTournament = async () => {
+      try {
+        const base = getServerBase();
+        if (!base) return;
+        const headers: Record<string, string> = {};
+        const jwt = getChallengeJwt();
+        if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+        const res = await fetch(`${base}/api/tournament/active`, { headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        setActiveTournament(data.tournament || null);
+      } catch { /* silent */ }
+    };
+    fetchTournament();
+  }, [address]);
+
+  const submitToTournament = useCallback(async (score: number) => {
+    try {
+      const base = getServerBase();
+      const jwt = getChallengeJwt();
+      if (!base || !jwt) return;
+      await fetch(`${base}/api/tournament/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+        body: JSON.stringify({ score }),
+      });
+    } catch { /* silent */ }
+  }, []);
 
   // Continue/Revive feature — free revives for ID holders: 3 per DAY (persisted)
   const FREE_REVIVES_PER_DAY = 3;
@@ -831,7 +865,7 @@ const PrismLeague = () => {
 
   useEffect(() => {
     if (!fromAppJump) return;
-    fadeOutWormholeTunnel(80);
+    fadeOutTransition();
     window.history.replaceState({}, "");
   }, [fromAppJump]);
 
@@ -946,6 +980,7 @@ const PrismLeague = () => {
           if (finalScore >= 1000) incrementQuest(qs, 'ot_score1000');
           if (finalScore > highScore) incrementQuest(qs, 'daily_highscore');
         }).catch(() => {});
+        invalidateCompositeCache(walletAddr);
       }
       const startedAtMs = runStartedAtRef.current || Date.now();
       const endedAtMs = Date.now();
@@ -1053,20 +1088,6 @@ const PrismLeague = () => {
         }
         // Reset session stats ref for next run
         gravitySessionStatsRef.current = { columns: 0, crystals: 0 };
-      } else if (gameMode === "mining") {
-        const ms = miningSessionStatsRef.current;
-        const survivalTime = finalScore;
-        const mStats = updateMiningStats(survivalTime, finalScore, finalCoins, ms.asteroidsMined, ms.darkMatter, ms.piratesDestroyed);
-        const mNew = checkMiningAchievements(mStats, survivalTime, finalCoins);
-        setMiningAchievementsState(getMiningAchievements());
-        if (mNew.length > 0) {
-          const allAchs = getMiningAchievements();
-          mNew.forEach(id => {
-            const a = allAchs.find(x => x.id === id);
-            if (a) toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
-          });
-        }
-        miningSessionStatsRef.current = { asteroidsMined: 0, darkMatter: 0, piratesDestroyed: 0 };
       }
 
       const playerAddr = address || "anonymous";
@@ -1103,17 +1124,6 @@ const PrismLeague = () => {
           next.sort((a, b) => b.score - a.score);
           next = next.slice(0, 20);
           writeGravityLeaderboard(next);
-          return next;
-        });
-      } else if (gameMode === "mining") {
-        setMiningLeaderboard((prev) => {
-          const existing = prev.findIndex((e) => e.address === playerAddr);
-          let next = [...prev];
-          if (existing !== -1) { if (finalScore > next[existing].score) next[existing] = newEntry; }
-          else { next.push(newEntry); }
-          next.sort((a, b) => b.score - a.score);
-          next = next.slice(0, 20);
-          writeMiningLeaderboard(next);
           return next;
         });
       } else {
@@ -1160,6 +1170,11 @@ const PrismLeague = () => {
         });
       }
 
+      // Submit to active tournament if user joined & mode matches
+      if (activeTournament?.userJoined && activeTournament.mode === gameMode && !activeTournament.isEnded) {
+        submitToTournament(finalScore);
+      }
+
       if (finalScore > highScore) {
         setIsNewBest(true);
         setHighScore(finalScore);
@@ -1168,7 +1183,7 @@ const PrismLeague = () => {
         setIsNewBest(false);
       }
     },
-    [address, gameMode, highScore, activeChallengeId]
+    [address, gameMode, highScore, activeChallengeId, activeTournament, submitToTournament]
   );
 
   const handleGameOver = useCallback(
@@ -1199,14 +1214,6 @@ const PrismLeague = () => {
     [handleGameOver]
   );
 
-  // Mining-specific game over handler — skip Continue screen (idle game, no revive)
-  const handleMiningGameOver = useCallback(
-    (finalScore: number, finalCoins: number, extraStats?: { asteroidsMined: number; darkMatter: number; piratesDestroyed: number }) => {
-      if (extraStats) miningSessionStatsRef.current = extraStats;
-      finalizeDeath(finalScore, finalCoins, true);
-    },
-    [finalizeDeath]
-  );
 
   const handleContinue = useCallback(async () => {
     if (!pendingGameOver.current || revivePaying) return;
@@ -1451,6 +1458,15 @@ const PrismLeague = () => {
 
   const handleJumpBackToPrism = useCallback(() => {
     if (isJumpingBack) return;
+
+    // If playing or game over → return to start screen (game menu)
+    if (gameState === "playing" || gameState === "gameover") {
+      stopAllAudio();
+      setGameState("start");
+      return;
+    }
+
+    // If on start screen → go back to hub
     setIsJumpingBack(true);
     clearTransitionTimers();
 
@@ -1461,13 +1477,9 @@ const PrismLeague = () => {
     }
 
     transitionTimersRef.current.push(window.setTimeout(() => {
-      createWormholeTunnel('game-return');
+      startFadeTransition(() => goBack(navigate));
     }, 240));
-
-    transitionTimersRef.current.push(window.setTimeout(() => {
-      goBack(navigate);
-    }, 2740));
-  }, [isJumpingBack, clearTransitionTimers, navigate]);
+  }, [isJumpingBack, clearTransitionTimers, navigate, gameState]);
 
   return (
     <div className="prism-league-page relative w-full h-screen overflow-hidden bg-black">
@@ -1484,9 +1496,6 @@ const PrismLeague = () => {
         )}
         {gameMode === "gravity" && (
           <GravityRunnerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGravityGameOver} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
-        )}
-        {gameMode === "mining" && (
-          <CosmicMineScene gameState={gameState} onGameOver={handleMiningGameOver} traits={traits} hasMintedId={hasMintedId} shipStats={shipStats} />
         )}
       </div>
 
@@ -1525,7 +1534,7 @@ const PrismLeague = () => {
               </svg>
             </span>
             <span className="league-jumpgate__text hidden sm:inline-flex">
-              <strong>Return to Prism</strong>
+              <strong>{gameState === "playing" || gameState === "gameover" ? "Game Menu" : "Return to Prism"}</strong>
             </span>
           </button>
 

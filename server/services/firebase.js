@@ -38,16 +38,26 @@ const setDoc = async (collection, docId, data) => {
 
 const getDoc = async (collection, docId) => {
   if (!db) return null;
-  const snap = await db.collection(collection).doc(docId).get();
-  return snap.exists ? snap.data() : null;
+  try {
+    const snap = await db.collection(collection).doc(docId).get();
+    return snap.exists ? snap.data() : null;
+  } catch (err) {
+    console.warn(`[firebase] getDoc ${collection}/${docId} failed:`, err.message);
+    return null;
+  }
 };
 
 const getAllDocs = async (collection) => {
   if (!db) return new Map();
-  const snap = await db.collection(collection).get();
-  const map = new Map();
-  snap.forEach(doc => map.set(doc.id, doc.data()));
-  return map;
+  try {
+    const snap = await db.collection(collection).get();
+    const map = new Map();
+    snap.forEach(doc => map.set(doc.id, doc.data()));
+    return map;
+  } catch (err) {
+    console.warn(`[firebase] getAllDocs ${collection} failed:`, err.message);
+    return new Map();
+  }
 };
 
 const batchSet = async (collection, entries) => {

@@ -166,6 +166,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
   const shipImgRef = useRef<HTMLImageElement | null>(null);
   const shipLoadedRef = useRef(false);
 
+  const _lastFlush = useRef(0);
   const stateRef = useRef({
     playerX: 70,
     playerY: 0,
@@ -301,6 +302,21 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     s._grazed = false;
     s.startTime = performance.now();
     s.lastTickTime = s.startTime;
+    let hiddenAt = 0;
+    let unmounted = false;
+
+    // Pause score timer when tab is hidden (prevents score inflation)
+    const onVisChange = () => {
+      if (document.hidden) {
+        hiddenAt = performance.now();
+      } else if (hiddenAt > 0) {
+        const pauseDuration = performance.now() - hiddenAt;
+        s.startTime += pauseDuration;
+        s.lastTickTime = performance.now();
+        hiddenAt = 0;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisChange);
 
     const coinMult = hasMintedId ? 2 : 1;
 
@@ -605,8 +621,9 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         reviveRef.current = false;
         s.alive = true;
         s.screenShake = 0;
+        s._grazed = false; // reset graze immunity on revive
         s.velY = FLAP_VEL * 0.5; // gentle upward push on revive
-        s.obstacles = s.obstacles.filter(o => o.data.x > s.playerX + 200);
+        { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }
       }
 
       if (!s.alive) return;
@@ -673,14 +690,14 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         }
       }
       // Remove off-screen
-      s.obstacles = s.obstacles.filter(o => o.data.x + (o.data.width ?? 0) > -30);
+      { let wi = 0; for (let i = 0; i < s.obstacles.length; i++) { if (s.obstacles[i].data.x + (s.obstacles[i].data.width ?? 0) > -30) s.obstacles[wi++] = s.obstacles[i]; } s.obstacles.length = wi; }
 
       // Move crystals
       for (const c of s.crystals) {
         c.x -= s.speed;
         c.pulse += 0.08;
       }
-      s.crystals = s.crystals.filter(c => c.x > -20);
+      { let ci = 0; for (let i = 0; i < s.crystals.length; i++) { if (s.crystals[i].x > -20) s.crystals[ci++] = s.crystals[i]; } s.crystals.length = ci; }
 
       // Spawn obstacles — consistent intervals with minimum spacing enforced in spawnObstacle
       s.nextObstacle--;
@@ -702,7 +719,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
 
       // Collision checks (shield stat gives graze chance to survive)
-      const grazeChance = (props.shipStats?.shield || 0) / 50; // 0-2 → 0%-100% graze
+      const grazeChance = Math.min(1, (props.shipStats?.shield || 0) / 100); // 0-100 → 0%-100% chance, *0.5 below
       for (const o of s.obstacles) {
         const hit = (o.kind === 'column' && checkColumnCollision(o.data))
           || (o.kind === 'comet' && checkCometCollision(o.data))
@@ -765,24 +782,26 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       const dt = Math.min((now - s.lastTickTime) / 1000, 0.1); // cap at 100ms to prevent burst on tab-switch
       s.lastTickTime = now;
       const elapsedSec = (now - s.startTime) / 1000;
-      const coinsPerSec = (1 + Math.floor(elapsedSec / 30)) * coinMult;
+      const coinsPerSec = Math.min(10, 1 + Math.floor(elapsedSec / 30)) * coinMult;
       s.coinAccum += coinsPerSec * dt;
       const wholeCoins = Math.floor(s.coinAccum);
       if (wholeCoins > 0) {
         s.coins += wholeCoins;
         s.coinAccum -= wholeCoins;
-        onCoins(s.coins);
       }
 
-      // Particles
-      for (const p of s.particles) {
+      // Particles — in-place update & compact (no alloc)
+      let pi = 0;
+      for (let i = 0; i < s.particles.length; i++) {
+        const p = s.particles[i];
         p.x += p.vx;
         p.y += p.vy;
         p.life--;
         p.vx *= 0.95;
         p.vy *= 0.95;
+        if (p.life > 0) { s.particles[pi++] = p; }
       }
-      s.particles = s.particles.filter(p => p.life > 0);
+      s.particles.length = pi;
 
       // Engine trail
       s.trail.push({
@@ -796,7 +815,12 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
       // Score = time survived in seconds (FPS-independent)
       s.score = Math.floor((performance.now() - s.startTime) / 1000);
-      onScore(s.score);
+      // Batched React setState — flush every 100ms
+      if (now - _lastFlush.current > 100) {
+        _lastFlush.current = now;
+        onScore(s.score);
+        onCoins(s.coins);
+      }
 
       // Screen shake decay
       if (s.screenShake > 0) s.screenShake *= 0.85;
@@ -1235,7 +1259,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             s.alive = true;
             s.screenShake = 0;
             s.velY = FLAP_VEL * 0.5;
-            s.obstacles = s.obstacles.filter(o => o.data.x > s.playerX + 200);
+            { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }
             s.particles = [];
             animRef.current = requestAnimationFrame(loop);
             return;
@@ -1248,7 +1272,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             p.vx *= 0.95;
             p.vy *= 0.95;
           }
-          s.particles = s.particles.filter(p => p.life > 0);
+          { let _pi = 0; for (let _i = 0; _i < s.particles.length; _i++) { if (s.particles[_i].life > 0) s.particles[_pi++] = s.particles[_i]; } s.particles.length = _pi; }
           if (s.screenShake > 0) s.screenShake *= 0.85;
           draw();
           if (deathFrames < 45 && s.particles.length > 0) {
@@ -1256,13 +1280,14 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           } else {
             // Keep checking for late revive after death animation ends
             const waitForRevive = () => {
+              if (unmounted) return;
               if (!animRef.current && animRef.current !== 0) return;
               if (reviveRef.current) {
                 reviveRef.current = false;
                 s.alive = true;
                 s.screenShake = 0;
                 s.velY = FLAP_VEL * 0.5;
-                s.obstacles = s.obstacles.filter(o => o.data.x > s.playerX + 200);
+                { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }
                 s.particles = [];
                 animRef.current = requestAnimationFrame(loop);
               } else {
@@ -1279,9 +1304,11 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     loop();
 
     return () => {
+      unmounted = true;
       cancelAnimationFrame(animRef.current);
       clearTimeout(animRef.current);
       window.removeEventListener('resize', resize);
+      document.removeEventListener('visibilitychange', onVisChange);
     };
   }, [gameState, onScore, onCoins, onGameOver, reviveRef, hasMintedId]);
 

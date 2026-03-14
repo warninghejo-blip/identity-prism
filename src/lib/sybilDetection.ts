@@ -425,10 +425,15 @@ export async function runSybilAnalysis(
     suspiciousPatterns: signals.filter((s) => s.detected).map((s) => s.name),
   };
 
+  const trustScore = Math.max(0, 100 - riskScore);
+  const trustGrade = trustScore >= 90 ? 'A+' : trustScore >= 80 ? 'A' : trustScore >= 65 ? 'B' : trustScore >= 50 ? 'C' : trustScore >= 35 ? 'D' : 'F';
+
   return {
     address,
     riskScore,
     riskLevel,
+    trustScore,
+    trustGrade,
     signals,
     fundingSources,
     clusterInfo,

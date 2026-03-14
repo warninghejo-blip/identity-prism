@@ -130,11 +130,11 @@ export const GRAVITY_ACHIEVEMENT_DEFS: Omit<GravityAchievement, 'unlocked' | 'un
   {
     id: 'grav_ace',
     name: 'Gravity Ace',
-    description: 'Score 2000+ points in a single run',
+    description: 'Survive 180+ seconds in a single run',
     icon: '💎',
     image: '/achievements/grav_ace.png',
-    threshold: 2000,
-    thresholdType: 'best_score',
+    threshold: 180,
+    thresholdType: 'survival_time',
     tier: 'diamond',
   },
 ];
@@ -250,7 +250,7 @@ export function checkGravityAchievements(
         met = effectiveColumns >= ach.threshold;
         break;
       case 'crystals_collected':
-        met = params.crystals >= ach.threshold;
+        met = effectiveTotalCrystals >= ach.threshold;
         break;
       case 'best_score':
         met = effectiveBestScore >= ach.threshold;

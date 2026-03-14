@@ -3,10 +3,12 @@
  * New code should use api.* methods. Legacy fetch calls migrated gradually.
  */
 
+import { getSessionJwt } from '@/components/prism/shared';
+
 const BASE = import.meta.env.VITE_HELIUS_PROXY_URL || '';
 
 function getAuthHeaders(): Record<string, string> {
-  const jwt = localStorage.getItem('ip_jwt');
+  const jwt = getSessionJwt();
   return jwt ? { Authorization: `Bearer ${jwt}` } : {};
 }
 

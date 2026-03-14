@@ -5,32 +5,22 @@ import { goBack } from '@/lib/safeNavigate';
 import { trackCompare } from '@/lib/analytics';
 import { toast } from 'sonner';
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { useWalletData, calculateScore, type WalletTraits } from "@/hooks/useWalletData";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Wallet, Search, Trophy, ArrowUpDown, Loader2, Swords, Shield, Zap } from "lucide-react";
+import { ArrowLeft, Wallet, Search, Trophy, ArrowUpDown, Loader2, Swords, Shield, Zap, Home } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import PageShell from "@/components/PageShell";
 import {
   TIER_LABELS,
   TIER_TEXT_COLORS as TIER_COLORS,
   TIER_HEX,
-  TIER_BG,
-  buildCompareRows,
   MiniPlanet,
   BattleBar,
   formatAddr,
-  getBadgeCount,
+  fetchWalletPreview,
+  type WalletPreview,
+  type CompareRow,
+  BADGE_LABELS,
 } from '@/components/prism/shared';
-
-const ALL_BADGES: [string, (t: WalletTraits) => boolean][] = [
-  ["OG Member", t => t.isOG], ["Whale", t => t.isWhale], ["Collector", t => t.isCollector],
-  ["Binary Sun", t => t.hasCombo], ["Early Adopter", t => t.isEarlyAdopter],
-  ["Tx Titan", t => t.isTxTitan], ["Solana Maxi", t => t.isSolanaMaxi],
-  ["Blue Chip", t => t.isBlueChip], ["DeFi King", t => t.isDeFiKing],
-  ["Meme Lord", t => t.isMemeLord], ["Diamond Hands", t => t.diamondHands],
-  ["Hyperactive", t => t.hyperactiveDegen], ["Seeker", t => t.hasSeeker],
-  ["Visionary", t => t.hasPreorder],
-];
 
 // ── AnimatedScore — easeOutExpo counter ──
 function AnimatedScore({ value, className }: { value: number; className?: string }) {
@@ -43,7 +33,7 @@ function AnimatedScore({ value, className }: { value: number; className?: string
     const from = 0;
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration);
-      const ease = 1 - Math.pow(2, -10 * t); // easeOutExpo
+      const ease = 1 - Math.pow(2, -10 * t);
       setDisplay(Math.round(from + (value - from) * ease));
       if (t < 1) frameRef.current = requestAnimationFrame(tick);
     };
@@ -53,15 +43,15 @@ function AnimatedScore({ value, className }: { value: number; className?: string
   return <span className={className}>{display}</span>;
 }
 
-// ── RadarChart — SVG spider chart ──
-function RadarChart({ dataA, dataB }: { dataA: WalletTraits; dataB: WalletTraits }) {
+// ── RadarChart — uses WalletPreview data ──
+function RadarChart({ a, b }: { a: WalletPreview; b: WalletPreview }) {
   const metrics = [
-    { label: "Age", a: Math.min(1, dataA.walletAgeDays / 1000), b: Math.min(1, dataB.walletAgeDays / 1000) },
-    { label: "Txns", a: Math.min(1, dataA.txCount / 5000), b: Math.min(1, dataB.txCount / 5000) },
-    { label: "NFTs", a: Math.min(1, dataA.nftCount / 100), b: Math.min(1, dataB.nftCount / 100) },
-    { label: "Tokens", a: Math.min(1, dataA.uniqueTokenCount / 50), b: Math.min(1, dataB.uniqueTokenCount / 50) },
-    { label: "Assets", a: Math.min(1, dataA.totalAssetsCount / 200), b: Math.min(1, dataB.totalAssetsCount / 200) },
-    { label: "Activity", a: Math.min(1, dataA.avgTxPerDay30d / 20), b: Math.min(1, dataB.avgTxPerDay30d / 20) },
+    { label: "Age", a: Math.min(1, a.walletAgeDays / 1000), b: Math.min(1, b.walletAgeDays / 1000) },
+    { label: "Txns", a: Math.min(1, a.txCount / 5000), b: Math.min(1, b.txCount / 5000) },
+    { label: "NFTs", a: Math.min(1, a.nftCount / 100), b: Math.min(1, b.nftCount / 100) },
+    { label: "Tokens", a: Math.min(1, a.tokenCount / 50), b: Math.min(1, b.tokenCount / 50) },
+    { label: "SOL", a: Math.min(1, a.solBalance / 100), b: Math.min(1, b.solBalance / 100) },
+    { label: "Activity", a: Math.min(1, (a.walletAgeDays > 0 ? a.txCount / a.walletAgeDays : 0) / 20), b: Math.min(1, (b.walletAgeDays > 0 ? b.txCount / b.walletAgeDays : 0) / 20) },
   ];
   const cx = 100, cy = 100, R = 70;
   const n = metrics.length;
@@ -69,12 +59,11 @@ function RadarChart({ dataA, dataB }: { dataA: WalletTraits; dataB: WalletTraits
   const polygon = (values: number[], color: string, fill: string) => {
     const pts = values.map((v, i) => {
       const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
-      return `${cx + Math.cos(angle) * R * v},${cy + Math.sin(angle) * R * v}`;
+      return `${cx + Math.cos(angle) * R * Math.max(0.05, v)},${cy + Math.sin(angle) * R * Math.max(0.05, v)}`;
     }).join(' ');
     return <polygon points={pts} fill={fill} stroke={color} strokeWidth="1.5" />;
   };
 
-  // Grid rings
   const rings = [0.25, 0.5, 0.75, 1].map(scale => {
     const pts = Array.from({ length: n }, (_, i) => {
       const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
@@ -83,13 +72,11 @@ function RadarChart({ dataA, dataB }: { dataA: WalletTraits; dataB: WalletTraits
     return <polygon key={scale} points={pts} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />;
   });
 
-  // Axis lines
   const axes = metrics.map((_, i) => {
     const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
     return <line key={i} x1={cx} y1={cy} x2={cx + Math.cos(angle) * R} y2={cy + Math.sin(angle) * R} stroke="rgba(255,255,255,0.08)" strokeWidth="0.5" />;
   });
 
-  // Labels
   const labels = metrics.map((m, i) => {
     const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
     const lx = cx + Math.cos(angle) * (R + 16);
@@ -125,6 +112,21 @@ function BadgeCard({ name, hasA, hasB }: { name: string; hasA: boolean; hasB: bo
   );
 }
 
+// ── Build compare rows from WalletPreview ──
+function buildCompareRowsFromPreview(a: WalletPreview, b: WalletPreview): CompareRow[] {
+  const fmt = (n: number, d = 2) => n % 1 === 0 ? String(n) : n.toFixed(d);
+  const ageFmt = (d: number) => d >= 365 ? `${(d / 365).toFixed(1)}y` : `${d}d`;
+  const txDay = (p: WalletPreview) => p.walletAgeDays > 0 ? p.txCount / p.walletAgeDays : 0;
+  return [
+    { label: 'SOL Balance', valueA: fmt(a.solBalance), valueB: fmt(b.solBalance), numA: a.solBalance, numB: b.solBalance, higherIsBetter: true },
+    { label: 'Wallet Age', valueA: ageFmt(a.walletAgeDays), valueB: ageFmt(b.walletAgeDays), numA: a.walletAgeDays, numB: b.walletAgeDays, higherIsBetter: true },
+    { label: 'Transactions', valueA: a.txCount.toLocaleString(), valueB: b.txCount.toLocaleString(), numA: a.txCount, numB: b.txCount, higherIsBetter: true },
+    { label: 'NFTs', valueA: String(a.nftCount), valueB: String(b.nftCount), numA: a.nftCount, numB: b.nftCount, higherIsBetter: true },
+    { label: 'Tokens', valueA: String(a.tokenCount), valueB: String(b.tokenCount), numA: a.tokenCount, numB: b.tokenCount, higherIsBetter: true },
+    { label: 'Tx/Day', valueA: txDay(a).toFixed(1), valueB: txDay(b).toFixed(1), numA: txDay(a), numB: txDay(b), higherIsBetter: true },
+  ];
+}
+
 export default function Compare() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -136,28 +138,48 @@ export default function Compare() {
 
   const [inputA, setInputA] = useState(paramA || wallet.publicKey?.toBase58() || "");
   const [inputB, setInputB] = useState(paramB);
-  const [addrA, setAddrA] = useState(paramA || wallet.publicKey?.toBase58() || "");
-  const [addrB, setAddrB] = useState(paramB);
+
+  const [dataA, setDataA] = useState<WalletPreview | null>(null);
+  const [dataB, setDataB] = useState<WalletPreview | null>(null);
+  const [loadingA, setLoadingA] = useState(false);
+  const [loadingB, setLoadingB] = useState(false);
 
   useEffect(() => {
-    if (wallet.publicKey && !addrA) {
-      const addr = wallet.publicKey.toBase58();
-      setInputA(addr);
-      setAddrA(addr);
+    if (wallet.publicKey && !inputA) {
+      setInputA(wallet.publicKey.toBase58());
     }
-  }, [wallet.publicKey, addrA]);
+  }, [wallet.publicKey, inputA]);
 
-  const dataA = useWalletData(addrA || undefined);
-  const dataB = useWalletData(addrB || undefined);
+  // Auto-compare if both params present
+  const didAutoCompare = useRef(false);
+  useEffect(() => {
+    if (paramA && paramB && !didAutoCompare.current) {
+      didAutoCompare.current = true;
+      doCompare(paramA, paramB);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [errorA, setErrorA] = useState<string | null>(null);
+  const [errorB, setErrorB] = useState<string | null>(null);
+
+  const doCompare = useCallback(async (a: string, b: string) => {
+    setLoadingA(true); setLoadingB(true);
+    setDataA(null); setDataB(null);
+    setErrorA(null); setErrorB(null);
+    const [resA, resB] = await Promise.all([fetchWalletPreview(a), fetchWalletPreview(b)]);
+    if (!resA) setErrorA('Failed to load wallet A');
+    if (!resB) setErrorB('Failed to load wallet B');
+    setDataA(resA); setDataB(resB);
+    setLoadingA(false); setLoadingB(false);
+  }, []);
 
   const handleCompare = useCallback(() => {
     const a = inputA.trim();
     const b = inputB.trim();
     if (!a || !b) return;
-    setAddrA(a);
-    setAddrB(b);
     trackCompare();
     setSearchParams({ a, b });
+    doCompare(a, b);
     const myAddr = wallet.publicKey?.toBase58();
     if (myAddr) {
       import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
@@ -168,31 +190,40 @@ export default function Compare() {
         incrementQuest(qs, 'daily_explore', 1, onComplete);
       }).catch(() => {});
     }
-  }, [inputA, inputB, setSearchParams, wallet.publicKey]);
+  }, [inputA, inputB, setSearchParams, wallet.publicKey, doCompare]);
 
   const handleSwap = useCallback(() => {
     setInputA(inputB);
     setInputB(inputA);
-    setAddrA(inputB);
-    setAddrB(inputA);
+    setDataA(dataB);
+    setDataB(dataA);
+    setErrorA(errorB);
+    setErrorB(errorA);
     if (inputA && inputB) setSearchParams({ a: inputB, b: inputA });
-  }, [inputA, inputB, setSearchParams]);
+  }, [inputA, inputB, dataA, dataB, errorA, errorB, setSearchParams]);
 
-  const scoreA = dataA.traits ? calculateScore(dataA.traits) : 0;
-  const scoreB = dataB.traits ? calculateScore(dataB.traits) : 0;
-  const tierA = dataA.traits?.planetTier || "mercury";
-  const tierB = dataB.traits?.planetTier || "mercury";
+  const scoreA = dataA?.compositeScore ?? 0;
+  const scoreB = dataB?.compositeScore ?? 0;
+  const tierA = dataA?.compositeTier || "mercury";
+  const tierB = dataB?.compositeTier || "mercury";
 
   const rows = useMemo(() => {
-    if (!dataA.traits || !dataB.traits) return [];
-    return buildCompareRows(dataA.traits, dataB.traits);
-  }, [dataA.traits, dataB.traits]);
+    if (!dataA || !dataB) return [];
+    return buildCompareRowsFromPreview(dataA, dataB);
+  }, [dataA, dataB]);
 
-  const badgesA = dataA.traits ? getBadgeCount(dataA.traits) : 0;
-  const badgesB = dataB.traits ? getBadgeCount(dataB.traits) : 0;
+  const badgesA = dataA?.compositeBadgeCount || 0;
+  const badgesB = dataB?.compositeBadgeCount || 0;
 
-  const bothLoaded = dataA.traits && dataB.traits && !dataA.isLoading && !dataB.isLoading;
-  const isLoading = (addrA && dataA.isLoading) || (addrB && dataB.isLoading);
+  // Merge badge sets for comparison grid
+  const allBadges = useMemo(() => {
+    if (!dataA || !dataB) return [];
+    const setAll = new Set([...dataA.badges, ...dataB.badges]);
+    return Array.from(setAll);
+  }, [dataA, dataB]);
+
+  const bothLoaded = dataA && dataB && !loadingA && !loadingB;
+  const isLoading = loadingA || loadingB;
   const aWins = scoreA > scoreB;
   const bWins = scoreB > scoreA;
 
@@ -201,13 +232,16 @@ export default function Compare() {
       {/* Header */}
       <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => goBack(navigate)} className="text-white/50 hover:text-white transition-colors">
+          <button onClick={() => goBack(navigate)} className="text-white/50 hover:text-white transition-colors" title="Back">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">
             Compare Wallets
           </h1>
           <div className="flex-1" />
+          <button onClick={() => navigate('/')} className="text-white/50 hover:text-white transition-colors" title="Home">
+            <Home className="w-5 h-5" />
+          </button>
           {!wallet.connected && (
             <Button
               size="sm"
@@ -266,6 +300,15 @@ export default function Compare() {
           </Button>
         </div>
 
+        {/* Error state */}
+        {!isLoading && (errorA || errorB) && (
+          <div className="text-center py-6 space-y-2">
+            {errorA && <p className="text-red-400 text-sm">{errorA}</p>}
+            {errorB && <p className="text-red-400 text-sm">{errorB}</p>}
+            <p className="text-white/30 text-xs">Check the addresses and try again</p>
+          </div>
+        )}
+
         {/* Results */}
         <AnimatePresence mode="wait">
         {bothLoaded && (
@@ -279,7 +322,6 @@ export default function Compare() {
           >
             {/* BATTLE Arena */}
             <div className="relative">
-              {/* Arena background glow */}
               <div className="absolute -inset-4 bg-gradient-to-r from-cyan-500/5 via-transparent to-purple-500/5 blur-3xl rounded-3xl" />
 
               {/* VS Battle Header */}
@@ -311,7 +353,7 @@ export default function Compare() {
                       <div className={`text-xs font-bold uppercase tracking-wider mt-1 ${TIER_COLORS[tierA]}`}>
                         {TIER_LABELS[tierA]}
                       </div>
-                      <div className="font-mono text-[9px] text-white/30 mt-1">{formatAddr(addrA)}</div>
+                      <div className="font-mono text-[9px] text-white/30 mt-1">{formatAddr(dataA!.address)}</div>
                     </div>
                   </div>
                 </motion.div>
@@ -351,7 +393,7 @@ export default function Compare() {
                       <div className={`text-xs font-bold uppercase tracking-wider mt-1 ${TIER_COLORS[tierB]}`}>
                         {TIER_LABELS[tierB]}
                       </div>
-                      <div className="font-mono text-[9px] text-white/30 mt-1">{formatAddr(addrB)}</div>
+                      <div className="font-mono text-[9px] text-white/30 mt-1">{formatAddr(dataB!.address)}</div>
                     </div>
                   </div>
                 </motion.div>
@@ -370,7 +412,7 @@ export default function Compare() {
                     <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.03)_50%,transparent_100%)] animate-[shimmer_3s_infinite]" />
                     <Trophy className="w-5 h-5 text-yellow-400 drop-shadow-[0_0_6px_rgba(250,204,21,0.6)]" />
                     <span className="text-sm text-white/70 relative">
-                      <span className={`font-bold ${aWins ? 'text-cyan-300' : 'text-purple-300'}`}>{formatAddr(aWins ? addrA : addrB)}</span>
+                      <span className={`font-bold ${aWins ? 'text-cyan-300' : 'text-purple-300'}`}>{formatAddr(aWins ? dataA!.address : dataB!.address)}</span>
                       {" "}dominates by{" "}
                       <span className="font-black text-green-400 text-base">+{Math.abs(scoreA - scoreB)}</span>
                     </span>
@@ -387,23 +429,21 @@ export default function Compare() {
             </div>
 
             {/* Radar Chart */}
-            {dataA.traits && dataB.traits && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.5, duration: 0.5 }}
-                className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
-              >
-                <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-2 text-center">Radar Comparison</h3>
-                <div className="flex items-center justify-center gap-4 mb-2">
-                  <span className="flex items-center gap-1.5 text-[10px] text-cyan-400/70"><span className="w-2 h-2 rounded-full bg-cyan-400" />A</span>
-                  <span className="flex items-center gap-1.5 text-[10px] text-purple-400/70"><span className="w-2 h-2 rounded-full bg-purple-400" />B</span>
-                </div>
-                <RadarChart dataA={dataA.traits} dataB={dataB.traits} />
-              </motion.div>
-            )}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.5, duration: 0.5 }}
+              className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
+            >
+              <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-2 text-center">Radar Comparison</h3>
+              <div className="flex items-center justify-center gap-4 mb-2">
+                <span className="flex items-center gap-1.5 text-[10px] text-cyan-400/70"><span className="w-2 h-2 rounded-full bg-cyan-400" />A</span>
+                <span className="flex items-center gap-1.5 text-[10px] text-purple-400/70"><span className="w-2 h-2 rounded-full bg-purple-400" />B</span>
+              </div>
+              <RadarChart a={dataA!} b={dataB!} />
+            </motion.div>
 
-            {/* Battle Bars — visual metric comparison */}
+            {/* Battle Bars */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -412,20 +452,16 @@ export default function Compare() {
             >
               <h3 className="text-xs font-bold text-white/40 uppercase tracking-wider text-center mb-1">Battle Stats</h3>
 
-              {/* Score power bar */}
-              <BattleBar label="Power Score" valA={scoreA} valB={scoreB} maxVal={1400} showValues />
+              <BattleBar label="Power Score" valA={scoreA} valB={scoreB} maxVal={1000} showValues />
 
-              {/* Tier comparison */}
               <div className="flex items-center justify-between py-1.5 px-2">
                 <span className={`text-xs font-bold ${TIER_COLORS[tierA]}`}>{TIER_LABELS[tierA]}</span>
                 <span className="text-[9px] uppercase tracking-wider text-white/25 font-bold">Tier</span>
                 <span className={`text-xs font-bold ${TIER_COLORS[tierB]}`}>{TIER_LABELS[tierB]}</span>
               </div>
 
-              {/* Badge power bar */}
-              <BattleBar label="Badges" valA={badgesA} valB={badgesB} maxVal={ALL_BADGES.length} />
+              <BattleBar label="Badges" valA={badgesA} valB={badgesB} maxVal={Math.max(badgesA, badgesB, 14)} />
 
-              {/* Metric bars */}
               {rows.map((row, i) => {
                 const maxVal = Math.max(row.numA, row.numB, 1);
                 return (
@@ -442,8 +478,8 @@ export default function Compare() {
               })}
             </motion.div>
 
-            {/* Badge Comparison — visual cards */}
-            {dataA.traits && dataB.traits && (
+            {/* Badge Comparison */}
+            {allBadges.length > 0 && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -452,9 +488,17 @@ export default function Compare() {
               >
                 <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Badge Comparison</h3>
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                  {ALL_BADGES.map(([name, fn]) => (
-                    <BadgeCard key={name} name={name} hasA={fn(dataA.traits!)} hasB={fn(dataB.traits!)} />
-                  ))}
+                  {allBadges.map(badge => {
+                    const label = BADGE_LABELS[badge]?.label || badge;
+                    return (
+                      <BadgeCard
+                        key={badge}
+                        name={label}
+                        hasA={dataA!.badges.includes(badge)}
+                        hasB={dataB!.badges.includes(badge)}
+                      />
+                    );
+                  })}
                 </div>
               </motion.div>
             )}

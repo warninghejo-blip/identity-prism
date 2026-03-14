@@ -176,7 +176,7 @@ export function getQuestProgress(state: QuestState, questId: string): QuestProgr
  */
 export function syncQuestsToServer(address: string, quests: Record<string, QuestProgress>): void {
   const proxyUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_HELIUS_PROXY_URL) || '';
-  const jwt = localStorage.getItem('ip_jwt') || '';
+  const jwt = (() => { try { const r = sessionStorage.getItem('ip_auth_jwt'); if (!r) return ''; const p = JSON.parse(r); return (p.expiresAt > Date.now() + 60000) ? p.token : ''; } catch { return ''; } })();
   fetch(`${proxyUrl}/api/quest/sync`, {
     method: 'POST',
     headers: {
@@ -225,7 +225,15 @@ export function incrementQuest(
   };
 
   saveQuestState(newState);
-  if (justCompleted && onComplete && quest) onComplete(quest);
+  if (justCompleted) {
+    if (onComplete && quest) onComplete(quest);
+    // Invalidate composite cache so score reflects quest completion
+    if (newState.address) {
+      import('@/hooks/useCompositeScore').then(({ invalidateCompositeCache }) => {
+        invalidateCompositeCache(newState.address);
+      }).catch(() => {});
+    }
+  }
   return { state: newState, justCompleted };
 }
 

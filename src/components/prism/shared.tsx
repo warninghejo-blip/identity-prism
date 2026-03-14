@@ -34,6 +34,14 @@ interface TopProgram {
   interactions: number;
 }
 
+export interface CompositeBreakdown {
+  onchain: number;      // 0-400
+  sybilTrust: number;   // 0-250
+  humanProof: number;   // 0-150
+  social: number;       // 0-100
+  engagement: number;   // 0-100
+}
+
 export interface WalletPreview {
   address: string;
   score: number;
@@ -50,6 +58,8 @@ export interface WalletPreview {
   topPrograms: TopProgram[];
   compositeScore: number;
   compositeTier: string;
+  compositeBadgeCount: number;
+  compositeBreakdown: CompositeBreakdown;
 }
 
 export interface CompareRow {
@@ -83,11 +93,25 @@ export async function fetchWalletPreview(address: string): Promise<WalletPreview
     const data = await repRes.json();
     let compositeScore = 0;
     let compositeTier = '';
+    let compositeBadgeCount = 0;
+    let compositeBreakdown: CompositeBreakdown = { onchain: 0, sybilTrust: 0, humanProof: 0, social: 0, engagement: 0 };
     if (dbRes?.ok) {
       try {
         const db = await dbRes.json();
-        compositeScore = db.compositeScore ?? db.composite_score ?? 0;
-        compositeTier = db.compositeTier ?? db.composite_tier ?? '';
+        const comp = db.composite;
+        compositeScore = comp?.compositeScore ?? db.compositeScore ?? 0;
+        compositeTier = comp?.compositeTier ?? db.compositeTier ?? 'mercury';
+        compositeBadgeCount = comp?.badgeCount ?? db.badgeCount ?? 0;
+        const bd = comp?.breakdown ?? db.breakdown;
+        if (bd) {
+          compositeBreakdown = {
+            onchain: bd.onchain ?? 0,
+            sybilTrust: bd.sybilTrust ?? 0,
+            humanProof: bd.humanProof ?? 0,
+            social: bd.social ?? 0,
+            engagement: bd.engagement ?? 0,
+          };
+        }
       } catch { /* ignore */ }
     }
     return {
@@ -106,6 +130,8 @@ export async function fetchWalletPreview(address: string): Promise<WalletPreview
       topPrograms: data.topPrograms ?? [],
       compositeScore,
       compositeTier,
+      compositeBadgeCount,
+      compositeBreakdown,
     };
   } catch { return null; }
 }
@@ -208,6 +234,18 @@ export function StatPill({ icon, label, value, color }: { icon: JSX.Element; lab
 
 // ── Auth helpers ──
 
+/** Get raw JWT token from session (no address check). For API calls. */
+export function getSessionJwt(): string | null {
+  try {
+    const raw = sessionStorage.getItem('ip_auth_jwt');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { token: string; expiresAt: number };
+    if (parsed.expiresAt > Date.now() + 60_000) return parsed.token;
+    sessionStorage.removeItem('ip_auth_jwt');
+  } catch { /* ignore */ }
+  return null;
+}
+
 export function getCachedJwt(address: string): string | null {
   try {
     const raw = sessionStorage.getItem('ip_auth_jwt');
@@ -220,6 +258,8 @@ export function getCachedJwt(address: string): string | null {
   return null;
 }
 
+let _jwtInFlight: Promise<string | null> | null = null;
+
 export async function obtainJwt(
   wallet: { publicKey?: { toBase58(): string } | null; signMessage?: (msg: Uint8Array) => Promise<Uint8Array> },
 ): Promise<string | null> {
@@ -229,35 +269,48 @@ export async function obtainJwt(
   const existing = getCachedJwt(address);
   if (existing) return existing;
 
-  try {
-    const base = getApiBase();
-    const challengeRes = await fetch(`${base}/api/auth/challenge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address }),
-    });
-    if (!challengeRes.ok) return null;
-    const { nonce, message } = await challengeRes.json() as { nonce: string; message: string };
+  // Deduplicate in-flight requests — prevents double signature popups
+  if (_jwtInFlight) return _jwtInFlight;
 
-    const msgBytes = new TextEncoder().encode(message);
-    const signatureBytes = await wallet.signMessage(msgBytes);
-    const sigArr = signatureBytes instanceof Uint8Array ? signatureBytes : new Uint8Array(signatureBytes as ArrayLike<number>);
-    const signatureHex = Array.from(sigArr, (b: number) => b.toString(16).padStart(2, '0')).join('');
+  _jwtInFlight = (async () => {
+    try {
+      // Re-check cache (another caller may have resolved between our check and lock)
+      const cached = getCachedJwt(address);
+      if (cached) return cached;
 
-    const tokenRes = await fetch(`${base}/api/auth/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, nonce, signature: signatureHex }),
-    });
-    if (!tokenRes.ok) return null;
-    const { token } = await tokenRes.json() as { token: string };
+      const base = getApiBase();
+      const challengeRes = await fetch(`${base}/api/auth/challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      });
+      if (!challengeRes.ok) return null;
+      const { nonce, message } = await challengeRes.json() as { nonce: string; message: string };
 
-    const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
-    try { sessionStorage.setItem('ip_auth_jwt', JSON.stringify(entry)); } catch { /* ignore */ }
-    return token;
-  } catch {
-    return null;
-  }
+      const msgBytes = new TextEncoder().encode(message);
+      const signatureBytes = await wallet.signMessage!(msgBytes);
+      const sigArr = signatureBytes instanceof Uint8Array ? signatureBytes : new Uint8Array(signatureBytes as ArrayLike<number>);
+      const signatureHex = Array.from(sigArr, (b: number) => b.toString(16).padStart(2, '0')).join('');
+
+      const tokenRes = await fetch(`${base}/api/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address, nonce, signature: signatureHex }),
+      });
+      if (!tokenRes.ok) return null;
+      const { token } = await tokenRes.json() as { token: string };
+
+      const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
+      try { sessionStorage.setItem('ip_auth_jwt', JSON.stringify(entry)); } catch { /* ignore */ }
+      return token;
+    } catch {
+      return null;
+    } finally {
+      _jwtInFlight = null;
+    }
+  })();
+
+  return _jwtInFlight;
 }
 
 // ── Server health check ──

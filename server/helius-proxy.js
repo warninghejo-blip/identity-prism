@@ -31,12 +31,18 @@ import {
 import { create, fetchCollection, fetchAsset, mplCore, burnV1, updateV1 } from '@metaplex-foundation/mpl-core';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
 import jwt from 'jsonwebtoken';
+import { createRequire } from 'node:module';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
+
+// Load tweetnacl at module level (used by verifyWalletSignature as fallback)
+let _naclInstance = null;
+try { _naclInstance = createRequire(import.meta.url)('tweetnacl'); } catch { /* tweetnacl not available */ }
 import {
   initFirebase,
   isAvailable as fbAvailable,
   setDoc as fbSet,
+  getDoc as fbGet,
   getAllDocs as fbGetAll,
   batchSet as fbBatchSet,
 } from './services/firebase.js';
@@ -130,7 +136,7 @@ const SKR_MINT = (process.env.SKR_MINT ?? 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2N
 const SKR_DISCOUNT = Number(process.env.SKR_DISCOUNT ?? '0.5');
 const SKR_DISCOUNT_RATE = Number.isFinite(SKR_DISCOUNT) && SKR_DISCOUNT > 0 ? SKR_DISCOUNT : 0.5;
 const LAMPORTS_PER_SOL = 1_000_000_000;
-const MAX_SIGNATURE_PAGES = Number(process.env.MAX_SIGNATURE_PAGES ?? '10');
+const MAX_SIGNATURE_PAGES = Number(process.env.MAX_SIGNATURE_PAGES ?? '15');
 const SIGNATURE_PAGE_LIMIT = 1000;
 const MAGICBLOCK_RPC = (process.env.MAGICBLOCK_RPC ?? 'https://devnet.magicblock.app/api').trim();
 const GAME_SESSION_TTL_RAW = Number(process.env.GAME_SESSION_TTL_MS ?? String(7 * 24 * 60 * 60 * 1000));
@@ -219,8 +225,7 @@ function verifyWalletSignature(address, message, signatureRaw) {
       console.warn('[auth:verify] SPKI key creation failed:', e.message);
     }
 
-    let nacl = null;
-    try { nacl = require('tweetnacl'); } catch { /* ignore */ }
+    // nacl loaded at module top-level (see _naclInstance)
 
     for (const { name, bytes: sigBytes } of encodings) {
       if (sigBytes.length !== 64) {
@@ -243,9 +248,9 @@ function verifyWalletSignature(address, message, signatureRaw) {
       }
 
       // Try tweetnacl
-      if (nacl) {
+      if (_naclInstance) {
         try {
-          const result = nacl.sign.detached.verify(msgBytes, sigBytes, pubkeyBytes);
+          const result = _naclInstance.sign.detached.verify(msgBytes, sigBytes, pubkeyBytes);
           if (result) {
             console.log(`[auth:verify] ${name} + tweetnacl: PASS`);
             return true;
@@ -361,6 +366,7 @@ const BLUE_CHIP_COLLECTION_NAMES = [
 ];
 
 const PENDING_MINT_TTL_MS = 10 * 60 * 1000;
+const MAX_GAME_SESSION_PROOFS = 50_000;
 const pendingMintSigners = new Map();
 const gameSessionProofs = new Map();
 
@@ -759,11 +765,11 @@ const loadScoreHistory = async () => {
   }
 };
 
-const persistScoreHistory = () => {
+const persistScoreHistory = async () => {
   try {
     const obj = {};
     for (const [k, v] of scoreHistory) obj[k] = v;
-    fs.writeFileSync(SCORE_HISTORY_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
+    await fs.promises.writeFile(SCORE_HISTORY_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
   } catch (err) {
     console.warn('[score-history] Failed to persist', err);
   }
@@ -795,6 +801,7 @@ const WALLET_DB_FILE = path.join(METADATA_DIR, 'wallet-database.json');
 const walletDatabase = new Map(); // address -> wallet data object
 
 const loadWalletDatabase = async () => {
+  let loadedFromFirestore = false;
   // Try Firestore first
   if (fbAvailable()) {
     try {
@@ -804,32 +811,66 @@ const loadWalletDatabase = async () => {
           if (addr && typeof data === 'object') walletDatabase.set(addr, data);
         }
         console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from Firestore`);
-        return;
+        loadedFromFirestore = true;
       }
     } catch (err) {
       console.warn('[wallet-db] Firestore load failed, falling back to JSON:', err.message);
     }
   }
-  // Fallback to JSON
+  // Load JSON (primary if no Firestore, or merge source if Firestore loaded)
   try {
     if (!fs.existsSync(WALLET_DB_FILE)) return;
     const raw = fs.readFileSync(WALLET_DB_FILE, 'utf8');
     if (!raw.trim()) return;
     const parsed = JSON.parse(raw);
     const wallets = parsed?.wallets || {};
-    for (const [addr, entry] of Object.entries(wallets)) {
-      if (addr && typeof entry === 'object') walletDatabase.set(addr, entry);
-    }
-    console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from JSON`);
-    // Auto-migrate to Firestore
-    if (walletDatabase.size > 0 && fbAvailable()) {
-      console.log('[wallet-db] Migrating JSON data to Firestore...');
-      fbBatchSet('wallets', [...walletDatabase.entries()])
-        .then(() => console.log('[wallet-db] Migration complete'))
-        .catch(err => console.warn('[wallet-db] Migration failed:', err.message));
+    if (!loadedFromFirestore) {
+      for (const [addr, entry] of Object.entries(wallets)) {
+        if (addr && typeof entry === 'object') walletDatabase.set(addr, entry);
+      }
+      console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from JSON`);
+      // Auto-migrate to Firestore
+      if (walletDatabase.size > 0 && fbAvailable()) {
+        console.log('[wallet-db] Migrating JSON data to Firestore...');
+        fbBatchSet('wallets', [...walletDatabase.entries()])
+          .then(() => console.log('[wallet-db] Migration complete'))
+          .catch(err => console.warn('[wallet-db] Migration failed:', err.message));
+      }
+    } else {
+      // Merge missing fields from JSON into Firestore-loaded entries
+      let mergeCount = 0;
+      for (const [addr, jsonEntry] of Object.entries(wallets)) {
+        const existing = walletDatabase.get(addr);
+        if (!existing || typeof jsonEntry !== 'object') continue;
+        let merged = false;
+        // Merge scoreBreakdown if Firestore is missing it
+        if (!existing.scoreBreakdown && jsonEntry.scoreBreakdown) {
+          existing.scoreBreakdown = jsonEntry.scoreBreakdown;
+          merged = true;
+        }
+        // Merge composite if Firestore is missing it
+        if (!existing.composite && jsonEntry.composite) {
+          existing.composite = jsonEntry.composite;
+          merged = true;
+        }
+        // Merge traits if Firestore is missing them
+        if (!existing.traits && jsonEntry.traits) {
+          existing.traits = jsonEntry.traits;
+          merged = true;
+        }
+        if (merged) {
+          walletDatabase.set(addr, existing);
+          mergeCount++;
+        }
+      }
+      if (mergeCount > 0) {
+        console.log(`[wallet-db] Merged ${mergeCount} wallets with JSON data`);
+      } else {
+        console.log(`[wallet-db] No wallets needed merging (JSON had ${Object.keys(wallets).length} entries)`);
+      }
     }
   } catch (err) {
-    console.warn('[wallet-db] Failed to load', err);
+    console.warn('[wallet-db] Failed to load JSON', err);
   }
 };
 
@@ -838,12 +879,12 @@ const persistWalletDatabase = () => {
   try {
     const obj = {};
     for (const [k, v] of walletDatabase) obj[k] = v;
-    fs.writeFileSync(WALLET_DB_FILE, JSON.stringify({
+    fs.writeFile(WALLET_DB_FILE, JSON.stringify({
       version: 1,
       updatedAt: new Date().toISOString(),
       totalWallets: walletDatabase.size,
       wallets: obj,
-    }, null, 2));
+    }, null, 2), (err) => { if (err) console.warn('[wallet-db] Write error:', err.message); });
   } catch (err) {
     console.warn('[wallet-db] Failed to persist', err);
   }
@@ -1170,6 +1211,7 @@ const COMPOSITE_TIER_MAP = [
 ];
 
 function getCompositeTier(score) {
+  if (!Number.isFinite(score) || score < 0) return 'mercury';
   for (const [threshold, tier] of COMPOSITE_TIER_MAP) {
     if (score <= threshold) return tier;
   }
@@ -1177,36 +1219,73 @@ function getCompositeTier(score) {
 }
 
 function calculateCompositeScore(input) {
-  const { onchainScore = 0, trustScore = 0, gameScores = [], gameTypes = new Set(), achievementCount = 0, challengesWon = 0, constellationExplored = 0, compareCount = 0, questsCompleted = 0, streakDays = 0, scanCount = 0, hasSeeker = false, hasPreorder = false, hasCombo = false } = input;
+  const {
+    onchainScore = 0, trustScore = 0, riskScore = 0,
+    walletAgeDays = 0, txCount = 0, nftCount = 0, solBalance = 0, defiProtoCount = 0,
+    gameScores = [], gameTypes = new Set(), achievementCount = 0,
+    challengesWon = 0, constellationExplored = 0, compareCount = 0,
+    questsCompleted = 0, streakDays = 0, scanCount = 0,
+    hasSeeker = false, hasPreorder = false, hasCombo = false, scoreBreakdown = null,
+  } = input;
 
-  // On-chain (40%, max 400) — base + badge bonus
-  const basePts = Math.round((onchainScore / 1400) * 400);
-  const badgeBonus = (hasSeeker ? 15 : 0) + (hasPreorder ? 15 : 0) + (hasCombo ? 30 : 0);
-  const onchain = Math.min(400, basePts + badgeBonus);
+  // ── Badge evaluation (same conditions as client-side getBadgeItems) ──
+  // On-chain badges (5) — on-chain score already includes badge pts from scoring.js
+  // No extra bonus here to avoid double-counting
 
-  // Sybil Trust (25%, max 250)
-  const sybilTrust = Math.min(250, Math.round((trustScore / 100) * 250));
+  // Sybil Trust badges (3) — bonus 10 pts each
+  const badge_verifiedHuman = trustScore >= 80;
+  const badge_cleanRecord = trustScore > 0 && riskScore < 10;
+  const badge_trustPillar = trustScore >= 95;
+  const sybilBadgeBonus = (badge_verifiedHuman ? 10 : 0) + (badge_cleanRecord ? 10 : 0) + (badge_trustPillar ? 10 : 0);
 
-  // Human Proof (15%, max 150)
+  // Human Proof badges (3) — bonus 10 pts each
   const gameScoreTotal = gameScores.length > 0
     ? Math.min(80, Math.round(Math.log2(1 + gameScores.reduce((a, b) => a + b, 0)) * 8))
     : 0;
   const gameTypesCount = gameTypes.size;
+  const badge_gameMaster = gameTypesCount >= 3;
+  const badge_achievementHunter = achievementCount >= 10;
+  const badge_highScorer = gameScoreTotal >= 40;
+  const humanBadgeBonus = (badge_gameMaster ? 10 : 0) + (badge_achievementHunter ? 10 : 0) + (badge_highScorer ? 10 : 0);
+
+  // Social badges (3) — bonus 8 pts each
+  const badge_arenaChampion = challengesWon >= 5;
+  const badge_starNavigator = constellationExplored >= 10;
+  const badge_debateKing = compareCount >= 10;
+  const socialBadgeBonus = (badge_arenaChampion ? 8 : 0) + (badge_starNavigator ? 8 : 0) + (badge_debateKing ? 8 : 0);
+
+  // Engagement badges (3) — bonus 8 pts each
+  const badge_questHunter = questsCompleted >= 10;
+  const badge_streakLord = streakDays >= 7;
+  const badge_explorer = scanCount >= 20;
+  const engagementBadgeBonus = (badge_questHunter ? 8 : 0) + (badge_streakLord ? 8 : 0) + (badge_explorer ? 8 : 0);
+
+  // ── Category scores ──
+  // On-chain (40%, max 400) — scoring.js already outputs 0-400 directly
+  const onchain = Math.min(400, onchainScore);
+  const basePts = onchain;
+
+  // Sybil Trust (25%, max 250)
+  const safeTrust = Number.isFinite(trustScore) ? Math.max(0, Math.min(100, trustScore)) : 0;
+  const sybilBase = Math.round((safeTrust / 100) * 250);
+  const sybilTrust = Math.min(250, Math.max(0, sybilBase + sybilBadgeBonus));
+
+  // Human Proof (15%, max 150)
   const gameDiversity = Math.min(30, gameTypesCount * 5);
   const achievementPts = Math.min(40, achievementCount * 5);
-  const humanProof = Math.min(150, gameScoreTotal + gameDiversity + achievementPts);
+  const humanProof = Math.min(150, gameScoreTotal + gameDiversity + achievementPts + humanBadgeBonus);
 
-  // Social (10%, max 100)
-  const challengePts = Math.min(40, challengesWon * 5);
-  const constellationPts = Math.min(35, constellationExplored * 2);
-  const comparePts = Math.min(25, compareCount * 3);
-  const social = Math.min(100, challengePts + constellationPts + comparePts);
+  // Social (10%, max 100) — base activities capped at 76 so badge bonuses (up to 24) always matter
+  const challengePts = Math.min(32, challengesWon * 4);
+  const constellationPts = Math.min(28, constellationExplored * 2);
+  const comparePts = Math.min(16, compareCount * 2);
+  const social = Math.min(100, challengePts + constellationPts + comparePts + socialBadgeBonus);
 
-  // Engagement (10%, max 100)
-  const questPts = Math.min(50, questsCompleted * 2);
-  const streakPts = Math.min(30, streakDays * 3);
-  const scanPts = Math.min(20, scanCount > 0 ? Math.round(Math.log2(1 + scanCount) * 5) : 0);
-  const engagement = Math.min(100, questPts + streakPts + scanPts);
+  // Engagement (10%, max 100) — base activities capped at 76 so badge bonuses (up to 24) always matter
+  const questPts = Math.min(40, questsCompleted * 2);
+  const streakPts = Math.min(22, streakDays * 2);
+  const scanPts = Math.min(14, scanCount > 0 ? Math.round(Math.log2(1 + scanCount) * 4) : 0);
+  const engagement = Math.min(100, questPts + streakPts + scanPts + engagementBadgeBonus);
 
   const total = onchain + sybilTrust + humanProof + social + engagement;
   const tier = getCompositeTier(total);
@@ -1216,18 +1295,30 @@ function calculateCompositeScore(input) {
     compositeTier: tier,
     breakdown: { onchain, sybilTrust, humanProof, social, engagement },
     details: {
-      onchain: { identityScore: onchainScore, identityMax: 1400, basePts, badgeBonus, hasSeeker, hasPreorder, hasCombo },
-      sybilTrust: { trustScore, trustMax: 100 },
-      humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount },
-      social: { challengesWon, challengePts, constellationExplored, constellationPts, compareCount, comparePts },
-      engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts },
+      onchain: { identityScore: onchainScore, identityMax: 400, basePts, badgeBonus: 0, hasSeeker, hasPreorder, hasCombo, scoreBreakdown },
+      sybilTrust: { trustScore, trustMax: 100, badgeBonus: sybilBadgeBonus },
+      humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount, badgeBonus: humanBadgeBonus },
+      social: { challengesWon, challengePts, constellationExplored, constellationPts, compareCount, comparePts, badgeBonus: socialBadgeBonus },
+      engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
     },
   };
 }
 
 function buildCompositeInput(address) {
   const walletEntry = walletDatabase.get(address) || {};
-  const onchainScore = walletEntry.score || 0;
+  const scoreBreakdown = walletEntry.scoreBreakdown || null;
+  // Prefer sum from current scoreBreakdown (max 400) over legacy entry.score (may be from old 1000-scale system)
+  let onchainScore = walletEntry.score || 0;
+  if (scoreBreakdown && scoreBreakdown.solBalance && scoreBreakdown.solBalance.max === 40) {
+    // Current scoring system — sum pts from breakdown for accurate on-chain score
+    let sbSum = 0;
+    for (const v of Object.values(scoreBreakdown)) {
+      if (v && typeof v === 'object' && typeof v.pts === 'number') sbSum += v.pts;
+    }
+    onchainScore = Math.min(400, sbSum);
+  } else if (onchainScore > 400) {
+    onchainScore = 400; // legacy score, just cap
+  }
   const trustScore = walletEntry.sybil?.trustScore || 0;
   const socialStats = walletEntry.socialStats || {};
 
@@ -1252,9 +1343,17 @@ function buildCompositeInput(address) {
   }
 
   const traits = walletEntry.traits || {};
+  const stats = walletEntry.stats || {};
+  const sybil = walletEntry.sybil || {};
   return {
     onchainScore,
     trustScore,
+    riskScore: sybil.riskScore || 0,
+    walletAgeDays: stats.walletAgeDays || (traits.walletAgeDays ?? 0),
+    txCount: stats.transactions || (traits.txCount ?? 0),
+    nftCount: stats.nfts || (traits.nftCount ?? 0),
+    solBalance: stats.solBalance || (traits.solBalance ?? 0),
+    defiProtoCount: Array.isArray(traits.defiProtocols) ? traits.defiProtocols.length : 0,
     gameScores,
     gameTypes,
     achievementCount,
@@ -1267,6 +1366,7 @@ function buildCompositeInput(address) {
     hasSeeker: Boolean(traits.hasSeeker),
     hasPreorder: Boolean(traits.hasPreorder),
     hasCombo: Boolean(traits.hasCombo),
+    scoreBreakdown,
   };
 }
 
@@ -1278,18 +1378,63 @@ function triggerCompositeUpdate(address) {
     existing.composite = result;
     walletDatabase.set(address, existing);
     saveWalletDatabaseDebounced();
+    if (fbAvailable()) {
+      fbSet('wallets', address, existing).catch(() => {});
+    }
   } catch (err) {
     console.warn('[composite] Failed to update for', address, err.message);
   }
 }
 
-function backfillCompositeScores() {
+async function backfillCompositeScores() {
   let count = 0;
-  for (const [address] of walletDatabase) {
+  let recalculated = 0;
+  for (const [address, entry] of walletDatabase) {
+    // If wallet has a score but no/stale scoreBreakdown, generate approximate breakdown from stats
+    // ONLY sets scoreBreakdown — does NOT overwrite score/tier/badges (those need a full scan)
+    // Detect old scoring system: current system has solBalance.max=40, old had 100+
+    const sbStale = entry.scoreBreakdown && (
+      (entry.scoreBreakdown.solBalance?.max || 0) !== 40
+      || entry.scoreBreakdown.behavioral
+    );
+    // Also recalculate if score exceeds current max (400) — legacy data
+    const scoreLegacy = entry.score > 400;
+    if (entry.score > 0 && (!entry.scoreBreakdown || sbStale || scoreLegacy) && entry.stats) {
+      try {
+        const s = entry.stats;
+        const firstTxTime = entry.firstTxTimestamp || (s.walletAgeYears > 0 ? Date.now() - s.walletAgeYears * 365 * 86400000 : 0);
+        const badges = entry.badges || [];
+        const extraTraits = {
+          hasSeeker: badges.includes('seeker'),
+          hasPreorder: badges.includes('visionary'),
+          swapCount: 0, nftTradeCount: 0, stakingCount: 0, defiProtocols: [],
+          ...(entry.traits || {}),
+        };
+        const identity = calculateIdentity(
+          s.transactions || 0,
+          firstTxTime,
+          s.solBalance || 0,
+          s.tokens || 0,
+          s.nfts || 0,
+          extraTraits,
+        );
+        // Set scoreBreakdown + sync score/tier/badges to current scoring system
+        entry.scoreBreakdown = identity.scoreBreakdown;
+        entry.score = identity.score;
+        entry.tier = identity.tier;
+        entry.badges = identity.badges;
+        walletDatabase.set(address, entry);
+        recalculated++;
+      } catch (err) {
+        console.warn(`[composite] Failed to recalculate identity for ${address.slice(0, 8)}:`, err.message);
+      }
+    }
     triggerCompositeUpdate(address);
     count++;
+    // Yield to event loop every 50 wallets to avoid blocking + Firestore write storm
+    if (count % 50 === 0) await new Promise(r => setTimeout(r, 100));
   }
-  console.log(`[composite] Backfilled ${count} wallets`);
+  console.log(`[composite] Backfilled ${count} wallets (recalculated ${recalculated} identities)`);
 }
 
 const getHeliusKeyIndex = (seed = '') => {
@@ -1920,14 +2065,19 @@ const fetchIdentitySnapshot = async (address) => {
       ? MAX_SIGNATURE_PAGES
       : Number.POSITIVE_INFINITY;
     for (let page = 0; page < maxPages; page += 1) {
-      const pageSignatures = await connection.getSignaturesForAddress(pubkey, {
-        limit: SIGNATURE_PAGE_LIMIT,
-        ...(before ? { before } : {}),
-      });
-      if (!pageSignatures.length) break;
-      signatures.push(...pageSignatures);
-      before = pageSignatures[pageSignatures.length - 1]?.signature;
-      if (!before || pageSignatures.length < SIGNATURE_PAGE_LIMIT) break;
+      try {
+        const pageSignatures = await connection.getSignaturesForAddress(pubkey, {
+          limit: SIGNATURE_PAGE_LIMIT,
+          ...(before ? { before } : {}),
+        });
+        if (!pageSignatures.length) break;
+        signatures.push(...pageSignatures);
+        before = pageSignatures[pageSignatures.length - 1]?.signature;
+        if (!before || pageSignatures.length < SIGNATURE_PAGE_LIMIT) break;
+      } catch (err) {
+        console.warn(`[fetchSignatures] page ${page + 1} failed for ${address.slice(0, 8)}:`, err.message);
+        break; // keep what we have so far
+      }
     }
     return signatures;
   };
@@ -1939,9 +2089,34 @@ const fetchIdentitySnapshot = async (address) => {
   ]);
 
   const solBalance = balance / LAMPORTS_PER_SOL;
-  const txCount = signatures.length;
+  const sigCount = signatures.length;
   const oldest = signatures[signatures.length - 1];
-  const firstTxTime = oldest?.blockTime ?? null;
+  // Use cached data from walletDatabase when available
+  const cachedEntry = walletDatabase.get(address);
+  const cachedTxCount = cachedEntry?.stats?.transactions || 0;
+  const cachedFirstTx = cachedEntry?.firstTxTimestamp || null;
+
+  // For high-tx wallets: findFirstTxTime paginates fully → returns exact firstTxTime + totalSigs
+  // For low-tx wallets: pagination oldest is exact
+  let firstTxTime;
+  let txCount;
+  if (sigCount >= SIGNATURE_PAGE_LIMIT) {
+    try {
+      const result = await findFirstTxTime(connection, pubkey, signatures, cachedFirstTx, rpcUrl);
+      firstTxTime = result.firstTxTime;
+      txCount = Math.max(result.totalSigs, cachedTxCount);
+    } catch {
+      firstTxTime = cachedFirstTx || oldest?.blockTime || null;
+      txCount = Math.max(sigCount, cachedTxCount);
+    }
+    // Use the older (smaller) of new vs cached — first tx never gets newer
+    if (cachedFirstTx && firstTxTime && cachedFirstTx < firstTxTime) {
+      firstTxTime = cachedFirstTx;
+    }
+  } else {
+    firstTxTime = oldest?.blockTime || null;
+    txCount = Math.max(sigCount, cachedTxCount);
+  }
 
   let nftCount = 0;
   let uniqueTokenCount = 0;
@@ -2137,7 +2312,7 @@ const fetchIdentitySnapshot = async (address) => {
   const isDeFiKing = isDeFiKingBase || (enhancedData?.isDeFiKing ?? false);
 
   const walletAgeDays = firstTxTime
-    ? Math.floor((Date.now() - firstTxTime * 1000) / (1000 * 60 * 60 * 24))
+    ? Math.round((Date.now() - firstTxTime * 1000) / (1000 * 60 * 60 * 24))
     : 0;
   const identity = calculateIdentity(txCount, firstTxTime, solBalance, uniqueTokenCount, nftCount, {
     hasSeeker,
@@ -2174,6 +2349,7 @@ const fetchIdentitySnapshot = async (address) => {
     txCount,
     tokenCount: uniqueTokenCount,
     nftCount,
+    firstTxTime,
   };
 };
 
@@ -2480,11 +2656,25 @@ const server = http.createServer(async (req, res) => {
         }
       } catch { /* ignore — trust data is optional */ }
 
+      // Update walletDatabase so composite score stays in sync
+      // firstTxTimestamp: persisted permanently (first tx never changes) — used by sybil to skip pagination
+      const firstTxTimestamp = snapshot.firstTxTime || null;
+      updateWalletEntry(address, {
+        score: identity.score,
+        tier: identity.tier,
+        badges: identity.badges,
+        scoreBreakdown: identity.scoreBreakdown,
+        ...(firstTxTimestamp ? { firstTxTimestamp } : {}),
+        stats: { tokens: tokenCount, nfts: nftCount, transactions: txCount, solBalance: Math.round(solBalance * 1000) / 1000, walletAgeYears: Math.floor(walletAgeDays / 365) },
+      });
+      triggerCompositeUpdate(address);
+
       respondJson(res, 200, {
         address,
         score: identity.score,
         tier: identity.tier,
         badges: identity.badges,
+        scoreBreakdown: identity.scoreBreakdown,
         trustGrade,
         trustScore,
         riskLevel,
@@ -2594,6 +2784,17 @@ const server = http.createServer(async (req, res) => {
       const resultA = format(snapA, a);
       const resultB = format(snapB, b);
       const diff = resultA.compositeScore - resultB.compositeScore;
+
+      // Increment compareCount for both wallets
+      for (const addr of [a, b]) {
+        const w = walletDatabase.get(addr) || {};
+        const ss = w.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
+        ss.compareCount = (ss.compareCount || 0) + 1;
+        updateWalletEntry(addr, { socialStats: ss });
+      }
+      triggerCompositeUpdate(a);
+      triggerCompositeUpdate(b);
+
       respondJson(res, 200, {
         wallets: [resultA, resultB],
         scoreDiff: diff,
@@ -2643,7 +2844,7 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 200, {
           type: 'action',
           icon: `${baseUrl}/api/actions/render?address=${address}&side=front`,
-          title: `Attest Score: ${identity.score}/1400 — ${identity.tier.replace('_', ' ').toUpperCase()}`,
+          title: `Attest Score: ${identity.score}/1000 — ${identity.tier.replace('_', ' ').toUpperCase()}`,
           description: `Badges: ${identity.badges.join(', ') || 'none'}. Click to record this reputation permanently on the Solana blockchain.`,
           label: `Attest ${identity.score} pts`,
           links: {
@@ -2726,7 +2927,7 @@ const server = http.createServer(async (req, res) => {
 
         respondJson(res, 200, {
           transaction: serialized,
-          message: `Reputation attestation: Score ${identity.score}/1400, Tier ${identity.tier.replace('_', ' ').toUpperCase()}. This will be permanently recorded on Solana.`,
+          message: `Reputation attestation: Score ${identity.score}/400, Tier ${identity.tier.replace('_', ' ').toUpperCase()}. This will be permanently recorded on Solana.`,
         });
         return;
       } catch (error) {
@@ -2841,9 +3042,11 @@ const server = http.createServer(async (req, res) => {
       // For destroyer: score = points (unrelated to time), skip score-time check
       const isDestroyerMode = payload.gameMode === 'destroyer';
       const expectedScore = Math.floor(durationMs / 1000);
+      const maxDestroyerScore = Math.max(500, Math.floor(durationMs / 100));
       const scoreDelta = isDestroyerMode ? 0 : Math.abs(expectedScore - payload.score);
       const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
-      const verified = verification.seedMatchesSlot && scoreDelta <= 5;
+      const destroyerScoreValid = !isDestroyerMode || payload.score <= maxDestroyerScore;
+      const verified = verification.seedMatchesSlot && scoreDelta <= 5 && destroyerScoreValid;
       const nowIso = new Date().toISOString();
       const baseUrl = getBaseUrl(req);
       const proofUrl = baseUrl ? `${baseUrl}/api/game/session/${encodeURIComponent(id)}` : null;
@@ -2876,6 +3079,11 @@ const server = http.createServer(async (req, res) => {
         createdAtMs: Date.now(),
       };
 
+      // Evict oldest if at capacity
+      if (gameSessionProofs.size >= MAX_GAME_SESSION_PROOFS) {
+        const oldest = gameSessionProofs.keys().next().value;
+        if (oldest) gameSessionProofs.delete(oldest);
+      }
       gameSessionProofs.set(id, entry);
       persistGameSessionProofs();
       respondJson(res, 200, { session: toPublicGameSessionProof(entry) });
@@ -2970,7 +3178,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       // MAX_SCORE validation per game mode
-      const MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600, mining: 600 };
+      const MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
       const gtCheck = gameType || 'orbit';
       const maxScore = MAX_SCORES[gtCheck] || 9999;
       if (score > maxScore) {
@@ -3167,67 +3375,208 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ Tournament System ═══
+  // ═══ Tournament System (Tiered) ═══
   if (pathname === '/api/tournament/active' && req.method === 'GET') {
-    checkTournament();
-    if (!activeTournament) return respondJson(res, 200, { tournament: null });
-    const entriesArr = Object.entries(activeTournament.entries)
-      .map(([addr, data]) => ({ address: addr, score: data.score, submittedAt: data.submittedAt }))
-      .sort((a, b) => b.score - a.score);
-    respondJson(res, 200, {
-      tournament: {
-        id: activeTournament.id, mode: activeTournament.mode, entryFee: activeTournament.entryFee,
-        prizePool: activeTournament.prizePool, startTime: activeTournament.startTime,
-        endTime: activeTournament.endTime, status: activeTournament.status,
-        entriesCount: entriesArr.length, entries: entriesArr.slice(0, 50),
-      },
-    });
+    checkTournaments();
+    // Optional JWT check for userJoined per tier
+    let userAddr = null;
+    try {
+      const authHeader = req.headers['authorization'];
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+        if (decoded.address) userAddr = decoded.address;
+      }
+    } catch {}
+    const tournaments = {};
+    for (const tier of Object.keys(TOURNAMENT_TIERS)) {
+      const t = activeTournaments[tier];
+      if (!t) { tournaments[tier] = null; continue; }
+      const userJoined = !!(userAddr && t.entries[userAddr]);
+      const entriesArr = Object.entries(t.entries)
+        .map(([addr, data]) => ({ address: addr, score: data.score, submittedAt: data.submittedAt }))
+        .sort((a, b) => b.score - a.score);
+      tournaments[tier] = {
+        id: t.id, tier, mode: t.mode, entryFee: t.entryFee, label: t.label || TOURNAMENT_TIERS[tier].label,
+        prizePool: t.prizePool, startTime: t.startTime, endTime: t.endTime, status: t.status,
+        entriesCount: entriesArr.length, endsAt: t.endTime, entryCount: entriesArr.length,
+        isEnded: t.status === 'ended', userJoined,
+        // Gated: only show entries if user joined
+        entries: userJoined ? entriesArr.slice(0, 50) : [],
+        resultsHidden: !userJoined,
+      };
+    }
+    // Backward compat: also provide "tournament" key (daily as default)
+    respondJson(res, 200, { tournaments, tournament: tournaments.daily });
     return;
   }
 
   if (pathname === '/api/tournament/join' && req.method === 'POST') {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
-    checkTournament();
-    if (!activeTournament) return respondJson(res, 400, { error: 'No active tournament' });
+    checkTournaments();
+    let tier = 'daily';
+    try { const body = JSON.parse(await readBody(req)); if (body.tier) tier = body.tier; } catch {}
+    if (!TOURNAMENT_TIERS[tier]) return respondJson(res, 400, { error: 'Invalid tier' });
+    const t = activeTournaments[tier];
+    if (!t) return respondJson(res, 400, { error: 'No active tournament for this tier' });
     const addr = jwtAuth.address;
-    if (activeTournament.entries[addr]) return respondJson(res, 400, { error: 'Already joined' });
-    const fee = activeTournament.entryFee;
+    if (t.entries[addr]) return respondJson(res, 400, { error: 'Already joined' });
+    const fee = t.entryFee;
     const bal = getCoinBalance(addr);
     if (bal < fee) return respondJson(res, 400, { error: `Insufficient balance. Entry fee: ${fee} Coins` });
-    // Apply burn fee to entry
-    const { net, burned } = applyBurnFee(fee);
-    totalBurned += burned;
+    // Apply 15% burn fee to entry
+    const burnAmt = Math.max(1, Math.floor(fee * TOURNAMENT_TIERS[tier].burnRate));
+    const net = fee - burnAmt;
+    totalBurned += burnAmt;
     setCoinBalance(addr, bal - fee);
-    activeTournament.prizePool += net;
-    activeTournament.entries[addr] = { score: 0, submittedAt: null };
-    respondJson(res, 200, { success: true, prizePool: activeTournament.prizePool, newBalance: bal - fee, burned });
+    t.prizePool += net;
+    t.entries[addr] = { score: 0, submittedAt: null };
+    saveTournament();
+    respondJson(res, 200, { success: true, tier, prizePool: t.prizePool, newBalance: bal - fee, burned: burnAmt });
     return;
   }
 
   if (pathname === '/api/tournament/submit' && req.method === 'POST') {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
-    checkTournament();
-    if (!activeTournament) return respondJson(res, 400, { error: 'No active tournament' });
-    const addr = jwtAuth.address;
-    if (!activeTournament.entries[addr]) return respondJson(res, 400, { error: 'Not joined' });
+    checkTournaments();
     try {
-      const { score } = JSON.parse(await readBody(req));
+      const body = JSON.parse(await readBody(req));
+      const { score, tier: reqTier } = body;
+      const tier = reqTier || 'daily';
+      if (!TOURNAMENT_TIERS[tier]) return respondJson(res, 400, { error: 'Invalid tier' });
+      const t = activeTournaments[tier];
+      if (!t) return respondJson(res, 400, { error: 'No active tournament' });
+      const addr = jwtAuth.address;
+      if (!t.entries[addr]) return respondJson(res, 400, { error: 'Not joined' });
       if (typeof score !== 'number' || score <= 0) return respondJson(res, 400, { error: 'Valid score required' });
-      const MAX_T_SCORES = { orbit: 600, gravity: 600 };
-      const maxTScore = MAX_T_SCORES[activeTournament.mode] || 9999;
+      const MAX_T_SCORES = { orbit: 600, gravity: 600, destroyer: 9999 };
+      const maxTScore = MAX_T_SCORES[t.mode] || 9999;
       if (score > maxTScore) return respondJson(res, 400, { error: 'Score exceeds maximum' });
-      if (score > (activeTournament.entries[addr].score || 0)) {
-        activeTournament.entries[addr] = { score, submittedAt: new Date().toISOString() };
+      if (score > (t.entries[addr].score || 0)) {
+        t.entries[addr] = { score, submittedAt: new Date().toISOString() };
+        saveTournament();
       }
-      respondJson(res, 200, { success: true, score: activeTournament.entries[addr].score });
+      respondJson(res, 200, { success: true, tier, score: t.entries[addr].score });
     } catch { respondJson(res, 400, { error: 'Invalid JSON body' }); }
     return;
   }
 
   if (pathname === '/api/tournament/history' && req.method === 'GET') {
-    respondJson(res, 200, { tournaments: tournamentHistory.slice(0, 10) });
+    respondJson(res, 200, { tournaments: tournamentHistory.slice(0, 20) });
+    return;
+  }
+
+  // ═══ Referral System ═══
+  if (pathname === '/api/referral/code' && req.method === 'GET') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const addr = jwtAuth.address;
+    // Check if code already exists in Firebase
+    if (fbAvailable()) {
+      const existing = await fbGet('referralCodes', addr);
+      if (existing?.code) {
+        return respondJson(res, 200, { code: existing.code });
+      }
+    }
+    // Generate deterministic code: base58 chars from sha256(address + SALT)
+    const SALT = process.env.REFERRAL_SALT || 'prism_ref_2024';
+    const hash = crypto.createHash('sha256').update(addr + SALT).digest();
+    const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    let code = '';
+    for (let i = 0; i < 6; i++) code += BASE58[hash[i] % 58];
+    // Persist in Firebase
+    if (fbAvailable()) {
+      await fbSet('referralCodes', addr, { code, createdAt: Date.now() });
+      await fbSet('referralCodes', `code_${code}`, { address: addr });
+    }
+    respondJson(res, 200, { code });
+    return;
+  }
+
+  if (pathname === '/api/referral/claim' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const claimer = jwtAuth.address;
+    try {
+      const { code } = JSON.parse(await readBody(req));
+      if (!code || typeof code !== 'string') return respondJson(res, 400, { error: 'Code required' });
+      if (!fbAvailable()) return respondJson(res, 503, { error: 'Firebase unavailable' });
+
+      // Look up referrer
+      const codeDoc = await fbGet('referralCodes', `code_${code}`);
+      if (!codeDoc?.address) return respondJson(res, 400, { error: 'Invalid referral code' });
+      const referrer = codeDoc.address;
+
+      // Validate
+      if (referrer === claimer) return respondJson(res, 400, { error: 'Cannot use your own code' });
+
+      // Check if claimer already claimed
+      const existingClaim = await fbGet('referrals', `${referrer}_${claimer}`);
+      if (existingClaim) return respondJson(res, 400, { error: 'Already claimed a referral' });
+
+      // Check referrer max 50 referrals
+      const referrerStats = await fbGet('referralStats', referrer);
+      if (referrerStats && referrerStats.totalReferred >= 50) {
+        return respondJson(res, 400, { error: 'Referrer has reached maximum referrals' });
+      }
+
+      // Award coins
+      const claimerBal = getCoinBalance(claimer);
+      setCoinBalance(claimer, claimerBal + 50);
+      const referrerBal = getCoinBalance(referrer);
+      setCoinBalance(referrer, referrerBal + 20);
+
+      // Save referral record
+      await fbSet('referrals', `${referrer}_${claimer}`, {
+        referrer, claimer, code, timestamp: Date.now(), mintBonus: false,
+      });
+
+      // Update referrer stats
+      const newTotal = (referrerStats?.totalReferred || 0) + 1;
+      const newEarned = (referrerStats?.totalEarned || 0) + 20;
+      await fbSet('referralStats', referrer, {
+        totalReferred: newTotal,
+        totalEarned: newEarned,
+      });
+
+      respondJson(res, 200, { success: true, claimerBonus: 50, referrerBonus: 20 });
+    } catch { respondJson(res, 400, { error: 'Invalid request' }); }
+    return;
+  }
+
+  if (pathname === '/api/referral/stats' && req.method === 'GET') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const addr = jwtAuth.address;
+    if (!fbAvailable()) return respondJson(res, 200, { code: null, totalReferred: 0, totalEarned: 0, referrals: [] });
+
+    const codeDoc = await fbGet('referralCodes', addr);
+    const statsDoc = await fbGet('referralStats', addr);
+
+    // Get referral list (max 50)
+    const referrals = [];
+    if (statsDoc?.totalReferred > 0) {
+      const db = (await import('./services/firebase.js')).getDb();
+      if (db) {
+        const snap = await db.collection('referrals')
+          .where('referrer', '==', addr)
+          .orderBy('timestamp', 'desc')
+          .limit(50)
+          .get();
+        snap.forEach(doc => {
+          const d = doc.data();
+          referrals.push({ address: d.claimer, timestamp: d.timestamp, mintBonus: d.mintBonus || false });
+        });
+      }
+    }
+
+    respondJson(res, 200, {
+      code: codeDoc?.code || null,
+      totalReferred: statsDoc?.totalReferred || 0,
+      totalEarned: statsDoc?.totalEarned || 0,
+      referrals,
+    });
     return;
   }
 
@@ -3356,6 +3705,29 @@ const server = http.createServer(async (req, res) => {
     if (txsm.length > 500) txsm.length = 500;
     prismTransactions.set(addr, txsm);
     debouncedSavePrism();
+    // Referral mint bonus: if minter was referred, give referrer +100 coins
+    if (fbAvailable()) {
+      (async () => {
+        try {
+          const db = (await import('./services/firebase.js')).getDb();
+          if (!db) return;
+          const snap = await db.collection('referrals').where('claimer', '==', addr).limit(1).get();
+          if (snap.empty) return;
+          const refDoc = snap.docs[0];
+          const refData = refDoc.data();
+          if (refData.mintBonus) return; // already awarded
+          const referrer = refData.referrer;
+          const rBal = getCoinBalance(referrer);
+          setCoinBalance(referrer, rBal + 100);
+          await fbSet('referrals', refDoc.id, { mintBonus: true });
+          // Update referrer stats
+          const rStats = await fbGet('referralStats', referrer);
+          await fbSet('referralStats', referrer, {
+            totalEarned: (rStats?.totalEarned || 0) + 100,
+          });
+        } catch (e) { console.warn('[referral] mint bonus error:', e.message); }
+      })();
+    }
     respondJson(res, 200, { success: true, proceedWithMint: true, newBalance: bal - MINT_COIN_COST, burned: mintBurned });
     return;
   }
@@ -3390,7 +3762,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (score < 0 || score > 1500) return respondJson(res, 400, { error: 'Score must be between 0 and 1500' });
+      if (score < 0 || score > 1000) return respondJson(res, 400, { error: 'Score must be between 0 and 1000' });
       const entry = addScoreEntry(addr, score, tier || 'mercury');
       // ── Update wallet database ──
       const wExisting = walletDatabase.get(addr) || {};
@@ -3824,7 +4196,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const metadataPath = path.join(METADATA_DIR, metadataFile);
-      fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+      await fs.promises.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
       const metadataUri = `${baseUrl}/metadata/${metadataFile}`;
 
       const rpcUrl = getRpcUrl(payerKey.toBase58());
@@ -4857,7 +5229,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const filePath = path.join(ASSETS_DIR, fileName);
-      fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+      await fs.promises.writeFile(filePath, Buffer.from(base64, 'base64'));
       const baseUrl = getBaseUrl(req);
       if (!baseUrl) {
         respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
@@ -4936,7 +5308,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const filePath = path.join(METADATA_DIR, fileName);
-        fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2));
+        await fs.promises.writeFile(filePath, JSON.stringify(metadata, null, 2));
         const baseUrl = getBaseUrl(req);
         if (!baseUrl) {
           respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
@@ -4980,14 +5352,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ PRISM Earn (JWT optional — scoring endpoint, low risk) ═══
+  // ═══ PRISM Earn ═══
   if (pathname === '/api/prism/earn' && req.method === 'POST') {
-    const jwtAuth = optionalJwt(req, res);
+    const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
       const { address: bodyAddress, source, amount, description } = JSON.parse(await readBody(req));
-      const address = jwtAuth.address || bodyAddress;
-      if (jwtAuth.address && bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      const address = jwtAuth.address;
+      if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
       // Max amount caps per source to prevent abuse
       const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, burn_tokens: 500, burn_nfts: 500, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20 };
@@ -5009,22 +5381,25 @@ const server = http.createServer(async (req, res) => {
       prismEarnRateLimit.set(globalKey, Date.now());
       prismEarnRateLimit.set(rlKey, Date.now());
       if (prismEarnRateLimit.size > 5000) {
-        const cutoff = Date.now() - PRISM_EARN_COOLDOWN_DEFAULT * 2;
-        for (const [k, v] of prismEarnRateLimit) { if (v < cutoff) prismEarnRateLimit.delete(k); }
+        const now = Date.now();
+        for (const [k, v] of prismEarnRateLimit) {
+          // Use the max possible cooldown (7 days for quest_weekly) to avoid premature eviction
+          if (now - v > 7 * 24 * 60 * 60_000) prismEarnRateLimit.delete(k);
+        }
       }
       let earned = Math.max(0, Math.floor(Number(amount)));
       if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
       // Apply staking boost to earn
       const earnBoost = getStakingBoost(address);
       if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
-      const bal = getPrismBalance(address);
-      bal.balance += earned;
-      bal.totalEarned += earned;
-      bal.lastUpdated = new Date().toISOString();
-      setCoinBalance(address, bal.balance);
+      const prevBal = getCoinBalance(address);
+      const newBal = prevBal + earned;
+      setCoinBalance(address, newBal);
+      addCoinEarned(address, earned);
       // ── Sync coins to wallet database ──
       const wEarn = walletDatabase.get(address);
-      if (wEarn) { wEarn.coins = bal.balance; saveWalletDatabaseDebounced(); }
+      if (wEarn) { wEarn.coins = newBal; saveWalletDatabaseDebounced(); }
+      const bal = getPrismBalance(address);
       const tx = {
         id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         address, amount: earned, type: 'earn', source: source || 'unknown',
@@ -5056,26 +5431,25 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ PRISM Spend ═══
   if (pathname === '/api/prism/spend' && req.method === 'POST') {
-    const jwtAuth = optionalJwt(req, res);
+    const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
       const { address: bodyAddress, source, amount, description } = JSON.parse(await readBody(req));
-      const address = jwtAuth.address || bodyAddress;
-      if (jwtAuth.address && bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      const address = jwtAuth.address;
+      if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
       const spent = Math.max(0, Math.floor(Number(amount)));
-      const bal = getPrismBalance(address);
-      if (bal.balance < spent) return respondJson(res, 400, { error: 'insufficient balance' });
+      const currentBal = getCoinBalance(address);
+      if (currentBal < spent) return respondJson(res, 400, { error: 'insufficient balance' });
       // Apply 2% burn fee
       const { burned } = applyBurnFee(spent);
       totalBurned += burned;
-      bal.balance -= spent;
-      bal.totalSpent += spent;
-      bal.lastUpdated = new Date().toISOString();
-      setCoinBalance(address, bal.balance);
+      const newBal = currentBal - spent;
+      setCoinBalance(address, newBal);
+      addCoinSpent(address, spent);
       // ── Sync coins to wallet database ──
       const wSpend = walletDatabase.get(address);
-      if (wSpend) { wSpend.coins = bal.balance; saveWalletDatabaseDebounced(); }
+      if (wSpend) { wSpend.coins = newBal; saveWalletDatabaseDebounced(); }
       const tx = {
         id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         address, amount: spent, type: 'spend', source: source || 'unknown',
@@ -5087,7 +5461,7 @@ const server = http.createServer(async (req, res) => {
       if (txs.length > 500) txs.length = 500;
       prismTransactions.set(address, txs);
       debouncedSavePrism();
-      respondJson(res, 200, { balance: bal, spent });
+      respondJson(res, 200, { balance: getPrismBalance(address), spent });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
   }
@@ -5099,12 +5473,12 @@ const server = http.createServer(async (req, res) => {
   const dailyPurchases = globalThis._dailyPurchases || (globalThis._dailyPurchases = new Map());
 
   const COIN_PACKAGES = [
-    { coins: 1000,   solPrice: 0.001 },
-    { coins: 5000,   solPrice: 0.0045 },
-    { coins: 15000,  solPrice: 0.012 },
-    { coins: 50000,  solPrice: 0.035 },
+    { coins: 5000,    solPrice: 0.005 },
+    { coins: 15000,   solPrice: 0.013 },
+    { coins: 50000,   solPrice: 0.038 },
+    { coins: 150000,  solPrice: 0.099 },
   ];
-  const DAILY_COIN_LIMIT = 100000;
+  const DAILY_COIN_LIMIT = 300000;
 
   if (pathname === '/api/prism/buy/status' && req.method === 'GET') {
     const address = url.searchParams.get('address');
@@ -5122,7 +5496,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/prism/buy' && req.method === 'POST') {
     const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth) return;
+    if (!jwtAuth.ok) return;
     try {
       const { packageIndex, txSignature } = JSON.parse(await readBody(req));
       const address = jwtAuth.address;
@@ -5141,15 +5515,16 @@ const server = http.createServer(async (req, res) => {
         return respondJson(res, 400, { error: `Daily limit reached. Purchased today: ${purchasedToday}/${DAILY_COIN_LIMIT}` });
       }
 
-      // Replay protection
+      // Replay protection — reserve BEFORE async verification to prevent race condition
       if (!txSignature || typeof txSignature !== 'string') return respondJson(res, 400, { error: 'txSignature required' });
       if (usedBuyTxSignatures.has(txSignature)) return respondJson(res, 400, { error: 'Transaction already used' });
+      usedBuyTxSignatures.add(txSignature); // reserve immediately
 
       // Verify on-chain transaction
       try {
         const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
         const tx = await conn.getParsedTransaction(txSignature, { maxSupportedTransactionVersion: 0 });
-        if (!tx) return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' });
+        if (!tx) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' }); }
         const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
         const instructions = tx.transaction?.message?.instructions || [];
         const validTransfer = instructions.some(ix => {
@@ -5159,24 +5534,20 @@ const server = http.createServer(async (req, res) => {
           }
           return false;
         });
-        if (!validTransfer) return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' });
+        if (!validTransfer) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
       } catch (e) {
+        usedBuyTxSignatures.delete(txSignature); // release on error so user can retry
         return respondJson(res, 400, { error: `Failed to verify transaction: ${e.message}` });
       }
 
-      // Mark tx as used
-      usedBuyTxSignatures.add(txSignature);
-
       // Credit coins
-      const bal = getPrismBalance(address);
-      bal.balance += pkg.coins;
-      bal.totalEarned += pkg.coins;
-      bal.lastUpdated = new Date().toISOString();
-      setCoinBalance(address, bal.balance);
+      const prevBuyBal = getCoinBalance(address);
+      setCoinBalance(address, prevBuyBal + pkg.coins);
+      addCoinEarned(address, pkg.coins);
 
       // Sync to wallet database
       const wBuy = walletDatabase.get(address);
-      if (wBuy) { wBuy.coins = bal.balance; saveWalletDatabaseDebounced(); }
+      if (wBuy) { wBuy.coins = prevBuyBal + pkg.coins; saveWalletDatabaseDebounced(); }
 
       // Update daily tracking
       dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
@@ -5195,7 +5566,7 @@ const server = http.createServer(async (req, res) => {
       prismTransactions.set(address, txs);
       debouncedSavePrism();
 
-      respondJson(res, 200, { balance: bal, purchased: pkg.coins, solPaid: pkg.solPrice });
+      respondJson(res, 200, { balance: getPrismBalance(address), purchased: pkg.coins, solPaid: pkg.solPrice });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
   }
@@ -5210,22 +5581,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ Sybil Analysis (Comprehensive — 12 signals) ═══
+  // ═══ Sybil Analysis (Comprehensive — 18+ signals) ═══
   if (pathname === '/api/sybil/analysis' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
-    // Rate limit: 30s per IP (heavy endpoint — 13+ RPC calls)
-    const sybilIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-    const sybilRlKey = `sybil:${sybilIp}`;
-    if (Date.now() - (reputationRateLimit.get(sybilRlKey) || 0) < 30_000) {
-      return respondJson(res, 429, { error: 'Rate limited. Try again in 30 seconds.' });
-    }
+    // Serve from cache first (no rate limit for cached results)
     const cached = sybilCache.get(address);
     if (cached && Date.now() - cached.cachedAt < 3600_000) {
-      respondJson(res, 200, cached.analysis);
-      return;
+      return respondJson(res, 200, cached.analysis);
+    }
+    // In-flight dedup: if the same address is already being analyzed, wait for it
+    if (sybilInFlight.has(address)) {
+      try {
+        const result = await sybilInFlight.get(address);
+        return respondJson(res, 200, result);
+      } catch {
+        return respondJson(res, 500, { error: 'Analysis failed (in-flight)' });
+      }
+    }
+    // Rate limit: 15s per IP (optimized — fewer RPC calls now)
+    const sybilIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const sybilRlKey = `sybil:${sybilIp}`;
+    if (Date.now() - (reputationRateLimit.get(sybilRlKey) || 0) < 15_000) {
+      return respondJson(res, 429, { error: 'Rate limited. Try again in 15 seconds.' });
     }
     reputationRateLimit.set(sybilRlKey, Date.now());
+    // Wrap in a shared promise for in-flight dedup
+    const analysisPromise = (async () => {
     try {
       const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
       const pubkey = new PublicKey(address);
@@ -5240,35 +5622,43 @@ const server = http.createServer(async (req, res) => {
       const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
       const tokenAccounts = tokenAccountsResult.status === 'fulfilled' ? tokenAccountsResult.value?.value || [] : [];
 
-      // Paginate to find the true oldest tx (up to 10 pages, 30s timeout) — matches fetchIdentitySnapshot depth
+      // Wallet age + parsed txs — run in parallel (independent operations)
       let oldestSig = signatures.length > 0 ? signatures[signatures.length - 1] : null;
-      if (signatures.length === 1000) {
-        const ageStart = Date.now();
-        let cursor = oldestSig?.signature;
-        for (let page = 0; page < 9 && cursor; page++) {
-          if (Date.now() - ageStart > 30_000) break;
-          try {
-            const older = await conn.getSignaturesForAddress(pubkey, { limit: 1000, before: cursor });
-            if (!older.length) break;
-            oldestSig = older[older.length - 1];
-            if (older.length < 1000) break;
-            cursor = oldestSig.signature;
-          } catch { break; }
+      const cachedWallet = walletDatabase.get(address);
+      const cachedFirstTx = cachedWallet?.firstTxTimestamp || null;
+      const sybilRpcUrl = getRpcUrl(address) || 'https://api.mainnet-beta.solana.com';
+
+      const sigBatch = signatures.slice(0, 30).map(s => s.signature);
+      let parsedTxs = [];
+
+      // Run wallet age search + tx parsing in parallel
+      const [firstTxResult, parseBatch1, parseBatch2] = await Promise.allSettled([
+        findFirstTxTime(conn, pubkey, signatures, cachedFirstTx, sybilRpcUrl),
+        sigBatch.length > 0 ? conn.getParsedTransactions(sigBatch.slice(0, 15), { maxSupportedTransactionVersion: 0 }) : Promise.resolve([]),
+        sigBatch.length > 15 ? conn.getParsedTransactions(sigBatch.slice(15), { maxSupportedTransactionVersion: 0 }) : Promise.resolve([]),
+      ]);
+
+      // Process wallet age result (findFirstTxTime now returns { firstTxTime, totalSigs })
+      const ftResult = firstTxResult.status === 'fulfilled' ? firstTxResult.value : null;
+      const firstTxBlockTime = ftResult?.firstTxTime ?? (typeof ftResult === 'number' ? ftResult : null);
+      if (firstTxBlockTime && (!oldestSig?.blockTime || firstTxBlockTime < oldestSig.blockTime)) {
+        oldestSig = { ...(oldestSig || {}), blockTime: firstTxBlockTime };
+      }
+      if (firstTxBlockTime && (!cachedFirstTx || firstTxBlockTime < cachedFirstTx)) {
+        updateWalletEntry(address, { firstTxTimestamp: firstTxBlockTime });
+      }
+      // Update txCount if findFirstTxTime found more
+      if (ftResult?.totalSigs && ftResult.totalSigs > signatures.length) {
+        const cachedStats = cachedWallet?.stats || {};
+        const bestTxCount = Math.max(ftResult.totalSigs, cachedStats.transactions || 0);
+        if (bestTxCount > (cachedStats.transactions || 0)) {
+          updateWalletEntry(address, { stats: { ...cachedStats, transactions: bestTxCount } });
         }
       }
 
-      // Parse a subset of transactions for deeper analysis (max 60 to stay fast)
-      const sigBatch = signatures.slice(0, 60).map(s => s.signature);
-      let parsedTxs = [];
-      if (sigBatch.length > 0) {
-        try {
-          for (let i = 0; i < sigBatch.length; i += 10) {
-            const batch = sigBatch.slice(i, i + 10);
-            const txs = await conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 });
-            parsedTxs.push(...txs.filter(Boolean));
-          }
-        } catch { /* partial failure ok */ }
-      }
+      // Process parsed txs result
+      if (parseBatch1.status === 'fulfilled') parsedTxs.push(...(parseBatch1.value || []).filter(Boolean));
+      if (parseBatch2.status === 'fulfilled') parsedTxs.push(...(parseBatch2.value || []).filter(Boolean));
 
       // ── Derive metrics from existing data ──
 
@@ -5276,7 +5666,7 @@ const server = http.createServer(async (req, res) => {
       const nowMs = Date.now();
 
       // 1. Wallet Age (uses paginated oldest tx)
-      const walletAgeDays = oldestSig?.blockTime ? Math.floor((nowMs / 1000 - oldestSig.blockTime) / 86400) : 0;
+      const walletAgeDays = oldestSig?.blockTime ? Math.round((nowMs / 1000 - oldestSig.blockTime) / 86400) : 0;
 
       // 2. Transaction Timing Variance (Coefficient of Variation)
       let timingVariance = 1;
@@ -5385,85 +5775,285 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      // 6. Connected wallet similarity (from funding sources — check cluster endpoint data)
-      // We'll use basic heuristic: check top funding source overlap
+      // 6. Multi-hop funding graph + .sol domain check — run in parallel
       let clusterSimilarity = 0;
-      try {
-        const { parsed: fundingParsed } = await fetchParsedTransactions(address, 50);
-        const { incoming } = extractSolTransfers(fundingParsed, address);
-        // Check if top funder funded multiple wallets with similar timing
-        let topFunder = null, topAmount = 0;
-        for (const [addr, info] of incoming) {
-          if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
-        }
-        if (topFunder && topAmount >= 0.01) {
-          const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
-          const topFunderPct = topAmount / totalReceived;
-          // If >80% from one source, check if that source has many outgoing
-          if (topFunderPct > 0.8) {
-            try {
-              const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
-              const funderBatch = funderSigs.slice(0, 15).map(s => s.signature);
-              let funderParsed = [];
+      let fundingChainDepth = 0;
+      let hubSpokeScore = 0;
+      const allSiblings = new Set();
+      let hasSolDomain = false;
+
+      const fundingGraphPromise = (async () => {
+        try {
+          // Reuse already-parsed txs from step above (no duplicate RPC calls)
+          const { incoming } = extractSolTransfers(parsedTxs, address);
+          let topFunder = null, topAmount = 0;
+          for (const [addr, info] of incoming) {
+            if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
+          }
+          if (topFunder && topAmount >= 0.01) {
+            const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
+            const topFunderPct = topAmount / totalReceived;
+            if (topFunderPct > 0.6) {
+              fundingChainDepth = 1;
               try {
-                const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
-                funderParsed = txs.filter(Boolean);
-              } catch {}
-              const siblings = new Set();
-              for (const tx of funderParsed) {
-                if (!tx?.meta || !tx?.transaction) continue;
-                const accounts = tx.transaction.message?.accountKeys || [];
-                const pre = tx.meta.preBalances || [];
-                const post = tx.meta.postBalances || [];
-                for (let i = 0; i < accounts.length; i++) {
-                  const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
-                  const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
-                  if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
-                    siblings.add(acc);
+                const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
+                const funderBatch = funderSigs.slice(0, 20).map(s => s.signature);
+                let funderParsed = [];
+                try {
+                  const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
+                  funderParsed = txs.filter(Boolean);
+                } catch {}
+                for (const tx of funderParsed) {
+                  if (!tx?.meta || !tx?.transaction) continue;
+                  const accounts = tx.transaction.message?.accountKeys || [];
+                  const pre = tx.meta.preBalances || [];
+                  const post = tx.meta.postBalances || [];
+                  for (let i = 0; i < accounts.length; i++) {
+                    const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+                    const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+                    if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
+                      allSiblings.add(acc);
+                    }
                   }
                 }
+                hubSpokeScore = Math.min(1, allSiblings.size / 20);
+                // Level 2: only if strong single-source signal
+                if (topFunderPct > 0.8 && funderParsed.length > 0) {
+                  try {
+                    const { parsed: level2Parsed } = await fetchParsedTransactions(topFunder, 20);
+                    const { incoming: level2In } = extractSolTransfers(level2Parsed, topFunder);
+                    let grandFunder = null, grandAmount = 0;
+                    for (const [addr, info] of level2In) {
+                      if (info.totalSol > grandAmount) { grandFunder = addr; grandAmount = info.totalSol; }
+                    }
+                    if (grandFunder && grandAmount > 0.01) {
+                      const totalL2 = [...level2In.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
+                      if (grandAmount / totalL2 > 0.7) {
+                        fundingChainDepth = 2;
+                        try {
+                          const gfSigs = await conn.getSignaturesForAddress(new PublicKey(grandFunder), { limit: 30 });
+                          const gfBatch = gfSigs.slice(0, 10).map(s => s.signature);
+                          const gfTxs = await conn.getParsedTransactions(gfBatch, { maxSupportedTransactionVersion: 0 });
+                          for (const tx of (gfTxs || []).filter(Boolean)) {
+                            if (!tx?.meta || !tx?.transaction) continue;
+                            const accs = tx.transaction.message?.accountKeys || [];
+                            const pre2 = tx.meta.preBalances || [];
+                            const post2 = tx.meta.postBalances || [];
+                            for (let i = 0; i < accs.length; i++) {
+                              const acc = typeof accs[i] === 'string' ? accs[i] : accs[i]?.pubkey?.toBase58?.() || '';
+                              const diff = ((post2[i] || 0) - (pre2[i] || 0)) / 1e9;
+                              if (diff > 0.01 && acc !== grandFunder && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
+                                allSiblings.add(acc);
+                              }
+                            }
+                          }
+                        } catch {}
+                      }
+                    }
+                  } catch {}
+                }
+              } catch {}
+              if (allSiblings.size >= 3) {
+                clusterSimilarity = Math.min(1, allSiblings.size / 15);
               }
-              if (siblings.size >= 3) {
-                clusterSimilarity = Math.min(1, siblings.size / 10);
-              }
-            } catch {}
+            }
+          }
+        } catch {}
+      })();
+
+      const domainCheckPromise = (async () => {
+        try {
+          const NAME_PROGRAM = new PublicKey('namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX');
+          const nameAccounts = await conn.getProgramAccounts(NAME_PROGRAM, {
+            filters: [{ memcmp: { offset: 32, bytes: pubkey.toBase58() } }],
+            dataSlice: { offset: 0, length: 1 },
+          });
+          hasSolDomain = nameAccounts.length > 0;
+        } catch {}
+      })();
+
+      await Promise.allSettled([fundingGraphPromise, domainCheckPromise]);
+
+      // 7. Time-of-day and day-of-week fingerprinting
+      const hourBuckets = new Array(24).fill(0);
+      const dayBuckets = new Array(7).fill(0);
+      for (const ts of timestamps) {
+        const d = new Date(ts);
+        hourBuckets[d.getUTCHours()]++;
+        dayBuckets[d.getUTCDay()]++;
+      }
+      // Shannon entropy for hour distribution (max = log2(24) ≈ 4.58 for uniform)
+      let hourEntropy = 0;
+      const totalTs = timestamps.length || 1;
+      for (const count of hourBuckets) {
+        if (count > 0) {
+          const p = count / totalTs;
+          hourEntropy -= p * Math.log2(p);
+        }
+      }
+      // Entropy for timing intervals (replaces simple CV)
+      let intervalEntropy = 0;
+      if (timestamps.length >= 10) {
+        const sorted = [...timestamps].sort((a, b) => a - b);
+        const intervals = [];
+        for (let i = 1; i < sorted.length; i++) intervals.push(sorted[i] - sorted[i - 1]);
+        // Bin intervals into 10 buckets by percentile for entropy calc
+        const sortedIntervals = [...intervals].sort((a, b) => a - b);
+        const binSize = Math.max(1, Math.floor(sortedIntervals.length / 10));
+        const bins = new Array(10).fill(0);
+        for (let i = 0; i < intervals.length; i++) {
+          const bin = Math.min(9, Math.floor(i / binSize));
+          bins[bin]++;
+        }
+        for (const count of bins) {
+          if (count > 0) {
+            const p = count / intervals.length;
+            intervalEntropy -= p * Math.log2(p);
           }
         }
-      } catch {}
+      }
+      // Weekend ratio (sybil bots don't rest on weekends)
+      const weekendTxs = dayBuckets[0] + dayBuckets[6]; // Sun + Sat
+      const weekdayTxs = totalTs - weekendTxs;
+      const weekendRatio = totalTs > 20 ? weekendTxs / totalTs : 0.28; // default neutral
+
+      // 8. Airdrop farming pattern detection
+      // Count programs with very few interactions (1-2 txs) — farmers touch many protocols minimally
+      const programInteractionCounts = new Map();
+      for (const tx of parsedTxs) {
+        if (!tx?.meta || !tx?.transaction || tx.meta.err) continue;
+        const ixs = tx.transaction.message?.instructions || [];
+        const txPrograms = new Set();
+        for (const ix of ixs) {
+          const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+          if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') txPrograms.add(pid);
+        }
+        for (const pid of txPrograms) {
+          programInteractionCounts.set(pid, (programInteractionCounts.get(pid) || 0) + 1);
+        }
+      }
+      let shallowProtocols = 0; // protocols with only 1-2 interactions
+      let deepProtocols = 0;    // protocols with 5+ interactions
+      for (const [, count] of programInteractionCounts) {
+        if (count <= 2) shallowProtocols++;
+        if (count >= 5) deepProtocols++;
+      }
+      const farmingRatio = programInteractionCounts.size > 3
+        ? shallowProtocols / programInteractionCounts.size : 0;
+
+      // 9. DeFi depth scoring — check for known DeFi program interactions
+      const DEFI_PROGRAMS = {
+        // DEXes
+        'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': 'jupiter',
+        'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': 'orca',
+        '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': 'raydium',
+        'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK': 'raydium_clmm',
+        'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo': 'meteora',
+        // Lending
+        'So1endDq2YkqhipRh3WViPa8hFb7GVEtcEMF3CBAK8h': 'solend',
+        'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': 'marginfi',
+        'KLend2g3cP87ber41GXWsSZQz9R1hGT2bVBaeEdnKHR': 'kamino',
+        // Staking
+        'CgDG2CLNqR2ypE3CXTMEq5R6J8FaqVjChn9Tfmwocs4Y': 'marinade',
+        'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy': 'spl_stake_pool',
+        'JitoSOL': 'jito',
+        // Governance
+        'GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw': 'spl_governance',
+        'GovHgfDPyQ1GwjFhNkMqZVs9EVecaH3MQ1Lmob5NLz2v': 'realms',
+      };
+      let defiCategories = new Set(); // 'dex', 'lending', 'staking', 'governance'
+      for (const pid of allProgramIds) {
+        const name = DEFI_PROGRAMS[pid];
+        if (!name) continue;
+        if (['jupiter', 'orca', 'raydium', 'raydium_clmm', 'meteora'].includes(name)) defiCategories.add('dex');
+        if (['solend', 'marginfi', 'kamino'].includes(name)) defiCategories.add('lending');
+        if (['marinade', 'spl_stake_pool', 'jito'].includes(name)) defiCategories.add('staking');
+        if (['spl_governance', 'realms'].includes(name)) defiCategories.add('governance');
+      }
+      const defiDepth = defiCategories.size; // 0-4
 
       // ── Build Signals ──
       const signals = [];
 
-      // Signal 1: Wallet Age — new wallets are suspicious
+      // --- Derived metrics for new signals ---
+      // Self-transfers: target appears on both sending and receiving side
+      let selfTransferCount = 0;
+      for (const tx of parsedTxs) {
+        if (!tx?.meta || !tx?.transaction || tx.meta.err) continue;
+        const accounts = tx.transaction.message?.accountKeys || [];
+        const pre = tx.meta.preBalances || [];
+        const post = tx.meta.postBalances || [];
+        let targetIdx = -1;
+        for (let i = 0; i < accounts.length; i++) {
+          const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+          if (acc === address) { targetIdx = i; break; }
+        }
+        if (targetIdx >= 0) {
+          // Check inner instructions for self-transfer (System.Transfer to self)
+          const ixs = tx.transaction.message?.instructions || [];
+          for (const ix of ixs) {
+            const parsed = ix.parsed;
+            if (parsed?.type === 'transfer' && parsed?.info) {
+              if (parsed.info.source === address && parsed.info.destination === address) selfTransferCount++;
+            }
+          }
+        }
+      }
+
+      // Counterparty concentration: ratio of unique counterparties to total txs
+      const totalCounterparties = incomingSenders.size + outgoingRecipients.size;
+      const counterpartyRatio = totalSolTxCount > 5 ? totalCounterparties / totalSolTxCount : 1;
+
+      // Activity burst detection: what % of active days are in the most active week
+      let burstRatio = 0;
+      if (timestamps.length >= 20 && walletAgeDays > 14) {
+        const daySet = [...uniqueDays].sort();
+        if (daySet.length >= 3) {
+          let maxInWindow = 0;
+          for (let i = 0; i < daySet.length; i++) {
+            const windowStart = new Date(daySet[i]).getTime();
+            const windowEnd = windowStart + 7 * 86400_000;
+            let count = 0;
+            for (let j = i; j < daySet.length; j++) {
+              if (new Date(daySet[j]).getTime() <= windowEnd) count++;
+              else break;
+            }
+            if (count > maxInWindow) maxInWindow = count;
+          }
+          burstRatio = maxInWindow / daySet.length;
+        }
+      }
+
+      const uniquePrograms = allProgramIds.size;
+
+      // Signal 1: Wallet Age + Fresh Burst (MERGED — no double-counting)
+      // Graduated: new wallet alone = moderate, new wallet + burst = high
       const isNewWallet = walletAgeDays < 30;
+      const freshBurst = isNewWallet && signatures.length > 50;
       signals.push({
-        id: 'wallet_age', name: 'New Wallet', category: 'behavioral',
-        detected: isNewWallet, weight: 15,
-        severity: isNewWallet ? 'warning' : 'info',
-        value: `${walletAgeDays}d`,
-        description: isNewWallet ? `Wallet is only ${walletAgeDays} days old` : `Wallet is ${walletAgeDays} days old`,
+        id: 'wallet_age', name: freshBurst ? 'Fresh Wallet Burst' : 'New Wallet', category: 'behavioral',
+        detected: isNewWallet, weight: freshBurst ? 20 : 12,
+        severity: freshBurst ? 'danger' : (isNewWallet ? 'warning' : 'info'),
+        value: isNewWallet ? `${walletAgeDays}d / ${signatures.length} txs` : `${walletAgeDays}d`,
+        description: freshBurst
+          ? `${signatures.length} transactions in only ${walletAgeDays} days — suspicious burst`
+          : (isNewWallet ? `Wallet is only ${walletAgeDays} days old` : `Wallet is ${walletAgeDays} days old`),
       });
 
-      // Signal 2: Uniform Timing — bot-like evenly spaced transactions
-      const uniformTiming = timingCV < 0.3 && timestamps.length >= 10;
+      // Signal 2: Timing Pattern (MERGED — graduated single signal)
+      // Robotic (CV < 0.25 + 20 txs) = full weight, Uniform (CV < 0.3) = lower weight
+      const timingDetected = (isRobotic || (timingCV < 0.3 && timestamps.length >= 10));
       signals.push({
-        id: 'uniform_timing', name: 'Uniform Timing Pattern', category: 'behavioral',
-        detected: uniformTiming, weight: 12,
-        severity: uniformTiming ? 'danger' : 'info',
+        id: 'timing_pattern', name: isRobotic ? 'Robotic Timing' : 'Uniform Timing', category: 'behavioral',
+        detected: timingDetected, weight: isRobotic ? 18 : 10,
+        severity: isRobotic ? 'danger' : (timingDetected ? 'warning' : 'info'),
         value: timingCV < 999 ? `CV ${timingCV.toFixed(2)}` : 'N/A',
-        description: uniformTiming ? 'Transactions are suspiciously evenly spaced (bot-like)' : 'Transaction timing appears natural',
+        description: isRobotic
+          ? 'Extreme timing uniformity — automated script detected'
+          : (timingDetected ? 'Transactions are suspiciously evenly spaced' : 'Transaction timing appears natural'),
       });
 
-      // Signal 3: Robotic Timing (stricter — CV < 0.25 with many txs)
-      signals.push({
-        id: 'robotic_timing', name: 'Robotic Transaction Timing', category: 'behavioral',
-        detected: isRobotic, weight: 18,
-        severity: isRobotic ? 'danger' : 'info',
-        value: isRobotic ? 'Detected' : 'Normal',
-        description: isRobotic ? 'Extreme timing uniformity detected (automated script)' : 'No robotic patterns',
-      });
-
-      // Signal 4: Low Activity Ratio — dormant wallet suddenly active
+      // Signal 3: Low Activity Ratio — dormant wallet suddenly active
       const lowActivityRatio = walletAgeDays > 60 && activeDaysRatio < 0.05;
       signals.push({
         id: 'low_activity_ratio', name: 'Low Activity Ratio', category: 'behavioral',
@@ -5473,37 +6063,39 @@ const server = http.createServer(async (req, res) => {
         description: lowActivityRatio ? `Only active ${activeDaysCount} of ${totalLifespanDays} days (${(activeDaysRatio * 100).toFixed(1)}%)` : `Active ${activeDaysCount} of ${totalLifespanDays} days`,
       });
 
-      // Signal 5: Fresh Wallet Burst — new + lots of txs
-      const freshBurst = walletAgeDays < 30 && signatures.length > 50;
+      // Signal 4: Activity Burst — most activity crammed into one week (NEW)
+      const isBurst = burstRatio > 0.8 && activeDaysCount >= 3 && walletAgeDays > 30;
       signals.push({
-        id: 'fresh_wallet', name: 'Fresh Wallet Burst', category: 'behavioral',
-        detected: freshBurst, weight: 12,
-        severity: freshBurst ? 'warning' : 'info',
-        value: freshBurst ? `${signatures.length} txs in ${walletAgeDays}d` : `${signatures.length} txs`,
-        description: freshBurst ? `${signatures.length} transactions in only ${walletAgeDays} days` : 'Normal activity level for wallet age',
+        id: 'activity_burst', name: 'Activity Burst', category: 'behavioral',
+        detected: isBurst, weight: 10,
+        severity: isBurst ? 'warning' : 'info',
+        value: `${(burstRatio * 100).toFixed(0)}% in 7d`,
+        description: isBurst
+          ? `${(burstRatio * 100).toFixed(0)}% of all active days fall within a single week — farming burst`
+          : 'Activity is spread across wallet lifetime',
       });
 
-      // Signal 6: Low Token Diversity
+      // Signal 5: Low Token Diversity
       const lowTokenDiv = tokenDiversityCount < 3;
       signals.push({
         id: 'low_token_diversity', name: 'Low Token Diversity', category: 'financial',
-        detected: lowTokenDiv, weight: 6,
+        detected: lowTokenDiv, weight: 5,
         severity: lowTokenDiv ? 'warning' : 'info',
         value: `${tokenDiversityCount} tokens`,
         description: lowTokenDiv ? `Only ${tokenDiversityCount} unique tokens held` : `Holds ${tokenDiversityCount} unique tokens`,
       });
 
-      // Signal 7: No NFT Holdings
+      // Signal 6: No NFT Holdings
       const noNfts = nftCount === 0;
       signals.push({
         id: 'no_nft_holdings', name: 'No NFT Holdings', category: 'financial',
-        detected: noNfts, weight: 5,
-        severity: noNfts ? 'info' : 'info',
+        detected: noNfts, weight: 4,
+        severity: 'info',
         value: `${nftCount} NFTs`,
         description: noNfts ? 'Wallet holds no NFTs' : `Holds ${nftCount} NFTs`,
       });
 
-      // Signal 8: One-Directional Flow
+      // Signal 7: One-Directional Flow
       const totalVolume = incomingVolume + outgoingVolume;
       const flowRatio = totalVolume > 0 ? Math.max(incomingVolume, outgoingVolume) / totalVolume : 0.5;
       const oneDirectional = totalVolume > 0.1 && flowRatio > 0.9;
@@ -5517,7 +6109,7 @@ const server = http.createServer(async (req, res) => {
         description: oneDirectional ? 'Heavily one-directional SOL flow (suspicious)' : 'Balanced SOL flow',
       });
 
-      // Signal 9: Cluster Similarity — connected wallets from same funder
+      // Signal 8: Cluster Similarity — connected wallets from same funder
       const highClusterSim = clusterSimilarity > 0.3;
       signals.push({
         id: 'cluster_similarity', name: 'Cluster Similarity', category: 'network',
@@ -5527,7 +6119,7 @@ const server = http.createServer(async (req, res) => {
         description: highClusterSim ? 'Wallet shares funding source with multiple similar wallets' : 'No suspicious wallet clusters detected',
       });
 
-      // Signal 10: Dust Transactions — many tiny transactions indicate farming
+      // Signal 9: Dust Transactions — many tiny transactions indicate farming
       const dustRatio = totalSolTxCount > 0 ? dustTxCount / totalSolTxCount : 0;
       const highDust = totalSolTxCount >= 5 && dustRatio > 0.5;
       signals.push({
@@ -5538,8 +6130,7 @@ const server = http.createServer(async (req, res) => {
         description: highDust ? `${dustTxCount}/${totalSolTxCount} transactions are dust (<0.001 SOL)` : 'Normal transaction sizes',
       });
 
-      // Signal 11: Low dApp Interaction Breadth
-      const uniquePrograms = allProgramIds.size;
+      // Signal 10: Low dApp Interaction Breadth
       const lowDappInteraction = uniquePrograms < 5 && signatures.length > 20;
       signals.push({
         id: 'low_dapp_interaction', name: 'Low dApp Interaction', category: 'behavioral',
@@ -5549,28 +6140,139 @@ const server = http.createServer(async (req, res) => {
         description: lowDappInteraction ? `Only interacted with ${uniquePrograms} programs despite ${signatures.length} txs` : `Interacted with ${uniquePrograms} different programs`,
       });
 
-      // Signal 12: Drained Balance — current balance is tiny vs historical max
+      // Signal 11: Drained Balance — current balance is tiny vs historical max
       const drainedBalance = historicalMaxBalance > 1 && balance < historicalMaxBalance * 0.01;
       signals.push({
         id: 'drained_balance', name: 'Drained Balance', category: 'financial',
-        detected: drainedBalance, weight: 8,
+        detected: drainedBalance, weight: 7,
         severity: drainedBalance ? 'warning' : 'info',
         value: drainedBalance ? `${balance.toFixed(3)} / ${historicalMaxBalance.toFixed(1)} SOL` : `${balance.toFixed(2)} SOL`,
         description: drainedBalance ? `Current balance (${balance.toFixed(3)}) is <1% of historical max (${historicalMaxBalance.toFixed(1)} SOL)` : 'Balance appears normal',
+      });
+
+      // Signal 12: Self-Transfers — sending SOL to yourself to inflate tx count (NEW)
+      const hasSelfTransfers = selfTransferCount >= 3;
+      signals.push({
+        id: 'self_transfers', name: 'Self-Transfers', category: 'behavioral',
+        detected: hasSelfTransfers, weight: 12,
+        severity: hasSelfTransfers ? 'danger' : 'info',
+        value: `${selfTransferCount} self-txs`,
+        description: hasSelfTransfers
+          ? `${selfTransferCount} transfers to self detected — tx count inflation`
+          : 'No self-transfer patterns',
+      });
+
+      // Signal 13: Low Counterparty Diversity — few unique addresses despite many txs (NEW)
+      const lowCounterparty = totalSolTxCount >= 10 && counterpartyRatio < 0.2;
+      signals.push({
+        id: 'low_counterparty', name: 'Low Counterparty Diversity', category: 'network',
+        detected: lowCounterparty, weight: 10,
+        severity: lowCounterparty ? 'warning' : 'info',
+        value: `${totalCounterparties} counterparties / ${totalSolTxCount} txs`,
+        description: lowCounterparty
+          ? `Only ${totalCounterparties} unique counterparties across ${totalSolTxCount} SOL transactions`
+          : `${totalCounterparties} unique counterparties`,
+      });
+
+      // Signal 14: Funding Chain Depth — multi-hop single-source funding
+      const deepChain = fundingChainDepth >= 2;
+      signals.push({
+        id: 'funding_chain', name: 'Funding Chain', category: 'network',
+        detected: deepChain, weight: 12,
+        severity: deepChain ? 'danger' : 'info',
+        value: `${fundingChainDepth} hops`,
+        description: deepChain
+          ? `Funding traced through ${fundingChainDepth} intermediary wallets — layered sybil pattern`
+          : 'No suspicious funding chains',
+      });
+
+      // Signal 15: Hub-and-Spoke — funder distributes to many wallets
+      const isHubSpoke = hubSpokeScore > 0.4;
+      signals.push({
+        id: 'hub_spoke', name: 'Hub-and-Spoke Funding', category: 'network',
+        detected: isHubSpoke, weight: 10,
+        severity: isHubSpoke ? 'warning' : 'info',
+        value: `${allSiblings.size} siblings`,
+        description: isHubSpoke
+          ? `Funding source distributed to ${allSiblings.size}+ wallets — mass distribution pattern`
+          : 'No hub-and-spoke pattern detected',
+      });
+
+      // Signal 16: Bot-like Hour Distribution — flat or extremely narrow time windows
+      // Max entropy for 24 bins = log2(24) ≈ 4.58 — bots are near-max (all hours equal)
+      // Humans typically use 3-4.0 range (concentrated in waking hours)
+      const botlikeHours = timestamps.length >= 20 && hourEntropy > 4.2;
+      const nightOwlHours = timestamps.length >= 20 && hourEntropy < 1.5; // extremely concentrated
+      signals.push({
+        id: 'hour_distribution', name: botlikeHours ? '24/7 Bot Activity' : (nightOwlHours ? 'Narrow Time Window' : 'Normal Hours'), category: 'behavioral',
+        detected: botlikeHours || nightOwlHours, weight: botlikeHours ? 10 : (nightOwlHours ? 6 : 0),
+        severity: botlikeHours ? 'warning' : (nightOwlHours ? 'info' : 'info'),
+        value: `entropy ${hourEntropy.toFixed(2)}`,
+        description: botlikeHours
+          ? 'Activity spread evenly across all 24 hours — bot-like pattern'
+          : (nightOwlHours ? 'All activity concentrated in a very narrow time window' : 'Normal day/night activity pattern'),
+      });
+
+      // Signal 17: Airdrop Farming — many protocols touched minimally
+      const isFarming = farmingRatio > 0.7 && shallowProtocols >= 5;
+      signals.push({
+        id: 'airdrop_farming', name: 'Airdrop Farming Pattern', category: 'behavioral',
+        detected: isFarming, weight: 14,
+        severity: isFarming ? 'danger' : 'info',
+        value: `${shallowProtocols}/${programInteractionCounts.size} shallow`,
+        description: isFarming
+          ? `${shallowProtocols} protocols with only 1-2 interactions each — airdrop farming pattern`
+          : `${deepProtocols} deeply-used protocols`,
+      });
+
+      // Signal 18: No Weekend Activity — bots often run only on weekdays
+      const noWeekends = timestamps.length >= 30 && weekendRatio < 0.05;
+      signals.push({
+        id: 'no_weekends', name: 'No Weekend Activity', category: 'behavioral',
+        detected: noWeekends, weight: 6,
+        severity: noWeekends ? 'warning' : 'info',
+        value: `${(weekendRatio * 100).toFixed(0)}% weekend`,
+        description: noWeekends
+          ? 'Nearly zero weekend activity — scheduled bot pattern'
+          : `${(weekendRatio * 100).toFixed(0)}% of transactions on weekends`,
       });
 
       // ── Calculate Risk Score ──
       let riskScore = signals.reduce((sum, s) => sum + (s.detected ? s.weight : 0), 0);
       riskScore = Math.min(100, riskScore);
 
-      // Bonus: reduce score if wallet has positive trust indicators
+      // Trust bonuses — scaled for genuinely active wallets (max ~35)
       let trustBonus = 0;
-      if (walletAgeDays > 365) trustBonus += 5;      // old wallet
-      if (tokenDiversityCount >= 10) trustBonus += 3; // diverse portfolio
-      if (nftCount >= 5) trustBonus += 2;             // active collector
-      if (uniquePrograms >= 10) trustBonus += 3;      // uses many dApps
-      if (activeDaysRatio > 0.3) trustBonus += 2;     // consistently active
+      if (walletAgeDays > 365) trustBonus += 5;          // 1+ year old
+      if (walletAgeDays > 730) trustBonus += 3;          // 2+ years old
+      if (walletAgeDays > 1460) trustBonus += 2;         // 4+ years old
+      if (tokenDiversityCount >= 10) trustBonus += 3;    // diverse portfolio
+      if (tokenDiversityCount >= 25) trustBonus += 2;    // very diverse
+      if (nftCount >= 3) trustBonus += 2;                // collector
+      if (nftCount >= 10) trustBonus += 1;               // active collector
+      if (uniquePrograms >= 8) trustBonus += 2;          // uses many dApps
+      if (uniquePrograms >= 15) trustBonus += 2;         // DeFi power user
+      if (activeDaysRatio > 0.15) trustBonus += 2;       // regularly active
+      if (activeDaysRatio > 0.4) trustBonus += 1;        // daily user
+      if (incomingSenders.size >= 5) trustBonus += 2;     // receives from many sources
+      if (hasSolDomain) trustBonus += 4;                 // owns .sol domain (strong identity signal)
+      if (defiDepth >= 2) trustBonus += 2;               // uses DeFi beyond swaps
+      if (defiDepth >= 3) trustBonus += 2;               // deep DeFi user (lending+staking+governance)
       riskScore = Math.max(0, riskScore - trustBonus);
+
+      // ── Cross-session graph intelligence ──
+      const fundingSources = [...incomingSenders];
+      const { graphRisk, graphDetails } = checkGraphForKnownSybils(address, fundingSources, [...allSiblings]);
+      if (graphRisk > 0) {
+        riskScore = Math.min(100, riskScore + graphRisk);
+        signals.push({
+          id: 'graph_intelligence', name: 'Known Sybil Network', category: 'network',
+          detected: true, weight: graphRisk,
+          severity: graphRisk >= 15 ? 'danger' : 'warning',
+          value: `+${graphRisk} from graph`,
+          description: graphDetails.join('; '),
+        });
+      }
 
       const riskLevel = riskScore >= 75 ? 'critical' : riskScore >= 50 ? 'high' : riskScore >= 30 ? 'medium' : riskScore >= 10 ? 'low' : 'clean';
       const trustScore = Math.max(0, 100 - riskScore);
@@ -5594,11 +6296,32 @@ const server = http.createServer(async (req, res) => {
           historicalMaxBalance: Math.round(historicalMaxBalance * 10000) / 10000,
           txCount: signatures.length,
           clusterSimilarity: Math.round(clusterSimilarity * 100),
+          selfTransferCount,
+          counterpartyRatio: Math.round(counterpartyRatio * 100),
+          burstRatio: Math.round(burstRatio * 100),
+          trustBonus,
+          fundingChainDepth,
+          hourBuckets,
+          dayBuckets,
+          hubSpokeScore: Math.round(hubSpokeScore * 100),
+          siblingCount: allSiblings.size,
+          hourEntropy: Math.round(hourEntropy * 100) / 100,
+          intervalEntropy: Math.round(intervalEntropy * 100) / 100,
+          weekendRatio: Math.round(weekendRatio * 100),
+          shallowProtocols,
+          deepProtocols,
+          farmingRatio: Math.round(farmingRatio * 100),
+          defiDepth,
+          defiCategories: [...defiCategories],
+          hasSolDomain,
         },
         behaviorProfile: {
           txTimingVariance: timingVariance,
           timingCV: timingCV < 999 ? Math.round(timingCV * 100) / 100 : null,
+          intervalEntropy: Math.round(intervalEntropy * 100) / 100,
+          hourEntropy: Math.round(hourEntropy * 100) / 100,
           protocolDiversity: Math.min(1, uniquePrograms / 10),
+          defiDepth,
           activeDaysRatio: Math.round(activeDaysRatio * 100) / 100,
         },
         timestamp: new Date().toISOString(),
@@ -5626,9 +6349,220 @@ const server = http.createServer(async (req, res) => {
       }
       updateWalletEntry(address, sybilUpdate);
       triggerCompositeUpdate(address);
+
+      // ── Persist to sybil graph ──
+      updateSybilGraphNode(address, {
+        riskScore: analysis.riskScore,
+        trustGrade: analysis.trustGrade,
+        fundedBy: fundingSources.slice(0, 5),
+        siblings: [...allSiblings].slice(0, 20),
+        defiDepth,
+        hasSolDomain,
+        walletAgeDays,
+      });
+      // Also record siblings in graph for future lookups
+      for (const sib of allSiblings) {
+        if (!sybilGraph.nodes[sib]) {
+          updateSybilGraphNode(sib, { inferredFromCluster: address });
+        }
+      }
+      // Auto-flag clusters: if hub funded 10+ wallets and target is high risk
+      if (allSiblings.size >= 10 && riskScore >= 50) {
+        const clusterKey = fundingSources[0] || address;
+        const existing = sybilGraph.flaggedClusters.find(c => c.funder === clusterKey);
+        if (!existing) {
+          sybilGraph.flaggedClusters.push({
+            funder: clusterKey,
+            label: `auto-${clusterKey.slice(0, 8)}`,
+            members: [address, ...([...allSiblings].slice(0, 30))],
+            flaggedAt: Date.now(),
+          });
+        }
+      }
+      saveSybilGraph();
+
+      return analysis;
+    } catch (e) {
+      throw e;
+    }
+    })();
+    sybilInFlight.set(address, analysisPromise);
+    try {
+      const analysis = await analysisPromise;
       respondJson(res, 200, analysis);
     } catch (e) {
       respondJson(res, 500, { error: 'Sybil analysis failed', detail: e.message });
+    } finally {
+      sybilInFlight.delete(address);
+    }
+    return;
+  }
+
+  // ═══ Sybil Batch Analysis ═══
+  if (pathname === '/api/sybil/batch' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const { addresses } = JSON.parse(body);
+      if (!Array.isArray(addresses) || addresses.length === 0) return respondJson(res, 400, { error: 'addresses array required' });
+      if (addresses.length > 20) return respondJson(res, 400, { error: 'Max 20 addresses per batch' });
+
+      const results = {};
+      for (const addr of addresses) {
+        const cached = sybilCache.get(addr);
+        if (cached && Date.now() - cached.cachedAt < 3600_000) {
+          results[addr] = { trustGrade: cached.analysis.trustGrade, riskScore: cached.analysis.riskScore, riskLevel: cached.analysis.riskLevel, trustScore: cached.analysis.trustScore };
+        } else {
+          // Check graph for quick estimate
+          const node = sybilGraph.nodes[addr];
+          if (node && node.riskScore !== undefined) {
+            results[addr] = { trustGrade: node.trustGrade || '?', riskScore: node.riskScore, riskLevel: node.riskScore >= 75 ? 'critical' : node.riskScore >= 50 ? 'high' : node.riskScore >= 30 ? 'medium' : node.riskScore >= 10 ? 'low' : 'clean', source: 'graph' };
+          } else {
+            results[addr] = { trustGrade: '?', riskScore: -1, riskLevel: 'unknown', source: 'not_analyzed' };
+          }
+        }
+      }
+      respondJson(res, 200, { results, total: addresses.length, analyzed: Object.values(results).filter(r => r.riskScore >= 0).length });
+    } catch (e) {
+      respondJson(res, 500, { error: 'Batch analysis failed', detail: e.message });
+    }
+    return;
+  }
+
+  // ═══ Sybil Stats ═══
+  if (pathname === '/api/sybil/stats' && req.method === 'GET') {
+    const nodes = Object.values(sybilGraph.nodes);
+    const analyzed = nodes.filter(n => n.riskScore !== undefined);
+    const grades = { 'A+': 0, A: 0, B: 0, C: 0, D: 0, F: 0 };
+    for (const n of analyzed) {
+      if (n.trustGrade && grades[n.trustGrade] !== undefined) grades[n.trustGrade]++;
+    }
+    const avgRisk = analyzed.length > 0 ? Math.round(analyzed.reduce((s, n) => s + n.riskScore, 0) / analyzed.length) : 0;
+    const highRisk = analyzed.filter(n => n.riskScore >= 50).length;
+    respondJson(res, 200, {
+      totalAnalyzed: analyzed.length,
+      totalInGraph: nodes.length,
+      flaggedClusters: sybilGraph.flaggedClusters.length,
+      averageRiskScore: avgRisk,
+      highRiskCount: highRisk,
+      gradeDistribution: grades,
+      cacheSize: sybilCache.size,
+    });
+    return;
+  }
+
+  // ═══ Sybil Graph Lookup ═══
+  if (pathname === '/api/sybil/graph' && req.method === 'GET') {
+    const addr = url.searchParams.get('address');
+    if (!addr) return respondJson(res, 400, { error: 'address required' });
+    const node = sybilGraph.nodes[addr];
+    if (!node) return respondJson(res, 404, { error: 'Address not in sybil graph' });
+    // Find connected nodes
+    const connected = [];
+    if (node.siblings) {
+      for (const sib of node.siblings.slice(0, 10)) {
+        const sibNode = sybilGraph.nodes[sib];
+        connected.push({ address: sib, riskScore: sibNode?.riskScore ?? -1, trustGrade: sibNode?.trustGrade ?? '?' });
+      }
+    }
+    respondJson(res, 200, { address: addr, ...node, connected });
+    return;
+  }
+
+  // ═══ Wallet Token Holdings ═══
+  if (pathname === '/api/wallet/tokens' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    try {
+      const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+      const pubkey = new PublicKey(address);
+      const [balResult, tokenResult] = await Promise.allSettled([
+        conn.getBalance(pubkey),
+        conn.getParsedTokenAccountsByOwner(pubkey, { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }),
+      ]);
+      const solBalance = balResult.status === 'fulfilled' ? balResult.value / 1e9 : 0;
+      const tokenAccounts = tokenResult.status === 'fulfilled' ? tokenResult.value?.value || [] : [];
+      const tokens = [];
+      for (const acc of tokenAccounts) {
+        const info = acc.account?.data?.parsed?.info;
+        if (!info) continue;
+        const amount = parseFloat(info.tokenAmount?.uiAmountString || '0');
+        if (amount <= 0) continue;
+        const decimals = info.tokenAmount?.decimals ?? 0;
+        tokens.push({
+          mint: info.mint,
+          amount,
+          decimals,
+          isNft: decimals === 0 && amount === 1,
+        });
+      }
+      tokens.sort((a, b) => b.amount - a.amount);
+      respondJson(res, 200, {
+        solBalance: Math.round(solBalance * 10000) / 10000,
+        tokens: tokens.slice(0, 30),
+        totalTokens: tokens.filter(t => !t.isNft).length,
+        totalNfts: tokens.filter(t => t.isNft).length,
+      });
+    } catch (e) {
+      respondJson(res, 500, { error: 'Failed to fetch tokens', detail: e.message });
+    }
+    return;
+  }
+
+  // ═══ Wallet Recent Transactions ═══
+  if (pathname === '/api/wallet/recent-txs' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    try {
+      const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+      const pubkey = new PublicKey(address);
+      const sigs = await conn.getSignaturesForAddress(pubkey, { limit: 15 });
+      const sigBatch = sigs.map(s => s.signature);
+      let parsed = [];
+      if (sigBatch.length > 0) {
+        try {
+          const txs = await conn.getParsedTransactions(sigBatch, { maxSupportedTransactionVersion: 0 });
+          parsed = txs.filter(Boolean);
+        } catch {}
+      }
+      const txs = [];
+      for (let i = 0; i < parsed.length; i++) {
+        const tx = parsed[i];
+        if (!tx?.meta || !tx?.transaction) continue;
+        const accounts = tx.transaction.message?.accountKeys || [];
+        const pre = tx.meta.preBalances || [];
+        const post = tx.meta.postBalances || [];
+        let targetIdx = -1;
+        for (let j = 0; j < accounts.length; j++) {
+          const acc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
+          if (acc === address) { targetIdx = j; break; }
+        }
+        const balChange = targetIdx >= 0 ? ((post[targetIdx] || 0) - (pre[targetIdx] || 0)) / 1e9 : 0;
+        // Detect tx type from instructions
+        const ixs = tx.transaction.message?.instructions || [];
+        let txType = 'unknown';
+        for (const ix of ixs) {
+          const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+          if (pid === '11111111111111111111111111111111') txType = 'transfer';
+          else if (pid.startsWith('JUP')) txType = 'swap';
+          else if (['whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc', '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', 'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'].includes(pid)) txType = 'swap';
+          else if (['M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K', 'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN', 'hadeK9DLv9eA7ya5KnRSb4dTSitisSCRoB68Y8hmjtR'].includes(pid)) txType = 'nft_trade';
+          else if (['So1endDq2YkqhipRh3WViPa8hFb7GVEtcEMF3CBAK8h', 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA', 'KLend2g3cP87ber41GXWsSZQz9R1hGT2bVBaeEdnKHR'].includes(pid)) txType = 'lending';
+          else if (['CgDG2CLNqR2ypE3CXTMEq5R6J8FaqVjChn9Tfmwocs4Y', 'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy'].includes(pid)) txType = 'staking';
+          else if (txType === 'unknown') txType = 'contract';
+        }
+        txs.push({
+          signature: sigs[i]?.signature || '',
+          blockTime: tx.blockTime || sigs[i]?.blockTime || null,
+          balanceChange: Math.round(balChange * 10000) / 10000,
+          fee: (tx.meta.fee || 0) / 1e9,
+          type: txType,
+          success: !tx.meta.err,
+          programCount: new Set(ixs.map(ix => ix.programId?.toBase58?.() || '')).size,
+        });
+      }
+      respondJson(res, 200, { transactions: txs });
+    } catch (e) {
+      respondJson(res, 500, { error: 'Failed to fetch transactions', detail: e.message });
     }
     return;
   }
@@ -5881,7 +6815,7 @@ const server = http.createServer(async (req, res) => {
         compositeTier: compositeData.compositeTier,
         scoreBreakdown: compositeData.breakdown,
         scoreDetails: compositeData.details || null,
-        identity: { score: identity.score, maxScore: 1400, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
+        identity: { score: identity.score, maxScore: 1000, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
         stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
         sybilAnalysis: sybil ? { trustScore: sybil.trustScore, trustGrade: sybil.trustGrade, riskScore: sybil.riskScore, riskLevel: sybil.riskLevel, signalsDetected: sybil.signals?.filter(s => s.detected).length || 0, totalSignals: sybil.signals?.length || 0 } : null,
         achievements: { unlocked: achEntry ? achEntry.unlocked.size : 0, claimed: achEntry ? achEntry.claimed.size : 0 },
@@ -5985,7 +6919,7 @@ const server = http.createServer(async (req, res) => {
       if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
       const modelPath = path.join(modelsDir, `${id}.${format}`);
       const buf = Buffer.from(modelData.split(',').pop() || modelData, 'base64');
-      fs.writeFileSync(modelPath, buf);
+      await fs.promises.writeFile(modelPath, buf);
       const listing = { id, seller: jwtAuth.address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: previewImage ? previewImage.slice(0, 100000) : null, status: 'pending', purchaseCount: 0, createdAt: Date.now() };
       marketplaceListings.set(id, listing);
       saveMarketplace();
@@ -6002,31 +6936,28 @@ const server = http.createServer(async (req, res) => {
       const { address, listingId } = JSON.parse(await readBody(req));
       if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !listingId) return respondJson(res, 400, { error: 'address and listingId required' });
-      const listing = marketplaceListings.get(listingId);
-      if (!listing) return respondJson(res, 404, { error: 'Listing not found' });
+      // Race condition guard: lock on purchaseKey
       const purchaseKey = `${address}:${listingId}`;
       if (marketplacePurchases.has(purchaseKey)) return respondJson(res, 400, { error: 'Already purchased' });
-      const bal = getPrismBalance(address);
-      if (bal.balance < listing.price) return respondJson(res, 400, { error: 'Insufficient Coin balance' });
+      // Mark as purchased BEFORE balance check to prevent double-spend race
+      marketplacePurchases.set(purchaseKey, true);
+      const listing = marketplaceListings.get(listingId);
+      if (!listing) { marketplacePurchases.delete(purchaseKey); return respondJson(res, 404, { error: 'Listing not found' }); }
+      const buyerBal = getCoinBalance(address);
+      if (buyerBal < listing.price) { marketplacePurchases.delete(purchaseKey); return respondJson(res, 400, { error: 'Insufficient Coin balance' }); }
       // Apply 2% burn fee on purchase
       const { burned: purchaseBurned } = applyBurnFee(listing.price);
       totalBurned += purchaseBurned;
-      bal.balance -= listing.price;
-      bal.totalSpent += listing.price;
-      bal.lastUpdated = new Date().toISOString();
-      setCoinBalance(address, bal.balance);
+      setCoinBalance(address, buyerBal - listing.price);
+      addCoinSpent(address, listing.price);
       const sellerShare = Math.floor((listing.price - purchaseBurned) * 0.8);
-      const sellerBal = getPrismBalance(listing.seller);
-      sellerBal.balance += sellerShare;
-      sellerBal.totalEarned += sellerShare;
-      sellerBal.lastUpdated = new Date().toISOString();
-      setCoinBalance(listing.seller, sellerBal.balance);
-      marketplacePurchases.set(purchaseKey, true);
+      setCoinBalance(listing.seller, getCoinBalance(listing.seller) + sellerShare);
+      addCoinEarned(listing.seller, sellerShare);
       listing.purchaseCount = (listing.purchaseCount || 0) + 1;
       marketplaceListings.set(listingId, listing);
       debouncedSavePrism();
       saveMarketplace();
-      respondJson(res, 200, { success: true, listing, newBalance: bal.balance, message: `Purchased "${listing.name}" for ${listing.price} Coins` });
+      respondJson(res, 200, { success: true, listing, newBalance: getCoinBalance(address), message: `Purchased "${listing.name}" for ${listing.price} Coins` });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
   }
@@ -6101,10 +7032,8 @@ const server = http.createServer(async (req, res) => {
           return respondJson(res, 400, { error: `Insufficient balance. Have ${creatorBal.balance} Coins, need ${stake}` });
         }
         // Lock Coins from creator
-        creatorBal.balance -= stake;
-        creatorBal.totalSpent += stake;
-        creatorBal.lastUpdated = new Date().toISOString();
-        setCoinBalance(creator, creatorBal.balance);
+        setCoinBalance(creator, creatorBal.balance - stake);
+        addCoinSpent(creator, stake);
         debouncedSavePrism();
       }
 
@@ -6126,7 +7055,7 @@ const server = http.createServer(async (req, res) => {
         solTxCreator: isSolBet ? solTxSignature : null,
         solTxAcceptor: null,
       };
-      challenges.unshift(challenge);
+      challenges.push(challenge);
       saveChallenges();
       console.log(`[challenges] Created ${challenge.id} by ${creator.slice(0, 8)}... (${type}, ${stake} ${isSolBet ? 'SOL' : 'Coins'})`);
       respondJson(res, 200, { ok: true, challenge });
@@ -6185,6 +7114,12 @@ const server = http.createServer(async (req, res) => {
 
       const isSolBet = challenge.stakeType === 'sol';
 
+      // Save original state for rollback (preserve private opponent)
+      const origOpponent = challenge.opponent;
+      const origStatus = challenge.status;
+      const origAcceptedAt = challenge.acceptedAt;
+      const rollback = () => { challenge.status = origStatus; challenge.opponent = origOpponent; challenge.acceptedAt = origAcceptedAt; saveChallenges(); };
+
       // Lock challenge immediately to prevent race condition on double accept
       challenge.status = 'accepted';
       challenge.opponent = acceptor;
@@ -6194,13 +7129,13 @@ const server = http.createServer(async (req, res) => {
       if (isSolBet) {
         // Verify SOL transfer from acceptor
         if (!solTxSignature) {
-          challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges();
+          rollback();
           return respondJson(res, 400, { error: 'solTxSignature required for SOL challenges' });
         }
         try {
           const conn = new Connection(getRpcUrl(acceptor) || 'https://api.mainnet-beta.solana.com', 'confirmed');
           const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
-          if (!tx) { challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges(); return respondJson(res, 400, { error: 'Transaction not found' }); }
+          if (!tx) { rollback(); return respondJson(res, 400, { error: 'Transaction not found' }); }
           const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
           const instructions = tx.transaction?.message?.instructions || [];
           const validTransfer = instructions.some(ix => {
@@ -6209,23 +7144,20 @@ const server = http.createServer(async (req, res) => {
             }
             return false;
           });
-          if (!validTransfer) { challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
+          if (!validTransfer) { rollback(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
           challenge.solTxAcceptor = solTxSignature;
-        } catch (e) { challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges(); return respondJson(res, 400, { error: `Transfer verification failed: ${e.message}` }); }
+        } catch (e) { rollback(); return respondJson(res, 400, { error: `Transfer verification failed: ${e.message}` }); }
       } else {
         // Check acceptor Coin balance
-        const acceptorBal = getPrismBalance(acceptor);
-        if (acceptorBal.balance < challenge.stakeAmount) {
-          challenge.status = 'open'; challenge.opponent = null; challenge.acceptedAt = null; saveChallenges();
-          return respondJson(res, 400, { error: `Insufficient balance. Have ${acceptorBal.balance} Coins, need ${challenge.stakeAmount}` });
+        const accBal = getCoinBalance(acceptor);
+        if (accBal < challenge.stakeAmount) {
+          rollback();
+          return respondJson(res, 400, { error: `Insufficient balance. Have ${accBal} Coins, need ${challenge.stakeAmount}` });
         }
         // Lock Coins from acceptor
-        acceptorBal.balance -= challenge.stakeAmount;
-        acceptorBal.totalSpent += challenge.stakeAmount;
-        acceptorBal.lastUpdated = new Date().toISOString();
-        setCoinBalance(acceptor, acceptorBal.balance);
+        setCoinBalance(acceptor, accBal - challenge.stakeAmount);
+        addCoinSpent(acceptor, challenge.stakeAmount);
       }
-      const acceptorBal = isSolBet ? null : getPrismBalance(acceptor);
 
       if (challenge.type === 'score') {
         // Score challenge: resolve using composite scores (matches card display)
@@ -6245,11 +7177,8 @@ const server = http.createServer(async (req, res) => {
           const fee = totalPot - winnerPrize;
 
           const resolveCoinWinner = (winnerAddr) => {
-            const winnerBal = getPrismBalance(winnerAddr);
-            winnerBal.balance += winnerPrize;
-            winnerBal.totalEarned += winnerPrize;
-            winnerBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(winnerAddr, winnerBal.balance);
+            setCoinBalance(winnerAddr, getCoinBalance(winnerAddr) + winnerPrize);
+            addCoinEarned(winnerAddr, winnerPrize);
           };
 
           const resolveSolWinner = async (winnerAddr) => {
@@ -6288,17 +7217,11 @@ const server = http.createServer(async (req, res) => {
             // Tie — refund both (no fee)
             challenge.winner = null;
             if (!isSolBet) {
-              const creatorBal = getPrismBalance(challenge.creator);
-              creatorBal.balance += challenge.stakeAmount;
-              creatorBal.totalSpent -= challenge.stakeAmount;
-              creatorBal.lastUpdated = new Date().toISOString();
-              setCoinBalance(challenge.creator, creatorBal.balance);
-              if (acceptorBal) {
-                acceptorBal.balance += challenge.stakeAmount;
-                acceptorBal.totalSpent -= challenge.stakeAmount;
-                acceptorBal.lastUpdated = new Date().toISOString();
-                setCoinBalance(acceptor, acceptorBal.balance);
-              }
+              // Tie — refund both
+              setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
+              refundCoinSpent(challenge.creator, challenge.stakeAmount);
+              setCoinBalance(acceptor, getCoinBalance(acceptor) + challenge.stakeAmount);
+              refundCoinSpent(acceptor, challenge.stakeAmount);
             } else {
               // SOL tie: refund both from treasury
               challenge.solPayoutStatus = 'tie_refund_pending';
@@ -6307,11 +7230,8 @@ const server = http.createServer(async (req, res) => {
           // Fee to treasury (Coin bets only — SOL fee stays in treasury naturally)
           if (!isSolBet && challenge.winner && fee > 0) {
             const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-            const tBal = getPrismBalance(treasuryAddr);
-            tBal.balance += fee;
-            tBal.totalEarned += fee;
-            tBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(treasuryAddr, tBal.balance);
+            setCoinBalance(treasuryAddr, getCoinBalance(treasuryAddr) + fee);
+            addCoinEarned(treasuryAddr, fee);
           }
           challenge.status = 'completed';
           challenge.completedAt = Date.now();
@@ -6319,17 +7239,11 @@ const server = http.createServer(async (req, res) => {
           // Score fetch failed — refund both and cancel
           console.warn('[challenges] Score fetch failed for', challengeId, scoreErr.message);
           if (!isSolBet) {
-            const creatorBal = getPrismBalance(challenge.creator);
-            creatorBal.balance += challenge.stakeAmount;
-            creatorBal.totalSpent -= challenge.stakeAmount;
-            creatorBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(challenge.creator, creatorBal.balance);
-            if (acceptorBal) {
-              acceptorBal.balance += challenge.stakeAmount;
-              acceptorBal.totalSpent -= challenge.stakeAmount;
-              acceptorBal.lastUpdated = new Date().toISOString();
-              setCoinBalance(acceptor, acceptorBal.balance);
-            }
+            // Score fetch failed — refund both
+            setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
+            refundCoinSpent(challenge.creator, challenge.stakeAmount);
+            setCoinBalance(acceptor, getCoinBalance(acceptor) + challenge.stakeAmount);
+            refundCoinSpent(acceptor, challenge.stakeAmount);
           }
           challenge.status = 'cancelled';
           challenge.completedAt = Date.now();
@@ -6390,11 +7304,8 @@ const server = http.createServer(async (req, res) => {
         const fee = totalPot - winnerPrize;
 
         const awardCoinWinner = (addr) => {
-          const bal = getPrismBalance(addr);
-          bal.balance += winnerPrize;
-          bal.totalEarned += winnerPrize;
-          bal.lastUpdated = new Date().toISOString();
-          setCoinBalance(addr, bal.balance);
+          setCoinBalance(addr, getCoinBalance(addr) + winnerPrize);
+          addCoinEarned(addr, winnerPrize);
         };
 
         const awardSolWinner = async (addr) => {
@@ -6430,25 +7341,17 @@ const server = http.createServer(async (req, res) => {
         } else {
           challenge.winner = null;
           if (!isSolBet) {
-            const creatorBal = getPrismBalance(challenge.creator);
-            creatorBal.balance += challenge.stakeAmount;
-            creatorBal.totalSpent -= challenge.stakeAmount;
-            creatorBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(challenge.creator, creatorBal.balance);
-            const opponentBal = getPrismBalance(challenge.opponent);
-            opponentBal.balance += challenge.stakeAmount;
-            opponentBal.totalSpent -= challenge.stakeAmount;
-            opponentBal.lastUpdated = new Date().toISOString();
-            setCoinBalance(challenge.opponent, opponentBal.balance);
+            // Tie — refund both
+            setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
+            refundCoinSpent(challenge.creator, challenge.stakeAmount);
+            setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+            refundCoinSpent(challenge.opponent, challenge.stakeAmount);
           }
         }
         if (!isSolBet && challenge.winner && fee > 0) {
           const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-          const tBal = getPrismBalance(treasuryAddr);
-          tBal.balance += fee;
-          tBal.totalEarned += fee;
-          tBal.lastUpdated = new Date().toISOString();
-          setCoinBalance(treasuryAddr, tBal.balance);
+          setCoinBalance(treasuryAddr, getCoinBalance(treasuryAddr) + fee);
+          addCoinEarned(treasuryAddr, fee);
         }
         challenge.status = 'completed';
         challenge.completedAt = Date.now();
@@ -6497,11 +7400,9 @@ const server = http.createServer(async (req, res) => {
           }
         } catch (e) { console.warn('[challenges] SOL refund failed:', e.message); }
       } else {
-        const creatorBal = getPrismBalance(challenge.creator);
-        creatorBal.balance += challenge.stakeAmount;
-        creatorBal.totalSpent -= challenge.stakeAmount;
-        creatorBal.lastUpdated = new Date().toISOString();
-        setCoinBalance(challenge.creator, creatorBal.balance);
+        // Coin bet cancel — refund creator
+        setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
+        refundCoinSpent(challenge.creator, challenge.stakeAmount);
         debouncedSavePrism();
       }
 
@@ -6568,14 +7469,18 @@ const server = http.createServer(async (req, res) => {
     // Rate limit: 30s per IP (heavy — up to 1000 tx parsing)
     const constIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
     const constIpRlKey = `const:${constIp}`;
-    if (Date.now() - (reputationRateLimit.get(constIpRlKey) || 0) < 30_000) {
-      return respondJson(res, 429, { error: 'Rate limited. Try again in 30 seconds.' });
+    if (Date.now() - (reputationRateLimit.get(constIpRlKey) || 0) < 10_000) {
+      const cached = constellationCache.get(address);
+      if (cached && Date.now() - cached.ts < 600_000) { return respondJson(res, 200, cached.data); }
+      return respondJson(res, 429, { error: 'Rate limited. Try again in 10 seconds.' });
     }
     const cachedConst = constellationCache.get(address);
     if (cachedConst && Date.now() - cachedConst.ts < 600_000) { respondJson(res, 200, cachedConst.data); return; }
     const constRlKey = `constellation:${address}`;
     const lastConst = prismEarnRateLimit.get(constRlKey) || 0;
     if (Date.now() - lastConst < 10_000) {
+      const cached = constellationCache.get(address);
+      if (cached && Date.now() - cached.ts < 600_000) { return respondJson(res, 200, cached.data); }
       return respondJson(res, 429, { error: 'Constellation data is being fetched, try again in 10s' });
     }
     reputationRateLimit.set(constIpRlKey, Date.now());
@@ -6659,14 +7564,22 @@ const server = http.createServer(async (req, res) => {
           txTypes,
         });
       }
-      const result = { nodes: [...nodeMap.values()], edges };
+      const allNodes = [...nodeMap.values()];
+      const cappedNodes = allNodes.length > 200 ? allNodes.slice(0, 200) : allNodes;
+      const nodeIds = new Set(cappedNodes.map(n => n.id));
+      const cappedEdges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+      const result = { nodes: cappedNodes, edges: cappedEdges };
       constellationCache.set(address, { data: result, ts: Date.now() });
-      // Track social stats: constellation explored
-      const wConst = walletDatabase.get(address) || {};
-      const ss = wConst.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
-      ss.constellationExplored = (ss.constellationExplored || 0) + 1;
-      updateWalletEntry(address, { socialStats: ss });
-      triggerCompositeUpdate(address);
+      // Track social stats: constellation explored — credit the VIEWER, not the target
+      const viewerAuth = optionalJwt(req, res);
+      const viewerAddr = viewerAuth?.address;
+      if (viewerAddr) {
+        const wViewer = walletDatabase.get(viewerAddr) || {};
+        const ssViewer = wViewer.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
+        ssViewer.constellationExplored = (ssViewer.constellationExplored || 0) + 1;
+        updateWalletEntry(viewerAddr, { socialStats: ssViewer });
+        triggerCompositeUpdate(viewerAddr);
+      }
       respondJson(res, 200, result);
     } catch (e) {
       respondJson(res, 200, { nodes: [], edges: [], error: e.message });
@@ -6861,6 +7774,255 @@ const server = http.createServer(async (req, res) => {
 const prismTransactions = new Map(); // address → PrismTransaction[] (kept for history)
 const feedItems = [];
 const sybilCache = new Map(); // address → { analysis, cachedAt }
+const sybilInFlight = new Map(); // address → Promise<analysis> — dedup concurrent requests
+
+// ── Binary search for wallet's first transaction (slot-based, no full pagination) ──
+// Uses getBlock to get reference signatures at specific time points,
+// then getSignaturesForAddress with 'before' to check if wallet had activity before that point.
+// Total: ~14-20 RPC calls (all parallelized where possible) for ANY wallet, regardless of tx count.
+async function findFirstTxTime(conn, pubkey, firstPageSigs, cachedFirstTx, rpcUrl) {
+  const _ftStart = Date.now();
+  const _addr = pubkey.toBase58().slice(0, 8);
+
+  // Quick: < 1000 sigs on first page → oldest is exact
+  if (firstPageSigs.length < 1000) {
+    for (let i = firstPageSigs.length - 1; i >= 0; i--) {
+      if (firstPageSigs[i].blockTime > 1584000000) {
+        console.log(`[findFirstTx] ${_addr}.. sigs=${firstPageSigs.length} → fast path (${Date.now()-_ftStart}ms)`);
+        return { firstTxTime: firstPageSigs[i].blockTime, totalSigs: firstPageSigs.length };
+      }
+    }
+    return { firstTxTime: null, totalSigs: firstPageSigs.length };
+  }
+
+  // ─── Strategy: Paginate first (fast & exact), binary search fallback ───
+  // Pagination: ~280ms/page on Helius, covers 99% of wallets in <3s
+  // Binary search: fallback for extreme cases (>10K txs, ~7s)
+
+  const SOLANA_GENESIS = 1584000000; // ~March 2020, filter out invalid blockTimes
+  const MAX_PAGES = 30; // 30 pages × 1000 sigs = 30,000 txs max via pagination
+  let before = firstPageSigs[firstPageSigs.length - 1]?.signature;
+  let bestOldest = firstPageSigs[firstPageSigs.length - 1]?.blockTime || 0;
+  let totalSigs = firstPageSigs.length;
+  let pagesUsed = 1; // first page already fetched by caller
+  let reachedEnd = false;
+
+  // Phase 1: Paginate backwards (fast, exact)
+  for (let page = 1; page < MAX_PAGES && before; page++) {
+    try {
+      const sigs = await conn.getSignaturesForAddress(pubkey, { before, limit: 1000 });
+      pagesUsed++;
+      totalSigs += sigs.length;
+      if (sigs.length > 0) {
+        // Find oldest sig with a valid blockTime (skip null/0/pre-genesis)
+        for (let si = sigs.length - 1; si >= 0; si--) {
+          if (sigs[si].blockTime > SOLANA_GENESIS) {
+            bestOldest = sigs[si].blockTime;
+            break;
+          }
+        }
+        before = sigs[sigs.length - 1].signature;
+      }
+      if (sigs.length < 1000) { reachedEnd = true; break; }
+    } catch { break; }
+  }
+
+  if (reachedEnd) {
+    const ageDays = Math.round((Date.now() / 1000 - bestOldest) / 86400);
+    console.log(`[findFirstTx] ${_addr}.. paginated ${pagesUsed} pages, ${totalSigs} sigs → age=${ageDays}d, first=${new Date(bestOldest*1000).toISOString().slice(0,10)} (${Date.now()-_ftStart}ms)`);
+    return { firstTxTime: bestOldest, totalSigs };
+  }
+
+  // Phase 2: Binary search for wallets with >10K txs
+  // We know wallet's oldest visible time from pagination — search before that
+  console.log(`[findFirstTx] ${_addr}.. ${totalSigs}+ sigs, switching to binary search from ${new Date(bestOldest*1000).toISOString().slice(0,10)}`);
+
+  const now = Math.floor(Date.now() / 1000);
+  let currentSlot;
+  try { currentSlot = await conn.getSlot(); } catch { return { firstTxTime: bestOldest, totalSigs }; }
+  const timeToSlot = (t) => Math.max(0, Math.round(currentSlot - (now - t) * 2.5));
+
+  // Raw RPC call with retry on 429
+  async function rpcCall(method, params, retries = 3) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      });
+      if (res.status === 429 && attempt < retries) {
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      const data = await res.json();
+      return data?.result ?? null;
+    }
+    return null;
+  }
+
+  // Get a reference sig from a block near targetTime (2 RPC calls)
+  async function getRefSig(targetTime) {
+    const estSlot = timeToSlot(targetTime);
+    try {
+      const validSlots = await rpcCall('getBlocks', [estSlot, estSlot + 200]);
+      if (!validSlots?.length) return null;
+      const block = await rpcCall('getBlock', [validSlots[0], {
+        transactionDetails: 'signatures', rewards: false, maxSupportedTransactionVersion: 0,
+      }]);
+      if (block?.signatures?.length) return { sig: block.signatures[0], blockTime: block.blockTime };
+    } catch {}
+    return null;
+  }
+
+  // Check if wallet has txs before a reference sig (with retry)
+  async function hasTxBefore(refSig) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const sigs = await conn.getSignaturesForAddress(pubkey, { before: refSig, limit: 1 });
+        return sigs.length > 0 ? sigs[0] : false;
+      } catch (e) {
+        if (attempt < 2 && e?.message?.includes('429')) {
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Probe backwards from oldest paginated time
+  const DAY = 86400;
+  const probeOffsets = [90, 180, 365, 730, 1460, 2190];
+  const probeTimes = probeOffsets
+    .map(d => bestOldest - d * DAY)
+    .filter(t => t > 1584000000);
+
+  let upperTime = bestOldest;
+  let lowerTime = 1584000000;
+
+  for (const probeTime of probeTimes) {
+    const ref = await getRefSig(probeTime);
+    if (!ref) continue;
+    const found = await hasTxBefore(ref.sig);
+    if (found === null) continue;
+    if (found) {
+      const txTime = found.blockTime || probeTime;
+      if (txTime < bestOldest) bestOldest = txTime;
+      upperTime = probeTime;
+    } else {
+      lowerTime = probeTime;
+      break;
+    }
+  }
+
+  // Narrow down with 6 binary search iterations (~1 day precision)
+  for (let iter = 0; iter < 6 && (upperTime - lowerTime) > 7 * DAY; iter++) {
+    const midTime = Math.floor((lowerTime + upperTime) / 2);
+    const ref = await getRefSig(midTime);
+    if (!ref) { upperTime = midTime; continue; }
+    const found = await hasTxBefore(ref.sig);
+    if (found === null) continue;
+    if (found) {
+      upperTime = midTime;
+      if (found.blockTime && found.blockTime < bestOldest) bestOldest = found.blockTime;
+    } else {
+      lowerTime = midTime;
+    }
+  }
+
+  // Final exact fetch in the narrow window
+  try {
+    const ref = await getRefSig(upperTime);
+    if (ref) {
+      const finalSigs = await conn.getSignaturesForAddress(pubkey, { before: ref.sig, limit: 1000 });
+      if (finalSigs.length > 0) {
+        const exactOldest = finalSigs[finalSigs.length - 1]?.blockTime;
+        if (exactOldest && exactOldest < bestOldest) bestOldest = exactOldest;
+      }
+    }
+  } catch {}
+
+  const ageDays = Math.round((Date.now() / 1000 - bestOldest) / 86400);
+  console.log(`[findFirstTx] ${_addr}.. binary search done → age=${ageDays}d, first=${new Date(bestOldest*1000).toISOString().slice(0,10)} (${Date.now()-_ftStart}ms)`);
+  return { firstTxTime: bestOldest, totalSigs };
+}
+
+// ═══ Persistent Sybil Wallet Graph ═══
+// Stores relationships between wallets for cross-session intelligence
+// Format: { nodes: { address: { riskScore, trustGrade, fundedBy, fundedWallets, lastSeen } }, edges: [...] }
+const SYBIL_GRAPH_FILE = path.join(process.cwd(), 'sybil_graph.json');
+const sybilGraph = { nodes: {}, flaggedClusters: [] };
+try {
+  if (fs.existsSync(SYBIL_GRAPH_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(SYBIL_GRAPH_FILE, 'utf8'));
+    if (raw.nodes) Object.assign(sybilGraph.nodes, raw.nodes);
+    if (raw.flaggedClusters) sybilGraph.flaggedClusters = raw.flaggedClusters;
+    console.log(`[sybil-graph] Loaded ${Object.keys(sybilGraph.nodes).length} nodes, ${sybilGraph.flaggedClusters.length} clusters`);
+  }
+} catch (e) { console.warn('[sybil-graph] Failed to load:', e.message); }
+
+const MAX_SYBIL_GRAPH_NODES = 10_000;
+
+function pruneSybilGraph() {
+  const nodeAddrs = Object.keys(sybilGraph.nodes);
+  if (nodeAddrs.length > MAX_SYBIL_GRAPH_NODES) {
+    const sorted = nodeAddrs.sort((a, b) => (sybilGraph.nodes[a].lastSeen || 0) - (sybilGraph.nodes[b].lastSeen || 0));
+    const toRemove = sorted.slice(0, nodeAddrs.length - MAX_SYBIL_GRAPH_NODES);
+    for (const addr of toRemove) delete sybilGraph.nodes[addr];
+  }
+  if (sybilGraph.flaggedClusters.length > 1000) {
+    sybilGraph.flaggedClusters = sybilGraph.flaggedClusters.slice(-1000);
+  }
+}
+
+async function saveSybilGraph() {
+  pruneSybilGraph();
+  try {
+    await fs.promises.writeFile(SYBIL_GRAPH_FILE, JSON.stringify(sybilGraph), 'utf8');
+  } catch (e) { console.warn('[sybil-graph] Save failed:', e.message); }
+}
+
+function updateSybilGraphNode(address, data) {
+  const existing = sybilGraph.nodes[address] || {};
+  sybilGraph.nodes[address] = {
+    ...existing,
+    ...data,
+    lastSeen: Date.now(),
+  };
+}
+
+function checkGraphForKnownSybils(address, fundingSources, siblings) {
+  let graphRisk = 0;
+  let graphDetails = [];
+  // Check if any funding source is a known sybil
+  for (const funder of fundingSources) {
+    const node = sybilGraph.nodes[funder];
+    if (node && node.riskScore >= 50) {
+      graphRisk += 15;
+      graphDetails.push(`Funded by flagged wallet ${funder.slice(0, 8)}... (risk ${node.riskScore})`);
+    }
+  }
+  // Check if siblings are known sybils
+  let flaggedSiblings = 0;
+  for (const sib of siblings) {
+    const node = sybilGraph.nodes[sib];
+    if (node && node.riskScore >= 50) flaggedSiblings++;
+  }
+  if (flaggedSiblings >= 2) {
+    graphRisk += 10;
+    graphDetails.push(`${flaggedSiblings} sibling wallets previously flagged as sybil`);
+  }
+  // Check if address is part of a known flagged cluster
+  for (const cluster of sybilGraph.flaggedClusters) {
+    if (cluster.members.includes(address)) {
+      graphRisk += 20;
+      graphDetails.push(`Part of flagged cluster "${cluster.label}" (${cluster.members.length} members)`);
+      break;
+    }
+  }
+  return { graphRisk: Math.min(25, graphRisk), graphDetails };
+}
 
 // Migrate any old prism_data.json balances into coinBalances on first run
 const PRISM_DATA_FILE = path.join(process.cwd(), 'prism_data.json');
@@ -6886,17 +8048,22 @@ try {
         fs.writeFileSync(PRISM_DATA_FILE, JSON.stringify(raw), 'utf8');
       }
     }
-    console.log(`[coins] Loaded ${prismTransactions.size} transaction histories`);
+    // Load coinStats
+    if (raw.coinStats) {
+      for (const [addr, stats] of Object.entries(raw.coinStats)) coinStats.set(addr, stats);
+    }
+    console.log(`[coins] Loaded ${prismTransactions.size} transaction histories, ${coinStats.size} coin stats`);
   }
 } catch { /* first run */ }
 
-function savePrismData() {
+async function savePrismData() {
   try {
     const data = {
       balances: {}, // balances now live in coinBalances only
       transactions: Object.fromEntries(prismTransactions),
+      coinStats: Object.fromEntries(coinStats),
     };
-    fs.writeFileSync(PRISM_DATA_FILE, JSON.stringify(data), 'utf8');
+    await fs.promises.writeFile(PRISM_DATA_FILE, JSON.stringify(data), 'utf8');
   } catch (e) { console.warn('[coins] save error', e.message); }
 }
 
@@ -6907,10 +8074,33 @@ function debouncedSavePrism() {
   prismSaveTimer = setTimeout(() => { savePrismData(); persistCoinBalances(); }, 2000);
 }
 
+// Coin stats tracking (totalEarned / totalSpent)
+const coinStats = globalThis._coinStats || (globalThis._coinStats = new Map());
+
+function getCoinStats(address) {
+  return coinStats.get(address) || { totalEarned: 0, totalSpent: 0 };
+}
+function addCoinEarned(address, amount) {
+  const s = getCoinStats(address);
+  s.totalEarned += amount;
+  coinStats.set(address, s);
+}
+function addCoinSpent(address, amount) {
+  const s = getCoinStats(address);
+  s.totalSpent += amount;
+  coinStats.set(address, s);
+}
+function refundCoinSpent(address, amount) {
+  const s = getCoinStats(address);
+  s.totalSpent = Math.max(0, s.totalSpent - amount);
+  coinStats.set(address, s);
+}
+
 // getPrismBalance now wraps coinBalances — returns the structured object the client expects
 function getPrismBalance(address) {
   const coins = getCoinBalance(address);
-  return { address, balance: coins, totalEarned: coins, totalSpent: 0, lastUpdated: new Date().toISOString() };
+  const stats = getCoinStats(address);
+  return { address, balance: coins, totalEarned: stats.totalEarned, totalSpent: stats.totalSpent, lastUpdated: new Date().toISOString() };
 }
 
 // PRISM earn rate-limit: per-source cooldowns
@@ -7315,13 +8505,13 @@ function addGameCoinsToday(address, amount) {
 }
 
 // ═══ Delta Validation per Game Mode ═══
-const MAX_DELTA_PER_GAME = { orbit: 800, destroyer: 1500, gravity: 800, wars: 800, territory: 800, mining: 1000 };
+const MAX_DELTA_PER_GAME = { orbit: 800, destroyer: 1500, gravity: 800, wars: 800, territory: 800 };
 
 // ═══ Staking (Prism Vault) ═══
 const STAKING_TIERS = {
-  bronze: { minStake: 500, lockDays: 7, rateMultiplier: 1.0, boostRate: 0.10 },
-  silver: { minStake: 2000, lockDays: 30, rateMultiplier: 1.4, boostRate: 0.20 },
-  gold:   { minStake: 5000, lockDays: 90, rateMultiplier: 2.0, boostRate: 0.35 },
+  bronze: { minStake: 10000, lockDays: 7, rateMultiplier: 1.0, boostRate: 0.10 },
+  silver: { minStake: 30000, lockDays: 30, rateMultiplier: 1.4, boostRate: 0.20 },
+  gold:   { minStake: 75000, lockDays: 90, rateMultiplier: 2.0, boostRate: 0.35 },
 };
 
 const YIELD_BRACKETS = [
@@ -7333,7 +8523,7 @@ const YIELD_BRACKETS = [
 ];
 
 // Stakes created before this timestamp use old flat rate; after use brackets
-const BRACKETS_DEPLOY_TS = Date.now();
+const BRACKETS_DEPLOY_TS = parseInt(process.env.BRACKETS_DEPLOY_TS || '0', 10) || Date.now();
 
 function calcDailyYieldForAmount(amount, tierMultiplier) {
   let remaining = amount;
@@ -7387,36 +8577,83 @@ function calcUnclaimedYield(stake) {
   return Math.floor(daysSinceClaim * dailyYield);
 }
 
-// ═══ Tournament System ═══
-let activeTournament = null;
+// ═══ Tournament System (Tiered: daily/weekly/monthly) ═══
+const TOURNAMENT_FILE = path.join(process.cwd(), 'tournament_data.json');
+const TOURNAMENT_TIERS = {
+  daily:   { entryFee: 1000,  durationMs: 24 * 3600000,      label: 'Daily',   burnRate: 0.15 },
+  weekly:  { entryFee: 5000,  durationMs: 7 * 24 * 3600000,  label: 'Weekly',  burnRate: 0.15 },
+  monthly: { entryFee: 25000, durationMs: 30 * 24 * 3600000, label: 'Monthly', burnRate: 0.15 },
+};
+const TOURNAMENT_MODES = ['orbit', 'gravity', 'destroyer'];
+const PRIZE_SHARES = {
+  daily:   [0.50, 0.30, 0.20],                                         // top-3
+  weekly:  [0.35, 0.22, 0.15, 0.10, 0.10, 0.08],                     // top-6
+  monthly: [0.30, 0.18, 0.12, 0.09, 0.08, 0.06, 0.05, 0.04, 0.04, 0.04], // top-10
+};
+const activeTournaments = { daily: null, weekly: null, monthly: null };
 const tournamentHistory = [];
-const TOURNAMENT_MODES = ['orbit', 'gravity'];
 let tournamentModeIndex = 0;
-function createTournament() {
+
+// Load persisted tournaments
+try {
+  if (fs.existsSync(TOURNAMENT_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(TOURNAMENT_FILE, 'utf8'));
+    if (raw.active) {
+      for (const tier of Object.keys(TOURNAMENT_TIERS)) {
+        if (raw.active[tier]) activeTournaments[tier] = raw.active[tier];
+      }
+    }
+    // Backward compat: old single-tournament format
+    if (raw.active && raw.active.id && !raw.active.daily) {
+      activeTournaments.daily = raw.active;
+      activeTournaments.daily.tier = 'daily';
+    }
+    if (Array.isArray(raw.history)) tournamentHistory.push(...raw.history.slice(0, 50));
+    if (typeof raw.modeIndex === 'number') tournamentModeIndex = raw.modeIndex;
+    console.log(`[tournament] Loaded from disk, active=${Object.keys(activeTournaments).filter(k => activeTournaments[k]).join(',')}, history=${tournamentHistory.length}`);
+  }
+} catch (e) { console.warn('[tournament] Load error:', e.message); }
+
+function saveTournament() {
+  fs.promises.writeFile(TOURNAMENT_FILE, JSON.stringify({
+    active: activeTournaments,
+    history: tournamentHistory.slice(0, 50),
+    modeIndex: tournamentModeIndex,
+  }), 'utf8').catch(e => console.warn('[tournament] save error', e.message));
+}
+
+function createTournamentForTier(tier) {
+  const cfg = TOURNAMENT_TIERS[tier];
+  if (!cfg) return;
   const mode = TOURNAMENT_MODES[tournamentModeIndex % TOURNAMENT_MODES.length];
   tournamentModeIndex++;
-  activeTournament = {
-    id: `t_${Date.now()}`,
+  activeTournaments[tier] = {
+    id: `t_${tier}_${Date.now()}`,
+    tier,
     mode,
-    entryFee: 50,
+    entryFee: cfg.entryFee,
     prizePool: 0,
     startTime: Date.now(),
-    endTime: Date.now() + 24 * 60 * 60 * 1000, // 24h
+    endTime: Date.now() + cfg.durationMs,
     entries: {},
     status: 'active',
+    label: cfg.label,
   };
-  console.log(`[tournament] Created new tournament: ${activeTournament.id} mode=${mode}`);
+  console.log(`[tournament] Created ${tier} tournament: ${activeTournaments[tier].id} mode=${mode}`);
+  saveTournament();
 }
-function finalizeTournament() {
-  if (!activeTournament || activeTournament.status !== 'active') return;
-  activeTournament.status = 'ended';
-  const sorted = Object.entries(activeTournament.entries)
+
+function finalizeTournamentTier(tier) {
+  const t = activeTournaments[tier];
+  if (!t || t.status !== 'active') return;
+  t.status = 'ended';
+  const sorted = Object.entries(t.entries)
     .map(([addr, data]) => ({ address: addr, score: data.score }))
     .sort((a, b) => b.score - a.score);
-  const pool = activeTournament.prizePool;
+  const pool = t.prizePool;
   const winners = [];
-  const shares = [0.50, 0.30, 0.20];
-  for (let i = 0; i < Math.min(3, sorted.length); i++) {
+  const shares = PRIZE_SHARES[tier] || PRIZE_SHARES.daily;
+  for (let i = 0; i < Math.min(shares.length, sorted.length); i++) {
     const prize = Math.floor(pool * shares[i]);
     if (prize > 0) {
       const cur = getCoinBalance(sorted[i].address);
@@ -7424,20 +8661,24 @@ function finalizeTournament() {
       winners.push({ address: sorted[i].address, score: sorted[i].score, prize, place: i + 1 });
     }
   }
-  activeTournament.winners = winners;
-  tournamentHistory.unshift({ ...activeTournament });
-  if (tournamentHistory.length > 20) tournamentHistory.length = 20;
-  console.log(`[tournament] Finalized ${activeTournament.id}, ${winners.length} winners, pool=${pool}`);
-  activeTournament = null;
+  t.winners = winners;
+  tournamentHistory.unshift({ ...t });
+  if (tournamentHistory.length > 50) tournamentHistory.length = 50;
+  console.log(`[tournament] Finalized ${t.id}, ${winners.length} winners, pool=${pool}`);
+  activeTournaments[tier] = null;
+  saveTournament();
 }
-function checkTournament() {
-  if (activeTournament && Date.now() > activeTournament.endTime) {
-    finalizeTournament();
-  }
-  if (!activeTournament) {
-    createTournament();
+
+function checkTournaments() {
+  const now = Date.now();
+  for (const tier of Object.keys(TOURNAMENT_TIERS)) {
+    const t = activeTournaments[tier];
+    if (t && now > t.endTime) finalizeTournamentTier(tier);
+    if (!activeTournaments[tier]) createTournamentForTier(tier);
   }
 }
+// Backward compat alias
+function checkTournament() { checkTournaments(); }
 
 // ═══ Prism Marketplace ═══
 const MARKETPLACE_FILE = path.join(process.cwd(), 'marketplace_data.json');
@@ -7474,9 +8715,8 @@ try {
 } catch { /* first run */ }
 
 function saveChallenges() {
-  try {
-    fs.writeFileSync(CHALLENGES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2));
-  } catch (e) { console.warn('[challenges] save error', e.message); }
+  fs.promises.writeFile(CHALLENGES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2))
+    .catch(e => console.warn('[challenges] save error', e.message));
 }
 
 // Cleanup: remove old challenges + cancel stale ones (every 30 minutes)
@@ -7491,18 +8731,12 @@ setInterval(() => {
   challenges.forEach(ch => {
     if (ch.status === 'playing' && ch.acceptedAt < stalePlayingCutoff) {
       // Refund creator
-      const creatorBal = getPrismBalance(ch.creator);
-      creatorBal.balance += ch.stakeAmount;
-      creatorBal.totalSpent -= ch.stakeAmount;
-      creatorBal.lastUpdated = new Date().toISOString();
-      setCoinBalance(ch.creator, creatorBal.balance);
+      setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
+      refundCoinSpent(ch.creator, ch.stakeAmount);
       // Refund opponent
       if (ch.opponent) {
-        const opponentBal = getPrismBalance(ch.opponent);
-        opponentBal.balance += ch.stakeAmount;
-        opponentBal.totalSpent -= ch.stakeAmount;
-        opponentBal.lastUpdated = new Date().toISOString();
-        setCoinBalance(ch.opponent, opponentBal.balance);
+        setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
+        refundCoinSpent(ch.opponent, ch.stakeAmount);
       }
       ch.status = 'cancelled';
       ch.completedAt = Date.now();
@@ -7513,11 +8747,8 @@ setInterval(() => {
   // Cancel stale "open" challenges (no one accepted for >7 days) and refund creator
   challenges.forEach(ch => {
     if (ch.status === 'open' && ch.createdAt < cutoff) {
-      const creatorBal = getPrismBalance(ch.creator);
-      creatorBal.balance += ch.stakeAmount;
-      creatorBal.totalSpent -= ch.stakeAmount;
-      creatorBal.lastUpdated = new Date().toISOString();
-      setCoinBalance(ch.creator, creatorBal.balance);
+      setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
+      refundCoinSpent(ch.creator, ch.stakeAmount);
       ch.status = 'cancelled';
       ch.completedAt = Date.now();
       staleCancelled++;
@@ -7577,6 +8808,15 @@ setInterval(() => {
   if (enhancedTxCache.size > 200) { const it = enhancedTxCache.keys(); for (let i = enhancedTxCache.size - 200; i > 0; i--) enhancedTxCache.delete(it.next().value); }
   if (reputationV2RateLimit.size > 1000) { const it = reputationV2RateLimit.keys(); for (let i = reputationV2RateLimit.size - 1000; i > 0; i--) reputationV2RateLimit.delete(it.next().value); }
   if (reputationRateLimit.size > 1000) { const it = reputationRateLimit.keys(); for (let i = reputationRateLimit.size - 1000; i > 0; i--) reputationRateLimit.delete(it.next().value); }
+  // prismEarnRateLimit: remove entries older than their source cooldown (max 7d)
+  if (prismEarnRateLimit.size > 0) {
+    for (const [k, v] of prismEarnRateLimit) {
+      const src = k.split(':')[1] || '';
+      const cd = PRISM_EARN_COOLDOWN_TABLE[src] ?? PRISM_EARN_COOLDOWN_DEFAULT;
+      if (now - v > cd * 2) prismEarnRateLimit.delete(k);
+    }
+  }
+  if (prismEarnRateLimit.size > 3000) { const it = prismEarnRateLimit.keys(); for (let i = prismEarnRateLimit.size - 3000; i > 0; i--) prismEarnRateLimit.delete(it.next().value); }
 }, 300_000);
 
 server.keepAliveTimeout = 65000;

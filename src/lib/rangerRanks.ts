@@ -113,11 +113,11 @@ export function gatherXPSources(address: string): RangerXPSources {
   const sources: RangerXPSources = {};
 
   try {
-    // Composite score
-    const scoreRaw = localStorage.getItem(`composite_score_${address}`);
+    // Composite score (cached by useCompositeScore in sessionStorage)
+    const scoreRaw = sessionStorage.getItem(`ip_composite_v2_${address}`);
     if (scoreRaw) {
-      const parsed = JSON.parse(scoreRaw);
-      sources.compositeScore = parsed?.score || parsed || 0;
+      const cached = JSON.parse(scoreRaw);
+      sources.compositeScore = cached?.data?.score || 0;
     }
 
     // Game best scores
@@ -131,7 +131,7 @@ export function gatherXPSources(address: string): RangerXPSources {
     if (Object.keys(bestScores).length > 0) sources.gameBestScores = bestScores;
 
     // Total coins
-    const coinRaw = localStorage.getItem(`prism_coins_v1_${address}`);
+    const coinRaw = localStorage.getItem(`prism_balance_v1_${address}`);
     if (coinRaw) {
       const parsed = JSON.parse(coinRaw);
       sources.totalCoins = parsed?.totalEarned || 0;
@@ -165,7 +165,7 @@ export function gatherXPSources(address: string): RangerXPSources {
 
     // Achievements
     let achCount = 0;
-    const achKeys = ['orbit_survival_achievements_v1', 'defender_achievements_v1', 'gravity_rush_achievements_v1'];
+    const achKeys = ['orbit_survival_achievements_v1', 'cosmic_defender_achievements_v1', 'gravity_rush_achievements_v1'];
     for (const k of achKeys) {
       const raw = localStorage.getItem(k);
       if (raw) {

@@ -8,6 +8,7 @@
  */
 
 import { getHeliusProxyUrl } from '@/constants';
+import { getSessionJwt } from '@/components/prism/shared';
 
 // ── Types ──
 
@@ -18,6 +19,15 @@ export interface PrismBalance {
   totalSpent: number;
   lastUpdated: string;
 }
+
+// ── Coin Packages (shared between StellarForge and PrismVault) ──
+
+export const COIN_PACKAGES = [
+  { coins: 5000,    solPrice: 0.005,  label: 'Starter' },
+  { coins: 15000,   solPrice: 0.013,  label: 'Explorer' },
+  { coins: 50000,   solPrice: 0.038,  label: 'Voyager' },
+  { coins: 150000,  solPrice: 0.099,  label: 'Commander' },
+] as const;
 
 export interface PrismTransaction {
   id: string;
@@ -89,9 +99,13 @@ function getApiBase(): string {
 async function apiCall<T>(path: string, body?: unknown): Promise<T | null> {
   try {
     const base = getApiBase();
+    const headers: Record<string, string> = {};
+    if (body) headers['Content-Type'] = 'application/json';
+    const jwt = getSessionJwt();
+    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
     const res = await fetch(`${base}${path}`, {
       method: body ? 'POST' : 'GET',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) return null;

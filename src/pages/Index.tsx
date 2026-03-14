@@ -73,25 +73,43 @@ const Index = () => {
   const isNftMode = searchParams.get("mode") === "nft";
   const urlAddress = searchParams.get("address");
   const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
+  const storedSubPageReturn = sessionStorage.getItem('returnedFromSubPage') === '1';
+  if (storedSubPageReturn) { try { sessionStorage.removeItem('returnedFromSubPage'); } catch {} }
   const locState = location.state as Record<string, unknown> | null;
   const shouldResumeFromBlackHole = Boolean(urlAddress) && (Boolean(locState?.fromBlackHole) || storedReturn);
   const shouldResumeFromGameJump = Boolean(locState?.fromGameJump);
-  const shouldResumeFromSubPage = Boolean(locState?.fromSubPage);
+  const shouldResumeFromSubPage = Boolean(locState?.fromSubPage) || storedSubPageReturn;
+  const shouldOpenCard = Boolean(locState?.openCard);
   const [fromBlackHole, setFromBlackHole] = useState(shouldResumeFromBlackHole);
   const returningFromBH = useRef(shouldResumeFromBlackHole);
   const returningFromGameJump = useRef(shouldResumeFromGameJump);
   const returningFromSubPage = useRef(shouldResumeFromSubPage);
   const suppressLoadingRef = useRef(shouldResumeFromBlackHole || shouldResumeFromGameJump);
 
+  // Referral claim — check for ?ref= param on first load
+  useEffect(() => {
+    const refCode = searchParams.get('ref');
+    if (!refCode) return;
+    // Store ref code, claim when wallet connects
+    sessionStorage.setItem('pending_referral', refCode);
+    // Clean URL
+    const next = new URLSearchParams(searchParams);
+    next.delete('ref');
+    setSearchParams(next, { replace: true });
+  }, []);
+
   const [isWarping, setIsWarping] = useState(false);
   const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
-    (returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)
-      ? "hub"
-      : (urlAddress ? "scanning" : "landing")
+    shouldOpenCard && urlAddress
+      ? "ready"
+      : (returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)
+        ? "hub"
+        : (urlAddress ? "scanning" : "landing")
   );
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
+  const [jwtSigning, setJwtSigning] = useState(false);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mwaErrorRef = useRef<string | null>(null);
@@ -110,7 +128,7 @@ const Index = () => {
 
   const [activeAddress, setActiveAddress] = useState<string | undefined>(urlAddress || undefined);
   const didForceDisconnect = useRef(false);
-  const [walletStable, setWalletStable] = useState(Boolean(urlAddress) || returningFromBH.current || returningFromGameJump.current);
+  const [walletStable, setWalletStable] = useState(Boolean(urlAddress) || returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current);
 
   // On fresh app open (no URL address, not returning from BlackHole),
   // force-disconnect any auto-connected wallet so user must choose manually.
@@ -545,6 +563,21 @@ const Index = () => {
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
 
+  // Pre-warm JWT right after wallet connects — one signature at connect time, not later in hub
+  const jwtPrewarmedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!resolvedAddress || !wallet.publicKey || !wallet.signMessage) return;
+    if (jwtPrewarmedRef.current === resolvedAddress) return;
+    jwtPrewarmedRef.current = resolvedAddress;
+    import('@/components/prism/shared').then(async ({ getCachedJwt, obtainJwt }) => {
+      if (!getCachedJwt(resolvedAddress)) {
+        setJwtSigning(true);
+        try { await obtainJwt(wallet); } catch {}
+        setJwtSigning(false);
+      }
+    });
+  }, [resolvedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Phase 0: Return from Prism League via wormhole jump
   const gameJumpTunnelFaded = useRef(false);
   useEffect(() => {
@@ -682,6 +715,22 @@ const Index = () => {
       // Load Coin balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
         getPrismBalance(resolvedAddress).then(setPrismBalance).catch(() => {});
+        // Claim pending referral
+        const pendingRef = sessionStorage.getItem('pending_referral');
+        if (pendingRef) {
+          sessionStorage.removeItem('pending_referral');
+          const base = getHeliusProxyUrl() || window.location.origin;
+          const jwt = (() => { try { const r = sessionStorage.getItem('ip_auth_jwt'); if (!r) return null; const p = JSON.parse(r); return (p.expiresAt > Date.now() + 60000) ? p.token : null; } catch { return null; } })();
+          if (jwt) {
+            fetch(`${base}/api/referral/claim`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+              body: JSON.stringify({ code: pendingRef }),
+            }).then(r => r.json()).then(d => {
+              if (d.success) toast.success('Referral bonus! +50 Coins');
+            }).catch(() => {});
+          }
+        }
         if (canEarnFromScan(resolvedAddress)) {
           markScanEarned(resolvedAddress);
           earnPrism(resolvedAddress, 'scan_wallet').catch(() => {});
@@ -1148,7 +1197,7 @@ const Index = () => {
 
   // Curtain transition — STICKY: once triggered, never resets (except back to landing).
   // When returning from BlackHole/Game, skip curtains entirely — show card immediately.
-  const isReturning = returningFromBH.current || returningFromGameJump.current;
+  const isReturning = returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current;
   const [curtainOpen, setCurtainOpen] = useState(isReturning);
   const [curtainDone, setCurtainDone] = useState(isReturning);
 
@@ -1219,6 +1268,7 @@ const Index = () => {
             walletAddress={activeAddress}
             prismBalance={prismBalance}
             onNavigateToCard={() => setViewState("ready")}
+            onDisconnect={handleDisconnect}
             identityScore={walletData.score}
             planetTier={walletData.traits?.planetTier}
           />
@@ -1472,6 +1522,7 @@ const Index = () => {
               onDesktopConnect={handleDesktopConnect}
               desktopWalletReady={desktopWalletReady}
               scanningMessageIndex={scanningMessageIndex}
+              jwtSigning={jwtSigning}
             />
           )}
 

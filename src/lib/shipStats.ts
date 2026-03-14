@@ -1,9 +1,18 @@
 /**
- * Ship Stats System — derives 4 gameplay stats (0-100) from wallet traits + forge loadout.
+ * Ship Stats System — derives 4 gameplay stats (0-100) from composite breakdown + forge loadout.
  * Stats affect speed, shield, firepower, and luck across all Prism League games.
+ *
+ * V2: Each stat maps to composite categories:
+ *   Speed     ← engagement (0-100) + social (0-100)    → max 200 → 0-70
+ *   Shield    ← sybilTrust (0-250)                     → max 250 → 0-70
+ *   Firepower ← onchain (0-400)                        → max 400 → 0-70
+ *   Luck      ← humanProof (0-150)                     → max 150 → 0-70
+ *
+ * Legacy system: based on WalletTraits (kept for backwards compat).
  */
 
 import type { WalletTraits } from '@/hooks/useWalletData';
+import type { WalletPreview } from '@/components/prism/shared';
 import { getModuleBonuses, type ForgeLoadout } from '@/lib/forgeItems';
 
 // ── Types ──
@@ -18,12 +27,20 @@ export interface ShipStats {
 // ── Skin Bonuses ──
 
 export const SKIN_BONUSES: Record<string, Partial<ShipStats>> = {
-  stealth:  { speed: 8, shield: 3, firepower: 5 },
-  chrome:   { speed: 5, shield: 8, firepower: 3 },
-  neon:     { speed: 10, firepower: 3, luck: 3 },
-  phantom:  { speed: 3, shield: 5, firepower: 3, luck: 8 },
-  prism:    { speed: 5, shield: 5, firepower: 5, luck: 5 },
-  golden:   { speed: 8, shield: 8, firepower: 8, luck: 8 },
+  // Set A
+  cargo:       { shield: 5, luck: 2 },
+  crystal:     { speed: 5, shield: 5, luck: 3 },
+  fighter:     { speed: 8, firepower: 5, luck: 2 },
+  stealth_v2:  { speed: 6, shield: 3, firepower: 6, luck: 4 },
+  fortress:    { shield: 8, firepower: 5, luck: 3 },
+  manta:       { speed: 8, shield: 8, firepower: 8, luck: 8 },
+  // Set B
+  cargo_b:     { shield: 6, luck: 2 },
+  crystal_b:   { speed: 5, shield: 6, luck: 3 },
+  fighter_b:   { speed: 7, firepower: 6, luck: 2 },
+  stealth_v2_b:{ speed: 7, shield: 3, firepower: 5, luck: 4 },
+  fortress_b:  { shield: 7, firepower: 6, luck: 3 },
+  trident:     { speed: 10, shield: 5, firepower: 10, luck: 5 },
 };
 
 // ── Frame Bonuses ──
@@ -48,41 +65,68 @@ export const AURA_BONUSES: Record<string, Partial<ShipStats>> = {
   binary_pulse: { speed: 3, luck: 3 },
 };
 
-// ── Staking tier → shield bonus ──
+// ── Tier value for achievements bonus ──
 
-const STAKING_SHIELD: Record<string, number> = {
-  bronze: 10,
-  silver: 20,
-  gold: 35,
+const TIER_VALUES: Record<string, number> = {
+  mercury: 1, mars: 2, venus: 3, earth: 4, neptune: 5,
+  uranus: 6, saturn: 7, jupiter: 8, sun: 9, binary_sun: 10,
 };
 
-// ── Planet tier → luck multiplier ──
+// ── Achievement count from localStorage ──
 
-const PLANET_TIER_VALUES: Record<string, number> = {
-  mercury: 1,
-  mars: 2,
-  venus: 3,
-  earth: 4,
-  neptune: 5,
-  uranus: 6,
-  saturn: 7,
-  jupiter: 8,
-  sun: 9,
-  binary_sun: 10,
-};
+function getAchievementCount(): number {
+  let count = 0;
+  try {
+    const keys = ['orbit_survival_achievements_v1', 'cosmic_defender_achievements_v1', 'gravity_rush_achievements_v1'];
+    for (const k of keys) {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) count += arr.filter((a: { unlocked?: boolean }) => a.unlocked).length;
+      }
+    }
+  } catch { /* ignore */ }
+  return count;
+}
 
-// ── Derive base stats from wallet traits (0-70 each) ──
+// ══════════════════════════════════════════════════════
+//  V2: Derive base stats from composite breakdown categories
+//  Each stat maps directly to its composite categories:
+//    Speed     ← engagement(100) + social(100)  → /200 * 65 + 5
+//    Shield    ← sybilTrust(250)                → /250 * 65 + 5
+//    Firepower ← onchain(400)                   → /400 * 65 + 5
+//    Luck      ← humanProof(150)                → /150 * 65 + 5
+//  Result: 5-70 per stat before equipment
+// ══════════════════════════════════════════════════════
 
-function deriveBaseStats(traits: WalletTraits | null): ShipStats {
-  if (!traits) return { speed: 10, shield: 10, firepower: 10, luck: 10 };
+function deriveBaseStatsFromPreview(preview: WalletPreview): ShipStats {
+  const bd = preview.compositeBreakdown;
 
+  const speed     = 5 + ((bd.engagement + bd.social) / 200) * 65;
+  const shield    = 5 + (bd.sybilTrust / 250) * 65;
+  const firepower = 5 + (bd.onchain / 400) * 65;
+  const luck      = 5 + (bd.humanProof / 150) * 65;
+
+  return {
+    speed:     Math.round(Math.min(70, Math.max(5, speed))),
+    shield:    Math.round(Math.min(70, Math.max(5, shield))),
+    firepower: Math.round(Math.min(70, Math.max(5, firepower))),
+    luck:      Math.round(Math.min(70, Math.max(5, luck))),
+  };
+}
+
+// ══════════════════════════════════════════════════════
+//  Legacy: Derive base stats from WalletTraits (v1)
+//  Only used when WalletPreview is unavailable
+// ══════════════════════════════════════════════════════
+
+function deriveBaseStatsLegacy(traits: WalletTraits): ShipStats {
   const speed = Math.min(70,
     (traits.walletAgeDays || 0) / 5 +
     (traits.txCount || 0) / 100 +
     (traits.isEarlyAdopter ? 10 : 0)
   );
 
-  // stakingTier comes from external state; use solTier as proxy for now
   const stakingBonus = traits.solTier === 'whale' ? 35 : traits.solTier === 'dolphin' ? 20 : 10;
   const shield = Math.min(70,
     (traits.solBalance || 0) * 2 +
@@ -95,20 +139,8 @@ function deriveBaseStats(traits: WalletTraits | null): ShipStats {
     (traits.isDeFiKing ? 10 : 0)
   );
 
-  const planetVal = PLANET_TIER_VALUES[traits.planetTier] || 1;
-  // Count achievements from localStorage (approximate)
-  let achCount = 0;
-  try {
-    const keys = ['orbit_survival_achievements_v1', 'defender_achievements_v1', 'gravity_rush_achievements_v1'];
-    for (const k of keys) {
-      const raw = localStorage.getItem(k);
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) achCount += arr.filter((a: { unlocked?: boolean }) => a.unlocked).length;
-      }
-    }
-  } catch { /* ignore */ }
-
+  const planetVal = TIER_VALUES[traits.planetTier] || 1;
+  const achCount = getAchievementCount();
   const luck = Math.min(70,
     planetVal * 8 +
     achCount * 2 +
@@ -136,7 +168,6 @@ function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipSt
 
   const stats = { ...base };
 
-  // Ship skin bonus (strip "ship_" prefix to match bonus keys)
   if (loadout.equippedShipSkin) {
     const key = loadout.equippedShipSkin.replace('ship_', '');
     const bonus = SKIN_BONUSES[key];
@@ -148,7 +179,6 @@ function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipSt
     }
   }
 
-  // Frame bonus (strip "frame_" prefix)
   if (loadout.equippedFrame) {
     const key = loadout.equippedFrame.replace('frame_', '');
     const bonus = FRAME_BONUSES[key];
@@ -160,7 +190,6 @@ function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipSt
     }
   }
 
-  // Aura bonus (strip "aura_" prefix)
   if (loadout.equippedAura) {
     const key = loadout.equippedAura.replace('aura_', '');
     const bonus = AURA_BONUSES[key];
@@ -172,7 +201,6 @@ function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipSt
     }
   }
 
-  // Clamp all stats to 0-100
   stats.speed = Math.min(100, Math.max(0, stats.speed));
   stats.shield = Math.min(100, Math.max(0, stats.shield));
   stats.firepower = Math.min(100, Math.max(0, stats.firepower));
@@ -181,22 +209,43 @@ function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipSt
   return stats;
 }
 
-// ── Main export ──
+// ── Apply module bonuses ──
 
-export function deriveShipStats(traits: WalletTraits | null, loadout: ForgeLoadoutLike | null): ShipStats {
-  const base = deriveBaseStats(traits);
+function applyModules(stats: ShipStats, loadout: ForgeLoadoutLike | null): ShipStats {
+  if (!loadout || !('installedModules' in loadout)) return stats;
+  const modBonuses = getModuleBonuses(loadout as ForgeLoadout);
+  return {
+    speed:     Math.min(100, Math.max(0, stats.speed + modBonuses.speed)),
+    shield:    Math.min(100, Math.max(0, stats.shield + modBonuses.shield)),
+    firepower: Math.min(100, Math.max(0, stats.firepower + modBonuses.firepower)),
+    luck:      Math.min(100, Math.max(0, stats.luck + modBonuses.luck)),
+  };
+}
+
+// ══════════════════════════════════════════════════════
+//  Public API
+// ══════════════════════════════════════════════════════
+
+/**
+ * V2: Compute ship stats from WalletPreview (compositeScore-based).
+ * Use this in Hangar, games, and anywhere WalletPreview is available.
+ */
+export function computeShipStats(preview: WalletPreview | null, loadout: ForgeLoadoutLike | null): ShipStats {
+  if (!preview || preview.compositeScore == null || !preview.compositeBreakdown) return DEFAULT_SHIP_STATS;
+  const base = deriveBaseStatsFromPreview(preview);
   const withEquip = applyBonuses(base, loadout);
+  return applyModules(withEquip, loadout);
+}
 
-  // Apply micromodule bonuses if loadout has installedModules
-  if (loadout && 'installedModules' in loadout) {
-    const modBonuses = getModuleBonuses(loadout as ForgeLoadout);
-    withEquip.speed = Math.min(100, Math.max(0, withEquip.speed + modBonuses.speed));
-    withEquip.shield = Math.min(100, Math.max(0, withEquip.shield + modBonuses.shield));
-    withEquip.firepower = Math.min(100, Math.max(0, withEquip.firepower + modBonuses.firepower));
-    withEquip.luck = Math.min(100, Math.max(0, withEquip.luck + modBonuses.luck));
-  }
-
-  return withEquip;
+/**
+ * Legacy: Compute ship stats from WalletTraits.
+ * Still works, but prefer computeShipStats(preview, loadout) when possible.
+ */
+export function deriveShipStats(traits: WalletTraits | null, loadout: ForgeLoadoutLike | null): ShipStats {
+  if (!traits) return DEFAULT_SHIP_STATS;
+  const base = deriveBaseStatsLegacy(traits);
+  const withEquip = applyBonuses(base, loadout);
+  return applyModules(withEquip, loadout);
 }
 
 /** Default stats for unauthenticated players */

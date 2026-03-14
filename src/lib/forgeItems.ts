@@ -30,6 +30,7 @@ export interface ForgeItem {
   description: string;
   preview: string;         // CSS/shader identifier or image path
   unlockCondition?: string; // optional requirement beyond price
+  maxModuleSlots?: number; // how many modules can be installed (ship_skin only)
 }
 
 export interface OwnedItem {
@@ -51,53 +52,47 @@ export interface ForgeLoadout {
 // ── Item Catalog ──
 
 export const FORGE_FRAMES: ForgeItem[] = [
-  { id: 'frame_nebula', name: 'Nebula Frame', category: 'frame', price: 200, rarity: 'common', description: 'Soft purple nebula border around your card', preview: 'nebula' },
-  { id: 'frame_solar_flare', name: 'Solar Flare', category: 'frame', price: 600, rarity: 'rare', description: 'Animated golden flare edges', preview: 'solar_flare' },
-  { id: 'frame_void', name: 'Void Edge', category: 'frame', price: 1200, rarity: 'epic', description: 'Dark matter distortion border', preview: 'void' },
-  { id: 'frame_quantum', name: 'Quantum Lattice', category: 'frame', price: 1600, rarity: 'epic', description: 'Glitching holographic wireframe', preview: 'quantum' },
-  { id: 'frame_supernova', name: 'Supernova', category: 'frame', price: 3000, rarity: 'legendary', description: 'Explosive radiant border with particle trails', preview: 'supernova' },
-  { id: 'frame_event_horizon', name: 'Event Horizon', category: 'frame', price: 5000, rarity: 'legendary', description: 'Warped spacetime distortion around the card', preview: 'event_horizon', unlockCondition: 'Burn 100+ tokens in Black Hole' },
+  { id: 'frame_nebula', name: 'Nebula Frame', category: 'frame', price: 400, rarity: 'common', description: 'Soft purple nebula border around your card', preview: 'nebula' },
+  { id: 'frame_solar_flare', name: 'Solar Flare', category: 'frame', price: 1200, rarity: 'rare', description: 'Animated golden flare edges', preview: 'solar_flare' },
+  { id: 'frame_void', name: 'Void Edge', category: 'frame', price: 2400, rarity: 'epic', description: 'Dark matter distortion border', preview: 'void' },
+  { id: 'frame_quantum', name: 'Quantum Lattice', category: 'frame', price: 3200, rarity: 'epic', description: 'Glitching holographic wireframe', preview: 'quantum' },
+  { id: 'frame_supernova', name: 'Supernova', category: 'frame', price: 6000, rarity: 'legendary', description: 'Explosive radiant border with particle trails', preview: 'supernova' },
+  { id: 'frame_event_horizon', name: 'Event Horizon', category: 'frame', price: 10000, rarity: 'legendary', description: 'Warped spacetime distortion around the card', preview: 'event_horizon', unlockCondition: 'Burn 100+ tokens in Black Hole' },
 ];
 
 export const FORGE_AURAS: ForgeItem[] = [
-  { id: 'aura_frost', name: 'Frost Aura', category: 'aura', price: 300, rarity: 'common', description: 'Ice crystal particles orbit your planet', preview: 'frost' },
-  { id: 'aura_ember', name: 'Ember Aura', category: 'aura', price: 300, rarity: 'common', description: 'Warm fire particles around your planet', preview: 'ember' },
-  { id: 'aura_electric', name: 'Electric Storm', category: 'aura', price: 800, rarity: 'rare', description: 'Lightning arcs around your planet', preview: 'electric' },
-  { id: 'aura_plasma', name: 'Plasma Field', category: 'aura', price: 1400, rarity: 'epic', description: 'Swirling plasma energy field', preview: 'plasma' },
-  { id: 'aura_dark_matter', name: 'Dark Matter', category: 'aura', price: 2400, rarity: 'legendary', description: 'Gravitational lensing distortion effect', preview: 'dark_matter' },
-  { id: 'aura_binary_pulse', name: 'Binary Pulse', category: 'aura', price: 4000, rarity: 'legendary', description: 'Twin energy beams connecting binary suns', preview: 'binary_pulse', unlockCondition: 'Reach Binary Sun tier' },
+  { id: 'aura_frost', name: 'Frost Aura', category: 'aura', price: 600, rarity: 'common', description: 'Ice crystal particles orbit your planet', preview: 'frost' },
+  { id: 'aura_ember', name: 'Ember Aura', category: 'aura', price: 600, rarity: 'common', description: 'Warm fire particles around your planet', preview: 'ember' },
+  { id: 'aura_electric', name: 'Electric Storm', category: 'aura', price: 1600, rarity: 'rare', description: 'Lightning arcs around your planet', preview: 'electric' },
+  { id: 'aura_plasma', name: 'Plasma Field', category: 'aura', price: 2800, rarity: 'epic', description: 'Swirling plasma energy field', preview: 'plasma' },
+  { id: 'aura_dark_matter', name: 'Dark Matter', category: 'aura', price: 4800, rarity: 'legendary', description: 'Gravitational lensing distortion effect', preview: 'dark_matter' },
+  { id: 'aura_binary_pulse', name: 'Binary Pulse', category: 'aura', price: 8000, rarity: 'legendary', description: 'Twin energy beams connecting binary suns', preview: 'binary_pulse', unlockCondition: 'Reach Binary Sun tier' },
 ];
 
 export const FORGE_SHIP_SKINS: ForgeItem[] = [
-  { id: 'ship_stealth', name: 'Stealth Fighter', category: 'ship_skin', price: 240, rarity: 'common', description: 'Dark matte hull with red accents', preview: 'stealth' },
-  { id: 'ship_chrome', name: 'Chrome Viper', category: 'ship_skin', price: 600, rarity: 'rare', description: 'Reflective chrome hull', preview: 'chrome' },
-  { id: 'ship_neon', name: 'Neon Racer', category: 'ship_skin', price: 800, rarity: 'rare', description: 'Glowing neon outlines', preview: 'neon' },
-  { id: 'ship_phantom', name: 'Phantom Wing', category: 'ship_skin', price: 1400, rarity: 'epic', description: 'Semi-transparent ghostly ship', preview: 'phantom' },
-  { id: 'ship_prism', name: 'Prism Cruiser', category: 'ship_skin', price: 2400, rarity: 'legendary', description: 'Rainbow prismatic hull that shifts color', preview: 'prism' },
-  { id: 'ship_golden', name: 'Golden Sovereign', category: 'ship_skin', price: 4000, rarity: 'legendary', description: 'Ornate golden ship with particle trail', preview: 'golden', unlockCondition: 'Win 10 Cosmic Defender games' },
-  // ── New ship skins (Set A) ──
-  { id: 'ship_crystal', name: 'Crystal Sentinel', category: 'ship_skin', price: 500, rarity: 'rare', description: 'Amethyst crystal hull with Solana core', preview: 'crystal' },
-  { id: 'ship_cargo', name: 'Cargo Hauler', category: 'ship_skin', price: 350, rarity: 'common', description: 'Heavy industrial mining vessel', preview: 'cargo' },
-  { id: 'ship_fighter', name: 'Starfighter Mk.II', category: 'ship_skin', price: 700, rarity: 'rare', description: 'Sleek teal interceptor with energy wings', preview: 'fighter' },
-  { id: 'ship_stealth_v2', name: 'Shadow Wraith', category: 'ship_skin', price: 1200, rarity: 'epic', description: 'Ultra-dark stealth bomber with purple circuits', preview: 'stealth_v2' },
-  { id: 'ship_fortress', name: 'Stellar Fortress', category: 'ship_skin', price: 1800, rarity: 'epic', description: 'Golden cathedral-class capital ship', preview: 'fortress' },
-  { id: 'ship_manta', name: 'Void Manta', category: 'ship_skin', price: 2800, rarity: 'legendary', description: 'Bio-organic manta ray with cosmic tentacles', preview: 'manta' },
-  // ── New ship skins (Set B — variants) ──
-  { id: 'ship_crystal_b', name: 'Emerald Sentinel', category: 'ship_skin', price: 550, rarity: 'rare', description: 'Green crystal variant with dual core', preview: 'crystal_b' },
-  { id: 'ship_cargo_b', name: 'Cargo Titan', category: 'ship_skin', price: 400, rarity: 'common', description: 'Heavy-duty cargo variant with extra thrusters', preview: 'cargo_b' },
-  { id: 'ship_fighter_b', name: 'Starfighter Mk.III', category: 'ship_skin', price: 750, rarity: 'rare', description: 'Silver interceptor with reinforced armor', preview: 'fighter_b' },
-  { id: 'ship_stealth_v2_b', name: 'Crimson Wraith', category: 'ship_skin', price: 1300, rarity: 'epic', description: 'Red-accented stealth variant with plasma drives', preview: 'stealth_v2_b' },
-  { id: 'ship_fortress_b', name: 'Phoenix Citadel', category: 'ship_skin', price: 2000, rarity: 'epic', description: 'Golden winged fortress with jeweled hull', preview: 'fortress_b' },
-  { id: 'ship_trident', name: 'Teal Trident', category: 'ship_skin', price: 3200, rarity: 'legendary', description: 'Three-pronged cosmic interceptor', preview: 'trident' },
+  // ── Set A ──
+  { id: 'ship_cargo', name: 'Cargo Hauler', category: 'ship_skin', price: 700, rarity: 'common', description: 'Heavy industrial mining vessel', preview: 'cargo', maxModuleSlots: 1 },
+  { id: 'ship_crystal', name: 'Crystal Sentinel', category: 'ship_skin', price: 1000, rarity: 'rare', description: 'Amethyst crystal hull with Solana core', preview: 'crystal', maxModuleSlots: 2 },
+  { id: 'ship_fighter', name: 'Starfighter Mk.II', category: 'ship_skin', price: 1400, rarity: 'rare', description: 'Sleek teal interceptor with energy wings', preview: 'fighter', maxModuleSlots: 2 },
+  { id: 'ship_stealth_v2', name: 'Shadow Wraith', category: 'ship_skin', price: 2400, rarity: 'epic', description: 'Ultra-dark stealth bomber with purple circuits', preview: 'stealth_v2', maxModuleSlots: 2 },
+  { id: 'ship_fortress', name: 'Stellar Fortress', category: 'ship_skin', price: 3600, rarity: 'epic', description: 'Golden cathedral-class capital ship', preview: 'fortress', maxModuleSlots: 2 },
+  { id: 'ship_manta', name: 'Void Manta', category: 'ship_skin', price: 5600, rarity: 'legendary', description: 'Bio-organic manta ray with cosmic tentacles', preview: 'manta', maxModuleSlots: 3 },
+  // ── Set B — variants ──
+  { id: 'ship_cargo_b', name: 'Cargo Titan', category: 'ship_skin', price: 800, rarity: 'common', description: 'Heavy-duty cargo variant with extra thrusters', preview: 'cargo_b', maxModuleSlots: 1 },
+  { id: 'ship_crystal_b', name: 'Emerald Sentinel', category: 'ship_skin', price: 1100, rarity: 'rare', description: 'Green crystal variant with dual core', preview: 'crystal_b', maxModuleSlots: 2 },
+  { id: 'ship_fighter_b', name: 'Starfighter Mk.III', category: 'ship_skin', price: 1500, rarity: 'rare', description: 'Silver interceptor with reinforced armor', preview: 'fighter_b', maxModuleSlots: 2 },
+  { id: 'ship_stealth_v2_b', name: 'Crimson Wraith', category: 'ship_skin', price: 2600, rarity: 'epic', description: 'Red-accented stealth variant with plasma drives', preview: 'stealth_v2_b', maxModuleSlots: 2 },
+  { id: 'ship_fortress_b', name: 'Phoenix Citadel', category: 'ship_skin', price: 4000, rarity: 'epic', description: 'Golden winged fortress with jeweled hull', preview: 'fortress_b', maxModuleSlots: 2 },
+  { id: 'ship_trident', name: 'Teal Trident', category: 'ship_skin', price: 6400, rarity: 'legendary', description: 'Three-pronged cosmic interceptor', preview: 'trident', maxModuleSlots: 3 },
 ];
 
 export const FORGE_TITLES: ForgeItem[] = [
-  { id: 'title_explorer', name: 'Explorer', category: 'title', price: 150, rarity: 'common', description: 'Title: "Explorer"', preview: 'Explorer' },
-  { id: 'title_guardian', name: 'Cosmic Guardian', category: 'title', price: 500, rarity: 'rare', description: 'Title: "Cosmic Guardian"', preview: 'Cosmic Guardian' },
-  { id: 'title_destroyer', name: 'Destroyer of Dust', category: 'title', price: 800, rarity: 'rare', description: 'Title: "Destroyer of Dust"', preview: 'Destroyer of Dust', unlockCondition: 'Burn 50 tokens' },
-  { id: 'title_architect', name: 'Stellar Architect', category: 'title', price: 1200, rarity: 'epic', description: 'Title: "Stellar Architect"', preview: 'Stellar Architect' },
-  { id: 'title_sovereign', name: 'Prism Sovereign', category: 'title', price: 2000, rarity: 'epic', description: 'Title: "Prism Sovereign"', preview: 'Prism Sovereign', unlockCondition: 'Own 5+ Forge items' },
-  { id: 'title_ascended', name: 'The Ascended', category: 'title', price: 6000, rarity: 'legendary', description: 'Title: "The Ascended"', preview: 'The Ascended', unlockCondition: 'Score 1000+ identity points' },
+  { id: 'title_explorer', name: 'Explorer', category: 'title', price: 300, rarity: 'common', description: 'Title: "Explorer"', preview: 'Explorer' },
+  { id: 'title_guardian', name: 'Cosmic Guardian', category: 'title', price: 1000, rarity: 'rare', description: 'Title: "Cosmic Guardian"', preview: 'Cosmic Guardian' },
+  { id: 'title_destroyer', name: 'Destroyer of Dust', category: 'title', price: 1600, rarity: 'rare', description: 'Title: "Destroyer of Dust"', preview: 'Destroyer of Dust', unlockCondition: 'Burn 50 tokens' },
+  { id: 'title_architect', name: 'Stellar Architect', category: 'title', price: 2400, rarity: 'epic', description: 'Title: "Stellar Architect"', preview: 'Stellar Architect' },
+  { id: 'title_sovereign', name: 'Prism Sovereign', category: 'title', price: 4000, rarity: 'epic', description: 'Title: "Prism Sovereign"', preview: 'Prism Sovereign', unlockCondition: 'Own 5+ Forge items' },
+  { id: 'title_ascended', name: 'The Ascended', category: 'title', price: 12000, rarity: 'legendary', description: 'Title: "The Ascended"', preview: 'The Ascended', unlockCondition: 'Score 1000+ identity points' },
 ];
 
 export const ALL_FORGE_ITEMS: ForgeItem[] = [
@@ -117,30 +112,30 @@ export interface FrameStyle {
 
 export const FRAME_STYLES: Record<string, FrameStyle> = {
   frame_nebula: {
-    gradient: 'linear-gradient(135deg, rgba(147,51,234,0.5), rgba(88,28,135,0.4), rgba(147,51,234,0.5))',
-    boxShadow: '0 0 25px -4px rgba(147,51,234,0.3)',
+    gradient: 'linear-gradient(135deg, rgba(147,51,234,0.85), rgba(88,28,135,0.7), rgba(147,51,234,0.85))',
+    boxShadow: '0 0 30px -2px rgba(147,51,234,0.5), inset 0 0 20px -10px rgba(147,51,234,0.3)',
   },
   frame_solar_flare: {
-    gradient: 'linear-gradient(135deg, rgba(251,191,36,0.6), rgba(245,158,11,0.5), rgba(234,88,12,0.5))',
-    boxShadow: '0 0 30px -4px rgba(251,191,36,0.35)',
+    gradient: 'linear-gradient(135deg, rgba(251,191,36,0.9), rgba(245,158,11,0.8), rgba(234,88,12,0.85))',
+    boxShadow: '0 0 35px -2px rgba(251,191,36,0.5), inset 0 0 20px -10px rgba(251,191,36,0.3)',
   },
   frame_void: {
-    gradient: 'linear-gradient(135deg, rgba(139,92,246,0.6), rgba(76,29,149,0.5), rgba(139,92,246,0.6))',
-    boxShadow: '0 0 30px -4px rgba(139,92,246,0.35)',
+    gradient: 'linear-gradient(135deg, rgba(139,92,246,0.9), rgba(76,29,149,0.75), rgba(139,92,246,0.9))',
+    boxShadow: '0 0 35px -2px rgba(139,92,246,0.5), inset 0 0 20px -10px rgba(139,92,246,0.3)',
   },
   frame_quantum: {
-    gradient: 'linear-gradient(135deg, rgba(34,211,238,0.5), rgba(6,182,212,0.4), rgba(34,211,238,0.5))',
-    boxShadow: '0 0 30px -4px rgba(34,211,238,0.3)',
+    gradient: 'linear-gradient(135deg, rgba(34,211,238,0.85), rgba(6,182,212,0.7), rgba(34,211,238,0.85))',
+    boxShadow: '0 0 35px -2px rgba(34,211,238,0.5), inset 0 0 20px -10px rgba(34,211,238,0.3)',
     animation: 'quantum-march 8s linear infinite',
   },
   frame_supernova: {
-    gradient: 'linear-gradient(135deg, rgba(245,158,11,0.7), rgba(239,68,68,0.5), rgba(245,158,11,0.7))',
-    boxShadow: '0 0 35px -4px rgba(245,158,11,0.4)',
+    gradient: 'linear-gradient(135deg, rgba(245,158,11,0.95), rgba(239,68,68,0.8), rgba(245,158,11,0.95))',
+    boxShadow: '0 0 40px -2px rgba(245,158,11,0.6), inset 0 0 20px -10px rgba(245,158,11,0.3)',
     animation: 'supernova-rotate 4s linear infinite',
   },
   frame_event_horizon: {
-    gradient: 'linear-gradient(135deg, rgba(168,85,247,0.7), rgba(88,28,135,0.6), rgba(168,85,247,0.7))',
-    boxShadow: '0 0 40px -4px rgba(168,85,247,0.4)',
+    gradient: 'linear-gradient(135deg, rgba(168,85,247,0.95), rgba(88,28,135,0.85), rgba(168,85,247,0.95))',
+    boxShadow: '0 0 45px -2px rgba(168,85,247,0.6), inset 0 0 25px -10px rgba(168,85,247,0.3)',
     animation: 'event-horizon-pulse 3s ease-in-out infinite',
   },
 };
@@ -209,15 +204,13 @@ export function saveLocalLoadout(loadout: ForgeLoadout): void {
   } catch {}
 }
 
-export function purchaseItem(loadout: ForgeLoadout, itemId: string, prismBalance?: number): ForgeLoadout | null {
+export function purchaseItem(loadout: ForgeLoadout, itemId: string, prismBalance: number): ForgeLoadout | null {
   if (loadout.ownedItems.some((o) => o.itemId === itemId)) return loadout;
 
-  // Validate PRISM balance if provided
-  if (prismBalance !== undefined) {
-    const item = getItemById(itemId);
-    if (!item) return null;
-    if (prismBalance < item.price) return null;
-  }
+  // Validate PRISM balance — always required
+  const item = getItemById(itemId);
+  if (!item) return null;
+  if (prismBalance < item.price) return null;
 
   return {
     ...loadout,
@@ -283,21 +276,21 @@ export function unequipItem(loadout: ForgeLoadout, category: ForgeCategory): For
 
 export const MICROMODULE_DEFS: Micromodule[] = [
   // Speed modules
-  { id: 'mod_speed_1', name: 'Thruster Boost',  description: 'Basic engine enhancement',           tier: 'blue',   price: 2000,  statBonus: { stat: 'speed', value: 5 },     icon: '🔥', compatibleCategories: ['frame', 'aura'] },
-  { id: 'mod_speed_2', name: 'Warp Coils',      description: 'Advanced warp drive components',      tier: 'yellow', price: 8000,  statBonus: { stat: 'speed', value: 12 },    tradeoff: { stat: 'shield', value: 3 },    icon: '⚡', compatibleCategories: ['frame', 'aura'] },
-  { id: 'mod_speed_3', name: 'Quantum Engine',   description: 'Experimental quantum propulsion',     tier: 'red',    price: 30000, statBonus: { stat: 'speed', value: 25 },    tradeoff: { stat: 'shield', value: 8 },    icon: '🌀', compatibleCategories: ['frame'] },
+  { id: 'mod_speed_1', name: 'Thruster Boost',  description: 'Basic engine enhancement',           tier: 'blue',   price: 4000,  statBonus: { stat: 'speed', value: 5 },     icon: '🔥', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_speed_2', name: 'Warp Coils',      description: 'Advanced warp drive components',      tier: 'yellow', price: 16000, statBonus: { stat: 'speed', value: 12 },    tradeoff: { stat: 'shield', value: 3 },    icon: '⚡', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_speed_3', name: 'Quantum Engine',   description: 'Experimental quantum propulsion',     tier: 'red',    price: 60000, statBonus: { stat: 'speed', value: 25 },    tradeoff: { stat: 'shield', value: 8 },    icon: '🌀', compatibleCategories: ['frame', 'ship_skin'] },
   // Shield modules
-  { id: 'mod_shield_1', name: 'Plating Mk.I',    description: 'Reinforced hull plating',            tier: 'blue',   price: 2000,  statBonus: { stat: 'shield', value: 5 },    icon: '🛡️', compatibleCategories: ['frame', 'aura'] },
-  { id: 'mod_shield_2', name: 'Deflector Array',  description: 'Energy deflection system',            tier: 'yellow', price: 8000,  statBonus: { stat: 'shield', value: 12 },   tradeoff: { stat: 'speed', value: 3 },     icon: '🔷', compatibleCategories: ['frame', 'aura'] },
-  { id: 'mod_shield_3', name: 'Fortress Core',    description: 'Impenetrable defense matrix',         tier: 'red',    price: 30000, statBonus: { stat: 'shield', value: 25 },   tradeoff: { stat: 'speed', value: 8 },     icon: '🏰', compatibleCategories: ['frame'] },
+  { id: 'mod_shield_1', name: 'Plating Mk.I',    description: 'Reinforced hull plating',            tier: 'blue',   price: 4000,  statBonus: { stat: 'shield', value: 5 },    icon: '🛡️', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_shield_2', name: 'Deflector Array',  description: 'Energy deflection system',            tier: 'yellow', price: 16000, statBonus: { stat: 'shield', value: 12 },   tradeoff: { stat: 'speed', value: 3 },     icon: '🔷', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_shield_3', name: 'Fortress Core',    description: 'Impenetrable defense matrix',         tier: 'red',    price: 60000, statBonus: { stat: 'shield', value: 25 },   tradeoff: { stat: 'speed', value: 8 },     icon: '🏰', compatibleCategories: ['frame', 'ship_skin'] },
   // Firepower modules
-  { id: 'mod_fire_1', name: 'Targeting Chip',    description: 'Enhanced targeting computer',         tier: 'blue',   price: 2000,  statBonus: { stat: 'firepower', value: 5 }, icon: '🎯', compatibleCategories: ['aura', 'frame'] },
-  { id: 'mod_fire_2', name: 'Arsenal Pack',      description: 'Expanded weapons array',              tier: 'yellow', price: 8000,  statBonus: { stat: 'firepower', value: 12 },tradeoff: { stat: 'luck', value: 3 },      icon: '💥', compatibleCategories: ['aura', 'frame'] },
-  { id: 'mod_fire_3', name: 'Devastator Core',   description: 'Planet-cracking weapon system',       tier: 'red',    price: 30000, statBonus: { stat: 'firepower', value: 25 },tradeoff: { stat: 'luck', value: 8 },      icon: '☢️', compatibleCategories: ['aura'] },
+  { id: 'mod_fire_1', name: 'Targeting Chip',    description: 'Enhanced targeting computer',         tier: 'blue',   price: 4000,  statBonus: { stat: 'firepower', value: 5 }, icon: '🎯', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_fire_2', name: 'Arsenal Pack',      description: 'Expanded weapons array',              tier: 'yellow', price: 16000, statBonus: { stat: 'firepower', value: 12 },tradeoff: { stat: 'luck', value: 3 },      icon: '💥', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_fire_3', name: 'Devastator Core',   description: 'Planet-cracking weapon system',       tier: 'red',    price: 60000, statBonus: { stat: 'firepower', value: 25 },tradeoff: { stat: 'luck', value: 8 },      icon: '☢️', compatibleCategories: ['aura', 'ship_skin'] },
   // Luck modules
-  { id: 'mod_luck_1', name: 'Scanner Lens',      description: 'Improved anomaly detection',          tier: 'blue',   price: 2000,  statBonus: { stat: 'luck', value: 5 },      icon: '🔍', compatibleCategories: ['aura', 'frame'] },
-  { id: 'mod_luck_2', name: 'Probability Matrix', description: 'Quantum probability manipulation',    tier: 'yellow', price: 8000,  statBonus: { stat: 'luck', value: 12 },     tradeoff: { stat: 'firepower', value: 3 }, icon: '🎲', compatibleCategories: ['aura', 'frame'] },
-  { id: 'mod_luck_3', name: 'Quantum Oracle',     description: 'Prescient decision engine',           tier: 'red',    price: 30000, statBonus: { stat: 'luck', value: 25 },     tradeoff: { stat: 'firepower', value: 8 }, icon: '🔮', compatibleCategories: ['aura'] },
+  { id: 'mod_luck_1', name: 'Scanner Lens',      description: 'Improved anomaly detection',          tier: 'blue',   price: 4000,  statBonus: { stat: 'luck', value: 5 },      icon: '🔍', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_luck_2', name: 'Probability Matrix', description: 'Quantum probability manipulation',    tier: 'yellow', price: 16000, statBonus: { stat: 'luck', value: 12 },     tradeoff: { stat: 'firepower', value: 3 }, icon: '🎲', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_luck_3', name: 'Quantum Oracle',     description: 'Prescient decision engine',           tier: 'red',    price: 60000, statBonus: { stat: 'luck', value: 25 },     tradeoff: { stat: 'firepower', value: 8 }, icon: '🔮', compatibleCategories: ['aura', 'ship_skin'] },
 ];
 
 export const MODULE_TIER_COLORS: Record<Micromodule['tier'], string> = {
@@ -310,11 +303,14 @@ export function getModuleById(id: string): Micromodule | undefined {
   return MICROMODULE_DEFS.find((m) => m.id === id);
 }
 
-/** Install a module into an item slot (permanent, max 3 per item). */
-export function installModule(loadout: ForgeLoadout, itemId: string, moduleId: string): ForgeLoadout | null {
+/** Install a module into an item slot (permanent, limited by maxModuleSlots). */
+export function installModule(loadout: ForgeLoadout, itemId: string, moduleId: string, hasIdentityCard = false): ForgeLoadout | null {
   const item = getItemById(itemId);
   const mod = getModuleById(moduleId);
   if (!item || !mod) return null;
+
+  // Ship skins require identity card
+  if (item.category === 'ship_skin' && !hasIdentityCard) return null;
 
   // Check compatibility
   if (!mod.compatibleCategories.includes(item.category)) return null;
@@ -324,8 +320,9 @@ export function installModule(loadout: ForgeLoadout, itemId: string, moduleId: s
 
   const currentModules = loadout.installedModules[itemId] || [];
 
-  // Max 3 modules per item
-  if (currentModules.length >= 3) return null;
+  // Slot limit: use item's maxModuleSlots (default 3)
+  const maxSlots = item.maxModuleSlots ?? 3;
+  if (currentModules.length >= maxSlots) return null;
 
   // No duplicate module on same item
   if (currentModules.includes(moduleId)) return null;
@@ -337,6 +334,14 @@ export function installModule(loadout: ForgeLoadout, itemId: string, moduleId: s
       [itemId]: [...currentModules, moduleId],
     },
   };
+}
+
+/** Remove a module from an item. Returns updated loadout or null if not found. */
+export function uninstallModule(loadout: ForgeLoadout, itemId: string, moduleId: string): ForgeLoadout | null {
+  const currentModules = loadout.installedModules[itemId] || [];
+  const idx = currentModules.indexOf(moduleId);
+  if (idx === -1) return null;
+  return { ...loadout, installedModules: { ...loadout.installedModules, [itemId]: currentModules.filter((_, i) => i !== idx) } };
 }
 
 /** Get modules installed on an item. */
