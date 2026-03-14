@@ -196,7 +196,7 @@ export async function earnPrism(
   amount?: number,
   description?: string,
 ): Promise<{ balance: PrismBalance; earned: number }> {
-  const earned = amount ?? PRISM_EARN_RATES[source] ?? 1;
+  const earned = Math.max(0, amount ?? PRISM_EARN_RATES[source] ?? 1);
   const desc = description ?? `Earned ${earned} Coins from ${source.replace(/_/g, ' ')}`;
 
   // Try server first

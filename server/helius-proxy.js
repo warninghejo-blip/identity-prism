@@ -3006,6 +3006,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── MagicBlock game-session proof API ──
   if (pathname === '/api/game/session' && req.method === 'POST') {
+    const jwtAuth = optionalJwt(req);
     try {
       const raw = await readBody(req);
       const parsed = safeParseJson(raw);
@@ -3251,11 +3252,15 @@ const server = http.createServer(async (req, res) => {
         setCoinBalance(addr, newBalance);
         respondJson(res, 200, { address: addr, coins: newBalance, earned: effectiveDelta, dailyRemaining: Math.max(0, DAILY_GAME_COIN_CAP - getGameCoinsToday(addr)), boost: boost > 0 ? boost : undefined });
       } else {
-        // Negative delta (spending) — pass through
+        // Negative delta (spending) — apply burn fee + tracking
+        const absDelta = Math.abs(delta);
         const current = getCoinBalance(addr);
-        const newBalance = Math.max(0, current + delta);
-        setCoinBalance(addr, newBalance);
-        respondJson(res, 200, { address: addr, coins: newBalance });
+        if (current < absDelta) return respondJson(res, 400, { error: 'Insufficient balance' });
+        const { burned } = applyBurnFee(absDelta);
+        totalBurned += burned;
+        setCoinBalance(addr, current - absDelta);
+        addCoinSpent(addr, absDelta);
+        respondJson(res, 200, { address: addr, coins: getCoinBalance(addr) });
       }
     } catch {
       respondJson(res, 400, { error: 'Invalid JSON body' });
@@ -3293,9 +3298,13 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 409, { error: 'Achievement already claimed', achievementId });
         return;
       }
-      if (typeof reward === 'number' && reward > 0) {
+      // Server-side achievement reward lookup (ignore client-supplied reward)
+      const ACHIEVEMENT_REWARDS = { 'score_10': 25, 'score_50': 50, 'score_100': 100, 'score_200': 200, 'survived_15s': 25, 'survived_30s': 50, 'survived_60s': 100, 'survived_120s': 150, 'survived_180s': 200, 'survived_300s': 300, 'near_miss_1': 15, 'near_miss_5': 30, 'near_miss_25': 75, 'near_miss_50': 100, 'near_miss_100': 150, 'total_games_1': 10, 'total_games_10': 50, 'total_games_50': 100, 'total_games_100': 150, 'first_blood': 25, 'kill_streak_5': 50, 'kill_streak_10': 100, 'boss_slayer': 100, 'boss_rush': 200, 'perfect_wave': 150, 'destroyer_500': 100, 'destroyer_1000': 200, 'destroyer_2000': 300, 'grav_ace': 150, 'grav_columns_50': 75, 'grav_columns_100': 150, 'grav_crystals_100': 100, 'grav_crystals_500': 200, 'grav_survived_120': 150, 'grav_survived_300': 300 };
+      const serverReward = ACHIEVEMENT_REWARDS[achievementId] || 0;
+      if (serverReward > 0) {
         const current = getCoinBalance(addr);
-        setCoinBalance(addr, current + reward);
+        setCoinBalance(addr, current + serverReward);
+        addCoinEarned(addr, serverReward);
       }
       const entry = getWalletAchievements(addr);
       const coins = getCoinBalance(addr);
@@ -3511,9 +3520,15 @@ const server = http.createServer(async (req, res) => {
       // Validate
       if (referrer === claimer) return respondJson(res, 400, { error: 'Cannot use your own code' });
 
+      // Race condition guard for referral claims
+      if (!globalThis._pendingReferralClaims) globalThis._pendingReferralClaims = new Set();
+      const refClaimKey = `${referrer}_${claimer}`;
+      if (globalThis._pendingReferralClaims.has(refClaimKey)) return respondJson(res, 409, { error: 'Claim in progress' });
+      globalThis._pendingReferralClaims.add(refClaimKey);
+
       // Check if claimer already claimed
-      const existingClaim = await fbGet('referrals', `${referrer}_${claimer}`);
-      if (existingClaim) return respondJson(res, 400, { error: 'Already claimed a referral' });
+      const existingClaim = await fbGet('referrals', refClaimKey);
+      if (existingClaim) { globalThis._pendingReferralClaims.delete(refClaimKey); return respondJson(res, 400, { error: 'Already claimed a referral' }); }
 
       // Check referrer max 50 referrals
       const referrerStats = await fbGet('referralStats', referrer);
@@ -3540,8 +3555,9 @@ const server = http.createServer(async (req, res) => {
         totalEarned: newEarned,
       });
 
+      globalThis._pendingReferralClaims.delete(refClaimKey);
       respondJson(res, 200, { success: true, claimerBonus: 50, referrerBonus: 20 });
-    } catch { respondJson(res, 400, { error: 'Invalid request' }); }
+    } catch { if (typeof refClaimKey !== 'undefined') globalThis._pendingReferralClaims?.delete(refClaimKey); respondJson(res, 400, { error: 'Invalid request' }); }
     return;
   }
 
@@ -3589,7 +3605,7 @@ const server = http.createServer(async (req, res) => {
       const addr = jwtAuth.address;
       const tierConfig = STAKING_TIERS[tier];
       if (!tierConfig) return respondJson(res, 400, { error: 'Invalid tier. Use: bronze, silver, gold' });
-      if (typeof amount !== 'number' || amount < tierConfig.minStake) {
+      if (!Number.isFinite(amount) || amount < tierConfig.minStake) {
         return respondJson(res, 400, { error: `Minimum stake for ${tier}: ${tierConfig.minStake} Coins` });
       }
       const bal = getCoinBalance(addr);
@@ -7008,6 +7024,10 @@ const server = http.createServer(async (req, res) => {
       if (isSolBet) {
         // Verify SOL transfer to treasury
         if (!solTxSignature) return respondJson(res, 400, { error: 'solTxSignature required for SOL bets' });
+        // Dedup: prevent reusing same tx for multiple challenges
+        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Set();
+        if (globalThis._usedChallengeSolTx.has(solTxSignature)) return respondJson(res, 400, { error: 'This SOL transaction has already been used' });
+        globalThis._usedChallengeSolTx.add(solTxSignature);
         try {
           const conn = new Connection(getRpcUrl(creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
           const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
@@ -7132,6 +7152,10 @@ const server = http.createServer(async (req, res) => {
           rollback();
           return respondJson(res, 400, { error: 'solTxSignature required for SOL challenges' });
         }
+        // Dedup SOL tx
+        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Set();
+        if (globalThis._usedChallengeSolTx.has(solTxSignature)) { rollback(); return respondJson(res, 400, { error: 'This SOL transaction has already been used' }); }
+        globalThis._usedChallengeSolTx.add(solTxSignature);
         try {
           const conn = new Connection(getRpcUrl(acceptor) || 'https://api.mainnet-beta.solana.com', 'confirmed');
           const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
@@ -7285,13 +7309,25 @@ const server = http.createServer(async (req, res) => {
       if (challenge.type !== 'game') return respondJson(res, 400, { error: 'Score submission is for game challenges only' });
       if (challenge.status !== 'playing') return respondJson(res, 400, { error: 'Challenge is not in playing state' });
 
+      // Per-gameMode score validation (same as leaderboard)
+      const CH_MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
+      const chMaxScore = CH_MAX_SCORES[challenge.gameMode] || 600;
+      if (scoreNum > chMaxScore) return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
+
+      // Race condition guard: atomic check-and-set
+      const submitKey = `${challengeId}:${submitter}`;
+      if (!globalThis._pendingSubmits) globalThis._pendingSubmits = new Set();
+      if (globalThis._pendingSubmits.has(submitKey)) return respondJson(res, 409, { error: 'Submission in progress' });
+      globalThis._pendingSubmits.add(submitKey);
+
       if (submitter === challenge.creator) {
-        if (challenge.creatorScore !== null) return respondJson(res, 400, { error: 'Score already submitted' });
+        if (challenge.creatorScore !== null) { globalThis._pendingSubmits.delete(submitKey); return respondJson(res, 400, { error: 'Score already submitted' }); }
         challenge.creatorScore = scoreNum;
       } else if (submitter === challenge.opponent) {
-        if (challenge.opponentScore !== null) return respondJson(res, 400, { error: 'Score already submitted' });
+        if (challenge.opponentScore !== null) { globalThis._pendingSubmits.delete(submitKey); return respondJson(res, 400, { error: 'Score already submitted' }); }
         challenge.opponentScore = scoreNum;
       } else {
+        globalThis._pendingSubmits.delete(submitKey);
         return respondJson(res, 403, { error: 'You are not a participant in this challenge' });
       }
 
@@ -7360,8 +7396,9 @@ const server = http.createServer(async (req, res) => {
 
       debouncedSavePrism();
       saveChallenges();
+      globalThis._pendingSubmits.delete(submitKey);
       respondJson(res, 200, { ok: true, challenge });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    } catch (e) { if (typeof submitKey !== 'undefined') globalThis._pendingSubmits?.delete(submitKey); respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
   }
 
@@ -8730,13 +8767,16 @@ setInterval(() => {
   // Cancel stale "playing" challenges (stuck for >24h) and refund both players
   challenges.forEach(ch => {
     if (ch.status === 'playing' && ch.acceptedAt < stalePlayingCutoff) {
-      // Refund creator
-      setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
-      refundCoinSpent(ch.creator, ch.stakeAmount);
-      // Refund opponent
-      if (ch.opponent) {
-        setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
-        refundCoinSpent(ch.opponent, ch.stakeAmount);
+      // Only refund coin bets automatically; SOL bets need manual payout
+      if (ch.stakeType !== 'sol') {
+        setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
+        refundCoinSpent(ch.creator, ch.stakeAmount);
+        if (ch.opponent) {
+          setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
+          refundCoinSpent(ch.opponent, ch.stakeAmount);
+        }
+      } else {
+        ch.solPayoutStatus = 'stale_refund_pending';
       }
       ch.status = 'cancelled';
       ch.completedAt = Date.now();
@@ -8747,8 +8787,12 @@ setInterval(() => {
   // Cancel stale "open" challenges (no one accepted for >7 days) and refund creator
   challenges.forEach(ch => {
     if (ch.status === 'open' && ch.createdAt < cutoff) {
-      setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
-      refundCoinSpent(ch.creator, ch.stakeAmount);
+      if (ch.stakeType !== 'sol') {
+        setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
+        refundCoinSpent(ch.creator, ch.stakeAmount);
+      } else {
+        ch.solPayoutStatus = 'stale_refund_pending';
+      }
       ch.status = 'cancelled';
       ch.completedAt = Date.now();
       staleCancelled++;

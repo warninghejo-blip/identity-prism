@@ -680,7 +680,8 @@ const BlackHole = () => {
         }
 
         const actualRent = token.rentSol;
-        const rentAfterFees = actualRent * (1 - COMMISSION_RATE_DEFAULT) - ESTIMATED_FEE_SOL;
+        const effectiveRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
+        const rentAfterFees = actualRent * (1 - effectiveRate) - ESTIMATED_FEE_SOL;
         if (token.valueSol !== null && token.valueSol !== undefined) {
           token.netGainSol = rentAfterFees - token.valueSol;
         } else if (token.uiAmount === 0) {

@@ -498,8 +498,18 @@ export function generatePlanetTextures(surface: PlanetSurface, materialSeed: num
 // MAIN GENERATOR - Data-driven visual mapping
 // ============================================================================
 
+function deriveRarityTier(traits: WalletTraits): RarityTier {
+  const t = traits.planetTier;
+  if (t === 'binary_sun') return 'mythic';
+  if (t === 'sun' || t === 'jupiter') return 'legendary';
+  if (t === 'saturn' || t === 'uranus' || t === 'neptune') return 'epic';
+  if (t === 'earth' || t === 'venus') return 'rare';
+  return 'common';
+}
+
 export function generateSolarSystem(traits: WalletTraits, walletAddress?: string): SolarSystemData {
-  const rarityConfig = RARITY_VISUALS[traits.rarityTier];
+  const effectiveRarity = deriveRarityTier(traits);
+  const rarityConfig = RARITY_VISUALS[effectiveRarity];
   const addressSeed = walletAddress ? hashWalletAddress(walletAddress) : 0;
   const random = seededRandom(addressSeed + traits.uniqueTokenCount + traits.nftCount);
   
@@ -531,7 +541,7 @@ export function generateSolarSystem(traits: WalletTraits, walletAddress?: string
   }
 
   // Mythic tier = Pulsar
-  if (traits.rarityTier === 'mythic') {
+  if (effectiveRarity === 'mythic') {
     starMode = 'binaryPulsar';
     if (sunType !== 'combo') {
       palette = rarityConfig.palette;
@@ -544,9 +554,9 @@ export function generateSolarSystem(traits: WalletTraits, walletAddress?: string
     mode: starMode,
     sunType,
     palette,
-    intensity: traits.rarityTier === 'mythic' ? 6 : traits.rarityTier === 'legendary' ? 5 : 4,
+    intensity: effectiveRarity === 'mythic' ? 6 : effectiveRarity === 'legendary' ? 5 : 4,
     plasmaBridge,
-    novaBridge: sunType === 'combo' || traits.rarityTier === 'mythic',
+    novaBridge: sunType === 'combo' || effectiveRarity === 'mythic',
   };
 
   // 2. Planet Generation - scales with token diversity
@@ -629,7 +639,7 @@ export function generateSolarSystem(traits: WalletTraits, walletAddress?: string
 
   // Debris density scales with transaction count
   const dustParticleCount = Math.min(
-    Math.floor((150 + Math.floor(traits.txCount / 80) * 10) * DUST_MULTIPLIER[traits.rarityTier]),
+    Math.floor((150 + Math.floor(traits.txCount / 80) * 10) * DUST_MULTIPLIER[effectiveRarity]),
     2500
   );
 
@@ -642,10 +652,10 @@ export function generateSolarSystem(traits: WalletTraits, walletAddress?: string
       spreadRadius,
       colors: [palette.primary, palette.secondary, '#ffffff'],
     },
-    starfieldDensity: 0.1 + (DUST_MULTIPLIER[traits.rarityTier] * 0.2),
+    starfieldDensity: 0.1 + (DUST_MULTIPLIER[effectiveRarity] * 0.2),
     stellarProfile,
     orbitColor: rarityConfig.orbitColor,
-    rarityTier: traits.rarityTier,
+    rarityTier: effectiveRarity,
     nebula: {
       colors: ['#2b1055', '#7a00ff', '#ff8e53'], 
       intensity: 0.6, 

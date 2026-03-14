@@ -327,6 +327,11 @@ export function installModule(loadout: ForgeLoadout, itemId: string, moduleId: s
   // No duplicate module on same item
   if (currentModules.includes(moduleId)) return null;
 
+  // No duplicate module across ALL items (prevent stacking same module on multiple items)
+  const alreadyInstalledElsewhere = Object.entries(loadout.installedModules)
+    .some(([key, mods]) => key !== itemId && mods.includes(moduleId));
+  if (alreadyInstalledElsewhere) return null;
+
   return {
     ...loadout,
     installedModules: {

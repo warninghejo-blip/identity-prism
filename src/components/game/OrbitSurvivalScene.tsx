@@ -1372,8 +1372,9 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
         else if (pw.type === "slowmo") slowmoT.current = SLOWMO_DUR;
         else if (pw.type === "phase") phaseT.current = PHASE_DUR;
         else if (pw.type === "coin") {
-          bonusPoints.current += COIN_BONUS;
-          coinBank.current += COIN_BONUS;
+          const coinPwrBonus = COIN_BONUS * coinMult;
+          bonusPoints.current += coinPwrBonus;
+          coinBank.current += coinPwrBonus;
           onCoins(coinBank.current);
           const newSc = Math.floor(el) + bonusPoints.current;
           scoreRef.current = newSc;

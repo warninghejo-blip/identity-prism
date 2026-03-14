@@ -893,10 +893,11 @@ export default function StellarForge() {
     if (balance.balance < item.price) { toast.error('Not enough Coins'); return; }
     setPurchasing(item.id);
     try {
-      const result = await spendPrism(walletAddress, `forge_${item.category}` as any, item.price, `Purchased ${item.name}`);
-      if (!result) { toast.error('Purchase failed'); return; }
+      // Validate locally first (before spending on server) to avoid money loss
       const newLoadout = purchaseItem(loadout, item.id, balance.balance);
       if (!newLoadout) { toast.error('Purchase failed — insufficient Coins or invalid item'); return; }
+      const result = await spendPrism(walletAddress, `forge_${item.category}` as any, item.price, `Purchased ${item.name}`);
+      if (!result) { toast.error('Purchase failed'); return; }
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
       setBalance(result.balance);

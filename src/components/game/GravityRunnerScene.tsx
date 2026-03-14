@@ -598,6 +598,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
     function die() {
       s.alive = false;
+      s._deathTime = performance.now();
       s.screenShake = 20;
       for (let i = 0; i < 28; i++) {
         const angle = (Math.PI * 2 * i) / 28;
@@ -620,6 +621,9 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       if (reviveRef.current) {
         reviveRef.current = false;
         s.alive = true;
+        // Compensate startTime for death duration (prevent score jump)
+        if (s._deathTime) { s.startTime += performance.now() - s._deathTime; s._deathTime = 0; }
+        s.lastTickTime = performance.now();
         s.screenShake = 0;
         s._grazed = false; // reset graze immunity on revive
         s.velY = FLAP_VEL * 0.5; // gentle upward push on revive
@@ -1257,6 +1261,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           if (reviveRef.current) {
             reviveRef.current = false;
             s.alive = true;
+            if (s._deathTime) { s.startTime += performance.now() - s._deathTime; s._deathTime = 0; }
+            s.lastTickTime = performance.now();
             s.screenShake = 0;
             s.velY = FLAP_VEL * 0.5;
             { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }
@@ -1285,6 +1291,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
               if (reviveRef.current) {
                 reviveRef.current = false;
                 s.alive = true;
+                if (s._deathTime) { s.startTime += performance.now() - s._deathTime; s._deathTime = 0; }
+                s.lastTickTime = performance.now();
                 s.screenShake = 0;
                 s.velY = FLAP_VEL * 0.5;
                 { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }

@@ -195,9 +195,12 @@ async function syncCoinsToServer(walletAddress: string, coins: number, delta: nu
   try {
     const base = getServerBase();
     if (!base) return;
+    const jwt = getChallengeJwt();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
     await fetch(`${base}/api/game/coins`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ address: walletAddress, coins, delta, mode }),
     });
   } catch { /* silent */ }

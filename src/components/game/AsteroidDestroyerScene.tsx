@@ -1367,9 +1367,10 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
           shake.current = Math.max(shake.current, .8);
           if (shieldHits.current <= 0) shieldActive.current = false;
           if (e.hp <= 0) {
-            e.dying = 0.25;
+            e.dying = isBoss(e.type) ? 0.6 : 0.25;
+            e.cascadeTimer = 0;
+            addExplosion(smallExplosions.current, e.x, e.y, ENEMY_STATS[e.type].color);
             if (isBoss(e.type)) {
-              addExplosion(smallExplosions.current, e.x, e.y, "#ff8844");
               for (let _bi = 0; _bi < enemyBullets.current.length; _bi++) enemyBullets.current[_bi].active = false;
             }
             sfxEnemyDestroy();

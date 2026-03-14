@@ -124,8 +124,7 @@ export function gatherXPSources(address: string): RangerXPSources {
     const gameModes = ['orbit_survival', 'cosmic_defender', 'gravity_rush', 'cosmic_mine', 'cosmic_runner'];
     const bestScores: Record<string, number> = {};
     for (const mode of gameModes) {
-      const raw = localStorage.getItem(`prism_league_best_${mode}_${address}`)
-        || localStorage.getItem(`${mode}_best_score`);
+      const raw = localStorage.getItem(`prism_league_best_${mode}_${address}`);
       if (raw) bestScores[mode] = parseInt(raw, 10) || 0;
     }
     if (Object.keys(bestScores).length > 0) sources.gameBestScores = bestScores;
