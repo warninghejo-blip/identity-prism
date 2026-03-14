@@ -606,6 +606,11 @@ const PrismLeague = () => {
   const [coins, setCoins] = useState(0);
   const [totalCoins, setTotalCoins] = useState(() => readWalletCoins(address || "anonymous"));
 
+  // Reset totalCoins on wallet change
+  useEffect(() => {
+    setTotalCoins(readWalletCoins(address || "anonymous"));
+  }, [address]);
+
   // Sync coins & achievements from server when wallet connects
   useEffect(() => {
     if (!address) return;
@@ -1390,14 +1395,18 @@ const PrismLeague = () => {
     }
   };
 
+  const claimingAchRef = useRef(false);
   const handleClaimAchievement = async (achId: string) => {
-    const walletAddr = address || "anonymous";
+    if (!address) { toast.error('Connect wallet to claim'); return; }
+    if (claimingAchRef.current) return;
+    claimingAchRef.current = true;
+    const walletAddr = address;
     // Check orbit, defender, and gravity achievements
     const orbitAch = achievements.find((a) => a.id === achId);
     const defAch = defenderAchievements.find((a) => a.id === achId);
     const gravAch = gravityAchievements.find((a) => a.id === achId);
     const ach = orbitAch || defAch || gravAch;
-    if (!ach || !ach.unlocked || ach.claimed) return;
+    if (!ach || !ach.unlocked || ach.claimed) { claimingAchRef.current = false; return; }
     const isDefAch = !!defAch && !orbitAch;
     const isGravAch = !!gravAch && !orbitAch && !defAch;
     const reward = isGravAch
@@ -1405,13 +1414,14 @@ const PrismLeague = () => {
       : isDefAch
       ? (DEFENDER_COIN_REWARDS[ach.tier] ?? 0)
       : (ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0);
-    if (reward <= 0) return;
+    if (reward <= 0) { claimingAchRef.current = false; return; }
     const serverResult = await claimAchievementOnServer(walletAddr, achId, reward);
     if (!serverResult.ok) {
       if (isGravAch) { const { all } = claimGravityReward(achId); setGravityAchievements(all); }
       else if (isDefAch) { const { all } = claimDefenderReward(achId); setDefenderAchievements(all); }
       else { const { all } = claimAchievementReward(achId); setAchievements(all); }
       toast.error('Achievement already claimed!');
+      claimingAchRef.current = false;
       return;
     }
     if (isGravAch) { const { all } = claimGravityReward(achId); setGravityAchievements(all); }
@@ -1428,6 +1438,7 @@ const PrismLeague = () => {
     }
     toast.success(`Claimed +${reward} coins!`);
     hapticMedium();
+    claimingAchRef.current = false;
   };
 
   const handleShare = () => {

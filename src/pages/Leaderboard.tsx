@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { goBack } from "@/lib/safeNavigate";
+import { startFadeTransition, fadeOutTransition } from "@/lib/fadeTransition";
 import {
   ArrowLeft,
   Trophy,
@@ -55,7 +56,10 @@ interface TournamentEntry {
 
 interface ActiveTournament {
   id: string;
+  tier?: string;
   mode: string;
+  label?: string;
+  entryFee?: number;
   endsAt: string;
   prizePool: number;
   entryCount: number;
@@ -63,7 +67,15 @@ interface ActiveTournament {
   isEnded: boolean;
   winners?: TournamentEntry[];
   userJoined?: boolean;
+  resultsHidden?: boolean;
 }
+
+type TournamentTierKey = 'daily' | 'weekly' | 'monthly';
+const TIER_TABS: { key: TournamentTierKey; label: string; fee: number }[] = [
+  { key: 'daily', label: 'Daily', fee: 1000 },
+  { key: 'weekly', label: 'Weekly', fee: 5000 },
+  { key: 'monthly', label: 'Monthly', fee: 25000 },
+];
 
 interface TournamentHistoryItem {
   id: string;
@@ -211,8 +223,13 @@ function formatTimeLeft(endsAt: string): string {
   }
 }
 
-function getJwt(): string {
-  return localStorage.getItem("ip_jwt") || "";
+async function getJwtAsync(wallet: ReturnType<typeof import('@solana/wallet-adapter-react').useWallet>): Promise<string> {
+  const addr = wallet.publicKey?.toBase58() || '';
+  if (!addr) return '';
+  const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
+  let jwt = getCachedJwt(addr);
+  if (!jwt && wallet.publicKey && wallet.signMessage) jwt = await obtainJwt(wallet);
+  return jwt || '';
 }
 
 // ── Component ──
@@ -221,6 +238,8 @@ export default function Leaderboard() {
   const navigate = useNavigate();
   const wallet = useWallet();
   const myAddress = wallet.publicKey?.toBase58() || "";
+
+  useEffect(() => { fadeOutTransition(); }, []);
 
   const [activeTab, setActiveTab] = useState<TabKey>("overall");
 
@@ -236,8 +255,9 @@ export default function Leaderboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Tournament state
-  const [tournament, setTournament] = useState<ActiveTournament | null>(null);
+  // Tournament state (tiered)
+  const [tournaments, setTournaments] = useState<Record<TournamentTierKey, ActiveTournament | null>>({ daily: null, weekly: null, monthly: null });
+  const [activeTier, setActiveTier] = useState<TournamentTierKey>('daily');
   const [tournamentLoading, setTournamentLoading] = useState(false);
   const [tournamentError, setTournamentError] = useState<string | null>(null);
   const [joinLoading, setJoinLoading] = useState(false);
@@ -248,6 +268,9 @@ export default function Leaderboard() {
   const [timeLeft, setTimeLeft] = useState<string>("");
   const tournamentIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Convenience: currently selected tournament
+  const tournament = tournaments[activeTier];
 
   const fetchEntries = useCallback(
     async (tab?: TabKey) => {
@@ -297,12 +320,24 @@ export default function Leaderboard() {
     setTournamentLoading(true);
     setTournamentError(null);
     try {
-      const res = await fetch(`${base}/api/tournament/active`);
+      const jwt = await getJwtAsync(wallet);
+      const headers: Record<string, string> = {};
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      const res = await fetch(`${base}/api/tournament/active`, { headers });
       if (res.ok) {
         const data = await res.json();
-        setTournament(data?.tournament || null);
+        if (data?.tournaments) {
+          setTournaments({
+            daily: data.tournaments.daily || null,
+            weekly: data.tournaments.weekly || null,
+            monthly: data.tournaments.monthly || null,
+          });
+        } else if (data?.tournament) {
+          // Backward compat: single tournament
+          setTournaments(prev => ({ ...prev, daily: data.tournament }));
+        }
       } else if (res.status === 404) {
-        setTournament(null);
+        setTournaments({ daily: null, weekly: null, monthly: null });
       } else {
         setTournamentError("Failed to load tournament data");
       }
@@ -310,7 +345,7 @@ export default function Leaderboard() {
       setTournamentError("Network error \u2014 check your connection");
     }
     setTournamentLoading(false);
-  }, []);
+  }, [wallet]);
 
   const fetchHistory = useCallback(async () => {
     const base = getServerBase();
@@ -328,24 +363,24 @@ export default function Leaderboard() {
     setHistoryLoading(false);
   }, []);
 
-  const handleJoin = async () => {
+  const handleJoin = async (tier: TournamentTierKey = activeTier) => {
     const base = getServerBase();
     if (!base || !myAddress) return;
     setJoinLoading(true);
     setJoinMessage(null);
     try {
-      const jwt = getJwt();
+      const jwt = await getJwtAsync(wallet);
       const res = await fetch(`${base}/api/tournament/join`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
-        body: JSON.stringify({ address: myAddress }),
+        body: JSON.stringify({ tier }),
       });
       const data = await res.json();
       if (res.ok) {
-        setJoinMessage(data?.message || "Joined successfully!");
+        setJoinMessage("Joined successfully!");
         fetchTournament();
       } else {
         setJoinMessage(data?.error || "Failed to join tournament");
@@ -381,12 +416,13 @@ export default function Leaderboard() {
     };
   }, [activeTab, fetchTournament]);
 
-  // Countdown ticker
+  // Countdown ticker for active tier
   useEffect(() => {
-    if (tournament && !tournament.isEnded) {
-      setTimeLeft(formatTimeLeft(tournament.endsAt));
+    const t = tournaments[activeTier];
+    if (t && !t.isEnded) {
+      setTimeLeft(formatTimeLeft(t.endsAt));
       countdownRef.current = setInterval(() => {
-        setTimeLeft(formatTimeLeft(tournament.endsAt));
+        setTimeLeft(formatTimeLeft(t.endsAt));
       }, 1000);
     } else {
       setTimeLeft("");
@@ -394,7 +430,7 @@ export default function Leaderboard() {
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-  }, [tournament]);
+  }, [tournaments, activeTier]);
 
   const handleTabChange = (tab: TabKey) => {
     if (tab === activeTab) return;
@@ -418,9 +454,12 @@ export default function Leaderboard() {
     if (activeTab === "tournament") {
       fetchTournament();
     } else {
-      fetchEntries();
+      fetchEntries(activeTab);
     }
   };
+
+  // Clear join message on tier switch
+  useEffect(() => { setJoinMessage(null); }, [activeTier]);
 
   return (
     <PageShell className="text-white">
@@ -428,7 +467,7 @@ export default function Leaderboard() {
       <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <button
-            onClick={() => goBack(navigate)}
+            onClick={() => { startFadeTransition(() => goBack(navigate)); }}
             className="text-white/50 hover:text-white transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -495,7 +534,9 @@ export default function Leaderboard() {
       <main className="flex-1 overflow-y-auto max-w-3xl mx-auto w-full px-4 py-4 pb-24">
         {activeTab === "tournament" ? (
           <TournamentPanel
-            tournament={tournament}
+            tournaments={tournaments}
+            activeTier={activeTier}
+            onTierChange={setActiveTier}
             loading={tournamentLoading}
             error={tournamentError}
             timeLeft={timeLeft}
@@ -523,7 +564,7 @@ export default function Leaderboard() {
             <Trophy className="w-12 h-12 mx-auto mb-4 opacity-20" />
             <p className="text-sm">{error}</p>
             <button
-              onClick={() => fetchEntries()}
+              onClick={() => fetchEntries(activeTab)}
               className="mt-4 text-xs text-white/40 hover:text-white/70 underline transition-colors"
             >
               Retry
@@ -560,7 +601,9 @@ export default function Leaderboard() {
 const TOURNAMENT_COLOR = "#A855F7";
 
 function TournamentPanel({
-  tournament,
+  tournaments,
+  activeTier,
+  onTierChange,
   loading,
   error,
   timeLeft,
@@ -573,24 +616,28 @@ function TournamentPanel({
   historyOpen,
   onToggleHistory,
 }: {
-  tournament: ActiveTournament | null;
+  tournaments: Record<TournamentTierKey, ActiveTournament | null>;
+  activeTier: TournamentTierKey;
+  onTierChange: (tier: TournamentTierKey) => void;
   loading: boolean;
   error: string | null;
   timeLeft: string;
   myAddress: string;
   joinLoading: boolean;
   joinMessage: string | null;
-  onJoin: () => void;
+  onJoin: (tier: TournamentTierKey) => void;
   history: TournamentHistoryItem[];
   historyLoading: boolean;
   historyOpen: boolean;
   onToggleHistory: () => void;
 }) {
+  const tournament = tournaments[activeTier];
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-white/30">
         <Loader2 className="w-6 h-6 animate-spin mr-2" />
-        Loading tournament...
+        Loading tournaments...
       </div>
     );
   }
@@ -606,6 +653,26 @@ function TournamentPanel({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Tier sub-tabs */}
+      <div className="flex gap-1 rounded-xl bg-white/[0.03] p-1 border border-white/[0.06]">
+        {TIER_TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => onTierChange(t.key)}
+            className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all ${
+              activeTier === t.key
+                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                : 'text-white/40 hover:text-white/60 border border-transparent'
+            }`}
+          >
+            <div>{t.label}</div>
+            <div className={`text-[10px] mt-0.5 ${activeTier === t.key ? 'text-purple-400/70' : 'text-white/20'}`}>
+              {formatNumber(t.fee)} coins
+            </div>
+          </button>
+        ))}
+      </div>
+
       {/* Active / ended tournament card */}
       {tournament ? (
         tournament.isEnded ? (
@@ -617,13 +684,13 @@ function TournamentPanel({
             myAddress={myAddress}
             joinLoading={joinLoading}
             joinMessage={joinMessage}
-            onJoin={onJoin}
+            onJoin={() => onJoin(activeTier)}
           />
         )
       ) : (
         <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-8 text-center text-white/30 flex flex-col items-center gap-3">
           <Swords className="w-10 h-10 opacity-20" />
-          <p className="text-sm">No active tournament right now.</p>
+          <p className="text-sm">No active {activeTier} tournament right now.</p>
           <p className="text-xs text-white/20">Check back soon!</p>
         </div>
       )}
@@ -639,7 +706,7 @@ function TournamentPanel({
         <Star className="w-4 h-4 mt-0.5 shrink-0" style={{ color: TOURNAMENT_COLOR }} />
         <p className="text-xs text-white/50 leading-relaxed">
           Scores are submitted automatically when you finish a game session.
-          Just play normally — your best run during the tournament window counts.
+          Your best run during the tournament window counts. 15% burn fee on entry.
         </p>
       </div>
 
@@ -717,7 +784,7 @@ function ActiveTournamentCard({
           className="text-sm font-bold"
           style={{ color: TOURNAMENT_COLOR }}
         >
-          Active Tournament
+          {tournament.label || 'Daily'} Tournament
         </span>
         <span
           className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full"
@@ -750,13 +817,36 @@ function ActiveTournamentCard({
         />
       </div>
 
-      {/* Prize pool */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.05]">
-        <Coins className="w-4 h-4 text-yellow-400/70" />
-        <span className="text-xs text-white/40">Prize Pool</span>
-        <span className="ml-auto text-sm font-bold text-yellow-300">
-          {formatNumber(tournament.prizePool)} coins
-        </span>
+      {/* Prize pool + Entry Fee */}
+      <div className="grid grid-cols-2 divide-x divide-white/[0.05] border-b border-white/[0.05]">
+        <div className="flex flex-col items-center py-3 gap-0.5">
+          <span className="text-[10px] text-white/30 uppercase tracking-wider">Entry Fee</span>
+          <span className="text-sm font-bold text-purple-300">{formatNumber(tournament.entryFee || 1000)}</span>
+          <span className="text-[9px] text-white/20">15% burned</span>
+        </div>
+        <div className="flex flex-col items-center py-3 gap-0.5">
+          <span className="text-[10px] text-white/30 uppercase tracking-wider">Prize Pool</span>
+          <span className="text-sm font-bold text-yellow-300">{formatNumber(tournament.prizePool)}</span>
+          <span className="text-[9px] text-white/20">{tournament.entryCount} entries</span>
+        </div>
+      </div>
+
+      {/* Prize distribution table */}
+      <div className="px-4 py-2.5 border-b border-white/[0.05]">
+        <p className="text-[10px] text-white/30 uppercase tracking-wider font-bold mb-1.5">Prize Distribution</p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+          {(tournament.tier === 'monthly'
+            ? [{p:'1st',s:'30%'},{p:'2nd',s:'18%'},{p:'3rd',s:'12%'},{p:'4th',s:'9%'},{p:'5th',s:'8%'},{p:'6th',s:'6%'},{p:'7th',s:'5%'},{p:'8-10th',s:'4%'}]
+            : tournament.tier === 'weekly'
+            ? [{p:'1st',s:'35%'},{p:'2nd',s:'22%'},{p:'3rd',s:'15%'},{p:'4th',s:'10%'},{p:'5th',s:'10%'},{p:'6th',s:'8%'}]
+            : [{p:'1st',s:'50%'},{p:'2nd',s:'30%'},{p:'3rd',s:'20%'}]
+          ).map(r => (
+            <div key={r.p} className="flex justify-between text-[11px]">
+              <span className={r.p === '1st' ? 'text-yellow-400' : r.p === '2nd' ? 'text-gray-300' : r.p === '3rd' ? 'text-amber-600' : 'text-white/40'}>{r.p}</span>
+              <span className="text-white/50 font-mono">{r.s}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Join button */}
@@ -787,7 +877,7 @@ function ActiveTournamentCard({
             ) : (
               <>
                 <Coins className="w-4 h-4" />
-                Join Tournament — 50 coins
+                Join — {formatNumber(tournament.entryFee || 500)} coins
               </>
             )}
           </button>
@@ -811,8 +901,13 @@ function ActiveTournamentCard({
         )}
       </div>
 
-      {/* Leaderboard */}
-      {tournament.entries && tournament.entries.length > 0 && (
+      {/* Leaderboard — gated until joined */}
+      {tournament.resultsHidden && !alreadyJoined ? (
+        <div className="border-t border-white/[0.05] px-4 py-8 text-center">
+          <Swords className="w-8 h-8 mx-auto mb-2 text-white/10" />
+          <p className="text-xs text-white/30">Pay entry fee to see standings</p>
+        </div>
+      ) : tournament.entries && tournament.entries.length > 0 ? (
         <div className="border-t border-white/[0.05]">
           <p className="px-4 py-2 text-[10px] uppercase tracking-wider font-bold text-white/30">
             Current Standings
@@ -826,7 +921,11 @@ function ActiveTournamentCard({
             />
           ))}
         </div>
-      )}
+      ) : alreadyJoined ? (
+        <div className="border-t border-white/[0.05] px-4 py-6 text-center text-xs text-white/20">
+          No scores submitted yet — play to get on the board!
+        </div>
+      ) : null}
     </div>
   );
 }

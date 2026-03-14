@@ -1030,8 +1030,8 @@ const BlackHole = () => {
         }).catch(() => {});
       }
 
-      // Refresh
-      fetchTokens();
+      // Refresh — pass ownerPublicKey so it works for viewed wallets too
+      fetchTokens(ownerPublicKey);
 
     } catch (error) {
       toast.error("Incineration failed", {
@@ -1083,7 +1083,8 @@ const BlackHole = () => {
     const totalValueLost = burnable.reduce((sum, t) => sum + (t.valueSol && t.valueSol > 0.001 ? t.valueSol : 0), 0);
     const commissionRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
     const commission = grossReclaim * commissionRate;
-    const netReturn = Math.max(0, grossReclaim - commission - ESTIMATED_FEE_SOL);
+    const chunkCount = Math.max(1, Math.ceil(totalAccounts / 8));
+    const netReturn = Math.max(0, grossReclaim - commission - ESTIMATED_FEE_SOL * chunkCount);
     const protectedCount = tokens.filter(t => t.assetStatus === 'protected').length;
     const valuableCount = tokens.filter(t => t.assetStatus === 'valuable').length;
     const burnableCount = tokens.filter(t => t.assetStatus === 'burnable').length;

@@ -904,9 +904,9 @@ export default function StellarForge() {
       trackForgePurchase(item.name, item.price);
       toast.success(`Acquired ${item.name}!`, { description: `−${item.price} Coins` });
       import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
-        const qs = getQuestState(walletAddress);
+        let qs = getQuestState(walletAddress);
         const onComplete = (q: { name: string }) => toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
-        incrementQuest(qs, 'weekly_forge', 1, onComplete);
+        qs = incrementQuest(qs, 'weekly_forge', 1, onComplete).state;
         incrementQuest(qs, 'ot_forge5', 1, onComplete);
       }).catch(() => {});
     } catch {

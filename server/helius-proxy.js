@@ -76,28 +76,34 @@ let solPriceCache = { value: null, timestamp: 0 };
 const SKR_PRICE_TTL_MS = 60 * 1000;
 let skrPriceCache = { value: null, timestamp: 0 };
 
+let _solPriceInflight = null;
 const getCachedSolPriceUsd = async () => {
   const now = Date.now();
   if (solPriceCache.value && now - solPriceCache.timestamp < SOL_PRICE_TTL_MS) {
     return solPriceCache.value;
   }
-  const price = await fetchSolPriceUsd();
-  if (price) {
-    solPriceCache = { value: price, timestamp: now };
-  }
-  return price;
+  if (_solPriceInflight) return _solPriceInflight;
+  _solPriceInflight = fetchSolPriceUsd().then(price => {
+    if (price) solPriceCache = { value: price, timestamp: Date.now() };
+    _solPriceInflight = null;
+    return price;
+  }).catch(e => { _solPriceInflight = null; throw e; });
+  return _solPriceInflight;
 };
 
+let _skrPriceInflight = null;
 const getCachedSkrPriceUsd = async () => {
   const now = Date.now();
   if (skrPriceCache.value && now - skrPriceCache.timestamp < SKR_PRICE_TTL_MS) {
     return skrPriceCache.value;
   }
-  const price = await fetchSkrPriceUsd();
-  if (price) {
-    skrPriceCache = { value: price, timestamp: now };
-  }
-  return price;
+  if (_skrPriceInflight) return _skrPriceInflight;
+  _skrPriceInflight = fetchSkrPriceUsd().then(price => {
+    if (price) skrPriceCache = { value: price, timestamp: Date.now() };
+    _skrPriceInflight = null;
+    return price;
+  }).catch(e => { _skrPriceInflight = null; throw e; });
+  return _skrPriceInflight;
 };
 
 loadEnvFile(process.env.ENV_PATH ?? path.join(process.cwd(), '.env'));
@@ -480,18 +486,28 @@ const normalizeStoredGameSessionEntry = (raw) => {
   };
 };
 
+let _sessionPersistTimer = null;
+let _sessionPersistInFlight = false;
 const persistGameSessionProofs = () => {
-  try {
-    const payload = {
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      sessions: Array.from(gameSessionProofs.values()),
-    };
-    fs.promises.writeFile(GAME_SESSION_STORE_FILE, JSON.stringify(payload, null, 2))
-      .catch(error => console.warn('[game-session] Failed to persist proofs', error));
-  } catch (error) {
-    console.warn('[game-session] Failed to serialize proofs', error);
-  }
+  if (_sessionPersistTimer) clearTimeout(_sessionPersistTimer);
+  _sessionPersistTimer = setTimeout(async () => {
+    if (_sessionPersistInFlight) return;
+    _sessionPersistInFlight = true;
+    try {
+      const payload = {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        sessions: Array.from(gameSessionProofs.values()),
+      };
+      const tmp = GAME_SESSION_STORE_FILE + '.tmp';
+      await fs.promises.writeFile(tmp, JSON.stringify(payload, null, 2));
+      await fs.promises.rename(tmp, GAME_SESSION_STORE_FILE);
+    } catch (error) {
+      console.warn('[game-session] Failed to persist proofs', error);
+    } finally {
+      _sessionPersistInFlight = false;
+    }
+  }, 2000);
 };
 
 const loadGameSessionProofs = () => {
@@ -681,6 +697,8 @@ const getCoinBalance = (address) => coinBalances.get(address) || 0;
 
 const setCoinBalance = (address, coins) => {
   coinBalances.set(address, coins);
+  // Keep walletDatabase in sync
+  if (walletDatabase[address]) walletDatabase[address].coins = coins;
   persistCoinBalances();
   if (fbAvailable()) {
     fbSet('coinBalances', address, { balance: coins, updatedAt: new Date().toISOString() })
@@ -1745,9 +1763,12 @@ const normalizeGameSessionPayload = (payload) => {
   const txSignature = typeof payload.txSignature === 'string' && payload.txSignature.trim()
     ? payload.txSignature.trim()
     : null;
+  const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity']);
   const gameMode = typeof payload.gameMode === 'string' ? payload.gameMode.trim() : 'orbit';
+  if (!VALID_GAME_MODES.has(gameMode)) throw new Error('invalid gameMode');
 
-  if (!Number.isFinite(score) || score < 0) {
+  const MAX_SESSION_SCORE = 1_000_000;
+  if (!Number.isFinite(score) || score < 0 || score > MAX_SESSION_SCORE) {
     throw new Error('score must be a non-negative number');
   }
   if (!seed || seed.length < 16) {
@@ -1756,8 +1777,13 @@ const normalizeGameSessionPayload = (payload) => {
   if (!Number.isInteger(slot) || slot <= 0) {
     throw new Error('slot must be a positive integer');
   }
+  const CLOCK_SKEW_MS = 30_000;
+  const now = Date.now();
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs) || endedAtMs < startedAtMs) {
     throw new Error('startedAtMs/endedAtMs are invalid');
+  }
+  if (startedAtMs > now + CLOCK_SKEW_MS || endedAtMs > now + CLOCK_SKEW_MS) {
+    throw new Error('session timestamps are in the future');
   }
 
   return {
@@ -1814,8 +1840,8 @@ const sendImageDataUrl = (res, dataUrl) => {
 
 const normalizeFloorSol = (value) => {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return null;
-  if (numeric > 1_000_000) return numeric / LAMPORTS_PER_SOL;
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  // Values > 1000 assumed to be in lamports → convert to SOL
   if (numeric > 1000) return numeric / LAMPORTS_PER_SOL;
   return numeric;
 };
@@ -3200,8 +3226,8 @@ const server = http.createServer(async (req, res) => {
   // ── Coins API (per-wallet coin balance) ──
   if (pathname === '/api/game/coins' && req.method === 'GET') {
     const addr = url.searchParams.get('address') || '';
-    if (!addr) {
-      respondJson(res, 400, { error: 'address query param required' });
+    if (!addr || addr.length < 32 || addr.length > 44) {
+      respondJson(res, 400, { error: 'valid address required' });
       return;
     }
     const coins = getCoinBalance(addr);
