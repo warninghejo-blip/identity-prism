@@ -672,7 +672,8 @@ const loadCoinBalances = async () => {
     for (const [addr, bal] of Object.entries(entries)) {
       if (typeof bal === 'number') coinBalances.set(addr, bal);
     }
-    console.log(`[coins] Loaded ${coinBalances.size} balances from JSON`);
+    if (typeof parsed?.totalBurned === 'number') { totalBurned = parsed.totalBurned; globalThis._totalBurned = totalBurned; }
+    console.log(`[coins] Loaded ${coinBalances.size} balances from JSON (totalBurned: ${totalBurned})`);
     // Auto-migrate to Firestore
     if (coinBalances.size > 0 && fbAvailable()) {
       console.log('[coins] Migrating JSON data to Firestore...');
@@ -694,7 +695,7 @@ const persistCoinBalances = () => {
       const obj = {};
       for (const [k, v] of coinBalances) obj[k] = v;
       const tmp = COINS_STORE_FILE + '.tmp';
-      await fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), balances: obj }, null, 2));
+      await fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), totalBurned, balances: obj }, null, 2));
       await fs.promises.rename(tmp, COINS_STORE_FILE);
     } catch (err) {
       console.warn('[coins] Failed to persist', err);
@@ -3297,7 +3298,6 @@ const server = http.createServer(async (req, res) => {
         const current = getCoinBalance(addr);
         if (current < absDelta) return respondJson(res, 400, { error: 'Insufficient balance' });
         const { burned } = applyBurnFee(absDelta);
-        totalBurned += burned;
         setCoinBalance(addr, current - absDelta);
         addCoinSpent(addr, absDelta);
         respondJson(res, 200, { address: addr, coins: getCoinBalance(addr) });
@@ -3756,7 +3756,6 @@ const server = http.createServer(async (req, res) => {
     const bal = getCoinBalance(addr);
     if (bal < MINT_COIN_COST) return respondJson(res, 400, { error: `Insufficient balance. Cost: ${MINT_COIN_COST} Coins` });
     const { burned: mintBurned } = applyBurnFee(MINT_COIN_COST);
-    totalBurned += mintBurned;
     setCoinBalance(addr, bal - MINT_COIN_COST);
     const wMint = walletDatabase.get(addr);
     if (wMint) { wMint.coins = bal - MINT_COIN_COST; saveWalletDatabaseDebounced(); }
@@ -3773,26 +3772,31 @@ const server = http.createServer(async (req, res) => {
     debouncedSavePrism();
     // Referral mint bonus: if minter was referred, give referrer +100 coins
     if (fbAvailable()) {
-      (async () => {
-        try {
-          const db = (await import('./services/firebase.js')).getDb();
-          if (!db) return;
-          const snap = await db.collection('referrals').where('claimer', '==', addr).limit(1).get();
-          if (snap.empty) return;
-          const refDoc = snap.docs[0];
-          const refData = refDoc.data();
-          if (refData.mintBonus) return; // already awarded
-          const referrer = refData.referrer;
-          const rBal = getCoinBalance(referrer);
-          setCoinBalance(referrer, rBal + 100);
-          await fbSet('referrals', refDoc.id, { mintBonus: true });
-          // Update referrer stats
-          const rStats = await fbGet('referralStats', referrer);
-          await fbSet('referralStats', referrer, {
-            totalEarned: (rStats?.totalEarned || 0) + 100,
-          });
-        } catch (e) { console.warn('[referral] mint bonus error:', e.message); }
-      })();
+      const _mintBonusLocks = globalThis._mintBonusLocks || (globalThis._mintBonusLocks = new Set());
+      if (!_mintBonusLocks.has(addr)) {
+        _mintBonusLocks.add(addr);
+        (async () => {
+          try {
+            const db = (await import('./services/firebase.js')).getDb();
+            if (!db) return;
+            const snap = await db.collection('referrals').where('claimer', '==', addr).limit(1).get();
+            if (snap.empty) return;
+            const refDoc = snap.docs[0];
+            const refData = refDoc.data();
+            if (refData.mintBonus) return; // already awarded
+            // Set mintBonus FIRST to prevent race
+            await fbSet('referrals', refDoc.id, { mintBonus: true });
+            const referrer = refData.referrer;
+            const rBal = getCoinBalance(referrer);
+            setCoinBalance(referrer, rBal + 100);
+            const rStats = await fbGet('referralStats', referrer);
+            await fbSet('referralStats', referrer, {
+              totalEarned: (rStats?.totalEarned || 0) + 100,
+            });
+          } catch (e) { console.warn('[referral] mint bonus error:', e.message); }
+          finally { _mintBonusLocks.delete(addr); }
+        })();
+      }
     }
     respondJson(res, 200, { success: true, proceedWithMint: true, newBalance: bal - MINT_COIN_COST, burned: mintBurned });
     return;
@@ -5512,7 +5516,6 @@ const server = http.createServer(async (req, res) => {
       if (currentBal < spent) return respondJson(res, 400, { error: 'insufficient balance' });
       // Apply 2% burn fee
       const { burned } = applyBurnFee(spent);
-      totalBurned += burned;
       const newBal = currentBal - spent;
       setCoinBalance(address, newBal);
       addCoinSpent(address, spent);
@@ -6914,9 +6917,25 @@ const server = http.createServer(async (req, res) => {
       const { address, quests } = JSON.parse(await readBody(req));
       if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       const addr = jwtAuth.address;
-      if (!quests || typeof quests !== 'object') return respondJson(res, 400, { error: 'quests object required' });
+      if (!quests || typeof quests !== 'object' || Array.isArray(quests)) return respondJson(res, 400, { error: 'quests object required' });
+      // Validate quest data: only allow known quest IDs with numeric progress/claimed fields
+      const VALID_QUEST_IDS = new Set([
+        'daily_game', 'daily_explore', 'daily_burn', 'daily_highscore',
+        'weekly_games5', 'weekly_forge', 'weekly_burn500',
+        'ot_first_game', 'ot_score1000', 'ot_mint_card', 'ot_first_challenge',
+        'ot_first_stake', 'ot_first_forge', 'ot_explore10',
+      ]);
+      const sanitized = {};
+      for (const [key, val] of Object.entries(quests)) {
+        if (!VALID_QUEST_IDS.has(key)) continue;
+        if (!val || typeof val !== 'object') continue;
+        sanitized[key] = {
+          progress: Math.max(0, Math.min(Number(val.progress) || 0, 100000)),
+          claimed: val.claimed === true,
+        };
+      }
       const existing = questProgress.get(addr) || {};
-      questProgress.set(addr, { ...existing, quests, updatedAt: new Date().toISOString() });
+      questProgress.set(addr, { ...existing, quests: sanitized, updatedAt: new Date().toISOString() });
       persistQuestProgress();
       triggerCompositeUpdate(addr);
       respondJson(res, 200, { ok: true });
@@ -6966,15 +6985,7 @@ const server = http.createServer(async (req, res) => {
       const { address, name, description, category, price, modelData, modelFormat, previewImage } = JSON.parse(await readBody(req));
       if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !name || !modelData || !price) return respondJson(res, 400, { error: 'address, name, modelData, price required' });
-      // Listing fee: 10 coins with 2% burn
-      const LISTING_FEE = 10;
-      const listingBal = getCoinBalance(address);
-      if (listingBal < LISTING_FEE) return respondJson(res, 400, { error: `Insufficient balance. Listing fee: ${LISTING_FEE} Coins` });
-      const { burned: listBurned } = applyBurnFee(LISTING_FEE);
-      totalBurned += listBurned;
-      setCoinBalance(address, listingBal - LISTING_FEE);
-      const wList = walletDatabase.get(address);
-      if (wList) { wList.coins = listingBal - LISTING_FEE; saveWalletDatabaseDebounced(); }
+      // Validate format, size, and content BEFORE charging fee
       const format = (modelFormat || '').toLowerCase();
       if (!['glb', 'gltf', 'obj'].includes(format)) return respondJson(res, 400, { error: 'Invalid format. Supported: GLB, GLTF, OBJ' });
       if (modelData.length > 5 * 1024 * 1024 * 1.37) return respondJson(res, 400, { error: 'Model too large. Max 5MB.' });
@@ -6989,6 +7000,14 @@ const server = http.createServer(async (req, res) => {
         const version = buf.readUInt32LE(4);
         if (version !== 2) return respondJson(res, 400, { error: `Unsupported GLB version ${version}. Only glTF 2.0 supported.` });
       }
+      // All validation passed — now charge listing fee
+      const LISTING_FEE = 10;
+      const listingBal = getCoinBalance(address);
+      if (listingBal < LISTING_FEE) return respondJson(res, 400, { error: `Insufficient balance. Listing fee: ${LISTING_FEE} Coins` });
+      const { burned: listBurned } = applyBurnFee(LISTING_FEE);
+      setCoinBalance(address, listingBal - LISTING_FEE);
+      const wList = walletDatabase.get(address);
+      if (wList) { wList.coins = listingBal - LISTING_FEE; saveWalletDatabaseDebounced(); }
       const id = `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const modelsDir = path.join(process.cwd(), 'marketplace_models');
       if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
@@ -7022,7 +7041,6 @@ const server = http.createServer(async (req, res) => {
       if (buyerBal < listing.price) { marketplacePurchases.delete(purchaseKey); return respondJson(res, 400, { error: 'Insufficient Coin balance' }); }
       // Apply 2% burn fee on purchase
       const { burned: purchaseBurned } = applyBurnFee(listing.price);
-      totalBurned += purchaseBurned;
       setCoinBalance(address, buyerBal - listing.price);
       addCoinSpent(address, listing.price);
       const sellerShare = Math.floor((listing.price - purchaseBurned) * 0.8);
@@ -7235,7 +7253,7 @@ const server = http.createServer(async (req, res) => {
           });
           if (!validTransfer) { globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
           challenge.solTxAcceptor = solTxSignature;
-        } catch (e) { rollback(); return respondJson(res, 400, { error: `Transfer verification failed: ${e.message}` }); }
+        } catch (e) { globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: `Transfer verification failed: ${e.message}` }); }
       } else {
         // Check acceptor Coin balance
         const accBal = getCoinBalance(acceptor);
@@ -7740,7 +7758,9 @@ const server = http.createServer(async (req, res) => {
     if (address) {
       const w = walletDatabase.get(address);
       if (!w) return respondJson(res, 404, { error: 'Wallet not found' });
-      respondJson(res, 200, w);
+      // Public view: strip sensitive fields
+      const { coins, sybilScore, sybilFlags, ...publicData } = w;
+      respondJson(res, 200, publicData);
       return;
     }
     // Paginated list requires admin key
@@ -8581,9 +8601,11 @@ const clusterCache = new Map();
 const reputationV2RateLimit = new Map();
 
 // ═══ 2% Burn Fee Helper ═══
-let totalBurned = 0;
+let totalBurned = globalThis._totalBurned || 0;
 function applyBurnFee(amount) {
   const burned = Math.max(1, Math.floor(amount * 0.02));
+  totalBurned += burned;
+  globalThis._totalBurned = totalBurned;
   return { net: amount - burned, burned };
 }
 
