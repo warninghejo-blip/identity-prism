@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { ArrowLeft, Gift, Check, Clock, Flame, Star, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -126,6 +127,8 @@ export default function QuestsPage() {
   const [balance, setBalance] = useState<PrismBalance | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
 
+  useEffect(() => { fadeOutTransition(); }, []);
+
   useEffect(() => {
     if (!walletAddress) return;
     setQuestState(getQuestState(walletAddress));
@@ -141,7 +144,11 @@ export default function QuestsPage() {
   }, [activeTab]);
 
   const handleClaim = useCallback(async (quest: Quest) => {
-    if (!walletAddress || !questState) return;
+    if (!walletAddress || !questState || claiming) return;
+    // Mark as claimed locally FIRST to prevent double-tap race condition
+    const updatedState = claimQuestReward(questState, quest.id);
+    if (updatedState === questState) return; // already claimed — no change
+    setQuestState({ ...updatedState });
     setClaiming(quest.id);
 
     try {
@@ -149,8 +156,6 @@ export default function QuestsPage() {
         : quest.frequency === 'weekly' ? 'quest_weekly'
         : 'quest_daily';
       const result = await earnPrism(walletAddress, source, quest.reward, `Quest: ${quest.name}`);
-      const updatedState = claimQuestReward(questState, quest.id);
-      setQuestState({ ...updatedState });
       setBalance(result.balance);
       toast.success(`+${quest.reward} Coins`, { description: quest.name });
     } catch {
@@ -158,7 +163,7 @@ export default function QuestsPage() {
     } finally {
       setClaiming(null);
     }
-  }, [walletAddress, questState]);
+  }, [walletAddress, questState, claiming]);
 
   const unclaimedCount = questState ? getUnclaimedCount(questState) : 0;
 
@@ -184,7 +189,7 @@ export default function QuestsPage() {
       {/* Header */}
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button onClick={() => goBack(navigate)} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
+          <button onClick={() => { startFadeTransition(() => goBack(navigate)); }} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
             <ArrowLeft className="w-4 h-4" />
             Back
           </button>

@@ -940,12 +940,13 @@ export default function StellarForge() {
     const mod = getModuleById(moduleId);
     if (!mod) return;
     if (balance.balance < mod.price) { toast.error('Not enough Coins'); return; }
+    // Validate module install BEFORE spending coins
+    const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
+    if (!newLoadout) { toast.error('Cannot install module — check slot limits or identity card requirement'); return; }
     setInstallingModule(true);
     try {
       const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
       if (!result) { toast.error('Purchase failed'); return; }
-      const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
-      if (!newLoadout) { toast.error('Cannot install module — check slot limits or identity card requirement'); return; }
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
       setBalance(result.balance);

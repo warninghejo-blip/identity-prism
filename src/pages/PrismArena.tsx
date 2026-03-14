@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { invalidateCompositeCache } from '@/hooks/useCompositeScore';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import {
@@ -17,6 +18,7 @@ import PageShell from '@/components/PageShell';
 import ChallengeReadyModal from '@/components/ChallengeReadyModal';
 import BattleResultOverlay, { type ChallengeResult } from '@/components/BattleResultOverlay';
 import { goBack } from '@/lib/safeNavigate';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { trackChallengeCreate, trackChallengeAccept } from '@/lib/analytics';
 import {
   getApiBase,
@@ -98,6 +100,8 @@ export default function PrismArena() {
   const wallet = useWallet();
   const myAddress = wallet.publicKey?.toBase58() || '';
 
+  useEffect(() => { fadeOutTransition(); }, []);
+
   const [openChallenges, setOpenChallenges] = useState<Challenge[]>([]);
   const [myChallenges, setMyChallenges] = useState<Challenge[]>([]);
   const [creating, setCreating] = useState(false);
@@ -163,6 +167,7 @@ export default function PrismArena() {
               else if (c.status === 'completed') {
                 if (c.winner === myAddress) toast.success(`You won ${c.stakeAmount * 2} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'}!`);
                 else toast.error(`You lost the challenge. ${c.stakeAmount} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'} gone.`);
+                if (myAddress) invalidateCompositeCache(myAddress);
               } else if (c.status === 'cancelled') toast.info('Challenge was cancelled.');
             }
           }
@@ -198,7 +203,7 @@ export default function PrismArena() {
       let jwt = getCachedJwt(myAddress);
       if (!jwt) {
         jwt = await obtainJwt(wallet);
-        if (!jwt) { toast.error('Please sign the message to authenticate'); setSubmitting(false); actionLockRef.current = false; return; }
+        if (!jwt) { toast.error('Please sign the message to authenticate'); return; }
       }
 
       let solTxSignature: string | undefined;
@@ -219,7 +224,7 @@ export default function PrismArena() {
           toast.info('SOL transfer confirmed, creating challenge...');
         } catch (e: any) {
           toast.error(e?.message || 'SOL transfer failed');
-          setSubmitting(false); actionLockRef.current = false; return;
+          return;
         }
       }
 
@@ -259,8 +264,8 @@ export default function PrismArena() {
       toast.error('Network error — could not create challenge');
     } finally {
       actionLockRef.current = false;
+      setSubmitting(false);
     }
-    setSubmitting(false);
   }, [myAddress, formType, formGameMode, formStake, formBetType, formOpponent, base, wallet, fetchOpen, fetchMine]);
 
   // ── Accept challenge ──
@@ -274,7 +279,7 @@ export default function PrismArena() {
       let jwt = getCachedJwt(myAddress);
       if (!jwt) {
         jwt = await obtainJwt(wallet);
-        if (!jwt) { toast.error('Please sign the message to authenticate'); setAcceptingId(null); actionLockRef.current = false; return; }
+        if (!jwt) { toast.error('Please sign the message to authenticate'); return; }
       }
 
       const challenge = [...openChallenges, ...myChallenges].find(c => c.id === challengeId);
@@ -296,7 +301,7 @@ export default function PrismArena() {
           toast.info('SOL transfer confirmed, accepting challenge...');
         } catch (e: any) {
           toast.error(e?.message || 'SOL transfer failed');
-          setAcceptingId(null); actionLockRef.current = false; return;
+          return;
         }
       }
 
@@ -333,8 +338,8 @@ export default function PrismArena() {
       toast.error('Network error');
     } finally {
       actionLockRef.current = false;
+      setAcceptingId(null);
     }
-    setAcceptingId(null);
   }, [myAddress, base, wallet, fetchOpen, fetchMine, openChallenges, myChallenges]);
 
   // ── Cancel challenge ──
@@ -367,8 +372,8 @@ export default function PrismArena() {
       toast.error('Network error');
     } finally {
       actionLockRef.current = false;
+      setCancellingId(null);
     }
-    setCancellingId(null);
   }, [myAddress, base, wallet, fetchOpen, fetchMine]);
 
   return (
@@ -377,7 +382,7 @@ export default function PrismArena() {
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <button
-            onClick={() => goBack(navigate)}
+            onClick={() => { startFadeTransition(() => goBack(navigate)); }}
             className="flex items-center gap-2 text-white/50 hover:text-white transition-colors text-sm min-h-[44px]"
           >
             <ArrowLeft className="w-4 h-4" />

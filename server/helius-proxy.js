@@ -3524,15 +3524,23 @@ const server = http.createServer(async (req, res) => {
       if (!globalThis._pendingReferralClaims) globalThis._pendingReferralClaims = new Set();
       const refClaimKey = `${referrer}_${claimer}`;
       if (globalThis._pendingReferralClaims.has(refClaimKey)) return respondJson(res, 409, { error: 'Claim in progress' });
+      if (globalThis._pendingReferralClaims.has(`claimer_${claimer}`)) return respondJson(res, 409, { error: 'Claim in progress' });
       globalThis._pendingReferralClaims.add(refClaimKey);
+      globalThis._pendingReferralClaims.add(`claimer_${claimer}`);
 
-      // Check if claimer already claimed
+      // Check if claimer already used ANY referral code (global per-claimer check)
+      const claimerGlobal = await fbGet('referralClaimers', claimer);
+      if (claimerGlobal) { globalThis._pendingReferralClaims.delete(refClaimKey); globalThis._pendingReferralClaims.delete(`claimer_${claimer}`); return respondJson(res, 400, { error: 'Already claimed a referral' }); }
+
+      // Check this specific pair too
       const existingClaim = await fbGet('referrals', refClaimKey);
-      if (existingClaim) { globalThis._pendingReferralClaims.delete(refClaimKey); return respondJson(res, 400, { error: 'Already claimed a referral' }); }
+      if (existingClaim) { globalThis._pendingReferralClaims.delete(refClaimKey); globalThis._pendingReferralClaims.delete(`claimer_${claimer}`); return respondJson(res, 400, { error: 'Already claimed a referral' }); }
 
       // Check referrer max 50 referrals
       const referrerStats = await fbGet('referralStats', referrer);
       if (referrerStats && referrerStats.totalReferred >= 50) {
+        globalThis._pendingReferralClaims.delete(refClaimKey);
+        globalThis._pendingReferralClaims.delete(`claimer_${claimer}`);
         return respondJson(res, 400, { error: 'Referrer has reached maximum referrals' });
       }
 
@@ -3542,10 +3550,11 @@ const server = http.createServer(async (req, res) => {
       const referrerBal = getCoinBalance(referrer);
       setCoinBalance(referrer, referrerBal + 20);
 
-      // Save referral record
+      // Save referral record + per-claimer global record
       await fbSet('referrals', `${referrer}_${claimer}`, {
         referrer, claimer, code, timestamp: Date.now(), mintBonus: false,
       });
+      await fbSet('referralClaimers', claimer, { referrer, code, claimedAt: Date.now() });
 
       // Update referrer stats
       const newTotal = (referrerStats?.totalReferred || 0) + 1;
@@ -3556,8 +3565,9 @@ const server = http.createServer(async (req, res) => {
       });
 
       globalThis._pendingReferralClaims.delete(refClaimKey);
+      globalThis._pendingReferralClaims.delete(`claimer_${claimer}`);
       respondJson(res, 200, { success: true, claimerBonus: 50, referrerBonus: 20 });
-    } catch { if (typeof refClaimKey !== 'undefined') globalThis._pendingReferralClaims?.delete(refClaimKey); respondJson(res, 400, { error: 'Invalid request' }); }
+    } catch { if (typeof refClaimKey !== 'undefined') { globalThis._pendingReferralClaims?.delete(refClaimKey); globalThis._pendingReferralClaims?.delete(`claimer_${claimer}`); } respondJson(res, 400, { error: 'Invalid request' }); }
     return;
   }
 
@@ -4355,7 +4365,9 @@ const server = http.createServer(async (req, res) => {
       const symbol = payload?.symbol ?? '';
       const sellerFeeBasisPoints = Number(payload?.sellerFeeBasisPoints ?? 0);
       const collectionMintRaw = payload?.collectionMint ?? CORE_COLLECTION ?? '';
-      const adminMode = Boolean(payload?.admin);
+      // adminMode requires valid X-Admin-Key header — user payload alone is NOT enough
+      // Guard: ADMIN_KEY must be explicitly set (undefined === undefined would bypass)
+      const adminMode = Boolean(payload?.admin) && !!process.env.ADMIN_KEY && req.headers['x-admin-key'] === process.env.ADMIN_KEY;
       const remintMode = Boolean(payload?.remint);
       const burnSignature = typeof payload?.burnSignature === 'string' ? payload.burnSignature.trim() : '';
       const burnAssetId = typeof payload?.burnAssetId === 'string' ? payload.burnAssetId.trim() : '';
@@ -4933,7 +4945,7 @@ const server = http.createServer(async (req, res) => {
         try {
           const signature = await connection.sendRawTransaction(txBuf, {
             preflightCommitment: 'confirmed',
-            skipPreflight: true,
+            skipPreflight: false,
           });
           await connection.confirmTransaction(signature, 'confirmed');
           console.info('[update-card] finalized', { ownerAddress: ownerAddress.slice(0, 8), assetId: assetId.slice(0, 16), signature: signature.slice(0, 16) });
@@ -5377,9 +5389,10 @@ const server = http.createServer(async (req, res) => {
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
-      // Max amount caps per source to prevent abuse
+      // Whitelist valid earn sources — reject unknown sources to prevent rate-limit bypass
       const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, burn_tokens: 500, burn_nfts: 500, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20 };
-      const maxAllowed = MAX_EARN_PER_CALL[source] || 50;
+      if (!source || !MAX_EARN_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
+      const maxAllowed = MAX_EARN_PER_CALL[source];
       if (Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
       // Per-source rate limit with per-source cooldowns
       const rlKey = `${address}:${source || 'unknown'}`;
@@ -5483,8 +5496,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ PRISM Buy Coins ═══
-  // Replay protection set
-  const usedBuyTxSignatures = globalThis._usedBuyTxSignatures || (globalThis._usedBuyTxSignatures = new Set());
+  // Replay protection map with TTL (24h auto-cleanup)
+  const usedBuyTxSignatures = globalThis._usedBuyTxMap || (globalThis._usedBuyTxMap = new Map());
+  // Periodic cleanup of expired entries (every 1000 requests)
+  if (!globalThis._buyTxCleanupCounter) globalThis._buyTxCleanupCounter = 0;
+  if (++globalThis._buyTxCleanupCounter % 1000 === 0) {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const [sig, ts] of usedBuyTxSignatures) { if (ts < cutoff) usedBuyTxSignatures.delete(sig); }
+  }
   // Daily purchase tracking
   const dailyPurchases = globalThis._dailyPurchases || (globalThis._dailyPurchases = new Map());
 
@@ -5534,7 +5553,7 @@ const server = http.createServer(async (req, res) => {
       // Replay protection — reserve BEFORE async verification to prevent race condition
       if (!txSignature || typeof txSignature !== 'string') return respondJson(res, 400, { error: 'txSignature required' });
       if (usedBuyTxSignatures.has(txSignature)) return respondJson(res, 400, { error: 'Transaction already used' });
-      usedBuyTxSignatures.add(txSignature); // reserve immediately
+      usedBuyTxSignatures.set(txSignature, Date.now()); // reserve immediately with timestamp
 
       // Verify on-chain transaction
       try {
@@ -5546,7 +5565,7 @@ const server = http.createServer(async (req, res) => {
         const validTransfer = instructions.some(ix => {
           if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
             const info = ix.parsed.info;
-            return info.destination === treasuryAddr && info.lamports >= Math.floor(pkg.solPrice * 1e9 * 0.99);
+            return info.source === address && info.destination === treasuryAddr && info.lamports >= Math.floor(pkg.solPrice * 1e9 * 0.99);
           }
           return false;
         });
@@ -7024,27 +7043,33 @@ const server = http.createServer(async (req, res) => {
       if (isSolBet) {
         // Verify SOL transfer to treasury
         if (!solTxSignature) return respondJson(res, 400, { error: 'solTxSignature required for SOL bets' });
-        // Dedup: prevent reusing same tx for multiple challenges
-        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Set();
+        // Dedup: prevent reusing same tx for multiple challenges (Map with TTL)
+        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Map();
+        // Periodic cleanup (every 500 requests)
+        if (!globalThis._challengeTxCleanupCounter) globalThis._challengeTxCleanupCounter = 0;
+        if (++globalThis._challengeTxCleanupCounter % 500 === 0) {
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          for (const [sig, ts] of globalThis._usedChallengeSolTx) { if (ts < cutoff) globalThis._usedChallengeSolTx.delete(sig); }
+        }
         if (globalThis._usedChallengeSolTx.has(solTxSignature)) return respondJson(res, 400, { error: 'This SOL transaction has already been used' });
-        globalThis._usedChallengeSolTx.add(solTxSignature);
+        globalThis._usedChallengeSolTx.set(solTxSignature, Date.now());
         try {
           const conn = new Connection(getRpcUrl(creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
           const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
-          if (!tx) return respondJson(res, 400, { error: 'Transaction not found' });
-          // Verify transfer to treasury
+          if (!tx) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' }); }
+          // Verify transfer to treasury from creator
           const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-          if (!treasuryAddr) return respondJson(res, 500, { error: 'Treasury not configured' });
+          if (!treasuryAddr) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 500, { error: 'Treasury not configured' }); }
           const instructions = tx.transaction?.message?.instructions || [];
           const validTransfer = instructions.some(ix => {
             if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
               const info = ix.parsed.info;
-              return info.destination === treasuryAddr && info.lamports >= Math.floor(stake * 1e9 * 0.99);
+              return info.source === creator && info.destination === treasuryAddr && info.lamports >= Math.floor(stake * 1e9 * 0.99);
             }
             return false;
           });
-          if (!validTransfer) return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' });
-        } catch (e) { return respondJson(res, 400, { error: `Failed to verify SOL transfer: ${e.message}` }); }
+          if (!validTransfer) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
+        } catch (e) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: `Failed to verify SOL transfer: ${e.message}` }); }
       } else {
         // Check creator Coin balance
         const creatorBal = getPrismBalance(creator);
@@ -7152,10 +7177,10 @@ const server = http.createServer(async (req, res) => {
           rollback();
           return respondJson(res, 400, { error: 'solTxSignature required for SOL challenges' });
         }
-        // Dedup SOL tx
-        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Set();
+        // Dedup SOL tx (Map with TTL — initialized in create path above)
+        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Map();
         if (globalThis._usedChallengeSolTx.has(solTxSignature)) { rollback(); return respondJson(res, 400, { error: 'This SOL transaction has already been used' }); }
-        globalThis._usedChallengeSolTx.add(solTxSignature);
+        globalThis._usedChallengeSolTx.set(solTxSignature, Date.now());
         try {
           const conn = new Connection(getRpcUrl(acceptor) || 'https://api.mainnet-beta.solana.com', 'confirmed');
           const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
@@ -7164,11 +7189,11 @@ const server = http.createServer(async (req, res) => {
           const instructions = tx.transaction?.message?.instructions || [];
           const validTransfer = instructions.some(ix => {
             if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
-              return ix.parsed.info.destination === treasuryAddr && ix.parsed.info.lamports >= Math.floor(challenge.stakeAmount * 1e9 * 0.99);
+              return ix.parsed.info.source === acceptor && ix.parsed.info.destination === treasuryAddr && ix.parsed.info.lamports >= Math.floor(challenge.stakeAmount * 1e9 * 0.99);
             }
             return false;
           });
-          if (!validTransfer) { rollback(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
+          if (!validTransfer) { globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
           challenge.solTxAcceptor = solTxSignature;
         } catch (e) { rollback(); return respondJson(res, 400, { error: `Transfer verification failed: ${e.message}` }); }
       } else {
@@ -7416,6 +7441,11 @@ const server = http.createServer(async (req, res) => {
       if (challenge.creator !== canceller) return respondJson(res, 403, { error: 'Only the creator can cancel a challenge' });
       if (challenge.status !== 'open') return respondJson(res, 400, { error: 'Can only cancel open challenges (no opponent yet)' });
 
+      // Lock status BEFORE refund to prevent double-cancel race condition
+      challenge.status = 'cancelled';
+      challenge.completedAt = Date.now();
+      saveChallenges();
+
       // Refund creator's stake
       if (challenge.stakeType === 'sol') {
         // SOL refund — send from treasury back to creator
@@ -7443,9 +7473,7 @@ const server = http.createServer(async (req, res) => {
         debouncedSavePrism();
       }
 
-      challenge.status = 'cancelled';
-      challenge.completedAt = Date.now();
-      saveChallenges();
+      saveChallenges(); // persist after refund
       console.log(`[challenges] Cancelled ${challengeId} by ${canceller.slice(0, 8)}... — stake refunded`);
       respondJson(res, 200, { ok: true });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }

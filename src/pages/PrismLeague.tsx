@@ -976,12 +976,15 @@ const PrismLeague = () => {
       if (walletAddr !== "anonymous") {
         // Quest auto-tracking
         import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
-          const qs = getQuestState(walletAddr);
-          incrementQuest(qs, 'daily_game');
-          incrementQuest(qs, 'ot_first_game');
-          incrementQuest(qs, 'weekly_games5');
-          if (finalScore >= 1000) incrementQuest(qs, 'ot_score1000');
-          if (finalScore > highScore) incrementQuest(qs, 'daily_highscore');
+          let qs = getQuestState(walletAddr);
+          qs = incrementQuest(qs, 'daily_game').state;
+          qs = incrementQuest(qs, 'ot_first_game').state;
+          qs = incrementQuest(qs, 'weekly_games5').state;
+          // ot_score1000: only for orbit/destroyer (gravity score = seconds, not points)
+          if (gameMode !== 'gravity' && finalScore >= 1000) {
+            qs = incrementQuest(qs, 'ot_score1000', finalScore).state;
+          }
+          if (finalScore > highScore) { qs = incrementQuest(qs, 'daily_highscore').state; }
         }).catch(() => {});
         invalidateCompositeCache(walletAddr);
       }
@@ -1193,6 +1196,8 @@ const PrismLeague = () => {
     (finalScore: number, finalCoins: number, victory?: boolean) => {
       // Victory — no revive, go straight to game over
       if (victory) { finalizeDeath(finalScore, finalCoins, true); return; }
+      // Gravity mode does not support revive — go straight to game over
+      if (gameMode === 'gravity') { finalizeDeath(finalScore, finalCoins, false); return; }
       // Show continue if: has free revives OR (hasn't used paid continue yet AND connected)
       if (freeRevivesLeft.current > 0 || (!continueUsed.current && connected)) {
         pendingGameOver.current = { score: finalScore, coins: finalCoins };
@@ -1203,7 +1208,7 @@ const PrismLeague = () => {
       }
       finalizeDeath(finalScore, finalCoins, false);
     },
-    [finalizeDeath, connected]
+    [finalizeDeath, connected, gameMode]
   );
 
   // Gravity-specific game over handler — captures extra session stats then calls shared handler
