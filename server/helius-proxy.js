@@ -491,7 +491,7 @@ let _sessionPersistInFlight = false;
 const persistGameSessionProofs = () => {
   if (_sessionPersistTimer) clearTimeout(_sessionPersistTimer);
   _sessionPersistTimer = setTimeout(async () => {
-    if (_sessionPersistInFlight) return;
+    if (_sessionPersistInFlight) { persistGameSessionProofs(); return; }
     _sessionPersistInFlight = true;
     try {
       const payload = {
@@ -686,19 +686,29 @@ const loadCoinBalances = async () => {
   }
 };
 
+let _coinPersistTimer = null;
 const persistCoinBalances = () => {
-  const obj = {};
-  for (const [k, v] of coinBalances) obj[k] = v;
-  fs.promises.writeFile(COINS_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), balances: obj }, null, 2))
-    .catch(err => console.warn('[coins] Failed to persist', err));
+  if (_coinPersistTimer) clearTimeout(_coinPersistTimer);
+  _coinPersistTimer = setTimeout(async () => {
+    try {
+      const obj = {};
+      for (const [k, v] of coinBalances) obj[k] = v;
+      const tmp = COINS_STORE_FILE + '.tmp';
+      await fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), balances: obj }, null, 2));
+      await fs.promises.rename(tmp, COINS_STORE_FILE);
+    } catch (err) {
+      console.warn('[coins] Failed to persist', err);
+    }
+  }, 1000);
 };
 
 const getCoinBalance = (address) => coinBalances.get(address) || 0;
 
 const setCoinBalance = (address, coins) => {
   coinBalances.set(address, coins);
-  // Keep walletDatabase in sync
-  if (walletDatabase[address]) walletDatabase[address].coins = coins;
+  // Keep walletDatabase in sync (walletDatabase is a Map)
+  const wEntry = walletDatabase.get(address);
+  if (wEntry) { wEntry.coins = coins; walletDatabase.set(address, wEntry); }
   persistCoinBalances();
   if (fbAvailable()) {
     fbSet('coinBalances', address, { balance: coins, updatedAt: new Date().toISOString() })
@@ -1784,6 +1794,10 @@ const normalizeGameSessionPayload = (payload) => {
   }
   if (startedAtMs > now + CLOCK_SKEW_MS || endedAtMs > now + CLOCK_SKEW_MS) {
     throw new Error('session timestamps are in the future');
+  }
+  const MAX_SESSION_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours
+  if (endedAtMs - startedAtMs > MAX_SESSION_DURATION_MS) {
+    throw new Error('session duration exceeds maximum');
   }
 
   return {

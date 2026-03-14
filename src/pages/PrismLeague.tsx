@@ -614,8 +614,9 @@ const PrismLeague = () => {
   // Sync coins & achievements from server when wallet connects
   useEffect(() => {
     if (!address) return;
+    let cancelled = false;
     fetchServerCoins(address).then((srv) => {
-      if (srv === null) return;
+      if (cancelled || srv === null) return;
       const local = readWalletCoins(address);
       const best = Math.max(srv, local);
       if (best !== local) writeWalletCoins(address, best);
@@ -651,6 +652,7 @@ const PrismLeague = () => {
         setAchievements([...current]);
       }
     });
+    return () => { cancelled = true; };
   }, [address]);
   const [sessionProof, setSessionProof] = useState<GameSessionProof | null>(null);
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
@@ -1400,45 +1402,48 @@ const PrismLeague = () => {
     if (!address) { toast.error('Connect wallet to claim'); return; }
     if (claimingAchRef.current) return;
     claimingAchRef.current = true;
-    const walletAddr = address;
-    // Check orbit, defender, and gravity achievements
-    const orbitAch = achievements.find((a) => a.id === achId);
-    const defAch = defenderAchievements.find((a) => a.id === achId);
-    const gravAch = gravityAchievements.find((a) => a.id === achId);
-    const ach = orbitAch || defAch || gravAch;
-    if (!ach || !ach.unlocked || ach.claimed) { claimingAchRef.current = false; return; }
-    const isDefAch = !!defAch && !orbitAch;
-    const isGravAch = !!gravAch && !orbitAch && !defAch;
-    const reward = isGravAch
-      ? (GRAVITY_COIN_REWARDS[ach.tier] ?? 0)
-      : isDefAch
-      ? (DEFENDER_COIN_REWARDS[ach.tier] ?? 0)
-      : (ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0);
-    if (reward <= 0) { claimingAchRef.current = false; return; }
-    const serverResult = await claimAchievementOnServer(walletAddr, achId, reward);
-    if (!serverResult.ok) {
+    try {
+      const walletAddr = address;
+      const orbitAch = achievements.find((a) => a.id === achId);
+      const defAch = defenderAchievements.find((a) => a.id === achId);
+      const gravAch = gravityAchievements.find((a) => a.id === achId);
+      const ach = orbitAch || defAch || gravAch;
+      if (!ach || !ach.unlocked || ach.claimed) return;
+      const isDefAch = !!defAch && !orbitAch;
+      const isGravAch = !!gravAch && !orbitAch && !defAch;
+      const reward = isGravAch
+        ? (GRAVITY_COIN_REWARDS[ach.tier] ?? 0)
+        : isDefAch
+        ? (DEFENDER_COIN_REWARDS[ach.tier] ?? 0)
+        : (ACHIEVEMENT_COIN_REWARDS[ach.tier] ?? 0);
+      if (reward <= 0) return;
+      const serverResult = await claimAchievementOnServer(walletAddr, achId, reward);
+      if (!serverResult.ok) {
+        if (isGravAch) { const { all } = claimGravityReward(achId); setGravityAchievements(all); }
+        else if (isDefAch) { const { all } = claimDefenderReward(achId); setDefenderAchievements(all); }
+        else { const { all } = claimAchievementReward(achId); setAchievements(all); }
+        toast.error('Achievement already claimed!');
+        return;
+      }
       if (isGravAch) { const { all } = claimGravityReward(achId); setGravityAchievements(all); }
       else if (isDefAch) { const { all } = claimDefenderReward(achId); setDefenderAchievements(all); }
       else { const { all } = claimAchievementReward(achId); setAchievements(all); }
-      toast.error('Achievement already claimed!');
+      if (typeof serverResult.coins === 'number') {
+        writeWalletCoins(walletAddr, serverResult.coins);
+        setTotalCoins(serverResult.coins);
+      } else {
+        const prev = readWalletCoins(walletAddr);
+        const next = prev + reward;
+        writeWalletCoins(walletAddr, next);
+        setTotalCoins(next);
+      }
+      toast.success(`Claimed +${reward} coins!`);
+      hapticMedium();
+    } catch {
+      toast.error('Failed to claim achievement');
+    } finally {
       claimingAchRef.current = false;
-      return;
     }
-    if (isGravAch) { const { all } = claimGravityReward(achId); setGravityAchievements(all); }
-    else if (isDefAch) { const { all } = claimDefenderReward(achId); setDefenderAchievements(all); }
-    else { const { all } = claimAchievementReward(achId); setAchievements(all); }
-    if (typeof serverResult.coins === 'number') {
-      writeWalletCoins(walletAddr, serverResult.coins);
-      setTotalCoins(serverResult.coins);
-    } else {
-      const prev = readWalletCoins(walletAddr);
-      const next = prev + reward;
-      writeWalletCoins(walletAddr, next);
-      setTotalCoins(next);
-    }
-    toast.success(`Claimed +${reward} coins!`);
-    hapticMedium();
-    claimingAchRef.current = false;
   };
 
   const handleShare = () => {

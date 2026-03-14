@@ -321,6 +321,7 @@ const BlackHole = () => {
   const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
   const [isBurning, setIsBurning] = useState(false);
   const [hasMintedCard, setHasMintedCard] = useState(false);
+  const hasMintedCardRef = useRef(false);
   const [showAllAssets, setShowAllAssets] = useState(false);
   const [incinerationTokens, setIncinerationTokens] = useState<IncinerationToken[]>([]);
   const [wormholeBack, setWormholeBack] = useState(false);
@@ -582,8 +583,10 @@ const BlackHole = () => {
             }
           }
           setHasMintedCard(ownsCard);
+          hasMintedCardRef.current = ownsCard;
         } else {
           setHasMintedCard(false);
+          hasMintedCardRef.current = false;
         }
       }
 
@@ -680,7 +683,7 @@ const BlackHole = () => {
         }
 
         const actualRent = token.rentSol;
-        const effectiveRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
+        const effectiveRate = hasMintedCardRef.current ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
         const rentAfterFees = actualRent * (1 - effectiveRate) - ESTIMATED_FEE_SOL;
         if (token.valueSol !== null && token.valueSol !== undefined) {
           token.netGainSol = rentAfterFees - token.valueSol;
