@@ -1142,7 +1142,9 @@ const persistAchievementData = () => {
   for (const [k, v] of achievementData) {
     obj[k] = { unlocked: [...v.unlocked], claimed: [...v.claimed] };
   }
-  fs.promises.writeFile(ACHIEVEMENTS_STORE_FILE, JSON.stringify({ version: 2, updatedAt: new Date().toISOString(), data: obj }, null, 2))
+  const tmp = ACHIEVEMENTS_STORE_FILE + '.tmp';
+  fs.promises.writeFile(tmp, JSON.stringify({ version: 2, updatedAt: new Date().toISOString(), data: obj }, null, 2), 'utf8')
+    .then(() => fs.promises.rename(tmp, ACHIEVEMENTS_STORE_FILE))
     .catch(err => console.warn('[achievements] Failed to persist', err));
 };
 
@@ -1200,7 +1202,9 @@ const loadReviveData = () => {
 const persistReviveData = () => {
   const obj = {};
   for (const [k, v] of reviveData) obj[k] = v;
-  fs.promises.writeFile(REVIVES_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2))
+  const tmp = REVIVES_STORE_FILE + '.tmp';
+  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2), 'utf8')
+    .then(() => fs.promises.rename(tmp, REVIVES_STORE_FILE))
     .catch(err => console.warn('[revives] Failed to persist', err));
 };
 
@@ -2868,15 +2872,21 @@ const server = http.createServer(async (req, res) => {
       const resultB = format(snapB, b);
       const diff = resultA.compositeScore - resultB.compositeScore;
 
-      // Increment compareCount for both wallets
-      for (const addr of [a, b]) {
-        const w = walletDatabase.get(addr) || {};
-        const ss = w.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
-        ss.compareCount = (ss.compareCount || 0) + 1;
-        updateWalletEntry(addr, { socialStats: ss });
+      // Increment compareCount — per-pair-per-day limit (prevent inflation)
+      const comparePairKey = `compare_pair:${[a, b].sort().join(':')}`;
+      const compareToday = new Date().toISOString().slice(0, 10);
+      const comparePairEntry = prismEarnRateLimit.get(comparePairKey);
+      if (!comparePairEntry || comparePairEntry.date !== compareToday) {
+        prismEarnRateLimit.set(comparePairKey, { date: compareToday });
+        for (const addr of [a, b]) {
+          const w = walletDatabase.get(addr) || {};
+          const ss = w.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
+          ss.compareCount = (ss.compareCount || 0) + 1;
+          updateWalletEntry(addr, { socialStats: ss });
+        }
+        triggerCompositeUpdate(a);
+        triggerCompositeUpdate(b);
       }
-      triggerCompositeUpdate(a);
-      triggerCompositeUpdate(b);
 
       respondJson(res, 200, {
         wallets: [resultA, resultB],
@@ -3367,6 +3377,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Coins API (per-wallet coin balance) ──
   if (pathname === '/api/game/coins' && req.method === 'GET') {
+    if (!ipRateLimit('coins_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const addr = url.searchParams.get('address') || '';
     if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
       respondJson(res, 400, { error: 'valid address required' });
@@ -3736,19 +3747,19 @@ const server = http.createServer(async (req, res) => {
         return respondJson(res, 400, { error: 'Referrer has reached maximum referrals' });
       }
 
-      // Award coins
+      // Persist to Firestore BEFORE awarding coins (crash-safe: no double-claim)
+      await fbSet('referralClaimers', claimer, { referrer, code, claimedAt: Date.now() });
+      await fbSet('referrals', `${referrer}_${claimer}`, {
+        referrer, claimer, code, timestamp: Date.now(), mintBonus: false,
+      });
+
+      // Award coins (only after Firestore confirms)
       const claimerBal = getCoinBalance(claimer);
       setCoinBalance(claimer, claimerBal + 50);
       addCoinEarned(claimer, 50);
       const referrerBal = getCoinBalance(referrer);
       setCoinBalance(referrer, referrerBal + 20);
       addCoinEarned(referrer, 20);
-
-      // Save referral record + per-claimer global record
-      await fbSet('referrals', `${referrer}_${claimer}`, {
-        referrer, claimer, code, timestamp: Date.now(), mintBonus: false,
-      });
-      await fbSet('referralClaimers', claimer, { referrer, code, claimedAt: Date.now() });
 
       // Update referrer stats
       const newTotal = (referrerStats?.totalReferred || 0) + 1;
@@ -5660,7 +5671,12 @@ const server = http.createServer(async (req, res) => {
           );
           if (recentChallenges.length === 0) return respondJson(res, 400, { error: 'No recent challenge win found' });
           recentChallenges[0].earnClaimed = true; // mark so it can't be double-claimed
-          saveChallenges();
+          // Await persist before awarding coins (prevent double-claim on crash)
+          try {
+            const _tmp = CHALLENGES_FILE + '.tmp';
+            await fs.promises.writeFile(_tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2));
+            await fs.promises.rename(_tmp, CHALLENGES_FILE);
+          } catch { /* saveChallenges debounced will retry */ }
         }
         // Track pre-boost base in daily cap (consistent with game approach — boost is bonus ON TOP)
         const ngKey = `nongame_daily:${address}`;
@@ -7290,8 +7306,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/quest/progress' && req.method === 'GET') {
+    if (!ipRateLimit('quest_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const addr = url.searchParams.get('address');
-    if (!addr) return respondJson(res, 400, { error: 'address required' });
+    if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) return respondJson(res, 400, { error: 'Valid address required' });
     const qp = questProgress.get(addr) || { quests: {} };
     respondJson(res, 200, qp);
     return;
@@ -8000,7 +8017,7 @@ const server = http.createServer(async (req, res) => {
   // ═══ Constellation Network ═══
   if (pathname === '/api/constellation' && req.method === 'GET') {
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Valid address required' });
     // Rate limit: 30s per IP (heavy — up to 1000 tx parsing)
     const constIp = getClientIp(req);
     const constIpRlKey = `const:${constIp}`;
@@ -8108,8 +8125,8 @@ const server = http.createServer(async (req, res) => {
       // Track social stats: constellation explored — credit the VIEWER, not the target
       const viewerAuth = optionalJwt(req, res);
       const viewerAddr = viewerAuth?.address;
-      if (viewerAddr) {
-        // Daily limit: 10 constellation explorations per day
+      if (viewerAddr && viewerAddr !== address) {
+        // Daily limit: 10 constellation explorations per day (self-explore doesn't count)
         const ceKey = `ce_daily:${viewerAddr}`;
         const ceToday = new Date().toISOString().slice(0, 10);
         const ce = prismEarnRateLimit.get(ceKey);
@@ -8232,7 +8249,16 @@ const server = http.createServer(async (req, res) => {
 
     // Detect RPC method to decide routing
     let rpcMethod = '';
-    try { rpcMethod = JSON.parse(rpcBody)?.method ?? ''; } catch {}
+    let rpcParsed = null;
+    try { rpcParsed = JSON.parse(rpcBody); rpcMethod = rpcParsed?.method ?? ''; } catch {}
+
+    // Block expensive methods without filters to prevent API credit drain
+    if (rpcMethod === 'getProgramAccounts') {
+      const filters = rpcParsed?.params?.[1]?.filters;
+      if (!Array.isArray(filters) || filters.length === 0) {
+        return respondJson(res, 400, { error: 'getProgramAccounts requires filters' });
+      }
+    }
 
     const isDasMethod = DAS_METHODS.has(rpcMethod);
 
@@ -9107,7 +9133,10 @@ function saveGameCoinsToday() {
     _saveGameCoinsTimer = null;
     const obj = {};
     for (const [addr, entry] of gameCoinsToday) obj[addr] = entry;
-    fs.promises.writeFile(GAME_COINS_TODAY_FILE, JSON.stringify(obj)).catch(() => {});
+    const tmp = GAME_COINS_TODAY_FILE + '.tmp';
+    fs.promises.writeFile(tmp, JSON.stringify(obj), 'utf8')
+      .then(() => fs.promises.rename(tmp, GAME_COINS_TODAY_FILE))
+      .catch(() => {});
   }, 5000);
 }
 function addGameCoinsToday(address, amount) {

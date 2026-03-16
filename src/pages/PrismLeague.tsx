@@ -517,7 +517,11 @@ const PrismLeague = () => {
   // ── Challenge integration ──
   const rawChallengeId = searchParams.get('challengeId');
   const urlChallengeId = rawChallengeId && /^[a-zA-Z0-9_-]{1,64}$/.test(rawChallengeId) ? rawChallengeId : null;
-  const urlMode = searchParams.get('mode') as GameMode | null;
+  const urlMode = (() => {
+    const raw = searchParams.get('mode');
+    const VALID_GAME_MODES: GameMode[] = ['orbit', 'destroyer', 'gravity'];
+    return raw && VALID_GAME_MODES.includes(raw as GameMode) ? raw as GameMode : null;
+  })();
   const [activeChallengeId, setActiveChallengeId] = useState<string | null>(urlChallengeId);
   const [challengeResult, setChallengeResult] = useState<ChallengeResult | null>(null);
   const [challengeSubmitting, setChallengeSubmitting] = useState(false);
@@ -901,7 +905,8 @@ const PrismLeague = () => {
     const safeColor = (c: string) => /^#[0-9a-fA-F]{3,8}$/.test(c) || /^[a-z]{3,20}$/.test(c) ? c : '#fff';
     el.innerHTML = bonuses.map(b => {
       const pct = Math.max(0, Math.min(100, Math.round((b.t / b.max) * 100)));
-      const img = _pwrImgMap[b.type] || '';
+      const rawImg = _pwrImgMap[b.type] || '';
+      const img = /^\/textures\/powerups\/[a-z0-9_]+\.png$/.test(rawImg) ? rawImg : '';
       const color = safeColor(b.color);
       return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">` +
         `<span style="font-size:7px;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:0.4px;text-shadow:0 0 6px ${color}88;white-space:nowrap">${esc(b.label)}</span>` +

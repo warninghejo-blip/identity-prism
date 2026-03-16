@@ -246,29 +246,8 @@ export async function spendPrism(
     { address, source, amount, description: desc },
   );
 
-  if (serverResult) return serverResult;
-
-  // Fallback: local
-  const balance = getLocalBalance(address);
-  if (balance.balance < amount) return null;
-
-  balance.balance -= amount;
-  balance.totalSpent += amount;
-  balance.lastUpdated = new Date().toISOString();
-  saveLocalBalance(balance);
-
-  const tx: PrismTransaction = {
-    id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    address,
-    amount,
-    type: 'spend',
-    source,
-    description: desc,
-    timestamp: new Date().toISOString(),
-  };
-  saveLocalTransaction(address, tx);
-
-  return { balance, spent: amount };
+  // Spending MUST be server-authoritative — no local fallback (prevents free purchases when server is down)
+  return serverResult;
 }
 
 /**

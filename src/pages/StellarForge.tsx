@@ -326,7 +326,15 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
     setBuyingIdx(pkgIndex);
 
     try {
-      // 1. Send SOL to treasury
+      // 1. Get JWT FIRST (before SOL transfer — prevents fund loss on auth failure)
+      const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
+      let jwt = getCachedJwt(walletAddress);
+      if (!jwt) {
+        jwt = await obtainJwt(wallet);
+        if (!jwt) { toast.error('Authentication required to purchase'); setBuyingIdx(null); return; }
+      }
+
+      // 2. Send SOL to treasury
       const { Connection: SolConn, PublicKey: SolPK, SystemProgram: SolSP, Transaction: SolTx } = await import('@solana/web3.js');
       const base = getApiBase();
       const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
@@ -340,14 +348,6 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
       const sig = await conn.sendRawTransaction(signed.serialize());
       toast.info('Confirming transaction...');
       await conn.confirmTransaction(sig, 'confirmed');
-
-      // 2. Get JWT
-      const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
-      let jwt = getCachedJwt(walletAddress);
-      if (!jwt) {
-        jwt = await obtainJwt(wallet);
-        if (!jwt) { toast.error('Authentication failed'); setBuyingIdx(null); return; }
-      }
 
       // 3. POST to buy endpoint
       const res = await fetch(`${base}/api/prism/buy`, {
