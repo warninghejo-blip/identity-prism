@@ -1638,11 +1638,17 @@ const readBody = (req) => new Promise((resolve, reject) => {
 
 const getBaseUrl = (req) => {
   if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
-  const forwardedProto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
-  const forwardedHost = String(req.headers['x-forwarded-host'] ?? '').split(',')[0].trim();
-  const proto = forwardedProto || 'http';
-  const host = forwardedHost || req.headers.host;
-  return host ? `${proto}://${host}` : '';
+  // Only trust forwarded headers from trusted proxies (same as getClientIp)
+  const socketIp = req.socket?.remoteAddress || '';
+  if (TRUSTED_PROXIES.has(socketIp)) {
+    const forwardedProto = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
+    const forwardedHost = String(req.headers['x-forwarded-host'] ?? '').split(',')[0].trim();
+    const proto = forwardedProto || 'http';
+    const host = forwardedHost || req.headers.host;
+    return host ? `${proto}://${host}` : '';
+  }
+  const host = req.headers.host;
+  return host ? `http://${host}` : '';
 };
 
 const respondJson = (res, status, payload) => {
@@ -3296,10 +3302,9 @@ const server = http.createServer(async (req, res) => {
       if (Math.abs(session.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
       // Require gameType and enforce exact match
       if (!gameType) return respondJson(res, 400, { error: 'gameType required' });
-      if (session.gameMode && session.gameMode !== gameType) return respondJson(res, 400, { error: 'Session gameMode mismatch' });
+      if (session.gameMode !== gameType) return respondJson(res, 400, { error: 'Session gameMode mismatch' });
       if (session.usedForLeaderboard) return respondJson(res, 400, { error: 'Session already used for leaderboard' });
-      session.usedForLeaderboard = { address, at: Date.now() };
-      // MAX_SCORE validation per game mode
+      // MAX_SCORE validation per game mode (BEFORE marking session used)
       const MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
       const gtCheck = gameType;
       const maxScore = MAX_SCORES[gtCheck] || 9999;
@@ -3307,6 +3312,9 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 400, { error: 'Score exceeds maximum allowed' });
         return;
       }
+      // Mark session used AFTER all validation passes
+      session.usedForLeaderboard = { address, at: Date.now() };
+      persistGameSessionProofs();
       const result = submitLeaderboardEntry({ address, score, playedAt, txSignature, gameType });
       triggerCompositeUpdate(address);
       const gt = gameType || 'orbit';
@@ -3596,6 +3604,7 @@ const server = http.createServer(async (req, res) => {
       if (score > maxTScore) return respondJson(res, 400, { error: 'Score exceeds maximum' });
       // Mark session used AFTER all validation passes (atomic)
       tSession.usedForTournament = { tier, addr, at: Date.now() };
+      persistGameSessionProofs();
       if (score > (t.entries[addr].score || 0)) {
         t.entries[addr] = { score, submittedAt: new Date().toISOString() };
         saveTournament();
@@ -5596,6 +5605,9 @@ const server = http.createServer(async (req, res) => {
       }
       // Server-side verification for one-time/conditional sources
       if (source === 'first_mint') {
+        if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
+        if (globalThis._firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
+        globalThis._firstMintLocks.add(address);
         const wfm = walletDatabase.get(address);
         if (wfm?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
         updateWalletEntry(address, { _firstMintClaimed: true });
@@ -7089,7 +7101,7 @@ const server = http.createServer(async (req, res) => {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
     const ip = getClientIp(req);
-    const apiKey = req.headers['x-api-key'] || url.searchParams.get('api_key');
+    const apiKey = req.headers['x-api-key']; // only accept via header (not URL query — leaks in logs)
     // API key validation
     const API_KEY_REGISTRY = new Map(
       (process.env.REPUTATION_API_KEYS || '').split(',').filter(Boolean).map(k => [k.trim(), true])
@@ -7177,17 +7189,21 @@ const server = http.createServer(async (req, res) => {
         sanitized[key] = { progress, claimed, completed };
       }
       const existing = questProgress.get(addr) || {};
-      // Update streak: if last sync was yesterday or today, increment; otherwise reset to 1
+      // Streak only increments if at least one quest was completed today
+      const hasCompletedQuest = Object.values(sanitized).some(q => q.completed);
       const today = new Date().toISOString().slice(0, 10);
       const lastDate = existing.lastStreakDate || '';
       let streakDays = existing.streakDays || 0;
       if (lastDate === today) {
         // Same day — no change
+      } else if (!hasCompletedQuest) {
+        // No quest completed — don't update streak date
       } else {
         const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
         streakDays = lastDate === yesterday ? streakDays + 1 : 1;
       }
-      questProgress.set(addr, { ...existing, quests: sanitized, streakDays, lastStreakDate: today, updatedAt: new Date().toISOString() });
+      const streakDate = hasCompletedQuest ? today : (existing.lastStreakDate || today);
+      questProgress.set(addr, { ...existing, quests: sanitized, streakDays, lastStreakDate: streakDate, updatedAt: new Date().toISOString() });
       persistQuestProgress();
       triggerCompositeUpdate(addr);
       respondJson(res, 200, { ok: true });
@@ -7659,14 +7675,18 @@ const server = http.createServer(async (req, res) => {
       if (!cSession || !cSession.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
       if (cSession.walletAddress !== submitter) return respondJson(res, 403, { error: 'Session wallet mismatch' });
       if (Math.abs(cSession.score - scoreNum) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
-      if (cSession.gameMode && challenge.gameMode && cSession.gameMode !== challenge.gameMode) return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
+      // Strict gameMode check (no falsy guard — fail-closed like tournament)
+      if (!challenge.gameMode) return respondJson(res, 400, { error: 'Challenge gameMode not set' });
+      if (cSession.gameMode !== challenge.gameMode) return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
       if (cSession.usedForChallenge) return respondJson(res, 400, { error: 'Session already used for a challenge submission' });
-      cSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
 
-      // Per-gameMode score validation (same as leaderboard)
+      // Per-gameMode score validation — BEFORE marking session used
       const CH_MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
       const chMaxScore = CH_MAX_SCORES[challenge.gameMode] || 600;
       if (scoreNum > chMaxScore) return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
+      // Mark session used AFTER all validation passes
+      cSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
+      persistGameSessionProofs();
 
       // Race condition guard: atomic check-and-set
       const submitKey = `${challengeId}:${submitter}`;
@@ -8099,7 +8119,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!urls.length) {
-      respondJson(res, 500, { error: 'No RPC endpoint available for method: ' + rpcMethod });
+      respondJson(res, 500, { error: 'RPC endpoint not available' });
       return;
     }
 
@@ -9091,6 +9111,7 @@ function finalizeTournamentTier(tier) {
   t.status = 'ended';
   const sorted = Object.entries(t.entries)
     .map(([addr, data]) => ({ address: addr, score: data.score }))
+    .filter(e => e.score > 0) // exclude players who joined but never submitted
     .sort((a, b) => b.score - a.score);
   const pool = t.prizePool;
   const winners = [];
@@ -9268,7 +9289,13 @@ setInterval(() => {
   if (reputationRateLimit.size > 1000) { const it = reputationRateLimit.keys(); for (let i = reputationRateLimit.size - 1000; i > 0; i--) reputationRateLimit.delete(it.next().value); }
   // prismEarnRateLimit: remove entries older than their source cooldown (max 7d)
   if (prismEarnRateLimit.size > 0) {
+    const todayStr = new Date().toISOString().slice(0, 10);
     for (const [k, v] of prismEarnRateLimit) {
+      // Handle object-format entries (nongame_daily:*, firstMintLocks)
+      if (typeof v === 'object' && v !== null && v.date) {
+        if (v.date < todayStr) prismEarnRateLimit.delete(k);
+        continue;
+      }
       const src = k.split(':')[1] || '';
       const cd = PRISM_EARN_COOLDOWN_TABLE[src] ?? PRISM_EARN_COOLDOWN_DEFAULT;
       if (now - v > cd * 2) prismEarnRateLimit.delete(k);

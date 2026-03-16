@@ -221,9 +221,12 @@ async function claimAchievementOnServer(walletAddress: string, achievementId: st
   try {
     const base = getServerBase();
     if (!base) return { ok: true };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const jwt = getChallengeJwt();
+    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
     const res = await fetch(`${base}/api/game/achievements`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ address: walletAddress, achievementId, reward }),
     });
     if (res.status === 409) return { ok: false };
@@ -237,9 +240,12 @@ async function syncUnlockedToServer(walletAddress: string, unlockedIds: string[]
   try {
     const base = getServerBase();
     if (!base || !unlockedIds.length) return;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const jwt = getChallengeJwt();
+    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
     await fetch(`${base}/api/game/achievements`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ address: walletAddress, unlocked: unlockedIds }),
     });
   } catch { /* silent */ }
@@ -2696,7 +2702,7 @@ const PrismLeague = () => {
                   {sessionProof ? (
                     <>
                       <span className="text-[10px] font-mono text-cyan-200/50 flex-1 truncate">{sessionProof.id}</span>
-                      {sessionProof.proofUrl && (
+                      {sessionProof.proofUrl && /^https?:\/\//.test(sessionProof.proofUrl) && (
                         <a href={sessionProof.proofUrl} target="_blank" rel="noopener noreferrer" className="text-cyan-300/60 hover:text-cyan-200 flex-shrink-0">
                           <ExternalLink className="w-3 h-3" />
                         </a>
