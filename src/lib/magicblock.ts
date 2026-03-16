@@ -180,9 +180,18 @@ export async function registerGameSessionProof(
 
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 8000);
+  // Build headers — include JWT if available (server requires auth)
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    const raw = sessionStorage.getItem('ip_auth_jwt');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { token: string; expiresAt: number };
+      if (parsed.expiresAt > Date.now() + 60_000) headers['Authorization'] = `Bearer ${parsed.token}`;
+    }
+  } catch { /* ignore */ }
   const res = await fetch(`${base}/api/game/session`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
     signal: ctrl.signal,
   });

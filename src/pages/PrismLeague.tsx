@@ -4,8 +4,8 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { SolanaMobileWalletAdapterWalletName } from "@solana-mobile/wallet-adapter-mobile";
 import { Button } from "@/components/ui/button";
-import { fetchWalletPreview, type WalletPreview } from '@/components/prism/shared';
-import { invalidateCompositeCache } from "@/hooks/useCompositeScore";
+import { type WalletPreview } from '@/components/prism/shared';
+import { invalidateCompositeCache, useCompositeScore } from "@/hooks/useCompositeScore";
 import { toast } from "sonner";
 import BattleResultOverlay from "@/components/BattleResultOverlay";
 import {
@@ -133,7 +133,7 @@ async function fetchServerLeaderboard(gameType?: string): Promise<LeaderboardEnt
   }
 }
 
-async function submitToServerLeaderboard(entry: { address: string; score: number; playedAt: string; txSignature?: string; gameType?: string }): Promise<void> {
+async function submitToServerLeaderboard(entry: { address: string; score: number; playedAt: string; txSignature?: string; gameType?: string; gameSessionId?: string }): Promise<void> {
   try {
     const base = getServerBase();
     if (!base) return;
@@ -378,7 +378,7 @@ function getChallengeJwt(): string | null {
   return null;
 }
 
-async function submitChallengeScore(challengeId: string, score: number): Promise<{ ok: boolean; challenge?: ChallengeResult; error?: string }> {
+async function submitChallengeScore(challengeId: string, score: number, gameSessionId?: string): Promise<{ ok: boolean; challenge?: ChallengeResult; error?: string }> {
   const jwt = getChallengeJwt();
   if (!jwt) return { ok: false, error: 'Not authenticated — sign in from Prism Arena first' };
   try {
@@ -390,7 +390,7 @@ async function submitChallengeScore(challengeId: string, score: number): Promise
         'Content-Type': 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
-      body: JSON.stringify({ challengeId, score }),
+      body: JSON.stringify({ challengeId, score, gameSessionId }),
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, error: data?.error || 'Failed to submit score' };
@@ -455,6 +455,46 @@ function WaitingForOpponentBanner({
 }
 
 /* ═══════════════════════════════════════════════════
+   Tournament types
+   ═══════════════════════════════════════════════════ */
+
+type PlayMode = 'free' | 'tournament';
+type TournamentTierKey = 'daily' | 'weekly' | 'monthly';
+
+interface TournamentEntry { address: string; score: number; submittedAt: string; rank: number; }
+
+interface ActiveTournament {
+  id: string; tier?: string; mode: string; label?: string; entryFee?: number;
+  endsAt: string; prizePool: number; entryCount: number; entries: TournamentEntry[];
+  isEnded: boolean; winners?: TournamentEntry[]; userJoined?: boolean; resultsHidden?: boolean;
+}
+
+const TOURNAMENT_TIERS: { key: TournamentTierKey; label: string; fee: number; shortLabel: string }[] = [
+  { key: 'daily', label: 'Daily 1k', fee: 1000, shortLabel: 'Daily' },
+  { key: 'weekly', label: 'Weekly 5k', fee: 5000, shortLabel: 'Weekly' },
+  { key: 'monthly', label: 'Monthly 25k', fee: 25000, shortLabel: 'Monthly' },
+];
+
+const PRIZE_DIST: Record<TournamentTierKey, { place: string; pct: string }[]> = {
+  daily: [{ place: '1st', pct: '50%' }, { place: '2nd', pct: '30%' }, { place: '3rd', pct: '20%' }],
+  weekly: [{ place: '1st', pct: '35%' }, { place: '2nd', pct: '22%' }, { place: '3rd', pct: '15%' }, { place: '4th', pct: '10%' }, { place: '5th', pct: '10%' }, { place: '6th', pct: '8%' }],
+  monthly: [{ place: '1st', pct: '30%' }, { place: '2nd', pct: '18%' }, { place: '3rd', pct: '12%' }, { place: '4th', pct: '9%' }, { place: '5th', pct: '8%' }, { place: '6th', pct: '6%' }, { place: '7th', pct: '5%' }, { place: '8-10th', pct: '4%' }],
+};
+
+function formatTournamentTimeLeft(endsAt: string): string {
+  try {
+    const diff = new Date(endsAt).getTime() - Date.now();
+    if (diff <= 0) return "Ended";
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s < 10 ? '0' : ''}${s}s`;
+    return `${s}s`;
+  } catch { return '—'; }
+}
+
+/* ═══════════════════════════════════════════════════
    Main component
    ═══════════════════════════════════════════════════ */
 
@@ -479,12 +519,22 @@ const PrismLeague = () => {
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const address = publicKey?.toBase58();
 
-  // Load wallet preview (compositeScore-based)
-  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(null);
-  useEffect(() => {
-    if (!address) { setWalletPreview(null); return; }
-    fetchWalletPreview(address).then(setWalletPreview);
-  }, [address]);
+  // Composite score — cached in sessionStorage, loads instantly on revisit
+  const composite = useCompositeScore(address || null);
+
+  // Build WalletPreview from composite data (instant — no extra HTTP calls for ship stats)
+  const walletPreview = useMemo<WalletPreview | null>(() => {
+    if (!address || composite.isLoading && !composite.breakdown) return null;
+    if (!composite.breakdown || composite.score === 0 && !composite.breakdown.onchain) return null;
+    return {
+      address, score: composite.score, tier: composite.tier,
+      badges: [], solBalance: 0, txCount: 0, walletAgeDays: 0,
+      tokenCount: 0, nftCount: 0, trustGrade: null, trustScore: null,
+      riskLevel: null, topPrograms: [],
+      compositeScore: composite.score, compositeTier: composite.tier,
+      compositeBadgeCount: 0, compositeBreakdown: composite.breakdown,
+    };
+  }, [address, composite.score, composite.tier, composite.breakdown, composite.isLoading]);
 
   // Load forge loadout from localStorage (re-reads on focus/visibility change)
   const [forgeLoadout, setForgeLoadout] = useState<ForgeLoadout | null>(null);
@@ -594,7 +644,6 @@ const PrismLeague = () => {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => readLeaderboard());
   const [defenderLeaderboard, setDefenderLeaderboard] = useState<LeaderboardEntry[]>(() => readDefenderLeaderboard());
   const [gravityLeaderboard, setGravityLeaderboard] = useState<LeaderboardEntry[]>(() => readGravityLeaderboard());
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
   const [isJumpingBack, setIsJumpingBack] = useState(false);
   const transitionTimersRef = useRef<number[]>([]);
@@ -686,31 +735,102 @@ const PrismLeague = () => {
   // Gravity session stats — populated by GravityRunnerScene via onGameOver extraStats
   const gravitySessionStatsRef = useRef<{ columns: number; crystals: number }>({ columns: 0, crystals: 0 });
 
-  // Tournament state
-  const [activeTournament, setActiveTournament] = useState<{
-    id: string; mode: string; endsAt: number; entryCount: number;
-    isEnded: boolean; userJoined: boolean; prizePool: number;
-  } | null>(null);
+  // ── Play Mode & Tournament state ──
+  const [playMode, setPlayMode] = useState<PlayMode>('free');
+  const [tournamentTier, setTournamentTier] = useState<TournamentTierKey>('daily');
+  const [tournaments, setTournaments] = useState<Record<TournamentTierKey, ActiveTournament | null>>({
+    daily: null, weekly: null, monthly: null,
+  });
+  const [tournamentLoading, setTournamentLoading] = useState(false);
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [joinMessage, setJoinMessage] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState('');
+  const tournamentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch active tournament on mount & when address changes
-  useEffect(() => {
-    const fetchTournament = async () => {
-      try {
-        const base = getServerBase();
-        if (!base) return;
-        const headers: Record<string, string> = {};
-        const jwt = getChallengeJwt();
-        if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-        const res = await fetch(`${base}/api/tournament/active`, { headers });
-        if (!res.ok) return;
+  // Derived: currently selected tournament & backward-compat alias
+  const activeTournament = tournaments[tournamentTier];
+
+  const fetchTournaments = useCallback(async () => {
+    const base = getServerBase();
+    if (!base) return;
+    setTournamentLoading(true);
+    try {
+      const headers: Record<string, string> = {};
+      const jwt = getChallengeJwt();
+      if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+      const res = await fetch(`${base}/api/tournament/active`, { headers });
+      if (res.ok) {
         const data = await res.json();
-        setActiveTournament(data.tournament || null);
-      } catch { /* silent */ }
-    };
-    fetchTournament();
-  }, [address]);
+        if (data?.tournaments) {
+          setTournaments({
+            daily: data.tournaments.daily || null,
+            weekly: data.tournaments.weekly || null,
+            monthly: data.tournaments.monthly || null,
+          });
+        } else if (data?.tournament) {
+          setTournaments(prev => ({ ...prev, daily: data.tournament }));
+        }
+      }
+    } catch { /* silent */ }
+    setTournamentLoading(false);
+  }, []);
 
-  const submitToTournament = useCallback(async (score: number) => {
+  // Fetch tournaments on mount & when address changes
+  useEffect(() => { fetchTournaments(); }, [address]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-poll tournaments every 30s when in tournament mode
+  useEffect(() => {
+    if (playMode !== 'tournament') {
+      if (tournamentPollRef.current) { clearInterval(tournamentPollRef.current); tournamentPollRef.current = null; }
+      return;
+    }
+    fetchTournaments();
+    tournamentPollRef.current = setInterval(fetchTournaments, 30_000);
+    return () => { if (tournamentPollRef.current) clearInterval(tournamentPollRef.current); };
+  }, [playMode, fetchTournaments]);
+
+  // Countdown ticker
+  useEffect(() => {
+    const t = tournaments[tournamentTier];
+    if (t && !t.isEnded) {
+      setTimeLeft(formatTournamentTimeLeft(t.endsAt));
+      countdownRef.current = setInterval(() => setTimeLeft(formatTournamentTimeLeft(t.endsAt)), 1000);
+    } else {
+      setTimeLeft('');
+    }
+    return () => { if (countdownRef.current) clearInterval(countdownRef.current); };
+  }, [tournaments, tournamentTier]);
+
+  // Clear join message on tier switch
+  useEffect(() => { setJoinMessage(null); }, [tournamentTier]);
+
+  const handleJoinTournament = useCallback(async (tier: TournamentTierKey = tournamentTier) => {
+    const base = getServerBase();
+    const jwt = getChallengeJwt();
+    if (!base || !address || !jwt) { toast.error('Connect wallet & sign in first'); return; }
+    setJoinLoading(true);
+    setJoinMessage(null);
+    try {
+      const res = await fetch(`${base}/api/tournament/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ tier }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setJoinMessage('Joined successfully!');
+        fetchTournaments();
+      } else {
+        setJoinMessage(data?.error || 'Failed to join tournament');
+      }
+    } catch {
+      setJoinMessage('Network error — could not join');
+    }
+    setJoinLoading(false);
+  }, [address, tournamentTier, fetchTournaments]);
+
+  const submitToTournament = useCallback(async (score: number, gameSessionId?: string) => {
     try {
       const base = getServerBase();
       const jwt = getChallengeJwt();
@@ -718,10 +838,10 @@ const PrismLeague = () => {
       await fetch(`${base}/api/tournament/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
-        body: JSON.stringify({ score }),
+        body: JSON.stringify({ score, tier: tournamentTier, gameSessionId }),
       });
     } catch { /* silent */ }
-  }, []);
+  }, [tournamentTier]);
 
   // Continue/Revive feature — free revives for ID holders: 3 per DAY (persisted)
   const FREE_REVIVES_PER_DAY = 3;
@@ -907,6 +1027,11 @@ const PrismLeague = () => {
       navigate('/text-quest');
       return;
     }
+    // Tournament mode: must join first
+    if (playMode === 'tournament' && !activeTournament?.userJoined) {
+      toast.error('Join the tournament first!');
+      return;
+    }
     initAudio();
     // Start music after a short delay so AudioContext is definitely running
     setTimeout(() => startMusic(gameMode === 'destroyer' ? 'defender' : gameMode === 'orbit' ? 'orbit' : 'menu'), 300);
@@ -1047,6 +1172,16 @@ const PrismLeague = () => {
           setMbVerified(true);
         }
 
+        // Submit to server leaderboard with verified session proof
+        submitToServerLeaderboard({
+          address: playerAddr, score: finalScore, playedAt: newEntry.playedAt,
+          gameType: gameMode, gameSessionId: proof?.id,
+        });
+
+        // Submit to tournament if joined
+        if (activeTournament?.userJoined) {
+          submitToTournament(finalScore, proof?.id ?? undefined);
+        }
       };
 
       void verifyAndPublish();
@@ -1155,9 +1290,6 @@ const PrismLeague = () => {
         });
       }
 
-      // Persist to server leaderboard
-      submitToServerLeaderboard({ address: playerAddr, score: finalScore, playedAt: newEntry.playedAt, gameType: gameMode });
-
       // ── Challenge: submit score if playing a challenge ──
       if (activeChallengeId && !challengeSubmittedRef.current) {
         challengeSubmittedRef.current = true;
@@ -1183,10 +1315,7 @@ const PrismLeague = () => {
         });
       }
 
-      // Submit to active tournament if user joined & mode matches
-      if (activeTournament?.userJoined && activeTournament.mode === gameMode && !activeTournament.isEnded) {
-        submitToTournament(finalScore);
-      }
+      // Tournament submit moved into verifyAndPublish (with gameSessionId)
 
       if (finalScore > highScore) {
         setIsNewBest(true);
@@ -1196,7 +1325,7 @@ const PrismLeague = () => {
         setIsNewBest(false);
       }
     },
-    [address, gameMode, highScore, activeChallengeId, activeTournament, submitToTournament]
+    [address, gameMode, highScore, activeChallengeId, activeTournament, submitToTournament, playMode]
   );
 
   const handleGameOver = useCallback(
@@ -1833,6 +1962,172 @@ const PrismLeague = () => {
                   </div>
                 </div>
 
+                {/* ═══ PLAY MODE SELECTOR ═══ */}
+                <div className="w-full mb-4 flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                  <button
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                      playMode === 'free'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                        : 'text-white/40 hover:text-white/60 border border-transparent'
+                    }`}
+                    onClick={() => setPlayMode('free')}
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" /> Free Play
+                  </button>
+                  <button
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                      playMode === 'tournament'
+                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                        : 'text-white/40 hover:text-white/60 border border-transparent'
+                    }`}
+                    onClick={() => setPlayMode('tournament')}
+                  >
+                    <Trophy className="w-3.5 h-3.5" /> Tournament
+                  </button>
+                </div>
+
+                {/* ═══ TOURNAMENT SECTION ═══ */}
+                {playMode === 'tournament' && (
+                  <div className="w-full mb-4 space-y-3">
+                    {/* Tier sub-tabs */}
+                    <div className="flex gap-1 rounded-xl bg-white/[0.03] p-1 border border-white/[0.06]">
+                      {TOURNAMENT_TIERS.map(t => (
+                        <button
+                          key={t.key}
+                          onClick={() => setTournamentTier(t.key)}
+                          className={`flex-1 py-2 px-2 rounded-lg text-[11px] font-bold transition-all ${
+                            tournamentTier === t.key
+                              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                              : 'text-white/40 hover:text-white/60 border border-transparent'
+                          }`}
+                        >
+                          <div>{t.shortLabel}</div>
+                          <div className={`text-[9px] mt-0.5 ${tournamentTier === t.key ? 'text-purple-400/70' : 'text-white/20'}`}>
+                            {t.fee.toLocaleString()} coins
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Tournament card */}
+                    {tournamentLoading ? (
+                      <div className="flex items-center justify-center py-8 text-white/30">
+                        <Orbit className="w-5 h-5 animate-spin mr-2" /> Loading tournaments...
+                      </div>
+                    ) : activeTournament && !activeTournament.isEnded ? (
+                      <div className="rounded-xl border border-purple-500/25 bg-purple-500/[0.06] overflow-hidden">
+                        {/* Header */}
+                        <div className="px-4 py-2.5 flex items-center gap-2 border-b border-purple-500/15">
+                          <Swords className="w-4 h-4 text-purple-400" />
+                          <span className="text-sm font-bold text-purple-300">{activeTournament.label || TOURNAMENT_TIERS.find(t => t.key === tournamentTier)?.shortLabel} Tournament</span>
+                          <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">LIVE</span>
+                        </div>
+                        {/* Stats row */}
+                        <div className="grid grid-cols-3 divide-x divide-white/[0.05] border-b border-white/[0.05]">
+                          <div className="flex flex-col items-center py-2.5">
+                            <Clock className="w-3.5 h-3.5 text-white/30 mb-0.5" />
+                            <span className="text-[10px] text-white/30">Time Left</span>
+                            <span className="text-xs font-bold text-purple-300">{timeLeft || '—'}</span>
+                          </div>
+                          <div className="flex flex-col items-center py-2.5">
+                            <Coins className="w-3.5 h-3.5 text-yellow-400/60 mb-0.5" />
+                            <span className="text-[10px] text-white/30">Prize Pool</span>
+                            <span className="text-xs font-bold text-yellow-300">{activeTournament.prizePool.toLocaleString()}</span>
+                          </div>
+                          <div className="flex flex-col items-center py-2.5">
+                            <Target className="w-3.5 h-3.5 text-white/30 mb-0.5" />
+                            <span className="text-[10px] text-white/30">Entries</span>
+                            <span className="text-xs font-bold text-white/70">{activeTournament.entryCount}</span>
+                          </div>
+                        </div>
+                        {/* Prize distribution */}
+                        <div className="px-4 py-2 border-b border-white/[0.05]">
+                          <p className="text-[9px] text-white/30 uppercase tracking-wider font-bold mb-1">Prize Distribution (15% burn)</p>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                            {PRIZE_DIST[tournamentTier].map(r => (
+                              <div key={r.place} className="flex justify-between text-[10px]">
+                                <span className={r.place === '1st' ? 'text-yellow-400' : r.place === '2nd' ? 'text-gray-300' : r.place === '3rd' ? 'text-amber-600' : 'text-white/40'}>{r.place}</span>
+                                <span className="text-white/50 font-mono">{r.pct}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Standings (if joined) */}
+                        {activeTournament.userJoined && activeTournament.entries && activeTournament.entries.length > 0 && (
+                          <div className="border-b border-white/[0.05]">
+                            <p className="px-4 py-1.5 text-[9px] uppercase tracking-wider font-bold text-white/30">Top Standings</p>
+                            {activeTournament.entries.slice(0, 5).map((entry, idx) => {
+                              const isMine = entry.address === address;
+                              const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
+                              return (
+                                <div
+                                  key={`${entry.address}-${idx}`}
+                                  className={`flex items-center gap-2 px-4 py-1.5 text-xs ${isMine ? 'bg-purple-500/10' : ''}`}
+                                >
+                                  {medal ? <span className="w-5 text-center">{medal}</span> : <span className="w-5 text-center text-[10px] text-white/30">{idx + 1}</span>}
+                                  <span className={`font-mono flex-1 ${isMine ? 'text-purple-300' : 'text-white/60'}`}>
+                                    {entry.address.slice(0, 4)}...{entry.address.slice(-4)}
+                                    {isMine && <span className="ml-1 text-[8px] px-1 py-px rounded bg-purple-500/20 text-purple-300 font-bold">you</span>}
+                                  </span>
+                                  <span className="font-bold text-white/70 tabular-nums">{entry.score.toLocaleString()}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {/* Join / Joined */}
+                        <div className="px-4 py-3 flex flex-col gap-2">
+                          {activeTournament.userJoined ? (
+                            <div className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-center bg-purple-500/15 text-purple-300">
+                              Joined — good luck!
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleJoinTournament(tournamentTier)}
+                              disabled={joinLoading || !connected}
+                              className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-2 text-white"
+                              style={{ backgroundColor: '#A855F7', boxShadow: '0 0 20px rgba(168,85,247,0.3)' }}
+                            >
+                              {joinLoading ? (
+                                <Orbit className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <><Coins className="w-4 h-4" /> Join — {TOURNAMENT_TIERS.find(t => t.key === tournamentTier)!.fee.toLocaleString()} coins</>
+                              )}
+                            </button>
+                          )}
+                          {!connected && (
+                            <p className="text-center text-[10px] text-white/30">Connect wallet to join</p>
+                          )}
+                          {joinMessage && (
+                            <p className={`text-center text-[10px] ${joinMessage.includes('fail') || joinMessage.includes('error') || joinMessage.includes('Error') ? 'text-red-400/70' : 'text-green-400/70'}`}>
+                              {joinMessage}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ) : activeTournament?.isEnded ? (
+                      <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-6 text-center">
+                        <Trophy className="w-8 h-8 mx-auto mb-2 text-yellow-400/30" />
+                        <p className="text-xs text-white/40">Tournament ended. Next one starts soon!</p>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-6 text-center">
+                        <Swords className="w-8 h-8 mx-auto mb-2 text-white/10" />
+                        <p className="text-xs text-white/30">No active {TOURNAMENT_TIERS.find(t => t.key === tournamentTier)?.shortLabel.toLowerCase()} tournament right now.</p>
+                        <p className="text-[10px] text-white/20 mt-1">Check back soon!</p>
+                      </div>
+                    )}
+
+                    {/* Score submission note */}
+                    <div className="px-3 py-2 rounded-lg bg-purple-500/[0.06] border border-purple-500/15 flex items-start gap-2">
+                      <Zap className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
+                      <p className="text-[10px] text-white/40 leading-relaxed">
+                        Scores are submitted automatically when your game ends. Your best run during the tournament window counts.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Coin Balance + Stats Row */}
                 <div className="w-full mb-4 grid grid-cols-2 gap-3">
                   <div className="rounded-2xl bg-gradient-to-br from-yellow-500/10 to-orange-500/5 border border-yellow-500/20 px-4 py-4 text-center">
@@ -2055,10 +2350,10 @@ const PrismLeague = () => {
                     </div>
                   )}
                   <button
-                    onClick={() => navigate('/stellar-forge')}
+                    onClick={() => navigate('/forge')}
                     className="mt-2 w-full text-[10px] text-cyan-400/50 hover:text-cyan-300 transition-colors text-center"
                   >
-                    Customize in Stellar Forge →
+                    Customize in Armory →
                   </button>
                 </div>
 
@@ -2068,12 +2363,16 @@ const PrismLeague = () => {
                   className={`w-full h-14 text-lg font-black uppercase tracking-[0.2em] transition-all duration-300 transform hover:scale-[1.03] active:scale-[0.97] rounded-xl mb-2 shrink-0 ${
                     activeChallengeId
                       ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:via-amber-300 hover:to-yellow-300 text-black shadow-[0_0_40px_rgba(245,158,11,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-amber-300/30'
+                      : playMode === 'tournament'
+                      ? 'bg-gradient-to-r from-purple-500 via-purple-400 to-fuchsia-400 hover:from-purple-400 hover:via-purple-300 hover:to-fuchsia-300 text-white shadow-[0_0_40px_rgba(168,85,247,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-purple-300/30'
                       : 'bg-gradient-to-r from-cyan-500 via-cyan-400 to-teal-400 hover:from-cyan-400 hover:via-cyan-300 hover:to-teal-300 text-black shadow-[0_0_40px_rgba(6,182,212,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-cyan-300/30'
                   }`}
                   onClick={handleStart}
                 >
                   {activeChallengeId ? (
                     <><Swords className="w-5 h-5 mr-2" /> Start Challenge</>
+                  ) : playMode === 'tournament' ? (
+                    <><Trophy className="w-5 h-5 mr-2" /> {activeTournament?.userJoined ? 'Enter Tournament' : 'Join First'}</>
                   ) : (
                     <><Play className="w-5 h-5 mr-2 fill-current" /> {connected ? "Play" : "Play as Guest"}</>
                   )}
@@ -2182,91 +2481,6 @@ const PrismLeague = () => {
                   </>);
                 })()}
 
-                {/* On-Chain Leaderboard — mode-aware */}
-                {(() => {
-                  const isDefMode = gameMode === "destroyer";
-                  const isGravMode = gameMode === "gravity";
-                  const board = isDefMode ? defenderLeaderboard : isGravMode ? gravityLeaderboard : leaderboard;
-                  if (board.length === 0) return null;
-                  return (
-                  <>
-                    <button
-                      className="mt-4 flex items-center gap-1.5 text-xs text-cyan-500/60 hover:text-cyan-300 transition-colors"
-                      onClick={() => setShowLeaderboard(!showLeaderboard)}
-                    >
-                      <Trophy className="w-3.5 h-3.5" />
-                      {isDefMode ? "Defender" : isGravMode ? "Gravity" : "Orbit"} Leaderboard ({board.length})
-                      {showLeaderboard ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    </button>
-                    <div className={`w-full mt-2 ${showLeaderboard ? "" : "hidden"}`}>
-                      <div className="rounded-xl border border-cyan-500/10 bg-gradient-to-b from-white/[0.03] to-transparent overflow-hidden">
-                        <div className="px-3 py-2 border-b border-white/[0.05] flex items-center justify-between">
-                          <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold">Rank</span>
-                          <div className="flex items-center gap-4">
-                            <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold">{isDefMode ? "Score" : "Time"}</span>
-                            <span className="text-[10px] uppercase tracking-wider text-cyan-400/50 font-bold w-12 text-right">Status</span>
-                          </div>
-                        </div>
-                        <div className="divide-y divide-white/[0.03]">
-                          {board.slice(0, 10).map((entry, i) => {
-                            const isCurrentPlayer = entry.address === (address || "anonymous");
-                            const rankMedal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
-                            return (
-                              <div
-                                key={entry.id}
-                                className={`flex justify-between items-center text-xs px-3 py-2 transition-all duration-500 ${
-                                  isCurrentPlayer
-                                    ? "bg-cyan-500/[0.08] shadow-[inset_0_0_20px_rgba(34,211,238,0.06)]"
-                                    : i < 3
-                                      ? "bg-gradient-to-r from-white/[0.02] to-transparent hover:from-white/[0.04]"
-                                      : "hover:bg-white/[0.02]"
-                                }`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  {rankMedal ? (
-                                    <span className="w-5 text-center text-sm leading-none">{rankMedal}</span>
-                                  ) : (
-                                    <span className="w-5 text-center text-[10px] font-bold text-white/30">{i + 1}</span>
-                                  )}
-                                  <span className={`font-mono ${isCurrentPlayer ? "text-cyan-300" : "text-cyan-300/70"}`}>
-                                    {formatAddress(entry.address)}
-                                  </span>
-                                  {isCurrentPlayer && (
-                                    <span className="text-[8px] px-1 py-px rounded bg-cyan-500/20 text-cyan-300 font-bold uppercase">you</span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  <span className="font-bold text-white/80 tabular-nums">{isDefMode ? formatPoints(entry.score) : formatTime(entry.score)}</span>
-                                  {entry.txSignature ? (
-                                    <a
-                                      href={`https://solscan.io/tx/${entry.txSignature}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-[9px] text-green-400/80 hover:text-green-300 transition-colors w-12 justify-end"
-                                      title="View on Solscan"
-                                    >
-                                      <Shield className="w-3 h-3" />
-                                      <span className="font-bold">Chain</span>
-                                    </a>
-                                  ) : (
-                                    <span className="text-[9px] text-white/20 w-12 text-right">Local</span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {board.some((e) => e.txSignature) && (
-                          <div className="px-3 py-1.5 border-t border-white/[0.05] flex items-center gap-1 text-[9px] text-green-400/40">
-                            <Shield className="w-2.5 h-2.5" />
-                            Scores verified via Solana Memo transactions
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                  );
-                })()}
               </div>
               </div>
             </div>
