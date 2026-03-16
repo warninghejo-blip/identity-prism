@@ -55,8 +55,14 @@ class LazyErrorBoundary extends Component<
 }
 
 /** Wrap lazy component in error boundary */
+const LazyFallback = () => (
+  <div className="fixed inset-0 flex items-center justify-center bg-[#05070a] z-[999]">
+    <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
+  </div>
+);
+
 function lazyRoute(element: ReactNode) {
-  return <LazyErrorBoundary><React.Suspense fallback={null}>{element}</React.Suspense></LazyErrorBoundary>;
+  return <LazyErrorBoundary><React.Suspense fallback={<LazyFallback />}>{element}</React.Suspense></LazyErrorBoundary>;
 }
 // wallet-adapter CSS imported eagerly in main.tsx to avoid lazy CSS dep
 import { mwaAuthorizationCache } from './lib/mwaAuthorizationCache';
@@ -71,16 +77,16 @@ const HomePage = React.lazy(() => import('./pages/HomePage'));
 const StellarForge = React.lazy(() => import('./pages/StellarForge'));
 const PrismScanner = React.lazy(() => import('./pages/PrismScanner'));
 const PrismArena = React.lazy(() => import('./pages/PrismArena'));
-const ConstellationNetwork = React.lazy(() => import('./pages/ConstellationNetwork'));
+const PrismVault = React.lazy(() => import('./pages/PrismVault'));
+// ConstellationNetwork removed — redirects to /scan below
 const QuestsPage = React.lazy(() => import('./pages/QuestsPage'));
-const TimeWarp = React.lazy(() => import('./pages/TimeWarp'));
 const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
 const WalletRequired = React.lazy(() => import('./components/WalletRequired'));
 // ScamChecker removed — redirects to /constellation below
 // Marketplace merged into StellarForge — redirect below
 const Leaderboard = React.lazy(() => import('./pages/Leaderboard'));
 const TextQuestPage = React.lazy(() => import('./pages/TextQuestPage'));
-const VisualCompare = React.lazy(() => import('./pages/VisualCompare'));
+
 
 const isCapacitorNative = Boolean(
   (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -122,16 +128,16 @@ const router = createBrowserRouter([
       { path: 'forge', element: lazyRoute(<StellarForge />) },
       { path: 'scan', element: lazyRoute(<PrismScanner />) },
       { path: 'arena', element: lazyRoute(<PrismArena />) },
+      { path: 'vault', element: lazyRoute(<WalletRequired><PrismVault /></WalletRequired>) },
       { path: 'market', element: <Navigate to="/arena" replace /> },
-      { path: 'constellation', element: lazyRoute(<ConstellationNetwork />) },
-      { path: 'timewarp', element: lazyRoute(<TimeWarp />) },
+      { path: 'constellation', element: <Navigate to="/scan" replace /> },
       { path: 'quests', element: lazyRoute(<WalletRequired><QuestsPage /></WalletRequired>) },
       { path: 'profile/:address', element: lazyRoute(<ProfilePage />) },
-      { path: 'scam-checker', element: <Navigate to="/constellation" replace /> },
+      { path: 'scam-checker', element: <Navigate to="/scan" replace /> },
       { path: 'marketplace', element: <Navigate to="/forge" replace /> },
       { path: 'leaderboard', element: lazyRoute(<Leaderboard />) },
       { path: 'text-quest', element: lazyRoute(<WalletRequired><TextQuestPage /></WalletRequired>) },
-      { path: 'visual-compare', element: lazyRoute(<VisualCompare />) },
+
       { path: '*', element: <NotFound /> },
     ],
   },
@@ -173,11 +179,8 @@ const debugEnabled =
     searchParams.has('debug') ||
     window.localStorage?.getItem('debug') === 'true');
 
-let DebugConsole: React.ComponentType | null = null;
-if (debugEnabled) {
-  // Only import in debug mode
-  DebugConsole = React.lazy(() => import('./components/DebugConsole'));
-}
+// Debug console disabled — too intrusive
+const DebugConsole: React.ComponentType | null = null;
 
 export default function AppShell() {
   return (

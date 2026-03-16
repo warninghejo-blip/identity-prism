@@ -56,6 +56,19 @@ body:has(.prism-league-page) #root > * {
   min-height: 100vh !important;
 }
 
+/* Allow scrolling on any page-shell page */
+body:has(.page-shell) {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+body:has(.page-shell) #root,
+body:has(.page-shell) #root > * {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  height: auto !important;
+  min-height: 100vh !important;
+}
+
 .identity-shell {
   position: relative;
   width: 100%;
@@ -442,22 +455,26 @@ body:has(.prism-league-page) #root > * {
 }
 
 .badge-icon {
-  --badge-size: 64px;
-  width: var(--badge-size);
-  height: var(--badge-size);
+  --badge-w: 44px;
+  --badge-h: 66px;
+  width: var(--badge-w);
+  height: var(--badge-h);
   background-size: contain;
   background-position: center;
   background-repeat: no-repeat;
+  border-radius: 6px;
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.3));
   transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
 }
 
 .badge-sm {
-  --badge-size: 44px;
+  --badge-w: 32px;
+  --badge-h: 48px;
 }
 
 .badge-md {
-  --badge-size: 60px;
+  --badge-w: 48px;
+  --badge-h: 72px;
 }
 
 .badge-icon.is-inactive {
@@ -467,7 +484,7 @@ body:has(.prism-league-page) #root > * {
 
 .badge-icon.is-active {
   opacity: 1;
-  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.6));
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.4));
   transform: scale(1.05);
 }
 
@@ -1141,8 +1158,8 @@ body:has(.prism-league-page) #root > * {
 }
 
 .landing-v3-logo {
-  width: 72px;
-  height: 72px;
+  width: 144px;
+  height: 144px;
   margin-bottom: 1.5rem;
   filter: drop-shadow(0 0 20px rgba(34,211,238,0.4)) drop-shadow(0 0 60px rgba(139,92,246,0.2));
   animation: logoFloat 3s ease-in-out infinite alternate;
@@ -1330,7 +1347,7 @@ body:has(.prism-league-page) #root > * {
     font-size: 1.6rem;
   }
   .landing-v3-logo {
-    width: 60px; height: 60px;
+    width: 120px; height: 120px;
   }
 }
 
@@ -1393,8 +1410,8 @@ body:has(.prism-league-page) #root > * {
   to   { transform: rotate(360deg); }
 }
 @keyframes starSpinnerPulse {
-  0%, 100% { opacity: 0.4; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.2); }
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
 .vortex-message {
   font-family: 'Orbitron', monospace;

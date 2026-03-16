@@ -23,7 +23,7 @@ import { trackWalletConnect, trackWalletDisconnect, trackMint } from '@/lib/anal
 const OnboardingModal = React.lazy(() => import('@/components/OnboardingModal'));
 
 type ViewState = "landing" | "scanning" | "ready" | "hub";
-type PaymentToken = "SOL" | "SKR";
+type PaymentToken = "SOL" | "SKR" | "COINS";
 
 const MWA_AUTH_CACHE_KEY = "SolanaMobileWalletAdapterDefaultAuthorizationCache";
 // SCANNING_MESSAGES moved to LandingOverlay.tsx
@@ -1348,6 +1348,17 @@ const Index = () => {
                             >
                               {SEEKER_TOKEN.SYMBOL} −50%
                             </button>
+                            {isConnected && (
+                              <button
+                                type="button"
+                                className={`mint-payment-option ${paymentToken === "COINS" ? "is-active" : ""}`}
+                                onClick={() => setPaymentToken("COINS")}
+                                disabled={!prismBalance || prismBalance.balance < 10000}
+                                style={paymentToken === "COINS" ? { borderColor: 'rgba(234,179,8,0.5)', color: 'rgba(234,179,8,0.9)' } : {}}
+                              >
+                                COINS
+                              </button>
+                            )}
                           </div>
                           {paymentToken === "SKR" && (
                             <span className={`mint-payment-note ${skrQuoteError ? "is-error" : ""}`}>
@@ -1356,75 +1367,36 @@ const Index = () => {
                                 : `50% discount with ${SEEKER_TOKEN.SYMBOL}`}
                             </span>
                           )}
+                          {paymentToken === "COINS" && !prismBalance && (
+                            <span className="mint-payment-note">Loading...</span>
+                          )}
                         </div>
                         <div className="mint-action-row">
                           <Button
-                            onClick={handleMint}
+                            onClick={paymentToken === "COINS" ? handleMintWithCoins : handleMint}
                             disabled={
                               mintState === "minting" ||
                               isLoading ||
                               !isConnected ||
-                              (paymentToken === "SKR" && !skrQuote)
+                              (paymentToken === "SKR" && !skrQuote) ||
+                              (paymentToken === "COINS" && (!prismBalance || prismBalance.balance < 10000))
                             }
                             className="mint-primary-btn"
+                            style={paymentToken === "COINS" ? { background: 'linear-gradient(135deg, rgba(234,179,8,0.2), rgba(234,179,8,0.1))', borderColor: 'rgba(234,179,8,0.35)' } : {}}
                           >
-                            {mintState === "idle" && <span>MINT IDENTITY</span>}
+                            {mintState === "idle" && (
+                              <span>
+                                {paymentToken === "COINS"
+                                  ? 'MINT · 10,000 COINS'
+                                  : paymentToken === "SKR"
+                                    ? `MINT · ${skrQuote ? skrQuote.skrAmount : "—"} ${SEEKER_TOKEN.SYMBOL}`
+                                    : `MINT · ${MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL`}
+                              </span>
+                            )}
                             {mintState === "minting" && <Loader2 className="h-5 w-5 animate-spin" />}
                             {mintState === "success" && <span>IDENTITY SECURED</span>}
                           </Button>
                         </div>
-                        <div className="mint-meta">
-                          {paymentToken === "SKR" ? (
-                            <>
-                              <span>
-                                MINT COST {skrQuote ? skrQuote.skrAmount : "—"} {SEEKER_TOKEN.SYMBOL}
-                              </span>
-                              <span>{`50% discount with ${SEEKER_TOKEN.SYMBOL}`}</span>
-                            </>
-                          ) : (
-                            <span>MINT COST {MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL</span>
-                          )}
-                        </div>
-                        {isConnected && (
-                          <div className="mint-action-row" style={{ marginTop: '0.25rem' }}>
-                            <Button
-                              onClick={handleMintWithCoins}
-                              disabled={
-                                mintState === "minting" ||
-                                isLoading ||
-                                !isConnected ||
-                                !prismBalance ||
-                                prismBalance.balance < 10000
-                              }
-                              variant="outline"
-                              className="mint-primary-btn"
-                              style={{
-                                background: 'rgba(234,179,8,0.08)',
-                                borderColor: 'rgba(234,179,8,0.35)',
-                                color: 'rgba(234,179,8,0.9)',
-                                opacity: (!prismBalance || prismBalance.balance < 10000) ? 0.4 : 1,
-                              }}
-                              title={
-                                !prismBalance || prismBalance.balance < 10000
-                                  ? `Need 10,000 coins (have ${prismBalance?.balance ?? 0})`
-                                  : 'Mint using 10,000 Prism Coins + ~0.002 SOL gas'
-                              }
-                            >
-                              {mintState === "idle" && <span>MINT WITH 10,000 COINS</span>}
-                              {mintState === "minting" && <Loader2 className="h-5 w-5 animate-spin" />}
-                              {mintState === "success" && <span>IDENTITY SECURED</span>}
-                            </Button>
-                          </div>
-                        )}
-                        {isConnected && (
-                          <div className="mint-meta" style={{ marginTop: '-0.1rem', textAlign: 'center', width: '100%' }}>
-                            <span>
-                              {prismBalance
-                                ? `${prismBalance.balance.toLocaleString()} coins available · 10,000 to mint`
-                                : 'Earn coins to unlock coin-based minting'}
-                            </span>
-                          </div>
-                        )}
                         {isConnected && (
                           <div className="mint-action-row" style={{ marginTop: '0.25rem' }}>
                             <Button
@@ -1437,22 +1409,12 @@ const Index = () => {
                               variant="outline"
                               className="mint-primary-btn"
                               style={{ background: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.25)', opacity: hasExistingId !== true ? 0.4 : 1 }}
-                              title={hasExistingId === false ? 'You need to mint an Identity Prism first' : hasExistingId === null ? 'Checking wallet...' : undefined}
+                              title={hasExistingId === false ? 'Mint your Identity first' : hasExistingId === null ? 'Checking wallet...' : 'Updates metadata on existing NFT'}
                             >
-                              {remintState === "idle" && <span>♻ UPDATE CARD</span>}
+                              {remintState === "idle" && <span>♻ UPDATE CARD · ~0.0005 SOL</span>}
                               {remintState === "updating" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />UPDATING...</>}
                               {remintState === "success" && <span>✓ CARD UPDATED</span>}
                             </Button>
-                          </div>
-                        )}
-                        {isConnected && hasExistingId === true && (
-                          <div className="mint-meta" style={{ marginTop: '-0.1rem', textAlign: 'center', width: '100%' }}>
-                            <span>Updates metadata on existing NFT · only ~0.0005 SOL</span>
-                          </div>
-                        )}
-                        {isConnected && hasExistingId === false && (
-                          <div className="mint-meta" style={{ marginTop: '-0.1rem', color: 'rgba(255,120,50,0.6)', textAlign: 'center', width: '100%' }}>
-                            <span>Mint your Identity first to unlock Update</span>
                           </div>
                         )}
                         <Button
@@ -1465,33 +1427,8 @@ const Index = () => {
                         </Button>
                         <Button
                           variant="ghost"
-                          onClick={async () => {
-                            if (!traits || !activeAddress) return;
-                            const { generatePassportImage, sharePassport, downloadPassport } = await import('@/lib/walletPassport');
-                            const img = await generatePassportImage({ address: activeAddress, score, traits, prismBalance: prismBalance?.balance });
-                            const shared = await sharePassport(img, activeAddress);
-                            if (!shared) downloadPassport(img, activeAddress);
-                          }}
-                          className="mint-secondary-btn"
-                        >
-                          🪪 PASSPORT
-                        </Button>
-                        <Button
-                          onClick={() => setViewState("hub")}
-                          className="mint-primary-btn"
-                          style={{ background: 'linear-gradient(135deg, #8b5cf6, #06b6d4)', marginTop: '0.25rem' }}
-                        >
-                          🌌 COSMIC HUB
-                        </Button>
-                        <Button
-                          variant="ghost"
                           onClick={() => {
-                            setActiveAddress(undefined);
-                            setViewState("landing");
-                            // Clear URL address param so the useEffect doesn't re-set it
-                            const next = new URLSearchParams(searchParams);
-                            next.delete('address');
-                            setSearchParams(next, { replace: true });
+                            setViewState("hub");
                           }}
                           className="mint-secondary-btn"
                         >

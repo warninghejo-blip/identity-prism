@@ -12,7 +12,7 @@ import { toast, Toaster as Sonner } from 'sonner';
 import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLeft, ExternalLink, ArrowUpDown } from 'lucide-react';
 import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { createWormholeTunnel, fadeOutWormholeTunnel } from '@/lib/wormholeTunnel';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { earnPrism, calculateBurnPrism } from '@/lib/prismCoin';
 
 import { Button } from '@/components/ui/button';
@@ -295,7 +295,7 @@ const BlackHole = () => {
 
   // Fade out wormhole tunnel (from Card→BH transition) + remove preloader
   useEffect(() => {
-    fadeOutWormholeTunnel(400);
+    fadeOutTransition(400);
     // Also handle legacy forward-blackout overlay
     const fwdOverlay = document.getElementById('bh-forward-blackout');
     if (fwdOverlay) {
@@ -1133,32 +1133,29 @@ const BlackHole = () => {
       visual.style.animation = 'wt-bh-grow 0.5s ease-out forwards';
     }
 
-    // Phase 2: Wormhole tunnel
-    setTimeout(() => {
-      createWormholeTunnel('blackhole-return');
-    }, 350);
-
-    // Phase 3: Navigate after shader completes (350 + 2500 = 2850ms)
+    // Phase 2: Fade transition + navigate
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/app?address=${encodeURIComponent(addr)}` : '/app';
     setTimeout(() => {
-      sessionStorage.setItem('fromBlackHole', '1');
-      try {
-        navigate(target, { state: { fromBlackHole: true }, replace: true });
-      } catch {
-        // Fallback for environments where navigate() throws
-      }
-      // Safety: if still on /blackhole after 600ms, force a full redirect
-      // (Capacitor WebView can silently drop react-router navigate between route trees)
-      setTimeout(() => {
-        if (window.location.pathname.includes('blackhole')) {
-          window.location.replace(target);
+      startFadeTransition(() => {
+        sessionStorage.setItem('fromBlackHole', '1');
+        try {
+          navigate(target, { state: { fromBlackHole: true }, replace: true });
+        } catch {
+          // Fallback for environments where navigate() throws
         }
-      }, 600);
-    }, 2850);
+        // Safety: if still on /blackhole after 600ms, force a full redirect
+        // (Capacitor WebView can silently drop react-router navigate between route trees)
+        setTimeout(() => {
+          if (window.location.pathname.includes('blackhole')) {
+            window.location.replace(target);
+          }
+        }, 600);
+      }, 400);
+    }, 350);
 
     // Safety: reset returning flag after generous timeout so user can retry
-    setTimeout(() => { setReturning(false); }, 4000);
+    setTimeout(() => { setReturning(false); }, 2000);
   }, [returning, ownerPublicKey, addressParam, navigate]);
 
   return (

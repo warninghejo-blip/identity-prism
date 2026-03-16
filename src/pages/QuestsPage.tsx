@@ -219,7 +219,7 @@ export default function QuestsPage() {
             <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-xl">{rank.icon}</span>
+                  <img src={rank.image} alt={rank.name} className="w-7 h-7 object-contain" style={(rank.id === 'ace' || rank.id === 'legend') ? { filter: `drop-shadow(0 0 5px ${rank.id === 'legend' ? '#f59e0b' : '#a855f7'})` } : undefined} />
                   <div>
                     <span className={`text-sm font-bold ${rank.color}`}>{rank.name}</span>
                     <span className="text-white/20 text-[10px] ml-2">{xp} XP</span>

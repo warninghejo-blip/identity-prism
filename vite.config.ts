@@ -69,7 +69,7 @@ export default defineConfig(({ mode }) => {
   build: {
     sourcemap: false,
     modulePreload: { polyfill: true },
-    cssCodeSplit: false,
+    cssCodeSplit: true,
     target: 'es2020',
     rollupOptions: {
       output: {

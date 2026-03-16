@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { goBack } from '@/lib/safeNavigate';
-import { useNavigate } from 'react-router-dom';
+import { getHeliusProxyUrl } from '@/constants';
 
 const TIER_LABELS: Record<string, string> = {
   mercury: 'Mercury', mars: 'Mars', venus: 'Venus', earth: 'Earth',
@@ -13,6 +13,14 @@ const TIER_COLORS: Record<string, string> = {
   mercury: '#94a3b8', mars: '#ef4444', venus: '#f59e0b', earth: '#22c55e',
   neptune: '#3b82f6', uranus: '#06b6d4', saturn: '#a855f7', jupiter: '#f97316',
   sun: '#eab308', binary_sun: '#ec4899',
+};
+
+const TIER_TEXTURES: Record<string, string> = {
+  mercury: '/textures/mercury_map.jpg', mars: '/textures/mars_map.jpg',
+  venus: '/textures/venus_map.jpg', earth: '/textures/earth_daymap.jpg',
+  neptune: '/textures/neptune_map.jpg', uranus: '/textures/uranus_map.jpg',
+  saturn: '/textures/saturn_map.jpg', jupiter: '/textures/jupiter_map.jpg',
+  sun: '/textures/sun_map.jpg', binary_sun: '/textures/sun_map.jpg',
 };
 
 interface WalletData {
@@ -42,7 +50,7 @@ export default function ProfilePage() {
   useEffect(() => {
     if (!address) return;
     setLoading(true);
-    const proxyUrl = import.meta.env.VITE_HELIUS_PROXY_URL || '';
+    const proxyUrl = getHeliusProxyUrl() || '';
     fetch(`${proxyUrl}/api/wallet-database?address=${address}`)
       .then(r => {
         if (!r.ok) throw new Error('Wallet not found');
@@ -88,7 +96,9 @@ export default function ProfilePage() {
       <button onClick={() => goBack(navigate)} className="text-white/40 hover:text-white/70 text-sm">← Back</button>
 
       <div className="text-center space-y-2">
-        <div className="text-5xl" style={{ color: tierColor }}>●</div>
+        <div className="w-16 h-16 mx-auto rounded-full overflow-hidden" style={{ boxShadow: `0 0 24px ${tierColor}40` }}>
+          <img src={TIER_TEXTURES[tier] || '/textures/mercury_map.jpg'} alt={TIER_LABELS[tier] || tier} className="w-full h-full object-cover" />
+        </div>
         <h1 className="text-xl font-bold text-white">{TIER_LABELS[tier] || tier}</h1>
         <p className="text-white/40 text-xs font-mono">{address}</p>
         <div className="text-3xl font-bold" style={{ color: tierColor }}>{compositeScore}<span className="text-sm text-white/30">/1000</span></div>
@@ -111,7 +121,7 @@ export default function ProfilePage() {
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="On-Chain Score" value={`${data.score || 0}/1400`} />
+        <StatCard label="On-Chain Score" value={`${data.score || 0}/400`} />
         <StatCard label="Sybil Grade" value={data.sybil?.trustGrade || '—'} />
         <StatCard label="Scans" value={String(data.scanCount || 0)} />
         <StatCard label="Coins" value={String(data.coins || 0)} />
@@ -124,7 +134,7 @@ export default function ProfilePage() {
       </div>
 
       <div className="text-center">
-        <Link to={`/compare?address=${address}`} className="inline-block px-6 py-2 rounded-lg bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition">
+        <Link to={`/compare?b=${address}`} className="inline-block px-6 py-2 rounded-lg bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition">
           Compare with me
         </Link>
       </div>

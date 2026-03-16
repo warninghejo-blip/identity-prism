@@ -24,10 +24,10 @@ import {
   type QuestSaveState,
 } from '@/lib/textQuests';
 import { getHeliusRpcUrl, getCollectionMint } from '@/constants';
-import { deriveShipStats, DEFAULT_SHIP_STATS, type ShipStats } from '@/lib/shipStats';
+import { computeShipStats, DEFAULT_SHIP_STATS, type ShipStats } from '@/lib/shipStats';
 import { getLocalLoadout } from '@/lib/forgeItems';
 import { earnPrism } from '@/lib/prismCoin';
-import { useWalletData } from '@/hooks/useWalletData';
+import { fetchWalletPreview, type WalletPreview } from '@/components/prism/shared';
 
 const DIFFICULTY_COLORS: Record<string, string> = {
   easy: '#4ade80',
@@ -206,13 +206,17 @@ export default function TextQuestPage() {
     })();
   }, [walletAddress]);
 
-  // Ship stats for skill checks
-  const { traits: walletTraits } = useWalletData(walletAddress || undefined);
+  // Ship stats for skill checks (compositeScore-based)
+  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(null);
+  useEffect(() => {
+    if (!walletAddress) { setWalletPreview(null); return; }
+    fetchWalletPreview(walletAddress).then(setWalletPreview);
+  }, [walletAddress]);
   const shipStats: ShipStats = useMemo(() => {
     if (!walletAddress) return DEFAULT_SHIP_STATS;
     const loadout = getLocalLoadout(walletAddress);
-    return deriveShipStats(walletTraits, loadout);
-  }, [walletAddress, walletTraits]);
+    return computeShipStats(walletPreview, loadout);
+  }, [walletAddress, walletPreview]);
 
   // Current node
   const currentNode = activeQuest && questState ? activeQuest.nodes[questState.currentNode] : null;

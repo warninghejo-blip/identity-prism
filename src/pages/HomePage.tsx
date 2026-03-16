@@ -157,19 +157,7 @@ export default function HomePage() {
           transition={{ duration: 1.2, delay: 0.8 }}
         >
           <div className="relative w-16 h-24 md:w-20 md:h-28">
-            {/* Ship body */}
-            <div className="absolute inset-x-0 top-0 h-full flex flex-col items-center">
-              <div className="w-3 h-8 md:w-4 md:h-10 bg-gradient-to-b from-cyan-300 to-cyan-600 rounded-t-full" />
-              <div className="w-5 h-4 md:w-6 md:h-5 bg-gradient-to-b from-slate-200 to-slate-400 rounded-b-sm -mt-1" />
-              <div className="flex gap-1 -mt-0.5">
-                <div className="w-3 h-1 bg-slate-300 rounded-b-sm -rotate-12" />
-                <div className="w-3 h-1 bg-slate-300 rounded-b-sm rotate-12" />
-              </div>
-              {/* Exhaust */}
-              <div className="w-2 h-6 md:w-2.5 md:h-8 bg-gradient-to-b from-orange-400 via-orange-500 to-transparent rounded-b-full mt-0.5 animate-pulse opacity-80" />
-            </div>
-            {/* Ship glow */}
-            <div className="absolute inset-0 bg-cyan-400/20 blur-xl rounded-full" />
+            <img src="/textures/ships/ship_default.png" alt="Ship" className="w-full h-full object-contain drop-shadow-[0_0_12px_rgba(34,211,238,0.5)]" />
           </div>
         </motion.div>
 

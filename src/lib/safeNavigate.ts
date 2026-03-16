@@ -34,6 +34,10 @@ export function goBack(navigate: NavigateFunction, _fallback = '/') {
   // Clean up any lingering wormhole tunnels that might block UI
   cleanupOverlays();
 
+  // Persist return flag in sessionStorage so Index.tsx can detect back-nav
+  // even if location.state is lost (e.g. browser back button)
+  try { sessionStorage.setItem('returnedFromSubPage', '1'); } catch {}
+
   // Always navigate to home/hub — prevents "kicking out" of the app
   // and provides consistent UX: Back = return to main menu
   setInternalNavDepth(0);
@@ -41,7 +45,7 @@ export function goBack(navigate: NavigateFunction, _fallback = '/') {
 }
 
 export function cleanupOverlays() {
-  for (const id of ['wormhole-tunnel', 'bh-forward-blackout', 'bh-transition-veil']) {
+  for (const id of ['wormhole-tunnel', 'bh-forward-blackout', 'bh-transition-veil', 'fade-overlay']) {
     const el = document.getElementById(id);
     if (el) el.remove();
   }

@@ -267,7 +267,10 @@ export function SpaceBG() {
   const ref = useRef<THREE.ShaderMaterial>(null);
   const meshRef = useRef<THREE.Mesh>(null);
   useFrame((s) => {
-    if (ref.current) ref.current.uniforms.uTime.value = s.clock.elapsedTime;
+    if (ref.current) {
+      ref.current.uniforms.uTime.value = s.clock.elapsedTime;
+      ref.current.uniforms.uOffset.value.set(s.camera.position.x * 0.003, s.camera.position.y * 0.003);
+    }
     if (meshRef.current) {
       meshRef.current.position.x = s.camera.position.x;
       meshRef.current.position.y = s.camera.position.y;
@@ -275,12 +278,13 @@ export function SpaceBG() {
   });
 
   const shader = useMemo(() => ({
-    uniforms: { uTime: { value: 0 } },
+    uniforms: { uTime: { value: 0 }, uOffset: { value: new THREE.Vector2(0, 0) } },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.); }`,
     fragmentShader: `
       #define FBM_ITER ${IS_MOBILE ? 3 : 7}
       #define STAR_LAYERS ${IS_MOBILE ? 2 : 4}
       uniform float uTime;
+      uniform vec2 uOffset;
       varying vec2 vUv;
       vec2 hash22(vec2 p) { p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3))); return fract(sin(p)*43758.5453); }
       float hash21(vec2 p) { return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
@@ -301,18 +305,19 @@ export function SpaceBG() {
       void main() {
         vec2 uv = vUv; vec2 cuv = (uv - .5) * 2.; float r = length(cuv);
         vec3 col = vec3(.10, .08, .22);
-        float n1 = fbm(cuv * 1.5 + vec2(uTime*.008, -uTime*.005));
-        float n2 = fbm(cuv * 3.0 + vec2(-uTime*.004, uTime*.01));
-        float n3 = fbm(cuv * 2.0 + vec2(uTime*.003, uTime*.003));
+        vec2 shipOff = uOffset;
+        float n1 = fbm(cuv * 1.5 + shipOff * 1.2 + vec2(uTime*.008, -uTime*.005));
+        float n2 = fbm(cuv * 3.0 + shipOff * 0.8 + vec2(-uTime*.004, uTime*.01));
+        float n3 = fbm(cuv * 2.0 + shipOff * 1.0 + vec2(uTime*.003, uTime*.003));
         col = mix(col, vec3(.28, .12, .38), smoothstep(.22, .55, n1) * .7);
         col = mix(col, vec3(.12, .15, .38), smoothstep(.28, .6, n2) * .6);
         col = mix(col, vec3(.10, .20, .35), smoothstep(.35, .68, n3) * .5);
         float glow = exp(-r * 1.5) * .22; col += vec3(.12, .10, .28) * glow;
-        col += renderStars(uv, 40., .55, .015, .03) * .18;
-        col += renderStars(uv, 100., .60, .008, .02) * .14;
+        col += renderStars(uv + shipOff * 0.15, 40., .55, .015, .03) * .18;
+        col += renderStars(uv + shipOff * 0.10, 100., .60, .008, .02) * .14;
 #if STAR_LAYERS > 2
-        col += renderStars(uv, 250., .65, .005, .012) * .08;
-        col += renderStars(uv, 600., .70, .003, .008) * .06;
+        col += renderStars(uv + shipOff * 0.06, 250., .65, .005, .012) * .08;
+        col += renderStars(uv + shipOff * 0.03, 600., .70, .003, .008) * .06;
 #endif
         float vig = 1. - smoothstep(.85, 1.55, r);
         gl_FragColor = vec4(col, vig);

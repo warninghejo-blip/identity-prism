@@ -10,7 +10,7 @@ import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { trackForgePurchase } from '@/lib/analytics';
 import {
-  ArrowLeft, ShoppingBag, Check, Lock, Sparkles, Coins,
+  ArrowLeft, ShoppingBag, Check, Lock, Sparkles, Coins, Wallet,
   Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap,
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
@@ -40,12 +40,12 @@ import {
   type Micromodule,
 } from '@/lib/forgeItems';
 import { computeShipStats, type ShipStats } from '@/lib/shipStats';
-import { fetchWalletPreview, type WalletPreview } from '@/components/prism/shared';
+import { fetchWalletPreview, getCachedWalletPreview, type WalletPreview } from '@/components/prism/shared';
 import { getPrismBalance, spendPrism, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
 import { getHeliusProxyUrl } from '@/constants';
 
-type TopTab = 'shop' | 'equipped' | 'hangar';
-type ShopFilter = ForgeCategory | 'all' | 'modules';
+type TopTab = 'shop' | 'inventory';
+type ShopFilter = ForgeCategory | 'all';
 
 function getApiBase(): string {
   const proxy = getHeliusProxyUrl();
@@ -85,7 +85,6 @@ const SHOP_FILTERS: { id: ShopFilter; label: string; icon: string }[] = [
   { id: 'aura', label: 'Auras', icon: CATEGORY_ICONS.aura },
   { id: 'ship_skin', label: 'Ships', icon: CATEGORY_ICONS.ship_skin },
   { id: 'title', label: 'Titles', icon: CATEGORY_ICONS.title },
-  { id: 'modules', label: 'Modules', icon: '🔧' },
 ];
 
 // ── Visual Preview Renderers ──
@@ -846,7 +845,9 @@ export default function StellarForge() {
 
   useEffect(() => { fadeOutTransition(); }, []);
 
-  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(null);
+  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(
+    () => walletAddress ? getCachedWalletPreview(walletAddress) : null
+  );
   useEffect(() => {
     if (!walletAddress) { setWalletPreview(null); return; }
     fetchWalletPreview(walletAddress).then(setWalletPreview);
@@ -861,24 +862,22 @@ export default function StellarForge() {
   const [confirmModule, setConfirmModule] = useState<{ itemId: string; mod: Micromodule } | null>(null);
   const [installingModule, setInstallingModule] = useState(false);
   const [hasIdentityCard, setHasIdentityCard] = useState(false);
-  const [moduleInstallTarget, setModuleInstallTarget] = useState<Micromodule | null>(null);
 
   // Load data
   useEffect(() => {
     if (!walletAddress) return;
     getPrismBalance(walletAddress).then(setBalance);
     setLoadout(getLocalLoadout(walletAddress));
-    // Check identity card status
+    // Check identity card status via wallet-database
     const base = getApiBase();
-    fetch(`${base}/api/identity/status?address=${walletAddress}`)
+    fetch(`${base}/api/wallet-database?address=${walletAddress}`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.hasCard) setHasIdentityCard(true); })
+      .then(d => { if (d?.mint?.minted) setHasIdentityCard(true); })
       .catch(() => {});
   }, [walletAddress]);
 
   // Shop logic
   const filteredItems = useMemo(() => {
-    if (shopFilter === 'modules') return []; // modules rendered separately
     if (shopFilter === 'all') return ALL_FORGE_ITEMS;
     return ALL_FORGE_ITEMS.filter((i) => i.category === shopFilter);
   }, [shopFilter]);
@@ -967,12 +966,6 @@ export default function StellarForge() {
            loadout.equippedShipSkin === id || loadout.equippedTitle === id;
   }, [loadout]);
 
-  // Equipped items for loadout tab
-  const equippedItems = useMemo(() => {
-    if (!loadout) return [];
-    const ids = [loadout.equippedFrame, loadout.equippedAura, loadout.equippedShipSkin, loadout.equippedTitle].filter(Boolean) as string[];
-    return ids.map(id => getItemById(id)).filter(Boolean) as ForgeItem[];
-  }, [loadout]);
 
   return (
     <PageShell className="text-white">
@@ -1038,8 +1031,7 @@ export default function StellarForge() {
         <div className="max-w-2xl mx-auto px-3 flex gap-1 py-1.5">
           {([
             { id: 'shop' as TopTab, label: 'Armory', icon: '🛡️' },
-            { id: 'equipped' as TopTab, label: 'Loadout', icon: '⚔️' },
-            { id: 'hangar' as TopTab, label: 'Hangar', icon: '🚀' },
+            { id: 'inventory' as TopTab, label: 'Inventory', icon: '📦' },
           ]).map((t) => (
             <button
               key={t.id}
@@ -1065,7 +1057,7 @@ export default function StellarForge() {
       <main className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full px-4 py-5 pb-24 relative z-10">
         {!walletAddress && (
           <div className="text-center py-16 space-y-3">
-            <div className="text-4xl">🔗</div>
+            <Wallet className="w-10 h-10 text-purple-400/60" />
             <p className="text-white/50 text-sm">Connect your wallet to access the Forge</p>
           </div>
         )}
@@ -1122,7 +1114,7 @@ export default function StellarForge() {
                 />
               ))}
             </div>
-            {filteredItems.length === 0 && shopFilter !== 'modules' && (
+            {filteredItems.length === 0 && (
               <div className="text-center py-24">
                 <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{
                   background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(139,92,246,0.05))',
@@ -1134,286 +1126,25 @@ export default function StellarForge() {
               </div>
             )}
 
-            {/* ── Modules Grid ── */}
-            {shopFilter === 'modules' && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {MICROMODULE_DEFS.map((mod) => {
-                  const tierColor = MODULE_TIER_COLORS[mod.tier];
-                  return (
-                    <div key={mod.id} className="rounded-xl overflow-hidden border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.06] transition-all duration-300">
-                      <div className="p-3">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xl">{mod.icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs font-bold text-white/90 truncate">{mod.name}</div>
-                            <div className="text-[9px] font-bold uppercase tracking-wider" style={{ color: tierColor }}>{mod.tier} tier</div>
-                          </div>
-                        </div>
-                        <p className="text-[10px] text-white/40 mb-2">{mod.description}</p>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-[10px] font-bold text-green-400">+{mod.statBonus.value} {mod.statBonus.stat}</span>
-                          {mod.tradeoff && <span className="text-[10px] font-bold text-red-400/60">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
-                        </div>
-                        <button
-                          onClick={() => setModuleInstallTarget(mod)}
-                          disabled={!walletAddress || !balance || balance.balance < mod.price}
-                          className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300"
-                          style={{
-                            background: balance && balance.balance >= mod.price
-                              ? `linear-gradient(135deg, ${tierColor}30, ${tierColor}15)`
-                              : 'rgba(255,255,255,0.04)',
-                            color: balance && balance.balance >= mod.price ? tierColor : 'rgba(255,255,255,0.25)',
-                            border: `1px solid ${balance && balance.balance >= mod.price ? `${tierColor}40` : 'rgba(255,255,255,0.06)'}`,
-                          }}
-                        >
-                          <Coins className="w-3 h-3 inline mr-1" /> {mod.price.toLocaleString()}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Module Install Target Modal — pick item to install on */}
-            {moduleInstallTarget && (
-              <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setModuleInstallTarget(null)}>
-                <div className="bg-[#0d1117] border border-white/10 rounded-2xl p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
-                  <h3 className="text-sm font-bold text-white mb-1">Install {moduleInstallTarget.name}</h3>
-                  <p className="text-[10px] text-white/40 mb-3">Select an owned item to install this module on:</p>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {loadout?.ownedItems
-                      .map(o => getItemById(o.itemId))
-                      .filter((item): item is ForgeItem => item != null && moduleInstallTarget.compatibleCategories.includes(item.category))
-                      .map(item => {
-                        const currentMods = loadout ? (loadout.installedModules[item.id] || []) : [];
-                        const maxSlots = item.maxModuleSlots ?? 3;
-                        const isFull = currentMods.length >= maxSlots;
-                        const alreadyHas = currentMods.includes(moduleInstallTarget.id);
-                        const needsCard = item.category === 'ship_skin' && !hasIdentityCard;
-                        const disabled = isFull || alreadyHas || needsCard;
-                        return (
-                          <button
-                            key={item.id}
-                            disabled={disabled}
-                            onClick={() => {
-                              setModuleInstallTarget(null);
-                              setConfirmModule({ itemId: item.id, mod: moduleInstallTarget });
-                            }}
-                            className="w-full flex items-center gap-3 p-2.5 rounded-xl border transition-all duration-200 text-left"
-                            style={{
-                              background: disabled ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.05)',
-                              borderColor: disabled ? 'rgba(255,255,255,0.04)' : 'rgba(168,85,247,0.2)',
-                              opacity: disabled ? 0.4 : 1,
-                            }}
-                          >
-                            <span className="text-sm">{CATEGORY_ICONS[item.category]}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[11px] font-bold text-white/80 truncate">{item.name}</div>
-                              <div className="text-[9px] text-white/30">
-                                Slots: {currentMods.map(() => '■').join('')}{Array(maxSlots - currentMods.length).fill('□').join('')}
-                                {' '}({currentMods.length}/{maxSlots})
-                                {needsCard && ' — Identity Card required'}
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                  </div>
-                  <button onClick={() => setModuleInstallTarget(null)} className="w-full mt-3 py-2 rounded-lg text-xs font-bold text-white/40 bg-white/5 hover:bg-white/10 transition-colors">Cancel</button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-
-        {/* ═══ LOADOUT TAB ═══ */}
-        {walletAddress && topTab === 'equipped' && (
-          <>
-            <p className="text-white/25 text-xs mb-5 font-medium">Your current loadout. Tap an item to change or unequip.</p>
-
-            {/* Loadout slots — premium cards */}
-            {(['frame', 'aura', 'ship_skin', 'title'] as ForgeCategory[]).map((cat) => {
-              const equippedId = loadout ? (cat === 'frame' ? loadout.equippedFrame : cat === 'aura' ? loadout.equippedAura : cat === 'ship_skin' ? loadout.equippedShipSkin : loadout.equippedTitle) : null;
-              const equippedItem = equippedId ? getItemById(equippedId) : null;
-              const ownedInCat = loadout ? ALL_FORGE_ITEMS.filter(i => i.category === cat && loadout.ownedItems.some(o => o.itemId === i.id)) : [];
-              const rarityColor = equippedItem ? RARITY_COLORS[equippedItem.rarity] : '#6b7280';
-
-              return (
-                <div key={cat} className="mb-4 rounded-2xl p-4 transition-all duration-300" style={{
-                  background: equippedItem
-                    ? `linear-gradient(135deg, ${rarityColor}08, ${rarityColor}03)`
-                    : 'rgba(255,255,255,0.015)',
-                  border: `1px solid ${equippedItem ? `${rarityColor}18` : 'rgba(255,255,255,0.04)'}`,
-                  boxShadow: equippedItem ? `0 0 30px ${rarityColor}08` : 'none',
-                }}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{
-                        background: equippedItem ? `${rarityColor}12` : 'rgba(255,255,255,0.04)',
-                      }}>
-                        <span className="text-base">{CATEGORY_ICONS[cat]}</span>
-                      </div>
-                      <span className="text-xs font-bold text-white/50 uppercase tracking-widest">{CATEGORY_LABELS[cat]}</span>
-                    </div>
-                    {equippedItem && (
-                      <span className="text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider" style={{
-                        color: rarityColor,
-                        background: `${rarityColor}12`,
-                        border: `1px solid ${rarityColor}20`,
-                      }}>
-                        {equippedItem.rarity}
-                      </span>
-                    )}
-                  </div>
-
-                  {equippedItem ? (
-                    <div className="flex items-center gap-3.5">
-                      <div className="w-14 h-14 rounded-xl flex items-center justify-center" style={{
-                        background: `linear-gradient(135deg, ${rarityColor}15, ${rarityColor}08)`,
-                        border: `1px solid ${rarityColor}20`,
-                        boxShadow: `0 0 15px ${rarityColor}10`,
-                      }}>
-                        {equippedItem.category === 'title' ? (
-                          <span className="text-[10px] font-black" style={{ color: rarityColor }}>{equippedItem.preview}</span>
-                        ) : (
-                          <Sparkles className="w-5 h-5" style={{ color: rarityColor, filter: `drop-shadow(0 0 6px ${rarityColor}40)` }} />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-white font-bold text-sm">{equippedItem.name}</p>
-                        <p className="text-white/25 text-[10px] truncate mt-0.5">{equippedItem.description}</p>
-                      </div>
-                      <button
-                        onClick={() => handleUnequip(cat)}
-                        className="px-2.5 py-1 rounded-lg text-[10px] font-bold text-red-400/70 border border-red-500/15 hover:bg-red-500/10 transition-colors"
-                      >
-                        Unequip
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-3 py-2">
-                      <div className="w-14 h-14 rounded-xl border border-dashed border-white/[0.06] flex items-center justify-center">
-                        <span className="text-white/10 text-lg">+</span>
-                      </div>
-                      <p className="text-white/10 text-xs italic">No {CATEGORY_LABELS[cat].toLowerCase()} equipped</p>
-                    </div>
-                  )}
-
-                  {/* Other owned items in this category */}
-                  {ownedInCat.length > 1 && (
-                    <div className="mt-3 pt-3 border-t border-white/[0.04]">
-                      <p className="text-white/15 text-[10px] mb-2 font-medium">{ownedInCat.length} owned — tap to switch:</p>
-                      <div className="flex gap-2 flex-wrap">
-                        {ownedInCat.filter(i => i.id !== equippedId).map((item) => {
-                          const rc = RARITY_COLORS[item.rarity];
-                          return (
-                            <button
-                              key={item.id}
-                              onClick={() => handleEquip(item)}
-                              className="px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-200 hover:scale-105"
-                              style={{
-                                border: `1px solid ${rc}25`,
-                                color: rc,
-                                background: `${rc}06`,
-                              }}
-                            >
-                              {item.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* ── Micromodules Section ── */}
-            <div className="mt-8">
-              <h3 className="text-white/30 text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-2">
-                <Zap className="w-3.5 h-3.5 text-amber-400" /> Micromodules
-              </h3>
-              <p className="text-white/15 text-[10px] mb-4">
-                Permanent upgrades for equipped items. Cannot be removed after install.
-              </p>
-
-              {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura' || i.category === 'ship_skin').length === 0 ? (
-                <p className="text-white/10 text-xs italic py-4 text-center">Equip a frame, aura, or ship to install modules</p>
-              ) : (
-                <div className="space-y-3">
-                  {equippedItems.filter(i => i.category === 'frame' || i.category === 'aura' || i.category === 'ship_skin').map((item) => {
-                    const modules = loadout ? getItemModules(loadout, item.id) : [];
-                    const rarityColor = RARITY_COLORS[item.rarity];
-                    const maxSlots = item.maxModuleSlots ?? 3;
-                    const needsCard = item.category === 'ship_skin' && !hasIdentityCard;
-                    return (
-                      <div key={item.id} className="rounded-xl p-3 border border-white/[0.06] bg-white/[0.02]">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-sm">{CATEGORY_ICONS[item.category]}</span>
-                          <span className="text-white text-xs font-bold">{item.name}</span>
-                          <span className={`text-[9px] ml-auto ${modules.length >= maxSlots ? 'text-green-400' : ''}`} style={modules.length < maxSlots ? { color: rarityColor } : undefined}>
-                            {modules.length >= maxSlots ? 'Full' : `${modules.length}/${maxSlots} slots`}
-                          </span>
-                        </div>
-                        {needsCard && (
-                          <p className="text-[9px] text-amber-400/60 mb-2">Identity Card required to install modules on ships</p>
-                        )}
-                        <div className="flex gap-2">
-                          {Array.from({ length: maxSlots }).map((_, slotIdx) => {
-                            const mod = modules[slotIdx];
-                            if (mod) {
-                              const tierColor = MODULE_TIER_COLORS[mod.tier];
-                              return (
-                                <div key={slotIdx} className="flex-1 rounded-lg p-2 text-center" style={{
-                                  background: `${tierColor}10`,
-                                  border: `1px solid ${tierColor}25`,
-                                }}>
-                                  <span className="text-sm block">{mod.icon}</span>
-                                  <span className="text-[9px] font-bold block mt-0.5" style={{ color: tierColor }}>{mod.name}</span>
-                                  <span className="text-[8px] text-white/30">+{mod.statBonus.value} {mod.statBonus.stat}</span>
-                                </div>
-                              );
-                            }
-                            return (
-                              <button
-                                key={slotIdx}
-                                onClick={() => !needsCard && setModuleModal({ itemId: item.id, item })}
-                                disabled={needsCard}
-                                className="flex-1 rounded-lg border border-dashed border-white/[0.08] p-2 flex flex-col items-center justify-center hover:border-purple-500/30 hover:bg-purple-500/5 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                              >
-                                <Plus className="w-3 h-3 text-white/15" />
-                                <span className="text-[8px] text-white/10 mt-0.5">Install</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
 
           </>
         )}
 
-        {/* ═══ HANGAR TAB ═══ */}
-        {walletAddress && topTab === 'hangar' && loadout && (() => {
+
+        {/* ═══ INVENTORY TAB ═══ */}
+        {walletAddress && topTab === 'inventory' && loadout && (() => {
+          // ── Equipment section data ──
+          const equipmentCats = ['frame', 'aura', 'title'] as ForgeCategory[];
+
+          // ── Ship Bay data ──
           const equippedShipId = loadout.equippedShipSkin;
           const equippedShip = equippedShipId ? getItemById(equippedShipId) : null;
-          // Show default ship when nothing equipped (same as in games: /textures/ship.png)
           const displayShipId = equippedShipId;
           const displayShip = equippedShip;
           const skinKey = displayShipId ? displayShipId.replace('ship_', '') : null;
           const shipModules = displayShipId ? getItemModules(loadout, displayShipId) : [];
           const maxSlots = displayShip?.maxModuleSlots ?? 1;
-
-          // Compute ship stats from compositeScore (consistent with card score)
           const stats = computeShipStats(walletPreview, loadout);
-
-          // All owned ships
           const ownedShips = ALL_FORGE_ITEMS.filter(i =>
             i.category === 'ship_skin' && loadout.ownedItems.some(o => o.itemId === i.id)
           );
@@ -1445,128 +1176,74 @@ export default function StellarForge() {
           ];
 
           return (
-            <div className="space-y-4">
-              {/* Ship Preview */}
-              <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-transparent p-5 text-center">
-                <div className="flex justify-center mb-3">
-                  <img
-                    src={skinKey ? `/textures/ships/ship_${skinKey}.png` : '/textures/ship.png'}
-                    alt={displayShip?.name ?? 'Standard Shuttle'}
-                    className="w-32 h-32 object-contain"
-                    style={{ filter: displayShip ? `drop-shadow(0 0 16px ${RARITY_COLORS[displayShip.rarity]}60)` : 'drop-shadow(0 0 12px rgba(255,255,255,0.15))' }}
-                  />
-                </div>
-                {displayShip ? (
-                  <>
-                    <h3 className="text-white font-bold text-base">{displayShip.name}</h3>
-                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block"
-                      style={{ color: RARITY_COLORS[displayShip.rarity], background: `${RARITY_COLORS[displayShip.rarity]}12`, border: `1px solid ${RARITY_COLORS[displayShip.rarity]}25` }}>
-                      {displayShip.rarity}
-                    </span>
-                    <p className="text-white/30 text-xs mt-2">
-                      Slots: {Array(maxSlots).fill(null).map((_, i) => i < shipModules.length ? '◆' : '◇').join('')} ({shipModules.length}/{maxSlots})
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <h3 className="text-white/50 font-bold text-base">Standard Shuttle</h3>
-                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block text-white/20 bg-white/[0.04] border border-white/[0.08]">
-                      default
-                    </span>
-                    <p className="text-white/15 text-[10px] mt-2">Purchase a ship in the Armory to customize</p>
-                  </>
-                )}
-              </div>
+            <div className="space-y-5">
 
-              {/* Installed Modules */}
-              {displayShip && (
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
-                  <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Installed Modules</h4>
-                  <div className="space-y-2">
-                    {shipModules.map((mod) => {
-                      const tierColor = MODULE_TIER_COLORS[mod.tier];
-                      return (
-                        <div key={mod.id} className="flex items-center gap-3 p-2.5 rounded-xl" style={{ background: `${tierColor}08`, border: `1px solid ${tierColor}20` }}>
-                          <span className="text-lg">{mod.icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <span className="text-xs font-bold text-white/80">{mod.name}</span>
-                            <span className="text-[10px] ml-2 font-bold" style={{ color: '#4ade80' }}>+{mod.statBonus.value} {mod.statBonus.stat}</span>
-                            {mod.tradeoff && <span className="text-[10px] ml-1 text-red-400/60">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
-                          </div>
-                          <button
-                            onClick={() => handleRemoveModule(mod.id)}
-                            className="px-2 py-1 rounded-lg text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })}
-                    {shipModules.length < maxSlots && (
-                      <button
-                        onClick={() => displayShipId && setModuleModal({ itemId: displayShipId, item: displayShip })}
-                        className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/[0.08] text-white/20 text-xs hover:border-purple-500/30 hover:bg-purple-500/5 transition-all"
-                      >
-                        <Plus className="w-3.5 h-3.5" /> Add Module
-                      </button>
-                    )}
-                    {shipModules.length === 0 && maxSlots > 0 && (
-                      <p className="text-white/10 text-[10px] text-center py-1">No modules installed yet</p>
-                    )}
-                  </div>
-                </div>
-              )}
+              {/* ── Equipment Section (frame / aura / title) ── */}
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Equipment
+                </h3>
 
-              {/* Ship Stats */}
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
-                <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Ship Stats</h4>
-                {!walletPreview && walletAddress && (
-                  <p className="text-white/15 text-[10px] mb-3 flex items-center gap-1.5">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Loading wallet data...
-                  </p>
-                )}
-                <div className="space-y-3">
-                  {statBars.map(({ key, label, color }) => {
-                    const val = stats[key];
-                    // Threshold effects
-                    const thresholds = STAT_THRESHOLDS[key];
-                    const activeThreshold = thresholds.filter(t => val >= t.at).pop();
-                    const nextThreshold = thresholds.find(t => val < t.at);
-                    return (
-                      <div key={key}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-[11px] font-bold text-white/60">{label}</span>
-                          <div className="flex items-center gap-2">
-                            {activeThreshold && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ color: activeThreshold.color, background: `${activeThreshold.color}15` }}>
-                                {activeThreshold.label}
-                              </span>
-                            )}
-                            <span className="text-[11px] font-black tabular-nums" style={{ color }}>{val}</span>
-                          </div>
-                        </div>
-                        <div className="relative h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
-                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${val}%`, background: `linear-gradient(90deg, ${color}80, ${color})` }} />
-                          {/* Threshold markers */}
-                          {thresholds.map(t => (
-                            <div key={t.at} className="absolute top-0 h-full w-px" style={{ left: `${t.at}%`, background: val >= t.at ? `${t.color}60` : 'rgba(255,255,255,0.08)' }} />
-                          ))}
-                        </div>
-                        {nextThreshold && (
-                          <p className="text-[10px] text-white/40 mt-0.5">
-                            +{nextThreshold.at - val} to unlock: <span className="font-medium" style={{ color: nextThreshold.color }}>{nextThreshold.label}</span> — {nextThreshold.effect}
-                          </p>
-                        )}
+                {equipmentCats.map((cat) => {
+                  const equippedId = cat === 'frame' ? loadout.equippedFrame : cat === 'aura' ? loadout.equippedAura : loadout.equippedTitle;
+                  const ownedInCat = ALL_FORGE_ITEMS.filter(i => i.category === cat && loadout.ownedItems.some(o => o.itemId === i.id));
+
+                  return (
+                    <div key={cat}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
+                        <span className="text-[11px] font-bold text-white/50 uppercase tracking-wider">{CATEGORY_LABELS[cat]}s</span>
                       </div>
-                    );
-                  })}
-                </div>
+                      {ownedInCat.length > 0 ? (
+                        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+                          {ownedInCat.map((item) => {
+                            const isEq = item.id === equippedId;
+                            const rc = RARITY_COLORS[item.rarity];
+                            return (
+                              <button
+                                key={item.id}
+                                onClick={() => isEq ? handleUnequip(cat) : handleEquip(item)}
+                                className="flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-200 hover:scale-105"
+                                style={{
+                                  width: 72, minWidth: 72,
+                                  border: isEq ? `2px solid ${rc}60` : '1px solid rgba(255,255,255,0.06)',
+                                  background: isEq ? `${rc}10` : 'rgba(255,255,255,0.02)',
+                                  boxShadow: isEq ? `0 0 12px ${rc}20` : 'none',
+                                }}
+                              >
+                                {cat === 'title' ? (
+                                  <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ background: `${rc}10` }}>
+                                    <span className="text-[8px] font-black text-center leading-tight" style={{ color: rc }}>{item.preview}</span>
+                                  </div>
+                                ) : (
+                                  <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ background: `${rc}10` }}>
+                                    <Sparkles className="w-5 h-5" style={{ color: rc, filter: `drop-shadow(0 0 4px ${rc}40)` }} />
+                                  </div>
+                                )}
+                                <span className="text-[9px] font-bold truncate w-full text-center" style={{ color: isEq ? rc : 'rgba(255,255,255,0.4)' }}>
+                                  {item.name}
+                                </span>
+                                {isEq && <Check className="w-3 h-3" style={{ color: rc }} />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-white/15 text-[10px] italic pl-7">No items — <span className="text-purple-400/50 cursor-pointer" onClick={() => setTopTab('shop')}>visit Armory</span></p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
-              {/* Ship Grid */}
-              {ownedShips.length > 1 && (
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
-                  <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Your Ships</h4>
+              {/* ── Ship Bay ── */}
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                  🚀 Ship Bay
+                </h3>
+
+                {/* Ship Grid — horizontal scroll */}
+                {ownedShips.length > 0 ? (
                   <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
                     {ownedShips.map((ship) => {
                       const sk = ship.id.replace('ship_', '');
@@ -1580,13 +1257,13 @@ export default function StellarForge() {
                           style={{
                             border: `1px solid ${isActive ? `${rc}40` : 'rgba(255,255,255,0.06)'}`,
                             background: isActive ? `${rc}10` : 'transparent',
-                            minWidth: 72,
+                            minWidth: 80,
                           }}
                         >
                           <img
                             src={`/textures/ships/ship_${sk}.png`}
                             alt={ship.name}
-                            className="w-12 h-12 object-contain"
+                            className="w-16 h-16 object-contain"
                             style={{ filter: isActive ? `drop-shadow(0 0 8px ${rc}60)` : 'brightness(0.6)' }}
                           />
                           <span className="text-[9px] font-bold truncate w-full text-center" style={{ color: isActive ? rc : 'rgba(255,255,255,0.3)' }}>
@@ -1597,8 +1274,119 @@ export default function StellarForge() {
                       );
                     })}
                   </div>
+                ) : (
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 text-center">
+                    <img src="/textures/ship.png" alt="Standard Shuttle" className="w-16 h-16 object-contain mx-auto mb-2 opacity-30" />
+                    <p className="text-white/30 text-xs font-bold">Standard Shuttle</p>
+                    <p className="text-white/15 text-[10px] mt-1"><span className="text-purple-400/50 cursor-pointer" onClick={() => setTopTab('shop')}>Buy ships in Armory</span></p>
+                  </div>
+                )}
+
+                {/* Ship Preview */}
+                {displayShip && (
+                  <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-transparent p-5 text-center">
+                    <div className="flex justify-center mb-3">
+                      <img
+                        src={skinKey ? `/textures/ships/ship_${skinKey}.png` : '/textures/ship.png'}
+                        alt={displayShip.name}
+                        className="w-24 h-24 object-contain"
+                        style={{ filter: `drop-shadow(0 0 16px ${RARITY_COLORS[displayShip.rarity]}60)` }}
+                      />
+                    </div>
+                    <h3 className="text-white font-bold text-base">{displayShip.name}</h3>
+                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block"
+                      style={{ color: RARITY_COLORS[displayShip.rarity], background: `${RARITY_COLORS[displayShip.rarity]}12`, border: `1px solid ${RARITY_COLORS[displayShip.rarity]}25` }}>
+                      {displayShip.rarity}
+                    </span>
+                    <p className="text-white/30 text-xs mt-2">
+                      Slots: {Array(maxSlots).fill(null).map((_, i) => i < shipModules.length ? '◆' : '◇').join('')} ({shipModules.length}/{maxSlots})
+                    </p>
+                  </div>
+                )}
+
+                {/* Installed Modules */}
+                {displayShip && (
+                  <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                    <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Installed Modules</h4>
+                    <div className="space-y-2">
+                      {shipModules.map((mod) => {
+                        const tierColor = MODULE_TIER_COLORS[mod.tier];
+                        return (
+                          <div key={mod.id} className="flex items-center gap-3 p-2.5 rounded-xl" style={{ background: `${tierColor}08`, border: `1px solid ${tierColor}20` }}>
+                            <img src={mod.image} alt={mod.name} className="w-7 h-7 object-contain" />
+                            <div className="flex-1 min-w-0">
+                              <span className="text-xs font-bold text-white/80">{mod.name}</span>
+                              <span className="text-[10px] ml-2 font-bold" style={{ color: '#4ade80' }}>+{mod.statBonus.value} {mod.statBonus.stat}</span>
+                              {mod.tradeoff && <span className="text-[10px] ml-1 text-red-400/60">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
+                            </div>
+                            <button
+                              onClick={() => handleRemoveModule(mod.id)}
+                              className="px-2 py-1 rounded-lg text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
+                      {shipModules.length < maxSlots && (
+                        <button
+                          onClick={() => displayShipId && setModuleModal({ itemId: displayShipId, item: displayShip })}
+                          className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/[0.08] text-white/20 text-xs hover:border-purple-500/30 hover:bg-purple-500/5 transition-all"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add Module
+                        </button>
+                      )}
+                      {shipModules.length === 0 && maxSlots > 0 && (
+                        <p className="text-white/10 text-[10px] text-center py-1">No modules installed yet</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ship Stats */}
+                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                  <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Ship Stats</h4>
+                  {!walletPreview && walletAddress && (
+                    <p className="text-white/15 text-[10px] mb-3 flex items-center gap-1.5">
+                      <Loader2 className="w-3 h-3 animate-spin" /> Loading wallet data...
+                    </p>
+                  )}
+                  <div className="space-y-3">
+                    {statBars.map(({ key, label, color }) => {
+                      const val = stats[key];
+                      const thresholds = STAT_THRESHOLDS[key];
+                      const activeThreshold = thresholds.filter(t => val >= t.at).pop();
+                      const nextThreshold = thresholds.find(t => val < t.at);
+                      return (
+                        <div key={key}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[11px] font-bold text-white/60">{label}</span>
+                            <div className="flex items-center gap-2">
+                              {activeThreshold && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ color: activeThreshold.color, background: `${activeThreshold.color}15` }}>
+                                  {activeThreshold.label}
+                                </span>
+                              )}
+                              <span className="text-[11px] font-black tabular-nums" style={{ color }}>{val}</span>
+                            </div>
+                          </div>
+                          <div className="relative h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${val}%`, background: `linear-gradient(90deg, ${color}80, ${color})` }} />
+                            {thresholds.map(t => (
+                              <div key={t.at} className="absolute top-0 h-full w-px" style={{ left: `${t.at}%`, background: val >= t.at ? `${t.color}60` : 'rgba(255,255,255,0.08)' }} />
+                            ))}
+                          </div>
+                          {nextThreshold && (
+                            <p className="text-[10px] text-white/40 mt-0.5">
+                              +{nextThreshold.at - val} to unlock: <span className="font-medium" style={{ color: nextThreshold.color }}>{nextThreshold.label}</span> — {nextThreshold.effect}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           );
         })()}
@@ -1615,7 +1403,7 @@ export default function StellarForge() {
                     border: `1px solid ${MODULE_TIER_COLORS[confirmModule.mod.tier]}25`,
                   }}>
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-lg">{confirmModule.mod.icon}</span>
+                      <img src={confirmModule.mod.image} alt={confirmModule.mod.name} className="w-7 h-7 object-contain" />
                       <span className="text-white font-bold text-sm">{confirmModule.mod.name}</span>
                     </div>
                     <p className="text-white/40 text-xs mb-2">{confirmModule.mod.description}</p>
@@ -1659,7 +1447,7 @@ export default function StellarForge() {
                             }}
                           >
                             <div className="flex items-center gap-2">
-                              <span className="text-lg">{mod.icon}</span>
+                              <img src={mod.image} alt={mod.name} className="w-7 h-7 object-contain" />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
                                   <span className="text-white text-xs font-bold">{mod.name}</span>

@@ -136,6 +136,25 @@ export async function fetchWalletPreview(address: string): Promise<WalletPreview
   } catch { return null; }
 }
 
+// ── Cached wallet preview (reads from sessionStorage synchronously) ──
+
+export function getCachedWalletPreview(address: string): WalletPreview | null {
+  try {
+    const raw = sessionStorage.getItem(`ip_composite_v2_${address}`);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    if (Date.now() - ts > 5 * 60 * 1000 || !data?.breakdown) return null;
+    return {
+      address, score: data.score ?? 0, tier: data.tier ?? 'mercury',
+      badges: [], solBalance: 0, txCount: 0, walletAgeDays: 0,
+      tokenCount: 0, nftCount: 0, trustGrade: null, trustScore: null,
+      riskLevel: null, topPrograms: [],
+      compositeScore: data.score ?? 0, compositeTier: data.tier ?? 'mercury',
+      compositeBadgeCount: 0, compositeBreakdown: data.breakdown,
+    };
+  } catch { return null; }
+}
+
 // ── Build compare rows ──
 
 export function buildCompareRows(a: WalletTraits, b: WalletTraits): CompareRow[] {

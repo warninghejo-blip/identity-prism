@@ -23,6 +23,7 @@ export interface LandingOverlayProps {
   onDesktopConnect?: () => void;
   desktopWalletReady?: boolean;
   scanningMessageIndex?: number;
+  jwtSigning?: boolean;
 }
 
 export default function LandingOverlay({
@@ -39,8 +40,13 @@ export default function LandingOverlay({
   onDesktopConnect,
   desktopWalletReady,
   scanningMessageIndex,
+  jwtSigning,
 }: LandingOverlayProps) {
   const startedScanning = useRef(isScanning);
+  useEffect(() => {
+    if (isScanning) startedScanning.current = true;
+    else startedScanning.current = false;
+  }, [isScanning]);
   const showScanning = isScanning || startedScanning.current;
   const msgIndexRef = useRef(0);
   const [localMsgIndex, setLocalMsgIndex] = useState(0);
@@ -155,8 +161,8 @@ export default function LandingOverlay({
             />
           ))}
         </div>
-        <span key={`vortex-msg-${activeMsgIdx}`} className="vortex-message">
-          {activeMessage}
+        <span key={jwtSigning ? 'jwt' : `vortex-msg-${activeMsgIdx}`} className="vortex-message">
+          {jwtSigning ? 'Verifying wallet ownership...' : activeMessage}
         </span>
       </div>
     </div>

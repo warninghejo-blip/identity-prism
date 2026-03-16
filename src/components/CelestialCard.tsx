@@ -1,9 +1,8 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, forwardRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
-import { Activity, Clock, Trophy, Wallet, Sparkles as SparklesIcon, Flame, Hourglass, RotateCw, RotateCcw, ChevronDown } from 'lucide-react';
+import { Sparkles as SparklesIcon, RotateCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Planet3D } from './Planet3D';
@@ -11,12 +10,9 @@ import { StarField } from './StarField';
 import type { WalletData, WalletTraits, PlanetTier } from '@/hooks/useWalletData';
 
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
-import { BLACKHOLE_ENABLED } from '@/constants';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
-import { createWormholeTunnel } from '@/lib/wormholeTunnel';
 import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
 import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
-import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
@@ -67,8 +63,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(false);
 
-  const [showDetails, setShowDetails] = useState(false);
-  const [showSybil, setShowSybil] = useState(false);
   const [sybilRisk, setSybilRisk] = useState<{
     riskScore: number; riskLevel: string; trustScore: number; trustGrade: string;
     signals?: { id: string; name: string; detected: boolean; weight: number; severity: string; category?: string; value?: string; description?: string }[];
@@ -89,7 +83,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : 'stats';
-  const navigate = useNavigate();
   const compositeData = useCompositeScore(address);
 
   // Fetch sybil risk and forge loadout
@@ -280,10 +273,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     cosmicRank: (traits?.cosmicRank) || fallbackTraits.cosmicRank,
     planetTier: (traits?.planetTier) || fallbackTraits.planetTier,
   };
-  const hasComposite = compositeData.score > 0;
-  const displayScore = hasComposite ? compositeData.score : (traits ? score : 0);
-  const maxDisplayScore = hasComposite ? 1000 : 1400;
-  const effectiveTier = (hasComposite ? compositeData.tier : safeTraits.planetTier) as PlanetTier;
+  const displayScore = compositeData.score;
+  const maxDisplayScore = 1000;
+  const effectiveTier = (compositeData.score > 0 ? compositeData.tier : safeTraits.planetTier) as PlanetTier;
   const shortAddress = address
     ? `${address.slice(0, 4)}...${address.slice(-4)}`
     : 'UNKNOWN';
@@ -312,7 +304,21 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const activeBadges = badgeItems.filter((badge) => badge.isActive);
   const inactiveBadges = badgeItems.filter((badge) => !badge.isActive);
   const orderedBadges = [...activeBadges, ...inactiveBadges];
-  const frontBadges = activeBadges.slice(0, 5);
+  const frontBadges: typeof activeBadges = (() => {
+    const result: typeof activeBadges = [];
+    const usedCats = new Set<string>();
+    for (const b of activeBadges) {
+      if (result.length >= 5) break;
+      if (usedCats.has(b.category)) continue;
+      usedCats.add(b.category);
+      result.push(b);
+    }
+    for (const b of activeBadges) {
+      if (result.length >= 5) break;
+      if (!result.includes(b)) result.push(b);
+    }
+    return result;
+  })();
 
   const funFact = useMemo(() => getRandomFunnyFact(safeTraits), [safeTraits]);
 
@@ -335,15 +341,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
           transition={{ type: 'tween', duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
           style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}
         >
-        {/* FRONT — gradient border wrapper for forge frames */}
+        {/* FRONT — single div with gradient border via background-clip technique */}
         <div
-          className={`absolute inset-0 w-full h-full rounded-[40px] ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
+          className={`celestial-card-face absolute inset-0 rounded-[40px] overflow-hidden backface-hidden flex flex-col ${isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
           style={{
             backfaceVisibility: 'hidden',
             zIndex: isFlipped ? 0 : 20,
-            padding: forgeFrame && FRAME_STYLES[forgeFrame] ? 4 : 0,
-            background: (forgeFrame && FRAME_STYLES[forgeFrame]?.gradient) || 'transparent',
-            borderRadius: 40,
+            border: forgeFrame && FRAME_STYLES[forgeFrame] ? '5px solid transparent' : '2px solid rgba(6,182,212,0.3)',
+            background: forgeFrame && FRAME_STYLES[forgeFrame]
+              ? `linear-gradient(#020408, #020408) padding-box, ${FRAME_STYLES[forgeFrame].gradient} border-box`
+              : '#020408',
             boxShadow: (() => {
               const fs = forgeFrame ? FRAME_STYLES[forgeFrame] : null;
               const base = fs?.boxShadow || '0 0 20px -4px rgba(6,182,212,0.15)';
@@ -353,15 +360,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             animation: (forgeFrame && FRAME_STYLES[forgeFrame]?.animation) || undefined,
           }}
         >
-        <div
-          className={`celestial-card-face w-full h-full rounded-[36px] overflow-hidden ${forgeFrame && FRAME_STYLES[forgeFrame] ? '' : 'border-2'} bg-[#020408] backface-hidden flex flex-col`}
-          style={{
-            backfaceVisibility: 'hidden',
-            borderColor: forgeFrame && FRAME_STYLES[forgeFrame] ? undefined : 'rgba(6,182,212,0.3)',
-          }}
-        >
           {/* Card background — separate suckable piece */}
-          <div data-suck="bg" className="absolute inset-0 rounded-[40px] bg-[#020408] border border-white/10 shadow-[0_0_50px_-10px_rgba(0,150,255,0.2)] pointer-events-none" />
+          <div data-suck="bg" className={`absolute inset-0 bg-[#020408] pointer-events-none ${forgeFrame && FRAME_STYLES[forgeFrame] ? 'rounded-[35px]' : 'rounded-[38px]'}`} />
 
           {/* Header */}
           <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
@@ -397,39 +397,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             >
               <RotateCw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:rotate-180 duration-500" />
             </button>
-            {forgeTitle && (
-              <span
-                className={`px-3 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider border ${
-                  forgeTitleRarity === 'legendary' ? 'bg-yellow-500/15 border-yellow-500/20' :
-                  forgeTitleRarity === 'epic' ? 'bg-purple-500/15 border-purple-500/20' :
-                  forgeTitleRarity === 'rare' ? 'bg-blue-500/15 border-blue-500/20' :
-                  'bg-gray-500/15 border-gray-500/20 text-gray-300'
-                }`}
-              >
-                <span
-                  style={
-                    forgeTitleRarity === 'legendary' ? {
-                      backgroundClip: 'text',
-                      WebkitBackgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      backgroundImage: 'linear-gradient(90deg, #fbbf24, #f59e0b, #fde68a, #f59e0b, #fbbf24)',
-                      backgroundSize: '200% 100%',
-                      animation: 'title-gold-shimmer 3s linear infinite',
-                    } : forgeTitleRarity === 'epic' ? {
-                      backgroundClip: 'text',
-                      WebkitBackgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      backgroundImage: 'linear-gradient(90deg, #a855f7, #c084fc, #a855f7)',
-                    } : forgeTitleRarity === 'rare' ? {
-                      backgroundClip: 'text',
-                      WebkitBackgroundClip: 'text',
-                      WebkitTextFillColor: 'transparent',
-                      backgroundImage: 'linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6)',
-                    } : undefined
-                  }
-                >{forgeTitle}</span>
-              </span>
-            )}
             <p className="text-cyan-200/50 text-[9px] font-bold tracking-[0.3em] uppercase">
               Tier Level
             </p>
@@ -444,93 +411,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             </h1>
           </div>
 
-          {!isCapture && (
-            <button
-              type="button"
-              className={`game-card-portal capture-hidden ${jumpingToGame ? 'is-jumping' : ''}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (jumpingToGame || suckingIn || consuming) return;
-                clearTransitionTimers();
-                setJumpingToGame(true);
-
-                const portal = shellRef.current?.querySelector('.game-card-portal') as HTMLElement | null;
-                if (portal) {
-                  portal.style.animation = 'wt-portal-grow 0.45s ease-out forwards';
-                  portal.style.zIndex = '100';
-                }
-
-                transitionTimersRef.current.push(window.setTimeout(() => {
-                  createWormholeTunnel('game');
-                }, 280));
-
-                const returnAddress = address ? { returnAddress: address } : {};
-                transitionTimersRef.current.push(window.setTimeout(() => {
-                  trackInternalNavigation();
-                  navigate('/game', { state: { fromAppJump: true, ...returnAddress } });
-                }, 2780));
-              }}
-            >
-              <span className="game-card-portal__glow" />
-              <svg className="game-card-portal__ship" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2C12 2 8 6 8 12C8 16 9.5 19 10 20L12 22L14 20C14.5 19 16 16 16 12C16 6 12 2 12 2Z" fill="url(#shipGrad)" stroke="rgba(6,182,212,0.6)" strokeWidth="0.5"/>
-                <path d="M8 12L4 15L8 14Z" fill="rgba(6,182,212,0.5)"/>
-                <path d="M16 12L20 15L16 14Z" fill="rgba(6,182,212,0.5)"/>
-                <circle cx="12" cy="9" r="1.8" fill="rgba(34,211,238,0.9)"/>
-                <circle cx="12" cy="9" r="1" fill="rgba(255,255,255,0.6)"/>
-                <path d="M10.5 18L12 21L13.5 18" fill="rgba(251,146,60,0.9)"/>
-                <path d="M11 18.5L12 20.5L13 18.5" fill="rgba(253,186,116,0.8)"/>
-                <defs>
-                  <linearGradient id="shipGrad" x1="12" y1="2" x2="12" y2="22" gradientUnits="userSpaceOnUse">
-                    <stop offset="0" stopColor="rgba(6,182,212,0.9)"/>
-                    <stop offset="0.5" stopColor="rgba(148,163,184,0.95)"/>
-                    <stop offset="1" stopColor="rgba(100,116,139,0.9)"/>
-                  </linearGradient>
-                </defs>
-              </svg>
-              <span className="game-card-portal__label">Prism League</span>
-            </button>
-          )}
-
-          {!isCapture && BLACKHOLE_ENABLED && (
-            <button
-              type="button"
-              className="bh-card-portal capture-hidden"
-              onClick={(event) => {
-                event.stopPropagation();
-                if (jumpingToGame || suckingIn || consuming) return;
-                clearTransitionTimers();
-                setSuckingIn(true);
-
-                // Phase 1: Portal grows
-                const portal = shellRef.current?.querySelector('.bh-card-portal') as HTMLElement | null;
-                if (portal) {
-                  portal.style.animation = 'wt-portal-grow 0.45s ease-out forwards';
-                  portal.style.zIndex = '100';
-                }
-
-                // Phase 2: Wormhole tunnel
-                transitionTimersRef.current.push(window.setTimeout(() => {
-                  createWormholeTunnel('blackhole');
-                }, 350));
-
-                // Phase 3: Navigate after shader completes (350 + 2500 = 2850ms)
-                const target = address ? `/blackhole?address=${encodeURIComponent(address)}` : '/blackhole';
-                transitionTimersRef.current.push(window.setTimeout(() => {
-                  trackInternalNavigation();
-                  navigate(target);
-                }, 2850));
-              }}
-            >
-              <span className="bh-card-portal__glow" />
-              <span className="bh-card-portal__disk" />
-              <span className="bh-card-portal__ring" />
-              <span className="bh-card-portal__core" />
-              <span className="bh-card-portal__flare bh-card-portal__flare--t" />
-              <span className="bh-card-portal__flare bh-card-portal__flare--b" />
-              <span className="bh-card-portal__label" data-suck="label">Black Hole</span>
-            </button>
-          )}
           {/* 3D Scene */}
           <div
             data-suck="scene"
@@ -596,6 +476,42 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
           {/* Footer Info */}
           <div data-suck="footer" className="relative z-20 mt-auto px-7 pb-4 flex flex-col">
+            {/* Title pill above badges */}
+            {forgeTitle && (
+              <div className="flex justify-center mb-2">
+                <span
+                  className={`px-3 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider border ${
+                    forgeTitleRarity === 'legendary' ? 'bg-yellow-500/15 border-yellow-500/20' :
+                    forgeTitleRarity === 'epic' ? 'bg-purple-500/15 border-purple-500/20' :
+                    forgeTitleRarity === 'rare' ? 'bg-blue-500/15 border-blue-500/20' :
+                    'bg-gray-500/15 border-gray-500/20 text-gray-300'
+                  }`}
+                >
+                  <span
+                    style={
+                      forgeTitleRarity === 'legendary' ? {
+                        backgroundClip: 'text',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundImage: 'linear-gradient(90deg, #fbbf24, #f59e0b, #fde68a, #f59e0b, #fbbf24)',
+                        backgroundSize: '200% 100%',
+                        animation: 'title-gold-shimmer 3s linear infinite',
+                      } : forgeTitleRarity === 'epic' ? {
+                        backgroundClip: 'text',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundImage: 'linear-gradient(90deg, #a855f7, #c084fc, #a855f7)',
+                      } : forgeTitleRarity === 'rare' ? {
+                        backgroundClip: 'text',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundImage: 'linear-gradient(90deg, #3b82f6, #60a5fa, #3b82f6)',
+                      } : undefined
+                    }
+                  >{forgeTitle}</span>
+                </span>
+              </div>
+            )}
             <div className="flex justify-center items-center border-t border-white/5 pt-4 pb-2 relative z-30">
                {/* Badges moved here */}
                {frontBadges.length > 0 ? (
@@ -619,12 +535,25 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             </div>
           </div>
         </div>
-        </div>
 
         {/* BACK */}
         <div
-          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] border border-white/10 bg-[#020408] shadow-2xl backface-hidden flex flex-col overflow-hidden ${!isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
-          style={{ transform: 'rotateY(180deg)', backfaceVisibility: 'hidden', pointerEvents: isFlipped ? 'auto' : 'none', zIndex: isFlipped ? 20 : 0 }}
+          className={`celestial-card-face absolute inset-0 w-full h-full rounded-[40px] bg-[#020408] backface-hidden flex flex-col overflow-hidden ${!isFlipped ? 'pointer-events-none' : 'pointer-events-auto'}`}
+          style={{
+            transform: 'rotateY(180deg)', backfaceVisibility: 'hidden',
+            pointerEvents: isFlipped ? 'auto' : 'none', zIndex: isFlipped ? 20 : 0,
+            border: forgeFrame && FRAME_STYLES[forgeFrame] ? '5px solid transparent' : '2px solid rgba(6,182,212,0.3)',
+            background: forgeFrame && FRAME_STYLES[forgeFrame]
+              ? `linear-gradient(#020408, #020408) padding-box, ${FRAME_STYLES[forgeFrame].gradient} border-box`
+              : '#020408',
+            boxShadow: (() => {
+              const fs = forgeFrame ? FRAME_STYLES[forgeFrame] : null;
+              const base = fs?.boxShadow || '0 0 20px -4px rgba(6,182,212,0.15)';
+              const aura = forgeAura ? AURA_GLOW_MAP[forgeAura] : null;
+              return aura ? `${base}, ${aura}` : base;
+            })(),
+            animation: (forgeFrame && FRAME_STYLES[forgeFrame]?.animation) || undefined,
+          }}
           onClick={(event) => event.stopPropagation()}
         >
           <div className="relative z-10 flex flex-col h-full" style={{ transformStyle: 'flat', transform: 'translateZ(0)', willChange: 'auto' }}>
@@ -665,7 +594,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     {displayScore}
                   </span>
                 </div>
-                <span className="text-white/20 text-[8px] uppercase tracking-[0.3em]">{hasComposite ? 'Composite Score' : 'Identity Score'}</span>
+                <span className="text-white/20 text-[8px] uppercase tracking-[0.3em]">Composite Score</span>
                 {nextTierLabel && ptsToNext > 0 && (
                   <span className="text-white/15 text-[8px] mt-0.5">
                     <span className="text-white/25">{ptsToNext}</span> pts to {nextTierLabel}
@@ -689,9 +618,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               </div>
             <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
               <div className="px-6 pt-4">
-                <TabsList className="w-full grid grid-cols-2 bg-white/5 border border-white/5 pointer-events-auto">
-                  <TabsTrigger value="stats" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 cursor-pointer pointer-events-auto">STATS</TabsTrigger>
-                  <TabsTrigger value="badges" className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-200 cursor-pointer pointer-events-auto">BADGES</TabsTrigger>
+                <TabsList className="w-full grid grid-cols-2 bg-white/5 border border-white/5 rounded-lg p-0.5 pointer-events-auto">
+                  <TabsTrigger value="stats" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto">STATS</TabsTrigger>
+                  <TabsTrigger value="badges" className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto">BADGES</TabsTrigger>
                 </TabsList>
               </div>
 
@@ -707,189 +636,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   <CompositeScoreBreakdown breakdown={compositeData.breakdown} details={compositeData.details} compact={false} />
                 </div>
 
-                {/* On-chain Details — collapsible */}
-                <div className="mb-4">
-                  <button onClick={() => setShowDetails(v => !v)} className="w-full flex items-center justify-between py-2 px-1 group/details">
-                    <span className="text-[10px] text-white/30 uppercase tracking-wider font-bold">On-chain Details</span>
-                    <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform duration-300 ${showDetails ? 'rotate-180' : ''}`} />
-                  </button>
-                  {showDetails && (
-                    <div className="grid grid-cols-2 gap-2 mt-2 animate-in fade-in slide-in-from-top-2 duration-300">
-                      <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="SOL Balance" value={`${safeTraits.solBalance.toFixed(2)}`} captureKey="sol" bar={Math.min(safeTraits.solBalance / 100, 1)} />
-                      <StatItem icon={<Clock className="w-3.5 h-3.5" />} label="Wallet Age" value={`${safeTraits.walletAgeDays}d`} captureKey="age" bar={Math.min(safeTraits.walletAgeDays / 1500, 1)} />
-                      <StatItem icon={<Activity className="w-3.5 h-3.5" />} label="Transactions" value={safeTraits.txCount > 999 ? `${(safeTraits.txCount / 1000).toFixed(1)}k` : safeTraits.txCount.toString()} captureKey="tx" bar={Math.min(safeTraits.txCount / 10000, 1)} />
-                      <StatItem icon={<Trophy className="w-3.5 h-3.5" />} label="NFTs" value={safeTraits.nftCount.toString()} captureKey="nfts" bar={Math.min(safeTraits.nftCount / 100, 1)} />
-                      <StatItem icon={<Flame className="w-3.5 h-3.5" />} label="Daily Activity" value={`${(safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)).toFixed(1)} tx/d`} captureKey="activity" bar={Math.min((safeTraits.txCount / Math.max(safeTraits.walletAgeDays, 1)) / 10, 1)} />
-                      <StatItem icon={<Hourglass className="w-3.5 h-3.5" />} label="Dormancy" value={safeTraits.daysSinceLastTx ? `${safeTraits.daysSinceLastTx}d ago` : 'Active'} captureKey="dormancy" bar={safeTraits.daysSinceLastTx ? Math.max(0, 1 - safeTraits.daysSinceLastTx / 365) : 1} />
-                      <StatItem icon={<Wallet className="w-3.5 h-3.5" />} label="Total Value" value={`$${safeTraits.totalValueUSD < 1000 ? safeTraits.totalValueUSD.toFixed(0) : (safeTraits.totalValueUSD / 1000).toFixed(1) + 'k'}`} captureKey="value" bar={Math.min(safeTraits.totalValueUSD / 10000, 1)} />
-                      <StatItem icon={<SparklesIcon className="w-3.5 h-3.5" />} label="Cosmic Rank" value={`${{'stardust':'✨','meteor':'☄️','comet':'💫','nebula':'🌌','supernova':'💥','quasar':'🔮'}[safeTraits.cosmicRank] || '✨'} ${safeTraits.cosmicRank.charAt(0).toUpperCase() + safeTraits.cosmicRank.slice(1)}`} captureKey="rank" bar={(['stardust','meteor','comet','nebula','supernova','quasar'].indexOf(safeTraits.cosmicRank) + 1) / 6} />
-                    </div>
-                  )}
-                </div>
 
 
 
-                {/* Sybil Analysis Section — Collapsible */}
-                {sybilRisk && (() => {
-                  const ts = sybilRisk.trustScore;
-                  const grade = sybilRisk.trustGrade;
-                  const riskColor = sybilRisk.riskScore >= 75 ? '#ef4444' : sybilRisk.riskScore >= 50 ? '#f97316' : sybilRisk.riskScore >= 30 ? '#eab308' : sybilRisk.riskScore >= 10 ? '#3b82f6' : '#22c55e';
-                  const trustColor = ts >= 80 ? '#22c55e' : ts >= 60 ? '#3b82f6' : ts >= 40 ? '#eab308' : ts >= 20 ? '#f97316' : '#ef4444';
-                  const gradeGlow = ts >= 80 ? 'rgba(34,197,94,0.3)' : ts >= 60 ? 'rgba(59,130,246,0.3)' : ts >= 40 ? 'rgba(234,179,8,0.3)' : 'rgba(239,68,68,0.3)';
-
-                  const allSignals = sybilRisk.signals || [];
-                  const behavioral = allSignals.filter(s => s.category === 'behavioral');
-                  const financial = allSignals.filter(s => s.category === 'financial');
-                  const network = allSignals.filter(s => s.category === 'network');
-                  // Fallback: if no categories (old API), show all as behavioral
-                  const hasCategories = behavioral.length > 0 || financial.length > 0 || network.length > 0;
-
-                  const categoryIcon = (cat: string) => {
-                    if (cat === 'behavioral') return (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                    );
-                    if (cat === 'financial') return (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                    );
-                    return (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-                    );
-                  };
-
-                  const signalRow = (sig: typeof allSignals[0]) => (
-                    <div key={sig.id} className="flex items-center gap-2 py-1">
-                      <div className="flex items-center justify-center w-4 h-4 flex-shrink-0">
-                        {sig.detected ? (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={sig.severity === 'danger' ? '#ef4444' : sig.severity === 'warning' ? '#f97316' : '#eab308'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
-                          </svg>
-                        ) : (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
-                          </svg>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[9px] text-white/60 truncate font-medium">{sig.name}</span>
-                          {sig.value && <span className="text-[8px] font-mono text-white/30 flex-shrink-0">{sig.value}</span>}
-                        </div>
-                        {sig.description && sig.detected && (
-                          <span className="text-[7.5px] text-white/25 block truncate">{sig.description}</span>
-                        )}
-                      </div>
-                      {sig.detected && (
-                        <span className="text-[8px] font-mono font-bold flex-shrink-0" style={{ color: sig.severity === 'danger' ? '#ef4444' : sig.severity === 'warning' ? '#f97316' : '#eab308' }}>+{sig.weight}</span>
-                      )}
-                    </div>
-                  );
-
-                  const categoryBlock = (title: string, icon: React.ReactNode, sigs: typeof allSignals, catColor: string) => {
-                    if (sigs.length === 0) return null;
-                    const detected = sigs.filter(s => s.detected).length;
-                    const passed = sigs.length - detected;
-                    return (
-                      <div className="mb-2">
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <div className="flex-shrink-0" style={{ color: catColor }}>{icon}</div>
-                          <span className="text-[8px] uppercase tracking-[0.12em] font-bold" style={{ color: `${catColor}99` }}>{title}</span>
-                          <div className="flex-1 h-px bg-white/[0.04]" />
-                          <span className="text-[7.5px] text-white/20 font-mono">{passed}/{sigs.length}</span>
-                        </div>
-                        <div className="pl-1">
-                          {sigs.map(signalRow)}
-                        </div>
-                      </div>
-                    );
-                  };
-
-                  return (
-                    <div className="mb-4">
-                      <button onClick={() => setShowSybil(v => !v)} className="w-full flex items-center justify-between py-2 px-1 group/sybil">
-                        <span className="text-[10px] text-white/30 uppercase tracking-wider font-bold flex items-center gap-1.5">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={trustColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-80">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                          </svg>
-                          Sybil Analysis
-                          <span
-                            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
-                            style={{ background: `${riskColor}20`, color: riskColor, border: `1px solid ${riskColor}30` }}
-                          >
-                            {grade} · {ts}/100
-                          </span>
-                        </span>
-                        <ChevronDown className={`w-3.5 h-3.5 text-white/20 transition-transform duration-300 ${showSybil ? 'rotate-180' : ''}`} />
-                      </button>
-                      {showSybil && (
-                    <div className="rounded-2xl border border-white/[0.06] bg-gradient-to-br from-white/[0.02] via-transparent to-white/[0.01] p-3.5 relative overflow-hidden mt-2 animate-in fade-in slide-in-from-top-2 duration-300">
-                      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.02),transparent_70%)]" />
-                      <div className="relative z-10">
-                        {/* Trust Score — big grade with arc */}
-                        <div className="flex items-center gap-4 mb-3">
-                          <div className="relative flex-shrink-0">
-                            <svg width="52" height="52" viewBox="0 0 52 52">
-                              <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
-                              <circle
-                                cx="26" cy="26" r="22" fill="none"
-                                stroke={trustColor}
-                                strokeWidth="3"
-                                strokeLinecap="round"
-                                strokeDasharray={`${(ts / 100) * 138.23} 138.23`}
-                                transform="rotate(-90 26 26)"
-                                style={{ filter: `drop-shadow(0 0 4px ${gradeGlow})` }}
-                              />
-                            </svg>
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <span className="text-base font-black font-mono" style={{ color: trustColor }}>{grade}</span>
-                            </div>
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-baseline gap-1.5 mb-1">
-                              <span className="text-lg font-bold font-mono" style={{ color: trustColor }}>{ts}</span>
-                              <span className="text-[9px] text-white/20 font-mono">/100</span>
-                            </div>
-                            <span className="text-[8px] text-white/25 uppercase tracking-wider">Trust Score</span>
-                            <div className="mt-1 h-1 rounded-full bg-white/[0.06] overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all duration-700"
-                                style={{
-                                  width: `${Math.max(ts, 2)}%`,
-                                  background: `linear-gradient(90deg, ${trustColor}60, ${trustColor})`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Signal Categories */}
-                        {hasCategories ? (
-                          <>
-                            {categoryBlock('Behavioral', categoryIcon('behavioral'), behavioral, '#818cf8')}
-                            {categoryBlock('Financial', categoryIcon('financial'), financial, '#34d399')}
-                            {categoryBlock('Network', categoryIcon('network'), network, '#f472b6')}
-                          </>
-                        ) : (
-                          /* Fallback for old API format — show all signals flat */
-                          <div className="mb-2">
-                            {allSignals.map(signalRow)}
-                          </div>
-                        )}
-
-                        {/* Summary footer */}
-                        <div className="mt-2 pt-2 border-t border-white/[0.04] flex items-center justify-between">
-                          <span className="text-[8px] text-white/20 font-mono">
-                            {allSignals.filter(s => s.detected).length} / {allSignals.length} signals flagged
-                          </span>
-                          <span className="text-[8px] text-white/15 font-mono">
-                            Risk: {sybilRisk.riskScore}/100
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                      )}
-                    </div>
-                  );
-                })()}
 
                 <div className="bg-gradient-to-br from-cyan-900/10 to-blue-900/10 border border-cyan-500/15 rounded-2xl p-4 relative overflow-hidden text-center">
                   <div className="absolute top-0 right-0 p-2 opacity-10">
@@ -922,31 +671,32 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       catData.sort((a, b) => (b.activeCount > 0 ? 1 : 0) - (a.activeCount > 0 ? 1 : 0));
                       return catData;
                     })().map(({ cat, badges: catBadges, activeCount }) => {
-                      const catMeta: Record<BadgeCategory, { icon: string; label: string }> = {
-                        onchain: { icon: '\u26D3\uFE0F', label: 'ON-CHAIN' },
-                        sybilTrust: { icon: '\uD83D\uDEE1\uFE0F', label: 'SYBIL TRUST' },
-                        humanProof: { icon: '\uD83C\uDFAE', label: 'HUMAN PROOF' },
-                        identityPrism: { icon: '\u25C8', label: 'IDENTITY PRISM' },
-                        social: { icon: '\uD83E\uDD1D', label: 'SOCIAL' },
-                        engagement: { icon: '\u26A1', label: 'ENGAGEMENT' },
+                      const catMeta: Record<BadgeCategory, { icon: string; label: string; color: string }> = {
+                        onchain: { icon: '\u26D3\uFE0F', label: 'ON-CHAIN', color: '#d4a04a' },
+                        sybilTrust: { icon: '\uD83D\uDEE1\uFE0F', label: 'SYBIL TRUST', color: '#4ac8e8' },
+                        humanProof: { icon: '\uD83C\uDFAE', label: 'HUMAN PROOF', color: '#a855f7' },
+                        identityPrism: { icon: '\u25C8', label: 'IDENTITY PRISM', color: '#34d399' },
+                        social: { icon: '\uD83E\uDD1D', label: 'SOCIAL', color: '#ef4444' },
+                        engagement: { icon: '\u26A1', label: 'ENGAGEMENT', color: '#94a3b8' },
                       };
                       const meta = catMeta[cat];
                       return (
                         <div key={cat}>
                           <div className="flex items-center justify-between mb-2 px-1">
-                            <span className="text-[10px] text-white/40 uppercase tracking-wider font-bold flex items-center gap-1.5">
+                            <span className="text-[10px] uppercase tracking-wider font-bold flex items-center gap-1.5" style={{ color: `${meta.color}cc` }}>
                               <span>{meta.icon}</span>
                               <span>{meta.label}</span>
                             </span>
-                            <span className="text-[10px] text-white/25 font-mono">{activeCount}/{catBadges.length}</span>
+                            <span className="text-[10px] font-mono" style={{ color: `${meta.color}66` }}>{activeCount}/{catBadges.length}</span>
                           </div>
                           <div className="space-y-2">
                             {[...catBadges].sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0)).map((badge) => (
                               <div
                                 key={badge.key}
-                                className={`flex items-center gap-3 p-3 rounded-xl border border-white/5 transition-all ${badge.isActive ? 'bg-white/5 hover:border-white/10' : 'bg-white/2 opacity-50'}`}
+                                className={`flex items-center gap-3.5 p-3 rounded-xl border transition-all ${badge.isActive ? 'bg-white/5' : 'bg-white/2 opacity-40'}`}
+                                style={{ borderColor: badge.isActive ? `${meta.color}30` : 'rgba(255,255,255,0.05)' }}
                               >
-                                <div className="capture-badge-content flex items-center gap-3 w-full">
+                                <div className="capture-badge-content flex items-center gap-3.5 w-full">
                                   <BadgeIcon badge={badge} size="md" dataBadgeIcon />
                                   <div className="flex-1 min-w-0 text-center">
                                     <p
@@ -957,7 +707,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                                     </p>
                                     <p
                                       data-badge-desc
-                                      className={`text-xs leading-snug mt-0.5 ${badge.isActive ? 'text-white/50' : 'text-white/30'}`}
+                                      className={`text-[11px] leading-snug mt-1 italic ${badge.isActive ? 'text-white/45' : 'text-white/25'}`}
                                     >
                                       {badge.description}
                                     </p>
@@ -982,61 +732,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   );
 });
 
-let _statIdx = 0;
-function StatItem({
-  icon,
-  label,
-  value,
-  captureKey,
-  bar = 0,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  captureKey?: string;
-  bar?: number;
-}) {
-  const pct = Math.round(Math.max(0, Math.min(1, bar)) * 100);
-  const idx = useMemo(() => _statIdx++ % 20, []);
-  const [animPct, setAnimPct] = useState(0);
-  useEffect(() => {
-    const timer = setTimeout(() => setAnimPct(pct), 80 + idx * 60);
-    return () => clearTimeout(timer);
-  }, [pct, idx]);
-  return (
-    <div className="relative overflow-hidden rounded-xl border p-2.5 transition-colors bg-cyan-500/[0.04] border-cyan-500/10 hover:bg-cyan-500/[0.08]">
-      <div className="flex items-center justify-center gap-2 mb-1.5">
-        <div className="shrink-0 flex items-center justify-center w-6 h-6 rounded-md bg-cyan-500/10 text-cyan-400">{icon}</div>
-        <span className="text-[9px] text-cyan-300/40 uppercase tracking-wider leading-none truncate">{label}</span>
-      </div>
-      <span
-        data-stat-key={captureKey}
-        className="capture-value text-sm font-bold font-mono leading-none block text-cyan-200 text-center"
-      >
-        {value}
-      </span>
-      <div className="mt-1.5 h-[3px] w-full rounded-full bg-white/[0.06] overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-700 ease-out"
-          style={{
-            width: `${animPct}%`,
-            background: animPct < 25 ? 'linear-gradient(90deg, rgba(239,68,68,0.7), rgba(239,68,68,0.4))'
-              : animPct < 50 ? 'linear-gradient(90deg, rgba(245,158,11,0.7), rgba(245,158,11,0.4))'
-              : animPct < 75 ? 'linear-gradient(90deg, rgba(34,197,94,0.7), rgba(34,197,94,0.4))'
-              : 'linear-gradient(90deg, rgba(34,211,238,0.7), rgba(34,211,238,0.4))',
-          }}
-        />
-      </div>
-    </div>
-  );
-}
 
 type BadgeKey =
-  | 'veteran' | 'whale' | 'defi_architect'
-  | 'verified_human' | 'clean_record'
+  | 'early_bird' | 'veteran' | 'whale' | 'nft_collector' | 'defi_architect'
+  | 'verified_human' | 'clean_record' | 'trust_pillar'
   | 'game_master' | 'achievement_hunter' | 'high_scorer'
   | 'seeker' | 'visionary' | 'binary'
-  | 'arena_champion' | 'star_navigator'
+  | 'arena_champion' | 'star_navigator' | 'debate_king'
   | 'quest_hunter' | 'streak_lord' | 'explorer';
 
 type BadgeCategory = 'onchain' | 'sybilTrust' | 'humanProof' | 'identityPrism' | 'social' | 'engagement';
@@ -1051,22 +753,26 @@ type BadgeItem = {
 };
 
 const BADGE_TEXTURES: Record<BadgeKey, string> = {
-  veteran: '/badges/og_member.png',
+  early_bird: '/badges/early_bird.png',
+  veteran: '/badges/veteran.png',
   whale: '/badges/whale.png',
-  defi_architect: '/badges/defi_king.png',
-  verified_human: '/badges/blue_chip.png',
-  clean_record: '/badges/diamond_hands.png',
-  game_master: '/badges/tx_titan.png',
-  achievement_hunter: '/badges/collector.png',
-  high_scorer: '/badges/solana_maxi.png',
-  seeker: '/badges/seeker_of_truth.png',
+  nft_collector: '/badges/nft_collector.png',
+  defi_architect: '/badges/defi_architect.png',
+  verified_human: '/badges/verified_human.png',
+  clean_record: '/badges/clean_record.png',
+  trust_pillar: '/badges/trust_pillar.png',
+  game_master: '/badges/game_master.png',
+  achievement_hunter: '/badges/achievement_hunter.png',
+  high_scorer: '/badges/high_scorer.png',
+  seeker: '/badges/seeker.png',
   visionary: '/badges/visionary.png',
-  binary: '/badges/binary_sun.png',
-  arena_champion: '/badges/meme_lord.png',
-  star_navigator: '/badges/early_adopter.png',
-  quest_hunter: '/badges/early_adopter.png',
-  streak_lord: '/badges/diamond_hands.png',
-  explorer: '/badges/collector.png',
+  binary: '/badges/binary.png',
+  arena_champion: '/badges/arena_champion.png',
+  star_navigator: '/badges/star_navigator.png',
+  debate_king: '/badges/debate_king.png',
+  quest_hunter: '/badges/quest_hunter.png',
+  streak_lord: '/badges/streak_lord.png',
+  explorer: '/badges/explorer.png',
 };
 
 // Preload badge images so they render instantly
@@ -1082,29 +788,34 @@ function getBadgeItems(
   sybilRisk: { trustScore: number; riskScore: number } | null,
   details: ScoreDetails | null,
 ): BadgeItem[] {
+  const defiProtoCount = Array.isArray(traits.defiProtocols) ? traits.defiProtocols.length : 0;
   return [
-    // ON-CHAIN — wallet age, balance, DeFi usage
-    { key: 'veteran', label: 'Veteran', isActive: traits.walletAgeDays >= 730 && traits.txCount > 1000, texture: BADGE_TEXTURES.veteran, description: 'Battle-tested wallet with 2+ years and 1000+ transactions.', category: 'onchain' },
-    { key: 'whale', label: 'Whale', isActive: traits.solBalance >= 50, texture: BADGE_TEXTURES.whale, description: 'Commands massive gravitational pull of 50+ SOL.', category: 'onchain' },
-    { key: 'defi_architect', label: 'DeFi Architect', isActive: traits.isDeFiKing && traits.solBalance >= 5 && traits.txCount > 500, texture: BADGE_TEXTURES.defi_architect, description: 'Master of DeFi with 5+ SOL and 500+ transactions.', category: 'onchain' },
-    // SYBIL TRUST — wallet authenticity
-    { key: 'verified_human', label: 'Verified Human', isActive: (sybilRisk?.trustScore ?? 0) >= 80, texture: BADGE_TEXTURES.verified_human, description: 'Trust score 80+. Wallet verified as authentic.', category: 'sybilTrust' },
-    { key: 'clean_record', label: 'Clean Record', isActive: sybilRisk != null && sybilRisk.riskScore < 10, texture: BADGE_TEXTURES.clean_record, description: 'Risk score under 10. Pristine on-chain record.', category: 'sybilTrust' },
-    // HUMAN PROOF — games and achievements
-    { key: 'game_master', label: 'Game Master', isActive: (details?.humanProof.gameTypesCount ?? 0) >= 3, texture: BADGE_TEXTURES.game_master, description: 'Played 3+ different game types.', category: 'humanProof' },
-    { key: 'achievement_hunter', label: 'Achievement Hunter', isActive: (details?.humanProof.achievementCount ?? 0) >= 10, texture: BADGE_TEXTURES.achievement_hunter, description: 'Unlocked 10+ cosmic achievements.', category: 'humanProof' },
-    { key: 'high_scorer', label: 'High Scorer', isActive: (details?.humanProof.gameScoreTotal ?? 0) >= 40, texture: BADGE_TEXTURES.high_scorer, description: 'Reached legendary scores across all games.', category: 'humanProof' },
-    // IDENTITY PRISM — project-specific
-    { key: 'seeker', label: 'Seeker of Truth', isActive: traits.hasSeeker, texture: BADGE_TEXTURES.seeker, description: 'Possesses the ancient Seeker device.', category: 'identityPrism' },
-    { key: 'visionary', label: 'Visionary', isActive: traits.hasPreorder, texture: BADGE_TEXTURES.visionary, description: 'Foresaw the future of the ecosystem.', category: 'identityPrism' },
-    { key: 'binary', label: 'Binary Sun', isActive: traits.hasCombo, texture: BADGE_TEXTURES.binary, description: 'A rare celestial phenomenon. Dual power.', category: 'identityPrism' },
-    // SOCIAL — P2P and community
-    { key: 'arena_champion', label: 'Arena Champion', isActive: (details?.social.challengesWon ?? 0) >= 5, texture: BADGE_TEXTURES.arena_champion, description: 'Won 5+ P2P challenges.', category: 'social' },
-    { key: 'star_navigator', label: 'Star Navigator', isActive: (details?.social.constellationExplored ?? 0) >= 10, texture: BADGE_TEXTURES.star_navigator, description: 'Explored 10+ wallet constellations.', category: 'social' },
-    // ENGAGEMENT — app activity
-    { key: 'quest_hunter', label: 'Quest Hunter', isActive: (details?.engagement.questsCompleted ?? 0) >= 10, texture: BADGE_TEXTURES.quest_hunter, description: 'Completed 10+ quests.', category: 'engagement' },
-    { key: 'streak_lord', label: 'Streak Lord', isActive: (details?.engagement.streakDays ?? 0) >= 7, texture: BADGE_TEXTURES.streak_lord, description: '7+ day activity streak.', category: 'engagement' },
-    { key: 'explorer', label: 'Explorer', isActive: (details?.engagement.scanCount ?? 0) >= 20 && (details?.social.compareCount ?? 0) >= 5 && (details?.social.constellationExplored ?? 0) >= 3, texture: BADGE_TEXTURES.explorer, description: 'Used every tool: 20+ scans, 5+ compares, 3+ constellations.', category: 'engagement' },
+    // ON-CHAIN (5)
+    { key: 'early_bird', label: 'Early Bird', isActive: traits.walletAgeDays >= 365, texture: BADGE_TEXTURES.early_bird, description: 'The first orbit around the sun leaves its mark.', category: 'onchain' },
+    { key: 'veteran', label: 'Veteran', isActive: traits.walletAgeDays >= 730 && traits.txCount > 1000, texture: BADGE_TEXTURES.veteran, description: 'Scars of a thousand battles etched into the ledger.', category: 'onchain' },
+    { key: 'whale', label: 'Whale', isActive: traits.solBalance >= 50, texture: BADGE_TEXTURES.whale, description: 'Where this one swims, the tides obey.', category: 'onchain' },
+    { key: 'nft_collector', label: 'NFT Collector', isActive: traits.nftCount >= 10, texture: BADGE_TEXTURES.nft_collector, description: 'A gallery of digital relics, each with a story.', category: 'onchain' },
+    { key: 'defi_architect', label: 'DeFi Architect', isActive: defiProtoCount >= 3, texture: BADGE_TEXTURES.defi_architect, description: 'Weaves liquidity across multiple dimensions.', category: 'onchain' },
+    // SYBIL TRUST (3)
+    { key: 'verified_human', label: 'Verified Human', isActive: (sybilRisk?.trustScore ?? 0) >= 80, texture: BADGE_TEXTURES.verified_human, description: 'Not a ghost, not a shadow. Pulse confirmed.', category: 'sybilTrust' },
+    { key: 'clean_record', label: 'Clean Record', isActive: sybilRisk != null && sybilRisk.riskScore < 10, texture: BADGE_TEXTURES.clean_record, description: 'A crystal without a single fracture.', category: 'sybilTrust' },
+    { key: 'trust_pillar', label: 'Trust Pillar', isActive: (sybilRisk?.trustScore ?? 0) >= 95, texture: BADGE_TEXTURES.trust_pillar, description: 'The chain itself vouches for this one.', category: 'sybilTrust' },
+    // HUMAN PROOF (3)
+    { key: 'game_master', label: 'Game Master', isActive: (details?.humanProof.gameTypesCount ?? 0) >= 3, texture: BADGE_TEXTURES.game_master, description: 'No arena unfamiliar, no game unplayed.', category: 'humanProof' },
+    { key: 'achievement_hunter', label: 'Achievement Hunter', isActive: (details?.humanProof.achievementCount ?? 0) >= 10, texture: BADGE_TEXTURES.achievement_hunter, description: 'Collects victories like others collect dust.', category: 'humanProof' },
+    { key: 'high_scorer', label: 'High Scorer', isActive: (details?.humanProof.gameScoreTotal ?? 0) >= 40, texture: BADGE_TEXTURES.high_scorer, description: 'The scoreboard bends under the weight of their name.', category: 'humanProof' },
+    // IDENTITY PRISM (3)
+    { key: 'seeker', label: 'Seeker of Truth', isActive: traits.hasSeeker, texture: BADGE_TEXTURES.seeker, description: 'Carries the ancient lens that reveals what others hide.', category: 'identityPrism' },
+    { key: 'visionary', label: 'Visionary', isActive: traits.hasPreorder, texture: BADGE_TEXTURES.visionary, description: 'Saw the constellation before it was drawn.', category: 'identityPrism' },
+    { key: 'binary', label: 'Binary Sun', isActive: traits.hasCombo, texture: BADGE_TEXTURES.binary, description: 'Two stars in perfect orbit. A rare celestial anomaly.', category: 'identityPrism' },
+    // SOCIAL (3)
+    { key: 'arena_champion', label: 'Arena Champion', isActive: (details?.social.challengesWon ?? 0) >= 5, texture: BADGE_TEXTURES.arena_champion, description: 'The crowd already knows who wins.', category: 'social' },
+    { key: 'star_navigator', label: 'Star Navigator', isActive: (details?.social.constellationExplored ?? 0) >= 10, texture: BADGE_TEXTURES.star_navigator, description: 'Maps the invisible threads between wallets.', category: 'social' },
+    { key: 'debate_king', label: 'Debate King', isActive: (details?.social.compareCount ?? 0) >= 10, texture: BADGE_TEXTURES.debate_king, description: 'Weighs identities on scales of pure data.', category: 'social' },
+    // ENGAGEMENT (3)
+    { key: 'quest_hunter', label: 'Quest Hunter', isActive: (details?.engagement.questsCompleted ?? 0) >= 10, texture: BADGE_TEXTURES.quest_hunter, description: 'Every quest a chapter, every reward a verse.', category: 'engagement' },
+    { key: 'streak_lord', label: 'Streak Lord', isActive: (details?.engagement.streakDays ?? 0) >= 7, texture: BADGE_TEXTURES.streak_lord, description: 'Discipline forged into an unbroken chain of fire.', category: 'engagement' },
+    { key: 'explorer', label: 'Explorer', isActive: (details?.engagement.scanCount ?? 0) >= 20, texture: BADGE_TEXTURES.explorer, description: 'Turns every unknown address into a known story.', category: 'engagement' },
   ];
 }
 

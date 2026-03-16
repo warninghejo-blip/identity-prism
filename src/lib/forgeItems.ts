@@ -18,6 +18,7 @@ export interface Micromodule {
   statBonus: { stat: 'speed' | 'shield' | 'firepower' | 'luck'; value: number };
   tradeoff?: { stat: 'speed' | 'shield' | 'firepower' | 'luck'; value: number };
   icon: string;
+  image: string;
   compatibleCategories: ForgeCategory[];
 }
 
@@ -87,12 +88,12 @@ export const FORGE_SHIP_SKINS: ForgeItem[] = [
 ];
 
 export const FORGE_TITLES: ForgeItem[] = [
-  { id: 'title_explorer', name: 'Explorer', category: 'title', price: 300, rarity: 'common', description: 'Title: "Explorer"', preview: 'Explorer' },
-  { id: 'title_guardian', name: 'Cosmic Guardian', category: 'title', price: 1000, rarity: 'rare', description: 'Title: "Cosmic Guardian"', preview: 'Cosmic Guardian' },
-  { id: 'title_destroyer', name: 'Destroyer of Dust', category: 'title', price: 1600, rarity: 'rare', description: 'Title: "Destroyer of Dust"', preview: 'Destroyer of Dust', unlockCondition: 'Burn 50 tokens' },
-  { id: 'title_architect', name: 'Stellar Architect', category: 'title', price: 2400, rarity: 'epic', description: 'Title: "Stellar Architect"', preview: 'Stellar Architect' },
-  { id: 'title_sovereign', name: 'Prism Sovereign', category: 'title', price: 4000, rarity: 'epic', description: 'Title: "Prism Sovereign"', preview: 'Prism Sovereign', unlockCondition: 'Own 5+ Forge items' },
-  { id: 'title_ascended', name: 'The Ascended', category: 'title', price: 12000, rarity: 'legendary', description: 'Title: "The Ascended"', preview: 'The Ascended', unlockCondition: 'Score 1000+ identity points' },
+  { id: 'title_explorer', name: 'Void Wanderer', category: 'title', price: 300, rarity: 'common', description: 'Drifting through the cosmic unknown', preview: 'Void Wanderer' },
+  { id: 'title_guardian', name: 'Celestial Warden', category: 'title', price: 1000, rarity: 'rare', description: 'Sworn protector of the stellar realm', preview: 'Celestial Warden' },
+  { id: 'title_destroyer', name: 'Annihilator of Worlds', category: 'title', price: 1600, rarity: 'rare', description: 'Leaves nothing but stardust in their wake', preview: 'Annihilator of Worlds', unlockCondition: 'Burn 50 tokens' },
+  { id: 'title_architect', name: 'Architect of Galaxies', category: 'title', price: 2400, rarity: 'epic', description: 'Reshaping the cosmos with every command', preview: 'Architect of Galaxies' },
+  { id: 'title_sovereign', name: 'Sovereign of the Nebula', category: 'title', price: 4000, rarity: 'epic', description: 'Ruling over infinite stellar domains', preview: 'Sovereign of the Nebula', unlockCondition: 'Own 5+ Forge items' },
+  { id: 'title_ascended', name: 'Omega Transcendent', category: 'title', price: 12000, rarity: 'legendary', description: 'Beyond mortal comprehension, one with the void', preview: 'Omega Transcendent', unlockCondition: 'Score 1000+ identity points' },
 ];
 
 export const ALL_FORGE_ITEMS: ForgeItem[] = [
@@ -276,21 +277,21 @@ export function unequipItem(loadout: ForgeLoadout, category: ForgeCategory): For
 
 export const MICROMODULE_DEFS: Micromodule[] = [
   // Speed modules
-  { id: 'mod_speed_1', name: 'Thruster Boost',  description: 'Basic engine enhancement',           tier: 'blue',   price: 4000,  statBonus: { stat: 'speed', value: 5 },     icon: '🔥', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
-  { id: 'mod_speed_2', name: 'Warp Coils',      description: 'Advanced warp drive components',      tier: 'yellow', price: 16000, statBonus: { stat: 'speed', value: 12 },    tradeoff: { stat: 'shield', value: 3 },    icon: '⚡', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
-  { id: 'mod_speed_3', name: 'Quantum Engine',   description: 'Experimental quantum propulsion',     tier: 'red',    price: 60000, statBonus: { stat: 'speed', value: 25 },    tradeoff: { stat: 'shield', value: 8 },    icon: '🌀', compatibleCategories: ['frame', 'ship_skin'] },
+  { id: 'mod_speed_1', name: 'Thruster Boost',  description: 'Basic engine enhancement',           tier: 'blue',   price: 4000,  statBonus: { stat: 'speed', value: 5 },     icon: '🔥', image: '/textures/modules/mod_speed_1.png', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_speed_2', name: 'Warp Coils',      description: 'Advanced warp drive components',      tier: 'yellow', price: 16000, statBonus: { stat: 'speed', value: 12 },    tradeoff: { stat: 'shield', value: 3 },    icon: '⚡', image: '/textures/modules/mod_speed_2.png', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_speed_3', name: 'Quantum Engine',   description: 'Experimental quantum propulsion',     tier: 'red',    price: 60000, statBonus: { stat: 'speed', value: 25 },    tradeoff: { stat: 'shield', value: 8 },    icon: '🌀', image: '/textures/modules/mod_speed_3.png', compatibleCategories: ['frame', 'ship_skin'] },
   // Shield modules
-  { id: 'mod_shield_1', name: 'Plating Mk.I',    description: 'Reinforced hull plating',            tier: 'blue',   price: 4000,  statBonus: { stat: 'shield', value: 5 },    icon: '🛡️', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
-  { id: 'mod_shield_2', name: 'Deflector Array',  description: 'Energy deflection system',            tier: 'yellow', price: 16000, statBonus: { stat: 'shield', value: 12 },   tradeoff: { stat: 'speed', value: 3 },     icon: '🔷', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
-  { id: 'mod_shield_3', name: 'Fortress Core',    description: 'Impenetrable defense matrix',         tier: 'red',    price: 60000, statBonus: { stat: 'shield', value: 25 },   tradeoff: { stat: 'speed', value: 8 },     icon: '🏰', compatibleCategories: ['frame', 'ship_skin'] },
+  { id: 'mod_shield_1', name: 'Plating Mk.I',    description: 'Reinforced hull plating',            tier: 'blue',   price: 4000,  statBonus: { stat: 'shield', value: 5 },    icon: '🛡️', image: '/textures/modules/mod_shield_1.png', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_shield_2', name: 'Deflector Array',  description: 'Energy deflection system',            tier: 'yellow', price: 16000, statBonus: { stat: 'shield', value: 12 },   tradeoff: { stat: 'speed', value: 3 },     icon: '🔷', image: '/textures/modules/mod_shield_2.png', compatibleCategories: ['frame', 'aura', 'ship_skin'] },
+  { id: 'mod_shield_3', name: 'Fortress Core',    description: 'Impenetrable defense matrix',         tier: 'red',    price: 60000, statBonus: { stat: 'shield', value: 25 },   tradeoff: { stat: 'speed', value: 8 },     icon: '🏰', image: '/textures/modules/mod_shield_3.png', compatibleCategories: ['frame', 'ship_skin'] },
   // Firepower modules
-  { id: 'mod_fire_1', name: 'Targeting Chip',    description: 'Enhanced targeting computer',         tier: 'blue',   price: 4000,  statBonus: { stat: 'firepower', value: 5 }, icon: '🎯', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
-  { id: 'mod_fire_2', name: 'Arsenal Pack',      description: 'Expanded weapons array',              tier: 'yellow', price: 16000, statBonus: { stat: 'firepower', value: 12 },tradeoff: { stat: 'luck', value: 3 },      icon: '💥', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
-  { id: 'mod_fire_3', name: 'Devastator Core',   description: 'Planet-cracking weapon system',       tier: 'red',    price: 60000, statBonus: { stat: 'firepower', value: 25 },tradeoff: { stat: 'luck', value: 8 },      icon: '☢️', compatibleCategories: ['aura', 'ship_skin'] },
+  { id: 'mod_fire_1', name: 'Targeting Chip',    description: 'Enhanced targeting computer',         tier: 'blue',   price: 4000,  statBonus: { stat: 'firepower', value: 5 }, icon: '🎯', image: '/textures/modules/mod_fire_1.png', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_fire_2', name: 'Arsenal Pack',      description: 'Expanded weapons array',              tier: 'yellow', price: 16000, statBonus: { stat: 'firepower', value: 12 },tradeoff: { stat: 'luck', value: 3 },      icon: '💥', image: '/textures/modules/mod_fire_2.png', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_fire_3', name: 'Devastator Core',   description: 'Planet-cracking weapon system',       tier: 'red',    price: 60000, statBonus: { stat: 'firepower', value: 25 },tradeoff: { stat: 'luck', value: 8 },      icon: '☢️', image: '/textures/modules/mod_fire_3.png', compatibleCategories: ['aura', 'ship_skin'] },
   // Luck modules
-  { id: 'mod_luck_1', name: 'Scanner Lens',      description: 'Improved anomaly detection',          tier: 'blue',   price: 4000,  statBonus: { stat: 'luck', value: 5 },      icon: '🔍', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
-  { id: 'mod_luck_2', name: 'Probability Matrix', description: 'Quantum probability manipulation',    tier: 'yellow', price: 16000, statBonus: { stat: 'luck', value: 12 },     tradeoff: { stat: 'firepower', value: 3 }, icon: '🎲', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
-  { id: 'mod_luck_3', name: 'Quantum Oracle',     description: 'Prescient decision engine',           tier: 'red',    price: 60000, statBonus: { stat: 'luck', value: 25 },     tradeoff: { stat: 'firepower', value: 8 }, icon: '🔮', compatibleCategories: ['aura', 'ship_skin'] },
+  { id: 'mod_luck_1', name: 'Scanner Lens',      description: 'Improved anomaly detection',          tier: 'blue',   price: 4000,  statBonus: { stat: 'luck', value: 5 },      icon: '🔍', image: '/textures/modules/mod_luck_1.png', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_luck_2', name: 'Probability Matrix', description: 'Quantum probability manipulation',    tier: 'yellow', price: 16000, statBonus: { stat: 'luck', value: 12 },     tradeoff: { stat: 'firepower', value: 3 }, icon: '🎲', image: '/textures/modules/mod_luck_2.png', compatibleCategories: ['aura', 'frame', 'ship_skin'] },
+  { id: 'mod_luck_3', name: 'Quantum Oracle',     description: 'Prescient decision engine',           tier: 'red',    price: 60000, statBonus: { stat: 'luck', value: 25 },     tradeoff: { stat: 'firepower', value: 8 }, icon: '🔮', image: '/textures/modules/mod_luck_3.png', compatibleCategories: ['aura', 'ship_skin'] },
 ];
 
 export const MODULE_TIER_COLORS: Record<Micromodule['tier'], string> = {

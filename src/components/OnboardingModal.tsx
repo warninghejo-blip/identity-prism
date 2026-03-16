@@ -9,7 +9,7 @@ const STEPS = [
   },
   {
     title: 'Your Identity Score',
-    desc: 'Your Composite Score (0-1000) is built from 5 pillars: On-Chain activity, Sybil Trust, Human Proof (games & achievements), Social interactions, and Engagement (quests & streaks).',
+    desc: 'Your Composite Score is built from 5 pillars: On-Chain activity (max 400), Sybil Trust (250), Human Proof (150), Social (100), and Engagement (100).',
     icon: '📊',
   },
   {

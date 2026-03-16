@@ -47,9 +47,15 @@ videos/
 package-lock.json
 bun.lockb
 
+# Asset source files
+virezat/
+virezar/
+
 # Misc
 *.map
 *.py
 docs/
 metadata/
 NEW/
+secrets/
+.jwt_secret

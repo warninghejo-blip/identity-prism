@@ -11,6 +11,7 @@ import {
   Group,
   LinearFilter,
   Mesh,
+  NormalBlending,
   Points,
   ShaderMaterial,
   Texture,

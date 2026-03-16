@@ -64,80 +64,72 @@ export interface WalletData {
 
 export function calculateScore(traits: WalletTraits): number {
   let score = 0;
-  
-  // 1. SOL Balance (Enhanced - Max 100)
+
+  // SOL Balance (max 40)
   const sol = traits.solBalance;
-  if (sol >= 10) score += 100;
-  else if (sol >= 5) score += 85;
-  else if (sol >= 1) score += 60;
-  else if (sol >= 0.5) score += 40;
-  else if (sol >= 0.1) score += 20;
-  
-  // 2. Wallet Age (SIGNIFICANTLY ENHANCED - Max 250)
+  if (sol >= 10) score += 40;
+  else if (sol >= 5) score += 34;
+  else if (sol >= 1) score += 24;
+  else if (sol >= 0.5) score += 16;
+  else if (sol >= 0.1) score += 8;
+
+  // Wallet Age (max 100)
   const age = traits.walletAgeDays;
-  if (age > 730) score += 250; // 2+ years
-  else if (age > 365) score += 180; // 1+ year
-  else if (age > 180) score += 120; // 6+ months
-  else if (age > 90) score += 70; // 3+ months
-  else if (age > 30) score += 35; // 1+ month
-  else if (age > 7) score += 15; // 1+ week
-  
-  // 3. Transaction Count (ENHANCED - Max 200)
+  if (age > 730) score += 100;
+  else if (age > 365) score += 72;
+  else if (age > 180) score += 48;
+  else if (age > 90) score += 28;
+  else if (age > 30) score += 14;
+  else if (age > 7) score += 6;
+
+  // Transactions (max 80)
   const tx = traits.txCount;
-  if (tx > 5000) score += 200;
-  else if (tx > 2000) score += 160;
-  else if (tx > 1000) score += 120;
-  else if (tx > 500) score += 80;
-  else if (tx > 100) score += 50;
-  else if (tx > 50) score += 30;
-  else score += Math.min(tx * 0.5, 25);
-  
-  // 4. NFT Count (Max 80)
+  if (tx > 5000) score += 80;
+  else if (tx > 2000) score += 64;
+  else if (tx > 1000) score += 48;
+  else if (tx > 500) score += 32;
+  else if (tx > 100) score += 20;
+  else if (tx > 50) score += 12;
+  else score += Math.min(Math.round(tx * 0.2), 10);
+
+  // NFTs (max 32)
   const nfts = traits.nftCount;
-  if (nfts > 100) score += 80;
-  else if (nfts > 50) score += 60;
-  else if (nfts > 20) score += 40;
-  else if (nfts > 5) score += 20;
-  
-  // 5. OG Status (Max 550)
-  if (traits.hasSeeker) score += SCORING.SEEKER_GENESIS_BONUS;
-  if (traits.hasPreorder) score += SCORING.CHAPTER2_PREORDER_BONUS;
-  if (traits.hasCombo) score += SCORING.COMBO_BONUS;
-  
-  // 6. Behavioral Traits (Max 210)
-  if (traits.isBlueChip) score += SCORING.BLUE_CHIP_BONUS;
-  if (traits.isDeFiKing) score += SCORING.DEFI_KING_BONUS;
-  if (traits.diamondHands) score += SCORING.DIAMOND_HANDS_BONUS;
-  if (traits.hyperactiveDegen) score += SCORING.HYPERACTIVE_BONUS;
-  if (traits.isMemeLord) score += SCORING.MEME_LORD_BONUS;
+  if (nfts > 100) score += 32;
+  else if (nfts > 50) score += 24;
+  else if (nfts > 20) score += 16;
+  else if (nfts > 5) score += 8;
 
-  // 7. Badge Bonus Points (reward for harder badges)
-  if (traits.isOG) score += 80;           // hardest: 2yr + 5k tx + 1 SOL held 1yr
-  if (traits.isTxTitan) score += 40;      // 5000+ transactions
-  if (traits.isWhale) score += 35;        // 50+ SOL
-  if (traits.isCollector) score += 25;    // 10+ NFTs
-  if (traits.isEarlyAdopter) score += 20; // 2+ years old
-  if (traits.isSolanaMaxi) score += 30;   // 100 SOL + 100 tx
-
-  // 8. Enhanced TX Signals (Max 60)
+  // DeFi Activity (max 30)
   const swaps = traits.swapCount ?? 0;
-  if (swaps > 100) score += 40;
-  else if (swaps > 50) score += 30;
-  else if (swaps > 10) score += 20;
-  else if (swaps > 0) score += 10;
-
-  const nftTrades = traits.nftTradeCount ?? 0;
-  score += Math.min(nftTrades * 2, 15);
-
+  if (swaps > 100) score += 16;
+  else if (swaps > 50) score += 12;
+  else if (swaps > 10) score += 8;
+  else if (swaps > 0) score += 4;
+  score += Math.min(Math.round((traits.nftTradeCount ?? 0) * 0.8), 6);
   const protocols = traits.defiProtocols?.length ?? 0;
-  if (protocols >= 3) score += 20;
-  else if (protocols >= 2) score += 12;
-  else if (protocols >= 1) score += 6;
-  
-  // Log breakdown for debugging
-  if (import.meta.env.DEV) console.log(`%c[Scoring] Total: ${Math.round(score)} | SOL: ${sol} | Age: ${age}d | Tx: ${tx} | NFTs: ${nfts} | Seeker: ${traits.hasSeeker} | Preorder: ${traits.hasPreorder} | Combo: ${traits.hasCombo}`, "color: #a855f7; font-weight: bold;");
-  
-  return Math.min(Math.round(score), 1460);
+  if (protocols >= 3) score += 8;
+  else if (protocols >= 2) score += 5;
+  else if (protocols >= 1) score += 2;
+
+  // Collection NFTs (max 50)
+  if (traits.hasSeeker) score += SCORING.SEEKER_GENESIS_BONUS;   // 20
+  if (traits.hasPreorder) score += SCORING.CHAPTER2_PREORDER_BONUS; // 15
+  if (traits.hasCombo) score += SCORING.COMBO_BONUS;             // 15
+
+  // Badges (max 68)
+  if (traits.isOG) score += 14;
+  if (traits.isTxTitan) score += 8;
+  if (traits.isWhale) score += 8;
+  if (traits.isCollector) score += 6;
+  if (traits.isEarlyAdopter) score += 6;
+  if (traits.isSolanaMaxi) score += 6;
+  if (traits.isBlueChip) score += SCORING.BLUE_CHIP_BONUS;       // 5
+  if (traits.diamondHands) score += SCORING.DIAMOND_HANDS_BONUS; // 5
+  if (traits.isDeFiKing) score += SCORING.DEFI_KING_BONUS;       // 5
+  if (traits.isMemeLord) score += SCORING.MEME_LORD_BONUS;       // 3
+  if (traits.hyperactiveDegen) score += SCORING.HYPERACTIVE_BONUS; // 2
+
+  return Math.min(Math.round(score), 400);
 }
 
 const SOL_LAMPORTS = 1_000_000_000;
@@ -166,7 +158,7 @@ export function useWalletData(address?: string) {
     // Check for cached data so planet renders immediately on return from BlackHole
     const cacheKey = `walletData_${address}`;
     const cacheTimeKey = `walletData_ts_${address}`;
-    const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
     let hasCached = false;
     let cacheIsFresh = false;
     try {
@@ -209,7 +201,7 @@ export function useWalletData(address?: string) {
         }
 
         if (isDev) {
-          console.log("%c--- 🚀 INITIATING COSMIC SCAN v3.0 (SUPERNOVA) ---", "color: #22d3ee; font-weight: bold; font-size: 14px;");
+          console.log("%c[Scan] Starting wallet scan", "color: #22d3ee;");
         }
         let publicKey: PublicKey;
         try {
@@ -380,14 +372,6 @@ export function useWalletData(address?: string) {
         
         if (isDev) {
           console.log(`%c[DAS Success] ${totalAssetsCount} assets found.`, "color: #22d3ee; font-weight: bold;");
-          if (!isLowEndDevice) {
-            console.log("%c[Nuclear Debug] FULL ASSET SCAN (Name & Symbol):", "color: #f472b6; font-weight: bold;");
-            assets.forEach((a, i) => {
-              const name = a.content?.metadata?.name || 'N/A';
-              const symbol = a.content?.metadata?.symbol || 'N/A';
-              console.log(`[${i}] ${name} (${symbol}) | ID: ${a.id}`);
-            });
-          }
         }
         
         const foundAsset = assets.find((a: DASAsset) => {
@@ -402,12 +386,8 @@ export function useWalletData(address?: string) {
           return isPreorderId || isPreorderName || isPreorderGroup;
         });
 
-        if (isDev) {
-          if (foundAsset) {
-            console.log("%c[!!!] NUCLEAR MATCH: PREORDER ASSET FOUND!", "color: #10b981; font-weight: bold;", foundAsset);
-          } else {
-            console.log("%c[???] NUCLEAR SCAN: NO PREORDER ASSET FOUND", "color: #ef4444;");
-          }
+        if (isDev && foundAsset) {
+          console.log("%c[DAS] Preorder asset found", "color: #10b981;");
         }
 
         let nftCount = 0;
@@ -632,24 +612,24 @@ export function useWalletData(address?: string) {
 
         const score = calculateScore(traits);
         
-        // 9-Tier Planet System + Binary Sun for Combo holders
+        // 9-Tier Planet System + Binary Sun for Combo holders (0-400 scale)
         if (traits.hasCombo) {
-          traits.planetTier = "binary_sun"; // Exclusive highest tier
-        } else if (score >= 1051) {
+          traits.planetTier = "binary_sun";
+        } else if (score >= 352) {
           traits.planetTier = "sun";
-        } else if (score >= 951) {
+        } else if (score >= 320) {
           traits.planetTier = "jupiter";
-        } else if (score >= 851) {
+        } else if (score >= 280) {
           traits.planetTier = "saturn";
-        } else if (score >= 701) {
+        } else if (score >= 240) {
           traits.planetTier = "uranus";
-        } else if (score >= 551) {
+        } else if (score >= 192) {
           traits.planetTier = "neptune";
-        } else if (score >= 401) {
+        } else if (score >= 140) {
           traits.planetTier = "earth";
-        } else if (score >= 251) {
+        } else if (score >= 88) {
           traits.planetTier = "venus";
-        } else if (score >= 101) {
+        } else if (score >= 40) {
           traits.planetTier = "mars";
         } else {
           traits.planetTier = "mercury";

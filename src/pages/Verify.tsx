@@ -115,7 +115,7 @@ const Verify: React.FC = () => {
         version: parsed.version || 1,
         wallet: parsed.wallet || '',
         score: parsed.score || 0,
-        maxScore: parsed.maxScore || 1400,
+        maxScore: parsed.maxScore || 400,
         tier: parsed.tier || 'unknown',
         badges: parsed.badges || [],
         stats: parsed.stats || {},

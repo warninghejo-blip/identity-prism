@@ -128,3 +128,6 @@ twitter-bot-python/.env.server
 
 # Local Netlify folder
 .netlify
+.claude/worktrees/
+virezat/
+google-services.json
