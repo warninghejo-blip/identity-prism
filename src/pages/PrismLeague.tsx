@@ -1159,17 +1159,17 @@ const PrismLeague = () => {
 
         if (proof) {
           setSessionProof(proof);
-          // Having a session proof is sufficient — mark verified regardless of seed check
+          // Server-side proof is the real verification — mark verified
           setMbVerified(true);
         } else if (curSeed) {
-          // Verify with timeout — never hang
-          const verifyTimeout = setTimeout(() => setMbVerified(true), 6000);
+          // Verify seed against MagicBlock — timeout fallback to false
+          const verifyTimeout = setTimeout(() => setMbVerified(false), 6000);
           verifyGameSessionSeed(curSeed, curSlot)
-            .then((ok) => { clearTimeout(verifyTimeout); setMbVerified(ok || true); })
-            .catch(() => { clearTimeout(verifyTimeout); setMbVerified(true); });
+            .then((ok) => { clearTimeout(verifyTimeout); setMbVerified(ok); })
+            .catch(() => { clearTimeout(verifyTimeout); setMbVerified(false); });
         } else {
-          // No seed was generated — skip verification
-          setMbVerified(true);
+          // No seed was generated — unverified
+          setMbVerified(false);
         }
 
         // Submit to server leaderboard with verified session proof
@@ -1178,8 +1178,8 @@ const PrismLeague = () => {
           gameType: gameMode, gameSessionId: proof?.id,
         });
 
-        // Submit to tournament if joined
-        if (activeTournament?.userJoined) {
+        // Submit to tournament only when in tournament mode and joined
+        if (playMode === 'tournament' && activeTournament?.userJoined) {
           submitToTournament(finalScore, proof?.id ?? undefined);
         }
       };
