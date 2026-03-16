@@ -196,8 +196,8 @@ async function syncCoinsToServer(walletAddress: string, coins: number, delta: nu
     const base = getServerBase();
     if (!base) return;
     const jwt = getChallengeJwt();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+    if (!jwt) return; // Require JWT to sync coins
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` };
     await fetch(`${base}/api/game/coins`, {
       method: 'POST',
       headers,
@@ -515,7 +515,8 @@ const PrismLeague = () => {
   const fromAppJump = Boolean(locationState?.fromAppJump);
 
   // ── Challenge integration ──
-  const urlChallengeId = searchParams.get('challengeId');
+  const rawChallengeId = searchParams.get('challengeId');
+  const urlChallengeId = rawChallengeId && /^[a-zA-Z0-9_-]{1,64}$/.test(rawChallengeId) ? rawChallengeId : null;
   const urlMode = searchParams.get('mode') as GameMode | null;
   const [activeChallengeId, setActiveChallengeId] = useState<string | null>(urlChallengeId);
   const [challengeResult, setChallengeResult] = useState<ChallengeResult | null>(null);

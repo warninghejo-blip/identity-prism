@@ -63,7 +63,7 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
   }, [address]);
 
   useEffect(() => {
-    if (!address) {
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
       setData(d => ({ ...d, isLoading: false }));
       return;
     }
@@ -83,7 +83,7 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
 
     let cancelled = false;
     const proxyUrl = getHeliusProxyUrl() || '';
-    fetch(`${proxyUrl}/api/wallet-database?address=${address}`)
+    fetch(`${proxyUrl}/api/wallet-database?address=${encodeURIComponent(address)}`)
       .then(r => r.ok ? r.json() : null)
       .then(wallet => {
         if (cancelled) return;

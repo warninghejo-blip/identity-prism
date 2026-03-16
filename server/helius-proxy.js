@@ -2515,11 +2515,7 @@ const server = http.createServer(async (req, res) => {
       });
       return;
     } catch (error) {
-      respondJson(res, 500, {
-        status: 'unknown',
-        floorSol: null,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      respondJson(res, 500, { status: 'unknown', floorSol: null, error: 'Failed to fetch collection stats' });
       return;
     }
   }
@@ -2778,10 +2774,7 @@ const server = http.createServer(async (req, res) => {
       return;
     } catch (error) {
       console.error('[reputation] failed for', address, error);
-      respondJson(res, 500, {
-        error: 'Failed to compute reputation',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      respondJson(res, 500, { error: 'Failed to compute reputation' });
       return;
     }
   }
@@ -2820,13 +2813,13 @@ const server = http.createServer(async (req, res) => {
             stats: { walletAgeDays, solBalance: Math.round(solBalance * 1000) / 1000, txCount, tokenCount, nftCount },
           });
         } catch (error) {
-          results.push({ address: trimmed, error: error instanceof Error ? error.message : String(error) });
+          results.push({ address: trimmed, error: 'Failed to compute reputation' });
         }
       }
       respondJson(res, 200, { results });
       return;
     } catch (error) {
-      respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      respondJson(res, 500, { error: 'Failed to compute batch reputation' });
       return;
     }
   }
@@ -2891,7 +2884,7 @@ const server = http.createServer(async (req, res) => {
       return;
     } catch (error) {
       console.error('[reputation/compare] failed', error);
-      respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      respondJson(res, 500, { error: 'Failed to compare reputations' });
       return;
     }
   }
@@ -3049,9 +3042,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/market/jupiter-prices' && req.method === 'GET') {
-    const ids = url.searchParams.get('ids');
-    if (!ids) {
-      respondJson(res, 400, { error: 'ids parameter required' });
+    const ids = url.searchParams.get('ids') || '';
+    if (!ids || ids.length > 2000) {
+      respondJson(res, 400, { error: 'Invalid ids parameter' });
       return;
     }
     try {
@@ -3307,6 +3300,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Leaderboard API ──
   if (pathname === '/api/game/leaderboard' && req.method === 'GET') {
+    if (!ipRateLimit('lb_get', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const gameTypeFilter = url.searchParams.get('gameType') || '';
     const cacheKey = `lb:${gameTypeFilter}`;
     if (leaderboardCache && leaderboardCache.key === cacheKey && Date.now() - leaderboardCacheTime < 10_000) {
@@ -3564,7 +3558,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const authHeader = req.headers['authorization'];
       if (authHeader && authHeader.startsWith('Bearer ')) {
-        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET, { algorithms: ['HS256'] });
+        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
         if (decoded.address) userAddr = decoded.address;
       }
     } catch {}
@@ -3658,6 +3652,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/tournament/history' && req.method === 'GET') {
+    if (!ipRateLimit('t_hist', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     respondJson(res, 200, { tournaments: tournamentHistory.slice(0, 20) });
     return;
   }
@@ -3967,7 +3962,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Economy Stats (totalBurned) ═══
   if (pathname === '/api/prism/economy' && req.method === 'GET') {
-    respondJson(res, 200, { totalBurned, dailyGameCap: DAILY_GAME_COIN_CAP, stakingTiers: STAKING_TIERS });
+    respondJson(res, 200, { totalBurned, dailyGameCap: DAILY_GAME_COIN_CAP });
     return;
   }
 
@@ -4002,7 +3997,7 @@ const server = http.createServer(async (req, res) => {
       updateWalletEntry(addr, {
         firstSeenAt: wExisting.firstSeenAt || new Date().toISOString(),
         lastSeenAt: new Date().toISOString(),
-        scanCount: (wExisting.scanCount || 0) + 1,
+        scanCount: (wExisting.scanCount || 0) + ((() => { const scKey = `scan_daily:${addr}`; const scToday = new Date().toISOString().slice(0, 10); const sc = prismEarnRateLimit.get(scKey); if (sc && typeof sc === 'object' && sc.date === scToday && sc.count >= 5) return 0; prismEarnRateLimit.set(scKey, { date: scToday, count: ((sc && sc.date === scToday) ? sc.count : 0) + 1 }); return 1; })()),
         score,
         tier: tier || 'mercury',
         source: 'live',
@@ -4017,6 +4012,7 @@ const server = http.createServer(async (req, res) => {
 
 
   if (pathname === '/api/actions/render') {
+    if (!ipRateLimit('actions', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const viewParam = String(url.searchParams.get('view') ?? 'front').trim();
     const view = viewParam === 'back' ? 'back' : 'front';
     const tabParam = String(url.searchParams.get('tab') ?? '').trim();
@@ -4051,15 +4047,13 @@ const server = http.createServer(async (req, res) => {
       return;
     } catch (error) {
       console.error('[actions/render] failed', error);
-      respondJson(res, 500, {
-        error: 'Unable to render card image',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      respondJson(res, 500, { error: 'Unable to render card image' });
       return;
     }
   }
 
   if (pathname === '/api/actions/share') {
+    if (!ipRateLimit('actions', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const baseUrl = getBaseUrl(req);
     if (!baseUrl) {
       respondJson(res, 500, { error: 'PUBLIC_BASE_URL is not configured' });
@@ -4177,11 +4171,13 @@ const server = http.createServer(async (req, res) => {
     const queryView = String(url.searchParams.get('view') ?? 'front').trim();
     const queryTab = String(url.searchParams.get('tab') ?? '').trim();
 
-    const findAddressCandidate = (payload) => {
+    const findAddressCandidate = (payload, maxNodes = 200) => {
       if (!payload || typeof payload !== 'object') return '';
       const queue = [payload];
       const visited = new Set();
-      while (queue.length) {
+      let nodeCount = 0;
+      while (queue.length && nodeCount < maxNodes) {
+        nodeCount++;
         const current = queue.shift();
         if (!current || typeof current !== 'object') continue;
         if (visited.has(current)) continue;
@@ -4281,13 +4277,13 @@ const server = http.createServer(async (req, res) => {
       console.error('[actions/share] failed', error);
       respondJson(res, 500, {
         error: 'Unable to build action payload',
-        detail: error instanceof Error ? error.message : String(error),
       });
     }
     return;
   }
 
   if (pathname === '/api/actions/view-app') {
+    if (!ipRateLimit('actions', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     if (req.method !== 'POST') {
       respondJson(res, 405, { error: 'Method not allowed' });
       return;
@@ -4346,6 +4342,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/actions/mint-blink') {
+    if (!ipRateLimit('actions', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     if (req.method !== 'POST') {
       respondJson(res, 405, { error: 'Method not allowed' });
       return;
@@ -4574,7 +4571,9 @@ const server = http.createServer(async (req, res) => {
       const collectionMintRaw = payload?.collectionMint ?? CORE_COLLECTION ?? '';
       // adminMode requires valid X-Admin-Key header — user payload alone is NOT enough
       // Guard: ADMIN_KEY must be explicitly set (undefined === undefined would bypass)
-      const adminMode = Boolean(payload?.admin) && !!process.env.ADMIN_KEY && req.headers['x-admin-key'] === process.env.ADMIN_KEY;
+      const adminMode = Boolean(payload?.admin) && !!process.env.ADMIN_KEY && (() => {
+        try { const a = req.headers['x-admin-key'] || '', b = process.env.ADMIN_KEY; return a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)); } catch { return false; }
+      })();
       const remintMode = Boolean(payload?.remint);
       const burnSignature = typeof payload?.burnSignature === 'string' ? payload.burnSignature.trim() : '';
       const burnAssetId = typeof payload?.burnAssetId === 'string' ? payload.burnAssetId.trim() : '';
@@ -5030,10 +5029,7 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       console.error('[mint-cnft] failed', error);
-      respondJson(res, 500, {
-        error: 'Core mint failed',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      respondJson(res, 500, { error: 'Core mint failed' });
     }
     return;
   }
@@ -5159,7 +5155,7 @@ const server = http.createServer(async (req, res) => {
           respondJson(res, 200, { signature, assetId, finalized: true });
         } catch (submitErr) {
           console.error('[update-card] submit failed', submitErr?.message ?? submitErr);
-          respondJson(res, 500, { error: 'Transaction submission failed', detail: submitErr?.message ?? String(submitErr) });
+          respondJson(res, 500, { error: 'Transaction submission failed' });
         }
         return;
       }
@@ -5299,6 +5295,7 @@ const server = http.createServer(async (req, res) => {
       respondJson(res, 405, { error: 'Method not allowed' });
       return;
     }
+    if (!requireAdminKey(req, res)) return;
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
 
@@ -5633,12 +5630,14 @@ const server = http.createServer(async (req, res) => {
       // Enforce daily game coin cap for game sources via /api/prism/earn (prevents bypass of /api/game/coins cap)
       const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
       if (GAME_EARN_SOURCES.has(source)) {
-        const gameBoost = getStakingBoost(address);
-        if (gameBoost > 0) earned = Math.floor(earned * (1 + gameBoost));
+        // Track pre-boost amount in daily cap (consistent with /api/game/coins)
         const todayCoins = getGameCoinsToday(address);
         if (todayCoins >= DAILY_GAME_COIN_CAP) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
-        earned = Math.min(earned, DAILY_GAME_COIN_CAP - todayCoins);
-        addGameCoinsToday(address, earned);
+        let baseDelta = Math.min(earned, DAILY_GAME_COIN_CAP - todayCoins);
+        addGameCoinsToday(address, baseDelta);
+        // Apply staking boost ON TOP of capped amount (bonus coins don't count towards cap)
+        const gameBoost = getStakingBoost(address);
+        earned = gameBoost > 0 ? Math.floor(baseDelta * (1 + gameBoost)) : baseDelta;
       } else {
         // Non-game sources: enforce global daily cap to prevent coin inflation
         // Server-side verification for one-time/conditional sources BEFORE cap consumption
@@ -7263,7 +7262,9 @@ const server = http.createServer(async (req, res) => {
       if (lastDate === today) {
         // Same day — no change
       } else if (!hasCompletedQuest) {
-        // No quest completed — don't update streak date
+        // No quest completed today — reset streak if day was skipped
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        if (lastDate && lastDate !== yesterday) streakDays = 0;
       } else {
         const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
         streakDays = lastDate === yesterday ? streakDays + 1 : 1;
@@ -7514,6 +7515,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Challenge: List open (public — no auth required) ──
   if (pathname === '/api/challenge/list' && req.method === 'GET') {
+    if (!ipRateLimit('ch_list', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
       const open = (challenges || [])
         .filter(c => c && c.status === 'open')
@@ -7526,12 +7528,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Challenge: My challenges (JWT optional — uses address query param) ──
+  // ── Challenge: My challenges (JWT required) ──
   if (pathname === '/api/challenge/my' && req.method === 'GET') {
-    const jwtAuth = optionalJwt(req, res);
+    const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
-    const address = jwtAuth.address || url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address query parameter required' });
+    const address = jwtAuth.address;
+    if (!address) return respondJson(res, 400, { error: 'Authentication required' });
     try {
       const my = (challenges || [])
         .filter(c => c && (c.creator === address || c.opponent === address))
@@ -7758,15 +7760,16 @@ const server = http.createServer(async (req, res) => {
       const CH_MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
       const chMaxScore = CH_MAX_SCORES[challenge.gameMode] || 600;
       if (scoreNum > chMaxScore) return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
-      // Mark session used AFTER all validation passes
-      cSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
-      persistGameSessionProofs();
 
-      // Race condition guard: atomic check-and-set
+      // Race condition guard: atomic check-and-set BEFORE marking session used
       const submitKey = `${challengeId}:${submitter}`;
       if (!globalThis._pendingSubmits) globalThis._pendingSubmits = new Set();
       if (globalThis._pendingSubmits.has(submitKey)) return respondJson(res, 409, { error: 'Submission in progress' });
       globalThis._pendingSubmits.add(submitKey);
+
+      // Mark session used AFTER pendingSubmits guard
+      cSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
+      persistGameSessionProofs();
 
       if (submitter === challenge.creator) {
         if (challenge.creatorScore !== null) { globalThis._pendingSubmits.delete(submitKey); return respondJson(res, 400, { error: 'Score already submitted' }); }
@@ -7833,9 +7836,9 @@ const server = http.createServer(async (req, res) => {
           }
         }
         if (!isSolBet && challenge.winner && fee > 0) {
-          const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-          setCoinBalance(treasuryAddr, getCoinBalance(treasuryAddr) + fee);
-          addCoinEarned(treasuryAddr, fee);
+          // Burn challenge fee (deflationary, consistent with marketplace)
+          totalBurned += fee;
+          debouncedSavePrism();
         }
         challenge.status = 'completed';
         challenge.completedAt = Date.now();
@@ -7903,11 +7906,34 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Admin: List SOL stale refund pending challenges ──
+  if (pathname === '/api/admin/challenge/stale-sol-refunds' && req.method === 'GET') {
+    if (!requireAdminKey(req, res)) return;
+    const stale = (challenges || []).filter(c => c && c.solPayoutStatus === 'stale_refund_pending');
+    respondJson(res, 200, { ok: true, count: stale.length, challenges: stale.map(c => ({ id: c.id, creator: c.creator, opponent: c.opponent, stakeAmount: c.stakeAmount, createdAt: c.createdAt })) });
+    return;
+  }
+
+  // ── Admin: Mark SOL stale refund as processed ──
+  if (pathname === '/api/admin/challenge/stale-sol-refunds' && req.method === 'POST') {
+    if (!requireAdminKey(req, res)) return;
+    try {
+      const body = await readBody(req);
+      const { challengeId, action } = JSON.parse(body);
+      const ch = (challenges || []).find(c => c.id === challengeId);
+      if (!ch || ch.solPayoutStatus !== 'stale_refund_pending') return respondJson(res, 404, { error: 'Challenge not found or not pending refund' });
+      ch.solPayoutStatus = action === 'refunded' ? 'refunded' : 'rejected';
+      saveChallenges();
+      respondJson(res, 200, { ok: true, challengeId, status: ch.solPayoutStatus });
+    } catch { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
   // ═══ Serve Marketplace Model Files ═══
   if (pathname.startsWith('/marketplace_models/') && req.method === 'GET') {
     const modelsRoot = path.join(process.cwd(), 'marketplace_models');
     const filePath = path.resolve(path.join(process.cwd(), pathname));
-    if (!filePath.startsWith(modelsRoot)) return respondJson(res, 403, { error: 'Forbidden' });
+    if (!filePath.startsWith(modelsRoot + path.sep) && filePath !== modelsRoot) return respondJson(res, 403, { error: 'Forbidden' });
     if (!fs.existsSync(filePath)) return respondJson(res, 404, { error: 'Model not found' });
     const ext = path.extname(filePath).toLowerCase();
     const mimeTypes = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain' };
@@ -8062,21 +8088,30 @@ const server = http.createServer(async (req, res) => {
       const viewerAuth = optionalJwt(req, res);
       const viewerAddr = viewerAuth?.address;
       if (viewerAddr) {
-        const wViewer = walletDatabase.get(viewerAddr) || {};
-        const ssViewer = wViewer.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
-        ssViewer.constellationExplored = (ssViewer.constellationExplored || 0) + 1;
-        updateWalletEntry(viewerAddr, { socialStats: ssViewer });
-        triggerCompositeUpdate(viewerAddr);
+        // Daily limit: 10 constellation explorations per day
+        const ceKey = `ce_daily:${viewerAddr}`;
+        const ceToday = new Date().toISOString().slice(0, 10);
+        const ce = prismEarnRateLimit.get(ceKey);
+        const ceDayCount = (ce && typeof ce === 'object' && ce.date === ceToday) ? ce.count : 0;
+        if (ceDayCount < 10) {
+          prismEarnRateLimit.set(ceKey, { date: ceToday, count: ceDayCount + 1 });
+          const wViewer = walletDatabase.get(viewerAddr) || {};
+          const ssViewer = wViewer.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
+          ssViewer.constellationExplored = (ssViewer.constellationExplored || 0) + 1;
+          updateWalletEntry(viewerAddr, { socialStats: ssViewer });
+          triggerCompositeUpdate(viewerAddr);
+        }
       }
       respondJson(res, 200, result);
     } catch (e) {
-      respondJson(res, 200, { nodes: [], edges: [], error: e.message });
+      respondJson(res, 200, { nodes: [], edges: [], error: 'Failed to compute constellation' });
     }
     return;
   }
 
   // ═══ Wallet Database API ═══
   if (pathname === '/api/wallet-database/stats' && req.method === 'GET') {
+    if (!requireAdminKey(req, res)) return;
     let totalMinted = 0;
     let totalScore = 0;
     let scoreCount = 0;
@@ -8608,6 +8643,19 @@ function getPrismBalance(address) {
   const coins = getCoinBalance(address);
   const stats = getCoinStats(address);
   return { address, balance: coins, totalEarned: stats.totalEarned, totalSpent: stats.totalSpent, lastUpdated: new Date().toISOString() };
+}
+
+// Generic per-IP rate limiter: returns true if allowed, false if rate-limited
+const _ipRateLimits = new Map(); // key: `${prefix}:${ip}` → { count, resetAt }
+function ipRateLimit(prefix, ip, maxReqs, windowMs) {
+  const key = `${prefix}:${ip}`;
+  const now = Date.now();
+  let entry = _ipRateLimits.get(key);
+  if (!entry || now > entry.resetAt) { entry = { count: 0, resetAt: now + windowMs }; _ipRateLimits.set(key, entry); }
+  if (++entry.count > maxReqs) return false;
+  // Periodic cleanup (every 10k entries)
+  if (_ipRateLimits.size > 10000) { for (const [k, v] of _ipRateLimits) { if (now > v.resetAt) _ipRateLimits.delete(k); } }
+  return true;
 }
 
 // PRISM earn rate-limit: per-source cooldowns

@@ -181,7 +181,7 @@ export function markScanEarned(address: string): void {
  * Tries server first, falls back to localStorage.
  */
 export async function getPrismBalance(address: string): Promise<PrismBalance> {
-  const serverBalance = await apiCall<PrismBalance>(`/api/prism/balance?address=${address}`);
+  const serverBalance = await apiCall<PrismBalance>(`/api/prism/balance?address=${encodeURIComponent(address)}`);
   if (serverBalance) return serverBalance;
   return getLocalBalance(address);
 }
@@ -279,7 +279,7 @@ export async function getPrismTransactions(
   limit = 50,
 ): Promise<PrismTransaction[]> {
   const serverTxs = await apiCall<PrismTransaction[]>(
-    `/api/prism/transactions?address=${address}&limit=${limit}`,
+    `/api/prism/transactions?address=${encodeURIComponent(address)}&limit=${limit}`,
   );
   if (serverTxs) return serverTxs;
   return getLocalTransactions(address).slice(0, limit);
