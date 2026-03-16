@@ -314,7 +314,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
   useEffect(() => {
     if (!walletAddress) return;
     const base = getApiBase();
-    fetch(`${base}/api/prism/buy/status?address=${walletAddress}`)
+    fetch(`${base}/api/prism/buy/status?address=${encodeURIComponent(walletAddress)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setStatus(d); })
       .catch(() => {});
@@ -529,7 +529,7 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
     if (!walletAddress) return;
     setLoadingStatus(true);
     const base = getApiBase();
-    fetch(`${base}/api/prism/vault/status?address=${walletAddress}`)
+    fetch(`${base}/api/prism/vault/status?address=${encodeURIComponent(walletAddress)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d?.staking) {
@@ -868,7 +868,7 @@ export default function StellarForge() {
     setLoadout(getLocalLoadout(walletAddress));
     // Check identity card status via wallet-database
     const base = getApiBase();
-    fetch(`${base}/api/wallet-database?address=${walletAddress}`)
+    fetch(`${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d?.mint?.minted) setHasIdentityCard(true); })
       .catch(() => {});

@@ -221,9 +221,9 @@ async function claimAchievementOnServer(walletAddress: string, achievementId: st
   try {
     const base = getServerBase();
     if (!base) return { ok: true };
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const jwt = getChallengeJwt();
-    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+    if (!jwt) return { ok: false }; // Require JWT
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` };
     const res = await fetch(`${base}/api/game/achievements`, {
       method: 'POST',
       headers,
@@ -240,9 +240,9 @@ async function syncUnlockedToServer(walletAddress: string, unlockedIds: string[]
   try {
     const base = getServerBase();
     if (!base || !unlockedIds.length) return;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const jwt = getChallengeJwt();
-    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+    if (!jwt) return; // Require JWT
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` };
     await fetch(`${base}/api/game/achievements`, {
       method: 'PUT',
       headers,
@@ -280,9 +280,9 @@ async function serverRevive(walletAddress: string, mode: 'orbit' | 'destroyer'):
   try {
     const base = getServerBase();
     if (!base) return { success: false, left: 0 };
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const jwt = getChallengeJwt();
-    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
+    if (!jwt) return { success: false, left: 0 }; // Require JWT
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` };
     const res = await fetch(`${base}/api/game/revives`, {
       method: 'POST',
       headers,

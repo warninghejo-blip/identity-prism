@@ -3013,7 +3013,7 @@ const server = http.createServer(async (req, res) => {
         return;
       } catch (error) {
         console.error('[attest] failed', error);
-        respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+        respondJson(res, 500, { error: 'Attestation failed' });
         return;
       }
     }
@@ -3366,7 +3366,7 @@ const server = http.createServer(async (req, res) => {
   // ── Coins API (per-wallet coin balance) ──
   if (pathname === '/api/game/coins' && req.method === 'GET') {
     const addr = url.searchParams.get('address') || '';
-    if (!addr || addr.length < 32 || addr.length > 44) {
+    if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
       respondJson(res, 400, { error: 'valid address required' });
       return;
     }
@@ -3468,9 +3468,18 @@ const server = http.createServer(async (req, res) => {
       const ACHIEVEMENT_REWARDS = { 'score_10': 25, 'score_50': 50, 'score_100': 100, 'score_200': 200, 'survived_15s': 25, 'survived_30s': 50, 'survived_60s': 100, 'survived_120s': 150, 'survived_180s': 200, 'survived_300s': 300, 'near_miss_1': 15, 'near_miss_5': 30, 'near_miss_25': 75, 'near_miss_50': 100, 'near_miss_100': 150, 'total_games_1': 10, 'total_games_10': 50, 'total_games_50': 100, 'total_games_100': 150, 'first_blood': 25, 'kill_streak_5': 50, 'kill_streak_10': 100, 'boss_slayer': 100, 'boss_rush': 200, 'perfect_wave': 150, 'destroyer_500': 100, 'destroyer_1000': 200, 'destroyer_2000': 300, 'grav_ace': 150, 'grav_columns_50': 75, 'grav_columns_100': 150, 'grav_crystals_100': 100, 'grav_crystals_500': 200, 'grav_survived_120': 150, 'grav_survived_300': 300 };
       const serverReward = ACHIEVEMENT_REWARDS[achievementId] || 0;
       if (serverReward > 0) {
-        const current = getCoinBalance(addr);
-        setCoinBalance(addr, current + serverReward);
-        addCoinEarned(addr, serverReward);
+        // Apply NON_GAME_DAILY_EARN_CAP to achievement rewards
+        const ngKey = `nongame_daily:${addr}`;
+        const ngToday = new Date().toISOString().slice(0, 10);
+        const ngEntry = prismEarnRateLimit.get(ngKey);
+        let ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === ngToday) ? ngEntry.earned : 0;
+        const remaining = Math.max(0, NON_GAME_DAILY_EARN_CAP - ngEarned);
+        const capped = Math.min(serverReward, remaining);
+        if (capped > 0) {
+          setCoinBalance(addr, getCoinBalance(addr) + capped);
+          addCoinEarned(addr, capped);
+          prismEarnRateLimit.set(ngKey, { date: ngToday, earned: ngEarned + capped });
+        }
       }
       const entry = getWalletAchievements(addr);
       const coins = getCoinBalance(addr);
@@ -3991,7 +4000,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (score < 0 || score > 1000) return respondJson(res, 400, { error: 'Score must be between 0 and 1000' });
-      const entry = addScoreEntry(addr, score, tier || 'mercury');
+      // Server-authoritative tier computation (ignore client-supplied tier)
+      const computedTier = score >= 800 ? 'binary_sun' : score >= 600 ? 'pulsar' : score >= 400 ? 'neutron_star' : score >= 200 ? 'dwarf_star' : 'mercury';
+      const entry = addScoreEntry(addr, score, computedTier);
       // ── Update wallet database ──
       const wExisting = walletDatabase.get(addr) || {};
       updateWalletEntry(addr, {
@@ -3999,7 +4010,7 @@ const server = http.createServer(async (req, res) => {
         lastSeenAt: new Date().toISOString(),
         scanCount: (wExisting.scanCount || 0) + ((() => { const scKey = `scan_daily:${addr}`; const scToday = new Date().toISOString().slice(0, 10); const sc = prismEarnRateLimit.get(scKey); if (sc && typeof sc === 'object' && sc.date === scToday && sc.count >= 5) return 0; prismEarnRateLimit.set(scKey, { date: scToday, count: ((sc && sc.date === scToday) ? sc.count : 0) + 1 }); return 1; })()),
         score,
-        tier: tier || 'mercury',
+        tier: computedTier,
         source: 'live',
       });
       triggerCompositeUpdate(addr);
@@ -4333,10 +4344,7 @@ const server = http.createServer(async (req, res) => {
       respondJson(res, 200, { type: 'external-link', externalLink });
     } catch (error) {
       console.error('[actions/view-app] failed', error);
-      respondJson(res, 500, {
-        error: 'Unable to build view app link',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      respondJson(res, 500, { error: 'Unable to build view app link' });
     }
     return;
   }
@@ -4510,10 +4518,7 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       console.error('[actions/mint] failed', error);
-      respondJson(res, 500, {
-        error: 'Action mint failed',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      respondJson(res, 500, { error: 'Action mint failed' });
     }
     return;
   }
@@ -5282,10 +5287,7 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (error) {
       console.error('[update-card] failed', error);
-      respondJson(res, 500, {
-        error: 'Update card failed',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      respondJson(res, 500, { error: 'Update card failed' });
     }
     return;
   }
@@ -5578,8 +5580,9 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ PRISM Balance ═══
   if (pathname === '/api/prism/balance' && req.method === 'GET') {
+    if (!ipRateLimit('prismBal', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address' });
     respondJson(res, 200, getPrismBalance(address));
     return;
   }
@@ -5657,9 +5660,7 @@ const server = http.createServer(async (req, res) => {
           recentChallenges[0].earnClaimed = true; // mark so it can't be double-claimed
           saveChallenges();
         }
-        // Apply staking boost BEFORE cap accounting so boosted amount counted against cap
-        const earnBoost = getStakingBoost(address);
-        if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
+        // Track pre-boost base in daily cap (consistent with game approach — boost is bonus ON TOP)
         const ngKey = `nongame_daily:${address}`;
         const today = new Date().toISOString().slice(0, 10);
         const ngEntry = prismEarnRateLimit.get(ngKey);
@@ -5670,6 +5671,9 @@ const server = http.createServer(async (req, res) => {
         if (ngEarned >= NON_GAME_DAILY_EARN_CAP) return respondJson(res, 429, { error: 'Daily non-game earn cap reached', dailyRemaining: 0 });
         earned = Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned);
         prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
+        // Apply staking boost AFTER cap (bonus coins don't count towards cap)
+        const earnBoost = getStakingBoost(address);
+        if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
       }
       const prevBal = getCoinBalance(address);
       const newBal = prevBal + earned;
@@ -5861,7 +5865,9 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ PRISM Transaction History ═══
   if (pathname === '/api/prism/transactions' && req.method === 'GET') {
-    const address = url.searchParams.get('address');
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address;
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
     if (!address) return respondJson(res, 400, { error: 'address required' });
     const txs = (prismTransactions.get(address) || []).slice(0, limit);
@@ -6832,7 +6838,7 @@ const server = http.createServer(async (req, res) => {
     }
     reputationRateLimit.set(rlKey, Date.now());
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
       const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
       const pubkey = new PublicKey(address);
@@ -6879,7 +6885,7 @@ const server = http.createServer(async (req, res) => {
     }
     reputationRateLimit.set(rlKey, Date.now());
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
       const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
       const pubkey = new PublicKey(address);
@@ -6943,7 +6949,7 @@ const server = http.createServer(async (req, res) => {
     if (Date.now() - lastSybilHeavy < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
     prismEarnRateLimit.set(sybilHeavyKey, Date.now());
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
       const { parsed } = await fetchParsedTransactions(address, 100);
       const { incoming } = extractSolTransfers(parsed, address);
@@ -6964,7 +6970,7 @@ const server = http.createServer(async (req, res) => {
         });
       respondJson(res, 200, { sources });
     } catch (e) {
-      respondJson(res, 200, { sources: [], error: e.message });
+      respondJson(res, 200, { sources: [], error: 'Failed to fetch funding sources' });
     }
     return;
   }
@@ -6977,7 +6983,7 @@ const server = http.createServer(async (req, res) => {
     if (Date.now() - lastCluster < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
     prismEarnRateLimit.set(clusterRlKey, Date.now());
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     const cachedCluster = clusterCache.get(address);
     if (cachedCluster && Date.now() - cachedCluster.ts < 1800_000) { respondJson(res, 200, cachedCluster.data); return; }
     try {
@@ -7025,7 +7031,7 @@ const server = http.createServer(async (req, res) => {
       clusterCache.set(address, { data: result, ts: Date.now() });
       respondJson(res, 200, result);
     } catch (e) {
-      respondJson(res, 200, { clusterId: null, error: e.message });
+      respondJson(res, 200, { clusterId: null, error: 'Failed to compute cluster' });
     }
     return;
   }
@@ -7038,7 +7044,7 @@ const server = http.createServer(async (req, res) => {
     if (Date.now() - lastCirc < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
     prismEarnRateLimit.set(circRlKey, Date.now());
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
       const { parsed } = await fetchParsedTransactions(address, 50);
       const { incoming, outgoing } = extractSolTransfers(parsed, address);
@@ -7048,7 +7054,7 @@ const server = http.createServer(async (req, res) => {
       }
       respondJson(res, 200, { detected: cycle.length > 0, cycle });
     } catch (e) {
-      respondJson(res, 200, { detected: false, cycle: [], error: e.message });
+      respondJson(res, 200, { detected: false, cycle: [], error: 'Failed to check circular flow' });
     }
     return;
   }
@@ -7061,7 +7067,7 @@ const server = http.createServer(async (req, res) => {
     if (Date.now() - lastDp < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
     prismEarnRateLimit.set(dpRlKey, Date.now());
     const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
       const { parsed } = await fetchParsedTransactions(address, 100);
       const scamInteractions = [];
@@ -7086,7 +7092,7 @@ const server = http.createServer(async (req, res) => {
       }
       respondJson(res, 200, { address, scamInteractions: scamInteractions.slice(0, 20), scamCount: scamInteractions.length, totalProgramsUsed: allPrograms.size, riskLevel: scamInteractions.length >= 5 ? 'high' : scamInteractions.length >= 1 ? 'medium' : 'clean' });
     } catch (e) {
-      respondJson(res, 200, { address, scamInteractions: [], scamCount: 0, riskLevel: 'unknown', error: e.message });
+      respondJson(res, 200, { address, scamInteractions: [], scamCount: 0, riskLevel: 'unknown', error: 'Failed to check dark pool' });
     }
     return;
   }
@@ -7115,6 +7121,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Global Leaderboard ═══
   if (pathname === '/api/leaderboard' && req.method === 'GET') {
+    if (!ipRateLimit('glb_lb', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
     const entryMap = new Map();
     // Seed from score history
@@ -7156,7 +7163,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Reputation API v2 — OPTIONS preflight ═══
   if (pathname === '/api/v2/reputation' && req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key' });
+    res.writeHead(204, { 'Access-Control-Allow-Origin': resolveCorsOrigin(req), 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key', 'Access-Control-Max-Age': '86400' });
     res.end();
     return;
   }
@@ -7165,6 +7172,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/v2/reputation' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     const ip = getClientIp(req);
     const apiKey = req.headers['x-api-key']; // only accept via header (not URL query — leaks in logs)
     // API key validation
@@ -7298,7 +7306,9 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Marketplace My Purchases ═══
   if (pathname === '/api/marketplace/my-purchases' && req.method === 'GET') {
-    const address = url.searchParams.get('address');
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address;
     if (!address) return respondJson(res, 400, { error: 'address required' });
     const owned = [];
     for (const [key] of marketplacePurchases) {
@@ -7684,11 +7694,10 @@ const server = http.createServer(async (req, res) => {
               challenge.solPayoutStatus = 'tie_refund_pending';
             }
           }
-          // Fee to treasury (Coin bets only — SOL fee stays in treasury naturally)
+          // Burn challenge fee (deflationary, consistent with game challenges)
           if (!isSolBet && challenge.winner && fee > 0) {
-            const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-            setCoinBalance(treasuryAddr, getCoinBalance(treasuryAddr) + fee);
-            addCoinEarned(treasuryAddr, fee);
+            totalBurned += fee;
+            debouncedSavePrism();
           }
           challenge.status = 'completed';
           challenge.completedAt = Date.now();
@@ -8519,7 +8528,9 @@ function pruneSybilGraph() {
 async function saveSybilGraph() {
   pruneSybilGraph();
   try {
-    await fs.promises.writeFile(SYBIL_GRAPH_FILE, JSON.stringify(sybilGraph), 'utf8');
+    const tmp = SYBIL_GRAPH_FILE + '.tmp';
+    await fs.promises.writeFile(tmp, JSON.stringify(sybilGraph), 'utf8');
+    await fs.promises.rename(tmp, SYBIL_GRAPH_FILE);
   } catch (e) { console.warn('[sybil-graph] Save failed:', e.message); }
 }
 
@@ -8605,7 +8616,9 @@ async function savePrismData() {
       transactions: Object.fromEntries(prismTransactions),
       coinStats: Object.fromEntries(coinStats),
     };
-    await fs.promises.writeFile(PRISM_DATA_FILE, JSON.stringify(data), 'utf8');
+    const tmp = PRISM_DATA_FILE + '.tmp';
+    await fs.promises.writeFile(tmp, JSON.stringify(data), 'utf8');
+    await fs.promises.rename(tmp, PRISM_DATA_FILE);
   } catch (e) { console.warn('[coins] save error', e.message); }
 }
 
@@ -9298,7 +9311,9 @@ try {
   }
 } catch {}
 function saveMarketplace() {
-  fs.promises.writeFile(MARKETPLACE_FILE, JSON.stringify({ listings: Object.fromEntries(marketplaceListings), purchases: Object.fromEntries(marketplacePurchases) }), 'utf8')
+  const tmp = MARKETPLACE_FILE + '.tmp';
+  fs.promises.writeFile(tmp, JSON.stringify({ listings: Object.fromEntries(marketplaceListings), purchases: Object.fromEntries(marketplacePurchases) }), 'utf8')
+    .then(() => fs.promises.rename(tmp, MARKETPLACE_FILE))
     .catch(e => console.warn('[marketplace] save error', e.message));
 }
 

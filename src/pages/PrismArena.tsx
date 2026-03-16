@@ -716,7 +716,7 @@ export default function PrismArena() {
                   <div className="flex items-center gap-2">
                     {(c.status === 'playing' || c.status === 'accepted') && c.type === 'game' && c.gameMode && (
                       <Button
-                        onClick={() => navigate(`/game?challengeId=${c.id}&mode=${c.gameMode}`)}
+                        onClick={() => navigate(`/game?challengeId=${encodeURIComponent(c.id)}&mode=${encodeURIComponent(c.gameMode || 'orbit')}`)}
                         size="sm"
                         className="bg-yellow-500 hover:bg-yellow-400 text-black font-bold"
                       >
@@ -758,7 +758,7 @@ export default function PrismArena() {
           onConfirm={() => {
             const { id, gameMode } = readyModal.challenge;
             setReadyModal(null);
-            navigate(`/game?challengeId=${id}&mode=${gameMode}`);
+            navigate(`/game?challengeId=${encodeURIComponent(id)}&mode=${encodeURIComponent(gameMode || 'orbit')}`);
           }}
           onClose={() => setReadyModal(null)}
         />
