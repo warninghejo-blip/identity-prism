@@ -480,6 +480,11 @@ const normalizeStoredGameSessionEntry = (raw) => {
     createdAt,
     lastVerifiedAt,
     createdAtMs,
+    gameMode: typeof raw.gameMode === 'string' ? raw.gameMode : undefined,
+    // Preserve reuse-prevention flags across restarts
+    usedForTournament: raw.usedForTournament || null,
+    usedForChallenge: raw.usedForChallenge || null,
+    usedForLeaderboard: raw.usedForLeaderboard || null,
   };
 };
 
@@ -1586,9 +1591,7 @@ const resolveCorsOrigin = (req) => {
   if (allowList.includes(origin)) {
     return origin;
   }
-  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
-    return origin;
-  }
+  // localhost bypass removed for security — use CORS_ORIGIN env to whitelist dev origins
   return allowList[0];
 };
 
@@ -2524,6 +2527,13 @@ const server = http.createServer(async (req, res) => {
 
   // ── Auth: verify signature, issue JWT ──
   if (pathname === '/api/auth/token' && req.method === 'POST') {
+    const rlIp = getClientIp(req);
+    const rlKey = `authToken:${rlIp}`;
+    const lastAuth = reputationRateLimit.get(rlKey) || 0;
+    if (Date.now() - lastAuth < 5000) {
+      return respondJson(res, 429, { error: 'Rate limited — 5s cooldown' });
+    }
+    reputationRateLimit.set(rlKey, Date.now());
     try {
       const parsed = safeParseJson(await readBody(req));
       const address = typeof parsed?.address === 'string' ? parsed.address.trim() : '';
@@ -3129,6 +3139,13 @@ const server = http.createServer(async (req, res) => {
         ? 'Seed matches MagicBlock slot and score delta is within tolerance'
         : `${verification.reason}; score delta=${scoreDelta}s`;
 
+      // Preserve reuse-prevention flags if session already exists (prevents replay attack)
+      const existingSession = gameSessionProofs.get(id);
+      if (existingSession && (existingSession.usedForTournament || existingSession.usedForChallenge || existingSession.usedForLeaderboard)) {
+        // Session already used competitively — reject re-registration
+        return respondJson(res, 409, { error: 'Session already registered and used competitively' });
+      }
+
       const entry = {
         id,
         hash,
@@ -3151,6 +3168,10 @@ const server = http.createServer(async (req, res) => {
         createdAt: nowIso,
         lastVerifiedAt: nowIso,
         createdAtMs: Date.now(),
+        // Carry over any existing reuse flags
+        usedForTournament: existingSession?.usedForTournament ?? null,
+        usedForChallenge: existingSession?.usedForChallenge ?? null,
+        usedForLeaderboard: existingSession?.usedForLeaderboard ?? null,
       };
 
       // Evict oldest if at capacity
@@ -3193,7 +3214,23 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const verification = await verifyMagicBlockSeedSlot(existing.seed, existing.slot);
-      const verified = verification.seedMatchesSlot && existing.scoreDelta <= 5;
+      // If RPC is unavailable, return cached data — never downgrade a verified session
+      if (!verification.rpcHealthy) {
+        respondJson(res, 200, {
+          session: toPublicGameSessionProof(existing),
+          verificationWarning: 'MagicBlock RPC unavailable; using cached verification',
+        });
+        return;
+      }
+      // Recalculate modeScoreValid (must match POST creation logic)
+      let modeScoreValid = true;
+      const exDurationSec = Math.max(1, (existing.durationMs || 0) / 1000);
+      if (existing.gameMode === 'destroyer') {
+        modeScoreValid = existing.score <= Math.max(500, Math.floor(exDurationSec * 100));
+      } else if (existing.gameMode === 'gravity') {
+        modeScoreValid = existing.score <= Math.max(100, Math.floor(exDurationSec * 10));
+      }
+      const verified = verification.seedMatchesSlot && existing.scoreDelta <= 5 && modeScoreValid;
       const reason = verified
         ? 'Seed matches MagicBlock slot and score delta is within tolerance'
         : `${verification.reason}; score delta=${existing.scoreDelta}s`;
@@ -3251,18 +3288,20 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
         return;
       }
-      // Verify game session proof if provided (strongly recommended)
-      if (gameSessionId) {
-        const session = gameSessionProofs.get(gameSessionId);
-        if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
-        if (session.walletAddress !== address) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-        if (Math.abs(session.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
-        if (session.gameMode && gameType && session.gameMode !== gameType) return respondJson(res, 400, { error: 'Session gameMode mismatch' });
-        session.usedForLeaderboard = { address, at: Date.now() };
-      }
+      // Require game session proof for leaderboard submit
+      if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for leaderboard' });
+      const session = gameSessionProofs.get(gameSessionId);
+      if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+      if (session.walletAddress !== address) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+      if (Math.abs(session.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
+      // Require gameType and enforce exact match
+      if (!gameType) return respondJson(res, 400, { error: 'gameType required' });
+      if (session.gameMode && session.gameMode !== gameType) return respondJson(res, 400, { error: 'Session gameMode mismatch' });
+      if (session.usedForLeaderboard) return respondJson(res, 400, { error: 'Session already used for leaderboard' });
+      session.usedForLeaderboard = { address, at: Date.now() };
       // MAX_SCORE validation per game mode
       const MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
-      const gtCheck = gameType || 'orbit';
+      const gtCheck = gameType;
       const maxScore = MAX_SCORES[gtCheck] || 9999;
       if (score > maxScore) {
         respondJson(res, 400, { error: 'Score exceeds maximum allowed' });
@@ -3310,7 +3349,8 @@ const server = http.createServer(async (req, res) => {
       }
       // Delta validation per game mode (1.5x buffer for coinMult + on-chain bonus)
       if (delta > 0) {
-        const gameMode = mode || 'orbit';
+        const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
+        const gameMode = VALID_GAME_MODES.has(mode) ? mode : 'orbit';
         const maxDelta = (MAX_DELTA_PER_GAME[gameMode] || 500) * 1.5;
         if (delta > maxDelta) {
           return respondJson(res, 400, { error: 'Delta exceeds maximum for game mode' });
@@ -3548,12 +3588,14 @@ const server = http.createServer(async (req, res) => {
       if (!tSession || !tSession.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
       if (tSession.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
       if (Math.abs(tSession.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
-      if (tSession.gameMode && t.mode && tSession.gameMode !== t.mode) return respondJson(res, 400, { error: 'Session gameMode does not match tournament mode' });
+      if (!t.mode) return respondJson(res, 500, { error: 'Tournament mode not configured' });
+      if (tSession.gameMode !== t.mode) return respondJson(res, 400, { error: 'Session gameMode does not match tournament mode' });
       if (tSession.usedForTournament) return respondJson(res, 400, { error: 'Session already used for a tournament submission' });
-      tSession.usedForTournament = { tier, addr, at: Date.now() };
       const MAX_T_SCORES = { orbit: 600, gravity: 600, destroyer: 9999 };
       const maxTScore = MAX_T_SCORES[t.mode] || 9999;
       if (score > maxTScore) return respondJson(res, 400, { error: 'Score exceeds maximum' });
+      // Mark session used AFTER all validation passes (atomic)
+      tSession.usedForTournament = { tier, addr, at: Date.now() };
       if (score > (t.entries[addr].score || 0)) {
         t.entries[addr] = { score, submittedAt: new Date().toISOString() };
         saveTournament();
@@ -3709,8 +3751,12 @@ const server = http.createServer(async (req, res) => {
       const addr = jwtAuth.address;
       const tierConfig = STAKING_TIERS[tier];
       if (!tierConfig) return respondJson(res, 400, { error: 'Invalid tier. Use: bronze, silver, gold' });
-      if (!Number.isFinite(amount) || amount < tierConfig.minStake) {
-        return respondJson(res, 400, { error: `Minimum stake for ${tier}: ${tierConfig.minStake} Coins` });
+      if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < tierConfig.minStake) {
+        return respondJson(res, 400, { error: `Minimum stake for ${tier}: ${tierConfig.minStake} Coins (integer)` });
+      }
+      const MAX_STAKE_PER_WALLET = 500_000;
+      if (amount > MAX_STAKE_PER_WALLET) {
+        return respondJson(res, 400, { error: `Maximum stake: ${MAX_STAKE_PER_WALLET} Coins` });
       }
       const bal = getCoinBalance(addr);
       if (bal < amount) return respondJson(res, 400, { error: 'Insufficient balance' });
@@ -3772,7 +3818,7 @@ const server = http.createServer(async (req, res) => {
     const total = returnAmount + yieldAmount;
     const bal = getCoinBalance(addr);
     setCoinBalance(addr, bal + total);
-    addCoinEarned(addr, total);
+    addCoinEarned(addr, yieldAmount); // only yield is earned income, not the returned deposit
     w.staking = null;
     w.coins = bal + total;
     walletDatabase.set(addr, w);
@@ -5535,6 +5581,31 @@ const server = http.createServer(async (req, res) => {
         if (todayCoins >= DAILY_GAME_COIN_CAP) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
         earned = Math.min(earned, DAILY_GAME_COIN_CAP - todayCoins);
         addGameCoinsToday(address, earned);
+      } else {
+        // Non-game sources: enforce global daily cap to prevent coin inflation
+        const ngKey = `nongame_daily:${address}`;
+        const today = new Date().toISOString().slice(0, 10);
+        const ngEntry = prismEarnRateLimit.get(ngKey);
+        let ngEarned = 0;
+        if (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) {
+          ngEarned = ngEntry.total || 0;
+        }
+        if (ngEarned >= NON_GAME_DAILY_EARN_CAP) return respondJson(res, 429, { error: 'Daily non-game earn cap reached', dailyRemaining: 0 });
+        earned = Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned);
+        prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
+      }
+      // Server-side verification for one-time/conditional sources
+      if (source === 'first_mint') {
+        const wfm = walletDatabase.get(address);
+        if (wfm?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
+        updateWalletEntry(address, { _firstMintClaimed: true });
+      }
+      if (source === 'challenge_win') {
+        // Cross-check: verify the user actually has a recently completed challenge win
+        const recentChallenges = Array.from(challenges.values()).filter(
+          c => c.status === 'completed' && c.winner === address && Date.now() - new Date(c.completedAt || c.createdAt).getTime() < 600_000
+        );
+        if (recentChallenges.length === 0) return respondJson(res, 400, { error: 'No recent challenge win found' });
       }
       // Apply staking boost to earn
       const earnBoost = getStakingBoost(address);
@@ -6593,11 +6664,24 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Sybil Batch Analysis ═══
   if (pathname === '/api/sybil/batch' && req.method === 'POST') {
+    const rlIp = getClientIp(req);
+    const rlKey = `sybilBatch:${rlIp}`;
+    const lastBatch = reputationRateLimit.get(rlKey) || 0;
+    if (Date.now() - lastBatch < 15000) {
+      return respondJson(res, 429, { error: 'Rate limited — 15s cooldown' });
+    }
+    reputationRateLimit.set(rlKey, Date.now());
     try {
       const body = await readBody(req);
       const { addresses } = JSON.parse(body);
       if (!Array.isArray(addresses) || addresses.length === 0) return respondJson(res, 400, { error: 'addresses array required' });
       if (addresses.length > 20) return respondJson(res, 400, { error: 'Max 20 addresses per batch' });
+      // Validate each address is a valid base58 Solana pubkey
+      for (const addr of addresses) {
+        if (typeof addr !== 'string' || addr.length < 32 || addr.length > 44 || !/^[1-9A-HJ-NP-Za-km-z]+$/.test(addr)) {
+          return respondJson(res, 400, { error: `Invalid address: ${String(addr).slice(0, 8)}...` });
+        }
+      }
 
       const results = {};
       for (const addr of addresses) {
@@ -6663,6 +6747,13 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Wallet Token Holdings ═══
   if (pathname === '/api/wallet/tokens' && req.method === 'GET') {
+    const rlIp = getClientIp(req);
+    const rlKey = `walletTokens:${rlIp}`;
+    const lastWT = reputationRateLimit.get(rlKey) || 0;
+    if (Date.now() - lastWT < 10000) {
+      return respondJson(res, 429, { error: 'Rate limited — 10s cooldown' });
+    }
+    reputationRateLimit.set(rlKey, Date.now());
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
     try {
@@ -6703,6 +6794,13 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Wallet Recent Transactions ═══
   if (pathname === '/api/wallet/recent-txs' && req.method === 'GET') {
+    const rlIp = getClientIp(req);
+    const rlKey = `walletTxs:${rlIp}`;
+    const lastWTx = reputationRateLimit.get(rlKey) || 0;
+    if (Date.now() - lastWTx < 10000) {
+      return respondJson(res, 429, { error: 'Rate limited — 10s cooldown' });
+    }
+    reputationRateLimit.set(rlKey, Date.now());
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
     try {
@@ -7065,15 +7163,18 @@ const server = http.createServer(async (req, res) => {
         'ot_first_game', 'ot_score1000', 'ot_mint_card', 'ot_first_challenge',
         'ot_first_stake', 'ot_first_forge', 'ot_explore10',
       ]);
+      const existingQuests = (questProgress.get(addr) || {}).quests || {};
       const sanitized = {};
       for (const [key, val] of Object.entries(quests)) {
         if (!VALID_QUEST_IDS.has(key)) continue;
         if (!val || typeof val !== 'object') continue;
-        sanitized[key] = {
-          progress: Math.max(0, Math.min(Number(val.progress) || 0, 100000)),
-          claimed: val.claimed === true,
-          completed: val.completed === true || val.claimed === true,
-        };
+        const prev = existingQuests[key] || {};
+        const progress = Math.max(0, Math.min(Number(val.progress) || 0, 100000));
+        // Server-side: completed can only go false→true (never back), and only if progress > 0
+        // claimed can only go false→true (once claimed, stays claimed)
+        const completed = prev.completed === true ? true : ((val.completed === true || val.claimed === true) && progress > 0);
+        const claimed = prev.claimed === true ? true : (val.claimed === true && completed);
+        sanitized[key] = { progress, claimed, completed };
       }
       const existing = questProgress.get(addr) || {};
       // Update streak: if last sync was yesterday or today, increment; otherwise reset to 1
@@ -7193,10 +7294,9 @@ const server = http.createServer(async (req, res) => {
       if (listing.seller === address) { marketplacePurchases.delete(purchaseKey); return respondJson(res, 400, { error: 'Cannot purchase your own listing' }); }
       const buyerBal = getCoinBalance(address);
       if (buyerBal < listing.price) { marketplacePurchases.delete(purchaseKey); return respondJson(res, 400, { error: 'Insufficient Coin balance' }); }
-      // Marketplace fee: 20% platform fee, 2% burn from platform fee, 80% to seller
+      // Marketplace fee: 20% platform fee (fully deflationary — burned), 80% to seller
       const platformFee = Math.max(1, Math.floor(listing.price * 0.20));
-      const burnFromFee = Math.max(1, Math.floor(platformFee * 0.10)); // 10% of platform fee burned (~2% of total)
-      totalBurned += burnFromFee;
+      totalBurned += platformFee; // entire platform fee is burned (deflationary)
       const sellerShare = listing.price - platformFee;
       setCoinBalance(address, buyerBal - listing.price);
       addCoinSpent(address, listing.price);
@@ -8325,7 +8425,7 @@ function checkGraphForKnownSybils(address, fundingSources, siblings) {
       break;
     }
   }
-  return { graphRisk: Math.min(25, graphRisk), graphDetails };
+  return { graphRisk: Math.min(40, graphRisk), graphDetails };
 }
 
 // Migrate any old prism_data.json balances into coinBalances on first run
@@ -8417,10 +8517,16 @@ const PRISM_EARN_COOLDOWN_TABLE = {
   game_gravity: 60_000,
   quest_daily: 24 * 60 * 60_000,
   quest_weekly: 7 * 24 * 60 * 60_000,
-  challenge_win: 10_000,
-  scan_wallet: 30_000,
-  text_quest: 30_000,
+  quest_milestone: 24 * 60 * 60_000,   // 1 per day
+  challenge_win: 10 * 60_000,           // 10 min (was 10s — exploitable)
+  scan_wallet: 60_000,                  // 1 min
+  text_quest: 24 * 60 * 60_000,        // 1 per day (was 30s — exploitable for 288K/day)
+  first_mint: 30 * 24 * 60 * 60_000,   // effectively one-time (30 days)
+  referral: 60 * 60_000,               // 1 per hour
+  achievement: 5 * 60_000,
 };
+// Global daily cap for non-game earn sources (prevents coin inflation exploits)
+const NON_GAME_DAILY_EARN_CAP = 500;
 const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;
 
 // Known CEX/Bridge/DEX addresses for labeling
@@ -8989,15 +9095,23 @@ function finalizeTournamentTier(tier) {
   const pool = t.prizePool;
   const winners = [];
   const shares = PRIZE_SHARES[tier] || PRIZE_SHARES.daily;
-  for (let i = 0; i < Math.min(shares.length, sorted.length); i++) {
-    const prize = Math.floor(pool * shares[i]);
+  const maxWinners = Math.min(shares.length, sorted.length);
+  let totalPaid = 0;
+  for (let i = 0; i < maxWinners; i++) {
+    // Give 1st place the remainder to avoid losing coins to rounding
+    const prize = i === 0
+      ? pool - shares.slice(1, maxWinners).reduce((acc, s) => acc + Math.floor(pool * s), 0)
+      : Math.floor(pool * shares[i]);
     if (prize > 0) {
       const cur = getCoinBalance(sorted[i].address);
       setCoinBalance(sorted[i].address, cur + prize);
       addCoinEarned(sorted[i].address, prize);
+      totalPaid += prize;
       winners.push({ address: sorted[i].address, score: sorted[i].score, prize, place: i + 1 });
     }
   }
+  // Any remaining dust (when fewer participants than prize slots) is burned
+  if (totalPaid < pool) totalBurned += (pool - totalPaid);
   t.winners = winners;
   tournamentHistory.unshift({ ...t });
   if (tournamentHistory.length > 50) tournamentHistory.length = 50;

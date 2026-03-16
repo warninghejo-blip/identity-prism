@@ -1189,6 +1189,30 @@ const PrismLeague = () => {
         if (playMode === 'tournament' && activeTournament?.userJoined) {
           submitToTournament(finalScore, proof?.id ?? undefined);
         }
+
+        // Challenge submit — must be inside verifyAndPublish to have proof.id
+        if (activeChallengeId && !challengeSubmittedRef.current) {
+          challengeSubmittedRef.current = true;
+          setChallengeSubmitting(true);
+          submitChallengeScore(activeChallengeId, finalScore, proof?.id).then((result) => {
+            setChallengeSubmitting(false);
+            if (result.ok && result.challenge) {
+              setChallengeResult(result.challenge);
+              if (result.challenge.status === 'completed') {
+                setTimeout(() => setShowBattleResult(true), 1500);
+                if (result.challenge.winner === playerAddr) hapticSuccess();
+                else hapticError();
+              } else {
+                toast.success('Score submitted! Waiting for opponent...');
+              }
+            } else {
+              toast.error(result.error || 'Failed to submit challenge score');
+            }
+          }).catch(() => {
+            setChallengeSubmitting(false);
+            toast.error('Failed to submit challenge score');
+          });
+        }
       };
 
       void verifyAndPublish();
@@ -1297,30 +1321,7 @@ const PrismLeague = () => {
         });
       }
 
-      // ── Challenge: submit score if playing a challenge ──
-      if (activeChallengeId && !challengeSubmittedRef.current) {
-        challengeSubmittedRef.current = true;
-        setChallengeSubmitting(true);
-        submitChallengeScore(activeChallengeId, finalScore).then((result) => {
-          setChallengeSubmitting(false);
-          if (result.ok && result.challenge) {
-            setChallengeResult(result.challenge);
-            if (result.challenge.status === 'completed') {
-              // Show BattleResultOverlay after 1.5s (let user see game over screen first)
-              setTimeout(() => setShowBattleResult(true), 1500);
-              if (result.challenge.winner === playerAddr) hapticSuccess();
-              else hapticError();
-            } else {
-              toast.success('Score submitted! Waiting for opponent...');
-            }
-          } else {
-            toast.error(result.error || 'Failed to submit challenge score');
-          }
-        }).catch(() => {
-          setChallengeSubmitting(false);
-          toast.error('Failed to submit challenge score');
-        });
-      }
+      // Challenge submit moved into verifyAndPublish (with gameSessionId proof)
 
       // Tournament submit moved into verifyAndPublish (with gameSessionId)
 
