@@ -176,6 +176,17 @@ const JWT_TTL = '1h';
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 min nonce window
 const authChallenges = new Map(); // nonce → { address, expiresAt }
 
+// Trusted proxy IPs — only trust X-Forwarded-For from these sources
+const TRUSTED_PROXIES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+/** Extract real client IP, only trusting X-Forwarded-For from trusted proxies */
+function getClientIp(req) {
+  const socketIp = req.socket?.remoteAddress || 'unknown';
+  if (TRUSTED_PROXIES.has(socketIp) && req.headers['x-forwarded-for']) {
+    return req.headers['x-forwarded-for'].split(',')[0].trim();
+  }
+  return socketIp;
+}
+
 // Clean up expired challenges every minute
 setInterval(() => {
   const now = Date.now();
@@ -274,7 +285,7 @@ function requireJwt(req, res) {
     return { ok: false };
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     return { ok: true, address: payload.address };
   } catch {
     respondJson(res, 401, { error: 'Invalid or expired auth token' });
@@ -294,7 +305,7 @@ function optionalJwt(req, res) {
     return { ok: true, address: null };
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     return { ok: true, address: payload.address };
   } catch {
     // Token present but invalid — reject to prevent spoofing
@@ -2490,7 +2501,7 @@ const server = http.createServer(async (req, res) => {
   // ── Auth: issue challenge nonce ──
   if (pathname === '/api/auth/challenge' && req.method === 'POST') {
     // Rate limit: 6 challenges per minute per IP
-    const challengeIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const challengeIp = getClientIp(req);
     const challengeRlKey = `authChallenge:${challengeIp}`;
     const lastChallengeTs = prismEarnRateLimit.get(challengeRlKey) || 0;
     if (Date.now() - lastChallengeTs < 10_000) return respondJson(res, 429, { error: 'Too many auth challenges, try again later' });
@@ -2559,7 +2570,7 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 401, { error: 'Invalid signature' }); return;
       }
       authChallenges.delete(nonce); // one-time use
-      const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL });
+      const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL, algorithm: 'HS256' });
       console.info('[auth] JWT issued', { address: address.slice(0, 8) });
       respondJson(res, 200, { token, expiresIn: JWT_TTL });
     } catch (e) {
@@ -2572,7 +2583,7 @@ const server = http.createServer(async (req, res) => {
   // Rate limit: 1 request per 10 seconds per IP for /api/reputation, /api/reputation/compare, /api/reputation/batch
   if ((pathname === '/api/reputation' || pathname === '/api/reputation/compare' || pathname === '/api/reputation/batch')
       && (req.method === 'GET' || req.method === 'POST')) {
-    const rlIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const rlIp = getClientIp(req);
     const rlKey = `repv1:${rlIp}`;
     const lastReq = reputationRateLimit.get(rlKey) || 0;
     if (Date.now() - lastReq < 10_000) {
@@ -2618,7 +2629,7 @@ const server = http.createServer(async (req, res) => {
           riskLevel = cachedSybil.analysis.riskLevel;
           topPrograms = cachedSybil.analysis.metrics?.topPrograms || [];
         } else {
-          // Lightweight trust estimation from identity data
+          // Lightweight trust estimation — capped at 70 until full sybil analysis
           let riskPts = 0;
           if (walletAgeDays < 30) riskPts += 15;
           if (txCount < 10) riskPts += 10;
@@ -2630,7 +2641,7 @@ const server = http.createServer(async (req, res) => {
           if (tokenCount >= 10) riskPts -= 3;
           if (nftCount >= 5) riskPts -= 2;
           riskPts = Math.max(0, Math.min(100, riskPts));
-          const ts = Math.max(0, 100 - riskPts);
+          const ts = Math.min(70, Math.max(0, 100 - riskPts)); // cap 70 — full analysis needed for higher
           trustScore = ts;
           trustGrade = ts >= 90 ? 'A+' : ts >= 80 ? 'A' : ts >= 70 ? 'B' : ts >= 60 ? 'C' : ts >= 50 ? 'D' : 'F';
           riskLevel = riskPts >= 75 ? 'critical' : riskPts >= 50 ? 'high' : riskPts >= 30 ? 'medium' : riskPts >= 10 ? 'low' : 'clean';
@@ -3088,15 +3099,28 @@ const server = http.createServer(async (req, res) => {
       const hash = crypto.createHash('sha256').update(canonical).digest('hex');
       const id = createGameSessionProofId(payload.slot, hash);
       const durationMs = Math.max(0, payload.endedAtMs - payload.startedAtMs);
-      // For orbit: score = survival seconds, check delta against duration
-      // For destroyer: score = points (unrelated to time), skip score-time check
+      // Score-time validation per game mode:
+      // orbit: score ≈ survival seconds (±5)
+      // gravity: score = points (not time-based), but cap at 10 pts/sec of play
+      // destroyer: score = points (high variance), cap at 100 pts/sec of play
       const isDestroyerMode = payload.gameMode === 'destroyer';
-      const expectedScore = Math.floor(durationMs / 1000);
-      const maxDestroyerScore = Math.max(500, Math.floor(durationMs / 100));
-      const scoreDelta = isDestroyerMode ? 0 : Math.abs(expectedScore - payload.score);
+      const isGravityMode = payload.gameMode === 'gravity';
+      const durationSec = Math.max(1, durationMs / 1000);
+      const expectedScore = Math.floor(durationSec);
+      const maxDestroyerScore = Math.max(500, Math.floor(durationSec * 100));
+      const maxGravityScore = Math.max(100, Math.floor(durationSec * 10));
+      let scoreDelta = 0;
+      let modeScoreValid = true;
+      if (isDestroyerMode) {
+        modeScoreValid = payload.score <= maxDestroyerScore;
+      } else if (isGravityMode) {
+        modeScoreValid = payload.score <= maxGravityScore;
+      } else {
+        // orbit: score ≈ seconds survived
+        scoreDelta = Math.abs(expectedScore - payload.score);
+      }
       const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
-      const destroyerScoreValid = !isDestroyerMode || payload.score <= maxDestroyerScore;
-      const verified = verification.seedMatchesSlot && scoreDelta <= 5 && destroyerScoreValid;
+      const verified = verification.seedMatchesSlot && scoreDelta <= 5 && modeScoreValid;
       const nowIso = new Date().toISOString();
       const baseUrl = getBaseUrl(req);
       const proofUrl = baseUrl ? `${baseUrl}/api/game/session/${encodeURIComponent(id)}` : null;
@@ -3449,7 +3473,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const authHeader = req.headers['authorization'];
       if (authHeader && authHeader.startsWith('Bearer ')) {
-        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET);
+        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET, { algorithms: ['HS256'] });
         if (decoded.address) userAddr = decoded.address;
       }
     } catch {}
@@ -5731,7 +5755,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
     // Rate limit: 15s per IP (optimized — fewer RPC calls now)
-    const sybilIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const sybilIp = getClientIp(req);
     const sybilRlKey = `sybil:${sybilIp}`;
     if (Date.now() - (reputationRateLimit.get(sybilRlKey) || 0) < 15_000) {
       return respondJson(res, 429, { error: 'Rate limited. Try again in 15 seconds.' });
@@ -5816,7 +5840,7 @@ const server = http.createServer(async (req, res) => {
           const stdDev = Math.sqrt(intervals.reduce((s, v) => s + (v - mean) ** 2, 0) / intervals.length);
           timingCV = stdDev / mean;
           timingVariance = Math.min(1, timingCV / 1.5);
-          isRobotic = timingCV < 0.25 && intervals.length > 50;
+          isRobotic = timingCV < 0.25 && intervals.length >= 30;
         }
       }
 
@@ -6401,7 +6425,14 @@ const server = http.createServer(async (req, res) => {
       }
       riskScore = Math.min(100, riskScore);
 
-      // Trust bonuses — scaled for genuinely active wallets (max ~40)
+      // ── Cross-session graph intelligence (applied BEFORE trust bonus) ──
+      const fundingSources = [...incomingSenders];
+      const { graphRisk, graphDetails } = checkGraphForKnownSybils(address, fundingSources, [...allSiblings]);
+      if (graphRisk > 0) {
+        riskScore = Math.min(100, riskScore + graphRisk);
+      }
+
+      // Trust bonuses — applied AFTER graph risk so they can't fully absorb it (max ~40)
       let trustBonus = cexTrustBonus; // carry over CEX bonus from funding graph analysis
       if (walletAgeDays > 365) trustBonus += 5;          // 1+ year old
       if (walletAgeDays > 730) trustBonus += 3;          // 2+ years old
@@ -6418,13 +6449,11 @@ const server = http.createServer(async (req, res) => {
       if (hasSolDomain) trustBonus += 4;                 // owns .sol domain (strong identity signal)
       if (defiDepth >= 2) trustBonus += 2;               // uses DeFi beyond swaps
       if (defiDepth >= 3) trustBonus += 2;               // deep DeFi user (lending+staking+governance)
-      riskScore = Math.max(0, riskScore - trustBonus);
+      // Trust bonus can reduce risk but never below half of graph risk (graph signal always partially persists)
+      const graphFloor = Math.floor(graphRisk / 2);
+      riskScore = Math.max(graphFloor, riskScore - trustBonus);
 
-      // ── Cross-session graph intelligence ──
-      const fundingSources = [...incomingSenders];
-      const { graphRisk, graphDetails } = checkGraphForKnownSybils(address, fundingSources, [...allSiblings]);
       if (graphRisk > 0) {
-        riskScore = Math.min(100, riskScore + graphRisk);
         signals.push({
           id: 'graph_intelligence', name: 'Known Sybil Network', category: 'network',
           detected: true, weight: graphRisk,
@@ -6530,12 +6559,16 @@ const server = http.createServer(async (req, res) => {
       if (allSiblings.size >= 10 && riskScore >= 50) {
         const clusterKey = fundingSources[0] || address;
         const existing = sybilGraph.flaggedClusters.find(c => c.funder === clusterKey);
-        if (!existing) {
+        if (existing) {
+          existing.lastSeen = Date.now();
+          if (!existing.members.includes(address)) existing.members.push(address);
+        } else {
           sybilGraph.flaggedClusters.push({
             funder: clusterKey,
             label: `auto-${clusterKey.slice(0, 8)}`,
             members: [address, ...([...allSiblings].slice(0, 30))],
             flaggedAt: Date.now(),
+            lastSeen: Date.now(),
           });
         }
       }
@@ -6729,7 +6762,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Sybil Funding Sources ═══
   if (pathname === '/api/sybil/funding-sources' && req.method === 'GET') {
-    const sybilHeavyIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const sybilHeavyIp = getClientIp(req);
     const sybilHeavyKey = `sybilHeavy:${sybilHeavyIp}`;
     const lastSybilHeavy = prismEarnRateLimit.get(sybilHeavyKey) || 0;
     if (Date.now() - lastSybilHeavy < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
@@ -6763,7 +6796,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Sybil Cluster Detection ═══
   if (pathname === '/api/sybil/cluster' && req.method === 'GET') {
-    const clusterIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const clusterIp = getClientIp(req);
     const clusterRlKey = `sybilHeavy:${clusterIp}`;
     const lastCluster = prismEarnRateLimit.get(clusterRlKey) || 0;
     if (Date.now() - lastCluster < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
@@ -6824,7 +6857,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Sybil Circular Flow ═══
   if (pathname === '/api/sybil/circular-flow' && req.method === 'GET') {
-    const circIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const circIp = getClientIp(req);
     const circRlKey = `sybilHeavy:${circIp}`;
     const lastCirc = prismEarnRateLimit.get(circRlKey) || 0;
     if (Date.now() - lastCirc < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
@@ -6847,7 +6880,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Sybil Dark Pool ═══
   if (pathname === '/api/sybil/dark-pool' && req.method === 'GET') {
-    const dpIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const dpIp = getClientIp(req);
     const dpRlKey = `sybilHeavy:${dpIp}`;
     const lastDp = prismEarnRateLimit.get(dpRlKey) || 0;
     if (Date.now() - lastDp < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
@@ -6885,7 +6918,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Scam Check ═══
   if (pathname === '/api/scam-check' && req.method === 'POST') {
-    const scamClientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const scamClientIp = getClientIp(req);
     const scamRlKey = `scam:${scamClientIp}`;
     const lastScam = prismEarnRateLimit.get(scamRlKey) || 0;
     if (Date.now() - lastScam < 10_000) return respondJson(res, 429, { error: 'Rate limited' });
@@ -6957,7 +6990,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/v2/reputation' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const ip = getClientIp(req);
     const apiKey = req.headers['x-api-key'] || url.searchParams.get('api_key');
     // API key validation
     const API_KEY_REGISTRY = new Map(
@@ -7728,7 +7761,7 @@ const server = http.createServer(async (req, res) => {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
     // Rate limit: 30s per IP (heavy — up to 1000 tx parsing)
-    const constIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+    const constIp = getClientIp(req);
     const constIpRlKey = `const:${constIp}`;
     if (Date.now() - (reputationRateLimit.get(constIpRlKey) || 0) < 10_000) {
       const cached = constellationCache.get(address);
@@ -8234,6 +8267,12 @@ function pruneSybilGraph() {
     const toRemove = sorted.slice(0, nodeAddrs.length - MAX_SYBIL_GRAPH_NODES);
     for (const addr of toRemove) delete sybilGraph.nodes[addr];
   }
+  // Prune clusters by TTL (90 days) then by count (max 1000)
+  const clusterTtl = 90 * 24 * 3600_000;
+  const nowPrune = Date.now();
+  sybilGraph.flaggedClusters = sybilGraph.flaggedClusters.filter(c =>
+    c.lastSeen && (nowPrune - c.lastSeen) < clusterTtl
+  );
   if (sybilGraph.flaggedClusters.length > 1000) {
     sybilGraph.flaggedClusters = sybilGraph.flaggedClusters.slice(-1000);
   }

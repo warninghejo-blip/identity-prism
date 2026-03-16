@@ -887,14 +887,18 @@ const PrismLeague = () => {
     if (!el) return;
     if (bonuses.length === 0) { el.style.display = 'none'; return; }
     el.style.display = 'flex';
+    // Sanitize: only allow known values, escape any user-controllable text
+    const esc = (s: string) => s.replace(/[<>"'&]/g, c => ({ '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '&': '&amp;' }[c] || c));
+    const safeColor = (c: string) => /^#[0-9a-fA-F]{3,8}$/.test(c) || /^[a-z]{3,20}$/.test(c) ? c : '#fff';
     el.innerHTML = bonuses.map(b => {
       const pct = Math.max(0, Math.min(100, Math.round((b.t / b.max) * 100)));
       const img = _pwrImgMap[b.type] || '';
+      const color = safeColor(b.color);
       return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">` +
-        `<span style="font-size:7px;font-weight:800;color:${b.color};text-transform:uppercase;letter-spacing:0.4px;text-shadow:0 0 6px ${b.color}88;white-space:nowrap">${b.label}</span>` +
-        `<img src="${img}" width="22" height="22" style="filter:drop-shadow(0 0 5px ${b.color}80);image-rendering:pixelated" />` +
+        `<span style="font-size:7px;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:0.4px;text-shadow:0 0 6px ${color}88;white-space:nowrap">${esc(b.label)}</span>` +
+        `<img src="${esc(img)}" width="22" height="22" style="filter:drop-shadow(0 0 5px ${color}80);image-rendering:pixelated" />` +
         `<div style="width:26px;height:4px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;box-shadow:inset 0 1px 2px rgba(0,0,0,0.4)">` +
-          `<div style="width:${pct}%;height:100%;border-radius:3px;background:linear-gradient(90deg,${b.color}cc,${b.color});box-shadow:0 0 6px ${b.color}88;transition:width 0.12s linear"></div>` +
+          `<div style="width:${pct}%;height:100%;border-radius:3px;background:linear-gradient(90deg,${color}cc,${color});box-shadow:0 0 6px ${color}88;transition:width 0.12s linear"></div>` +
         `</div>` +
       `</div>`;
     }).join('');
@@ -907,7 +911,10 @@ const PrismLeague = () => {
     if (!el) return;
     el.style.display = 'flex';
     el.style.opacity = '1';
-    el.innerHTML = `<span class="text-xs font-black text-orange-300 tabular-nums">&times;${combo}</span><span class="text-[9px] text-orange-400/70 ml-1 font-bold">+${pts}</span>`;
+    // combo and pts are numbers — safe, but coerce to int for defense
+    const safeCombo = Math.floor(Number(combo) || 0);
+    const safePts = Math.floor(Number(pts) || 0);
+    el.innerHTML = `<span class="text-xs font-black text-orange-300 tabular-nums">&times;${safeCombo}</span><span class="text-[9px] text-orange-400/70 ml-1 font-bold">+${safePts}</span>`;
     if (_comboHideTimer.current) clearTimeout(_comboHideTimer.current);
     _comboHideTimer.current = setTimeout(() => { if (el) { el.style.opacity = '0'; setTimeout(() => { el.style.display = 'none'; }, 300); } }, 1800);
   }, []);
