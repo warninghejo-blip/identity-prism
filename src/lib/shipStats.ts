@@ -102,10 +102,10 @@ function getAchievementCount(): number {
 function deriveBaseStatsFromPreview(preview: WalletPreview): ShipStats {
   const bd = preview.compositeBreakdown;
 
-  const speed     = 5 + ((bd.engagement + bd.social) / 200) * 65;
-  const shield    = 5 + (bd.sybilTrust / 250) * 65;
-  const firepower = 5 + (bd.onchain / 400) * 65;
-  const luck      = 5 + (bd.humanProof / 150) * 65;
+  const speed     = 5 + (((bd.engagement || 0) + (bd.social || 0)) / 200) * 65;
+  const shield    = 5 + ((bd.sybilTrust || 0) / 250) * 65;
+  const firepower = 5 + ((bd.onchain || 0) / 400) * 65;
+  const luck      = 5 + ((bd.humanProof || 0) / 150) * 65;
 
   return {
     speed:     Math.round(Math.min(70, Math.max(5, speed))),

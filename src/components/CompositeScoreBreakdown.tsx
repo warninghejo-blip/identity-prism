@@ -1,5 +1,6 @@
 /**
- * CompositeScoreBreakdown — 5 horizontal progress bars with ⓘ tooltips and expandable detail rows.
+ * CompositeScoreBreakdown — 5 horizontal progress bars with expandable detail rows.
+ * On-chain and Sybil details shown inline when bars are expanded.
  */
 import { useState } from 'react';
 import type { ScoreDetails } from '@/hooks/useCompositeScore';
@@ -19,7 +20,7 @@ interface BreakdownProps {
 type BarKey = 'onchain' | 'sybilTrust' | 'humanProof' | 'social' | 'engagement';
 
 const BARS: { key: BarKey; label: string; max: number; color: string; icon: string; tooltip: string }[] = [
-  { key: 'onchain', label: 'On-Chain', max: 400, color: '#22d3ee', icon: '\u{1F517}', tooltip: 'Based on Identity Score (0\u20131400). Badge holders get bonus points.' },
+  { key: 'onchain', label: 'On-Chain', max: 400, color: '#22d3ee', icon: '\u{1F517}', tooltip: 'SOL balance, wallet age, transactions, NFTs, DeFi activity, badges & collection.' },
   { key: 'sybilTrust', label: 'Sybil Trust', max: 250, color: '#a78bfa', icon: '\u{1F6E1}\uFE0F', tooltip: 'Wallet authenticity score. Low sybil risk = high trust.' },
   { key: 'humanProof', label: 'Human Proof', max: 150, color: '#34d399', icon: '\u{1F3AE}', tooltip: 'Play games, unlock achievements, try different game types.' },
   { key: 'social', label: 'Social', max: 100, color: '#fb923c', icon: '\u{1F465}', tooltip: 'Win challenges, explore constellations, compare wallets.' },
@@ -40,63 +41,100 @@ function DetailRow({ label, raw, pts, max, color }: { label: string; raw: string
 }
 
 function ExpandedDetails({ barKey, details, color }: { barKey: BarKey; details: ScoreDetails; color: string }) {
-  switch (barKey) {
-    case 'onchain': {
-      const d = details.onchain;
-      const badges: string[] = [];
-      if (d.hasSeeker) badges.push('Seeker +15');
-      if (d.hasPreorder) badges.push('Visionary +15');
-      if (d.hasCombo) badges.push('Binary Sun +30');
-      return (
-        <div className="mt-1.5 ml-6 mr-1 border-t border-white/5 pt-1.5 space-y-0.5">
-          <DetailRow label="Identity Score" raw={`${d.identityScore}/${d.identityMax}`} pts={d.basePts} color={color} />
-          {d.badgeBonus > 0 && (
-            <DetailRow label={`Badge Bonus (${badges.join(', ')})`} raw="" pts={d.badgeBonus} color={color} />
-          )}
-          <div className="flex justify-end text-[9px] font-mono pt-0.5 border-t border-white/5">
-            <span style={{ color }}>Total: {Math.min(400, d.basePts + d.badgeBonus)}/400</span>
+  try {
+    switch (barKey) {
+      case 'onchain': {
+        const d = details?.onchain;
+        if (!d) return <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5"><span className="text-[8px] text-white/20">Scan wallet to see on-chain breakdown</span></div>;
+        const sb = d.scoreBreakdown;
+        const cappedScore = Math.min(d.identityScore ?? 0, 400);
+        const rows: { label: string; raw: string; pts: number; max: number }[] = [];
+        if (sb && typeof sb === 'object') {
+          if (sb.solBalance && typeof sb.solBalance.pts === 'number') rows.push({ label: 'SOL Balance', raw: `${sb.solBalance.raw ?? 0} SOL`, pts: sb.solBalance.pts, max: sb.solBalance.max ?? 40 });
+          if (sb.walletAge && typeof sb.walletAge.pts === 'number') rows.push({ label: 'Wallet Age', raw: `${sb.walletAge.raw ?? 0} days`, pts: sb.walletAge.pts, max: sb.walletAge.max ?? 100 });
+          if (sb.transactions && typeof sb.transactions.pts === 'number') rows.push({ label: 'Transactions', raw: `${sb.transactions.raw ?? 0}`, pts: sb.transactions.pts, max: sb.transactions.max ?? 80 });
+          if (sb.nfts && typeof sb.nfts.pts === 'number') rows.push({ label: 'NFTs', raw: `${sb.nfts.raw ?? 0}`, pts: sb.nfts.pts, max: sb.nfts.max ?? 32 });
+          if (sb.defiActivity && typeof sb.defiActivity.pts === 'number') rows.push({ label: 'DeFi Activity', raw: `${(sb.defiActivity as Record<string, unknown>).swaps ?? 0} swaps, ${(sb.defiActivity as Record<string, unknown>).protocols ?? 0} proto`, pts: sb.defiActivity.pts, max: sb.defiActivity.max ?? 30 });
+          if (sb.badges && sb.badges.pts > 0) rows.push({ label: `Badges (${sb.badges.items?.join(', ') || ''})`, raw: '', pts: sb.badges.pts, max: sb.badges.max ?? 68 });
+          if (sb.collection && sb.collection.pts > 0) rows.push({ label: `Collection (${sb.collection.items?.join(', ') || ''})`, raw: '', pts: sb.collection.pts, max: sb.collection.max ?? 50 });
+        }
+        return (
+          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
+            {rows.length > 0 ? (
+              <>
+                {rows.map(r => <DetailRow key={r.label} label={r.label} raw={r.raw} pts={r.pts} max={r.max} color={color} />)}
+                <div className="flex justify-end text-[9px] font-mono pt-0.5 border-t border-white/5">
+                  <span style={{ color }}>On-Chain: {cappedScore}/400</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <DetailRow label="Identity Score" raw="" pts={cappedScore} max={400} color={color} />
+                {d.hasSeeker && <DetailRow label="Seeker NFT" raw="owned" pts={20} max={20} color={color} />}
+                {d.hasPreorder && <DetailRow label="Visionary NFT" raw="owned" pts={15} max={15} color={color} />}
+                {d.hasCombo && <DetailRow label="Binary Sun Combo" raw="both NFTs" pts={15} max={15} color={color} />}
+              </>
+            )}
           </div>
-        </div>
-      );
+        );
+      }
+      case 'sybilTrust': {
+        const d = details?.sybilTrust;
+        if (!d) return null;
+        const pts = Math.min(250, Math.round(((d.trustScore ?? 0) / 100) * 250));
+        return (
+          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
+            <DetailRow label="Trust Score" raw="" pts={pts} max={250} color={color} />
+            {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={30} color={color} />}
+          </div>
+        );
+      }
+      case 'humanProof': {
+        const d = details?.humanProof;
+        if (!d) return <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5"><span className="text-[8px] text-white/20">No game data yet</span></div>;
+        return (
+          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
+            <DetailRow label="Game Scores" raw={`${d.gameTypesCount ?? 0} types`} pts={d.gameScoreTotal ?? 0} max={80} color={color} />
+            <DetailRow label="Game Diversity" raw={`${d.gameTypesCount ?? 0} types`} pts={d.gameDiversity ?? 0} max={30} color={color} />
+            <DetailRow label="Achievements" raw={`${d.achievementCount ?? 0} unlocked`} pts={d.achievementPts ?? 0} max={40} color={color} />
+            {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={30} color={color} />}
+          </div>
+        );
+      }
+      case 'social': {
+        const d = details?.social;
+        if (!d) return <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5"><span className="text-[8px] text-white/20">No social data yet</span></div>;
+        return (
+          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
+            <DetailRow label="Challenges Won" raw={`${d.challengesWon ?? 0}`} pts={d.challengePts ?? 0} max={32} color={color} />
+            <DetailRow label="Constellation" raw={`${d.constellationExplored ?? 0} explored`} pts={d.constellationPts ?? 0} max={28} color={color} />
+            <DetailRow label="Compares" raw={`${d.compareCount ?? 0}`} pts={d.comparePts ?? 0} max={16} color={color} />
+            {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={24} color={color} />}
+          </div>
+        );
+      }
+      case 'engagement': {
+        const d = details?.engagement;
+        if (!d) return <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5"><span className="text-[8px] text-white/20">No engagement data yet</span></div>;
+        return (
+          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
+            <DetailRow label="Quests" raw={`${d.questsCompleted ?? 0} done`} pts={d.questPts ?? 0} max={40} color={color} />
+            <DetailRow label="Streak" raw={`${d.streakDays ?? 0} days`} pts={d.streakPts ?? 0} max={22} color={color} />
+            <DetailRow label="Scans" raw={`${d.scanCount ?? 0}`} pts={d.scanPts ?? 0} max={14} color={color} />
+            {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={24} color={color} />}
+          </div>
+        );
+      }
+      default:
+        return null;
     }
-    case 'sybilTrust': {
-      const d = details.sybilTrust;
-      return (
-        <div className="mt-1.5 ml-6 mr-1 border-t border-white/5 pt-1.5 space-y-0.5">
-          <DetailRow label="Trust Score" raw={`${d.trustScore}/${d.trustMax}`} pts={Math.min(250, Math.round((d.trustScore / 100) * 250))} max={250} color={color} />
-        </div>
-      );
-    }
-    case 'humanProof': {
-      const d = details.humanProof;
-      return (
-        <div className="mt-1.5 ml-6 mr-1 border-t border-white/5 pt-1.5 space-y-0.5">
-          <DetailRow label="Game Scores" raw={`${d.gameTypesCount} types`} pts={d.gameScoreTotal} max={80} color={color} />
-          <DetailRow label="Game Diversity" raw={`${d.gameTypesCount} types`} pts={d.gameDiversity} max={30} color={color} />
-          <DetailRow label="Achievements" raw={`${d.achievementCount} unlocked`} pts={d.achievementPts} max={40} color={color} />
-        </div>
-      );
-    }
-    case 'social': {
-      const d = details.social;
-      return (
-        <div className="mt-1.5 ml-6 mr-1 border-t border-white/5 pt-1.5 space-y-0.5">
-          <DetailRow label="Challenges Won" raw={`${d.challengesWon}`} pts={d.challengePts} max={40} color={color} />
-          <DetailRow label="Constellation" raw={`${d.constellationExplored} explored`} pts={d.constellationPts} max={35} color={color} />
-          <DetailRow label="Compares" raw={`${d.compareCount}`} pts={d.comparePts} max={25} color={color} />
-        </div>
-      );
-    }
-    case 'engagement': {
-      const d = details.engagement;
-      return (
-        <div className="mt-1.5 ml-6 mr-1 border-t border-white/5 pt-1.5 space-y-0.5">
-          <DetailRow label="Quests" raw={`${d.questsCompleted} done`} pts={d.questPts} max={50} color={color} />
-          <DetailRow label="Streak" raw={`${d.streakDays} days`} pts={d.streakPts} max={30} color={color} />
-          <DetailRow label="Scans" raw={`${d.scanCount}`} pts={d.scanPts} max={20} color={color} />
-        </div>
-      );
-    }
+  } catch (err) {
+    console.error('[CompositeBreakdown] ExpandedDetails crash:', barKey, err);
+    return (
+      <div className="mt-1.5 mx-1 border-t border-red-500/20 pt-1.5">
+        <span className="text-[8px] text-red-400">Error loading {barKey} details</span>
+      </div>
+    );
   }
 }
 
@@ -135,14 +173,16 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
           >
             <div className={`flex justify-between items-center ${compact ? 'text-[10px]' : 'text-xs'} mb-1`}>
               <span className="text-white/60 flex items-center gap-1">
-                <span>{bar.icon}</span>
-                <span>{bar.label}</span>
-                <InfoTooltip text={bar.tooltip} color={bar.color} />
                 {canExpand && (
                   <span className={`text-white/20 text-[8px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>{'\u25BE'}</span>
                 )}
+                <span>{bar.icon}</span>
+                <span>{bar.label}</span>
               </span>
-              <span style={{ color: bar.color }} className="font-mono">{value}/{bar.max}</span>
+              <span className="flex items-center gap-1">
+                <InfoTooltip text={bar.tooltip} color={bar.color} />
+                <span style={{ color: bar.color }} className="font-mono">{Math.min(value, bar.max)}/{bar.max}</span>
+              </span>
             </div>
             <div className={`${compact ? 'h-1.5' : 'h-2'} bg-white/10 rounded-full overflow-hidden`}>
               <div

@@ -1,6 +1,8 @@
 /**
- * Ranger Ranks — XP-based progression system inspired by Space Rangers 2.
- * XP is computed from existing activity data (not stored separately).
+ * Ranger Ranks — XP-based progression system.
+ * XP is computed from game stats, achievements, and other activity.
+ * Games are the PRIMARY source of XP (~70% at high ranks).
+ * NOTE: Composite score is NOT included — it already powers ship stats.
  */
 
 // ── Types ──
@@ -10,25 +12,59 @@ export interface RangerRank {
   name: string;
   minXP: number;
   icon: string;
+  image: string;
   color: string;
   perks: string[];
 }
 
 // ── Rank Definitions ──
+// Legend requires mastery across ALL systems — not achievable in days.
 
 export const RANGER_RANKS: RangerRank[] = [
-  { id: 'cadet',   name: 'Cadet',   minXP: 0,     icon: '🔰', color: 'text-gray-400',   perks: [] },
-  { id: 'pilot',   name: 'Pilot',   minXP: 500,   icon: '✈️',  color: 'text-blue-400',   perks: ['Unlock text quests'] },
-  { id: 'captain', name: 'Captain', minXP: 2000,  icon: '⭐',  color: 'text-yellow-400', perks: ['Yellow module slots'] },
-  { id: 'ace',     name: 'Ace',     minXP: 5000,  icon: '💫',  color: 'text-purple-400', perks: ['Red module slots'] },
-  { id: 'legend',  name: 'Legend',  minXP: 15000, icon: '👑',  color: 'text-amber-400',  perks: ['Exclusive title frame'] },
+  { id: 'cadet',   name: 'Cadet',   minXP: 0,      icon: '🔰', image: '/textures/ranks/rank_cadet.png',   color: 'text-gray-400',   perks: [] },
+  { id: 'pilot',   name: 'Pilot',   minXP: 1500,   icon: '✈️',  image: '/textures/ranks/rank_pilot.png',   color: 'text-blue-400',   perks: ['Unlock text quests'] },
+  { id: 'captain', name: 'Captain', minXP: 8000,   icon: '⭐',  image: '/textures/ranks/rank_captain.png', color: 'text-yellow-400', perks: ['Yellow module slots'] },
+  { id: 'ace',     name: 'Ace',     minXP: 25000,  icon: '💫',  image: '/textures/ranks/rank_ace.png',     color: 'text-purple-400', perks: ['Red module slots'] },
+  { id: 'legend',  name: 'Legend',  minXP: 50000,  icon: '👑',  image: '/textures/ranks/rank_legend.png',  color: 'text-amber-400',  perks: ['Exclusive title frame'] },
 ];
 
-// ── XP Sources (computed from existing data) ──
+/*
+ * ── XP Budget (theoretical maximums) ──
+ *
+ * Games (primary ~70%):
+ *   Best scores:  3 main modes × ~2000 cap = ~6,000
+ *   Games played: 3 modes × 200 games × 5 (capped 1000 ea) = 3,000
+ *   Total time:   2 survival × 500 + 1 defender kills 500 = 1,500
+ *   Subtotal:     ~10,500
+ *
+ * Achievements:   27 × 200 = 5,400
+ * Arena wins:     ×300 each (uncapped — primary Legend grind)
+ * Quests:         ×20 each (daily + weekly, repeatable)
+ * Text quests:    16 × 500 = 8,000
+ * Coins earned:   totalEarned / 200, cap 1,000
+ *
+ * NOT included: composite score (already powers ship stats via computeShipStats)
+ *
+ * To reach Legend (50,000):
+ *   - Max game scores (~6k) + 200 games/mode (~3k) + time/kills (~1.5k) = ~10.5k
+ *   - All 27 achievements = 5.4k
+ *   - Arena wins: need 80+ wins × 300 = 24k
+ *   - 200+ quests × 20 = 4k
+ *   - Text quests 16 × 500 = 8k
+ *   - Coins = ~1k
+ *   Total ≈ 50.4k — Legend achievable but requires mastery of ALL systems
+ *   Requires weeks/months of dedicated play across ALL systems.
+ */
+
+// ── XP Sources ──
 
 export interface RangerXPSources {
-  compositeScore?: number;
-  gameBestScores?: Record<string, number>; // mode → best score
+  gameBestScores?: Record<string, number>;
+  gameStats?: {
+    orbit?: { gamesPlayed: number; totalSurvivalTime: number };
+    defender?: { gamesPlayed: number; totalKills: number };
+    gravity?: { gamesPlayed: number; totalTime: number };
+  };
   totalCoins?: number;
   completedQuests?: number;
   completedTextQuests?: number;
@@ -36,47 +72,66 @@ export interface RangerXPSources {
   achievementCount?: number;
 }
 
+// Per-mode multipliers for best scores (different scoring scales)
+const GAME_XP_CONFIG: Record<string, { mult: number; cap: number }> = {
+  orbit_survival:   { mult: 5, cap: 2000 },   // 300s best → 1500 XP, cap 2000
+  cosmic_defender:  { mult: 1.5, cap: 2000 },  // 1500 pts → 2250 → capped 2000
+  gravity_rush:     { mult: 5, cap: 2000 },    // 300s best → 1500 XP, cap 2000
+  cosmic_mine:      { mult: 3, cap: 1500 },    // less established mode
+  cosmic_runner:    { mult: 3, cap: 1500 },    // less established mode
+};
+
 export function computeRangerXP(sources: RangerXPSources): number {
   let xp = 0;
 
-  // Composite score: ×2
-  if (sources.compositeScore) {
-    xp += sources.compositeScore * 2;
-  }
-
-  // Games: best score × 10 per mode
+  // ── Games: Best Scores (primary) ──
   if (sources.gameBestScores) {
-    for (const score of Object.values(sources.gameBestScores)) {
-      xp += (score || 0) * 10;
+    for (const [mode, score] of Object.entries(sources.gameBestScores)) {
+      const cfg = GAME_XP_CONFIG[mode] ?? { mult: 2, cap: 1000 };
+      xp += Math.min(Math.floor((score || 0) * cfg.mult), cfg.cap);
     }
   }
 
-  // Mining: totalCoins / 100
-  if (sources.totalCoins) {
-    xp += Math.floor(sources.totalCoins / 100);
+  // ── Games: Volume (games played + time spent) ──
+  if (sources.gameStats) {
+    const gs = sources.gameStats;
+    // Games played: 5 XP per game, encourages consistent play
+    if (gs.orbit) xp += Math.min(gs.orbit.gamesPlayed * 5, 1000);
+    if (gs.defender) xp += Math.min(gs.defender.gamesPlayed * 5, 1000);
+    if (gs.gravity) xp += Math.min(gs.gravity.gamesPlayed * 5, 1000);
+    // Total survival time: 1 XP per 10 seconds of cumulative play
+    if (gs.orbit) xp += Math.min(Math.floor(gs.orbit.totalSurvivalTime / 10), 500);
+    if (gs.gravity) xp += Math.min(Math.floor((gs.gravity.totalTime || 0) / 10), 500);
+    // Defender kills: 1 XP per 5 kills
+    if (gs.defender) xp += Math.min(Math.floor((gs.defender.totalKills || 0) / 5), 500);
   }
 
-  // Quests completed: ×50
-  if (sources.completedQuests) {
-    xp += sources.completedQuests * 50;
-  }
-
-  // Text quests: ×200
-  if (sources.completedTextQuests) {
-    xp += sources.completedTextQuests * 200;
-  }
-
-  // Challenge wins: ×100
-  if (sources.challengeWins) {
-    xp += sources.challengeWins * 100;
-  }
-
-  // Achievements: ×30
+  // ── Achievements: ×200 each (rewards mastery) ──
   if (sources.achievementCount) {
-    xp += sources.achievementCount * 30;
+    xp += sources.achievementCount * 200;
   }
 
-  return Math.floor(xp);
+  // ── Arena Challenge Wins: ×300 (uncapped — primary Legend grind) ──
+  if (sources.challengeWins) {
+    xp += sources.challengeWins * 300;
+  }
+
+  // ── Quests Completed: ×20 (slow steady progress) ──
+  if (sources.completedQuests) {
+    xp += sources.completedQuests * 20;
+  }
+
+  // ── Text Quests: ×500 (rare, hard content) ──
+  if (sources.completedTextQuests) {
+    xp += sources.completedTextQuests * 500;
+  }
+
+  // ── Total Coins Earned: /200 (minimal, bonus) ──
+  if (sources.totalCoins) {
+    xp += Math.min(Math.floor(sources.totalCoins / 200), 1000);
+  }
+
+  return Math.max(0, Math.floor(xp));
 }
 
 export function getRangerRank(xp: number): RangerRank {
@@ -107,19 +162,11 @@ export function getRankProgress(xp: number): number {
 
 /**
  * Gather XP sources from localStorage for a given wallet address.
- * This reads from the same keys used by other systems.
  */
 export function gatherXPSources(address: string): RangerXPSources {
   const sources: RangerXPSources = {};
 
   try {
-    // Composite score (cached by useCompositeScore in sessionStorage)
-    const scoreRaw = sessionStorage.getItem(`ip_composite_v2_${address}`);
-    if (scoreRaw) {
-      const cached = JSON.parse(scoreRaw);
-      sources.compositeScore = cached?.data?.score || 0;
-    }
-
     // Game best scores
     const gameModes = ['orbit_survival', 'cosmic_defender', 'gravity_rush', 'cosmic_mine', 'cosmic_runner'];
     const bestScores: Record<string, number> = {};
@@ -128,6 +175,31 @@ export function gatherXPSources(address: string): RangerXPSources {
       if (raw) bestScores[mode] = parseInt(raw, 10) || 0;
     }
     if (Object.keys(bestScores).length > 0) sources.gameBestScores = bestScores;
+
+    // Game stats (gamesPlayed, totalTime, totalKills)
+    const gameStats: NonNullable<RangerXPSources['gameStats']> = {};
+    try {
+      const orbitRaw = localStorage.getItem('orbit_survival_stats_v1');
+      if (orbitRaw) {
+        const p = JSON.parse(orbitRaw);
+        gameStats.orbit = { gamesPlayed: p.gamesPlayed || 0, totalSurvivalTime: p.totalSurvivalTime || 0 };
+      }
+    } catch { /* */ }
+    try {
+      const defRaw = localStorage.getItem('cosmic_defender_stats_v1');
+      if (defRaw) {
+        const p = JSON.parse(defRaw);
+        gameStats.defender = { gamesPlayed: p.gamesPlayed || 0, totalKills: p.totalKills || 0 };
+      }
+    } catch { /* */ }
+    try {
+      const gravRaw = localStorage.getItem('gravity_rush_stats_v1');
+      if (gravRaw) {
+        const p = JSON.parse(gravRaw);
+        gameStats.gravity = { gamesPlayed: p.gamesPlayed || 0, totalTime: p.totalSurvivalTime || p.totalTime || 0 };
+      }
+    } catch { /* */ }
+    if (Object.keys(gameStats).length > 0) sources.gameStats = gameStats;
 
     // Total coins
     const coinRaw = localStorage.getItem(`prism_balance_v1_${address}`);
@@ -145,7 +217,7 @@ export function gatherXPSources(address: string): RangerXPSources {
 
     // Text quests completed
     let textQuestCount = 0;
-    const questIds = ['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly'];
+    const questIds = ['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy'];
     for (const qid of questIds) {
       const raw = localStorage.getItem(`text_quest_v1_${address}_${qid}`);
       if (raw) {
