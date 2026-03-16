@@ -49,6 +49,13 @@ twitter-bot-python/__pycache__/
 tokens.json
 *.pid
 
+# Server runtime data
+game_coins_today.json
+tournament_data.json
+sybil_graph.json
+scam_addresses.json
+game_session_proofs.json
+
 # Local/temp
 .tmp.driveupload/
 .tmp.ssh_identity_prism
@@ -102,6 +109,7 @@ keys/
 tmp_srv_key
 .ssh_key_vps
 gh_token*
+.jwt_secret
 
 # Misc sensitive
 .env.scraper

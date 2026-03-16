@@ -297,8 +297,8 @@ function optionalJwt(req, res) {
     const payload = jwt.verify(token, JWT_SECRET);
     return { ok: true, address: payload.address };
   } catch {
-    // Token present but invalid — still allow, just ignore the bad token
-    return { ok: true, address: null };
+    // Token present but invalid — reject to prevent spoofing
+    return { ok: false, address: null };
   }
 }
 
@@ -1598,7 +1598,7 @@ const applyCors = (req, res) => {
 
   res.setHeader('Access-Control-Allow-Origin', resolveCorsOrigin(req));
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type,x-wallet-address,solana-client,x-action-version,x-blockchain-ids');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,x-wallet-address,solana-client,x-action-version,x-blockchain-ids');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version,X-Blockchain-Ids');
   res.setHeader('X-Action-Version', '2.1.3');
@@ -3044,7 +3044,8 @@ const server = http.createServer(async (req, res) => {
 
   // ── MagicBlock game-session proof API ──
   if (pathname === '/api/game/session' && req.method === 'POST') {
-    const jwtAuth = optionalJwt(req);
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const raw = await readBody(req);
       const parsed = safeParseJson(raw);
@@ -3059,6 +3060,10 @@ const server = http.createServer(async (req, res) => {
       } catch (error) {
         respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
         return;
+      }
+      // Enforce JWT address matches session wallet
+      if (payload.walletAddress !== jwtAuth.address) {
+        return respondJson(res, 403, { error: 'Wallet address mismatch' });
       }
 
       pruneGameSessionProofs();
@@ -3209,12 +3214,19 @@ const server = http.createServer(async (req, res) => {
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
-      const { address: bodyAddress, score, playedAt, txSignature, gameType } = parsed;
+      const { address: bodyAddress, score, playedAt, txSignature, gameType, gameSessionId } = parsed;
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
         respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
         return;
+      }
+      // Verify game session proof if provided (strongly recommended)
+      if (gameSessionId) {
+        const session = gameSessionProofs.get(gameSessionId);
+        if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+        if (session.walletAddress !== address) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+        if (Math.abs(session.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
       }
       // MAX_SCORE validation per game mode
       const MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
@@ -3260,8 +3272,8 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 400, { error: 'address (string) required' });
         return;
       }
-      if (typeof delta !== 'number' || !Number.isFinite(delta) || delta === 0) {
-        respondJson(res, 400, { error: 'delta (non-zero number) required' });
+      if (typeof delta !== 'number' || !Number.isFinite(delta) || delta === 0 || !Number.isInteger(delta)) {
+        respondJson(res, 400, { error: 'delta (non-zero integer) required' });
         return;
       }
       // Delta validation per game mode (1.5x buffer for coinMult + on-chain bonus)
@@ -3490,7 +3502,7 @@ const server = http.createServer(async (req, res) => {
     checkTournaments();
     try {
       const body = JSON.parse(await readBody(req));
-      const { score, tier: reqTier } = body;
+      const { score, tier: reqTier, gameSessionId } = body;
       const tier = reqTier || 'daily';
       if (!TOURNAMENT_TIERS[tier]) return respondJson(res, 400, { error: 'Invalid tier' });
       const t = activeTournaments[tier];
@@ -3498,6 +3510,13 @@ const server = http.createServer(async (req, res) => {
       const addr = jwtAuth.address;
       if (!t.entries[addr]) return respondJson(res, 400, { error: 'Not joined' });
       if (typeof score !== 'number' || score <= 0) return respondJson(res, 400, { error: 'Valid score required' });
+      // Verify game session proof if provided
+      if (gameSessionId) {
+        const session = gameSessionProofs.get(gameSessionId);
+        if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+        if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+        if (Math.abs(session.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
+      }
       const MAX_T_SCORES = { orbit: 600, gravity: 600, destroyer: 9999 };
       const maxTScore = MAX_T_SCORES[t.mode] || 9999;
       if (score > maxTScore) return respondJson(res, 400, { error: 'Score exceeds maximum' });
@@ -5787,7 +5806,7 @@ const server = http.createServer(async (req, res) => {
           const stdDev = Math.sqrt(intervals.reduce((s, v) => s + (v - mean) ** 2, 0) / intervals.length);
           timingCV = stdDev / mean;
           timingVariance = Math.min(1, timingCV / 1.5);
-          isRobotic = timingCV < 0.25 && intervals.length > 20;
+          isRobotic = timingCV < 0.25 && intervals.length > 50;
         }
       }
 
@@ -6211,7 +6230,7 @@ const server = http.createServer(async (req, res) => {
       // Signal 7: One-Directional Flow
       const totalVolume = incomingVolume + outgoingVolume;
       const flowRatio = totalVolume > 0 ? Math.max(incomingVolume, outgoingVolume) / totalVolume : 0.5;
-      const oneDirectional = totalVolume > 0.1 && flowRatio > 0.9;
+      const oneDirectional = totalVolume > 1.0 && flowRatio > 0.9 && totalSolTxCount >= 5;
       signals.push({
         id: 'one_directional_flow', name: 'One-Directional Flow', category: 'financial',
         detected: oneDirectional, weight: 10,
@@ -6299,8 +6318,8 @@ const server = http.createServer(async (req, res) => {
           : 'No suspicious funding chains',
       });
 
-      // Signal 15: Hub-and-Spoke — funder distributes to many wallets
-      const isHubSpoke = hubSpokeScore > 0.4;
+      // Signal 15: Hub-and-Spoke — mass distribution (only fires at 15+ siblings, above cluster threshold)
+      const isHubSpoke = allSiblings.size >= 15;
       signals.push({
         id: 'hub_spoke', name: 'Hub-and-Spoke Funding', category: 'network',
         detected: isHubSpoke, weight: 10,
@@ -6352,8 +6371,8 @@ const server = http.createServer(async (req, res) => {
 
       // Signal 19: Failed Transaction Ratio — bots/MEV have high fail rates
       const failedTxCount = signatures.filter(s => s.err !== null).length;
-      const failedRatio = signatures.length > 20 ? failedTxCount / signatures.length : 0;
-      const highFailRate = failedRatio > 0.3 && signatures.length >= 30;
+      const failedRatio = signatures.length >= 30 ? failedTxCount / signatures.length : 0;
+      const highFailRate = failedRatio > 0.5 && failedTxCount >= 15;
       signals.push({
         id: 'failed_tx_ratio', name: 'High Failed TX Rate', category: 'behavioral',
         detected: highFailRate, weight: 8,
@@ -6365,12 +6384,9 @@ const server = http.createServer(async (req, res) => {
       });
 
       // ── Calculate Risk Score ──
-      // Merge Signals 8+15 (cluster + hub-spoke) — take max weight instead of both to avoid double-counting
       let riskScore = 0;
       for (const s of signals) {
         if (!s.detected) continue;
-        // If both cluster_similarity and hub_spoke fire, only count the higher one
-        if (s.id === 'hub_spoke' && highClusterSim) continue; // skip hub_spoke if cluster already counted
         riskScore += s.weight;
       }
       riskScore = Math.min(100, riskScore);
@@ -6839,6 +6855,10 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Scam Check ═══
   if (pathname === '/api/scam-check' && req.method === 'POST') {
+    const scamRlKey = `scam:${getClientIp(req)}`;
+    const lastScam = prismEarnRateLimit.get(scamRlKey) || 0;
+    if (Date.now() - lastScam < 10_000) return respondJson(res, 429, { error: 'Rate limited' });
+    prismEarnRateLimit.set(scamRlKey, Date.now());
     try {
       const { address } = JSON.parse(await readBody(req));
       if (!address) return respondJson(res, 400, { error: 'contract address required' });
@@ -7451,7 +7471,7 @@ const server = http.createServer(async (req, res) => {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
-      const { challengeId, score } = JSON.parse(await readBody(req));
+      const { challengeId, score, gameSessionId } = JSON.parse(await readBody(req));
       const submitter = jwtAuth.address;
       if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
       if (typeof score !== 'number' || score < 0 || score > 100000) {
@@ -7466,6 +7486,14 @@ const server = http.createServer(async (req, res) => {
       if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
       if (challenge.type !== 'game') return respondJson(res, 400, { error: 'Score submission is for game challenges only' });
       if (challenge.status !== 'playing') return respondJson(res, 400, { error: 'Challenge is not in playing state' });
+
+      // Verify game session proof if provided
+      if (gameSessionId) {
+        const session = gameSessionProofs.get(gameSessionId);
+        if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+        if (session.walletAddress !== submitter) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+        if (Math.abs(session.score - scoreNum) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
+      }
 
       // Per-gameMode score validation (same as leaderboard)
       const CH_MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
@@ -8192,22 +8220,24 @@ function updateSybilGraphNode(address, data) {
   };
 }
 
+const GRAPH_NODE_TTL_MS = 90 * 24 * 3600_000; // 90 days
 function checkGraphForKnownSybils(address, fundingSources, siblings) {
   let graphRisk = 0;
   let graphDetails = [];
-  // Check if any funding source is a known sybil
+  const now = Date.now();
+  // Check if any funding source is a known sybil (with TTL)
   for (const funder of fundingSources) {
     const node = sybilGraph.nodes[funder];
-    if (node && node.riskScore >= 50) {
+    if (node && node.riskScore >= 50 && (now - (node.lastSeen || 0)) < GRAPH_NODE_TTL_MS) {
       graphRisk += 15;
       graphDetails.push(`Funded by flagged wallet ${funder.slice(0, 8)}... (risk ${node.riskScore})`);
     }
   }
-  // Check if siblings are known sybils
+  // Check if siblings are known sybils (with TTL)
   let flaggedSiblings = 0;
   for (const sib of siblings) {
     const node = sybilGraph.nodes[sib];
-    if (node && node.riskScore >= 50) flaggedSiblings++;
+    if (node && node.riskScore >= 50 && (now - (node.lastSeen || 0)) < GRAPH_NODE_TTL_MS) flaggedSiblings++;
   }
   if (flaggedSiblings >= 2) {
     graphRisk += 10;
@@ -8693,7 +8723,18 @@ function applyBurnFee(amount) {
 
 // ═══ Daily Game Coin Cap ═══
 const DAILY_GAME_COIN_CAP = 2000;
+const GAME_COINS_TODAY_FILE = path.join(process.cwd(), 'game_coins_today.json');
 const gameCoinsToday = new Map(); // address → { coins: number, date: string }
+// Load persisted daily caps
+try {
+  if (fs.existsSync(GAME_COINS_TODAY_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(GAME_COINS_TODAY_FILE, 'utf8'));
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [addr, entry] of Object.entries(raw)) {
+      if (entry && entry.date === today) gameCoinsToday.set(addr, entry);
+    }
+  }
+} catch {}
 function getGameCoinsToday(address) {
   const today = new Date().toISOString().slice(0, 10);
   const entry = gameCoinsToday.get(address);
@@ -8703,6 +8744,16 @@ function getGameCoinsToday(address) {
   }
   return entry.coins;
 }
+let _saveGameCoinsTimer = null;
+function saveGameCoinsToday() {
+  if (_saveGameCoinsTimer) return;
+  _saveGameCoinsTimer = setTimeout(() => {
+    _saveGameCoinsTimer = null;
+    const obj = {};
+    for (const [addr, entry] of gameCoinsToday) obj[addr] = entry;
+    fs.promises.writeFile(GAME_COINS_TODAY_FILE, JSON.stringify(obj)).catch(() => {});
+  }, 5000);
+}
 function addGameCoinsToday(address, amount) {
   const today = new Date().toISOString().slice(0, 10);
   const entry = gameCoinsToday.get(address);
@@ -8711,6 +8762,7 @@ function addGameCoinsToday(address, amount) {
   } else {
     entry.coins += amount;
   }
+  saveGameCoinsToday();
 }
 
 // ═══ Delta Validation per Game Mode ═══
