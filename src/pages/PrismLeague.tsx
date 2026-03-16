@@ -1138,6 +1138,13 @@ const PrismLeague = () => {
       }
       const startedAtMs = runStartedAtRef.current || Date.now();
       const endedAtMs = Date.now();
+      const playerAddr = address || "anonymous";
+      const newEntry: LeaderboardEntry = {
+        id: Date.now().toString(),
+        address: playerAddr,
+        score: finalScore,
+        playedAt: new Date().toISOString(),
+      };
 
       const verifyAndPublish = async () => {
         let proof: GameSessionProof | null = null;
@@ -1277,14 +1284,6 @@ const PrismLeague = () => {
         // Reset session stats ref for next run
         gravitySessionStatsRef.current = { columns: 0, crystals: 0 };
       }
-
-      const playerAddr = address || "anonymous";
-      const newEntry: LeaderboardEntry = {
-        id: Date.now().toString(),
-        address: playerAddr,
-        score: finalScore,
-        playedAt: new Date().toISOString(),
-      };
 
       if (gameMode === "destroyer") {
         setDefenderLeaderboard((prev) => {
@@ -1481,14 +1480,15 @@ const PrismLeague = () => {
         setLastTxSignature(result.txSignature);
         setOnchainBonusApplied(true);
 
-        // Apply on-chain bonus to coins and persist
+        // Apply on-chain bonus to coins and persist (use current state, not stale localStorage)
         const bonusCoins = Math.round(coins * (ONCHAIN_BONUS_MULTIPLIER - 1));
         if (bonusCoins > 0 && address) {
-          const prev = readWalletCoins(address);
-          const next = prev + bonusCoins;
-          writeWalletCoins(address, next);
-          setTotalCoins(next);
-          syncCoinsToServer(address, next, bonusCoins);
+          setTotalCoins(prev => {
+            const next = prev + bonusCoins;
+            writeWalletCoins(address, next);
+            syncCoinsToServer(address, next, bonusCoins);
+            return next;
+          });
         }
 
         toast.success(`Score on-chain! +${bonusCoins} bonus coins (×${ONCHAIN_BONUS_MULTIPLIER})`);

@@ -817,7 +817,9 @@ const persistScoreHistory = async () => {
   try {
     const obj = {};
     for (const [k, v] of scoreHistory) obj[k] = v;
-    await fs.promises.writeFile(SCORE_HISTORY_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
+    const tmp = SCORE_HISTORY_FILE + '.tmp';
+    await fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
+    await fs.promises.rename(tmp, SCORE_HISTORY_FILE);
   } catch (err) {
     console.warn('[score-history] Failed to persist', err);
   }
@@ -3999,7 +4001,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (score < 0 || score > 1000) return respondJson(res, 400, { error: 'Score must be between 0 and 1000' });
+      if (typeof score !== 'number' || score < 0 || score > 1000) return respondJson(res, 400, { error: 'Score must be between 0 and 1000' });
       // Server-authoritative tier computation (ignore client-supplied tier)
       const computedTier = score >= 800 ? 'binary_sun' : score >= 600 ? 'pulsar' : score >= 400 ? 'neutron_star' : score >= 200 ? 'dwarf_star' : 'mercury';
       const entry = addScoreEntry(addr, score, computedTier);
@@ -5774,6 +5776,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/prism/buy/status' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address format' });
     const today = new Date().toISOString().slice(0, 10);
     const dayKey = `${address}:${today}`;
     const purchasedToday = dailyPurchases.get(dayKey) || 0;
@@ -7915,22 +7918,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Admin: List SOL stale refund pending challenges ──
+  // ── Admin: List SOL stale/cancel refund pending challenges ──
   if (pathname === '/api/admin/challenge/stale-sol-refunds' && req.method === 'GET') {
     if (!requireAdminKey(req, res)) return;
-    const stale = (challenges || []).filter(c => c && c.solPayoutStatus === 'stale_refund_pending');
-    respondJson(res, 200, { ok: true, count: stale.length, challenges: stale.map(c => ({ id: c.id, creator: c.creator, opponent: c.opponent, stakeAmount: c.stakeAmount, createdAt: c.createdAt })) });
+    const stale = (challenges || []).filter(c => c && (c.solPayoutStatus === 'stale_refund_pending' || c.solPayoutStatus === 'cancel_refund_pending'));
+    respondJson(res, 200, { ok: true, count: stale.length, challenges: stale.map(c => ({ id: c.id, creator: c.creator, opponent: c.opponent, stakeAmount: c.stakeAmount, createdAt: c.createdAt, solPayoutStatus: c.solPayoutStatus, status: c.status })) });
     return;
   }
 
-  // ── Admin: Mark SOL stale refund as processed ──
+  // ── Admin: Mark SOL stale/cancel refund as processed ──
   if (pathname === '/api/admin/challenge/stale-sol-refunds' && req.method === 'POST') {
     if (!requireAdminKey(req, res)) return;
     try {
       const body = await readBody(req);
       const { challengeId, action } = JSON.parse(body);
       const ch = (challenges || []).find(c => c.id === challengeId);
-      if (!ch || ch.solPayoutStatus !== 'stale_refund_pending') return respondJson(res, 404, { error: 'Challenge not found or not pending refund' });
+      if (!ch || (ch.solPayoutStatus !== 'stale_refund_pending' && ch.solPayoutStatus !== 'cancel_refund_pending')) return respondJson(res, 404, { error: 'Challenge not found or not pending refund' });
       ch.solPayoutStatus = action === 'refunded' ? 'refunded' : 'rejected';
       saveChallenges();
       respondJson(res, 200, { ok: true, challengeId, status: ch.solPayoutStatus });
@@ -7944,6 +7947,15 @@ const server = http.createServer(async (req, res) => {
     const filePath = path.resolve(path.join(process.cwd(), pathname));
     if (!filePath.startsWith(modelsRoot + path.sep) && filePath !== modelsRoot) return respondJson(res, 403, { error: 'Forbidden' });
     if (!fs.existsSync(filePath)) return respondJson(res, 404, { error: 'Model not found' });
+    // Access control: require JWT and verify caller has purchased the listing or is the seller
+    const jwtAuth = optionalJwt(req, res);
+    if (!jwtAuth.ok) return respondJson(res, 401, { error: 'Invalid token' });
+    if (!jwtAuth.address) return respondJson(res, 401, { error: 'Authentication required to download marketplace models' });
+    const fileBasename = path.basename(filePath, path.extname(filePath)); // listing id = filename without ext
+    const listing = marketplaceListings.get(fileBasename);
+    const isSeller = listing && listing.seller === jwtAuth.address;
+    const hasPurchased = marketplacePurchases.has(`${jwtAuth.address}:${fileBasename}`);
+    if (!isSeller && !hasPurchased) return respondJson(res, 403, { error: 'Purchase required to download this model' });
     const ext = path.extname(filePath).toLowerCase();
     const mimeTypes = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain' };
     res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
