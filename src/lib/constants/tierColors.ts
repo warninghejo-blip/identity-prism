@@ -36,6 +36,23 @@ export function getSybilGradeColor(trustScore: number): string {
   return '#ef4444';
 }
 
+export const TIER_ICONS: Record<string, string> = {
+  mercury: '/textures/tiers/mercury.png',
+  mars: '/textures/tiers/mars.png',
+  venus: '/textures/tiers/venus.png',
+  earth: '/textures/tiers/earth.png',
+  neptune: '/textures/tiers/neptune.png',
+  uranus: '/textures/tiers/uranus.png',
+  saturn: '/textures/tiers/saturn.png',
+  jupiter: '/textures/tiers/jupiter.png',
+  sun: '/textures/tiers/sun.png',
+  binary_sun: '/textures/tiers/binary_sun.png',
+};
+
+export function getTierIcon(tier: string): string {
+  return TIER_ICONS[tier] || TIER_ICONS.mercury;
+}
+
 export function getTierHex(tier: string): string {
   return TIER_HEX[tier] || TIER_HEX.mercury;
 }

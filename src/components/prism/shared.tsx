@@ -9,7 +9,7 @@ import { getHeliusProxyUrl } from '@/constants';
 import type { WalletTraits } from '@/hooks/useWalletData';
 
 // Re-export canonical tier constants
-export { TIER_HEX, TIER_LABELS, TIER_COLORS_TW } from '@/lib/constants/tierColors';
+export { TIER_HEX, TIER_LABELS, TIER_COLORS_TW, TIER_ICONS, getTierIcon } from '@/lib/constants/tierColors';
 export { TIER_COLORS_TW as TIER_TEXT_COLORS } from '@/lib/constants/tierColors';
 
 export const TIER_COLORS_HEX: Record<string, string> = {
@@ -172,19 +172,18 @@ export function buildCompareRows(a: WalletTraits, b: WalletTraits): CompareRow[]
 // ── MiniPlanet ──
 
 export function MiniPlanet({ tier, size = 32 }: { tier: string; size?: number }) {
+  const icon = getTierIcon(tier);
   const color = TIER_COLORS_HEX[tier] || '#60a5fa';
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
-      <div
-        className="absolute inset-0 rounded-full"
-        style={{
-          background: `radial-gradient(circle at 35% 35%, ${color}dd, ${color}88 50%, ${color}44 100%)`,
-          boxShadow: `0 0 ${size * 0.4}px ${color}60, inset -${size * 0.1}px -${size * 0.1}px ${size * 0.3}px rgba(0,0,0,0.4)`,
-        }}
-      />
-      <div
-        className="absolute rounded-full opacity-30"
-        style={{ left: '10%', top: '20%', width: '25%', height: '15%', background: `${color}cc`, filter: 'blur(3px)' }}
+      <img
+        src={icon}
+        alt={tier}
+        width={size}
+        height={size}
+        className="w-full h-full object-contain"
+        style={{ filter: `drop-shadow(0 0 ${size * 0.2}px ${color}60)` }}
+        loading="lazy"
       />
     </div>
   );

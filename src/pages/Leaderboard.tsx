@@ -14,6 +14,7 @@ import {
   Rocket,
 } from "lucide-react";
 import { getHeliusProxyUrl, getAppBaseUrl } from "@/constants";
+import { getTierIcon } from "@/lib/constants/tierColors";
 import PageShell from "@/components/PageShell";
 
 // ── Types ──
@@ -430,8 +431,9 @@ function OverallTable({
                 <span className="text-white/40">
                   Score: {formatNumber(entry.score)}
                 </span>
-                <span style={{ color: tierColor }} className="font-semibold">
-                  {tierDisplayName(entry.tier)}
+                <span className="flex items-center gap-0.5" style={{ color: tierColor }}>
+                  <img src={getTierIcon(entry.tier)} alt="" className="w-3 h-3 object-contain" />
+                  <span className="font-semibold">{tierDisplayName(entry.tier)}</span>
                 </span>
               </div>
             </div>
@@ -449,9 +451,10 @@ function OverallTable({
 
             {/* Tier — desktop */}
             <span
-              className="hidden sm:block text-xs text-right font-semibold"
+              className="hidden sm:flex items-center justify-end gap-1 text-xs font-semibold"
               style={{ color: tierColor }}
             >
+              <img src={getTierIcon(entry.tier)} alt="" className="w-4 h-4 object-contain" />
               {tierDisplayName(entry.tier)}
             </span>
           </div>

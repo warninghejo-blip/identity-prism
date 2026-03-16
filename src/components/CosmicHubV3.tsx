@@ -12,6 +12,7 @@ import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { startFadeTransition } from '@/lib/fadeTransition';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
+import { getTierIcon } from '@/lib/constants/tierColors';
 import { toast } from 'sonner';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import type { PlanetTier } from '@/hooks/useWalletData';
@@ -174,6 +175,7 @@ function MiniPassport({
           <div className="flex-1 min-w-0 pt-0.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
+                <img src={getTierIcon(tier)} alt="" className="w-4 h-4 object-contain" style={{ filter: `drop-shadow(0 0 4px ${tierColor.glow})` }} />
                 <span className="text-[11px] font-black tracking-[0.1em] uppercase" style={{ color: tierColor.text, textShadow: `0 0 12px ${tierColor.glow}` }}>
                   {tierLabel}
                 </span>
@@ -292,7 +294,10 @@ function MiniPassport({
 
         {/* Tier + Rank */}
         <div className="text-center mb-3">
-          <div className="text-base font-black tracking-[0.15em] uppercase" style={{ color: tierColor.text, textShadow: `0 0 16px ${tierColor.glow}, 0 0 32px ${tierColor.glow}` }}>{tierLabel}</div>
+          <div className="flex items-center justify-center gap-2 text-base font-black tracking-[0.15em] uppercase" style={{ color: tierColor.text, textShadow: `0 0 16px ${tierColor.glow}, 0 0 32px ${tierColor.glow}` }}>
+            <img src={getTierIcon(tier)} alt="" className="w-6 h-6 object-contain" style={{ filter: `drop-shadow(0 0 6px ${tierColor.glow})` }} />
+            {tierLabel}
+          </div>
           <div className="text-[9px] text-white/20 mt-0.5 tracking-wider">COMPOSITE RANK</div>
           {/* Ranger Rank */}
           {(() => {

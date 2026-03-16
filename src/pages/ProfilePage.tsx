@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { goBack } from '@/lib/safeNavigate';
 import { getHeliusProxyUrl } from '@/constants';
+import { getTierIcon } from '@/lib/constants/tierColors';
 
 const TIER_LABELS: Record<string, string> = {
   mercury: 'Mercury', mars: 'Mars', venus: 'Venus', earth: 'Earth',
@@ -13,14 +14,6 @@ const TIER_COLORS: Record<string, string> = {
   mercury: '#94a3b8', mars: '#ef4444', venus: '#f59e0b', earth: '#22c55e',
   neptune: '#3b82f6', uranus: '#06b6d4', saturn: '#a855f7', jupiter: '#f97316',
   sun: '#eab308', binary_sun: '#ec4899',
-};
-
-const TIER_TEXTURES: Record<string, string> = {
-  mercury: '/textures/mercury_map.jpg', mars: '/textures/mars_map.jpg',
-  venus: '/textures/venus_map.jpg', earth: '/textures/earth_daymap.jpg',
-  neptune: '/textures/neptune_map.jpg', uranus: '/textures/uranus_map.jpg',
-  saturn: '/textures/saturn_map.jpg', jupiter: '/textures/jupiter_map.jpg',
-  sun: '/textures/sun_map.jpg', binary_sun: '/textures/sun_map.jpg',
 };
 
 interface WalletData {
@@ -97,8 +90,8 @@ export default function ProfilePage() {
       <button onClick={() => goBack(navigate)} className="text-white/40 hover:text-white/70 text-sm">← Back</button>
 
       <div className="text-center space-y-2">
-        <div className="w-16 h-16 mx-auto rounded-full overflow-hidden" style={{ boxShadow: `0 0 24px ${tierColor}40` }}>
-          <img src={TIER_TEXTURES[tier] || '/textures/mercury_map.jpg'} alt={TIER_LABELS[tier] || tier} className="w-full h-full object-cover" />
+        <div className="w-16 h-16 mx-auto" style={{ filter: `drop-shadow(0 0 12px ${tierColor}60)` }}>
+          <img src={getTierIcon(tier)} alt={TIER_LABELS[tier] || tier} className="w-full h-full object-contain" />
         </div>
         <h1 className="text-xl font-bold text-white">{TIER_LABELS[tier] || tier}</h1>
         <p className="text-white/40 text-xs font-mono">{address}</p>

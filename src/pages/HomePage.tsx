@@ -7,16 +7,16 @@ import { motion, useScroll, useTransform, useSpring, useInView } from "framer-mo
    ═══════════════════════════════════════════════════ */
 
 const PLANETS = [
-  { tier: "mercury", label: "Mercury", map: "/textures/mercury_map.jpg", color: "#b4a995", desc: "Newborn traveler" },
-  { tier: "mars", label: "Mars", map: "/textures/mars_map.jpg", color: "#ff6b4a", desc: "First footsteps" },
-  { tier: "venus", label: "Venus", map: "/textures/venus_map.jpg", color: "#ffd166", desc: "Growing presence" },
-  { tier: "earth", label: "Earth", map: "/textures/earth_daymap.jpg", color: "#5fa8ff", desc: "Established identity" },
-  { tier: "neptune", label: "Neptune", map: "/textures/neptune_map.jpg", color: "#4cc9f0", desc: "Deep explorer" },
-  { tier: "uranus", label: "Uranus", map: "/textures/uranus_map.jpg", color: "#80edff", desc: "Ice giant" },
-  { tier: "saturn", label: "Saturn", map: "/textures/saturn_map.jpg", color: "#fcbf49", desc: "Ringed royalty" },
-  { tier: "jupiter", label: "Jupiter", map: "/textures/jupiter_map.jpg", color: "#f4a261", desc: "Gas colossus" },
-  { tier: "sun", label: "Sun", map: "/textures/sun_map.jpg", color: "#ffdd99", desc: "Stellar power" },
-  { tier: "binary_sun", label: "Binary Sun", map: "/textures/sun_map.jpg", color: "#fffbe6", desc: "Twin star transcendence" },
+  { tier: "mercury", label: "Mercury", icon: "/textures/tiers/mercury.png", color: "#b4a995", desc: "Newborn traveler" },
+  { tier: "mars", label: "Mars", icon: "/textures/tiers/mars.png", color: "#ff6b4a", desc: "First footsteps" },
+  { tier: "venus", label: "Venus", icon: "/textures/tiers/venus.png", color: "#ffd166", desc: "Growing presence" },
+  { tier: "earth", label: "Earth", icon: "/textures/tiers/earth.png", color: "#5fa8ff", desc: "Established identity" },
+  { tier: "neptune", label: "Neptune", icon: "/textures/tiers/neptune.png", color: "#4cc9f0", desc: "Deep explorer" },
+  { tier: "uranus", label: "Uranus", icon: "/textures/tiers/uranus.png", color: "#80edff", desc: "Ice giant" },
+  { tier: "saturn", label: "Saturn", icon: "/textures/tiers/saturn.png", color: "#fcbf49", desc: "Ringed royalty" },
+  { tier: "jupiter", label: "Jupiter", icon: "/textures/tiers/jupiter.png", color: "#f4a261", desc: "Gas colossus" },
+  { tier: "sun", label: "Sun", icon: "/textures/tiers/sun.png", color: "#ffdd99", desc: "Stellar power" },
+  { tier: "binary_sun", label: "Binary Sun", icon: "/textures/tiers/binary_sun.png", color: "#fffbe6", desc: "Twin star transcendence" },
 ];
 
 const FEATURES = [
@@ -223,21 +223,14 @@ export default function HomePage() {
             {PLANETS.map((p, i) => (
               <FadeInSection key={p.tier} delay={i * 0.06} className="flex flex-col items-center group">
                 <div
-                  className="relative w-20 h-20 md:w-28 md:h-28 rounded-full overflow-hidden border-2 transition-all duration-500 group-hover:scale-110 group-hover:shadow-[0_0_30px_var(--glow)]"
-                  style={{
-                    borderColor: `${p.color}33`,
-                    "--glow": `${p.color}44`,
-                  } as React.CSSProperties}
+                  className="relative w-20 h-20 md:w-28 md:h-28 transition-all duration-500 group-hover:scale-110"
+                  style={{ filter: `drop-shadow(0 0 12px ${p.color}40)` }}
                 >
                   <img
-                    src={p.map}
+                    src={p.icon}
                     alt={p.label}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain transition-all duration-500 group-hover:brightness-110"
                     loading="lazy"
-                  />
-                  <div
-                    className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-                    style={{ boxShadow: `inset 0 0 20px ${p.color}30` }}
                   />
                 </div>
                 <span className="mt-2.5 text-[10px] md:text-xs font-bold uppercase tracking-widest" style={{ color: p.color }}>

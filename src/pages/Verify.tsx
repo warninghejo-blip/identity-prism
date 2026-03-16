@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getHeliusRpcUrl } from '@/constants';
 import { goBack } from '@/lib/safeNavigate';
+import { getTierIcon } from '@/lib/constants/tierColors';
 
 interface AttestationData {
   protocol: string;
@@ -30,19 +31,6 @@ const TIER_COLORS: Record<string, string> = {
   binary_sun: '#22D3EE',
 };
 
-const TIER_EMOJI: Record<string, string> = {
-  mercury: '☿️',
-  venus: '♀️',
-  earth: '🌍',
-  mars: '♂️',
-  jupiter: '♃',
-  saturn: '🪐',
-  uranus: '⛢',
-  neptune: '♆',
-  sun: '☀️',
-  'binary sun': '🌟',
-  binary_sun: '🌟',
-};
 
 type VerifyState =
   | { status: 'idle' }
@@ -152,7 +140,7 @@ const Verify: React.FC = () => {
   };
 
   const tierColor = state.status === 'success' ? (TIER_COLORS[state.data.tier.toLowerCase()] || '#888') : '#888';
-  const tierEmoji = state.status === 'success' ? (TIER_EMOJI[state.data.tier.toLowerCase()] || '🔮') : '';
+  const tierIconSrc = state.status === 'success' ? getTierIcon(state.data.tier.toLowerCase()) : '';
 
   const formatDate = (ts: string | number | null) => {
     if (!ts) return 'Unknown';
@@ -250,7 +238,7 @@ const Verify: React.FC = () => {
               <div className="sm:text-right">
                 <p className="text-gray-400 text-sm mb-1">Tier</p>
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl sm:text-3xl">{tierEmoji}</span>
+                  {tierIconSrc && <img src={tierIconSrc} alt={state.data.tier} className="w-8 h-8 sm:w-10 sm:h-10 object-contain" style={{ filter: `drop-shadow(0 0 6px ${tierColor}80)` }} />}
                   <span className="text-xl sm:text-2xl font-bold uppercase truncate max-w-[200px]" style={{ color: tierColor }}>
                     {state.data.tier.replace(/_/g, ' ')}
                   </span>
