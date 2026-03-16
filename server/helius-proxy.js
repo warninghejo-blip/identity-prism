@@ -3589,6 +3589,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Tournament System (Tiered) ═══
   if (pathname === '/api/tournament/active' && req.method === 'GET') {
+    if (!ipRateLimit('tourney_active', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     checkTournaments();
     // Optional JWT check for userJoined per tier
     let userAddr = null;
@@ -3696,6 +3697,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Referral System ═══
   if (pathname === '/api/referral/code' && req.method === 'GET') {
+    if (!ipRateLimit('referral_code', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const addr = jwtAuth.address;
@@ -5814,8 +5816,17 @@ const server = http.createServer(async (req, res) => {
     const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
     fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {});
   }
-  // Daily purchase tracking
-  const dailyPurchases = globalThis._dailyPurchases || (globalThis._dailyPurchases = new Map());
+  // Daily purchase tracking (persisted to survive restarts)
+  const DAILY_PURCHASES_FILE = path.join(METADATA_DIR, 'daily-purchases.json');
+  const dailyPurchases = globalThis._dailyPurchases || (() => {
+    const m = new Map();
+    try {
+      const d = JSON.parse(fs.readFileSync(DAILY_PURCHASES_FILE, 'utf8'));
+      const today = new Date().toISOString().slice(0, 10);
+      for (const [k, v] of Object.entries(d)) { if (k.endsWith(`:${today}`)) m.set(k, v); }
+    } catch {}
+    return (globalThis._dailyPurchases = m);
+  })();
 
   const COIN_PACKAGES = [
     { coins: 5000,    solPrice: 0.005 },
@@ -5826,6 +5837,7 @@ const server = http.createServer(async (req, res) => {
   const DAILY_COIN_LIMIT = 300000;
 
   if (pathname === '/api/prism/buy/status' && req.method === 'GET') {
+    if (!ipRateLimit('buy_status', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address format' });
@@ -5896,8 +5908,10 @@ const server = http.createServer(async (req, res) => {
       const wBuy = walletDatabase.get(address);
       if (wBuy) { wBuy.coins = prevBuyBal + pkg.coins; saveWalletDatabaseDebounced(); }
 
-      // Update daily tracking
+      // Update daily tracking + persist
       dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
+      { const _dpTmp = DAILY_PURCHASES_FILE + '.tmp'; const _dpObj = {}; for (const [k, v] of dailyPurchases) _dpObj[k] = v;
+        fs.promises.writeFile(_dpTmp, JSON.stringify(_dpObj), 'utf8').then(() => fs.promises.rename(_dpTmp, DAILY_PURCHASES_FILE)).catch(() => {}); }
       // Persist used tx signature immediately (survive restart)
       { const _txTmp = USED_TX_FILE + '.tmp'; const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
         fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {}); }
@@ -7355,6 +7369,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Marketplace Listings ═══
   if (pathname === '/api/marketplace/listings' && req.method === 'GET') {
+    if (!ipRateLimit('mkt_list', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const category = url.searchParams.get('category');
     const entries = [...marketplaceListings.values()]
       .filter(l => l.status === 'approved' && (!category || l.category === category))
