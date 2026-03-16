@@ -319,7 +319,9 @@ function optionalJwt(req, res) {
  */
 function requireAdminKey(req, res) {
   const key = req.headers['x-admin-key'];
-  if (!key || key !== process.env.ADMIN_KEY) {
+  const adminKey = process.env.ADMIN_KEY;
+  if (!key || !adminKey || key.length !== adminKey.length ||
+      !crypto.timingSafeEqual(Buffer.from(key), Buffer.from(adminKey))) {
     respondJson(res, 403, { error: 'Forbidden' });
     return false;
   }
@@ -543,7 +545,8 @@ const pruneGameSessionProofs = () => {
   const cutoff = Date.now() - GAME_SESSION_TTL_MS;
   let removed = 0;
   for (const [id, entry] of gameSessionProofs.entries()) {
-    if (!entry || Number(entry.createdAtMs ?? 0) < cutoff) {
+    if (!entry || (Number(entry.createdAtMs ?? 0) < cutoff
+        && !entry.usedForTournament && !entry.usedForChallenge && !entry.usedForLeaderboard)) {
       gameSessionProofs.delete(id);
       removed += 1;
     }
@@ -596,7 +599,9 @@ let leaderboardCacheTime = 0;
 
 const persistLeaderboard = () => {
   leaderboardCache = null; // invalidate cache on write
-  fs.promises.writeFile(LEADERBOARD_STORE_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), entries: leaderboardEntries }, null, 2))
+  const tmp = LEADERBOARD_STORE_FILE + '.tmp';
+  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), entries: leaderboardEntries }, null, 2))
+    .then(() => fs.promises.rename(tmp, LEADERBOARD_STORE_FILE))
     .catch(err => console.warn('[leaderboard] Failed to persist', err));
 };
 
@@ -1086,7 +1091,8 @@ const backfillWalletDatabaseAsync = async () => {
     let sybilCount = 0;
     for (const addr of walletsNeedingSybil) {
       try {
-        const sybilRes = await fetch(`http://127.0.0.1:${PORT}/api/sybil/analysis?address=${addr}`);
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) continue;
+        const sybilRes = await fetch(`http://127.0.0.1:${PORT}/api/sybil/analysis?address=${encodeURIComponent(addr)}`);
         if (sybilRes.ok) sybilCount++;
       } catch { /* ignore individual failures */ }
       // Throttle: 500ms between requests (2 req/sec)
@@ -1142,22 +1148,24 @@ const getWalletAchievements = (address) => {
   return achievementData.get(address) || { unlocked: new Set(), claimed: new Set() };
 };
 
+const VALID_ACHIEVEMENT_IDS = new Set(['score_10', 'score_50', 'score_100', 'score_200', 'survived_15s', 'survived_30s', 'survived_60s', 'survived_120s', 'survived_180s', 'survived_300s', 'near_miss_1', 'near_miss_5', 'near_miss_25', 'near_miss_50', 'near_miss_100', 'total_games_1', 'total_games_10', 'total_games_50', 'total_games_100', 'first_blood', 'kill_streak_5', 'kill_streak_10', 'boss_slayer', 'boss_rush', 'perfect_wave', 'destroyer_500', 'destroyer_1000', 'destroyer_2000', 'grav_ace', 'grav_columns_50', 'grav_columns_100', 'grav_crystals_100', 'grav_crystals_500', 'grav_survived_120', 'grav_survived_300']);
+
 const markAchievementsUnlocked = (address, achievementIds) => {
   let entry = achievementData.get(address);
   if (!entry) { entry = { unlocked: new Set(), claimed: new Set() }; achievementData.set(address, entry); }
   let changed = false;
   for (const id of achievementIds) {
-    if (!entry.unlocked.has(id)) { entry.unlocked.add(id); changed = true; }
+    if (VALID_ACHIEVEMENT_IDS.has(id) && !entry.unlocked.has(id)) { entry.unlocked.add(id); changed = true; }
   }
   if (changed) persistAchievementData();
   return changed;
 };
 
 const claimAchievement = (address, achievementId) => {
-  let entry = achievementData.get(address);
-  if (!entry) { entry = { unlocked: new Set(), claimed: new Set() }; achievementData.set(address, entry); }
+  const entry = achievementData.get(address);
+  if (!entry) return false; // no entry = nothing unlocked — must earn first
+  if (!entry.unlocked.has(achievementId)) return false; // MUST be unlocked before claiming
   if (entry.claimed.has(achievementId)) return false;
-  entry.unlocked.add(achievementId); // ensure unlocked too
   entry.claimed.add(achievementId);
   persistAchievementData();
   return true;
@@ -1612,11 +1620,17 @@ const applyCors = (req, res) => {
 
   res.setHeader('Access-Control-Allow-Origin', resolveCorsOrigin(req));
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,x-wallet-address,solana-client,x-action-version,x-blockchain-ids');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,x-wallet-address,solana-client,x-action-version,x-blockchain-ids,x-admin-key,x-api-key');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
   res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version,X-Blockchain-Ids');
   res.setHeader('X-Action-Version', '2.1.3');
   res.setHeader('X-Blockchain-Ids', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
+  // Security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-DNS-Prefetch-Control', 'off');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 };
 
 const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB hard limit
@@ -1716,6 +1730,7 @@ const callMagicBlockRpc = async (method, params = []) => {
       method,
       params,
     }),
+    signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) {
     throw new Error(`MagicBlock RPC ${response.status}`);
@@ -3079,6 +3094,13 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/game/session' && req.method === 'POST') {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
+    // Per-wallet rate limit: max 10 sessions per minute
+    if (!globalThis._sessionRateLimit) globalThis._sessionRateLimit = new Map();
+    const srlKey = jwtAuth.address;
+    const srl = globalThis._sessionRateLimit.get(srlKey) || { count: 0, resetAt: Date.now() + 60000 };
+    if (Date.now() > srl.resetAt) { srl.count = 0; srl.resetAt = Date.now() + 60000; }
+    if (++srl.count > 10) return respondJson(res, 429, { error: 'Too many session registrations' });
+    globalThis._sessionRateLimit.set(srlKey, srl);
     try {
       const raw = await readBody(req);
       const parsed = safeParseJson(raw);
@@ -3180,10 +3202,20 @@ const server = http.createServer(async (req, res) => {
         usedForLeaderboard: existingSession?.usedForLeaderboard ?? null,
       };
 
-      // Evict oldest if at capacity
+      // Evict oldest unprotected session if at capacity
       if (gameSessionProofs.size >= MAX_GAME_SESSION_PROOFS) {
-        const oldest = gameSessionProofs.keys().next().value;
-        if (oldest) gameSessionProofs.delete(oldest);
+        let evicted = false;
+        for (const [key, val] of gameSessionProofs) {
+          if (!val?.usedForTournament && !val?.usedForChallenge && !val?.usedForLeaderboard) {
+            gameSessionProofs.delete(key);
+            evicted = true;
+            break;
+          }
+        }
+        if (!evicted) { // all protected — evict absolute oldest as last resort
+          const oldest = gameSessionProofs.keys().next().value;
+          if (oldest) gameSessionProofs.delete(oldest);
+        }
       }
       gameSessionProofs.set(id, entry);
       persistGameSessionProofs();
@@ -3632,7 +3664,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
     // Generate deterministic code: base58 chars from sha256(address + SALT)
-    const SALT = process.env.REFERRAL_SALT || 'prism_ref_2024';
+    const SALT = process.env.REFERRAL_SALT || crypto.randomBytes(16).toString('hex'); // fallback generates per-restart (production MUST set env var)
     const hash = crypto.createHash('sha256').update(addr + SALT).digest();
     const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
     let code = '';
@@ -5576,8 +5608,12 @@ const server = http.createServer(async (req, res) => {
       prismEarnRateLimit.set(rlKey, Date.now());
       if (prismEarnRateLimit.size > 5000) {
         const now = Date.now();
+        const todayCleanup = new Date().toISOString().slice(0, 10);
         for (const [k, v] of prismEarnRateLimit) {
-          // Use the max possible cooldown (7 days for quest_weekly) to avoid premature eviction
+          if (typeof v === 'object' && v !== null && v.date) {
+            if (v.date < todayCleanup) prismEarnRateLimit.delete(k);
+            continue;
+          }
           if (now - v > 7 * 24 * 60 * 60_000) prismEarnRateLimit.delete(k);
         }
       }
@@ -5586,12 +5622,34 @@ const server = http.createServer(async (req, res) => {
       // Enforce daily game coin cap for game sources via /api/prism/earn (prevents bypass of /api/game/coins cap)
       const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
       if (GAME_EARN_SOURCES.has(source)) {
+        const gameBoost = getStakingBoost(address);
+        if (gameBoost > 0) earned = Math.floor(earned * (1 + gameBoost));
         const todayCoins = getGameCoinsToday(address);
         if (todayCoins >= DAILY_GAME_COIN_CAP) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
         earned = Math.min(earned, DAILY_GAME_COIN_CAP - todayCoins);
         addGameCoinsToday(address, earned);
       } else {
         // Non-game sources: enforce global daily cap to prevent coin inflation
+        // Server-side verification for one-time/conditional sources BEFORE cap consumption
+        if (source === 'first_mint') {
+          if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
+          if (globalThis._firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
+          globalThis._firstMintLocks.add(address);
+          const wfm = walletDatabase.get(address);
+          if (wfm?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
+          updateWalletEntry(address, { _firstMintClaimed: true });
+        }
+        if (source === 'challenge_win') {
+          const recentChallenges = Array.from(challenges.values()).filter(
+            c => c.status === 'completed' && c.winner === address && !c.earnClaimed && Date.now() - new Date(c.completedAt || c.createdAt).getTime() < 600_000
+          );
+          if (recentChallenges.length === 0) return respondJson(res, 400, { error: 'No recent challenge win found' });
+          recentChallenges[0].earnClaimed = true; // mark so it can't be double-claimed
+          saveChallenges();
+        }
+        // Apply staking boost BEFORE cap accounting so boosted amount counted against cap
+        const earnBoost = getStakingBoost(address);
+        if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
         const ngKey = `nongame_daily:${address}`;
         const today = new Date().toISOString().slice(0, 10);
         const ngEntry = prismEarnRateLimit.get(ngKey);
@@ -5603,25 +5661,6 @@ const server = http.createServer(async (req, res) => {
         earned = Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned);
         prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
       }
-      // Server-side verification for one-time/conditional sources
-      if (source === 'first_mint') {
-        if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
-        if (globalThis._firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
-        globalThis._firstMintLocks.add(address);
-        const wfm = walletDatabase.get(address);
-        if (wfm?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
-        updateWalletEntry(address, { _firstMintClaimed: true });
-      }
-      if (source === 'challenge_win') {
-        // Cross-check: verify the user actually has a recently completed challenge win
-        const recentChallenges = Array.from(challenges.values()).filter(
-          c => c.status === 'completed' && c.winner === address && Date.now() - new Date(c.completedAt || c.createdAt).getTime() < 600_000
-        );
-        if (recentChallenges.length === 0) return respondJson(res, 400, { error: 'No recent challenge win found' });
-      }
-      // Apply staking boost to earn
-      const earnBoost = getStakingBoost(address);
-      if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
       const prevBal = getCoinBalance(address);
       const newBal = prevBal + earned;
       setCoinBalance(address, newBal);
@@ -5775,7 +5814,8 @@ const server = http.createServer(async (req, res) => {
         if (!validTransfer) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
       } catch (e) {
         usedBuyTxSignatures.delete(txSignature); // release on error so user can retry
-        return respondJson(res, 400, { error: `Failed to verify transaction: ${e.message}` });
+        console.error('[buy] Transaction verification failed:', e.message);
+        return respondJson(res, 400, { error: 'Transaction verification failed' });
       }
 
       // Credit coins
@@ -5823,6 +5863,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sybil/analysis' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     // Serve from cache first (no rate limit for cached results)
     const cached = sybilCache.get(address);
     if (cached && Date.now() - cached.cachedAt < 3600_000) {
@@ -6635,7 +6676,7 @@ const server = http.createServer(async (req, res) => {
       // Also record siblings in graph for future lookups
       for (const sib of allSiblings) {
         if (!sybilGraph.nodes[sib]) {
-          updateSybilGraphNode(sib, { inferredFromCluster: address });
+          updateSybilGraphNode(sib, { inferredFromCluster: address, riskScore: 50 });
         }
       }
       // Auto-flag clusters: if hub funded 10+ wallets and target is high risk
@@ -6667,7 +6708,8 @@ const server = http.createServer(async (req, res) => {
       const analysis = await analysisPromise;
       respondJson(res, 200, analysis);
     } catch (e) {
-      respondJson(res, 500, { error: 'Sybil analysis failed', detail: e.message });
+      console.error('[sybil] Analysis failed:', e.message);
+      respondJson(res, 500, { error: 'Sybil analysis failed' });
     } finally {
       sybilInFlight.delete(address);
     }
@@ -6712,7 +6754,8 @@ const server = http.createServer(async (req, res) => {
       }
       respondJson(res, 200, { results, total: addresses.length, analyzed: Object.values(results).filter(r => r.riskScore >= 0).length });
     } catch (e) {
-      respondJson(res, 500, { error: 'Batch analysis failed', detail: e.message });
+      console.error('[sybil] Batch analysis failed:', e.message);
+      respondJson(res, 500, { error: 'Batch analysis failed' });
     }
     return;
   }
@@ -6799,7 +6842,7 @@ const server = http.createServer(async (req, res) => {
         totalNfts: tokens.filter(t => t.isNft).length,
       });
     } catch (e) {
-      respondJson(res, 500, { error: 'Failed to fetch tokens', detail: e.message });
+      respondJson(res, 500, { error: 'Failed to fetch tokens' });
     }
     return;
   }
@@ -6865,7 +6908,7 @@ const server = http.createServer(async (req, res) => {
       }
       respondJson(res, 200, { transactions: txs });
     } catch (e) {
-      respondJson(res, 500, { error: 'Failed to fetch transactions', detail: e.message });
+      respondJson(res, 500, { error: 'Failed to fetch transactions' });
     }
     return;
   }
@@ -7154,7 +7197,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key', 'Cache-Control': 'public, max-age=300' });
       res.end(JSON.stringify(response));
     } catch (e) {
-      respondJson(res, 500, { error: 'Internal error', detail: e.message });
+      respondJson(res, 500, { error: 'Internal error' });
     }
     return;
   }
@@ -7287,7 +7330,7 @@ const server = http.createServer(async (req, res) => {
       marketplaceListings.set(id, listing);
       saveMarketplace();
       respondJson(res, 200, { listing, message: 'Model uploaded successfully!' });
-    } catch (e) { respondJson(res, 500, { error: 'Upload failed: ' + e.message }); }
+    } catch (e) { console.error('[marketplace] Upload failed:', e.message); respondJson(res, 500, { error: 'Upload failed' }); }
     return;
   }
 
@@ -7430,6 +7473,14 @@ const server = http.createServer(async (req, res) => {
         solTxCreator: isSolBet ? solTxSignature : null,
         solTxAcceptor: null,
       };
+      // Cap: prevent unbounded growth (evict completed/expired before adding)
+      if (challenges.length >= 10000) {
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        for (let i = challenges.length - 1; i >= 0; i--) {
+          if ((challenges[i].status === 'completed' || challenges[i].status === 'expired' || challenges[i].status === 'cancelled') && challenges[i].createdAt < cutoff) challenges.splice(i, 1);
+        }
+        if (challenges.length >= 10000) return respondJson(res, 429, { error: 'Too many active challenges' });
+      }
       challenges.push(challenge);
       saveChallenges();
       console.log(`[challenges] Created ${challenge.id} by ${creator.slice(0, 8)}... (${type}, ${stake} ${isSolBet ? 'SOL' : 'Coins'})`);
@@ -9077,11 +9128,11 @@ try {
 } catch (e) { console.warn('[tournament] Load error:', e.message); }
 
 function saveTournament() {
-  fs.promises.writeFile(TOURNAMENT_FILE, JSON.stringify({
-    active: activeTournaments,
-    history: tournamentHistory.slice(0, 50),
-    modeIndex: tournamentModeIndex,
-  }), 'utf8').catch(e => console.warn('[tournament] save error', e.message));
+  const tmp = TOURNAMENT_FILE + '.tmp';
+  const data = JSON.stringify({ active: activeTournaments, history: tournamentHistory.slice(0, 50), modeIndex: tournamentModeIndex });
+  fs.promises.writeFile(tmp, data, 'utf8')
+    .then(() => fs.promises.rename(tmp, TOURNAMENT_FILE))
+    .catch(e => console.warn('[tournament] save error', e.message));
 }
 
 function createTournamentForTier(tier) {
@@ -9187,7 +9238,9 @@ try {
 } catch { /* first run */ }
 
 function saveChallenges() {
-  fs.promises.writeFile(CHALLENGES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2))
+  const tmp = CHALLENGES_FILE + '.tmp';
+  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2))
+    .then(() => fs.promises.rename(tmp, CHALLENGES_FILE))
     .catch(e => console.warn('[challenges] save error', e.message));
 }
 

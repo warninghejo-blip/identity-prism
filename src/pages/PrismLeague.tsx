@@ -280,9 +280,12 @@ async function serverRevive(walletAddress: string, mode: 'orbit' | 'destroyer'):
   try {
     const base = getServerBase();
     if (!base) return { success: false, left: 0 };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const jwt = getChallengeJwt();
+    if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
     const res = await fetch(`${base}/api/game/revives`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ address: walletAddress, mode }),
     });
     const data = await res.json();
