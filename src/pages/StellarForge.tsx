@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
@@ -838,10 +838,8 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
 // ── Main Component ──
 export default function StellarForge() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const address = searchParams.get('address');
   const { publicKey } = useWallet();
-  const walletAddress = address || publicKey?.toBase58() || '';
+  const walletAddress = publicKey?.toBase58() || '';
 
   useEffect(() => { fadeOutTransition(); }, []);
 

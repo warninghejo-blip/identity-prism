@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
 import { ArrowLeft, RotateCcw, ChevronRight, Lock, Trophy, Clock, Zap } from 'lucide-react';
@@ -176,10 +176,8 @@ function QuestListCard({
 
 export default function TextQuestPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const address = searchParams.get('address');
   const { publicKey } = useWallet();
-  const walletAddress = address || publicKey?.toBase58() || '';
+  const walletAddress = publicKey?.toBase58() || '';
 
   const [activeQuest, setActiveQuest] = useState<TextQuest | null>(null);
   const [questState, setQuestState] = useState<QuestSaveState | null>(null);

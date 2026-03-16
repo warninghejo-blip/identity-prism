@@ -285,7 +285,7 @@ function requireJwt(req, res) {
     return { ok: false };
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
     return { ok: true, address: payload.address };
   } catch {
     respondJson(res, 401, { error: 'Invalid or expired auth token' });
@@ -305,7 +305,7 @@ function optionalJwt(req, res) {
     return { ok: true, address: null };
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
     return { ok: true, address: payload.address };
   } catch {
     // Token present but invalid — reject to prevent spoofing
@@ -1283,10 +1283,11 @@ function calculateCompositeScore(input) {
   // On-chain badges (5) — on-chain score already includes badge pts from scoring.js
   // No extra bonus here to avoid double-counting
 
-  // Sybil Trust badges (3) — bonus 10 pts each
-  const badge_verifiedHuman = trustScore >= 80;
-  const badge_cleanRecord = trustScore >= 50 && riskScore < 10;
-  const badge_trustPillar = trustScore >= 95;
+  // Sybil Trust badges (3) — bonus 10 pts each (require full sybil analysis)
+  const sybilAnalyzed = input.sybilAnalyzed === true;
+  const badge_verifiedHuman = sybilAnalyzed && trustScore >= 80;
+  const badge_cleanRecord = sybilAnalyzed && trustScore >= 50 && riskScore < 10;
+  const badge_trustPillar = sybilAnalyzed && trustScore >= 95;
   const sybilBadgeBonus = (badge_verifiedHuman ? 10 : 0) + (badge_cleanRecord ? 10 : 0) + (badge_trustPillar ? 10 : 0);
 
   // Human Proof badges (3) — bonus 10 pts each
@@ -1401,6 +1402,7 @@ function buildCompositeInput(address) {
     onchainScore,
     trustScore,
     riskScore: sybil.riskScore || 0,
+    sybilAnalyzed: Boolean(sybil.updatedAt),
     walletAgeDays: stats.walletAgeDays || (traits.walletAgeDays ?? 0),
     txCount: stats.transactions || (traits.txCount ?? 0),
     nftCount: stats.nfts || (traits.nftCount ?? 0),
@@ -2601,7 +2603,7 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 401, { error: 'Invalid signature' }); return;
       }
       authChallenges.delete(nonce); // one-time use
-      const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL, algorithm: 'HS256' });
+      const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL, algorithm: 'HS256', issuer: 'identity-prism', audience: 'identity-prism-api' });
       console.info('[auth] JWT issued', { address: address.slice(0, 8) });
       respondJson(res, 200, { token, expiresIn: JWT_TTL });
     } catch (e) {
@@ -3145,8 +3147,8 @@ const server = http.createServer(async (req, res) => {
       const isGravityMode = payload.gameMode === 'gravity';
       const durationSec = Math.max(1, durationMs / 1000);
       const expectedScore = Math.floor(durationSec);
-      const maxDestroyerScore = Math.max(500, Math.floor(durationSec * 100));
-      const maxGravityScore = Math.max(100, Math.floor(durationSec * 10));
+      const maxDestroyerScore = Math.floor(Math.max(1, durationSec) * 100);
+      const maxGravityScore = Math.floor(Math.max(1, durationSec) * 10);
       let scoreDelta = 0;
       let modeScoreValid = true;
       if (isDestroyerMode) {
@@ -3224,13 +3226,20 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       respondJson(res, 500, {
         error: 'Failed to register game session',
-        detail: error instanceof Error ? error.message : String(error),
       });
       return;
     }
   }
 
   if (pathname.startsWith('/api/game/session/') && req.method === 'GET') {
+    // Rate limit: 30 req/min per IP
+    const sessGetIp = getClientIp(req);
+    const sessGetKey = `sessget:${sessGetIp}`;
+    const sessGetEntry = globalThis._sessionGetRl?.get(sessGetKey) || { count: 0, resetAt: Date.now() + 60000 };
+    if (!globalThis._sessionGetRl) globalThis._sessionGetRl = new Map();
+    if (Date.now() > sessGetEntry.resetAt) { sessGetEntry.count = 0; sessGetEntry.resetAt = Date.now() + 60000; }
+    if (++sessGetEntry.count > 30) return respondJson(res, 429, { error: 'Rate limited' });
+    globalThis._sessionGetRl.set(sessGetKey, sessGetEntry);
     pruneGameSessionProofs();
     const rawId = pathname.slice('/api/game/session/'.length);
     let sessionId = '';
@@ -3264,9 +3273,9 @@ const server = http.createServer(async (req, res) => {
       let modeScoreValid = true;
       const exDurationSec = Math.max(1, (existing.durationMs || 0) / 1000);
       if (existing.gameMode === 'destroyer') {
-        modeScoreValid = existing.score <= Math.max(500, Math.floor(exDurationSec * 100));
+        modeScoreValid = existing.score <= Math.floor(exDurationSec * 100);
       } else if (existing.gameMode === 'gravity') {
-        modeScoreValid = existing.score <= Math.max(100, Math.floor(exDurationSec * 10));
+        modeScoreValid = existing.score <= Math.floor(exDurationSec * 10);
       }
       const verified = verification.seedMatchesSlot && existing.scoreDelta <= 5 && modeScoreValid;
       const reason = verified
@@ -3282,14 +3291,15 @@ const server = http.createServer(async (req, res) => {
         },
         lastVerifiedAt: new Date().toISOString(),
       };
+      const verifiedChanged = refreshed.verified !== existing.verified;
       gameSessionProofs.set(sessionId, refreshed);
-      persistGameSessionProofs();
+      if (verifiedChanged) persistGameSessionProofs(); // only persist on state change
       respondJson(res, 200, { session: toPublicGameSessionProof(refreshed) });
       return;
     } catch (error) {
       respondJson(res, 200, {
         session: toPublicGameSessionProof(existing),
-        verificationWarning: error instanceof Error ? error.message : String(error),
+        verificationWarning: 'Verification temporarily unavailable',
       });
       return;
     }
@@ -3319,7 +3329,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const raw = await readBody(req);
       const parsed = JSON.parse(raw);
-      const { address: bodyAddress, score, playedAt, txSignature, gameType, gameSessionId } = parsed;
+      const { address: bodyAddress, score, txSignature, gameType, gameSessionId } = parsed;
+      const playedAt = new Date().toISOString(); // server-authoritative timestamp
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
@@ -3618,7 +3629,7 @@ const server = http.createServer(async (req, res) => {
       const tier = reqTier || 'daily';
       if (!TOURNAMENT_TIERS[tier]) return respondJson(res, 400, { error: 'Invalid tier' });
       const t = activeTournaments[tier];
-      if (!t || t.status === 'ended') return respondJson(res, 400, { error: 'No active tournament' });
+      if (!t || t.status === 'ended' || Date.now() > t.endTime) return respondJson(res, 400, { error: 'Tournament has ended' });
       const addr = jwtAuth.address;
       if (!t.entries[addr]) return respondJson(res, 400, { error: 'Not joined' });
       if (typeof score !== 'number' || score <= 0) return respondJson(res, 400, { error: 'Valid score required' });
@@ -6066,6 +6077,7 @@ const server = http.createServer(async (req, res) => {
       let hasSolDomain = false;
       let cexTrustBonus = 0; // CEX funding trust bonus — applied later to trustBonus
 
+      let resolvedTopFunder = null; // shared: used for cluster key later
       const fundingGraphPromise = (async () => {
         try {
           // Reuse already-parsed txs from step above (no duplicate RPC calls)
@@ -6074,6 +6086,7 @@ const server = http.createServer(async (req, res) => {
           for (const [addr, info] of incoming) {
             if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
           }
+          resolvedTopFunder = topFunder; // expose for cluster key
           if (topFunder && topAmount >= 0.01) {
             const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
             const topFunderPct = topAmount / totalReceived;
@@ -6574,7 +6587,7 @@ const server = http.createServer(async (req, res) => {
       if (defiDepth >= 2) trustBonus += 2;               // uses DeFi beyond swaps
       if (defiDepth >= 3) trustBonus += 2;               // deep DeFi user (lending+staking+governance)
       // Trust bonus can reduce risk but never below half of graph risk (graph signal always partially persists)
-      const graphFloor = Math.floor(graphRisk / 2);
+      const graphFloor = Math.max(10, Math.floor(graphRisk * 0.6));
       riskScore = Math.max(graphFloor, riskScore - trustBonus);
 
       if (graphRisk > 0) {
@@ -6681,7 +6694,8 @@ const server = http.createServer(async (req, res) => {
       }
       // Auto-flag clusters: if hub funded 10+ wallets and target is high risk
       if (allSiblings.size >= 10 && riskScore >= 50) {
-        const clusterKey = fundingSources[0] || address;
+        // Use the top funder (by SOL amount) as cluster key, not insertion order
+        const clusterKey = resolvedTopFunder || fundingSources[0] || address;
         const existing = sybilGraph.flaggedClusters.find(c => c.funder === clusterKey);
         if (existing) {
           existing.lastSeen = Date.now();
@@ -6762,6 +6776,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Sybil Stats ═══
   if (pathname === '/api/sybil/stats' && req.method === 'GET') {
+    if (!requireAdminKey(req, res)) return; // admin only — exposes graph intelligence
     const nodes = Object.values(sybilGraph.nodes);
     const analyzed = nodes.filter(n => n.riskScore !== undefined);
     const grades = { 'A+': 0, A: 0, B: 0, C: 0, D: 0, F: 0 };
@@ -6786,17 +6801,25 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sybil/graph' && req.method === 'GET') {
     const addr = url.searchParams.get('address');
     if (!addr) return respondJson(res, 400, { error: 'address required' });
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) return respondJson(res, 400, { error: 'Invalid address' });
+    // Rate limit: 10 req/min per IP
+    const graphIp = getClientIp(req);
+    const graphRlKey = `sybgraph:${graphIp}`;
+    const graphRl = reputationRateLimit.get(graphRlKey) || 0;
+    if (Date.now() - graphRl < 6000) return respondJson(res, 429, { error: 'Rate limited' });
+    reputationRateLimit.set(graphRlKey, Date.now());
     const node = sybilGraph.nodes[addr];
     if (!node) return respondJson(res, 404, { error: 'Address not in sybil graph' });
-    // Find connected nodes
-    const connected = [];
-    if (node.siblings) {
-      for (const sib of node.siblings.slice(0, 10)) {
-        const sibNode = sybilGraph.nodes[sib];
-        connected.push({ address: sib, riskScore: sibNode?.riskScore ?? -1, trustGrade: sibNode?.trustGrade ?? '?' });
-      }
-    }
-    respondJson(res, 200, { address: addr, ...node, connected });
+    // Return safe subset — no fundedBy or full sibling list (prevents graph enumeration)
+    respondJson(res, 200, {
+      address: addr,
+      riskScore: node.riskScore ?? -1,
+      trustGrade: node.trustGrade ?? '?',
+      walletAgeDays: node.walletAgeDays,
+      defiDepth: node.defiDepth,
+      hasSolDomain: node.hasSolDomain,
+      siblingCount: node.siblings?.length || 0,
+    });
     return;
   }
 
@@ -7194,7 +7217,7 @@ const server = http.createServer(async (req, res) => {
         scoreHistory: latestScores,
         meta: { timestamp: new Date().toISOString(), cached: Boolean(cachedSybil), provider: 'Identity Prism', website: 'https://identityprism.xyz' },
       };
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key', 'Cache-Control': 'public, max-age=300' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': resolveCorsOrigin(req), 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key', 'Cache-Control': 'private, no-store' });
       res.end(JSON.stringify(response));
     } catch (e) {
       respondJson(res, 500, { error: 'Internal error' });
@@ -7442,7 +7465,7 @@ const server = http.createServer(async (req, res) => {
             return false;
           });
           if (!validTransfer) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
-        } catch (e) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: `Failed to verify SOL transfer: ${e.message}` }); }
+        } catch (e) { console.error('[challenge] SOL verify failed:', e.message); globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: 'SOL transfer verification failed' }); }
       } else {
         // Check creator Coin balance
         const creatorBal = getPrismBalance(creator);
@@ -7578,7 +7601,7 @@ const server = http.createServer(async (req, res) => {
           });
           if (!validTransfer) { globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
           challenge.solTxAcceptor = solTxSignature;
-        } catch (e) { globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: `Transfer verification failed: ${e.message}` }); }
+        } catch (e) { console.error('[challenge] SOL verify failed:', e.message); globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: 'Transfer verification failed' }); }
       } else {
         // Check acceptor Coin balance
         const accBal = getCoinBalance(acceptor);
@@ -8100,8 +8123,17 @@ const server = http.createServer(async (req, res) => {
     if (address) {
       const w = walletDatabase.get(address);
       if (!w) return respondJson(res, 404, { error: 'Wallet not found' });
-      // Public view: strip sensitive fields
-      const { coins, sybilScore, sybilFlags, ...publicData } = w;
+      // Public view: only expose safe fields (strip sybil details, internal stats, sensitive data)
+      const publicData = {
+        address,
+        tier: w.tier || 'mercury',
+        score: w.score || 0,
+        badges: w.badges || [],
+        composite: w.composite ? { compositeScore: w.composite.compositeScore, compositeTier: w.composite.compositeTier, breakdown: w.composite.breakdown } : null,
+        scoreBreakdown: w.scoreBreakdown || null,
+        joinedAt: w.joinedAt || null,
+        lastSeenAt: w.lastSeenAt || null,
+      };
       respondJson(res, 200, publicData);
       return;
     }
@@ -9202,6 +9234,8 @@ function checkTournaments() {
 }
 // Backward compat alias
 function checkTournament() { checkTournaments(); }
+// Auto-finalize tournaments every 60 seconds (not just on HTTP request)
+setInterval(checkTournaments, 60_000);
 
 // ═══ Prism Marketplace ═══
 const MARKETPLACE_FILE = path.join(process.cwd(), 'marketplace_data.json');

@@ -675,10 +675,9 @@ const PrismLeague = () => {
     let cancelled = false;
     fetchServerCoins(address).then((srv) => {
       if (cancelled || srv === null) return;
-      const local = readWalletCoins(address);
-      const best = Math.max(srv, local);
-      if (best !== local) writeWalletCoins(address, best);
-      setTotalCoins(best);
+      // Server is source of truth — always use server balance
+      writeWalletCoins(address, srv);
+      setTotalCoins(srv);
     });
     // Sync unlocked + claimed achievements from server
     fetchServerAchievements(address).then(({ unlocked: srvUnlocked, claimed: srvClaimed }) => {

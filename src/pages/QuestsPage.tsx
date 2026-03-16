@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
@@ -117,10 +117,8 @@ function QuestCard({
 
 export default function QuestsPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const address = searchParams.get('address');
   const { publicKey } = useWallet();
-  const walletAddress = address || publicKey?.toBase58() || '';
+  const walletAddress = publicKey?.toBase58() || '';
 
   const [activeTab, setActiveTab] = useState<QuestTab>('daily');
   const [questState, setQuestState] = useState<QuestState | null>(null);

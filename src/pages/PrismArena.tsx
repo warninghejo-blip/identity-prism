@@ -231,7 +231,7 @@ export default function PrismArena() {
       const body: Record<string, unknown> = { type: formType, stakeAmount: formStake, betType: formBetType };
       if (isSol && solTxSignature) body.solTxSignature = solTxSignature;
       if (formType === 'game') body.gameMode = formGameMode;
-      if (formOpponent.trim().length >= 32) body.opponent = formOpponent.trim();
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(formOpponent.trim())) body.opponent = formOpponent.trim();
 
       const res = await fetch(`${base}/api/challenge/create`, {
         method: 'POST',

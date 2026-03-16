@@ -49,9 +49,10 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (!address) return;
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) { setError('Invalid address'); setLoading(false); return; }
     setLoading(true);
     const proxyUrl = getHeliusProxyUrl() || '';
-    fetch(`${proxyUrl}/api/wallet-database?address=${address}`)
+    fetch(`${proxyUrl}/api/wallet-database?address=${encodeURIComponent(address)}`)
       .then(r => {
         if (!r.ok) throw new Error('Wallet not found');
         return r.json();
