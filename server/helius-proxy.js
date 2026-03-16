@@ -759,7 +759,9 @@ const loadMintedAddresses = () => {
 };
 
 const saveMintedAddresses = () => {
-  fs.promises.writeFile(MINTED_ADDRESSES_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), addresses: [...mintedAddresses] }, null, 2))
+  const tmp = MINTED_ADDRESSES_FILE + '.tmp';
+  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), addresses: [...mintedAddresses] }, null, 2), 'utf8')
+    .then(() => fs.promises.rename(tmp, MINTED_ADDRESSES_FILE))
     .catch(err => console.warn('[minted] Failed to persist', err));
 };
 
@@ -929,12 +931,16 @@ const persistWalletDatabase = () => {
   try {
     const obj = {};
     for (const [k, v] of walletDatabase) obj[k] = v;
-    fs.writeFile(WALLET_DB_FILE, JSON.stringify({
+    const tmp = WALLET_DB_FILE + '.tmp';
+    const data = JSON.stringify({
       version: 1,
       updatedAt: new Date().toISOString(),
       totalWallets: walletDatabase.size,
       wallets: obj,
-    }, null, 2), (err) => { if (err) console.warn('[wallet-db] Write error:', err.message); });
+    }, null, 2);
+    fs.promises.writeFile(tmp, data, 'utf8')
+      .then(() => fs.promises.rename(tmp, WALLET_DB_FILE))
+      .catch(err => { console.warn('[wallet-db] Write error:', err.message); });
   } catch (err) {
     console.warn('[wallet-db] Failed to persist', err);
   }
@@ -1254,7 +1260,9 @@ try {
 const persistQuestProgress = () => {
   const obj = {};
   for (const [k, v] of questProgress) obj[k] = v;
-  fs.promises.writeFile(QUEST_PROGRESS_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2))
+  const tmp = QUEST_PROGRESS_FILE + '.tmp';
+  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2), 'utf8')
+    .then(() => fs.promises.rename(tmp, QUEST_PROGRESS_FILE))
     .catch(err => console.warn('[quests] Failed to persist', err));
 };
 
@@ -2452,6 +2460,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/market/collection-stats' && req.method === 'GET') {
+    if (!ipRateLimit('mkt_colstats', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const symbol = String(url.searchParams.get('symbol') ?? '').trim();
     const collectionId = String(url.searchParams.get('collectionId') ?? '').trim();
     const collName = String(url.searchParams.get('name') ?? '').trim();
@@ -3032,6 +3041,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/market/sol-price' && req.method === 'GET') {
+    if (!ipRateLimit('mkt_sol', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
       const price = await getCachedSolPriceUsd();
       respondJson(res, 200, { usd: price });
@@ -3043,6 +3053,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/market/skr-price' && req.method === 'GET') {
+    if (!ipRateLimit('mkt_skr', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
       const price = await getCachedSkrPriceUsd();
       respondJson(res, 200, { usd: price });
@@ -3054,6 +3065,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/market/jupiter-prices' && req.method === 'GET') {
+    if (!ipRateLimit('mkt_jup', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const ids = url.searchParams.get('ids') || '';
     if (!ids || ids.length > 2000) {
       respondJson(res, 400, { error: 'Invalid ids parameter' });
@@ -3076,6 +3088,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/market/mint-quote' && req.method === 'GET') {
+    if (!ipRateLimit('mkt_quote', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
       const quote = await getSkrQuote();
       if (!quote) {
@@ -3449,6 +3462,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Achievements API (per-wallet unlocked + claimed) ──
   if (pathname === '/api/game/achievements' && req.method === 'GET') {
+    if (!ipRateLimit('game_ach', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const addr = url.searchParams.get('address') || '';
     if (!addr) {
       respondJson(res, 400, { error: 'address query param required' });
@@ -3527,6 +3541,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Free Revive API (3 per day per game mode, server-authoritative) ──
   if (pathname === '/api/game/revives' && req.method === 'GET') {
+    if (!ipRateLimit('game_rev', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const addr = url.searchParams.get('address') || '';
     const mode = url.searchParams.get('mode') || 'orbit';
     if (!addr) {
@@ -3812,12 +3827,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ Prism Vault (Staking) ═══
+  const _pendingStakingOps = globalThis._pendingStakingOps || (globalThis._pendingStakingOps = new Set());
   if (pathname === '/api/prism/vault/stake' && req.method === 'POST') {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
+    const addr = jwtAuth.address;
+    if (_pendingStakingOps.has(addr)) return respondJson(res, 429, { error: 'Staking operation in progress' });
+    _pendingStakingOps.add(addr);
     try {
       const { amount, tier } = JSON.parse(await readBody(req));
-      const addr = jwtAuth.address;
       const tierConfig = STAKING_TIERS[tier];
       if (!tierConfig) return respondJson(res, 400, { error: 'Invalid tier. Use: bronze, silver, gold' });
       if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < tierConfig.minStake) {
@@ -3829,7 +3847,6 @@ const server = http.createServer(async (req, res) => {
       }
       const bal = getCoinBalance(addr);
       if (bal < amount) return respondJson(res, 400, { error: 'Insufficient balance' });
-      // Check if already staking
       const w = walletDatabase.get(addr) || { address: addr };
       if (w.staking && w.staking.amount > 0) {
         return respondJson(res, 400, { error: 'Already staking. Unstake first to change tier.' });
@@ -3841,7 +3858,7 @@ const server = http.createServer(async (req, res) => {
       walletDatabase.set(addr, w);
       saveWalletDatabaseDebounced();
       respondJson(res, 200, { success: true, staking: w.staking, newBalance: bal - amount });
-    } catch { respondJson(res, 400, { error: 'Invalid JSON body' }); }
+    } catch { respondJson(res, 400, { error: 'Invalid JSON body' }); } finally { _pendingStakingOps.delete(addr); }
     return;
   }
 
@@ -3849,18 +3866,22 @@ const server = http.createServer(async (req, res) => {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const addr = jwtAuth.address;
-    const w = walletDatabase.get(addr);
-    if (!w?.staking || !w.staking.amount) return respondJson(res, 400, { error: 'No active stake' });
-    const yieldAmount = calcUnclaimedYield(w.staking);
-    if (yieldAmount <= 0) return respondJson(res, 200, { success: true, claimed: 0, message: 'No yield to claim yet' });
-    const bal = getCoinBalance(addr);
-    setCoinBalance(addr, bal + yieldAmount);
-    addCoinEarned(addr, yieldAmount);
-    w.staking.lastClaimTime = Date.now();
-    w.coins = bal + yieldAmount;
-    walletDatabase.set(addr, w);
-    saveWalletDatabaseDebounced();
-    respondJson(res, 200, { success: true, claimed: yieldAmount, newBalance: bal + yieldAmount });
+    if (_pendingStakingOps.has(addr)) return respondJson(res, 429, { error: 'Staking operation in progress' });
+    _pendingStakingOps.add(addr);
+    try {
+      const w = walletDatabase.get(addr);
+      if (!w?.staking || !w.staking.amount) { respondJson(res, 400, { error: 'No active stake' }); return; }
+      const yieldAmount = calcUnclaimedYield(w.staking);
+      if (yieldAmount <= 0) { respondJson(res, 200, { success: true, claimed: 0, message: 'No yield to claim yet' }); return; }
+      const bal = getCoinBalance(addr);
+      setCoinBalance(addr, bal + yieldAmount);
+      addCoinEarned(addr, yieldAmount);
+      w.staking.lastClaimTime = Date.now();
+      w.coins = bal + yieldAmount;
+      walletDatabase.set(addr, w);
+      saveWalletDatabaseDebounced();
+      respondJson(res, 200, { success: true, claimed: yieldAmount, newBalance: bal + yieldAmount });
+    } finally { _pendingStakingOps.delete(addr); }
     return;
   }
 
@@ -3868,35 +3889,40 @@ const server = http.createServer(async (req, res) => {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const addr = jwtAuth.address;
-    const w = walletDatabase.get(addr);
-    if (!w?.staking || !w.staking.amount) return respondJson(res, 400, { error: 'No active stake' });
-    const stake = w.staking;
-    const now = Date.now();
-    const isEarly = now < stake.lockEnd;
-    let returnAmount = stake.amount;
-    let penalty = 0;
-    let burned = 0;
-    // Claim any unclaimed yield first
-    const yieldAmount = calcUnclaimedYield(stake);
-    if (isEarly) {
-      penalty = Math.floor(stake.amount * 0.25);
-      burned = penalty; // early unstake penalty is fully burned
-      totalBurned += burned;
-      returnAmount = stake.amount - penalty;
-    }
-    const total = returnAmount + yieldAmount;
-    const bal = getCoinBalance(addr);
-    setCoinBalance(addr, bal + total);
-    addCoinEarned(addr, yieldAmount); // only yield is earned income, not the returned deposit
-    w.staking = null;
-    w.coins = bal + total;
-    walletDatabase.set(addr, w);
-    saveWalletDatabaseDebounced();
-    respondJson(res, 200, { success: true, returned: returnAmount, yield: yieldAmount, penalty, burned, early: isEarly, newBalance: bal + total });
+    if (_pendingStakingOps.has(addr)) return respondJson(res, 429, { error: 'Staking operation in progress' });
+    _pendingStakingOps.add(addr);
+    try {
+      const w = walletDatabase.get(addr);
+      if (!w?.staking || !w.staking.amount) { respondJson(res, 400, { error: 'No active stake' }); return; }
+      const stake = w.staking;
+      const now = Date.now();
+      const isEarly = now < stake.lockEnd;
+      let returnAmount = stake.amount;
+      let penalty = 0;
+      let burned = 0;
+      // Claim any unclaimed yield first
+      const yieldAmount = calcUnclaimedYield(stake);
+      if (isEarly) {
+        penalty = Math.floor(stake.amount * 0.25);
+        burned = penalty; // early unstake penalty is fully burned
+        totalBurned += burned;
+        returnAmount = stake.amount - penalty;
+      }
+      const total = returnAmount + yieldAmount;
+      const bal = getCoinBalance(addr);
+      setCoinBalance(addr, bal + total);
+      addCoinEarned(addr, yieldAmount); // only yield is earned income, not the returned deposit
+      w.staking = null;
+      w.coins = bal + total;
+      walletDatabase.set(addr, w);
+      saveWalletDatabaseDebounced();
+      respondJson(res, 200, { success: true, returned: returnAmount, yield: yieldAmount, penalty, burned, early: isEarly, newBalance: bal + total });
+    } finally { _pendingStakingOps.delete(addr); }
     return;
   }
 
   if (pathname === '/api/prism/vault/status' && req.method === 'GET') {
+    if (!ipRateLimit('vault_st', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const addr = url.searchParams.get('address') || '';
     if (!addr) return respondJson(res, 400, { error: 'address required' });
     const w = walletDatabase.get(addr);
@@ -3984,12 +4010,14 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Economy Stats (totalBurned) ═══
   if (pathname === '/api/prism/economy' && req.method === 'GET') {
+    if (!ipRateLimit('economy', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     respondJson(res, 200, { totalBurned, dailyGameCap: DAILY_GAME_COIN_CAP });
     return;
   }
 
   // ── Score History API ──
   if (pathname === '/api/score-history' && req.method === 'GET') {
+    if (!ipRateLimit('score_hist', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const addr = url.searchParams.get('address') || '';
     if (!addr) {
       respondJson(res, 400, { error: 'address query param required' });
@@ -5770,13 +5798,21 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ PRISM Buy Coins ═══
-  // Replay protection map with TTL (24h auto-cleanup)
-  const usedBuyTxSignatures = globalThis._usedBuyTxMap || (globalThis._usedBuyTxMap = new Map());
-  // Periodic cleanup of expired entries (every 1000 requests)
+  // Replay protection map with TTL (48h auto-cleanup) + file persistence
+  const USED_TX_FILE = path.join(METADATA_DIR, 'used-tx-signatures.json');
+  const usedBuyTxSignatures = globalThis._usedBuyTxMap || (() => {
+    const m = new Map();
+    try { const d = JSON.parse(fs.readFileSync(USED_TX_FILE, 'utf8')); for (const [k, v] of Object.entries(d)) m.set(k, v); } catch {}
+    return (globalThis._usedBuyTxMap = m);
+  })();
+  // Periodic cleanup of expired entries (every 1000 requests) + persist
   if (!globalThis._buyTxCleanupCounter) globalThis._buyTxCleanupCounter = 0;
   if (++globalThis._buyTxCleanupCounter % 1000 === 0) {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
     for (const [sig, ts] of usedBuyTxSignatures) { if (ts < cutoff) usedBuyTxSignatures.delete(sig); }
+    const _txTmp = USED_TX_FILE + '.tmp';
+    const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
+    fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {});
   }
   // Daily purchase tracking
   const dailyPurchases = globalThis._dailyPurchases || (globalThis._dailyPurchases = new Map());
@@ -5862,6 +5898,9 @@ const server = http.createServer(async (req, res) => {
 
       // Update daily tracking
       dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
+      // Persist used tx signature immediately (survive restart)
+      { const _txTmp = USED_TX_FILE + '.tmp'; const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
+        fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {}); }
 
       // Log transaction
       const txLog = {
@@ -7470,13 +7509,20 @@ const server = http.createServer(async (req, res) => {
       if (isSolBet) {
         // Verify SOL transfer to treasury
         if (!solTxSignature) return respondJson(res, 400, { error: 'solTxSignature required for SOL bets' });
-        // Dedup: prevent reusing same tx for multiple challenges (Map with TTL)
-        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Map();
+        // Dedup: prevent reusing same tx for multiple challenges (Map with TTL + file persist)
+        const USED_CHALLENGE_TX_FILE = path.join(METADATA_DIR, 'used-challenge-tx.json');
+        if (!globalThis._usedChallengeSolTx) {
+          const m = new Map();
+          try { const d = JSON.parse(fs.readFileSync(USED_CHALLENGE_TX_FILE, 'utf8')); for (const [k, v] of Object.entries(d)) m.set(k, v); } catch {}
+          globalThis._usedChallengeSolTx = m;
+        }
         // Periodic cleanup (every 500 requests)
         if (!globalThis._challengeTxCleanupCounter) globalThis._challengeTxCleanupCounter = 0;
         if (++globalThis._challengeTxCleanupCounter % 500 === 0) {
-          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          const cutoff = Date.now() - 48 * 60 * 60 * 1000;
           for (const [sig, ts] of globalThis._usedChallengeSolTx) { if (ts < cutoff) globalThis._usedChallengeSolTx.delete(sig); }
+          const _ctTmp = USED_CHALLENGE_TX_FILE + '.tmp'; const _ctObj = {}; for (const [k, v] of globalThis._usedChallengeSolTx) _ctObj[k] = v;
+          fs.promises.writeFile(_ctTmp, JSON.stringify(_ctObj), 'utf8').then(() => fs.promises.rename(_ctTmp, USED_CHALLENGE_TX_FILE)).catch(() => {});
         }
         if (globalThis._usedChallengeSolTx.has(solTxSignature)) return respondJson(res, 400, { error: 'This SOL transaction has already been used' });
         globalThis._usedChallengeSolTx.set(solTxSignature, Date.now());
@@ -7982,6 +8028,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Identity Feed ═══
   if (pathname === '/api/feed' && req.method === 'GET') {
+    if (!ipRateLimit('feed', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 30));
     respondJson(res, 200, { items: feedItems.slice(0, limit) });
     return;
@@ -8192,6 +8239,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/wallet-database' && req.method === 'GET') {
+    if (!ipRateLimit('wallet_db', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const address = url.searchParams.get('address');
     if (address) {
       const w = walletDatabase.get(address);
