@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { goBack } from '@/lib/safeNavigate';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { getHeliusProxyUrl } from '@/constants';
 import { getTierIcon, TIER_HEX, TIER_LABELS } from '@/lib/constants/tierColors';
 
@@ -27,6 +28,10 @@ export default function ProfilePage() {
   const [data, setData] = useState<WalletData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fadeOutTransition();
+  }, []);
 
   useEffect(() => {
     if (!address) return;
@@ -62,7 +67,7 @@ export default function ProfilePage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <p className="text-white/50">{error || 'Profile not found'}</p>
-        <button onClick={() => goBack(navigate)} className="text-cyan-400 hover:underline">
+        <button onClick={() => startFadeTransition(() => goBack(navigate))} className="text-cyan-400 hover:underline">
           Go back
         </button>
       </div>
@@ -86,7 +91,10 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-lg mx-auto px-4 py-8 space-y-6">
-      <button onClick={() => goBack(navigate)} className="text-white/40 hover:text-white/70 text-sm">
+      <button
+        onClick={() => startFadeTransition(() => goBack(navigate))}
+        className="text-white/40 hover:text-white/70 text-sm"
+      >
         ← Back
       </button>
 
