@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import { WalletTraits } from "@/hooks/useWalletData";
 import { sfxPickup, sfxShield, sfxExplosion, sfxNearMiss, sfxTap, sfxRevive, sfxRumble, sfxDebris, sfxAsteroidHit } from "@/lib/gameAudio";
+import { AURA_GAME_COLORS, DEFAULT_SHIP_COLORS } from "./GameShared";
 
 extend({ Line_: THREE.Line });
 
@@ -24,6 +25,7 @@ interface GameProps {
   walletScore: number;
   hasMintedId?: boolean;
   shipSkin?: string | null;
+  shipAura?: string | null;
   shipStats?: { speed: number; shield: number; firepower: number; luck: number };
 }
 
@@ -680,7 +682,7 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
    Ship
    ═══════════════════════════════════════════════════ */
 
-function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, skinId }: {
+function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, skinId, shipAura }: {
   posRef: React.MutableRefObject<{ x: number; y: number }>;
   headRef: React.MutableRefObject<number>;
   color: string; scale: number;
@@ -688,7 +690,9 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, ski
   shieldRef: React.MutableRefObject<number>;
   phaseRef: React.MutableRefObject<number>;
   skinId?: string | null;
+  shipAura?: string | null;
 }) {
+  const ac = (shipAura && AURA_GAME_COLORS[shipAura]) || DEFAULT_SHIP_COLORS;
   const gRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
   const shRef = useRef<THREE.Mesh>(null);
@@ -809,10 +813,10 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, ski
       {/* Rim light — bright edge highlight on top for 3D pop */}
       <mesh position={[-.02, .02, .02]} scale={[1.03, 1.03, 1]}>
         <planeGeometry args={[1.6, 2.2]} />
-        <meshBasicMaterial map={shipTex} transparent depthWrite={false} color="#88ccff" opacity={.18} blending={THREE.AdditiveBlending} />
+        <meshBasicMaterial map={shipTex} transparent depthWrite={false} color={ac.rim} opacity={.18} blending={THREE.AdditiveBlending} />
       </mesh>
       {/* Cockpit highlight glow */}
-      <mesh position={[0, .15, .03]}><sphereGeometry args={[.15, 8, 8]} /><meshBasicMaterial color="#00eeff" transparent opacity={.25} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh position={[0, .15, .03]}><sphereGeometry args={[.15, 8, 8]} /><meshBasicMaterial color={ac.glow} transparent opacity={.25} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </>
   );
 
@@ -830,7 +834,7 @@ function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, ski
         </lineSegments>
         {!IS_MOBILE && <pointLight intensity={4} color="#22d3ee" distance={6} />}
       </group>
-      {!IS_MOBILE && <pointLight intensity={3} color="#0088ff" distance={8} />}
+      {!IS_MOBILE && <pointLight intensity={3} color={ac.light} distance={8} />}
     </group>
     {/* World-space instancedMesh trail */}
     <instancedMesh ref={trailRef} args={[_trailGeo, _trailMat, TRAIL_N]} frustumCulled={false} renderOrder={10} />
@@ -1094,7 +1098,7 @@ function AsteroidInstances({ pool, geos }: {
   );
 }
 
-function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef, traits, hasMintedId, shipSkin, shipStats }: GameProps) {
+function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef, traits, hasMintedId, shipSkin, shipAura, shipStats }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   const asteroidPool = useRef<AsteroidData[]>([]);
 
@@ -1589,7 +1593,7 @@ function GameWorld({ gameState, onGameOver, onScore, onCoins, onCombo, reviveRef
       <Comets />
 
       <BHVisuals bhRef={bhs} />
-      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} skinId={shipSkin} />
+      <Ship posRef={shipPos} headRef={shipHead} color={sCol} scale={sSc} nearRef={nearMiss} shieldRef={shieldT} phaseRef={phaseT} skinId={shipSkin} shipAura={shipAura} />
       <PowerUpVisuals pwRef={pws} />
       <PickupEffect pickupRef={pickupEffect} />
 

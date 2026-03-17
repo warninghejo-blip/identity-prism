@@ -24,6 +24,7 @@ import {
   getLocalLoadout,
   saveLocalLoadout,
   purchaseItem,
+  purchaseModule,
   equipItem,
   unequipItem,
   getItemById,
@@ -34,18 +35,21 @@ import {
   uninstallModule,
   getItemModules,
   getModuleById,
+  meetsRequiredRank,
+  RANK_LABELS,
   type ForgeCategory,
   type ForgeItem,
   type ForgeLoadout,
   type Micromodule,
 } from '@/lib/forgeItems';
 import { computeShipStats, type ShipStats } from '@/lib/shipStats';
+import { gatherXPSources, computeRangerXP, getRangerRank } from '@/lib/rangerRanks';
 import { fetchWalletPreview, getCachedWalletPreview, type WalletPreview } from '@/components/prism/shared';
 import { getPrismBalance, spendPrism, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
 import { getHeliusProxyUrl } from '@/constants';
 
 type TopTab = 'shop' | 'inventory';
-type ShopFilter = ForgeCategory | 'all';
+type ShopFilter = ForgeCategory | 'all' | 'module';
 
 function getApiBase(): string {
   const proxy = getHeliusProxyUrl();
@@ -85,6 +89,7 @@ const SHOP_FILTERS: { id: ShopFilter; label: string; icon: string }[] = [
   { id: 'aura', label: 'Auras', icon: CATEGORY_ICONS.aura },
   { id: 'ship_skin', label: 'Ships', icon: CATEGORY_ICONS.ship_skin },
   { id: 'title', label: 'Titles', icon: CATEGORY_ICONS.title },
+  { id: 'module', label: 'Modules', icon: '🔧' },
 ];
 
 // ── Visual Preview Renderers ──
@@ -94,8 +99,13 @@ const AURA_STYLES: Record<string, { color: string; shadow: string }> = {
   ember: { color: '#fb923c', shadow: '0 0 20px rgba(251,146,60,0.5), 0 0 40px rgba(239,68,68,0.2)' },
   electric: { color: '#60a5fa', shadow: '0 0 15px rgba(96,165,250,0.6), 0 0 30px rgba(59,130,246,0.3), 0 0 45px rgba(96,165,250,0.15)' },
   plasma: { color: '#c084fc', shadow: '0 0 20px rgba(192,132,252,0.5), 0 0 45px rgba(168,85,247,0.25)' },
-  dark_matter: { color: '#1e1b4b', shadow: '0 0 25px rgba(100,0,200,0.4), 0 0 50px rgba(0,0,50,0.3)' },
+  dark_matter: { color: '#8b5cf6', shadow: '0 0 25px rgba(139,92,246,0.6), 0 0 50px rgba(109,40,217,0.35)' },
   binary_pulse: { color: '#22d3ee', shadow: '0 0 20px rgba(34,211,238,0.5), 0 0 40px rgba(251,191,36,0.3)' },
+  solar_wind: { color: '#fde047', shadow: '0 0 20px rgba(253,224,71,0.5), 0 0 40px rgba(253,224,71,0.2)' },
+  fortune_mist: { color: '#a78bfa', shadow: '0 0 20px rgba(167,139,250,0.5), 0 0 40px rgba(167,139,250,0.2)' },
+  crimson_tide: { color: '#f87171', shadow: '0 0 20px rgba(248,113,113,0.5), 0 0 40px rgba(248,113,113,0.2)' },
+  void_shell: { color: '#818cf8', shadow: '0 0 20px rgba(129,140,248,0.5), 0 0 40px rgba(129,140,248,0.2)' },
+  stellar_tide: { color: '#34d399', shadow: '0 0 20px rgba(52,211,153,0.5), 0 0 40px rgba(52,211,153,0.2)' },
 };
 
 
@@ -135,26 +145,15 @@ function ItemPreview({ item }: { item: ForgeItem }) {
     return (
       <div className="w-full h-28 rounded-lg flex items-center justify-center"
         style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
-        {/* Mini identity card with aura glow applied */}
-        <div style={{
-          width: 52, height: 72, borderRadius: 6,
-          background: 'linear-gradient(135deg, #0a1020, #0d1428)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          boxShadow: aura.shadow,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 6,
-          position: 'relative', overflow: 'hidden',
-        }}>
-          {/* Aura glow overlay */}
-          <div style={{
-            position: 'absolute', inset: -4, borderRadius: 10,
-            background: `radial-gradient(ellipse at 50% 30%, ${aura.color}20, transparent 70%)`,
-            pointerEvents: 'none',
-          }} />
-          <div style={{ width: 18, height: 18, borderRadius: '50%', background: `radial-gradient(circle, ${aura.color}50, ${aura.color}15)`, marginBottom: 4, zIndex: 1 }} />
-          <div style={{ width: 26, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 2, zIndex: 1 }} />
-          <div style={{ width: 18, height: 2, borderRadius: 1, background: 'rgba(255,255,255,0.08)', zIndex: 1 }} />
-        </div>
-        <div className="absolute bottom-1 text-center" style={{ fontSize: 7, color: 'rgba(255,255,255,0.2)' }}>Card glow</div>
+        {/* Ship with aura glow following its silhouette via stacked drop-shadows */}
+        <img
+          src="/textures/ship.png"
+          alt="Ship with aura"
+          style={{
+            width: 44, height: 60, objectFit: 'contain',
+            filter: `drop-shadow(0 0 6px ${aura.color}) drop-shadow(0 0 12px ${aura.color}90) drop-shadow(0 0 20px ${aura.color}50)`,
+          }}
+        />
       </div>
     );
   }
@@ -175,44 +174,47 @@ function ItemPreview({ item }: { item: ForgeItem }) {
     );
   }
 
-  // Title — show on mini card where it will appear (under username)
+  // Title — premium badge display
   return (
-    <div className="w-full h-28 rounded-lg flex items-center justify-center"
+    <div className="w-full h-28 rounded-lg flex flex-col items-center justify-center gap-2"
       style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
+      {/* Decorative line */}
+      <div style={{ width: 40, height: 1, background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)` }} />
+      {/* Title badge */}
       <div style={{
-        width: 64, height: 78, borderRadius: 6,
-        background: 'linear-gradient(135deg, #0a1020, #0d1428)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 4px',
+        padding: '6px 14px', borderRadius: 8,
+        background: `linear-gradient(135deg, ${rarityColor}12, ${rarityColor}06)`,
+        border: `1px solid ${rarityColor}25`,
+        boxShadow: `0 0 25px ${rarityColor}12, inset 0 0 15px ${rarityColor}05`,
       }}>
-        {/* Mini avatar */}
-        <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'rgba(255,255,255,0.1)', marginBottom: 4 }} />
-        {/* Username placeholder */}
-        <div style={{ width: 32, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 3 }} />
-        {/* Title badge - this is where it shows */}
-        <div style={{
-          padding: '2px 8px', borderRadius: 6,
-          background: `${rarityColor}15`, border: `1px solid ${rarityColor}30`,
+        <span style={{
+          fontSize: 12, fontWeight: 800, letterSpacing: '0.04em',
+          color: rarityColor,
+          textShadow: `0 0 12px ${rarityColor}50`,
         }}>
-          <span style={{ fontSize: 7, fontWeight: 800, color: rarityColor, textShadow: `0 0 8px ${rarityColor}40` }}>
-            {item.preview}
-          </span>
-        </div>
-        {/* Score placeholder */}
-        <div style={{ width: 24, height: 2, borderRadius: 1, background: 'rgba(255,255,255,0.06)', marginTop: 4 }} />
+          {item.preview}
+        </span>
       </div>
+      {/* Decorative line */}
+      <div style={{ width: 40, height: 1, background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)` }} />
     </div>
   );
 }
 
 // ── Shop Item Card (AAA) ──
 function ItemCard({
-  item, owned, equipped, canAfford, onPurchase, onEquip,
+  item, owned, equipped, canAfford, userRank, onPurchase, onEquip,
 }: {
   item: ForgeItem; owned: boolean; equipped: boolean; canAfford: boolean;
+  userRank: string | undefined;
   onPurchase: () => void; onEquip: () => void;
 }) {
   const rarityColor = RARITY_COLORS[item.rarity];
+  const rankMet = meetsRequiredRank(userRank, item.requiredRank);
+  const locked = (Boolean(item.unlockCondition) || !rankMet) && !owned;
+  const lockLabel = !rankMet && item.requiredRank
+    ? `Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`
+    : item.unlockCondition;
   return (
     <div
       className="relative rounded-2xl p-[1px] transition-all duration-500 hover:scale-[1.03] group"
@@ -224,7 +226,7 @@ function ItemCard({
             : 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))',
       }}
     >
-      <div className="rounded-2xl p-3.5 h-full" style={{
+      <div className="rounded-2xl p-3.5 h-full flex flex-col" style={{
         background: 'linear-gradient(135deg, rgba(8,10,18,0.95), rgba(5,7,12,0.98))',
         boxShadow: equipped ? `0 0 30px ${rarityColor}15, inset 0 0 30px ${rarityColor}05` : 'none',
       }}>
@@ -250,16 +252,20 @@ function ItemCard({
         </div>
 
         {/* Info */}
-        <h3 className="text-white font-bold text-[13px] mb-0.5 leading-tight">{item.name}</h3>
-        <p className="text-white/25 text-[10px] mb-3 leading-relaxed line-clamp-2">{item.description}</p>
+        <h3 className="text-white font-bold text-[13px] mb-0.5 leading-tight text-center">{item.name}</h3>
+        <p className="text-white/25 text-[10px] mb-3 leading-relaxed line-clamp-2 text-center min-h-[33px]">{item.description}</p>
 
-        {item.unlockCondition && !owned && (
-          <div className="flex items-center gap-1.5 text-amber-400/50 text-[10px] mb-3 px-2 py-1.5 rounded-lg bg-amber-500/[0.04] border border-amber-500/10">
-            <Lock className="w-3 h-3" /> {item.unlockCondition}
-          </div>
-        )}
+        {/* Lock label — fixed height zone so cards don't jump */}
+        <div className="min-h-[28px] mb-3">
+          {lockLabel && !owned && (
+            <div className="flex items-center justify-center gap-1.5 text-amber-400/50 text-[10px] px-2 py-1.5 rounded-lg bg-amber-500/[0.04] border border-amber-500/10">
+              <Lock className="w-3 h-3" /> {lockLabel}
+            </div>
+          )}
+        </div>
 
-        {/* Action */}
+        {/* Action — mt-auto pushes buttons to bottom */}
+        <div className="mt-auto">
         {equipped ? (
           <div className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold" style={{
             color: '#4ade80',
@@ -282,10 +288,10 @@ function ItemCard({
           </button>
         ) : (
           <button
-            disabled={!canAfford || Boolean(item.unlockCondition)}
+            disabled={!canAfford || locked}
             onClick={onPurchase}
             className="w-full py-2 rounded-xl text-xs font-bold transition-all duration-300 flex items-center justify-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-            style={canAfford && !item.unlockCondition ? {
+            style={canAfford && !locked ? {
               background: `linear-gradient(135deg, ${rarityColor}, ${rarityColor}cc)`,
               color: '#000',
               boxShadow: `0 4px 15px ${rarityColor}25`,
@@ -295,9 +301,10 @@ function ItemCard({
               border: '1px solid rgba(255,255,255,0.06)',
             }}
           >
-            {item.unlockCondition ? <><Lock className="w-3 h-3" /> Locked</> : <><Coins className="w-3 h-3" /> {item.price}</>}
+            {locked ? <><Lock className="w-3 h-3" /> Locked</> : <><Coins className="w-3 h-3" /> {item.price.toLocaleString()}</>}
           </button>
         )}
+        </div>
       </div>
     </div>
   );
@@ -344,6 +351,9 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
       );
       tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
       tx.feePayer = new SolPK(walletAddress);
+      const simulation = await conn.simulateTransaction(tx, undefined, { sigVerify: false, replaceRecentBlockhash: true });
+      if (simulation.value.err) throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
+      tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
       const signed = await wallet.signTransaction(tx);
       const sig = await conn.sendRawTransaction(signed.serialize());
       toast.info('Confirming transaction...');
@@ -861,6 +871,14 @@ export default function StellarForge() {
   const [installingModule, setInstallingModule] = useState(false);
   const [hasIdentityCard, setHasIdentityCard] = useState(false);
 
+  // Compute Ranger Rank for shop gating
+  const rangerRank = useMemo(() => {
+    if (!walletAddress) return 'cadet';
+    const sources = gatherXPSources(walletAddress);
+    const xp = computeRangerXP(sources);
+    return getRangerRank(xp).id;
+  }, [walletAddress]);
+
   // Load data
   useEffect(() => {
     if (!walletAddress) return;
@@ -876,13 +894,17 @@ export default function StellarForge() {
 
   // Shop logic
   const filteredItems = useMemo(() => {
-    if (shopFilter === 'all') return ALL_FORGE_ITEMS;
+    if (shopFilter === 'all' || shopFilter === 'module') return ALL_FORGE_ITEMS;
     return ALL_FORGE_ITEMS.filter((i) => i.category === shopFilter);
   }, [shopFilter]);
 
   const handlePurchase = useCallback(async (item: ForgeItem) => {
     if (!walletAddress || !loadout || !balance) return;
     if (purchasing) return; // prevent double-click
+    if (item.requiredRank && !meetsRequiredRank(rangerRank, item.requiredRank)) {
+      toast.error(`Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`);
+      return;
+    }
     if (item.unlockCondition) {
       toast.error('This item is still locked');
       return;
@@ -932,14 +954,13 @@ export default function StellarForge() {
     toast.success(`Unequipped ${labels[category]}`);
   }, [loadout]);
 
-  const handleInstallModule = useCallback(async (itemId: string, moduleId: string) => {
-    if (!loadout || !balance || !walletAddress || installingModule) return;
+  const handlePurchaseModule = useCallback(async (moduleId: string) => {
+    if (!loadout || !balance || !walletAddress) return;
     const mod = getModuleById(moduleId);
     if (!mod) return;
     if (balance.balance < mod.price) { toast.error('Not enough Coins'); return; }
-    // Validate module install BEFORE spending coins
-    const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
-    if (!newLoadout) { toast.error('Cannot install module — check slot limits or identity card requirement'); return; }
+    const newLoadout = purchaseModule(loadout, moduleId, balance.balance);
+    if (!newLoadout) { toast.error('Module already owned'); return; }
     setInstallingModule(true);
     try {
       const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
@@ -947,15 +968,28 @@ export default function StellarForge() {
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
       setBalance(result.balance);
-      setConfirmModule(null);
-      setModuleModal(null);
-      toast.success(`Installed ${mod.name}!`, { description: 'This upgrade is permanent.' });
+      toast.success(`Purchased ${mod.name}!`, { description: 'Install it on a ship from your inventory.' });
     } catch {
-      toast.error('Install failed');
+      toast.error('Purchase failed');
     } finally {
       setInstallingModule(false);
     }
-  }, [loadout, balance, walletAddress, installingModule, hasIdentityCard]);
+  }, [loadout, balance, walletAddress]);
+
+  const handleInstallModule = useCallback(async (itemId: string, moduleId: string) => {
+    if (!loadout || !walletAddress || installingModule) return;
+    const mod = getModuleById(moduleId);
+    if (!mod) return;
+    // Module must be in ownedModules
+    if (!loadout.ownedModules.includes(moduleId)) { toast.error('You need to purchase this module first'); return; }
+    const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
+    if (!newLoadout) { toast.error('Cannot install module — check slot limits or identity card requirement'); return; }
+    saveLocalLoadout(newLoadout);
+    setLoadout(newLoadout);
+    setConfirmModule(null);
+    setModuleModal(null);
+    toast.success(`Installed ${mod.name}!`, { description: 'Module can be uninstalled later.' });
+  }, [loadout, walletAddress, installingModule, hasIdentityCard]);
 
   const isOwned = useCallback((id: string) => loadout?.ownedItems.some((o) => o.itemId === id) ?? false, [loadout]);
   const isEquipped = useCallback((id: string) => {
@@ -1098,21 +1132,141 @@ export default function StellarForge() {
               </button>
             )}
 
-            {/* Items grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {filteredItems.map((item) => (
-                <ItemCard
-                  key={item.id}
-                  item={item}
-                  owned={isOwned(item.id)}
-                  equipped={isEquipped(item.id)}
-                  canAfford={(balance?.balance ?? 0) >= item.price}
-                  onPurchase={() => handlePurchase(item)}
-                  onEquip={() => handleEquip(item)}
-                />
-              ))}
-            </div>
-            {filteredItems.length === 0 && (
+            {/* Items grid — with category subheadings in All tab */}
+            {shopFilter === 'all' ? (
+              <>
+                {(['ship_skin', 'frame', 'aura', 'title'] as ForgeCategory[]).map((cat) => {
+                  const catItems = ALL_FORGE_ITEMS.filter((i) => i.category === cat);
+                  if (catItems.length === 0) return null;
+                  return (
+                    <div key={cat} className="mb-6">
+                      <div className="flex items-center gap-2 mb-3 px-1">
+                        <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
+                        <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">{CATEGORY_LABELS[cat]}</span>
+                        <div className="flex-1 h-px bg-white/[0.06]" />
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {catItems.map((item) => (
+                          <ItemCard
+                            key={item.id}
+                            item={item}
+                            owned={isOwned(item.id)}
+                            equipped={isEquipped(item.id)}
+                            canAfford={(balance?.balance ?? 0) >= item.price}
+                            userRank={rangerRank}
+                            onPurchase={() => handlePurchase(item)}
+                            onEquip={() => handleEquip(item)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {/* Modules section in All tab */}
+                <div className="mb-6">
+                  <div className="flex items-center gap-2 mb-3 px-1">
+                    <span className="text-sm">🔧</span>
+                    <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">Modules</span>
+                    <div className="flex-1 h-px bg-white/[0.06]" />
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {MICROMODULE_DEFS.map((mod) => {
+                      const tierColor = MODULE_TIER_COLORS[mod.tier];
+                      const isModOwned = loadout?.ownedModules.includes(mod.id) || Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
+                      const canAfford = (balance?.balance ?? 0) >= mod.price;
+                      return (
+                        <div key={mod.id} className="rounded-xl p-3 transition-all duration-300" style={{
+                          background: 'rgba(255,255,255,0.02)',
+                          border: `1px solid ${tierColor}25`,
+                        }}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0" style={{ color: tierColor, background: `${tierColor}15` }}>{mod.tier.toUpperCase()}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-white/25 text-[10px] mb-2 line-clamp-1">{mod.description}</p>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-green-400 text-[10px] font-bold">+{mod.statBonus.value} {mod.statBonus.stat}</span>
+                            {mod.tradeoff && <span className="text-red-400 text-[10px]">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
+                          </div>
+                          {isModOwned ? (
+                            <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold"><Check className="w-3 h-3" /> Owned</div>
+                          ) : (
+                            <button onClick={() => canAfford ? handlePurchaseModule(mod.id) : undefined} disabled={!canAfford || installingModule} className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all" style={{
+                              background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
+                              color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
+                              border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
+                            }}>
+                              <Coins className="w-3 h-3 inline mr-1" />{mod.price}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : shopFilter === 'module' ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {MICROMODULE_DEFS.map((mod) => {
+                  const tierColor = MODULE_TIER_COLORS[mod.tier];
+                  const isModOwned = loadout?.ownedModules.includes(mod.id) || Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
+                  const canAfford = (balance?.balance ?? 0) >= mod.price;
+                  return (
+                    <div key={mod.id} className="rounded-xl p-3 transition-all duration-300" style={{
+                      background: 'rgba(255,255,255,0.02)',
+                      border: `1px solid ${tierColor}25`,
+                    }}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
+                            <span className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0" style={{ color: tierColor, background: `${tierColor}15` }}>{mod.tier.toUpperCase()}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-white/25 text-[10px] mb-2">{mod.description}</p>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-green-400 text-[10px] font-bold">+{mod.statBonus.value} {mod.statBonus.stat}</span>
+                        {mod.tradeoff && <span className="text-red-400 text-[10px]">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
+                      </div>
+                      {isModOwned ? (
+                        <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold"><Check className="w-3 h-3" /> Owned</div>
+                      ) : (
+                        <button onClick={() => canAfford ? handlePurchaseModule(mod.id) : undefined} disabled={!canAfford || installingModule} className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all" style={{
+                          background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
+                          color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
+                          border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
+                        }}>
+                          <Coins className="w-3 h-3 inline mr-1" />{mod.price}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {filteredItems.map((item) => (
+                  <ItemCard
+                    key={item.id}
+                    item={item}
+                    owned={isOwned(item.id)}
+                    equipped={isEquipped(item.id)}
+                    canAfford={(balance?.balance ?? 0) >= item.price}
+                    userRank={rangerRank}
+                    onPurchase={() => handlePurchase(item)}
+                    onEquip={() => handleEquip(item)}
+                  />
+                ))}
+              </div>
+            )}
+            {filteredItems.length === 0 && shopFilter !== 'all' && shopFilter !== 'module' && (
               <div className="text-center py-24">
                 <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{
                   background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(139,92,246,0.05))',
@@ -1410,15 +1564,15 @@ export default function StellarForge() {
                       <p className="text-red-400 text-xs">-{confirmModule.mod.tradeoff.value} {confirmModule.mod.tradeoff.stat}</p>
                     )}
                   </div>
-                  <div className="p-3 rounded-xl bg-red-500/5 border border-red-500/20 mb-4">
-                    <p className="text-red-400 text-xs font-bold flex items-center gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5" /> This is permanent! Module cannot be removed.
+                  <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 mb-4">
+                    <p className="text-blue-400 text-xs font-bold flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5" /> Module can be uninstalled later.
                     </p>
                   </div>
                   <div className="flex gap-3">
                     <Button variant="outline" className="flex-1 h-10 text-xs" onClick={() => setConfirmModule(null)}>Cancel</Button>
                     <Button className="flex-1 h-10 text-xs bg-purple-600 hover:bg-purple-500 font-bold" onClick={() => handleInstallModule(confirmModule.itemId, confirmModule.mod.id)} disabled={installingModule}>
-                      <Coins className="w-3 h-3 mr-1" /> {installingModule ? 'Installing...' : `Install (${confirmModule.mod.price})`}
+                      {installingModule ? 'Installing...' : 'Install'}
                     </Button>
                   </div>
                 </>
@@ -1429,20 +1583,15 @@ export default function StellarForge() {
                   <div className="space-y-2">
                     {MICROMODULE_DEFS
                       .filter(m => m.compatibleCategories.includes(moduleModal.item.category))
-                      .filter(m => !(loadout?.installedModules[moduleModal.itemId] || []).includes(m.id))
+                      .filter(m => loadout?.ownedModules.includes(m.id))
                       .map((mod) => {
                         const tierColor = MODULE_TIER_COLORS[mod.tier];
-                        const canAfford = (balance?.balance ?? 0) >= mod.price;
                         return (
                           <button
                             key={mod.id}
-                            onClick={() => canAfford ? setConfirmModule({ itemId: moduleModal.itemId, mod }) : undefined}
-                            disabled={!canAfford}
-                            className={`w-full text-left p-3 rounded-xl border transition-all ${canAfford ? 'hover:bg-white/[0.03] cursor-pointer' : 'cursor-not-allowed'}`}
-                            style={{
-                              borderColor: `${tierColor}20`,
-                              opacity: canAfford ? 1 : 0.4,
-                            }}
+                            onClick={() => setConfirmModule({ itemId: moduleModal.itemId, mod })}
+                            className="w-full text-left p-3 rounded-xl border transition-all hover:bg-white/[0.03] cursor-pointer"
+                            style={{ borderColor: `${tierColor}20` }}
                           >
                             <div className="flex items-center gap-2">
                               <img src={mod.image} alt={mod.name} className="w-7 h-7 object-contain" />
@@ -1459,13 +1608,16 @@ export default function StellarForge() {
                                   {mod.tradeoff && <span className="text-red-400 text-[10px]">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-1 text-amber-400 text-xs font-bold">
-                                <Coins className="w-3 h-3" /> {mod.price}
-                              </div>
                             </div>
                           </button>
                         );
                       })}
+                    {(loadout?.ownedModules.filter(id => {
+                      const m = getModuleById(id);
+                      return m && m.compatibleCategories.includes(moduleModal.item.category);
+                    }).length ?? 0) === 0 && (
+                      <p className="text-white/20 text-[10px] text-center py-4">No compatible modules in inventory. Buy modules from the shop first.</p>
+                    )}
                   </div>
                   <Button variant="outline" className="w-full mt-4 h-10 text-xs" onClick={() => setModuleModal(null)}>Close</Button>
                 </>

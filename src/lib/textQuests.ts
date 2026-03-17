@@ -21,7 +21,7 @@ export interface QuestNode {
   image?: string;   // path to /quests/ image or emoji
   choices: QuestChoice[];
   isEnding?: boolean;
-  reward?: { coins: number; xp?: number };
+  reward?: { coins: number };
 }
 
 export interface TextQuest {
@@ -1462,9 +1462,9 @@ const QUEST_WORMHOLE_GAMBIT: TextQuest = {
       text: 'Your cockpit alarms blare. A gravitational anomaly — a wormhole — has ripped open less than 200 klicks from your position. Scanners show massive energy readings. Your comm lights up with three incoming hails simultaneously: a research station, a military frigate, and an unregistered signal.',
       image: '/quests/sr2_23.jpg',
       choices: [
-        { text: 'Answer the research station', nextNode: 'scientists' },
-        { text: 'Answer the military frigate', nextNode: 'military' },
-        { text: 'Answer the unregistered signal', nextNode: 'smugglers' },
+        { text: 'Hail the research station', nextNode: 'scientists' },
+        { text: 'Hail the military frigate', nextNode: 'military' },
+        { text: 'Respond to the unregistered signal', nextNode: 'smugglers' },
         { text: 'Ignore all — fly straight into the wormhole', nextNode: 'dive_blind', skillCheck: { stat: 'luck', min: 70 } },
       ],
     },

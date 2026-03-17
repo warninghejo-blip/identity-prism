@@ -29,6 +29,7 @@ import {
   Coins,
   RotateCw,
   Swords,
+  BookOpen,
 } from "lucide-react";
 import "./PrismLeague.css";
 import { initAudio, startMusic, stopAllAudio, sfxGameOver } from "@/lib/gameAudio";
@@ -47,7 +48,7 @@ const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; cont
   { id: "orbit", name: "Orbit Survival", icon: "🛸", desc: "Dodge asteroids, survive as long as you can", controls: "Tap/Click to reverse orbit", cover: "/games/orbit_cover.png" },
   { id: "destroyer", name: "Cosmic Defender", icon: "💥", desc: "4 sectors of enemies & bosses. Auto-fire, collect powerups!", controls: "WASD/Arrows to move, auto-fire. Touch: drag to move", cover: "/games/wars_cover.png" },
   { id: "gravity", name: "Gravity Runner", icon: "🔄", desc: "Tap to fly, collect crystals, dodge asteroid columns!", controls: "Tap/Space to thrust upward", cover: "/games/gravity_cover.png" },
-  { id: "text_quest", name: "Text Adventures", icon: "📖", desc: "SR2-inspired branching quests", controls: "Read and make choices", cover: "/games/quest_cover.png" },
+  { id: "text_quest", name: "Text Adventures", icon: "📖", desc: "Daily narrative quests — explore stories, earn Coins", controls: "Read and make choices", cover: "/games/quest_cover.png" },
 ];
 import {
   commitScoreOnchain,
@@ -575,6 +576,7 @@ const PrismLeague = () => {
   // Minimal traits adapter for game scenes (they only use planetTier)
   const traits = useMemo(() => walletPreview ? { planetTier: walletPreview.compositeTier } as any : null, [walletPreview]);
   const equippedSkin = forgeLoadout?.equippedShipSkin || null;
+  const equippedAura = forgeLoadout?.equippedAura || null;
 
   const isMobile = useMemo(isMobileDevice, []);
   const isCapacitor = useMemo(isCapacitorNative, []);
@@ -1664,13 +1666,13 @@ const PrismLeague = () => {
       {/* 3D Scene — switches based on selected game mode */}
       <div className="absolute inset-0 z-0">
         {gameMode === "orbit" && (
-          <OrbitSurvivalScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGameOver} onCombo={handleCombo} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
+          <OrbitSurvivalScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGameOver} onCombo={handleCombo} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipAura={equippedAura} shipStats={shipStats} />
         )}
         {gameMode === "destroyer" && (
-          <AsteroidDestroyerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGameOver} onLevel={handleDefLevel} onActiveBonuses={handleActiveBonuses} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
+          <AsteroidDestroyerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGameOver} onLevel={handleDefLevel} onActiveBonuses={handleActiveBonuses} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipAura={equippedAura} shipStats={shipStats} />
         )}
         {gameMode === "gravity" && (
-          <GravityRunnerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGravityGameOver} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipStats={shipStats} />
+          <GravityRunnerScene gameState={gameState} onScore={throttledSetScore} onCoins={throttledSetCoins} onGameOver={handleGravityGameOver} reviveRef={reviveRef} traits={traits} walletScore={0} hasMintedId={hasMintedId} shipSkin={equippedSkin} shipAura={equippedAura} shipStats={shipStats} />
         )}
       </div>
 
@@ -1985,6 +1987,7 @@ const PrismLeague = () => {
                 </div>
 
                 {/* ═══ PLAY MODE SELECTOR ═══ */}
+                {gameMode !== 'text_quest' && (<>
                 <div className="w-full mb-4 flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                   <button
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
@@ -2149,6 +2152,7 @@ const PrismLeague = () => {
                     </div>
                   </div>
                 )}
+                </>)}
 
                 {/* Coin Balance + Stats Row */}
                 <div className="w-full mb-4 grid grid-cols-2 gap-3">
@@ -2395,6 +2399,8 @@ const PrismLeague = () => {
                     <><Swords className="w-5 h-5 mr-2" /> Start Challenge</>
                   ) : playMode === 'tournament' ? (
                     <><Trophy className="w-5 h-5 mr-2" /> {activeTournament?.userJoined ? 'Enter Tournament' : 'Join First'}</>
+                  ) : gameMode === 'text_quest' ? (
+                    <><BookOpen className="w-5 h-5 mr-2" /> Explore</>
                   ) : (
                     <><Play className="w-5 h-5 mr-2 fill-current" /> {connected ? "Play" : "Play as Guest"}</>
                   )}

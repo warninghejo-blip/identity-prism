@@ -33,7 +33,23 @@ interface GravityRunnerProps {
   walletScore: number;
   hasMintedId: boolean;
   shipSkin?: string | null;
+  shipAura?: string | null;
   shipStats?: { speed: number; shield: number; firepower: number; luck: number };
+}
+
+// ── Aura colors for Canvas 2D glow ──
+const AURA_CANVAS_COLORS: Record<string, string> = {
+  aura_frost: '#67e8f9', aura_ember: '#fb923c', aura_electric: '#60a5fa',
+  aura_plasma: '#c084fc', aura_dark_matter: '#8b5cf6', aura_binary_pulse: '#22d3ee',
+  aura_solar_wind: '#fde047', aura_fortune_mist: '#a78bfa', aura_crimson_tide: '#f87171',
+  aura_void_shell: '#818cf8', aura_stellar_tide: '#34d399',
+};
+
+function hexToRgb(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return [r, g, b];
 }
 
 // ── Game constants ──
@@ -65,7 +81,7 @@ interface LevelTheme {
 }
 
 const LEVEL_THEMES: LevelTheme[] = [
-  { name: 'Nebula', bg1: '#06081a', bg2: '#0d1428', floorColor: 'rgba(34,211,238,0.06)', ceilColor: 'rgba(168,85,247,0.04)', accentColor: '#22d3ee', crystalColor: '#a855f7', obstacleColor: '#374151', obstacleHighlight: '#6b7280', scoreThreshold: 0 },
+  { name: 'Nebula', bg1: '#0a0818', bg2: '#0d1428', floorColor: 'rgba(34,211,238,0.06)', ceilColor: 'rgba(168,85,247,0.04)', accentColor: '#22d3ee', crystalColor: '#a855f7', obstacleColor: '#374151', obstacleHighlight: '#6b7280', scoreThreshold: 0 },
   { name: 'Asteroid Belt', bg1: '#0f0a05', bg2: '#1a1008', floorColor: 'rgba(245,158,11,0.06)', ceilColor: 'rgba(239,68,68,0.04)', accentColor: '#f59e0b', crystalColor: '#fbbf24', obstacleColor: '#57534e', obstacleHighlight: '#a8a29e', scoreThreshold: 500 },
   { name: 'Black Hole', bg1: '#050008', bg2: '#0a0014', floorColor: 'rgba(139,92,246,0.08)', ceilColor: 'rgba(236,72,153,0.04)', accentColor: '#8b5cf6', crystalColor: '#ec4899', obstacleColor: '#4c1d95', obstacleHighlight: '#7c3aed', scoreThreshold: 1200 },
   { name: 'Warp Zone', bg1: '#000a0f', bg2: '#001420', floorColor: 'rgba(6,182,212,0.08)', ceilColor: 'rgba(16,185,129,0.06)', accentColor: '#06b6d4', crystalColor: '#10b981', obstacleColor: '#134e4a', obstacleHighlight: '#2dd4bf', scoreThreshold: 2000 },
@@ -165,6 +181,11 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
   const animRef = useRef<number>(0);
   const shipImgRef = useRef<HTMLImageElement | null>(null);
   const shipLoadedRef = useRef(false);
+  const auraColorRef = useRef<[number, number, number] | null>(
+    props.shipAura && AURA_CANVAS_COLORS[props.shipAura]
+      ? hexToRgb(AURA_CANVAS_COLORS[props.shipAura])
+      : null,
+  );
 
   const _lastFlush = useRef(0);
   const stateRef = useRef({
@@ -289,7 +310,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     s.crystals = [];
     s.particles = [];
     s.trail = [];
-    s.nextObstacle = 100;   // grace period at start before first obstacle
+    s.nextObstacle = 40;    // grace period at start before first obstacle
     s.nextCrystal = 80;
     s.frameCount = 0;
     s.alive = true;
@@ -359,7 +380,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     nebulaCanvas.height = Math.ceil(H);
     const nCtx = nebulaCanvas.getContext('2d')!;
     // Dark base
-    nCtx.fillStyle = '#06081a';
+    nCtx.fillStyle = '#0a0818';
     nCtx.fillRect(0, 0, nebulaCanvas.width, nebulaCanvas.height);
     // Paint 3-4 nebula blobs with radial gradients
     const nebulaBlobs = [
@@ -709,8 +730,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         spawnObstacle();
         // Interval shortens slightly over time, but never too fast
         const elapsedMin = (performance.now() - s.startTime) / 60000;
-        const baseInterval = 100;     // tighter base interval (frames)
-        const minInterval = 50;       // never spawn faster than this
+        const baseInterval = 50;      // tighter base interval (frames)
+        const minInterval = 25;       // never spawn faster than this
         s.nextObstacle = Math.max(minInterval, baseInterval - elapsedMin * 10);
       }
 
@@ -862,11 +883,11 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
       // ── Deep space background ──
       const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-      bgGrad.addColorStop(0, '#06081a');
+      bgGrad.addColorStop(0, '#0a0818');
       bgGrad.addColorStop(0.3, '#0a0c24');
       bgGrad.addColorStop(0.5, theme.bg2);
       bgGrad.addColorStop(0.7, '#0a0c24');
-      bgGrad.addColorStop(1, '#06081a');
+      bgGrad.addColorStop(1, '#0a0818');
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
@@ -1136,7 +1157,15 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
       if (shipLoadedRef.current && shipImgRef.current) {
         ctx.rotate(Math.PI / 2);
+        // Aura glow following ship silhouette via shadowBlur
+        if (auraColorRef.current) {
+          const [ar, ag, ab] = auraColorRef.current;
+          ctx.shadowColor = `rgba(${ar},${ag},${ab},0.8)`;
+          ctx.shadowBlur = 18;
+        }
         ctx.drawImage(shipImgRef.current, -SHIP_W / 2, -SHIP_H / 2, SHIP_W, SHIP_H);
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
       } else {
         // Fallback: draw a triangle ship
         ctx.fillStyle = '#22d3ee';
@@ -1324,7 +1353,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     <canvas
       ref={canvasRef}
       className="w-full h-full"
-      style={{ touchAction: 'none', background: '#06081a' }}
+      style={{ touchAction: 'none', background: '#0a0818' }}
     />
   );
 }

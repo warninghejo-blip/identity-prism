@@ -31,7 +31,7 @@ export const RANGER_RANKS: RangerRank[] = [
 /*
  * ── XP Budget (theoretical maximums) ──
  *
- * Games (primary ~70%):
+ * Games (primary):
  *   Best scores:  3 main modes × ~2000 cap = ~6,000
  *   Games played: 3 modes × 200 games × 5 (capped 1000 ea) = 3,000
  *   Total time:   2 survival × 500 + 1 defender kills 500 = 1,500
@@ -39,21 +39,21 @@ export const RANGER_RANKS: RangerRank[] = [
  *
  * Achievements:   27 × 200 = 5,400
  * Arena wins:     ×300 each (uncapped — primary Legend grind)
- * Quests:         ×20 each (daily + weekly, repeatable)
- * Text quests:    16 × 500 = 8,000
+ * Quests (XP):    daily 135/day + weekly 650/week + one-time 1,725
+ *   Monthly:      ~135×30 + 650×4 + 1,725 ≈ 8,375 first month, ~6,650/month after
+ * Text quests:    16 × 500 = 8,000 (coins reward is separate)
  * Coins earned:   totalEarned / 200, cap 1,000
  *
  * NOT included: composite score (already powers ship stats via computeShipStats)
  *
  * To reach Legend (50,000):
- *   - Max game scores (~6k) + 200 games/mode (~3k) + time/kills (~1.5k) = ~10.5k
- *   - All 27 achievements = 5.4k
- *   - Arena wins: need 80+ wins × 300 = 24k
- *   - 200+ quests × 20 = 4k
- *   - Text quests 16 × 500 = 8k
- *   - Coins = ~1k
- *   Total ≈ 50.4k — Legend achievable but requires mastery of ALL systems
- *   Requires weeks/months of dedicated play across ALL systems.
+ *   - Games: ~10.5k (scores + volume + time)
+ *   - Achievements: 5.4k
+ *   - Arena wins: ~56-80 wins × 300 = ~17-24k
+ *   - Quests (~2 months): ~15k
+ *   - Text quests: ~8k
+ *   - Coins: ~1k
+ *   Total ≈ 57-64k — Legend reachable in 1-3 months of dedicated play
  */
 
 // ── XP Sources ──
@@ -66,8 +66,8 @@ export interface RangerXPSources {
     gravity?: { gamesPlayed: number; totalTime: number };
   };
   totalCoins?: number;
-  completedQuests?: number;
-  completedTextQuests?: number;
+  questXPEarned?: number;           // total XP from regular quests (stored in quest state)
+  completedTextQuests?: number;      // count of completed text quests
   challengeWins?: number;
   achievementCount?: number;
 }
@@ -116,12 +116,12 @@ export function computeRangerXP(sources: RangerXPSources): number {
     xp += sources.challengeWins * 300;
   }
 
-  // ── Quests Completed: ×20 (slow steady progress) ──
-  if (sources.completedQuests) {
-    xp += sources.completedQuests * 20;
+  // ── Quest XP: earned directly from quest rewards ──
+  if (sources.questXPEarned) {
+    xp += sources.questXPEarned;
   }
 
-  // ── Text Quests: ×500 (rare, hard content) ──
+  // ── Text Quests: ×500 (rare, hard content — coins are separate) ──
   if (sources.completedTextQuests) {
     xp += sources.completedTextQuests * 500;
   }
@@ -208,14 +208,14 @@ export function gatherXPSources(address: string): RangerXPSources {
       sources.totalCoins = parsed?.totalEarned || 0;
     }
 
-    // Quests completed
+    // Quest XP: read totalXPEarned from quest state
     const questRaw = localStorage.getItem(`prism_quests_v1_${address}`);
     if (questRaw) {
       const parsed = JSON.parse(questRaw);
-      sources.completedQuests = parsed?.totalCompleted || 0;
+      sources.questXPEarned = parsed?.totalXPEarned || 0;
     }
 
-    // Text quests completed
+    // Text quests completed (count)
     let textQuestCount = 0;
     const questIds = ['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy'];
     for (const qid of questIds) {

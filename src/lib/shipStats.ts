@@ -27,42 +27,92 @@ export interface ShipStats {
 // ── Skin Bonuses ──
 
 export const SKIN_BONUSES: Record<string, Partial<ShipStats>> = {
-  // Set A
-  cargo:       { shield: 5, luck: 2 },
-  crystal:     { speed: 5, shield: 5, luck: 3 },
-  fighter:     { speed: 8, firepower: 5, luck: 2 },
-  stealth_v2:  { speed: 6, shield: 3, firepower: 6, luck: 4 },
-  fortress:    { shield: 8, firepower: 5, luck: 3 },
+  // Common (budget 10)
+  cargo:       { shield: 6, luck: 4 },
+  cargo_b:     { speed: 2, shield: 5, luck: 3 },
+  // Rare (budget 16)
+  crystal:     { speed: 5, shield: 6, luck: 5 },
+  crystal_b:   { speed: 5, shield: 5, firepower: 2, luck: 4 },
+  fighter:     { speed: 7, firepower: 6, luck: 3 },
+  fighter_b:   { speed: 6, firepower: 7, luck: 3 },
+  // Rare (budget 16) — new ships
+  fortress:    { speed: 2, shield: 9, firepower: 2, luck: 3 },
+  chrome:      { speed: 2, shield: 9, firepower: 2, luck: 3 },
+  neon:        { speed: 9, firepower: 5, luck: 2 },
+  // Epic (budget 22)
+  stealth_v2:  { speed: 7, shield: 3, firepower: 7, luck: 5 },
+  stealth_v2_b:{ speed: 6, shield: 4, firepower: 7, luck: 5 },
+  stealth:     { speed: 7, shield: 3, firepower: 7, luck: 5 },
+  fortress_b:  { speed: 3, shield: 9, firepower: 7, luck: 3 },
+  phantom:     { speed: 5, firepower: 12, luck: 5 },
+  // Legendary (budget 32)
   manta:       { speed: 8, shield: 8, firepower: 8, luck: 8 },
-  // Set B
-  cargo_b:     { shield: 6, luck: 2 },
-  crystal_b:   { speed: 5, shield: 6, luck: 3 },
-  fighter_b:   { speed: 7, firepower: 6, luck: 2 },
-  stealth_v2_b:{ speed: 7, shield: 3, firepower: 5, luck: 4 },
-  fortress_b:  { shield: 7, firepower: 6, luck: 3 },
-  trident:     { speed: 10, shield: 5, firepower: 10, luck: 5 },
+  trident:     { speed: 10, shield: 5, firepower: 10, luck: 7 },
+  prism:       { speed: 6, shield: 9, firepower: 7, luck: 10 },
+  golden:      { speed: 5, shield: 6, firepower: 5, luck: 16 },
 };
 
 // ── Frame Bonuses ──
 
 export const FRAME_BONUSES: Record<string, Partial<ShipStats>> = {
-  nebula:        { luck: 3 },
-  solar_flare:   { firepower: 4 },
-  void:          { shield: 5 },
-  quantum:       { speed: 5 },
-  supernova:     { firepower: 5 },
-  event_horizon: { shield: 5, luck: 3 },
+  // Common (budget 4)
+  nebula:        { luck: 3, shield: 1 },
+  iron_veil:     { speed: 4 },
+  // Rare (budget 7)
+  solar_flare:   { firepower: 5, luck: 2 },
+  ionic_storm:   { speed: 6, firepower: 1 },
+  basalt:        { shield: 5, luck: 2 },
+  // Epic (budget 10)
+  void:          { shield: 7, luck: 3 },
+  quantum:       { speed: 7, firepower: 3 },
+  pulsar:        { shield: 5, firepower: 3, speed: 2 },
+  // Legendary (budget 14)
+  supernova:     { firepower: 8, speed: 3, luck: 3 },
+  event_horizon: { shield: 8, luck: 4, firepower: 2 },
+  singularity:   { speed: 6, firepower: 4, shield: 4 },
 };
 
 // ── Aura Bonuses ──
 
+// ── Title Bonuses (flat, luck-focused) ──
+
+export const TITLE_BONUSES: Record<string, Partial<ShipStats>> = {
+  // Common (budget 2)
+  explorer:   { luck: 2 },
+  // Rare (budget 4)
+  guardian:   { luck: 3, shield: 1 },
+  destroyer:  { luck: 3, firepower: 1 },
+  // Epic (budget 6)
+  architect:  { luck: 4, speed: 2 },
+  sovereign:  { luck: 4, shield: 2 },
+  // Legendary (budget 10)
+  ascended:   { luck: 8, speed: 2 },
+  // ── New titles ──
+  // Common (budget 2)
+  starborn:     { firepower: 2 },
+  // Rare (budget 4)
+  voidrunner:   { luck: 3, speed: 1 },
+  // Epic (budget 6)
+  dreadnought:  { shield: 4, firepower: 2 },
+  phantom_hand: { speed: 3, luck: 3 },
+  // Legendary (budget 10)
+  harbinger:    { firepower: 5, speed: 3, shield: 2 },
+};
+
+/** Aura bonuses are percentage multipliers (0.10 = +10%), applied multiplicatively AFTER flat bonuses */
 export const AURA_BONUSES: Record<string, Partial<ShipStats>> = {
-  frost:        { shield: 3 },
-  ember:        { firepower: 3 },
-  electric:     { speed: 4 },
-  plasma:       { firepower: 4 },
-  dark_matter:  { shield: 4 },
-  binary_pulse: { speed: 3, luck: 3 },
+  frost:        { shield: 0.10 },
+  ember:        { firepower: 0.10 },
+  electric:     { speed: 0.15 },
+  plasma:       { firepower: 0.15, speed: 0.08 },
+  dark_matter:  { shield: 0.20, firepower: 0.08 },
+  binary_pulse: { speed: 0.15, luck: 0.15 },
+  // ── New auras ──
+  solar_wind:   { speed: 0.10 },
+  fortune_mist: { luck: 0.12 },
+  crimson_tide: { firepower: 0.15 },
+  void_shell:   { shield: 0.15 },
+  stellar_tide: { shield: 0.12, luck: 0.10 },
 };
 
 // ── Tier value for achievements bonus ──
@@ -161,6 +211,7 @@ interface ForgeLoadoutLike {
   equippedShipSkin: string | null;
   equippedFrame: string | null;
   equippedAura: string | null;
+  equippedTitle?: string | null;
 }
 
 function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipStats {
@@ -190,14 +241,26 @@ function applyBonuses(base: ShipStats, loadout: ForgeLoadoutLike | null): ShipSt
     }
   }
 
-  if (loadout.equippedAura) {
-    const key = loadout.equippedAura.replace('aura_', '');
-    const bonus = AURA_BONUSES[key];
+  if (loadout.equippedTitle) {
+    const key = loadout.equippedTitle.replace('title_', '');
+    const bonus = TITLE_BONUSES[key];
     if (bonus) {
       stats.speed += bonus.speed || 0;
       stats.shield += bonus.shield || 0;
       stats.firepower += bonus.firepower || 0;
       stats.luck += bonus.luck || 0;
+    }
+  }
+
+  // Aura: multiplicative AFTER flat bonuses
+  if (loadout.equippedAura) {
+    const key = loadout.equippedAura.replace('aura_', '');
+    const bonus = AURA_BONUSES[key];
+    if (bonus) {
+      stats.speed = Math.round(stats.speed * (1 + (bonus.speed || 0)));
+      stats.shield = Math.round(stats.shield * (1 + (bonus.shield || 0)));
+      stats.firepower = Math.round(stats.firepower * (1 + (bonus.firepower || 0)));
+      stats.luck = Math.round(stats.luck * (1 + (bonus.luck || 0)));
     }
   }
 
@@ -254,18 +317,25 @@ export const DEFAULT_SHIP_STATS: ShipStats = { speed: 15, shield: 15, firepower:
 /** Get human-readable label for a stat bonus from equipment */
 export function getEquipmentBonusLabel(
   equipId: string | null,
-  type: 'skin' | 'frame' | 'aura',
+  type: 'skin' | 'frame' | 'aura' | 'title',
 ): string | null {
   if (!equipId) return null;
-  const prefix = type === 'skin' ? 'ship_' : type === 'frame' ? 'frame_' : 'aura_';
+  const prefix = type === 'skin' ? 'ship_' : type === 'frame' ? 'frame_' : type === 'title' ? 'title_' : 'aura_';
   const key = equipId.replace(prefix, '');
-  const table = type === 'skin' ? SKIN_BONUSES : type === 'frame' ? FRAME_BONUSES : AURA_BONUSES;
+  const table = type === 'skin' ? SKIN_BONUSES : type === 'frame' ? FRAME_BONUSES : type === 'title' ? TITLE_BONUSES : AURA_BONUSES;
   const bonus = table[key];
   if (!bonus) return null;
   const parts: string[] = [];
-  if (bonus.speed) parts.push(`+${bonus.speed} spd`);
-  if (bonus.shield) parts.push(`+${bonus.shield} shd`);
-  if (bonus.firepower) parts.push(`+${bonus.firepower} fp`);
-  if (bonus.luck) parts.push(`+${bonus.luck} lck`);
+  if (type === 'aura') {
+    if (bonus.speed) parts.push(`+${Math.round(bonus.speed * 100)}% spd`);
+    if (bonus.shield) parts.push(`+${Math.round(bonus.shield * 100)}% shd`);
+    if (bonus.firepower) parts.push(`+${Math.round(bonus.firepower * 100)}% fp`);
+    if (bonus.luck) parts.push(`+${Math.round(bonus.luck * 100)}% lck`);
+  } else {
+    if (bonus.speed) parts.push(`+${bonus.speed} spd`);
+    if (bonus.shield) parts.push(`+${bonus.shield} shd`);
+    if (bonus.firepower) parts.push(`+${bonus.firepower} fp`);
+    if (bonus.luck) parts.push(`+${bonus.luck} lck`);
+  }
   return parts.join(', ');
 }

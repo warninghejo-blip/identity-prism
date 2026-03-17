@@ -6,6 +6,7 @@ import {
   IS_MOBILE, CAM_Z, TIER_COLORS,
   rnd, clamp, slerp,
   SpaceBG, Dust, SmallExplosions, FX, GameCanvas,
+  AURA_GAME_COLORS, DEFAULT_SHIP_COLORS,
 } from "./GameShared";
 import { sfxShoot, sfxShootDouble, sfxShootRocket, sfxEnemyDestroy, sfxExplosion, sfxShield, sfxPickup, sfxNuke, sfxLevelUp, sfxBossAppear, sfxVictory } from "@/lib/gameAudio";
 
@@ -543,13 +544,15 @@ function DPowerUpVisuals({ poolRef }: { poolRef: React.MutableRefObject<DPowerUp
    Shooter Ship (bottom, H/V movement)
    ═══════════════════════════════════════════════════ */
 
-function ShooterShip({ posRef, color, shieldActive, invulnRef, skinId }: {
+function ShooterShip({ posRef, color, shieldActive, invulnRef, skinId, shipAura }: {
   posRef: React.MutableRefObject<{ x: number; y: number }>;
   color: string;
   shieldActive: React.MutableRefObject<boolean>;
   invulnRef: React.MutableRefObject<number>;
   skinId?: string | null;
+  shipAura?: string | null;
 }) {
+  const ac = (shipAura && AURA_GAME_COLORS[shipAura]) || DEFAULT_SHIP_COLORS;
   const gRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
   const shieldRef = useRef<THREE.Group>(null);
@@ -625,10 +628,10 @@ function ShooterShip({ posRef, color, shieldActive, invulnRef, skinId }: {
         {/* Rim light */}
         <mesh position={[-.02, .02, .02]} scale={[1.03, 1.03, 1]}>
           <planeGeometry args={[1.6, 2.2]} />
-          <meshBasicMaterial map={shipTex} transparent depthWrite={false} color="#88ccff" opacity={.18} blending={THREE.AdditiveBlending} />
+          <meshBasicMaterial map={shipTex} transparent depthWrite={false} color={ac.rim} opacity={.18} blending={THREE.AdditiveBlending} />
         </mesh>
         {/* Cockpit glow */}
-        <mesh position={[0, .15, .03]}><sphereGeometry args={[.15, 8, 8]} /><meshBasicMaterial color="#00eeff" transparent opacity={.25} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+        <mesh position={[0, .15, .03]}><sphereGeometry args={[.15, 8, 8]} /><meshBasicMaterial color={ac.glow} transparent opacity={.25} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
       </group>
       {/* Shield — hex-panel geodesic */}
       <group ref={shieldRef} visible={false}>
@@ -638,7 +641,7 @@ function ShooterShip({ posRef, color, shieldActive, invulnRef, skinId }: {
         </lineSegments>
         {!IS_MOBILE && <pointLight intensity={4} color="#22d3ee" distance={6} />}
       </group>
-      {!IS_MOBILE && <pointLight intensity={3} color="#0088ff" distance={8} />}
+      {!IS_MOBILE && <pointLight intensity={3} color={ac.light} distance={8} />}
     </group>
   </>);
 }
@@ -667,7 +670,7 @@ function FixedCam({ shake }: { shake: React.MutableRefObject<number> }) {
    Game World — Cosmic Defender (top-down shooter)
    ═══════════════════════════════════════════════════ */
 
-function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onActiveBonuses, reviveRef, traits, hasMintedId, shipSkin, shipStats }: GameProps) {
+function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onActiveBonuses, reviveRef, traits, hasMintedId, shipSkin, shipAura, shipStats }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   // Throttled score/coins updates — batch React setState to max once per 100ms
   const _scoreDirty = useRef(false);
@@ -843,6 +846,14 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
 
   const physAccum = useRef(0);
   const PHYS_DT = IS_MOBILE ? 1 / 60 : 1 / 90;
+  const tabHiddenRef = useRef(false);
+
+  // Pause when tab is hidden to prevent time jumps
+  useEffect(() => {
+    const handler = () => { if (document.hidden) tabHiddenRef.current = true; };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
 
   useFrame(({ camera }, delta) => {
     // Compute visible bounds from camera
@@ -861,6 +872,11 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
       for (const b of enemyBullets.current) b.active = false;
     }
     if (gameState !== "playing" || overRef.current) return;
+    // Tab was hidden — skip frame to prevent time jump
+    if (tabHiddenRef.current) {
+      if (!document.hidden) { tabHiddenRef.current = false; physAccum.current = 0; }
+      return;
+    }
     const frameDt = Math.min(delta, .1);
     physAccum.current += frameDt;
     if (physAccum.current > PHYS_DT * 4) physAccum.current = PHYS_DT * 4;
@@ -1410,14 +1426,14 @@ function DestroyerWorld({ gameState, onGameOver, onScore, onCoins, onLevel, onAc
 
   return (
     <>
-      <color attach="background" args={[LEVELS[level.current]?.bgTint || "#080c1a"]} />
+      <color attach="background" args={[LEVELS[level.current]?.bgTint || "#0a0818"]} />
       <ambientLight intensity={IS_MOBILE ? .55 : .35} />
       <directionalLight intensity={.65} color="#93c5fd" position={[8, 10, 14]} />
       <directionalLight intensity={.32} color="#f8fafc" position={[-12, -8, 12]} />
       <FixedCam shake={shake} />
       <SpaceBG />
       <Dust />
-      <ShooterShip posRef={shipPos} color={sCol} shieldActive={shieldActive} invulnRef={invulnT} skinId={shipSkin} />
+      <ShooterShip posRef={shipPos} color={sCol} shieldActive={shieldActive} invulnRef={invulnT} skinId={shipSkin} shipAura={shipAura} />
       <ProjectileVisuals poolRef={projectiles} color={sCol} />
       <EnemyVisuals poolRef={enemies} shipPos={shipPos} />
       <EnemyBulletVisuals poolRef={enemyBullets} />

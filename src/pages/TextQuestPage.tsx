@@ -42,16 +42,32 @@ const STAT_LABELS: Record<string, string> = {
   luck: 'Luck',
 };
 
-function getDailyQuestIndex(walletAddress: string): number {
-  const d = new Date();
-  // FNV-1a hash for better distribution across small moduli
-  const seed = `PRISM:${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}:${walletAddress}`;
-  let hash = 2166136261; // FNV offset basis
-  for (let i = 0; i < seed.length; i++) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619); // FNV prime
-  }
-  return ((hash >>> 0) % TEXT_QUEST_DATA.length);
+function getRandomQuestIndex(walletAddress: string): number {
+  // Pick random quest, avoiding the last 2 played
+  const storageKey = `quest_last_two_${walletAddress}`;
+  let lastTwo: string[] = [];
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) lastTwo = JSON.parse(raw);
+  } catch { /* ignore */ }
+
+  const available = TEXT_QUEST_DATA.map((q, i) => ({ id: q.id, idx: i }))
+    .filter(q => !lastTwo.includes(q.id));
+  // fallback if all filtered out
+  const pool = available.length > 0 ? available : TEXT_QUEST_DATA.map((q, i) => ({ id: q.id, idx: i }));
+  return pool[Math.floor(Math.random() * pool.length)].idx;
+}
+
+function recordQuestPlayed(walletAddress: string, questId: string) {
+  const storageKey = `quest_last_two_${walletAddress}`;
+  let lastTwo: string[] = [];
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) lastTwo = JSON.parse(raw);
+  } catch { /* ignore */ }
+  lastTwo.push(questId);
+  if (lastTwo.length > 2) lastTwo = lastTwo.slice(-2);
+  try { localStorage.setItem(storageKey, JSON.stringify(lastTwo)); } catch { /* ignore */ }
 }
 
 function isImagePath(src?: string): boolean {
@@ -238,7 +254,10 @@ export default function TextQuestPage() {
       setActiveQuest(quest);
       setQuestState(state);
       setRewardClaimed(false);
-      if (walletAddress) saveQuestState(state, walletAddress);
+      if (walletAddress) {
+        saveQuestState(state, walletAddress);
+        recordQuestPlayed(walletAddress, quest.id);
+      }
     }
   }, [walletAddress]);
 
@@ -285,13 +304,29 @@ export default function TextQuestPage() {
   }, [questState, walletAddress, rewardClaimed, claimingReward, activeQuest]);
 
   const handleBack = useCallback(() => {
-    if (activeQuest) {
-      setActiveQuest(null);
-      setQuestState(null);
-    } else {
-      navigate('/game');
+    navigate('/game');
+  }, [navigate]);
+
+  // Auto-start random quest on mount (if no active quest)
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current || activeQuest) return;
+    // Check if any quest is in-progress first
+    if (walletAddress) {
+      for (const q of TEXT_QUEST_DATA) {
+        const save = getQuestSave(q.id, walletAddress);
+        if (save && !save.completed) {
+          autoStarted.current = true;
+          handleStart(q);
+          return;
+        }
+      }
     }
-  }, [activeQuest, navigate]);
+    // No in-progress quest — pick random
+    const idx = getRandomQuestIndex(walletAddress || 'anonymous');
+    autoStarted.current = true;
+    handleStart(TEXT_QUEST_DATA[idx]);
+  }, [walletAddress, activeQuest, handleStart]);
 
   // Load saves for quest list
   const questSaves = useMemo(() => {
@@ -310,7 +345,7 @@ export default function TextQuestPage() {
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <button onClick={handleBack} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
             <ArrowLeft className="w-4 h-4" />
-            {activeQuest ? 'Quest List' : 'Back'}
+            Back
           </button>
           {activeQuest && questState && (
             <div className="text-white/20 text-[10px] font-mono">
@@ -321,47 +356,17 @@ export default function TextQuestPage() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
-        {/* ═══ TODAY'S QUEST ═══ */}
-        {!activeQuest && (() => {
-          const dailyIdx = getDailyQuestIndex(walletAddress || 'anonymous');
-          const dailyQuest = TEXT_QUEST_DATA[dailyIdx];
-          const dailySave = questSaves[dailyQuest.id] ?? null;
-          return (
-            <>
-              <div className="mb-6">
-                <h1 className="text-xl font-black">🚀 Today's Quest</h1>
-                <p className="text-white/30 text-xs mt-1">A new adventure awaits you each day</p>
-              </div>
-
-              {/* Ship stats mini display */}
-              <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <p className="text-white/20 text-[9px] uppercase tracking-wider mb-2">Your Ship Stats (affect skill checks)</p>
-                <div className="flex gap-3">
-                  {(['speed', 'shield', 'firepower', 'luck'] as const).map((stat) => (
-                    <div key={stat} className="flex-1 text-center">
-                      <div className="text-white font-bold text-sm">{shipStats[stat]}</div>
-                      <div className="text-white/20 text-[8px] uppercase">{stat}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <QuestListCard
-                quest={dailyQuest}
-                save={dailySave}
-                onStart={() => handleStart(dailyQuest)}
-                onResume={() => handleStart(dailyQuest)}
-                onReplay={() => handleReplay(dailyQuest)}
-                canReplay={getCanReplay(dailyQuest.id, dailySave)}
-              />
-              <p className="text-center text-white/20 text-[10px] mt-3">Quest changes daily</p>
-            </>
-          );
-        })()}
+        {/* ═══ LOADING (auto-start picks quest) ═══ */}
+        {!activeQuest && (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-400 rounded-full animate-spin" />
+            <p className="text-white/30 text-xs">Loading quest...</p>
+          </div>
+        )}
 
         {/* ═══ ACTIVE QUEST ═══ */}
         {activeQuest && questState && currentNode && (
-          <div className="space-y-5">
+          <div key={questState.currentNode} className="space-y-5">
             {/* Quest title */}
             <div className="text-center mb-2">
               <h2 className="text-lg font-bold">{activeQuest.title}</h2>
@@ -371,39 +376,36 @@ export default function TextQuestPage() {
               }}>{activeQuest.difficulty}</span>
             </div>
 
-            {/* Node image */}
-            {currentNode.image && (
-              <div className="flex justify-center">
-                {isImagePath(currentNode.image) ? (
-                  <img
-                    src={currentNode.image}
-                    alt=""
-                    className="w-full max-w-md max-h-56 rounded-2xl object-contain"
-                    style={{
-                      border: '1px solid rgba(168,85,247,0.15)',
-                      boxShadow: '0 0 40px rgba(168,85,247,0.1)',
-                    }}
-                  />
-                ) : (
-                  <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-4xl"
+            {/* Text + image layout */}
+            <div className={`flex gap-4 ${currentNode.image && isImagePath(currentNode.image) ? '' : ''}`}>
+              <div
+                className="flex-1 p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] cursor-pointer"
+                onClick={() => !done && skip()}
+              >
+                {/* Emoji image inline */}
+                {currentNode.image && !isImagePath(currentNode.image) && (
+                  <div className="float-left mr-3 mb-2 w-16 h-16 rounded-xl flex items-center justify-center text-3xl flex-shrink-0"
                     style={{
                       background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.1), rgba(5,7,10,0.95))',
                       border: '1px solid rgba(168,85,247,0.15)',
-                      boxShadow: '0 0 40px rgba(168,85,247,0.1)',
                     }}>
                     {currentNode.image}
                   </div>
                 )}
+                {displayed}
+                {!done && <span className="animate-pulse text-purple-400">|</span>}
               </div>
-            )}
-
-            {/* Text with typewriter effect */}
-            <div
-              className="p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] cursor-pointer"
-              onClick={() => !done && skip()}
-            >
-              {displayed}
-              {!done && <span className="animate-pulse text-purple-400">|</span>}
+              {currentNode.image && isImagePath(currentNode.image) && (
+                <img
+                  src={currentNode.image}
+                  alt=""
+                  className="w-36 h-36 rounded-2xl object-cover flex-shrink-0 self-start"
+                  style={{
+                    border: '1px solid rgba(168,85,247,0.15)',
+                    boxShadow: '0 0 40px rgba(168,85,247,0.1)',
+                  }}
+                />
+              )}
             </div>
 
             {/* Variables */}

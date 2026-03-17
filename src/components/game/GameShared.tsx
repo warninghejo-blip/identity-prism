@@ -24,8 +24,25 @@ export interface GameProps {
   walletScore: number;
   hasMintedId?: boolean;
   shipSkin?: string | null;
+  shipAura?: string | null;
   shipStats?: ShipStats;
 }
+
+// ── Aura colors for in-game ship glow ──
+export const AURA_GAME_COLORS: Record<string, { rim: string; glow: string; light: string }> = {
+  aura_frost:        { rim: '#67e8f9', glow: '#22d3ee', light: '#22d3ee' },
+  aura_ember:        { rim: '#fb923c', glow: '#ff6b35', light: '#f97316' },
+  aura_electric:     { rim: '#60a5fa', glow: '#3b82f6', light: '#2563eb' },
+  aura_plasma:       { rim: '#c084fc', glow: '#a855f7', light: '#7c3aed' },
+  aura_dark_matter:  { rim: '#8b5cf6', glow: '#6d28d9', light: '#5b21b6' },
+  aura_binary_pulse: { rim: '#22d3ee', glow: '#06b6d4', light: '#0891b2' },
+  aura_solar_wind:   { rim: '#fde047', glow: '#eab308', light: '#ca8a04' },
+  aura_fortune_mist: { rim: '#a78bfa', glow: '#8b5cf6', light: '#7c3aed' },
+  aura_crimson_tide: { rim: '#f87171', glow: '#ef4444', light: '#dc2626' },
+  aura_void_shell:   { rim: '#818cf8', glow: '#6366f1', light: '#4f46e5' },
+  aura_stellar_tide: { rim: '#34d399', glow: '#10b981', light: '#059669' },
+};
+export const DEFAULT_SHIP_COLORS = { rim: '#88ccff', glow: '#00eeff', light: '#0088ff' };
 
 export interface AsteroidData {
   id: number;
@@ -443,7 +460,7 @@ export function getShipTexturePath(skinId?: string | null): string {
   return `/textures/ships/ship_${key}.png`;
 }
 
-export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, skinId }: {
+export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseRef, skinId, shipAura }: {
   posRef: React.MutableRefObject<{ x: number; y: number }>;
   headRef: React.MutableRefObject<number>;
   color: string; scale: number;
@@ -451,7 +468,9 @@ export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseR
   shieldRef: React.MutableRefObject<number>;
   phaseRef: React.MutableRefObject<number>;
   skinId?: string | null;
+  shipAura?: string | null;
 }) {
+  const ac = (shipAura && AURA_GAME_COLORS[shipAura]) || DEFAULT_SHIP_COLORS;
   const gRef = useRef<THREE.Group>(null);
   const shRef = useRef<THREE.Mesh>(null);
   const shieldBub = useRef<THREE.Mesh>(null);
@@ -518,10 +537,10 @@ export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseR
       {/* Rim light */}
       <mesh position={[-.02, .02, .02]}>
         <planeGeometry args={[1.6, 2.2]} />
-        <meshBasicMaterial map={shipTex} transparent alphaTest={0.05} depthWrite={false} color="#88ccff" opacity={.12} blending={THREE.AdditiveBlending} />
+        <meshBasicMaterial map={shipTex} transparent alphaTest={0.05} depthWrite={false} color={ac.rim} opacity={.12} blending={THREE.AdditiveBlending} />
       </mesh>
       {/* Cockpit glow */}
-      <mesh position={[0, .15, .03]}><sphereGeometry args={[.15, 8, 8]} /><meshBasicMaterial color="#00eeff" transparent opacity={.25} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+      <mesh position={[0, .15, .03]}><sphereGeometry args={[.15, 8, 8]} /><meshBasicMaterial color={ac.glow} transparent opacity={.25} blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </>
   );
 
@@ -531,8 +550,8 @@ export function Ship({ posRef, headRef, color, scale, nearRef, shieldRef, phaseR
       <mesh ref={shRef}><ringGeometry args={[1, 1.15, 32]} /><meshBasicMaterial color={color} transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
       <mesh ref={shieldBub} visible={false}><sphereGeometry args={[1.6, 24, 24]} /><meshBasicMaterial color="#22d3ee" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
       <mesh ref={phaseGlow} visible={false}><sphereGeometry args={[1.3, 16, 16]} /><meshBasicMaterial color="#a855f7" transparent opacity={0} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} /></mesh>
-      <points ref={exRef}><bufferGeometry><bufferAttribute attach="attributes-position" args={[exSt.p, 3]} /></bufferGeometry><pointsMaterial size={.1} color="#00bbff" transparent opacity={.85} blending={THREE.AdditiveBlending} sizeAttenuation depthWrite={false} /></points>
-      <pointLight intensity={4} color="#00aaff" distance={12} />
+      <points ref={exRef}><bufferGeometry><bufferAttribute attach="attributes-position" args={[exSt.p, 3]} /></bufferGeometry><pointsMaterial size={.1} color={ac.light} transparent opacity={.85} blending={THREE.AdditiveBlending} sizeAttenuation depthWrite={false} /></points>
+      <pointLight intensity={4} color={ac.light} distance={12} />
     </group>
   );
 }

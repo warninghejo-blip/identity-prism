@@ -1087,7 +1087,7 @@ const Index = () => {
     }, 60_000);
     try {
       toast.info("Updating card...", {
-        description: "Updates metadata on existing NFT — only ~0.0005 SOL.",
+        description: "Updates metadata on existing NFT — only 0.0005 SOL.",
       });
       const cardImageUrl = await captureCardImage();
       const { updateIdentityPrism } = await import("@/lib/mintIdentityPrism");
@@ -1353,7 +1353,7 @@ const Index = () => {
                                 type="button"
                                 className={`mint-payment-option ${paymentToken === "COINS" ? "is-active" : ""}`}
                                 onClick={() => setPaymentToken("COINS")}
-                                disabled={!prismBalance || prismBalance.balance < 10000}
+                                disabled={false}
                                 style={paymentToken === "COINS" ? { borderColor: 'rgba(234,179,8,0.5)', color: 'rgba(234,179,8,0.9)' } : {}}
                               >
                                 COINS
@@ -1367,8 +1367,14 @@ const Index = () => {
                                 : `50% discount with ${SEEKER_TOKEN.SYMBOL}`}
                             </span>
                           )}
-                          {paymentToken === "COINS" && !prismBalance && (
-                            <span className="mint-payment-note">Loading...</span>
+                          {paymentToken === "COINS" && (
+                            <span className={`mint-payment-note ${prismBalance && prismBalance.balance < 10000 ? 'is-error' : ''}`}>
+                              {!prismBalance
+                                ? 'Loading...'
+                                : prismBalance.balance < 10000
+                                  ? `Not enough Coins: ${prismBalance.balance.toLocaleString()} / 10,000`
+                                  : `Balance: ${prismBalance.balance.toLocaleString()} Coins`}
+                            </span>
                           )}
                         </div>
                         <div className="mint-action-row">
@@ -1411,7 +1417,7 @@ const Index = () => {
                               style={{ background: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.25)', opacity: hasExistingId !== true ? 0.4 : 1 }}
                               title={hasExistingId === false ? 'Mint your Identity first' : hasExistingId === null ? 'Checking wallet...' : 'Updates metadata on existing NFT'}
                             >
-                              {remintState === "idle" && <span>♻ UPDATE CARD · ~0.0005 SOL</span>}
+                              {remintState === "idle" && <span>♻ UPDATE CARD · 0.0005 SOL</span>}
                               {remintState === "updating" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />UPDATING...</>}
                               {remintState === "success" && <span>✓ CARD UPDATED</span>}
                             </Button>

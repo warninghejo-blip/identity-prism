@@ -85,21 +85,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const defaultTab = captureTab === 'badges' ? 'badges' : 'stats';
   const compositeData = useCompositeScore(address);
 
-  // Fetch sybil risk and forge loadout
+  // Forge loadout — always load (needed for NFT capture too)
   useEffect(() => {
-    if (!address || isCapture) return;
-    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-    // Sybil
-    fetch(`${base}/api/sybil/analysis?address=${address}`).then(r => r.ok ? r.json() : null)
-      .then(d => {
-        if (d?.riskScore !== undefined) setSybilRisk({
-          riskScore: d.riskScore, riskLevel: d.riskLevel,
-          trustScore: d.trustScore ?? (100 - d.riskScore), trustGrade: d.trustGrade ?? 'N/A',
-          signals: d.signals, metrics: d.metrics,
-        });
-      })
-      .catch(() => {});
-    // Forge loadout (local)
+    if (!address) return;
     try {
       const raw = localStorage.getItem(`prism_forge_loadout_v1_${address}`);
       if (raw) {
@@ -107,7 +95,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         if (loadout.equippedFrame) setForgeFrame(loadout.equippedFrame);
         if (loadout.equippedAura) setForgeAura(loadout.equippedAura);
         if (loadout.equippedTitle) {
-          // Resolve title name + rarity from item catalog
           import('@/lib/forgeItems').then(({ getItemById }) => {
             const item = getItemById(loadout.equippedTitle);
             if (item) {
@@ -118,6 +105,21 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         }
       }
     } catch {}
+  }, [address]);
+
+  // Fetch sybil risk — only in interactive mode
+  useEffect(() => {
+    if (!address || isCapture) return;
+    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    fetch(`${base}/api/sybil/analysis?address=${address}`).then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.riskScore !== undefined) setSybilRisk({
+          riskScore: d.riskScore, riskLevel: d.riskLevel,
+          trustScore: d.trustScore ?? (100 - d.riskScore), trustGrade: d.trustGrade ?? 'N/A',
+          signals: d.signals, metrics: d.metrics,
+        });
+      })
+      .catch(() => {});
   }, [address, isCapture]);
 
   const clearTransitionTimers = useCallback(() => {

@@ -1,6 +1,6 @@
 /**
  * Quests Page — Daily/Weekly/One-time challenges for Identity Prism v5.
- * Complete quests to earn Coins.
+ * Complete quests to earn XP toward Ranger Ranks.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -23,7 +23,8 @@ import {
   type QuestProgress,
   type QuestState,
 } from '@/lib/prismQuests';
-import { earnPrism, getPrismBalance, type PrismBalance } from '@/lib/prismCoin';
+import type { PrismBalance } from '@/lib/prismCoin';
+import { getPrismBalance } from '@/lib/prismCoin';
 import PageShell from '@/components/PageShell';
 import { computeRangerXP, getRangerRank, getRankProgress, getNextRank, gatherXPSources } from '@/lib/rangerRanks';
 import { getCompletedQuests } from '@/lib/textQuests';
@@ -105,8 +106,8 @@ function QuestCard({
             </Button>
           ) : (
             <div className="text-right">
-              <p className="text-purple-300 font-bold text-sm font-mono">+{quest.reward}</p>
-              <p className="text-white/20 text-[9px]">Coins</p>
+              <p className="text-cyan-300 font-bold text-sm font-mono">+{quest.reward}</p>
+              <p className="text-white/20 text-[9px]">XP</p>
             </div>
           )}
         </div>
@@ -141,26 +142,15 @@ export default function QuestsPage() {
     }
   }, [activeTab]);
 
-  const handleClaim = useCallback(async (quest: Quest) => {
+  const handleClaim = useCallback((quest: Quest) => {
     if (!walletAddress || !questState || claiming) return;
-    // Mark as claimed locally FIRST to prevent double-tap race condition
+    // Mark as claimed locally — XP is stored in quest state
     const updatedState = claimQuestReward(questState, quest.id);
     if (updatedState === questState) return; // already claimed — no change
     setQuestState({ ...updatedState });
     setClaiming(quest.id);
-
-    try {
-      const source = quest.frequency === 'one_time' ? 'quest_milestone'
-        : quest.frequency === 'weekly' ? 'quest_weekly'
-        : 'quest_daily';
-      const result = await earnPrism(walletAddress, source, quest.reward, `Quest: ${quest.name}`);
-      setBalance(result.balance);
-      toast.success(`+${quest.reward} Coins`, { description: quest.name });
-    } catch {
-      toast.error('Failed to claim reward');
-    } finally {
-      setClaiming(null);
-    }
+    toast.success(`+${quest.reward} XP`, { description: quest.name });
+    setClaiming(null);
   }, [walletAddress, questState, claiming]);
 
   const unclaimedCount = questState ? getUnclaimedCount(questState) : 0;
@@ -304,8 +294,8 @@ export default function QuestsPage() {
               <p className="text-white/20 text-[10px] uppercase tracking-wider">Completed</p>
             </div>
             <div>
-              <p className="text-purple-300 font-bold text-lg">{balance?.totalEarned ?? 0}</p>
-              <p className="text-white/20 text-[10px] uppercase tracking-wider">Total Earned</p>
+              <p className="text-cyan-300 font-bold text-lg">{questState?.totalXPEarned ?? 0}</p>
+              <p className="text-white/20 text-[10px] uppercase tracking-wider">XP Earned</p>
             </div>
             <div>
               <p className="text-amber-400 font-bold text-lg">{questState?.currentStreak ?? 0}d</p>

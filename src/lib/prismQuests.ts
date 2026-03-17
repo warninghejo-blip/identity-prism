@@ -1,6 +1,6 @@
 /**
  * Quests — daily/weekly challenges for Identity Prism v5.
- * Complete quests to earn Coins. Creates daily engagement loop.
+ * Complete quests to earn XP. Creates daily engagement loop.
  */
 
 // ── Types ──
@@ -14,7 +14,7 @@ export interface Quest {
   description: string;
   category: QuestCategory;
   frequency: QuestFrequency;
-  reward: number;             // Coins
+  reward: number;             // XP earned on claim
   target: number;             // e.g., "burn 3 tokens" → target = 3
   icon: string;
 }
@@ -33,38 +33,39 @@ export interface QuestState {
   weeklyResetAt: string;      // ISO timestamp of next weekly reset
   progress: QuestProgress[];
   totalCompleted: number;
+  totalXPEarned: number;      // running total of XP earned from quests
   currentStreak: number;      // consecutive days with ≥1 quest completed
 }
 
 // ── Quest Catalog ──
 
 export const DAILY_QUESTS: Quest[] = [
-  { id: 'daily_scan', name: 'Daily Scan', description: 'Scan your wallet once', category: 'identity', frequency: 'daily', reward: 5, target: 1, icon: '🔬' },
-  { id: 'daily_game', name: 'Daily Player', description: 'Play one game in Prism League', category: 'game', frequency: 'daily', reward: 10, target: 1, icon: '🎮' },
-  { id: 'daily_burn', name: 'Dust Collector', description: 'Burn 1 token in Black Hole', category: 'burn', frequency: 'daily', reward: 8, target: 1, icon: '🔥' },
-  { id: 'daily_explore', name: 'Curious Mind', description: 'View another wallet in Prism Arena', category: 'explore', frequency: 'daily', reward: 5, target: 1, icon: '🔭' },
-  { id: 'daily_highscore', name: 'Beat Yourself', description: 'Set a new personal best in any game', category: 'game', frequency: 'daily', reward: 15, target: 1, icon: '🏆' },
+  { id: 'daily_scan', name: 'Daily Scan', description: 'Scan your wallet once', category: 'identity', frequency: 'daily', reward: 15, target: 1, icon: '🔬' },
+  { id: 'daily_game', name: 'Daily Player', description: 'Play one game in Prism League', category: 'game', frequency: 'daily', reward: 30, target: 1, icon: '🎮' },
+  { id: 'daily_burn', name: 'Dust Collector', description: 'Burn 1 token in Black Hole', category: 'burn', frequency: 'daily', reward: 25, target: 1, icon: '🔥' },
+  { id: 'daily_explore', name: 'Curious Mind', description: 'View another wallet in Prism Arena', category: 'explore', frequency: 'daily', reward: 15, target: 1, icon: '🔭' },
+  { id: 'daily_highscore', name: 'Beat Yourself', description: 'Set a new personal best in any game', category: 'game', frequency: 'daily', reward: 50, target: 1, icon: '🏆' },
 ];
 
 export const WEEKLY_QUESTS: Quest[] = [
-  { id: 'weekly_burn5', name: 'Purge Week', description: 'Burn 5 tokens in Black Hole', category: 'burn', frequency: 'weekly', reward: 40, target: 5, icon: '🕳️' },
-  { id: 'weekly_games5', name: 'Marathon Runner', description: 'Play 5 games in Prism League', category: 'game', frequency: 'weekly', reward: 35, target: 5, icon: '🏃' },
-  { id: 'weekly_compare3', name: 'Social Butterfly', description: 'Compare wallets 3 times', category: 'social', frequency: 'weekly', reward: 25, target: 3, icon: '🦋' },
-  { id: 'weekly_streak', name: 'Dedication', description: 'Complete daily quests 5 days in a row', category: 'identity', frequency: 'weekly', reward: 50, target: 5, icon: '🔥' },
-  { id: 'weekly_forge', name: 'Forge Apprentice', description: 'Purchase 1 item from Stellar Forge', category: 'explore', frequency: 'weekly', reward: 30, target: 1, icon: '⚒️' },
+  { id: 'weekly_burn5', name: 'Purge Week', description: 'Burn 5 tokens in Black Hole', category: 'burn', frequency: 'weekly', reward: 150, target: 5, icon: '🕳️' },
+  { id: 'weekly_games5', name: 'Marathon Runner', description: 'Play 5 games in Prism League', category: 'game', frequency: 'weekly', reward: 120, target: 5, icon: '🏃' },
+  { id: 'weekly_compare3', name: 'Social Butterfly', description: 'Compare wallets 3 times', category: 'social', frequency: 'weekly', reward: 80, target: 3, icon: '🦋' },
+  { id: 'weekly_streak', name: 'Dedication', description: 'Complete daily quests 5 days in a row', category: 'identity', frequency: 'weekly', reward: 200, target: 5, icon: '🔥' },
+  { id: 'weekly_forge', name: 'Forge Apprentice', description: 'Purchase 1 item from Stellar Forge', category: 'explore', frequency: 'weekly', reward: 100, target: 1, icon: '⚒️' },
 ];
 
 export const ONE_TIME_QUESTS: Quest[] = [
-  { id: 'ot_first_scan', name: 'First Contact', description: 'Scan your wallet for the first time', category: 'identity', frequency: 'one_time', reward: 25, target: 1, icon: '🌟' },
-  { id: 'ot_first_mint', name: 'Minted!', description: 'Mint your Identity Prism NFT', category: 'identity', frequency: 'one_time', reward: 100, target: 1, icon: '💎' },
-  { id: 'ot_first_burn', name: 'Into the Void', description: 'Burn your first token in Black Hole', category: 'burn', frequency: 'one_time', reward: 15, target: 1, icon: '🕳️' },
-  { id: 'ot_first_game', name: 'Player One', description: 'Play your first game', category: 'game', frequency: 'one_time', reward: 20, target: 1, icon: '🎮' },
-  { id: 'ot_reach_sun', name: 'Solar Ascension', description: 'Reach Sun tier or higher', category: 'identity', frequency: 'one_time', reward: 200, target: 1, icon: '☀️' },
-  { id: 'ot_burn100', name: 'Black Hole Master', description: 'Burn 100 tokens total', category: 'burn', frequency: 'one_time', reward: 150, target: 100, icon: '🌀' },
-  { id: 'ot_score1000', name: 'Cosmic Legend', description: 'Score 1000+ in any game', category: 'game', frequency: 'one_time', reward: 75, target: 1000, icon: '🏅' },
-  { id: 'ot_forge5', name: 'Collector', description: 'Own 5 items from Stellar Forge', category: 'explore', frequency: 'one_time', reward: 100, target: 5, icon: '🗃️' },
-  { id: 'ot_compare10', name: 'Analyst', description: 'Compare 10 different wallets', category: 'social', frequency: 'one_time', reward: 50, target: 10, icon: '📊' },
-  { id: 'ot_constellation', name: 'Star Mapper', description: 'View your Constellation Network', category: 'explore', frequency: 'one_time', reward: 25, target: 1, icon: '🗺️' },
+  { id: 'ot_first_scan', name: 'First Contact', description: 'Scan your wallet for the first time', category: 'identity', frequency: 'one_time', reward: 50, target: 1, icon: '🌟' },
+  { id: 'ot_first_mint', name: 'Minted!', description: 'Mint your Identity Prism NFT', category: 'identity', frequency: 'one_time', reward: 250, target: 1, icon: '💎' },
+  { id: 'ot_first_burn', name: 'Into the Void', description: 'Burn your first token in Black Hole', category: 'burn', frequency: 'one_time', reward: 50, target: 1, icon: '🕳️' },
+  { id: 'ot_first_game', name: 'Player One', description: 'Play your first game', category: 'game', frequency: 'one_time', reward: 75, target: 1, icon: '🎮' },
+  { id: 'ot_reach_sun', name: 'Solar Ascension', description: 'Reach Sun tier or higher', category: 'identity', frequency: 'one_time', reward: 500, target: 1, icon: '☀️' },
+  { id: 'ot_burn100', name: 'Black Hole Master', description: 'Burn 100 tokens total', category: 'burn', frequency: 'one_time', reward: 300, target: 100, icon: '🌀' },
+  { id: 'ot_score1000', name: 'Cosmic Legend', description: 'Score 1000+ in any game', category: 'game', frequency: 'one_time', reward: 150, target: 1000, icon: '🏅' },
+  { id: 'ot_forge5', name: 'Collector', description: 'Own 5 items from Stellar Forge', category: 'explore', frequency: 'one_time', reward: 200, target: 5, icon: '🗃️' },
+  { id: 'ot_compare10', name: 'Analyst', description: 'Compare 10 different wallets', category: 'social', frequency: 'one_time', reward: 100, target: 10, icon: '📊' },
+  { id: 'ot_constellation', name: 'Star Mapper', description: 'View your Constellation Network', category: 'explore', frequency: 'one_time', reward: 50, target: 1, icon: '🗺️' },
 ];
 
 export const ALL_QUESTS: Quest[] = [...DAILY_QUESTS, ...WEEKLY_QUESTS, ...ONE_TIME_QUESTS];
@@ -96,6 +97,8 @@ export function getQuestState(address: string): QuestState {
     const raw = localStorage.getItem(`${QUEST_STATE_KEY}_${address}`);
     if (raw) {
       const state: QuestState = JSON.parse(raw);
+      // Migrate: add totalXPEarned if missing
+      if (state.totalXPEarned == null) state.totalXPEarned = 0;
       // Check resets
       const now = new Date().toISOString();
       let needsSave = false;
@@ -149,6 +152,7 @@ export function getQuestState(address: string): QuestState {
     weeklyResetAt: getNextWeeklyReset(),
     progress: [],
     totalCompleted: 0,
+    totalXPEarned: 0,
     currentStreak: 0,
   };
   saveQuestState(defaultState);
@@ -244,8 +248,12 @@ export function claimQuestReward(state: QuestState, questId: string): QuestState
   const progress = state.progress.find((p) => p.questId === questId);
   if (!progress || !progress.completed || progress.claimedAt) return state;
 
+  const quest = ALL_QUESTS.find((q) => q.id === questId);
+  const xpReward = quest?.reward ?? 0;
+
   const newState: QuestState = {
     ...state,
+    totalXPEarned: (state.totalXPEarned || 0) + xpReward,
     progress: state.progress.map((p) =>
       p.questId === questId ? { ...p, claimedAt: new Date().toISOString() } : p,
     ),

@@ -908,6 +908,15 @@ export async function updateIdentityPrism({
 
   // 4. User signs the transaction (pays service fee + network fee)
   const transaction = Transaction.from(Buffer.from(prepareData.transaction, 'base64'));
+
+  // Simulate before signing (dApp Store compliance)
+  const updateConn = new Connection(heliusRpcUrl, 'confirmed');
+  const updateSim = await updateConn.simulateTransaction(transaction, undefined, { sigVerify: false, replaceRecentBlockhash: true });
+  if (updateSim.value.err) {
+    throw buildPreflightError('SIMULATION_FAILED', `Update simulation failed: ${JSON.stringify(updateSim.value.err)}`);
+  }
+  transaction.recentBlockhash = (await updateConn.getLatestBlockhash()).blockhash;
+
   // Patch serialize so wallet adapter doesn't reject due to missing colAuth sig
   // (same pattern as mint-cnft — MWA internally calls serialize())
   const origSerialize = transaction.serialize.bind(transaction);

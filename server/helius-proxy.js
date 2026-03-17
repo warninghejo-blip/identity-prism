@@ -5641,7 +5641,7 @@ const server = http.createServer(async (req, res) => {
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
       // Whitelist valid earn sources — reject unknown sources to prevent rate-limit bypass
       // burn_tokens/burn_nfts REMOVED — no on-chain verification, was exploitable for 144K coins/day
-      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20, text_quest: 100 };
+      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20, text_quest: 1200 };
       if (!source || !MAX_EARN_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
       const maxAllowed = MAX_EARN_PER_CALL[source];
       if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
@@ -8209,6 +8209,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ═══ Admin: Set coin balance (dev/testing) ═══
+  if (pathname === '/api/admin/set-coins' && req.method === 'POST') {
+    if (!requireAdminKey(req, res)) return;
+    try {
+      const { address, coins } = JSON.parse(await readBody(req));
+      if (!address || typeof coins !== 'number') return respondJson(res, 400, { error: 'address and coins (number) required' });
+      setCoinBalance(address, coins);
+      respondJson(res, 200, { ok: true, address, balance: getCoinBalance(address) });
+    } catch (e) { respondJson(res, 400, { error: e.message }); }
+    return;
+  }
+
   // ═══ Wallet Database API ═══
   if (pathname === '/api/wallet-database/stats' && req.method === 'GET') {
     if (!requireAdminKey(req, res)) return;
@@ -8265,8 +8277,9 @@ const server = http.createServer(async (req, res) => {
         tier: w.tier || 'mercury',
         score: w.score || 0,
         badges: w.badges || [],
-        composite: w.composite ? { compositeScore: w.composite.compositeScore, compositeTier: w.composite.compositeTier, breakdown: w.composite.breakdown } : null,
+        composite: w.composite ? { compositeScore: w.composite.compositeScore, compositeTier: w.composite.compositeTier, breakdown: w.composite.breakdown, details: w.composite.details || null } : null,
         scoreBreakdown: w.scoreBreakdown || null,
+        scoreDetails: w.composite?.details || null,
         joinedAt: w.joinedAt || null,
         lastSeenAt: w.lastSeenAt || null,
       };
@@ -8791,7 +8804,7 @@ const PRISM_EARN_COOLDOWN_TABLE = {
   achievement: 5 * 60_000,
 };
 // Global daily cap for non-game earn sources (prevents coin inflation exploits)
-const NON_GAME_DAILY_EARN_CAP = 500;
+const NON_GAME_DAILY_EARN_CAP = 1500;
 const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;
 
 // Known CEX/Bridge/DEX addresses for labeling

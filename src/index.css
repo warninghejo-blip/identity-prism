@@ -212,6 +212,22 @@ body:has(.page-shell) #root > * {
   50% { opacity: 0.8; filter: brightness(1.15); }
 }
 
+@keyframes ionic-flicker {
+  0%, 100% { opacity: 1; }
+  25% { opacity: 0.85; filter: brightness(1.2); }
+  75% { opacity: 0.8; filter: brightness(1.25); }
+}
+
+@keyframes pulsar-ping {
+  0%, 100% { box-shadow: 0 0 35px -2px rgba(16,185,129,0.5); }
+  50% { box-shadow: 0 0 55px 0px rgba(16,185,129,0.7); }
+}
+
+@keyframes singularity-collapse {
+  0%, 100% { filter: hue-rotate(0deg) brightness(1); }
+  50% { filter: hue-rotate(30deg) brightness(1.3); }
+}
+
 /* ── PageShell — shared cosmic background ── */
 .page-shell {
   position: relative;

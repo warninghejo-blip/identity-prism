@@ -55,6 +55,9 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
       );
       tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
       tx.feePayer = new SolPK(walletAddress);
+      const simulation = await conn.simulateTransaction(tx, undefined, { sigVerify: false, replaceRecentBlockhash: true });
+      if (simulation.value.err) throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
+      tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
       const signed = await wallet.signTransaction(tx);
       const sig = await conn.sendRawTransaction(signed.serialize());
       toast.info('Confirming transaction...');
