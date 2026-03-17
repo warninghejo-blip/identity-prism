@@ -268,40 +268,10 @@ export function useWalletData(address?: string) {
           throw lastError ?? new Error('All Helius RPC endpoints failed.');
         };
 
-        // 1. Fast first page + background deep scan
-        //    Page 1 runs in parallel with balance/tokens → instant first render.
-        //    Remaining pages (2-10) load in background → update score silently.
-        const {
-          balance,
-          firstPageSigs,
-          tokenAccountsResponse,
-          conn: usedConn,
-        } = await withHeliusRpc(async (conn) => {
-          const [balance, firstPageSigs, tokenAccountsResponse] = await Promise.all([
-            conn.getBalance(publicKey),
-            conn.getSignaturesForAddress(publicKey, { limit: 1000 }),
-            conn.getParsedTokenAccountsByOwner(publicKey, {
-              programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-            }),
-          ]);
-          return { balance, firstPageSigs, tokenAccountsResponse, conn };
-        });
-        emitScan('transactions', 25);
-
-        // Use first page for initial render
-        const signatures = firstPageSigs;
-        const needsDeepScan = firstPageSigs.length === 1000; // more pages exist
-
-        emitScan('transactions', 35);
-        const solBalance = balance / SOL_LAMPORTS;
-        const txCount = signatures.length;
-        let firstTxDate = new Date();
-        if (signatures.length > 0) {
-          const oldest = signatures[signatures.length - 1];
-          if (oldest.blockTime) firstTxDate = new Date(oldest.blockTime * 1000);
-        }
-        const walletAgeDays = Math.floor((Date.now() - firstTxDate.getTime()) / (1000 * 60 * 60 * 24));
-        const avgTxPerDay30d = txCount / Math.max(1, Math.min(30, walletAgeDays));
+        // 1. Fast first page + DAS in parallel
+        //    RPC batch (balance/sigs/tokens) and DAS getAssetsByOwner are independent
+        //    → run concurrently to cut scan time roughly in half.
+        //    Remaining tx pages (2-10) load in background → update score silently.
 
         interface DASAsset {
           id: string;
@@ -337,65 +307,93 @@ export function useWalletData(address?: string) {
         const PREORDER_MINT = '2DMMamkkxQ6zDMBtkFp8KH7FoWzBMBA1CGTYwom4QH6Z';
         const PREORDER_COLLECTION = '3uejyD3ZwHDGwT8n6KctN3Stnjn9Nih79oXES9VqA38D';
 
-        let assets: DASAsset[] = [];
-        let dasError: unknown = null;
-        for (const [index, rpcUrl] of heliusRpcUrls.entries()) {
-          try {
-            if (isDev) {
-              console.log(`%c[DAS Request] Fetching assets for ${address}`, 'color: #fbbf24;');
-            }
-            const response = await fetch(rpcUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(proxyHeaders ?? {}),
-              },
-              body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: 'identity-prism-scan',
-                method: 'getAssetsByOwner',
-                params: {
-                  ownerAddress: address,
-                  page: 1,
-                  limit: 1000,
-                  displayOptions: {
-                    showCollectionMetadata: true,
-                    showFungible: true,
-                  },
-                },
-              }),
-            });
-
-            if (!response.ok) {
-              if (response.status === 429) {
-                throw new Error('DAS rate limited');
+        // DAS fetch helper (independent of RPC connection)
+        const fetchDasAssets = async (): Promise<DASAsset[]> => {
+          let dasError: unknown = null;
+          for (const [index, rpcUrl] of heliusRpcUrls.entries()) {
+            try {
+              if (isDev) {
+                console.log(`%c[DAS Request] Fetching assets for ${address}`, 'color: #fbbf24;');
               }
-              console.error(`%c[DAS Error] HTTP ${response.status}`, 'color: #ef4444;');
-              throw new Error(`DAS API returned ${response.status}`);
-            }
+              const response = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(proxyHeaders ?? {}),
+                },
+                body: JSON.stringify({
+                  jsonrpc: '2.0',
+                  id: 'identity-prism-scan',
+                  method: 'getAssetsByOwner',
+                  params: {
+                    ownerAddress: address,
+                    page: 1,
+                    limit: 1000,
+                    displayOptions: {
+                      showCollectionMetadata: true,
+                      showFungible: true,
+                    },
+                  },
+                }),
+              });
 
-            const dasResponse = (await response.json()) as {
-              result?: { items: DASAsset[] };
-              error?: { message?: string };
-            };
-            if (dasResponse.error) {
-              console.error(`%c[DAS Error]`, 'color: #ef4444;', dasResponse.error);
-              throw new Error(dasResponse.error.message || 'DAS API error');
-            }
-            assets = (dasResponse.result?.items as DASAsset[]) || [];
-            dasError = null;
-            break;
-          } catch (error) {
-            dasError = error;
-            if (isDev) {
-              console.warn(`[Helius DAS] Attempt ${index + 1}/${heliusRpcUrls.length} failed.`, error);
+              if (!response.ok) {
+                if (response.status === 429) throw new Error('DAS rate limited');
+                console.error(`%c[DAS Error] HTTP ${response.status}`, 'color: #ef4444;');
+                throw new Error(`DAS API returned ${response.status}`);
+              }
+
+              const dasResponse = (await response.json()) as {
+                result?: { items: DASAsset[] };
+                error?: { message?: string };
+              };
+              if (dasResponse.error) {
+                console.error(`%c[DAS Error]`, 'color: #ef4444;', dasResponse.error);
+                throw new Error(dasResponse.error.message || 'DAS API error');
+              }
+              return (dasResponse.result?.items as DASAsset[]) || [];
+            } catch (error) {
+              dasError = error;
+              if (isDev) {
+                console.warn(`[Helius DAS] Attempt ${index + 1}/${heliusRpcUrls.length} failed.`, error);
+              }
             }
           }
-        }
+          throw dasError ?? new Error('All DAS endpoints failed');
+        };
 
-        if (dasError) {
-          throw dasError;
+        // Run RPC batch and DAS concurrently
+        const [rpcResult, assets] = await Promise.all([
+          withHeliusRpc(async (conn) => {
+            const [balance, firstPageSigs, tokenAccountsResponse] = await Promise.all([
+              conn.getBalance(publicKey),
+              conn.getSignaturesForAddress(publicKey, { limit: 1000 }),
+              conn.getParsedTokenAccountsByOwner(publicKey, {
+                programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+              }),
+            ]);
+            return { balance, firstPageSigs, tokenAccountsResponse, conn };
+          }),
+          fetchDasAssets(),
+        ]);
+
+        const { balance, firstPageSigs, tokenAccountsResponse, conn: usedConn } = rpcResult;
+        emitScan('transactions', 35);
+
+        // Use first page for initial render
+        const signatures = firstPageSigs;
+        const needsDeepScan = firstPageSigs.length === 1000; // more pages exist
+
+        const solBalance = balance / SOL_LAMPORTS;
+        const txCount = signatures.length;
+        let firstTxDate = new Date();
+        if (signatures.length > 0) {
+          const oldest = signatures[signatures.length - 1];
+          if (oldest.blockTime) firstTxDate = new Date(oldest.blockTime * 1000);
         }
+        const walletAgeDays = Math.floor((Date.now() - firstTxDate.getTime()) / (1000 * 60 * 60 * 24));
+        const avgTxPerDay30d = txCount / Math.max(1, Math.min(30, walletAgeDays));
+
         emitScan('assets', 55);
         const totalAssetsCount = assets.length;
 

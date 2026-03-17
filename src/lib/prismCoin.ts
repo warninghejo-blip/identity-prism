@@ -7,7 +7,7 @@
  * Fallback: localStorage for offline/anonymous use.
  */
 
-import { getApiBase, getSessionJwt } from '@/components/prism/shared';
+import { getApiBase, ensureJwt } from '@/components/prism/shared';
 
 // ── Types ──
 
@@ -93,7 +93,7 @@ async function apiCall<T>(path: string, body?: unknown): Promise<T | null> {
     const base = getApiBase();
     const headers: Record<string, string> = {};
     if (body) headers['Content-Type'] = 'application/json';
-    const jwt = getSessionJwt();
+    const jwt = await ensureJwt();
     if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
     const res = await fetch(`${base}${path}`, {
       method: body ? 'POST' : 'GET',
@@ -175,6 +175,14 @@ export function markScanEarned(address: string): void {
  * Tries server first, falls back to localStorage.
  */
 export async function getPrismBalance(address: string): Promise<PrismBalance> {
+  // Check prefetch cache first
+  try {
+    const { getCachedBalance } = await import('@/lib/prefetch');
+    const cached = getCachedBalance(address);
+    if (cached) return cached as PrismBalance;
+  } catch {
+    /* ignore */
+  }
   const serverBalance = await apiCall<PrismBalance>(`/api/prism/balance?address=${encodeURIComponent(address)}`);
   if (serverBalance) return serverBalance;
   return getLocalBalance(address);

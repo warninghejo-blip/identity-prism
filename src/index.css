@@ -3214,9 +3214,9 @@ body:has(.page-shell) #root > * {
   0%   { opacity: 1; }
   100% { opacity: 0; }
 }
-/* Black hole visual: grows slightly before wormhole tunnel covers everything */
+/* Black hole visual: fade out with the rest of the page */
 .bh-returning .blackhole-visual {
-  animation: wt-bh-grow 0.5s ease-out forwards !important;
+  animation: bh-simple-fade 0.3s ease-out forwards !important;
   cursor: default !important;
   z-index: 100 !important;
 }

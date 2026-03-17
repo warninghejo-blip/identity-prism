@@ -427,6 +427,28 @@ export async function obtainJwt(wallet: {
   return _jwtInFlight;
 }
 
+// ── Global wallet ref for auto-JWT in apiCall ──
+
+type AuthWalletRef = {
+  publicKey?: { toBase58(): string } | null;
+  signMessage?: (msg: Uint8Array) => Promise<Uint8Array>;
+};
+
+let _authWallet: AuthWalletRef | null = null;
+
+/** Store wallet ref so apiCall can auto-obtain JWT when needed. */
+export function setAuthWallet(w: AuthWalletRef | null): void {
+  _authWallet = w;
+}
+
+/** Try to get a valid JWT, auto-obtaining if wallet is available. */
+export async function ensureJwt(): Promise<string | null> {
+  const existing = getSessionJwt();
+  if (existing) return existing;
+  if (!_authWallet) return null;
+  return obtainJwt(_authWallet);
+}
+
 // ── Server health check ──
 
 let _serverAvailable: boolean | null = null;

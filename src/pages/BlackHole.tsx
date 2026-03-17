@@ -1,30 +1,41 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, ComputeBudgetProgram } from '@solana/web3.js';
-import { 
-  TOKEN_PROGRAM_ID, 
+import {
+  TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
-  createBurnInstruction, 
-  createCloseAccountInstruction 
+  createBurnInstruction,
+  createCloseAccountInstruction,
 } from '@solana/spl-token';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { toast, Toaster as Sonner } from 'sonner';
-import { Loader2, Trash2, RefreshCw, Shield, AlertTriangle, Flame, Info, ArrowLeft, ExternalLink, ArrowUpDown } from 'lucide-react';
-import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, TOKEN_ADDRESSES, SEEKER_TOKEN, BLUE_CHIP_COLLECTIONS } from '@/constants';
+import {
+  Loader2,
+  Trash2,
+  RefreshCw,
+  Shield,
+  AlertTriangle,
+  Flame,
+  Info,
+  ArrowLeft,
+  ExternalLink,
+  ArrowUpDown,
+} from 'lucide-react';
+import {
+  getHeliusProxyUrl,
+  getHeliusRpcUrl,
+  getCollectionMint,
+  TOKEN_ADDRESSES,
+  SEEKER_TOKEN,
+  BLUE_CHIP_COLLECTIONS,
+} from '@/constants';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { earnPrism, calculateBurnPrism } from '@/lib/prismCoin';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 type AssetStatus = 'protected' | 'valuable' | 'burnable';
 
@@ -136,7 +147,7 @@ const fetchCollectionMarketStats = async (
   symbol?: string,
   collectionId?: string,
   collectionName?: string,
-  sampleMint?: string
+  sampleMint?: string,
 ): Promise<MarketStats> => {
   if (!proxyBase || (!symbol && !collectionId && !collectionName && !sampleMint)) {
     return { status: 'unknown' };
@@ -167,12 +178,7 @@ const fetchSolPriceUsd = async (proxyBase: string | null) => {
     const response = await fetch(`${proxyBase}/api/market/sol-price`);
     if (!response.ok) return null;
     const data = await response.json();
-    return (
-      parseNumber(data?.solana?.usd) ??
-      parseNumber(data?.usd) ??
-      parseNumber(data?.price) ??
-      null
-    );
+    return parseNumber(data?.solana?.usd) ?? parseNumber(data?.usd) ?? parseNumber(data?.price) ?? null;
   } catch {
     return null;
   }
@@ -203,7 +209,7 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
   } catch {}
 
   // 2) Raydium fallback for anything DexScreener missed
-  const remaining = mints.filter(m => !prices.has(m));
+  const remaining = mints.filter((m) => !prices.has(m));
   if (remaining.length > 0) {
     try {
       const RAYDIUM_BATCH = 100;
@@ -229,16 +235,13 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
 
 const RENT_RECLAIM_SOL = 0.002;
 const VALUE_THRESHOLD_SOL = 0.0015;
-const COMMISSION_RATE_DEFAULT = 0.10;
+const COMMISSION_RATE_DEFAULT = 0.1;
 const COMMISSION_RATE_MINTED = 0.02;
 const ESTIMATED_FEE_SOL = 0.00015; // conservative estimate for base + priority fee
 const MIN_NET_RETURN_SOL = 0.0005; // minimum net return to show as burnable
 const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
 
-const PROTECTED_MINTS = new Set<string>([
-  SEEKER_TOKEN.MINT,
-  TOKEN_ADDRESSES.CHAPTER2_PREORDER,
-]);
+const PROTECTED_MINTS = new Set<string>([SEEKER_TOKEN.MINT, TOKEN_ADDRESSES.CHAPTER2_PREORDER]);
 
 const PROTECTED_COLLECTIONS = new Set<string>([
   TOKEN_ADDRESSES.SEEKER_GENESIS_COLLECTION,
@@ -247,9 +250,7 @@ const PROTECTED_COLLECTIONS = new Set<string>([
   ...BLUE_CHIP_COLLECTIONS,
 ]);
 
-const PROTECTED_SYMBOLS = new Set<string>([
-  'SKR', 'SeekerGT', 'SAGA',
-]);
+const PROTECTED_SYMBOLS = new Set<string>(['SKR', 'SeekerGT', 'SAGA']);
 
 const PROTECTED_NAME_PATTERNS = [
   /seeker\s*genesis/i,
@@ -272,7 +273,7 @@ const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: str
   if (token.symbol && PROTECTED_SYMBOLS.has(token.symbol)) {
     return { status: 'protected', reason: 'Ecosystem token' };
   }
-  if (token.name && PROTECTED_NAME_PATTERNS.some(p => p.test(token.name!))) {
+  if (token.name && PROTECTED_NAME_PATTERNS.some((p) => p.test(token.name!))) {
     return { status: 'protected', reason: 'Ecosystem asset' };
   }
   if (token.isNft && token.marketStatus === 'listed') {
@@ -295,7 +296,7 @@ const BlackHole = () => {
 
   // Fade out wormhole tunnel (from Card→BH transition) + remove preloader
   useEffect(() => {
-    fadeOutTransition(400);
+    fadeOutTransition(50);
     // Also handle legacy forward-blackout overlay
     const fwdOverlay = document.getElementById('bh-forward-blackout');
     if (fwdOverlay) {
@@ -375,26 +376,29 @@ const BlackHole = () => {
 
   const getVisibleTokens = useCallback(
     (list: TokenAccount[] = tokens, showAll = showAllAssets) => {
-      let closeable = list.filter(token => token.closeable !== false);
-      if (!showAll) closeable = closeable.filter(token => token.isCandidate);
-      if (assetFilter === 'nft') closeable = closeable.filter(token => token.isNft);
-      else if (assetFilter === 'token') closeable = closeable.filter(token => !token.isNft);
+      let closeable = list.filter((token) => token.closeable !== false);
+      if (!showAll) closeable = closeable.filter((token) => token.isCandidate);
+      if (assetFilter === 'nft') closeable = closeable.filter((token) => token.isNft);
+      else if (assetFilter === 'token') closeable = closeable.filter((token) => !token.isNft);
       return closeable;
     },
-    [showAllAssets, tokens, assetFilter]
+    [showAllAssets, tokens, assetFilter],
   );
 
   // Total recoverable SOL from all burnable tokens (shown at top before selection)
   const totalRecoverableSol = useMemo(() => {
     return tokens
-      .filter(t => t.closeable !== false && t.assetStatus === 'burnable')
+      .filter((t) => t.closeable !== false && t.assetStatus === 'burnable')
       .reduce((sum, t) => sum + (t.rentSol || 0), 0);
   }, [tokens]);
+
+  const cancelledRef = useRef(false);
 
   const fetchTokens = useCallback(async (owner?: PublicKey | null) => {
     const targetOwner = owner ?? publicKeyRef.current;
     if (!targetOwner) return;
-    
+
+    cancelledRef.current = false;
     setIsLoading(true);
     setSelectedTokens(new Set());
 
@@ -432,15 +436,16 @@ const BlackHole = () => {
           let hasWithheldFees = false;
           try {
             hasWithheldFees = exts.some(
-              (e: any) => e.extension === 'transferFeeAmount' &&
-                e.state?.withheldAmount && BigInt(e.state.withheldAmount) > 0n
+              (e: any) =>
+                e.extension === 'transferFeeAmount' && e.state?.withheldAmount && BigInt(e.state.withheldAmount) > 0n,
             );
           } catch {}
           let hasConfidentialPending = false;
           try {
             hasConfidentialPending = exts.some(
-              (e: any) => e.extension === 'confidentialTransferAccount' &&
-                (e.state?.pending_balance_lo > 0 || e.state?.pending_balance_hi > 0)
+              (e: any) =>
+                e.extension === 'confidentialTransferAccount' &&
+                (e.state?.pending_balance_lo > 0 || e.state?.pending_balance_hi > 0),
             );
           } catch {}
           const canClose = !isFrozen && !hasWithheldFees && !hasConfidentialPending;
@@ -467,7 +472,7 @@ const BlackHole = () => {
       fetchStep = 'getAssetBatch';
       const heliusUrl = getHeliusRpcUrl(targetOwner.toBase58());
       if (heliusUrl && parsedTokens.length > 0) {
-        const mints = [...new Set(parsedTokens.map(t => t.mint))];
+        const mints = [...new Set(parsedTokens.map((t) => t.mint))];
         const BATCH_SIZE = 100;
         const metadataMap = new Map<
           string,
@@ -529,8 +534,8 @@ const BlackHole = () => {
                   image: content.links?.image || content.files?.[0]?.uri,
                   isNft,
                   collectionId: hasCollection ? collectionGroup.group_value : undefined,
-                  collectionName: hasCollection ? (collectionMeta.name || metadata.name) : undefined,
-                  collectionSymbol: hasCollection ? (collectionMeta.symbol || metadata.symbol) : undefined,
+                  collectionName: hasCollection ? collectionMeta.name || metadata.name : undefined,
+                  collectionSymbol: hasCollection ? collectionMeta.symbol || metadata.symbol : undefined,
                   priceUsd,
                 });
               });
@@ -540,7 +545,7 @@ const BlackHole = () => {
           }
         }
 
-        parsedTokens.forEach(t => {
+        parsedTokens.forEach((t) => {
           const meta = metadataMap.get(t.mint);
           if (!meta) return;
           t.name = meta.name;
@@ -557,7 +562,7 @@ const BlackHole = () => {
         const ourCollection = getCollectionMint();
         if (ourCollection) {
           // First check regular tokens
-          let ownsCard = parsedTokens.some(t => t.collectionId === ourCollection);
+          let ownsCard = parsedTokens.some((t) => t.collectionId === ourCollection);
           // If not found and heliusUrl available, check compressed NFTs via DAS searchAssets
           if (!ownsCard && heliusUrl) {
             try {
@@ -591,7 +596,7 @@ const BlackHole = () => {
       }
 
       // Tokens without Helius DAS price data are treated as zero-value dust
-      parsedTokens.forEach(token => {
+      parsedTokens.forEach((token) => {
         if (token.isNft === undefined) {
           const isMaybeNft = token.decimals === 0 && token.uiAmount <= 1;
           token.isNft = isMaybeNft;
@@ -601,11 +606,11 @@ const BlackHole = () => {
       fetchStep = 'jupiterPriceFallback';
       // Jupiter price fallback for fungible tokens without DAS price
       const noPriceMints = parsedTokens
-        .filter(t => !t.isNft && t.priceUsd == null && t.uiAmount > 0)
-        .map(t => t.mint);
+        .filter((t) => !t.isNft && t.priceUsd == null && t.uiAmount > 0)
+        .map((t) => t.mint);
       if (noPriceMints.length > 0) {
         const jupPrices = await fetchFallbackPrices([...new Set(noPriceMints)]);
-        parsedTokens.forEach(t => {
+        parsedTokens.forEach((t) => {
           if (!t.isNft && t.priceUsd == null) {
             const p = jupPrices.get(t.mint);
             if (p) t.priceUsd = p;
@@ -614,10 +619,13 @@ const BlackHole = () => {
       }
 
       fetchStep = 'collectionMarketStats';
-      const collectionLookups = new Map<string, { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }>();
+      const collectionLookups = new Map<
+        string,
+        { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }
+      >();
       parsedTokens
-        .filter(token => token.isNft && token.collectionId)
-        .forEach(token => {
+        .filter((token) => token.isNft && token.collectionId)
+        .forEach((token) => {
           const key = `${token.collectionSymbol ?? ''}|${token.collectionId}`;
           if (!collectionLookups.has(key)) {
             collectionLookups.set(key, {
@@ -634,13 +642,19 @@ const BlackHole = () => {
           Array.from(collectionLookups.entries()).map(async ([key, lookup]) => {
             const cached = collectionMarketCache.current.get(key);
             if (cached) return [key, cached] as const;
-            const stats = await fetchCollectionMarketStats(proxyBase, lookup.symbol, lookup.collectionId, lookup.collectionName, lookup.sampleMint);
+            const stats = await fetchCollectionMarketStats(
+              proxyBase,
+              lookup.symbol,
+              lookup.collectionId,
+              lookup.collectionName,
+              lookup.sampleMint,
+            );
             collectionMarketCache.current.set(key, stats);
             return [key, stats] as const;
-          })
+          }),
         );
         const statusMap = new Map(statuses);
-        parsedTokens.forEach(token => {
+        parsedTokens.forEach((token) => {
           if (!token.isNft || !token.collectionId) return;
           const key = `${token.collectionSymbol ?? ''}|${token.collectionId}`;
           const stats = statusMap.get(key);
@@ -651,13 +665,13 @@ const BlackHole = () => {
           token.meUrl = stats?.meUrl ?? null;
         });
       } else {
-        parsedTokens.forEach(token => {
+        parsedTokens.forEach((token) => {
           if (token.isNft) token.marketStatus = 'unknown';
         });
       }
 
       fetchStep = 'valueCalculation';
-      parsedTokens.forEach(token => {
+      parsedTokens.forEach((token) => {
         // For NFTs: prefer marketFloorSol, fall back to DAS priceUsd
         if (token.isNft) {
           if (token.marketFloorSol !== null && token.marketFloorSol !== undefined && token.marketFloorSol > 0) {
@@ -738,15 +752,16 @@ const BlackHole = () => {
         return 0;
       });
 
+      if (cancelledRef.current) return;
       setTokens(parsedTokens);
       toast.success(`Found ${parsedTokens.length} token accounts`);
     } catch (err: any) {
+      if (cancelledRef.current) return;
       console.error(`[BlackHole] fetchTokens error at step "${fetchStep}":`, err);
       toast.error(`Failed to fetch tokens (${fetchStep}): ${err?.message ?? String(err)}`);
     } finally {
-      setIsLoading(false);
+      if (!cancelledRef.current) setIsLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -754,6 +769,9 @@ const BlackHole = () => {
     if (!ownerBase58 || lastOwnerRef.current === ownerBase58) return;
     lastOwnerRef.current = ownerBase58;
     fetchTokens(ownerPublicKey);
+    return () => {
+      cancelledRef.current = true;
+    };
   }, [ownerPublicKey, fetchTokens]);
 
   const toggleSelection = (pubkey: string) => {
@@ -768,14 +786,12 @@ const BlackHole = () => {
 
   const selectAll = () => {
     const visibleTokens = getVisibleTokens();
-    const selectedVisibleCount = visibleTokens.filter(token =>
-      selectedTokens.has(token.pubkey.toBase58())
-    ).length;
+    const selectedVisibleCount = visibleTokens.filter((token) => selectedTokens.has(token.pubkey.toBase58())).length;
 
     if (visibleTokens.length > 0 && selectedVisibleCount === visibleTokens.length) {
       setSelectedTokens(new Set());
     } else {
-      setSelectedTokens(new Set(visibleTokens.map(token => token.pubkey.toBase58())));
+      setSelectedTokens(new Set(visibleTokens.map((token) => token.pubkey.toBase58())));
     }
   };
 
@@ -784,9 +800,9 @@ const BlackHole = () => {
     setShowAllAssets(next);
     if (!next) {
       const candidateKeys = new Set(
-        tokens.filter(token => token.isCandidate).map(token => token.pubkey.toBase58())
+        tokens.filter((token) => token.isCandidate).map((token) => token.pubkey.toBase58()),
       );
-      setSelectedTokens(prev => new Set([...prev].filter(key => candidateKeys.has(key))));
+      setSelectedTokens((prev) => new Set([...prev].filter((key) => candidateKeys.has(key))));
     }
   };
 
@@ -807,12 +823,12 @@ const BlackHole = () => {
       // Set compute budget to prevent wallet from adding excessive priority fees
       transaction.add(
         ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 })
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
       );
-      let instructionCount = 0;
-      
-      const targets = tokens.filter(t => selectedTokens.has(t.pubkey.toBase58()));
-      const safeTargets = targets.filter(t => t.assetStatus !== 'protected' && t.closeable !== false);
+      const instructionCount = 0;
+
+      const targets = tokens.filter((t) => selectedTokens.has(t.pubkey.toBase58()));
+      const safeTargets = targets.filter((t) => t.assetStatus !== 'protected' && t.closeable !== false);
       if (safeTargets.length < targets.length) {
         const blocked = targets.length - safeTargets.length;
         toast.warning(`${blocked} protected asset(s) excluded from burn`);
@@ -836,18 +852,21 @@ const BlackHole = () => {
         startY: `${25 + Math.random() * 45}vh`,
       }));
       setIncinerationTokens(animationTargets);
-      
+
       // Commission setup
       const totalReclaimLamports = safeTargets.reduce((sum, t) => sum + t.lamports, 0);
       const isTreasury = publicKey.toBase58() === TREASURY_ADDRESS;
       const commissionRate = hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT;
       const commissionLamports = isTreasury ? 0 : Math.round(totalReclaimLamports * commissionRate);
-      const netReclaim = Math.max(0, (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL - ESTIMATED_FEE_SOL);
+      const netReclaim = Math.max(
+        0,
+        (totalReclaimLamports - commissionLamports) / LAMPORTS_PER_SOL - ESTIMATED_FEE_SOL,
+      );
 
       // Chunk accounts into batches to stay within Solana tx size limit
       // Each account needs 1-2 instructions (burn + close); ~8 accounts per tx is safe
       const ACCOUNTS_PER_TX = 8;
-      const chunks: typeof safeTargets[] = [];
+      const chunks: (typeof safeTargets)[] = [];
       for (let i = 0; i < safeTargets.length; i += ACCOUNTS_PER_TX) {
         chunks.push(safeTargets.slice(i, i + ACCOUNTS_PER_TX));
       }
@@ -858,7 +877,7 @@ const BlackHole = () => {
         const tx = new Transaction();
         tx.add(
           ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
-          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 })
+          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
         );
 
         for (const token of chunks[ci]) {
@@ -871,19 +890,11 @@ const BlackHole = () => {
                 publicKey,
                 token.amount,
                 undefined,
-                token.programId
-              )
+                token.programId,
+              ),
             );
           }
-          tx.add(
-            createCloseAccountInstruction(
-              token.pubkey,
-              publicKey,
-              publicKey,
-              undefined,
-              token.programId
-            )
-          );
+          tx.add(createCloseAccountInstruction(token.pubkey, publicKey, publicKey, undefined, token.programId));
         }
 
         // Add commission transfer to the last chunk only
@@ -893,7 +904,7 @@ const BlackHole = () => {
               fromPubkey: publicKey,
               toPubkey: new PublicKey(TREASURY_ADDRESS),
               lamports: commissionLamports,
-            })
+            }),
           );
         }
 
@@ -901,13 +912,13 @@ const BlackHole = () => {
       }
 
       if (transactions.length === 0) {
-        toast.info("Nothing to do");
+        toast.info('Nothing to do');
         setIsBurning(false);
         return;
       }
 
       toast.info(`Preparing ${transactions.length} transaction${transactions.length > 1 ? 's' : ''}...`, {
-        description: `Burning ${safeTargets.length} accounts · returning ~${netReclaim.toFixed(4)} SOL`
+        description: `Burning ${safeTargets.length} accounts · returning ~${netReclaim.toFixed(4)} SOL`,
       });
 
       // Send all transaction chunks sequentially
@@ -934,8 +945,14 @@ const BlackHole = () => {
             replaceRecentBlockhash: true,
           });
           if (simulation.value.err) {
-            console.error(`[BlackHole] simulation failed for chunk ${ti + 1}`, simulation.value.err, simulation.value.logs);
-            throw new Error(`Transaction ${ti + 1}/${transactions.length} simulation failed: ${JSON.stringify(simulation.value.err)}`);
+            console.error(
+              `[BlackHole] simulation failed for chunk ${ti + 1}`,
+              simulation.value.err,
+              simulation.value.logs,
+            );
+            throw new Error(
+              `Transaction ${ti + 1}/${transactions.length} simulation failed: ${JSON.stringify(simulation.value.err)}`,
+            );
           }
         } catch (simError) {
           if (simError instanceof Error && simError.message.includes('simulation failed')) {
@@ -958,12 +975,12 @@ const BlackHole = () => {
           ? signTransaction(tx).then(async (signed) =>
               connection.sendRawTransaction(
                 signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-                { skipPreflight: true, preflightCommitment: 'confirmed' }
-              )
+                { skipPreflight: true, preflightCommitment: 'confirmed' },
+              ),
             )
           : sendTransaction(tx, connection);
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Wallet signing timed out — please try again')), 120_000)
+          setTimeout(() => reject(new Error('Wallet signing timed out — please try again')), 120_000),
         );
         try {
           signature = await Promise.race([signPromise, timeoutPromise]);
@@ -980,14 +997,14 @@ const BlackHole = () => {
 
         if (transactions.length > 1) {
           toast.info(`Transaction ${ti + 1}/${transactions.length} sent`, {
-            description: `Burning accounts ${ti * ACCOUNTS_PER_TX + 1}-${Math.min((ti + 1) * ACCOUNTS_PER_TX, safeTargets.length)}`
+            description: `Burning accounts ${ti * ACCOUNTS_PER_TX + 1}-${Math.min((ti + 1) * ACCOUNTS_PER_TX, safeTargets.length)}`,
           });
         }
 
         // Wait for confirmation before sending next chunk
         let confirmed = false;
         for (let attempt = 0; attempt < 60; attempt++) {
-          await new Promise(r => setTimeout(r, 1500));
+          await new Promise((r) => setTimeout(r, 1500));
           try {
             const status = await connection.getSignatureStatus(signature);
             const conf = status?.value?.confirmationStatus;
@@ -1008,37 +1025,41 @@ const BlackHole = () => {
         }
       }
 
-      toast.success("Incineration complete!", {
-        description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee) in ${signatures.length} tx${signatures.length > 1 ? 's' : ''}`
+      toast.success('Incineration complete!', {
+        description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee) in ${signatures.length} tx${signatures.length > 1 ? 's' : ''}`,
       });
 
       // Award Coins for burning
       if (publicKey) {
         const addr = publicKey.toBase58();
-        const nftsBurned = safeTargets.filter(t => t.isNft).length;
+        const nftsBurned = safeTargets.filter((t) => t.isNft).length;
         const tokensBurned = safeTargets.length - nftsBurned;
         const prismEarned = calculateBurnPrism(tokensBurned, nftsBurned);
         if (prismEarned > 0) {
-          earnPrism(addr, 'burn_tokens', prismEarned, `Burned ${safeTargets.length} asset(s) in Black Hole`).catch(() => {});
+          earnPrism(addr, 'burn_tokens', prismEarned, `Burned ${safeTargets.length} asset(s) in Black Hole`).catch(
+            () => {},
+          );
           toast.success(`+${prismEarned} Coins earned!`, { duration: 3000 });
         }
         // Quest auto-tracking
-        import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
-          const qs = getQuestState(addr);
-          const onComplete = (q: { name: string }) => toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
-          incrementQuest(qs, 'daily_burn', safeTargets.length, onComplete);
-          incrementQuest(qs, 'ot_first_burn', 1, onComplete);
-          incrementQuest(qs, 'weekly_burn5', safeTargets.length, onComplete);
-          incrementQuest(qs, 'ot_burn100', safeTargets.length, onComplete);
-        }).catch(() => {});
+        import('@/lib/prismQuests')
+          .then(({ getQuestState, incrementQuest }) => {
+            const qs = getQuestState(addr);
+            const onComplete = (q: { name: string }) =>
+              toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
+            incrementQuest(qs, 'daily_burn', safeTargets.length, onComplete);
+            incrementQuest(qs, 'ot_first_burn', 1, onComplete);
+            incrementQuest(qs, 'weekly_burn5', safeTargets.length, onComplete);
+            incrementQuest(qs, 'ot_burn100', safeTargets.length, onComplete);
+          })
+          .catch(() => {});
       }
 
       // Refresh — pass ownerPublicKey so it works for viewed wallets too
       fetchTokens(ownerPublicKey);
-
     } catch (error) {
-      toast.error("Incineration failed", {
-        description: error instanceof Error ? error.message : "Unknown error"
+      toast.error('Incineration failed', {
+        description: error instanceof Error ? error.message : 'Unknown error',
       });
     } finally {
       setIsBurning(false);
@@ -1047,14 +1068,17 @@ const BlackHole = () => {
 
   const visibleTokens = getVisibleTokens();
 
-  const handleSort = useCallback((field: 'value' | 'return' | 'status') => {
-    if (sortField === field) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir('desc');
-    }
-  }, [sortField]);
+  const handleSort = useCallback(
+    (field: 'value' | 'return' | 'status') => {
+      if (sortField === field) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortField(field);
+        setSortDir('desc');
+      }
+    },
+    [sortField],
+  );
 
   const sortedTokens = useMemo(() => {
     if (!sortField) return visibleTokens;
@@ -1079,8 +1103,8 @@ const BlackHole = () => {
   }, [visibleTokens, sortField, sortDir]);
 
   const summary = useMemo(() => {
-    const selected = tokens.filter(t => selectedTokens.has(t.pubkey.toBase58()));
-    const burnable = selected.filter(t => t.assetStatus !== 'protected');
+    const selected = tokens.filter((t) => selectedTokens.has(t.pubkey.toBase58()));
+    const burnable = selected.filter((t) => t.assetStatus !== 'protected');
     const totalAccounts = burnable.length;
     const grossReclaim = burnable.reduce((sum, t) => sum + t.rentSol, 0);
     const totalValueLost = burnable.reduce((sum, t) => sum + (t.valueSol && t.valueSol > 0.001 ? t.valueSol : 0), 0);
@@ -1088,16 +1112,25 @@ const BlackHole = () => {
     const commission = grossReclaim * commissionRate;
     const chunkCount = Math.max(1, Math.ceil(totalAccounts / 8));
     const netReturn = Math.max(0, grossReclaim - commission - ESTIMATED_FEE_SOL * chunkCount);
-    const protectedCount = tokens.filter(t => t.assetStatus === 'protected').length;
-    const valuableCount = tokens.filter(t => t.assetStatus === 'valuable').length;
-    const burnableCount = tokens.filter(t => t.assetStatus === 'burnable').length;
-    return { totalAccounts, grossReclaim, commission, netReturn, totalValueLost, protectedCount, valuableCount, burnableCount };
+    const protectedCount = tokens.filter((t) => t.assetStatus === 'protected').length;
+    const valuableCount = tokens.filter((t) => t.assetStatus === 'valuable').length;
+    const burnableCount = tokens.filter((t) => t.assetStatus === 'burnable').length;
+    return {
+      totalAccounts,
+      grossReclaim,
+      commission,
+      netReturn,
+      totalValueLost,
+      protectedCount,
+      valuableCount,
+      burnableCount,
+    };
   }, [tokens, selectedTokens, hasMintedCard]);
 
   const debrisParticles = useMemo(() => {
     const particles: { key: number; style: React.CSSProperties }[] = [];
     for (let i = 0; i < 14; i++) {
-      const hue = 15 + (i * 7) % 40;
+      const hue = 15 + ((i * 7) % 40);
       const size = 2 + (i % 4) * 1.5;
       particles.push({
         key: i,
@@ -1123,39 +1156,28 @@ const BlackHole = () => {
     if (returning) return;
     setReturning(true);
 
-    // Scroll to top so the BH visual is visible during grow animation
-    const shell = document.querySelector('.blackhole-shell');
-    if (shell) shell.scrollTo({ top: 0, behavior: 'smooth' });
-
-    // Phase 1: BH visual grows slightly
-    const visual = document.querySelector('.blackhole-visual') as HTMLElement;
-    if (visual) {
-      visual.style.animation = 'wt-bh-grow 0.5s ease-out forwards';
-    }
-
-    // Phase 2: Fade transition + navigate
     const addr = ownerPublicKey?.toBase58() ?? addressParam ?? '';
     const target = addr ? `/app?address=${encodeURIComponent(addr)}` : '/app';
-    setTimeout(() => {
-      startFadeTransition(() => {
-        sessionStorage.setItem('fromBlackHole', '1');
-        try {
-          navigate(target, { state: { fromBlackHole: true }, replace: true });
-        } catch {
-          // Fallback for environments where navigate() throws
+    startFadeTransition(() => {
+      sessionStorage.setItem('fromBlackHole', '1');
+      try {
+        navigate(target, { state: { fromBlackHole: true }, replace: true });
+      } catch {
+        // Fallback for environments where navigate() throws
+      }
+      // Safety: if still on /blackhole after 600ms, force a full redirect
+      // (Capacitor WebView can silently drop react-router navigate between route trees)
+      setTimeout(() => {
+        if (window.location.pathname.includes('blackhole')) {
+          window.location.replace(target);
         }
-        // Safety: if still on /blackhole after 600ms, force a full redirect
-        // (Capacitor WebView can silently drop react-router navigate between route trees)
-        setTimeout(() => {
-          if (window.location.pathname.includes('blackhole')) {
-            window.location.replace(target);
-          }
-        }, 600);
-      }, 400);
-    }, 350);
+      }, 600);
+    });
 
     // Safety: reset returning flag after generous timeout so user can retry
-    setTimeout(() => { setReturning(false); }, 2000);
+    setTimeout(() => {
+      setReturning(false);
+    }, 2000);
   }, [returning, ownerPublicKey, addressParam, navigate]);
 
   return (
@@ -1179,7 +1201,13 @@ const BlackHole = () => {
           return (
             <div key={token.id} className="incineration-token" style={style}>
               {token.image ? (
-                <img src={token.image} alt="" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                <img
+                  src={token.image}
+                  alt=""
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
               ) : (
                 <div className="incineration-dot" />
               )}
@@ -1237,7 +1265,8 @@ const BlackHole = () => {
         {!ownerPublicKey ? (
           <div className="blackhole-panel flex flex-col items-center gap-6 py-12 text-center">
             <p className="text-zinc-400 text-sm max-w-md leading-relaxed">
-              Connect your wallet to scan for dust tokens and abandoned NFTs.<br />
+              Connect your wallet to scan for dust tokens and abandoned NFTs.
+              <br />
               Burn them to reclaim locked SOL rent.
             </p>
             <WalletMultiButton className="!bg-gradient-to-r !from-red-600 !to-orange-600 hover:!from-red-500 hover:!to-orange-500 !rounded-xl !h-12 !px-8 !text-base !font-bold !shadow-lg !shadow-red-900/30" />
@@ -1246,253 +1275,313 @@ const BlackHole = () => {
             </p>
           </div>
         ) : (
-        <div className="blackhole-panel space-y-6">
-
-          {/* Description + wallet */}
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pb-4 border-b border-white/6">
-            <div className="text-center sm:text-left max-w-lg">
-              <p className="text-zinc-500 text-sm leading-relaxed">
-                Burn dust tokens and abandoned NFTs to reclaim locked SOL rent. Valuable assets are automatically protected.
-              </p>
-              <p className="text-[11px] mt-1.5 leading-relaxed">
-                {hasMintedCard ? (
-                  <span className="text-emerald-400/80">
-                    <Shield className="inline w-3 h-3 mr-0.5 -mt-0.5" />
-                    ID Holder — reduced fee: <strong>{(COMMISSION_RATE_MINTED * 100).toFixed(0)}%</strong> (vs {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% standard)
-                  </span>
-                ) : (
-                  <span className="text-zinc-500">
-                    Fee: {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% · <span className="text-cyan-400/70">Mint your Identity Prism ID to get only {(COMMISSION_RATE_MINTED * 100).toFixed(0)}%</span>
-                  </span>
-                )}
-              </p>
-            </div>
-            <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0 hidden sm:inline-flex" />
-          </div>
-
-          {/* Asset Summary Stats */}
-          {tokens.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3 text-center">
-                <div className="text-xl font-bold text-zinc-100">{tokens.length}</div>
-                <div className="text-[11px] text-zinc-500 mt-0.5">Total Accounts</div>
-              </div>
-              <div className="bg-emerald-950/20 border border-emerald-900/20 rounded-xl p-3 text-center">
-                <div className="flex items-center justify-center gap-1.5">
-                  <Shield className="h-3.5 w-3.5 text-emerald-400" />
-                  <span className="text-xl font-bold text-emerald-400">{summary.protectedCount}</span>
-                </div>
-                <div className="text-[11px] text-emerald-600/80 mt-0.5">Protected</div>
-              </div>
-              <div className="bg-amber-950/20 border border-amber-900/20 rounded-xl p-3 text-center">
-                <div className="flex items-center justify-center gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                  <span className="text-xl font-bold text-amber-400">{summary.valuableCount}</span>
-                </div>
-                <div className="text-[11px] text-amber-600/80 mt-0.5">Valuable</div>
-              </div>
-              <div className="bg-red-950/20 border border-red-900/20 rounded-xl p-3 text-center">
-                <div className="flex items-center justify-center gap-1.5">
-                  <Flame className="h-3.5 w-3.5 text-red-400" />
-                  <span className="text-xl font-bold text-red-400">{summary.burnableCount}</span>
-                </div>
-                <div className="text-[11px] text-red-600/80 mt-0.5">Burnable</div>
-              </div>
-            </div>
-          )}
-
-          {/* Selection & Burn Summary */}
-          {selectedTokens.size > 0 && (
-            <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-5">
-              <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
-                  <div>
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Accounts</div>
-                    <div className="text-lg font-bold text-red-400 mt-1">{summary.totalAccounts}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Rent Reclaim</div>
-                    <div className="text-lg font-bold font-mono text-zinc-200 mt-1">{parseFloat(summary.grossReclaim.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
-                  </div>
-                  {summary.totalValueLost > 0.001 && (
-                    <div className="bg-red-950/30 rounded-lg p-2">
-                      <div className="text-[11px] text-red-400 uppercase tracking-wider flex items-center justify-center gap-1">
-                        <AlertTriangle className="h-3 w-3" /> Value Lost
-                      </div>
-                      <div className="text-lg font-bold font-mono text-red-400 mt-1">~{parseFloat(summary.totalValueLost.toFixed(4))} <span className="text-xs">SOL</span></div>
-                      {solPriceUsd && (
-                        <div className="text-[11px] text-red-500/70">{formatUsd(summary.totalValueLost * solPriceUsd)}</div>
-                      )}
-                    </div>
-                  )}
-                  <div>
-                    <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Fee ({((hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT) * 100).toFixed(0)}%)</div>
-                    <div className="text-lg font-mono text-zinc-400 mt-1">-{parseFloat(summary.commission.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span></div>
-                  </div>
-                  <div className="bg-emerald-950/30 rounded-lg p-2">
-                    <div className="text-[11px] text-emerald-500 uppercase tracking-wider">Est. Return</div>
-                    <div className="text-xl font-black font-mono text-emerald-400 mt-1">~{parseFloat(summary.netReturn.toFixed(4))} <span className="text-xs">SOL</span></div>
-                    {solPriceUsd && (
-                      <div className="text-[11px] text-emerald-600">{formatUsd(summary.netReturn * solPriceUsd)}</div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex justify-center">
-                  <Button
-                    onClick={handleIncinerate}
-                    disabled={isBurning || summary.totalAccounts === 0}
-                    className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-12 text-base shadow-lg shadow-red-900/30"
-                  >
-                    {isBurning ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Flame className="mr-2 h-5 w-5" />}
-                    <span className="hidden sm:inline">Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr; </span>
-                    <span className="sm:hidden">Burn {summary.totalAccounts} &rarr; </span>
-                    ~{parseFloat(summary.netReturn.toFixed(4))} SOL
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* SOL Recovery Calculator */}
-          {tokens.length > 0 && totalRecoverableSol > 0 && selectedTokens.size === 0 && (
-            <div className="bg-gradient-to-r from-emerald-950/30 via-emerald-950/20 to-zinc-900/30 border border-emerald-800/30 rounded-2xl p-4 flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-emerald-500/80 uppercase tracking-wider font-bold">Total Recoverable SOL</div>
-                <div className="text-xl font-black font-mono text-emerald-400 mt-0.5">
-                  ~{parseFloat(totalRecoverableSol.toFixed(4))} <span className="text-sm text-emerald-600">SOL</span>
-                  {solPriceUsd && <span className="text-sm text-emerald-600/70 ml-2">{formatUsd(totalRecoverableSol * solPriceUsd)}</span>}
-                </div>
-                <div className="text-[10px] text-zinc-600 mt-0.5">Select tokens below to burn and reclaim rent</div>
-              </div>
-              <Flame className="h-8 w-8 text-emerald-600/40" />
-            </div>
-          )}
-
-          {/* Controls */}
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => fetchTokens(ownerPublicKey)}
-              disabled={!ownerPublicKey || isLoading}
-              variant="outline"
-              size="sm"
-              className="border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-            >
-              {isLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-              Rescan
-            </Button>
-
-            {/* Quick Filters */}
-            <div className="flex rounded-lg border border-zinc-800/60 overflow-hidden">
-              {(['all', 'nft', 'token'] as const).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setAssetFilter(f)}
-                  className={`px-3 py-1 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
-                >
-                  {f === 'all' ? 'All' : f === 'nft' ? 'NFTs' : 'Tokens'}
-                </button>
-              ))}
-            </div>
-
-            <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer">
-              <Checkbox
-                checked={showAllAssets}
-                onCheckedChange={handleShowAllToggle}
-                className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 h-3.5 w-3.5"
-              />
-              Show all
-            </label>
-          </div>
-
-          {/* ═══ Mobile Token List (< 640px) ═══ */}
-          <div className="sm:hidden">
-            {/* Header row — CSS grid for perfect alignment */}
-            <div className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5" style={{ gridTemplateColumns: '24px minmax(0, 1fr) 46px 72px 46px' }}>
-              <div className="flex justify-center">
-                <Checkbox
-                  checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
-                  onCheckedChange={selectAll}
-                  className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
-                />
-              </div>
-              <span className="text-center">Asset</span>
-              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</span>
-              <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>Status</span>
-            </div>
-
-            {visibleTokens.length === 0 ? (
-              <div className="py-10 text-center text-zinc-600 text-sm">
-                {isLoading ? 'Scanning event horizon...' : 'No burn candidates found. Toggle "Show all" to review.'}
-              </div>
-            ) : (
-              <div className="space-y-0.5">
-              {sortedTokens.map((token) => {
-                const netEst = token.netGainSol ?? 0;
-                const rawName = token.name || token.symbol || '???';
-                const displayName = rawName.length > 10 ? rawName.slice(0, 9) + '…' : rawName;
-                return (
-                  <div
-                    key={token.pubkey.toBase58()}
-                    className={`grid items-center py-1 rounded-md border transition-colors ${
-                      selectedTokens.has(token.pubkey.toBase58())
-                        ? 'bg-cyan-950/15 border-cyan-900/30'
-                        : 'bg-zinc-900/20 border-zinc-800/30'
-                    }`}
-                    style={{ gridTemplateColumns: '24px minmax(0, 1fr) 46px 72px 46px' }}
-                    onClick={() => toggleSelection(token.pubkey.toBase58())}
-                  >
-                    <div className="flex justify-center">
-                      <Checkbox
-                        checked={selectedTokens.has(token.pubkey.toBase58())}
-                        onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
-                        className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
-                      />
-                    </div>
-                    {/* Asset */}
-                    <div className="flex items-center gap-1.5 min-w-0 overflow-hidden pr-1">
-                      <div className="w-7 h-7 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
-                        {token.image ? (
-                          <img src={token.image} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                        ) : (
-                          <div className="w-3 h-3 rounded-full bg-zinc-800" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-medium text-zinc-200 leading-none truncate">{displayName}</div>
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <span className={`text-[7px] uppercase font-bold ${token.isNft ? 'text-purple-400' : 'text-zinc-600'}`}>{token.isNft ? 'NFT' : 'TKN'}</span>
-                          <span className="text-[8px] text-zinc-600 font-mono">{formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)}◎` : ''}</span>
-                        </div>
-                      </div>
-                    </div>
-                    {/* Balance */}
-                    <span className="text-[11px] font-mono text-zinc-400 text-center pr-1">{token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}</span>
-                    {/* Return */}
-                    <div className="text-center">
-                      <span className={`text-[10px] font-mono block ${netEst >= 0 ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
-                        {netEst >= 0 ? `+${parseFloat(netEst.toFixed(4))}` : parseFloat(netEst.toFixed(4))}
+          <div className="blackhole-panel space-y-6">
+            {/* Description + wallet */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pb-4 border-b border-white/6">
+              <div className="text-center sm:text-left max-w-lg">
+                <p className="text-zinc-500 text-sm leading-relaxed">
+                  Burn dust tokens and abandoned NFTs to reclaim locked SOL rent. Valuable assets are automatically
+                  protected.
+                </p>
+                <p className="text-[11px] mt-1.5 leading-relaxed">
+                  {hasMintedCard ? (
+                    <span className="text-emerald-400/80">
+                      <Shield className="inline w-3 h-3 mr-0.5 -mt-0.5" />
+                      ID Holder — reduced fee: <strong>{(COMMISSION_RATE_MINTED * 100).toFixed(0)}%</strong> (vs{' '}
+                      {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% standard)
+                    </span>
+                  ) : (
+                    <span className="text-zinc-500">
+                      Fee: {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% ·{' '}
+                      <span className="text-cyan-400/70">
+                        Mint your Identity Prism ID to get only {(COMMISSION_RATE_MINTED * 100).toFixed(0)}%
                       </span>
-                    </div>
-                    {/* Status */}
-                    <div className="flex justify-center">
-                      {token.assetStatus === 'protected' ? (
-                        <Shield className="h-3.5 w-3.5 text-emerald-400" />
-                      ) : token.assetStatus === 'valuable' ? (
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                      ) : (
-                        <Flame className="h-3.5 w-3.5 text-red-400/70" />
-                      )}
-                    </div>
+                    </span>
+                  )}
+                </p>
+              </div>
+              <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0 hidden sm:inline-flex" />
+            </div>
+
+            {/* Asset Summary Stats */}
+            {tokens.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3 text-center">
+                  <div className="text-xl font-bold text-zinc-100">{tokens.length}</div>
+                  <div className="text-[11px] text-zinc-500 mt-0.5">Total Accounts</div>
+                </div>
+                <div className="bg-emerald-950/20 border border-emerald-900/20 rounded-xl p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <Shield className="h-3.5 w-3.5 text-emerald-400" />
+                    <span className="text-xl font-bold text-emerald-400">{summary.protectedCount}</span>
                   </div>
-                );
-              })}
+                  <div className="text-[11px] text-emerald-600/80 mt-0.5">Protected</div>
+                </div>
+                <div className="bg-amber-950/20 border border-amber-900/20 rounded-xl p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                    <span className="text-xl font-bold text-amber-400">{summary.valuableCount}</span>
+                  </div>
+                  <div className="text-[11px] text-amber-600/80 mt-0.5">Valuable</div>
+                </div>
+                <div className="bg-red-950/20 border border-red-900/20 rounded-xl p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <Flame className="h-3.5 w-3.5 text-red-400" />
+                    <span className="text-xl font-bold text-red-400">{summary.burnableCount}</span>
+                  </div>
+                  <div className="text-[11px] text-red-600/80 mt-0.5">Burnable</div>
+                </div>
               </div>
             )}
-          </div>
 
-          {/* ═══ Desktop Token Table (≥ 640px) ═══ */}
-          <div className="hidden sm:block rounded-xl border border-zinc-800/50 bg-zinc-950/40 overflow-x-auto">
+            {/* Selection & Burn Summary */}
+            {selectedTokens.size > 0 && (
+              <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-5">
+                <div className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                    <div>
+                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Accounts</div>
+                      <div className="text-lg font-bold text-red-400 mt-1">{summary.totalAccounts}</div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Rent Reclaim</div>
+                      <div className="text-lg font-bold font-mono text-zinc-200 mt-1">
+                        {parseFloat(summary.grossReclaim.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span>
+                      </div>
+                    </div>
+                    {summary.totalValueLost > 0.001 && (
+                      <div className="bg-red-950/30 rounded-lg p-2">
+                        <div className="text-[11px] text-red-400 uppercase tracking-wider flex items-center justify-center gap-1">
+                          <AlertTriangle className="h-3 w-3" /> Value Lost
+                        </div>
+                        <div className="text-lg font-bold font-mono text-red-400 mt-1">
+                          ~{parseFloat(summary.totalValueLost.toFixed(4))} <span className="text-xs">SOL</span>
+                        </div>
+                        {solPriceUsd && (
+                          <div className="text-[11px] text-red-500/70">
+                            {formatUsd(summary.totalValueLost * solPriceUsd)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">
+                        Fee ({((hasMintedCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT) * 100).toFixed(0)}%)
+                      </div>
+                      <div className="text-lg font-mono text-zinc-400 mt-1">
+                        -{parseFloat(summary.commission.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span>
+                      </div>
+                    </div>
+                    <div className="bg-emerald-950/30 rounded-lg p-2">
+                      <div className="text-[11px] text-emerald-500 uppercase tracking-wider">Est. Return</div>
+                      <div className="text-xl font-black font-mono text-emerald-400 mt-1">
+                        ~{parseFloat(summary.netReturn.toFixed(4))} <span className="text-xs">SOL</span>
+                      </div>
+                      {solPriceUsd && (
+                        <div className="text-[11px] text-emerald-600">{formatUsd(summary.netReturn * solPriceUsd)}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex justify-center">
+                    <Button
+                      onClick={handleIncinerate}
+                      disabled={isBurning || summary.totalAccounts === 0}
+                      className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-12 text-base shadow-lg shadow-red-900/30"
+                    >
+                      {isBurning ? (
+                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      ) : (
+                        <Flame className="mr-2 h-5 w-5" />
+                      )}
+                      <span className="hidden sm:inline">
+                        Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr;{' '}
+                      </span>
+                      <span className="sm:hidden">Burn {summary.totalAccounts} &rarr; </span>~
+                      {parseFloat(summary.netReturn.toFixed(4))} SOL
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SOL Recovery Calculator */}
+            {tokens.length > 0 && totalRecoverableSol > 0 && selectedTokens.size === 0 && (
+              <div className="bg-gradient-to-r from-emerald-950/30 via-emerald-950/20 to-zinc-900/30 border border-emerald-800/30 rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] text-emerald-500/80 uppercase tracking-wider font-bold">
+                    Total Recoverable SOL
+                  </div>
+                  <div className="text-xl font-black font-mono text-emerald-400 mt-0.5">
+                    ~{parseFloat(totalRecoverableSol.toFixed(4))} <span className="text-sm text-emerald-600">SOL</span>
+                    {solPriceUsd && (
+                      <span className="text-sm text-emerald-600/70 ml-2">
+                        {formatUsd(totalRecoverableSol * solPriceUsd)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-zinc-600 mt-0.5">Select tokens below to burn and reclaim rent</div>
+                </div>
+                <Flame className="h-8 w-8 text-emerald-600/40" />
+              </div>
+            )}
+
+            {/* Controls */}
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                onClick={() => fetchTokens(ownerPublicKey)}
+                disabled={!ownerPublicKey || isLoading}
+                variant="outline"
+                size="sm"
+                className="border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+              >
+                {isLoading ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                Rescan
+              </Button>
+
+              {/* Quick Filters */}
+              <div className="flex rounded-lg border border-zinc-800/60 overflow-hidden">
+                {(['all', 'nft', 'token'] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setAssetFilter(f)}
+                    className={`px-3 py-1 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
+                  >
+                    {f === 'all' ? 'All' : f === 'nft' ? 'NFTs' : 'Tokens'}
+                  </button>
+                ))}
+              </div>
+
+              <label className="flex items-center gap-1.5 text-xs text-zinc-500 cursor-pointer">
+                <Checkbox
+                  checked={showAllAssets}
+                  onCheckedChange={handleShowAllToggle}
+                  className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 h-3.5 w-3.5"
+                />
+                Show all
+              </label>
+            </div>
+
+            {/* ═══ Mobile Token List (< 640px) ═══ */}
+            <div className="sm:hidden">
+              {/* Header row — CSS grid for perfect alignment */}
+              <div
+                className="grid items-center rounded-lg bg-zinc-900/30 text-[10px] text-zinc-500 py-1.5 mb-0.5"
+                style={{ gridTemplateColumns: '24px minmax(0, 1fr) 46px 72px 46px' }}
+              >
+                <div className="flex justify-center">
+                  <Checkbox
+                    checked={visibleTokens.length > 0 && selectedTokens.size === visibleTokens.length}
+                    onCheckedChange={selectAll}
+                    className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                  />
+                </div>
+                <span className="text-center">Asset</span>
+                <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>
+                  Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                </span>
+                <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>
+                  Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                </span>
+                <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>
+                  Status
+                </span>
+              </div>
+
+              {visibleTokens.length === 0 ? (
+                <div className="py-10 text-center text-zinc-600 text-sm">
+                  {isLoading ? 'Scanning event horizon...' : 'No burn candidates found. Toggle "Show all" to review.'}
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {sortedTokens.map((token) => {
+                    const netEst = token.netGainSol ?? 0;
+                    const rawName = token.name || token.symbol || '???';
+                    const displayName = rawName.length > 10 ? rawName.slice(0, 9) + '…' : rawName;
+                    return (
+                      <div
+                        key={token.pubkey.toBase58()}
+                        className={`grid items-center py-1 rounded-md border transition-colors ${
+                          selectedTokens.has(token.pubkey.toBase58())
+                            ? 'bg-cyan-950/15 border-cyan-900/30'
+                            : 'bg-zinc-900/20 border-zinc-800/30'
+                        }`}
+                        style={{ gridTemplateColumns: '24px minmax(0, 1fr) 46px 72px 46px' }}
+                        onClick={() => toggleSelection(token.pubkey.toBase58())}
+                      >
+                        <div className="flex justify-center">
+                          <Checkbox
+                            checked={selectedTokens.has(token.pubkey.toBase58())}
+                            onCheckedChange={() => toggleSelection(token.pubkey.toBase58())}
+                            className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400"
+                          />
+                        </div>
+                        {/* Asset */}
+                        <div className="flex items-center gap-1.5 min-w-0 overflow-hidden pr-1">
+                          <div className="w-7 h-7 rounded-md bg-zinc-900 border border-zinc-800/50 flex items-center justify-center overflow-hidden shrink-0">
+                            {token.image ? (
+                              <img
+                                src={token.image}
+                                alt=""
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="w-3 h-3 rounded-full bg-zinc-800" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-medium text-zinc-200 leading-none truncate">
+                              {displayName}
+                            </div>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <span
+                                className={`text-[7px] uppercase font-bold ${token.isNft ? 'text-purple-400' : 'text-zinc-600'}`}
+                              >
+                                {token.isNft ? 'NFT' : 'TKN'}
+                              </span>
+                              <span className="text-[8px] text-zinc-600 font-mono">
+                                {formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)}◎` : ''}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Balance */}
+                        <span className="text-[11px] font-mono text-zinc-400 text-center pr-1">
+                          {token.uiAmount > 0 ? formatCompact(token.uiAmount) : '0'}
+                        </span>
+                        {/* Return */}
+                        <div className="text-center">
+                          <span
+                            className={`text-[10px] font-mono block ${netEst >= 0 ? 'text-emerald-400/80' : 'text-red-400/80'}`}
+                          >
+                            {netEst >= 0 ? `+${parseFloat(netEst.toFixed(4))}` : parseFloat(netEst.toFixed(4))}
+                          </span>
+                        </div>
+                        {/* Status */}
+                        <div className="flex justify-center">
+                          {token.assetStatus === 'protected' ? (
+                            <Shield className="h-3.5 w-3.5 text-emerald-400" />
+                          ) : token.assetStatus === 'valuable' ? (
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                          ) : (
+                            <Flame className="h-3.5 w-3.5 text-red-400/70" />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ═══ Desktop Token Table (≥ 640px) ═══ */}
+            <div className="hidden sm:block rounded-xl border border-zinc-800/50 bg-zinc-950/40 overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-zinc-800/50">
@@ -1507,16 +1596,33 @@ const BlackHole = () => {
                     </TableHead>
                     <TableHead className="text-left text-zinc-500 text-xs w-[180px] min-w-[180px]">Asset</TableHead>
                     <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap">Balance</TableHead>
-                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors" onClick={() => handleSort('value')}>Value {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</TableHead>
-                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors" onClick={() => handleSort('return')}>Return {sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</TableHead>
-                    <TableHead className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors" onClick={() => handleSort('status')}>Status {sortField === 'status' ? (sortDir === 'asc' ? '↑' : '↓') : ''}</TableHead>
+                    <TableHead
+                      className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors"
+                      onClick={() => handleSort('value')}
+                    >
+                      Value {sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                    </TableHead>
+                    <TableHead
+                      className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors"
+                      onClick={() => handleSort('return')}
+                    >
+                      Return {sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                    </TableHead>
+                    <TableHead
+                      className="text-center text-zinc-500 text-xs whitespace-nowrap cursor-pointer select-none hover:text-zinc-300 transition-colors"
+                      onClick={() => handleSort('status')}
+                    >
+                      Status {sortField === 'status' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {visibleTokens.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="h-20 text-center text-zinc-600 text-sm">
-                        {isLoading ? 'Scanning event horizon...' : 'No burn candidates found. Toggle "Show all" to review.'}
+                        {isLoading
+                          ? 'Scanning event horizon...'
+                          : 'No burn candidates found. Toggle "Show all" to review.'}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -1556,20 +1662,41 @@ const BlackHole = () => {
                                 <span className="font-medium text-zinc-200 text-[12px] leading-tight truncate max-w-[90px]">
                                   {token.name || 'Unknown'}
                                 </span>
-                                <span className={`text-[8px] px-1 py-px rounded leading-none shrink-0 ${token.isNft ? 'bg-purple-900/30 text-purple-400' : 'bg-zinc-800/60 text-zinc-500'}`}>
+                                <span
+                                  className={`text-[8px] px-1 py-px rounded leading-none shrink-0 ${token.isNft ? 'bg-purple-900/30 text-purple-400' : 'bg-zinc-800/60 text-zinc-500'}`}
+                                >
                                   {token.isNft ? 'NFT' : 'TKN'}
                                 </span>
                                 {token.isNft && (
                                   <>
-                                    <a href={token.meUrl || `https://magiceden.io/item-details/${token.mint}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Magic Eden">ME</a>
+                                    <a
+                                      href={token.meUrl || `https://magiceden.io/item-details/${token.mint}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-[9px] text-purple-500/70 hover:text-purple-400 transition-colors shrink-0"
+                                      onClick={(e) => e.stopPropagation()}
+                                      title="Magic Eden"
+                                    >
+                                      ME
+                                    </a>
                                     {token.tensorUrl && (
-                                      <a href={token.tensorUrl} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-500/70 hover:text-blue-400 transition-colors shrink-0" onClick={e => e.stopPropagation()} title="Tensor">T</a>
+                                      <a
+                                        href={token.tensorUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[9px] text-blue-500/70 hover:text-blue-400 transition-colors shrink-0"
+                                        onClick={(e) => e.stopPropagation()}
+                                        title="Tensor"
+                                      >
+                                        T
+                                      </a>
                                     )}
                                   </>
                                 )}
                               </div>
                               <span className="text-[10px] text-zinc-600 font-mono">
-                                {token.symbol ? `${token.symbol} · ` : ''}{token.mint.slice(0, 4)}...{token.mint.slice(-4)}
+                                {token.symbol ? `${token.symbol} · ` : ''}
+                                {token.mint.slice(0, 4)}...{token.mint.slice(-4)}
                                 {token.isNft && token.collectionName ? ` · ${token.collectionName}` : ''}
                               </span>
                             </div>
@@ -1580,7 +1707,10 @@ const BlackHole = () => {
                         </TableCell>
                         <TableCell className="text-center text-sm whitespace-nowrap max-w-[90px]">
                           <div className="flex flex-col items-center leading-tight">
-                            <span className="font-mono text-zinc-300 text-[12px]">{formatSolCompact(token.valueSol) ?? (token.priceUsd != null ? formatUsd(token.priceUsd) : '—')}</span>
+                            <span className="font-mono text-zinc-300 text-[12px]">
+                              {formatSolCompact(token.valueSol) ??
+                                (token.priceUsd != null ? formatUsd(token.priceUsd) : '—')}
+                            </span>
                             {token.valueSol != null && token.valueSol > 0 && (
                               <span className="text-[9px] text-zinc-600">SOL</span>
                             )}
@@ -1602,14 +1732,18 @@ const BlackHole = () => {
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-900/20 text-emerald-400">
                                 <Shield className="h-2.5 w-2.5" /> Protected
                               </span>
-                              {token.protectReason && <span className="text-[9px] text-emerald-700">{token.protectReason}</span>}
+                              {token.protectReason && (
+                                <span className="text-[9px] text-emerald-700">{token.protectReason}</span>
+                              )}
                             </div>
                           ) : token.assetStatus === 'valuable' ? (
                             <div className="flex flex-col items-center gap-0.5">
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/20 text-amber-400">
                                 <AlertTriangle className="h-2.5 w-2.5" /> Valuable
                               </span>
-                              {token.protectReason && <span className="text-[9px] text-amber-700">{token.protectReason}</span>}
+                              {token.protectReason && (
+                                <span className="text-[9px] text-amber-700">{token.protectReason}</span>
+                              )}
                             </div>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-900/15 text-red-400/80">
@@ -1623,8 +1757,7 @@ const BlackHole = () => {
                 </TableBody>
               </Table>
             </div>
-
-        </div>
+          </div>
         )}
       </div>
 

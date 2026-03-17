@@ -162,12 +162,19 @@ export default function Leaderboard() {
         }
 
         if (currentTab === 'overall') {
-          const res = await fetch(`${base}/api/leaderboard?limit=50`);
-          if (res.ok) {
-            const data = await res.json();
-            setOverallEntries(data?.entries || []);
+          // Try prefetched cache first
+          const { getCachedLeaderboard } = await import('@/lib/prefetch');
+          const cached = getCachedLeaderboard();
+          if (cached) {
+            setOverallEntries(cached?.entries || []);
           } else {
-            setError('Failed to load leaderboard');
+            const res = await fetch(`${base}/api/leaderboard?limit=50`);
+            if (res.ok) {
+              const data = await res.json();
+              setOverallEntries(data?.entries || []);
+            } else {
+              setError('Failed to load leaderboard');
+            }
           }
         } else if (currentTab !== 'tournament') {
           const res = await fetch(`${base}/api/game/leaderboard?gameType=${currentTab}`);

@@ -137,6 +137,7 @@ const Index = () => {
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mwaErrorRef = useRef<string | null>(null);
+  const isDisconnectingRef = useRef(false);
 
   const wallet = useWallet();
   const {
@@ -161,6 +162,11 @@ const Index = () => {
   // Keep walletStable=false until disconnect settles to prevent connected UI flash.
   // Re-runs on isConnected to catch Phantom eager-connect that fires AFTER first render.
   useEffect(() => {
+    // If user explicitly disconnected, force-disconnect any auto-reconnect
+    if (isDisconnectingRef.current && isConnected) {
+      disconnect().catch(() => {});
+      return;
+    }
     if (urlAddress || returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current) {
       setWalletStable(true);
       return;
@@ -173,7 +179,7 @@ const Index = () => {
       return;
     }
     if (!isConnected && !didForceDisconnect.current) {
-      didForceDisconnect.current = true; // mark handled so manual connect isn't force-disconnected
+      didForceDisconnect.current = true;
       setWalletStable(true);
     }
   }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -570,6 +576,7 @@ const Index = () => {
     }
 
     try {
+      isDisconnectingRef.current = false; // Clear disconnect flag on new connect
       if (isConnected && connectedAddress) {
         setActiveAddress(connectedAddress.toBase58());
         setViewState('scanning');
@@ -629,7 +636,8 @@ const Index = () => {
     if (!resolvedAddress || !wallet.publicKey || !wallet.signMessage) return;
     if (jwtPrewarmedRef.current === resolvedAddress) return;
     jwtPrewarmedRef.current = resolvedAddress;
-    import('@/components/prism/shared').then(async ({ getCachedJwt, obtainJwt }) => {
+    import('@/components/prism/shared').then(async ({ getCachedJwt, obtainJwt, setAuthWallet }) => {
+      setAuthWallet(wallet);
       if (!getCachedJwt(resolvedAddress)) {
         setJwtSigning(true);
         try {
@@ -638,6 +646,10 @@ const Index = () => {
         setJwtSigning(false);
       }
     });
+    // Prefetch all data pages will need (balance, tokens, leaderboard)
+    import('@/lib/prefetch').then(({ runPrefetch }) => runPrefetch(resolvedAddress));
+    // Restore server-backed user data (loadout, scores, quests) into localStorage
+    import('@/lib/userDataSync').then(({ loadFromServer }) => loadFromServer(resolvedAddress));
   }, [resolvedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Phase 0: Return from Prism League via wormhole jump
@@ -751,10 +763,12 @@ const Index = () => {
 
   // Unified State Machine for UI
   useEffect(() => {
-    // When returning from BlackHole, skip scanning and go straight to ready
-    // Use ref so this persists across re-renders from isLoading/traits changes
+    // During disconnect, don't let state machine override landing state
+    if (isDisconnectingRef.current) return;
+
+    // When returning from BlackHole/Game, skip scanning and go straight to hub
     if ((returningFromBH.current || suppressLoadingRef.current) && resolvedAddress) {
-      setViewState('ready');
+      setViewState('hub');
       return;
     }
 
@@ -830,6 +844,7 @@ const Index = () => {
 
   const handleEnter = () => {
     if (connectedAddress) {
+      isDisconnectingRef.current = false; // Clear disconnect flag on new connect
       setActiveAddress(connectedAddress.toBase58());
       setIsWarping(true);
       setViewState('scanning'); // Immediate — prevents one-frame flash
@@ -838,13 +853,19 @@ const Index = () => {
   };
 
   const handleDisconnect = async () => {
-    await disconnect();
-    mwaAuthorizationCache.clear().catch(() => {});
+    // Set flag BEFORE async disconnect so state machine doesn't override viewState
+    isDisconnectingRef.current = true;
+    setActiveAddress(undefined);
+    setViewState('landing');
+    // Reset force-disconnect ref so next auto-connect will be force-disconnected
+    didForceDisconnect.current = false;
+    // Clear wallet session data
     try {
-      localStorage.removeItem(MWA_AUTH_CACHE_KEY);
+      sessionStorage.removeItem('ip_auth_jwt');
     } catch {
       /* ignore */
     }
+    // Clear localStorage BEFORE disconnect to prevent auto-reconnect race
     try {
       localStorage.removeItem('walletAdapter');
     } catch {
@@ -855,9 +876,20 @@ const Index = () => {
     } catch {
       /* ignore */
     }
-    setActiveAddress(undefined);
-    setViewState('landing');
+    try {
+      localStorage.removeItem(MWA_AUTH_CACHE_KEY);
+    } catch {
+      /* ignore */
+    }
+    try {
+      await disconnect();
+    } catch {
+      /* ignore */
+    }
+    mwaAuthorizationCache.clear().catch(() => {});
     trackWalletDisconnect();
+    // Keep flag active long enough for wallet-adapter to settle
+    // The flag is only cleared when user manually reconnects (not by state machine)
   };
 
   const [mintState, setMintState] = useState<'idle' | 'minting' | 'success' | 'error'>('idle');
@@ -1281,11 +1313,7 @@ const Index = () => {
     }
   }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);
 
-  const showReadyView =
-    previewMode ||
-    viewState === 'ready' ||
-    returningFromBH.current ||
-    (suppressLoadingRef.current && Boolean(resolvedAddress));
+  const showReadyView = previewMode || viewState === 'ready';
   const cardDataReady = !!traits;
   const isScrollEnabled = showReadyView && !previewMode && !isNftMode;
 
@@ -1308,8 +1336,14 @@ const Index = () => {
   // Curtain transition — STICKY: once triggered, never resets (except back to landing).
   // When returning from BlackHole/Game, skip curtains entirely — show card immediately.
   const isReturning = returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current;
-  const [curtainOpen, setCurtainOpen] = useState(isReturning);
-  const [curtainDone, setCurtainDone] = useState(isReturning);
+  // Skip curtain animation when returning from hub (data already loaded & canvas rendered)
+  const hasVisitedHub = useRef(false);
+  useEffect(() => {
+    if (viewState === 'hub') hasVisitedHub.current = true;
+  }, [viewState]);
+  const skipCurtain = isReturning || hasVisitedHub.current;
+  const [curtainOpen, setCurtainOpen] = useState(skipCurtain);
+  const [curtainDone, setCurtainDone] = useState(skipCurtain);
 
   const everythingReady = showReadyView && sceneReady && minDelayPassed;
 
@@ -1374,7 +1408,13 @@ const Index = () => {
           <CosmicHub
             walletAddress={activeAddress}
             prismBalance={prismBalance}
-            onNavigateToCard={() => setViewState('ready')}
+            onNavigateToCard={() => {
+              // Data already loaded, skip curtain/delay
+              setCurtainOpen(true);
+              setCurtainDone(true);
+              setMinDelayPassed(true);
+              setViewState('ready');
+            }}
             onDisconnect={handleDisconnect}
             identityScore={walletData.score}
             planetTier={walletData.traits?.planetTier}

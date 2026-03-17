@@ -761,6 +761,12 @@ export function saveLocalLoadout(loadout: ForgeLoadout): void {
   try {
     localStorage.setItem(`${LOADOUT_KEY}_${loadout.address}`, JSON.stringify(loadout));
   } catch {}
+  // Sync to server so purchases survive browser clears
+  import('@/lib/userDataSync')
+    .then(({ syncToServer }) => {
+      syncToServer({ loadout });
+    })
+    .catch(() => {});
 }
 
 export function purchaseItem(loadout: ForgeLoadout, itemId: string, prismBalance: number): ForgeLoadout | null {

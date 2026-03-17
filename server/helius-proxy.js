@@ -8265,6 +8265,40 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── User Data Sync (loadout, game stats, text quests, XP) ──
+  // Stores per-wallet JSON blobs in walletDatabase so data survives browser clears.
+  // All fields are stored under wallet.userData = { loadout, gameStats, textQuests, ... }
+
+  if (pathname === '/api/user-data' && req.method === 'GET') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address;
+    const w = walletDatabase.get(address);
+    respondJson(res, 200, { address, userData: w?.userData || null });
+    return;
+  }
+
+  if (pathname === '/api/user-data' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address;
+    const body = await readBody(req);
+    if (!body) return respondJson(res, 400, { error: 'Missing body' });
+
+    // Merge incoming fields into existing userData (don't overwrite unrelated fields)
+    const w = walletDatabase.get(address) || { address };
+    const existing = w.userData || {};
+    const ALLOWED_KEYS = ['loadout', 'gameStats', 'bestScores', 'textQuests', 'rangerXP', 'achievements'];
+    const updates = {};
+    for (const key of ALLOWED_KEYS) {
+      if (body[key] !== undefined) updates[key] = body[key];
+    }
+    const merged = { ...existing, ...updates, lastSyncAt: new Date().toISOString() };
+    updateWalletEntry(address, { userData: merged });
+    respondJson(res, 200, { ok: true, address, userData: merged });
+    return;
+  }
+
   if (pathname === '/api/wallet-database' && req.method === 'GET') {
     if (!ipRateLimit('wallet_db', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const address = url.searchParams.get('address');
