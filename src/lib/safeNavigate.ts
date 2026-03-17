@@ -22,7 +22,9 @@ function getInternalNavDepth(): number {
 function setInternalNavDepth(depth: number) {
   try {
     sessionStorage.setItem(NAV_DEPTH_KEY, String(Math.max(0, depth)));
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
 }
 
 /** Call this when navigating to a sub-page to track internal depth. */
@@ -36,7 +38,9 @@ export function goBack(navigate: NavigateFunction, _fallback = '/') {
 
   // Persist return flag in sessionStorage so Index.tsx can detect back-nav
   // even if location.state is lost (e.g. browser back button)
-  try { sessionStorage.setItem('returnedFromSubPage', '1'); } catch {}
+  try {
+    sessionStorage.setItem('returnedFromSubPage', '1');
+  } catch {}
 
   // Always navigate to home/hub — prevents "kicking out" of the app
   // and provides consistent UX: Back = return to main menu
@@ -45,8 +49,16 @@ export function goBack(navigate: NavigateFunction, _fallback = '/') {
 }
 
 export function cleanupOverlays() {
-  for (const id of ['wormhole-tunnel', 'bh-forward-blackout', 'bh-transition-veil', 'fade-overlay']) {
+  // Remove legacy transition overlays immediately
+  for (const id of ['wormhole-tunnel', 'bh-forward-blackout', 'bh-transition-veil', 'app-preloader']) {
     const el = document.getElementById(id);
     if (el) el.remove();
+  }
+  // fade-overlay: let fadeOutTransition handle it gracefully if present;
+  // only force-remove if it's stuck (opacity already 0 or missing transition)
+  const fadeEl = document.getElementById('fade-overlay');
+  if (fadeEl) {
+    const opacity = parseFloat(getComputedStyle(fadeEl).opacity);
+    if (opacity < 0.01) fadeEl.remove();
   }
 }

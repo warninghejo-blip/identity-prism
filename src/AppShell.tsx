@@ -35,19 +35,27 @@ class LazyErrorBoundary extends Component<
 
   render() {
     if (this.state.hasError) {
-      return this.props.fallback ?? (
-        <div style={{ padding: 40, textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
-          <p style={{ marginBottom: 12 }}>Page failed to load.</p>
-          <button
-            onClick={() => { this.setState({ hasError: false, retried: false }); }}
-            style={{
-              padding: '8px 20px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)',
-              background: 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer',
-            }}
-          >
-            Retry
-          </button>
-        </div>
+      return (
+        this.props.fallback ?? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>
+            <p style={{ marginBottom: 12 }}>Page failed to load.</p>
+            <button
+              onClick={() => {
+                this.setState({ hasError: false, retried: false });
+              }}
+              style={{
+                padding: '8px 20px',
+                borderRadius: 8,
+                border: '1px solid rgba(255,255,255,0.15)',
+                background: 'rgba(255,255,255,0.05)',
+                color: '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )
       );
     }
     return this.props.children;
@@ -55,14 +63,14 @@ class LazyErrorBoundary extends Component<
 }
 
 /** Wrap lazy component in error boundary */
-const LazyFallback = () => (
-  <div className="fixed inset-0 flex items-center justify-center bg-[#05070a] z-[999]">
-    <div className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin" />
-  </div>
-);
+const LazyFallback = () => <div className="fixed inset-0 bg-[#05070a] z-[999]" />;
 
 function lazyRoute(element: ReactNode) {
-  return <LazyErrorBoundary><React.Suspense fallback={<LazyFallback />}>{element}</React.Suspense></LazyErrorBoundary>;
+  return (
+    <LazyErrorBoundary>
+      <React.Suspense fallback={<LazyFallback />}>{element}</React.Suspense>
+    </LazyErrorBoundary>
+  );
 }
 // wallet-adapter CSS imported eagerly in main.tsx to avoid lazy CSS dep
 import { mwaAuthorizationCache } from './lib/mwaAuthorizationCache';
@@ -87,10 +95,10 @@ const WalletRequired = React.lazy(() => import('./components/WalletRequired'));
 const Leaderboard = React.lazy(() => import('./pages/Leaderboard'));
 const TextQuestPage = React.lazy(() => import('./pages/TextQuestPage'));
 
-
 const isCapacitorNative = Boolean(
-  (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
-    ?.isNativePlatform?.()
+  (
+    globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }
+  ).Capacitor?.isNativePlatform?.(),
 );
 
 // Clear MWA cache on load but keep walletAdapter for session persistence
@@ -106,42 +114,66 @@ const routerOptions: Parameters<typeof createBrowserRouter>[1] = {
   },
 };
 
-const router = createBrowserRouter([
-  {
-    path: '/blackhole',
-    element: BLACKHOLE_ENABLED ? <BlackHole /> : <Navigate to="/" replace />,
-  },
-  {
-    path: '/',
-    element: <App />,
-    children: [
-      { index: true, element: <Index /> },
-      { path: 'app', element: <Index /> },
-      { path: 'app/*', element: <Index /> },
-      { path: 'home', element: lazyRoute(<HomePage />) },
-      { path: 'share', element: <Index /> },
-      { path: 'game', element: lazyRoute(<PrismLeague />) },
-      { path: 'preview', element: lazyRoute(<PreviewDeck />) },
-      { path: 'preview/:tier', element: lazyRoute(<PreviewDeck />) },
-      { path: 'verify', element: lazyRoute(<Verify />) },
-      { path: 'compare', element: lazyRoute(<Compare />) },
-      { path: 'forge', element: lazyRoute(<StellarForge />) },
-      { path: 'scan', element: lazyRoute(<PrismScanner />) },
-      { path: 'arena', element: lazyRoute(<PrismArena />) },
-      { path: 'vault', element: lazyRoute(<WalletRequired><PrismVault /></WalletRequired>) },
-      { path: 'market', element: <Navigate to="/arena" replace /> },
-      { path: 'constellation', element: <Navigate to="/scan" replace /> },
-      { path: 'quests', element: lazyRoute(<WalletRequired><QuestsPage /></WalletRequired>) },
-      { path: 'profile/:address', element: lazyRoute(<ProfilePage />) },
-      { path: 'scam-checker', element: <Navigate to="/scan" replace /> },
-      { path: 'marketplace', element: <Navigate to="/forge" replace /> },
-      { path: 'leaderboard', element: lazyRoute(<Leaderboard />) },
-      { path: 'text-quest', element: lazyRoute(<WalletRequired><TextQuestPage /></WalletRequired>) },
+const router = createBrowserRouter(
+  [
+    {
+      path: '/blackhole',
+      element: BLACKHOLE_ENABLED ? <BlackHole /> : <Navigate to="/" replace />,
+    },
+    {
+      path: '/',
+      element: <App />,
+      children: [
+        { index: true, element: <Index /> },
+        { path: 'app', element: <Index /> },
+        { path: 'app/*', element: <Index /> },
+        { path: 'home', element: lazyRoute(<HomePage />) },
+        { path: 'share', element: <Index /> },
+        { path: 'game', element: lazyRoute(<PrismLeague />) },
+        { path: 'preview', element: lazyRoute(<PreviewDeck />) },
+        { path: 'preview/:tier', element: lazyRoute(<PreviewDeck />) },
+        { path: 'verify', element: lazyRoute(<Verify />) },
+        { path: 'compare', element: lazyRoute(<Compare />) },
+        { path: 'forge', element: lazyRoute(<StellarForge />) },
+        { path: 'scan', element: lazyRoute(<PrismScanner />) },
+        { path: 'arena', element: lazyRoute(<PrismArena />) },
+        {
+          path: 'vault',
+          element: lazyRoute(
+            <WalletRequired>
+              <PrismVault />
+            </WalletRequired>,
+          ),
+        },
+        { path: 'market', element: <Navigate to="/arena" replace /> },
+        { path: 'constellation', element: <Navigate to="/scan" replace /> },
+        {
+          path: 'quests',
+          element: lazyRoute(
+            <WalletRequired>
+              <QuestsPage />
+            </WalletRequired>,
+          ),
+        },
+        { path: 'profile/:address', element: lazyRoute(<ProfilePage />) },
+        { path: 'scam-checker', element: <Navigate to="/scan" replace /> },
+        { path: 'marketplace', element: <Navigate to="/forge" replace /> },
+        { path: 'leaderboard', element: lazyRoute(<Leaderboard />) },
+        {
+          path: 'text-quest',
+          element: lazyRoute(
+            <WalletRequired>
+              <TextQuestPage />
+            </WalletRequired>,
+          ),
+        },
 
-      { path: '*', element: <NotFound /> },
-    ],
-  },
-], routerOptions);
+        { path: '*', element: <NotFound /> },
+      ],
+    },
+  ],
+  routerOptions,
+);
 
 const cluster =
   MINT_CONFIG.NETWORK === 'devnet'
@@ -175,9 +207,7 @@ const isCaptureMode = searchParams.has('capture');
 const debugEnabled =
   !isCaptureMode &&
   !import.meta.env.PROD &&
-  (import.meta.env.DEV ||
-    searchParams.has('debug') ||
-    window.localStorage?.getItem('debug') === 'true');
+  (import.meta.env.DEV || searchParams.has('debug') || window.localStorage?.getItem('debug') === 'true');
 
 // Debug console disabled — too intrusive
 const DebugConsole: React.ComponentType | null = null;
@@ -190,14 +220,12 @@ export default function AppShell() {
           <DebugConsole />
         </React.Suspense>
       )}
-      <CustomWalletProvider
-        wallets={wallets}
-        autoConnect={true}
-        localStorageKey="walletAdapter"
-      >
+      <CustomWalletProvider wallets={wallets} autoConnect={true} localStorageKey="walletAdapter">
         <DebugWallet />
         <WalletModalProvider>
-          <React.Suspense fallback={<div style={{position:'fixed',inset:0,background:'#05070a',zIndex:999998}} />}>
+          <React.Suspense
+            fallback={<div style={{ position: 'fixed', inset: 0, background: '#05070a', zIndex: 999998 }} />}
+          >
             <RouterProvider router={router} />
           </React.Suspense>
         </WalletModalProvider>

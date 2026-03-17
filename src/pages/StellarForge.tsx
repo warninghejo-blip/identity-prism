@@ -10,8 +10,20 @@ import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { trackForgePurchase } from '@/lib/analytics';
 import {
-  ArrowLeft, ShoppingBag, Check, Lock, Sparkles, Coins, Wallet,
-  Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap,
+  ArrowLeft,
+  ShoppingBag,
+  Check,
+  Lock,
+  Sparkles,
+  Coins,
+  Wallet,
+  Loader2,
+  AlertTriangle,
+  Plus,
+  Shield,
+  Clock,
+  TrendingUp,
+  Zap,
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
@@ -46,18 +58,10 @@ import { computeShipStats, type ShipStats } from '@/lib/shipStats';
 import { gatherXPSources, computeRangerXP, getRangerRank } from '@/lib/rangerRanks';
 import { fetchWalletPreview, getCachedWalletPreview, type WalletPreview } from '@/components/prism/shared';
 import { getPrismBalance, spendPrism, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
-import { getHeliusProxyUrl } from '@/constants';
+import { getApiBase } from '@/components/prism/shared';
 
 type TopTab = 'shop' | 'inventory';
 type ShopFilter = ForgeCategory | 'all' | 'module';
-
-function getApiBase(): string {
-  const proxy = getHeliusProxyUrl();
-  if (proxy) return proxy;
-  if (typeof window !== 'undefined') return window.location.origin;
-  return '';
-}
-
 
 // ── Stat thresholds: milestones with gameplay effects ──
 const STAT_THRESHOLDS: Record<string, { at: number; label: string; effect: string; color: string }[]> = {
@@ -97,7 +101,10 @@ const SHOP_FILTERS: { id: ShopFilter; label: string; icon: string }[] = [
 const AURA_STYLES: Record<string, { color: string; shadow: string }> = {
   frost: { color: '#67e8f9', shadow: '0 0 20px rgba(103,232,249,0.5), 0 0 40px rgba(103,232,249,0.2)' },
   ember: { color: '#fb923c', shadow: '0 0 20px rgba(251,146,60,0.5), 0 0 40px rgba(239,68,68,0.2)' },
-  electric: { color: '#60a5fa', shadow: '0 0 15px rgba(96,165,250,0.6), 0 0 30px rgba(59,130,246,0.3), 0 0 45px rgba(96,165,250,0.15)' },
+  electric: {
+    color: '#60a5fa',
+    shadow: '0 0 15px rgba(96,165,250,0.6), 0 0 30px rgba(59,130,246,0.3), 0 0 45px rgba(96,165,250,0.15)',
+  },
   plasma: { color: '#c084fc', shadow: '0 0 20px rgba(192,132,252,0.5), 0 0 45px rgba(168,85,247,0.25)' },
   dark_matter: { color: '#8b5cf6', shadow: '0 0 25px rgba(139,92,246,0.6), 0 0 50px rgba(109,40,217,0.35)' },
   binary_pulse: { color: '#22d3ee', shadow: '0 0 20px rgba(34,211,238,0.5), 0 0 40px rgba(251,191,36,0.3)' },
@@ -108,31 +115,52 @@ const AURA_STYLES: Record<string, { color: string; shadow: string }> = {
   stellar_tide: { color: '#34d399', shadow: '0 0 20px rgba(52,211,153,0.5), 0 0 40px rgba(52,211,153,0.2)' },
 };
 
-
 function ItemPreview({ item }: { item: ForgeItem }) {
   const rarityColor = RARITY_COLORS[item.rarity];
 
   if (item.category === 'frame') {
     const frameStyle = FRAME_STYLES[item.id] || {};
     return (
-      <div className="w-full h-28 rounded-lg flex items-center justify-center"
-        style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
+      <div
+        className="w-full h-28 rounded-lg flex items-center justify-center"
+        style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}
+      >
         {/* Outer border = frame gradient */}
-        <div style={{
-          padding: 4,
-          borderRadius: 10,
-          background: frameStyle.gradient || 'transparent',
-          boxShadow: frameStyle.boxShadow || 'none',
-          animation: frameStyle.animation || undefined,
-        }}>
+        <div
+          style={{
+            padding: 4,
+            borderRadius: 10,
+            background: frameStyle.gradient || 'transparent',
+            boxShadow: frameStyle.boxShadow || 'none',
+            animation: frameStyle.animation || undefined,
+          }}
+        >
           {/* Inner mini card */}
-          <div style={{
-            background: 'linear-gradient(135deg, #0a1020, #0d1428)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 6,
-            width: 56, height: 76, borderRadius: 7,
-          }}>
-            <div style={{ width: 20, height: 20, borderRadius: '50%', background: `radial-gradient(circle, ${rarityColor}60, ${rarityColor}20)`, marginBottom: 4 }} />
-            <div style={{ width: 28, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 2 }} />
+          <div
+            style={{
+              background: 'linear-gradient(135deg, #0a1020, #0d1428)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 6,
+              width: 56,
+              height: 76,
+              borderRadius: 7,
+            }}
+          >
+            <div
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: '50%',
+                background: `radial-gradient(circle, ${rarityColor}60, ${rarityColor}20)`,
+                marginBottom: 4,
+              }}
+            />
+            <div
+              style={{ width: 28, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.15)', marginBottom: 2 }}
+            />
             <div style={{ width: 20, height: 2, borderRadius: 1, background: 'rgba(255,255,255,0.08)' }} />
           </div>
         </div>
@@ -143,14 +171,18 @@ function ItemPreview({ item }: { item: ForgeItem }) {
   if (item.category === 'aura') {
     const aura = AURA_STYLES[item.preview] || { color: rarityColor, shadow: `0 0 20px ${rarityColor}50` };
     return (
-      <div className="w-full h-28 rounded-lg flex items-center justify-center"
-        style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
+      <div
+        className="w-full h-28 rounded-lg flex items-center justify-center"
+        style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}
+      >
         {/* Ship with aura glow following its silhouette via stacked drop-shadows */}
         <img
           src="/textures/ship.png"
           alt="Ship with aura"
           style={{
-            width: 44, height: 60, objectFit: 'contain',
+            width: 44,
+            height: 60,
+            objectFit: 'contain',
             filter: `drop-shadow(0 0 6px ${aura.color}) drop-shadow(0 0 12px ${aura.color}90) drop-shadow(0 0 20px ${aura.color}50)`,
           }}
         />
@@ -160,13 +192,17 @@ function ItemPreview({ item }: { item: ForgeItem }) {
 
   if (item.category === 'ship_skin') {
     return (
-      <div className="w-full h-28 rounded-lg flex items-center justify-center"
-        style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
+      <div
+        className="w-full h-28 rounded-lg flex items-center justify-center"
+        style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}
+      >
         <img
           src={`/textures/ships/ship_${item.preview}.png`}
           alt={item.name}
           style={{
-            width: 48, height: 64, objectFit: 'contain',
+            width: 48,
+            height: 64,
+            objectFit: 'contain',
             filter: `drop-shadow(0 0 8px ${rarityColor}40)`,
           }}
         />
@@ -176,45 +212,77 @@ function ItemPreview({ item }: { item: ForgeItem }) {
 
   // Title — premium badge display
   return (
-    <div className="w-full h-28 rounded-lg flex flex-col items-center justify-center gap-2"
-      style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}>
+    <div
+      className="w-full h-28 rounded-lg flex flex-col items-center justify-center gap-2"
+      style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}
+    >
       {/* Decorative line */}
-      <div style={{ width: 40, height: 1, background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)` }} />
+      <div
+        style={{
+          width: 40,
+          height: 1,
+          background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)`,
+        }}
+      />
       {/* Title badge */}
-      <div style={{
-        padding: '6px 14px', borderRadius: 8,
-        background: `linear-gradient(135deg, ${rarityColor}12, ${rarityColor}06)`,
-        border: `1px solid ${rarityColor}25`,
-        boxShadow: `0 0 25px ${rarityColor}12, inset 0 0 15px ${rarityColor}05`,
-      }}>
-        <span style={{
-          fontSize: 12, fontWeight: 800, letterSpacing: '0.04em',
-          color: rarityColor,
-          textShadow: `0 0 12px ${rarityColor}50`,
-        }}>
+      <div
+        style={{
+          padding: '6px 14px',
+          borderRadius: 8,
+          background: `linear-gradient(135deg, ${rarityColor}12, ${rarityColor}06)`,
+          border: `1px solid ${rarityColor}25`,
+          boxShadow: `0 0 25px ${rarityColor}12, inset 0 0 15px ${rarityColor}05`,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 800,
+            letterSpacing: '0.04em',
+            color: rarityColor,
+            textShadow: `0 0 12px ${rarityColor}50`,
+          }}
+        >
           {item.preview}
         </span>
       </div>
       {/* Decorative line */}
-      <div style={{ width: 40, height: 1, background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)` }} />
+      <div
+        style={{
+          width: 40,
+          height: 1,
+          background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)`,
+        }}
+      />
     </div>
   );
 }
 
 // ── Shop Item Card (AAA) ──
 function ItemCard({
-  item, owned, equipped, canAfford, userRank, onPurchase, onEquip,
+  item,
+  owned,
+  equipped,
+  canAfford,
+  userRank,
+  onPurchase,
+  onEquip,
 }: {
-  item: ForgeItem; owned: boolean; equipped: boolean; canAfford: boolean;
+  item: ForgeItem;
+  owned: boolean;
+  equipped: boolean;
+  canAfford: boolean;
   userRank: string | undefined;
-  onPurchase: () => void; onEquip: () => void;
+  onPurchase: () => void;
+  onEquip: () => void;
 }) {
   const rarityColor = RARITY_COLORS[item.rarity];
   const rankMet = meetsRequiredRank(userRank, item.requiredRank);
   const locked = (Boolean(item.unlockCondition) || !rankMet) && !owned;
-  const lockLabel = !rankMet && item.requiredRank
-    ? `Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`
-    : item.unlockCondition;
+  const lockLabel =
+    !rankMet && item.requiredRank
+      ? `Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`
+      : item.unlockCondition;
   return (
     <div
       className="relative rounded-2xl p-[1px] transition-all duration-500 hover:scale-[1.03] group"
@@ -226,34 +294,44 @@ function ItemCard({
             : 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))',
       }}
     >
-      <div className="rounded-2xl p-3.5 h-full flex flex-col" style={{
-        background: 'linear-gradient(135deg, rgba(8,10,18,0.95), rgba(5,7,12,0.98))',
-        boxShadow: equipped ? `0 0 30px ${rarityColor}15, inset 0 0 30px ${rarityColor}05` : 'none',
-      }}>
+      <div
+        className="rounded-2xl p-3.5 h-full flex flex-col"
+        style={{
+          background: 'linear-gradient(135deg, rgba(8,10,18,0.95), rgba(5,7,12,0.98))',
+          boxShadow: equipped ? `0 0 30px ${rarityColor}15, inset 0 0 30px ${rarityColor}05` : 'none',
+        }}
+      >
         {/* Rarity + Category header */}
         <div className="flex items-center justify-between mb-2.5">
-          <span className="text-[8px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-md"
+          <span
+            className="text-[8px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-md"
             style={{
               color: rarityColor,
               background: `${rarityColor}10`,
               border: `1px solid ${rarityColor}20`,
               textShadow: `0 0 8px ${rarityColor}30`,
-            }}>
+            }}
+          >
             {item.rarity}
           </span>
           <span className="text-sm opacity-60">{CATEGORY_ICONS[item.category]}</span>
         </div>
 
         {/* Preview */}
-        <div className="mb-3 rounded-xl overflow-hidden" style={{
-          boxShadow: `inset 0 0 20px ${rarityColor}08`,
-        }}>
+        <div
+          className="mb-3 rounded-xl overflow-hidden"
+          style={{
+            boxShadow: `inset 0 0 20px ${rarityColor}08`,
+          }}
+        >
           <ItemPreview item={item} />
         </div>
 
         {/* Info */}
         <h3 className="text-white font-bold text-[13px] mb-0.5 leading-tight text-center">{item.name}</h3>
-        <p className="text-white/25 text-[10px] mb-3 leading-relaxed line-clamp-2 text-center min-h-[33px]">{item.description}</p>
+        <p className="text-white/25 text-[10px] mb-3 leading-relaxed line-clamp-2 text-center min-h-[33px]">
+          {item.description}
+        </p>
 
         {/* Lock label — fixed height zone so cards don't jump */}
         <div className="min-h-[28px] mb-3">
@@ -266,50 +344,64 @@ function ItemCard({
 
         {/* Action — mt-auto pushes buttons to bottom */}
         <div className="mt-auto">
-        {equipped ? (
-          <div className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold" style={{
-            color: '#4ade80',
-            background: 'rgba(74,222,128,0.06)',
-            border: '1px solid rgba(74,222,128,0.15)',
-          }}>
-            <Check className="w-4 h-4" /> Equipped
-          </div>
-        ) : owned ? (
-          <button
-            onClick={onEquip}
-            className="w-full py-2 rounded-xl text-xs font-bold transition-all duration-300 hover:brightness-110"
-            style={{
-              background: `linear-gradient(135deg, ${rarityColor}, ${rarityColor}cc)`,
-              color: '#000',
-              boxShadow: `0 4px 15px ${rarityColor}30`,
-            }}
-          >
-            Equip
-          </button>
-        ) : (
-          <button
-            disabled={!canAfford || locked}
-            onClick={onPurchase}
-            className="w-full py-2 rounded-xl text-xs font-bold transition-all duration-300 flex items-center justify-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-            style={canAfford && !locked ? {
-              background: `linear-gradient(135deg, ${rarityColor}, ${rarityColor}cc)`,
-              color: '#000',
-              boxShadow: `0 4px 15px ${rarityColor}25`,
-            } : {
-              background: 'rgba(255,255,255,0.04)',
-              color: 'rgba(255,255,255,0.25)',
-              border: '1px solid rgba(255,255,255,0.06)',
-            }}
-          >
-            {locked ? <><Lock className="w-3 h-3" /> Locked</> : <><Coins className="w-3 h-3" /> {item.price.toLocaleString()}</>}
-          </button>
-        )}
+          {equipped ? (
+            <div
+              className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold"
+              style={{
+                color: '#4ade80',
+                background: 'rgba(74,222,128,0.06)',
+                border: '1px solid rgba(74,222,128,0.15)',
+              }}
+            >
+              <Check className="w-4 h-4" /> Equipped
+            </div>
+          ) : owned ? (
+            <button
+              onClick={onEquip}
+              className="w-full py-2 rounded-xl text-xs font-bold transition-all duration-300 hover:brightness-110"
+              style={{
+                background: `linear-gradient(135deg, ${rarityColor}, ${rarityColor}cc)`,
+                color: '#000',
+                boxShadow: `0 4px 15px ${rarityColor}30`,
+              }}
+            >
+              Equip
+            </button>
+          ) : (
+            <button
+              disabled={!canAfford || locked}
+              onClick={onPurchase}
+              className="w-full py-2 rounded-xl text-xs font-bold transition-all duration-300 flex items-center justify-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+              style={
+                canAfford && !locked
+                  ? {
+                      background: `linear-gradient(135deg, ${rarityColor}, ${rarityColor}cc)`,
+                      color: '#000',
+                      boxShadow: `0 4px 15px ${rarityColor}25`,
+                    }
+                  : {
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'rgba(255,255,255,0.25)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }
+              }
+            >
+              {locked ? (
+                <>
+                  <Lock className="w-3 h-3" /> Locked
+                </>
+              ) : (
+                <>
+                  <Coins className="w-3 h-3" /> {item.price.toLocaleString()}
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 }
-
 
 // COIN_PACKAGES imported from prismCoin.ts
 
@@ -322,68 +414,95 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
     if (!walletAddress) return;
     const base = getApiBase();
     fetch(`${base}/api/prism/buy/status?address=${encodeURIComponent(walletAddress)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setStatus(d); })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setStatus(d);
+      })
       .catch(() => {});
   }, [walletAddress]);
 
-  const handleBuy = useCallback(async (pkgIndex: number) => {
-    if (buyingIdx !== null || !walletAddress || !wallet.publicKey || !wallet.signTransaction) return;
-    const pkg = COIN_PACKAGES[pkgIndex];
-    setBuyingIdx(pkgIndex);
+  const handleBuy = useCallback(
+    async (pkgIndex: number) => {
+      if (buyingIdx !== null || !walletAddress || !wallet.publicKey || !wallet.signTransaction) return;
+      const pkg = COIN_PACKAGES[pkgIndex];
+      setBuyingIdx(pkgIndex);
 
-    try {
-      // 1. Get JWT FIRST (before SOL transfer — prevents fund loss on auth failure)
-      const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
-      let jwt = getCachedJwt(walletAddress);
-      if (!jwt) {
-        jwt = await obtainJwt(wallet);
-        if (!jwt) { toast.error('Authentication required to purchase'); setBuyingIdx(null); return; }
+      try {
+        // 1. Get JWT FIRST (before SOL transfer — prevents fund loss on auth failure)
+        const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
+        let jwt = getCachedJwt(walletAddress);
+        if (!jwt) {
+          jwt = await obtainJwt(wallet);
+          if (!jwt) {
+            toast.error('Authentication required to purchase');
+            setBuyingIdx(null);
+            return;
+          }
+        }
+
+        // 2. Send SOL to treasury
+        const {
+          Connection: SolConn,
+          PublicKey: SolPK,
+          SystemProgram: SolSP,
+          Transaction: SolTx,
+        } = await import('@solana/web3.js');
+        const base = getApiBase();
+        const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
+        const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+        const tx = new SolTx().add(
+          SolSP.transfer({
+            fromPubkey: new SolPK(walletAddress),
+            toPubkey: new SolPK(treasuryAddr),
+            lamports: Math.floor(pkg.solPrice * 1e9),
+          }),
+        );
+        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+        tx.feePayer = new SolPK(walletAddress);
+        const simulation = await conn.simulateTransaction(tx, undefined, {
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+        });
+        if (simulation.value.err)
+          throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
+        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+        const signed = await wallet.signTransaction(tx);
+        const sig = await conn.sendRawTransaction(signed.serialize());
+        toast.info('Confirming transaction...');
+        await conn.confirmTransaction(sig, 'confirmed');
+
+        // 3. POST to buy endpoint
+        const res = await fetch(`${base}/api/prism/buy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ packageIndex: pkgIndex, txSignature: sig }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          toast.success(`Purchased ${pkg.coins} Coins!`);
+          if (status)
+            setStatus({
+              ...status,
+              purchasedToday: status.purchasedToday + pkg.coins,
+              remainingToday: status.remainingToday - pkg.coins,
+            });
+          onPurchased();
+        } else {
+          const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
+          toast.error(err.error || 'Purchase failed');
+        }
+      } catch (e: any) {
+        if (e?.message?.includes('User rejected')) {
+          toast.info('Transaction cancelled');
+        } else {
+          toast.error(e?.message || 'Purchase failed');
+        }
       }
-
-      // 2. Send SOL to treasury
-      const { Connection: SolConn, PublicKey: SolPK, SystemProgram: SolSP, Transaction: SolTx } = await import('@solana/web3.js');
-      const base = getApiBase();
-      const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
-      const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-      const tx = new SolTx().add(
-        SolSP.transfer({ fromPubkey: new SolPK(walletAddress), toPubkey: new SolPK(treasuryAddr), lamports: Math.floor(pkg.solPrice * 1e9) })
-      );
-      tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-      tx.feePayer = new SolPK(walletAddress);
-      const simulation = await conn.simulateTransaction(tx, undefined, { sigVerify: false, replaceRecentBlockhash: true });
-      if (simulation.value.err) throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-      tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-      const signed = await wallet.signTransaction(tx);
-      const sig = await conn.sendRawTransaction(signed.serialize());
-      toast.info('Confirming transaction...');
-      await conn.confirmTransaction(sig, 'confirmed');
-
-      // 3. POST to buy endpoint
-      const res = await fetch(`${base}/api/prism/buy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ packageIndex: pkgIndex, txSignature: sig }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(`Purchased ${pkg.coins} Coins!`);
-        if (status) setStatus({ ...status, purchasedToday: status.purchasedToday + pkg.coins, remainingToday: status.remainingToday - pkg.coins });
-        onPurchased();
-      } else {
-        const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
-        toast.error(err.error || 'Purchase failed');
-      }
-    } catch (e: any) {
-      if (e?.message?.includes('User rejected')) {
-        toast.info('Transaction cancelled');
-      } else {
-        toast.error(e?.message || 'Purchase failed');
-      }
-    }
-    setBuyingIdx(null);
-  }, [walletAddress, wallet, buyingIdx, status, onPurchased]);
+      setBuyingIdx(null);
+    },
+    [walletAddress, wallet, buyingIdx, status, onPurchased],
+  );
 
   return (
     <div className="mb-6">
@@ -393,9 +512,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
           Buy Coins
         </h3>
         {status && (
-          <span className="text-[10px] text-white/20">
-            {status.remainingToday.toLocaleString()} remaining today
-          </span>
+          <span className="text-[10px] text-white/20">{status.remainingToday.toLocaleString()} remaining today</span>
         )}
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -408,7 +525,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
           >
             <div className="text-[10px] text-amber-400/60 font-bold uppercase mb-1">{pkg.label}</div>
             <div className="flex items-center gap-1 mb-1">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5"/></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5" />
+              </svg>
               <span className="text-lg font-black text-white">{pkg.coins.toLocaleString()}</span>
             </div>
             <div className="text-[11px] font-bold text-purple-400">{pkg.solPrice} SOL</div>
@@ -427,10 +547,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
 // ── Prism Vault (Staking) ──
 
 const YIELD_BRACKETS = [
-  { upTo: 5000,     baseDailyRate: 0.010 },
-  { upTo: 20000,    baseDailyRate: 0.007 },
-  { upTo: 50000,    baseDailyRate: 0.005 },
-  { upTo: 100000,   baseDailyRate: 0.0035 },
+  { upTo: 5000, baseDailyRate: 0.01 },
+  { upTo: 20000, baseDailyRate: 0.007 },
+  { upTo: 50000, baseDailyRate: 0.005 },
+  { upTo: 100000, baseDailyRate: 0.0035 },
   { upTo: Infinity, baseDailyRate: 0.002 },
 ];
 
@@ -517,7 +637,11 @@ function formatTimeLeft(ms: number): string {
   return `${mins}m`;
 }
 
-function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
+function PrismVaultSection({
+  walletAddress,
+  balance,
+  onBalanceChange,
+}: {
   walletAddress: string;
   balance: number;
   onBalanceChange: () => void;
@@ -532,7 +656,7 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
   const [unstaking, setUnstaking] = useState(false);
   const [showUnstakeWarning, setShowUnstakeWarning] = useState(false);
 
-  const tier = VAULT_TIERS.find(t => t.id === selectedTier)!;
+  const tier = VAULT_TIERS.find((t) => t.id === selectedTier)!;
 
   // Fetch vault status
   useEffect(() => {
@@ -540,8 +664,8 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
     setLoadingStatus(true);
     const base = getApiBase();
     fetch(`${base}/api/prism/vault/status?address=${encodeURIComponent(walletAddress)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
         if (d?.staking) {
           setVaultStatus({
             staked: true,
@@ -569,13 +693,25 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
 
   const handleStake = useCallback(async () => {
     const amount = Number(stakeAmount);
-    if (!amount || amount < tier.min) { toast.error(`Minimum stake is ${tier.min} coins for ${tier.label}`); return; }
-    if (amount > balance) { toast.error('Insufficient balance'); return; }
-    if (!walletAddress) { toast.error('Connect wallet first'); return; }
+    if (!amount || amount < tier.min) {
+      toast.error(`Minimum stake is ${tier.min} coins for ${tier.label}`);
+      return;
+    }
+    if (amount > balance) {
+      toast.error('Insufficient balance');
+      return;
+    }
+    if (!walletAddress) {
+      toast.error('Connect wallet first');
+      return;
+    }
     setStaking(true);
     try {
       const jwt = await getJwt();
-      if (!jwt) { toast.error('Authentication failed'); return; }
+      if (!jwt) {
+        toast.error('Authentication failed');
+        return;
+      }
       const base = getApiBase();
       const res = await fetch(`${base}/api/prism/vault/stake`, {
         method: 'POST',
@@ -590,7 +726,9 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
       onBalanceChange();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Stake failed');
-    } finally { setStaking(false); }
+    } finally {
+      setStaking(false);
+    }
   }, [stakeAmount, tier, balance, walletAddress, selectedTier, onBalanceChange, wallet]);
 
   const handleClaim = useCallback(async () => {
@@ -598,7 +736,10 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
     setClaiming(true);
     try {
       const jwt = await getJwt();
-      if (!jwt) { toast.error('Authentication failed'); return; }
+      if (!jwt) {
+        toast.error('Authentication failed');
+        return;
+      }
       const base = getApiBase();
       const res = await fetch(`${base}/api/prism/vault/claim`, {
         method: 'POST',
@@ -608,11 +749,13 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Claim failed');
       toast.success(`Claimed ${data.claimed ?? ''} coins!`);
-      setVaultStatus(v => v ? { ...v, unclaimedYield: 0 } : v);
+      setVaultStatus((v) => (v ? { ...v, unclaimedYield: 0 } : v));
       onBalanceChange();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Claim failed');
-    } finally { setClaiming(false); }
+    } finally {
+      setClaiming(false);
+    }
   }, [walletAddress, onBalanceChange, wallet]);
 
   const handleUnstake = useCallback(async () => {
@@ -621,7 +764,10 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
     setShowUnstakeWarning(false);
     try {
       const jwt = await getJwt();
-      if (!jwt) { toast.error('Authentication failed'); return; }
+      if (!jwt) {
+        toast.error('Authentication failed');
+        return;
+      }
       const base = getApiBase();
       const res = await fetch(`${base}/api/prism/vault/unstake`, {
         method: 'POST',
@@ -635,10 +781,12 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
       onBalanceChange();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Unstake failed');
-    } finally { setUnstaking(false); }
+    } finally {
+      setUnstaking(false);
+    }
   }, [walletAddress, onBalanceChange, wallet]);
 
-  const stakedTierInfo = vaultStatus?.tier ? VAULT_TIERS.find(t => t.id === vaultStatus.tier) : null;
+  const stakedTierInfo = vaultStatus?.tier ? VAULT_TIERS.find((t) => t.id === vaultStatus.tier) : null;
   const isLocked = vaultStatus?.unlocksAt ? Date.now() < vaultStatus.unlocksAt : false;
   const timeLeft = vaultStatus?.unlocksAt ? vaultStatus.unlocksAt - Date.now() : 0;
   const stakeAmountNum = Number(stakeAmount);
@@ -661,18 +809,24 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
         </div>
       ) : vaultStatus?.staked ? (
         /* ── Active Stake Card ── */
-        <div className="rounded-2xl p-4 border" style={{
-          background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}08, ${stakedTierInfo?.color ?? '#fbbf24'}03)`,
-          borderColor: `${stakedTierInfo?.color ?? '#fbbf24'}25`,
-          boxShadow: `0 0 30px ${stakedTierInfo?.glow ?? 'rgba(251,191,36,0.1)'}`,
-        }}>
+        <div
+          className="rounded-2xl p-4 border"
+          style={{
+            background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}08, ${stakedTierInfo?.color ?? '#fbbf24'}03)`,
+            borderColor: `${stakedTierInfo?.color ?? '#fbbf24'}25`,
+            boxShadow: `0 0 30px ${stakedTierInfo?.glow ?? 'rgba(251,191,36,0.1)'}`,
+          }}
+        >
           {/* Tier badge + lock status */}
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{
-                background: `${stakedTierInfo?.color ?? '#fbbf24'}15`,
-                border: `1px solid ${stakedTierInfo?.color ?? '#fbbf24'}25`,
-              }}>
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                style={{
+                  background: `${stakedTierInfo?.color ?? '#fbbf24'}15`,
+                  border: `1px solid ${stakedTierInfo?.color ?? '#fbbf24'}25`,
+                }}
+              >
                 {stakedTierInfo?.icon ?? '🏆'}
               </div>
               <div>
@@ -680,10 +834,13 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
                 <p className="text-white/30 text-[10px]">{vaultStatus.amount?.toLocaleString()} coins staked</p>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{
-              background: isLocked ? 'rgba(239,68,68,0.08)' : 'rgba(74,222,128,0.08)',
-              border: `1px solid ${isLocked ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.2)'}`,
-            }}>
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+              style={{
+                background: isLocked ? 'rgba(239,68,68,0.08)' : 'rgba(74,222,128,0.08)',
+                border: `1px solid ${isLocked ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.2)'}`,
+              }}
+            >
               <Clock className="w-3 h-3" style={{ color: isLocked ? '#f87171' : '#4ade80' }} />
               <span className="text-[10px] font-bold" style={{ color: isLocked ? '#f87171' : '#4ade80' }}>
                 {isLocked ? formatTimeLeft(timeLeft) : 'Unlocked'}
@@ -693,17 +850,26 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
 
           {/* Stats row */}
           <div className="grid grid-cols-3 gap-2 mb-4">
-            <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div
+              className="rounded-xl p-2.5 text-center"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+            >
               <TrendingUp className="w-3.5 h-3.5 mx-auto mb-1" style={{ color: stakedTierInfo?.color ?? '#fbbf24' }} />
               <p className="text-white font-black text-sm">{vaultStatus.dailyYield ?? 0}</p>
               <p className="text-white/25 text-[9px]">coins/day</p>
             </div>
-            <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div
+              className="rounded-xl p-2.5 text-center"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+            >
               <Coins className="w-3.5 h-3.5 mx-auto mb-1 text-amber-400" />
               <p className="text-white font-black text-sm">{Math.floor(vaultStatus.unclaimedYield ?? 0)}</p>
               <p className="text-white/25 text-[9px]">unclaimed</p>
             </div>
-            <div className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div
+              className="rounded-xl p-2.5 text-center"
+              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+            >
               <Zap className="w-3.5 h-3.5 mx-auto mb-1 text-purple-400" />
               <p className="text-white font-black text-sm">+{stakedTierInfo?.boost ?? 0}%</p>
               <p className="text-white/25 text-[9px]">boost</p>
@@ -740,16 +906,32 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
 
           {/* Early unstake warning */}
           {showUnstakeWarning && (
-            <div className="mt-3 p-3 rounded-xl flex flex-col gap-2" style={{
-              background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
-            }}>
+            <div
+              className="mt-3 p-3 rounded-xl flex flex-col gap-2"
+              style={{
+                background: 'rgba(239,68,68,0.06)',
+                border: '1px solid rgba(239,68,68,0.2)',
+              }}
+            >
               <div className="flex items-center gap-2 text-red-400 text-xs font-bold">
                 <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
                 25% penalty will be burned on early unstake
               </div>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" className="flex-1 h-8 text-[10px] border-white/10 text-white/40" onClick={() => setShowUnstakeWarning(false)}>Cancel</Button>
-                <Button size="sm" className="flex-1 h-8 text-[10px] bg-red-600 hover:bg-red-500 text-white" onClick={handleUnstake} disabled={unstaking}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 h-8 text-[10px] border-white/10 text-white/40"
+                  onClick={() => setShowUnstakeWarning(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="flex-1 h-8 text-[10px] bg-red-600 hover:bg-red-500 text-white"
+                  onClick={handleUnstake}
+                  disabled={unstaking}
+                >
                   {unstaking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm Unstake'}
                 </Button>
               </div>
@@ -767,20 +949,46 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
                 onClick={() => setSelectedTier(t.id)}
                 className="rounded-xl p-3 text-left transition-all duration-300 hover:scale-[1.02]"
                 style={{
-                  background: selectedTier === t.id
-                    ? `linear-gradient(135deg, ${t.color}18, ${t.color}08)`
-                    : 'rgba(255,255,255,0.03)',
+                  background:
+                    selectedTier === t.id
+                      ? `linear-gradient(135deg, ${t.color}18, ${t.color}08)`
+                      : 'rgba(255,255,255,0.03)',
                   border: `1px solid ${selectedTier === t.id ? t.color + '35' : 'rgba(255,255,255,0.06)'}`,
                   boxShadow: selectedTier === t.id ? `0 0 20px ${t.glow}` : 'none',
                 }}
               >
                 <div className="text-xl mb-1.5">{t.icon}</div>
-                <p className="text-white font-bold text-xs mb-1" style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.7)' }}>{t.label}</p>
+                <p
+                  className="text-white font-bold text-xs mb-1"
+                  style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.7)' }}
+                >
+                  {t.label}
+                </p>
                 <div className="space-y-0.5">
-                  <p className="text-[9px]" style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}>Min: {t.min.toLocaleString()}</p>
-                  <p className="text-[9px]" style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}>{t.lock}d lock</p>
-                  <p className="text-[9px] font-bold" style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.3)' }}>{rateRangeLabel(t.rateMultiplier)}</p>
-                  <p className="text-[9px]" style={{ color: selectedTier === t.id ? '#c084fc' : 'rgba(192,132,252,0.4)' }}>+{t.boost}% boost</p>
+                  <p
+                    className="text-[9px]"
+                    style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}
+                  >
+                    Min: {t.min.toLocaleString()}
+                  </p>
+                  <p
+                    className="text-[9px]"
+                    style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}
+                  >
+                    {t.lock}d lock
+                  </p>
+                  <p
+                    className="text-[9px] font-bold"
+                    style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.3)' }}
+                  >
+                    {rateRangeLabel(t.rateMultiplier)}
+                  </p>
+                  <p
+                    className="text-[9px]"
+                    style={{ color: selectedTier === t.id ? '#c084fc' : 'rgba(192,132,252,0.4)' }}
+                  >
+                    +{t.boost}% boost
+                  </p>
                 </div>
               </button>
             ))}
@@ -802,14 +1010,20 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
               className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-2 py-1 rounded-lg"
               style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)' }}
               onClick={() => setStakeAmount(String(balance))}
-            >MAX</button>
+            >
+              MAX
+            </button>
           </div>
 
           {/* Projected yield info */}
           {stakeAmountNum >= tier.min && (
-            <div className="mb-3 px-3 py-2 rounded-xl flex items-center justify-between" style={{
-              background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)',
-            }}>
+            <div
+              className="mb-3 px-3 py-2 rounded-xl flex items-center justify-between"
+              style={{
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.05)',
+              }}
+            >
               <span className="text-[10px] text-white/30">Est. daily yield</span>
               <span className="text-[10px] font-bold" style={{ color: tier.color }}>
                 +{calcClientDailyYield(stakeAmountNum, tier.rateMultiplier).toFixed(1)} coins/day
@@ -820,24 +1034,36 @@ function PrismVaultSection({ walletAddress, balance, onBalanceChange }: {
           {/* Stake button */}
           <Button
             className="w-full h-12 font-bold text-sm"
-            style={canStake ? {
-              background: `linear-gradient(135deg, ${tier.color}, ${tier.color}cc)`,
-              color: '#000',
-              boxShadow: `0 4px 20px ${tier.glow}`,
-            } : {
-              background: 'rgba(255,255,255,0.05)',
-              color: 'rgba(255,255,255,0.25)',
-            }}
+            style={
+              canStake
+                ? {
+                    background: `linear-gradient(135deg, ${tier.color}, ${tier.color}cc)`,
+                    color: '#000',
+                    boxShadow: `0 4px 20px ${tier.glow}`,
+                  }
+                : {
+                    background: 'rgba(255,255,255,0.05)',
+                    color: 'rgba(255,255,255,0.25)',
+                  }
+            }
             onClick={handleStake}
             disabled={!canStake || staking}
           >
-            {staking
-              ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Staking...</>
-              : <><Shield className="w-4 h-4 mr-2" /> Stake {stakeAmountNum >= tier.min ? stakeAmountNum.toLocaleString() : ''} coins</>
-            }
+            {staking ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-2" /> Staking...
+              </>
+            ) : (
+              <>
+                <Shield className="w-4 h-4 mr-2" /> Stake{' '}
+                {stakeAmountNum >= tier.min ? stakeAmountNum.toLocaleString() : ''} coins
+              </>
+            )}
           </Button>
           {stakeAmountNum > 0 && stakeAmountNum < tier.min && (
-            <p className="text-red-400/60 text-[10px] mt-2 text-center">Minimum for {tier.label} is {tier.min.toLocaleString()} coins</p>
+            <p className="text-red-400/60 text-[10px] mt-2 text-center">
+              Minimum for {tier.label} is {tier.min.toLocaleString()} coins
+            </p>
           )}
         </div>
       )}
@@ -851,13 +1077,18 @@ export default function StellarForge() {
   const { publicKey } = useWallet();
   const walletAddress = publicKey?.toBase58() || '';
 
-  useEffect(() => { fadeOutTransition(); }, []);
+  useEffect(() => {
+    fadeOutTransition();
+  }, []);
 
-  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(
-    () => walletAddress ? getCachedWalletPreview(walletAddress) : null
+  const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(() =>
+    walletAddress ? getCachedWalletPreview(walletAddress) : null,
   );
   useEffect(() => {
-    if (!walletAddress) { setWalletPreview(null); return; }
+    if (!walletAddress) {
+      setWalletPreview(null);
+      return;
+    }
     fetchWalletPreview(walletAddress).then(setWalletPreview);
   }, [walletAddress]);
 
@@ -887,8 +1118,10 @@ export default function StellarForge() {
     // Check identity card status via wallet-database
     const base = getApiBase();
     fetch(`${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.mint?.minted) setHasIdentityCard(true); })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.mint?.minted) setHasIdentityCard(true);
+      })
       .catch(() => {});
   }, [walletAddress]);
 
@@ -898,737 +1131,1020 @@ export default function StellarForge() {
     return ALL_FORGE_ITEMS.filter((i) => i.category === shopFilter);
   }, [shopFilter]);
 
-  const handlePurchase = useCallback(async (item: ForgeItem) => {
-    if (!walletAddress || !loadout || !balance) return;
-    if (purchasing) return; // prevent double-click
-    if (item.requiredRank && !meetsRequiredRank(rangerRank, item.requiredRank)) {
-      toast.error(`Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`);
-      return;
-    }
-    if (item.unlockCondition) {
-      toast.error('This item is still locked');
-      return;
-    }
-    if (balance.balance < item.price) { toast.error('Not enough Coins'); return; }
-    setPurchasing(item.id);
-    try {
-      // Validate locally first (before spending on server) to avoid money loss
-      const newLoadout = purchaseItem(loadout, item.id, balance.balance);
-      if (!newLoadout) { toast.error('Purchase failed — insufficient Coins or invalid item'); return; }
-      const result = await spendPrism(walletAddress, `forge_${item.category}` as any, item.price, `Purchased ${item.name}`);
-      if (!result) { toast.error('Purchase failed'); return; }
+  const handlePurchase = useCallback(
+    async (item: ForgeItem) => {
+      if (!walletAddress || !loadout || !balance) return;
+      if (purchasing) return; // prevent double-click
+      if (item.requiredRank && !meetsRequiredRank(rangerRank, item.requiredRank)) {
+        toast.error(`Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`);
+        return;
+      }
+      if (item.unlockCondition) {
+        toast.error('This item is still locked');
+        return;
+      }
+      if (balance.balance < item.price) {
+        toast.error('Not enough Coins');
+        return;
+      }
+      setPurchasing(item.id);
+      try {
+        // Validate locally first (before spending on server) to avoid money loss
+        const newLoadout = purchaseItem(loadout, item.id, balance.balance);
+        if (!newLoadout) {
+          toast.error('Purchase failed — insufficient Coins or invalid item');
+          return;
+        }
+        const result = await spendPrism(
+          walletAddress,
+          `forge_${item.category}` as any,
+          item.price,
+          `Purchased ${item.name}`,
+        );
+        if (!result) {
+          toast.error('Purchase failed');
+          return;
+        }
+        saveLocalLoadout(newLoadout);
+        setLoadout(newLoadout);
+        setBalance(result.balance);
+        trackForgePurchase(item.name, item.price);
+        toast.success(`Acquired ${item.name}!`, { description: `−${item.price} Coins` });
+        import('@/lib/prismQuests')
+          .then(({ getQuestState, incrementQuest }) => {
+            let qs = getQuestState(walletAddress);
+            const onComplete = (q: { name: string }) =>
+              toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
+            qs = incrementQuest(qs, 'weekly_forge', 1, onComplete).state;
+            incrementQuest(qs, 'ot_forge5', 1, onComplete);
+          })
+          .catch(() => {});
+      } catch {
+        toast.error('Purchase failed');
+      } finally {
+        setPurchasing(null);
+      }
+    },
+    [walletAddress, loadout, balance, purchasing],
+  );
+
+  const handleEquip = useCallback(
+    (item: ForgeItem) => {
+      if (!loadout) return;
+      const newLoadout = equipItem(loadout, item.id);
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
-      setBalance(result.balance);
-      trackForgePurchase(item.name, item.price);
-      toast.success(`Acquired ${item.name}!`, { description: `−${item.price} Coins` });
-      import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
-        let qs = getQuestState(walletAddress);
-        const onComplete = (q: { name: string }) => toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
-        qs = incrementQuest(qs, 'weekly_forge', 1, onComplete).state;
-        incrementQuest(qs, 'ot_forge5', 1, onComplete);
-      }).catch(() => {});
-    } catch {
-      toast.error('Purchase failed');
-    } finally {
-      setPurchasing(null);
-    }
-  }, [walletAddress, loadout, balance, purchasing]);
+      toast.success(`Equipped ${item.name}`, {
+        action: { label: 'View Card', onClick: () => navigate('/') },
+      });
+    },
+    [loadout, navigate],
+  );
 
-  const handleEquip = useCallback((item: ForgeItem) => {
-    if (!loadout) return;
-    const newLoadout = equipItem(loadout, item.id);
-    saveLocalLoadout(newLoadout);
-    setLoadout(newLoadout);
-    toast.success(`Equipped ${item.name}`, {
-      action: { label: 'View Card', onClick: () => navigate('/') },
-    });
-  }, [loadout, navigate]);
-
-  const handleUnequip = useCallback((category: ForgeCategory) => {
-    if (!loadout) return;
-    const newLoadout = unequipItem(loadout, category);
-    saveLocalLoadout(newLoadout);
-    setLoadout(newLoadout);
-    const labels: Record<ForgeCategory, string> = { frame: 'Frame', aura: 'Aura', ship_skin: 'Ship Skin', title: 'Title' };
-    toast.success(`Unequipped ${labels[category]}`);
-  }, [loadout]);
-
-  const handlePurchaseModule = useCallback(async (moduleId: string) => {
-    if (!loadout || !balance || !walletAddress) return;
-    const mod = getModuleById(moduleId);
-    if (!mod) return;
-    if (balance.balance < mod.price) { toast.error('Not enough Coins'); return; }
-    const newLoadout = purchaseModule(loadout, moduleId, balance.balance);
-    if (!newLoadout) { toast.error('Module already owned'); return; }
-    setInstallingModule(true);
-    try {
-      const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
-      if (!result) { toast.error('Purchase failed'); return; }
+  const handleUnequip = useCallback(
+    (category: ForgeCategory) => {
+      if (!loadout) return;
+      const newLoadout = unequipItem(loadout, category);
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
-      setBalance(result.balance);
-      toast.success(`Purchased ${mod.name}!`, { description: 'Install it on a ship from your inventory.' });
-    } catch {
-      toast.error('Purchase failed');
-    } finally {
-      setInstallingModule(false);
-    }
-  }, [loadout, balance, walletAddress]);
+      const labels: Record<ForgeCategory, string> = {
+        frame: 'Frame',
+        aura: 'Aura',
+        ship_skin: 'Ship Skin',
+        title: 'Title',
+      };
+      toast.success(`Unequipped ${labels[category]}`);
+    },
+    [loadout],
+  );
 
-  const handleInstallModule = useCallback(async (itemId: string, moduleId: string) => {
-    if (!loadout || !walletAddress || installingModule) return;
-    const mod = getModuleById(moduleId);
-    if (!mod) return;
-    // Module must be in ownedModules
-    if (!loadout.ownedModules.includes(moduleId)) { toast.error('You need to purchase this module first'); return; }
-    const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
-    if (!newLoadout) { toast.error('Cannot install module — check slot limits or identity card requirement'); return; }
-    saveLocalLoadout(newLoadout);
-    setLoadout(newLoadout);
-    setConfirmModule(null);
-    setModuleModal(null);
-    toast.success(`Installed ${mod.name}!`, { description: 'Module can be uninstalled later.' });
-  }, [loadout, walletAddress, installingModule, hasIdentityCard]);
+  const handlePurchaseModule = useCallback(
+    async (moduleId: string) => {
+      if (!loadout || !balance || !walletAddress) return;
+      const mod = getModuleById(moduleId);
+      if (!mod) return;
+      if (balance.balance < mod.price) {
+        toast.error('Not enough Coins');
+        return;
+      }
+      const newLoadout = purchaseModule(loadout, moduleId, balance.balance);
+      if (!newLoadout) {
+        toast.error('Module already owned');
+        return;
+      }
+      setInstallingModule(true);
+      try {
+        const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
+        if (!result) {
+          toast.error('Purchase failed');
+          return;
+        }
+        saveLocalLoadout(newLoadout);
+        setLoadout(newLoadout);
+        setBalance(result.balance);
+        toast.success(`Purchased ${mod.name}!`, { description: 'Install it on a ship from your inventory.' });
+      } catch {
+        toast.error('Purchase failed');
+      } finally {
+        setInstallingModule(false);
+      }
+    },
+    [loadout, balance, walletAddress],
+  );
+
+  const handleInstallModule = useCallback(
+    async (itemId: string, moduleId: string) => {
+      if (!loadout || !walletAddress || installingModule) return;
+      const mod = getModuleById(moduleId);
+      if (!mod) return;
+      // Module must be in ownedModules
+      if (!loadout.ownedModules.includes(moduleId)) {
+        toast.error('You need to purchase this module first');
+        return;
+      }
+      const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
+      if (!newLoadout) {
+        toast.error('Cannot install module — check slot limits or identity card requirement');
+        return;
+      }
+      saveLocalLoadout(newLoadout);
+      setLoadout(newLoadout);
+      setConfirmModule(null);
+      setModuleModal(null);
+      toast.success(`Installed ${mod.name}!`, { description: 'Module can be uninstalled later.' });
+    },
+    [loadout, walletAddress, installingModule, hasIdentityCard],
+  );
 
   const isOwned = useCallback((id: string) => loadout?.ownedItems.some((o) => o.itemId === id) ?? false, [loadout]);
-  const isEquipped = useCallback((id: string) => {
-    if (!loadout) return false;
-    return loadout.equippedFrame === id || loadout.equippedAura === id ||
-           loadout.equippedShipSkin === id || loadout.equippedTitle === id;
-  }, [loadout]);
-
+  const isEquipped = useCallback(
+    (id: string) => {
+      if (!loadout) return false;
+      return (
+        loadout.equippedFrame === id ||
+        loadout.equippedAura === id ||
+        loadout.equippedShipSkin === id ||
+        loadout.equippedTitle === id
+      );
+    },
+    [loadout],
+  );
 
   return (
     <PageShell className="text-white">
       <div className="min-h-screen flex flex-col">
-      {/* ── Ambient background effects ── */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        {/* Floating orb 1 */}
-        <div className="absolute w-[500px] h-[500px] rounded-full opacity-[0.04]" style={{
-          top: '-10%', left: '-10%',
-          background: 'radial-gradient(circle, #a855f7, transparent 70%)',
-          animation: 'forge-float-1 20s ease-in-out infinite',
-        }} />
-        {/* Floating orb 2 */}
-        <div className="absolute w-[400px] h-[400px] rounded-full opacity-[0.03]" style={{
-          bottom: '-5%', right: '-10%',
-          background: 'radial-gradient(circle, #ec4899, transparent 70%)',
-          animation: 'forge-float-2 25s ease-in-out infinite',
-        }} />
-        {/* Grid overlay */}
-        <div className="absolute inset-0 opacity-[0.015]" style={{
-          backgroundImage: `linear-gradient(rgba(168,85,247,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(168,85,247,0.3) 1px, transparent 1px)`,
-          backgroundSize: '60px 60px',
-        }} />
-      </div>
-
-      {/* ── Header ── */}
-      <header className="flex-none sticky top-0 z-20" style={{
-        background: 'linear-gradient(180deg, rgba(5,7,10,0.95) 0%, rgba(10,14,26,0.85) 100%)',
-        backdropFilter: 'blur(20px) saturate(1.5)',
-        borderBottom: '1px solid rgba(168,85,247,0.08)',
-      }}>
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={() => { startFadeTransition(() => goBack(navigate)); }} className="w-9 h-9 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]">
-            <ArrowLeft className="w-4 h-4 text-white/60" />
-          </button>
-          <div className="flex-1">
-            <h1 className="text-base font-black tracking-tight" style={{
-              background: 'linear-gradient(135deg, #c084fc 0%, #f472b6 40%, #fbbf24 100%)',
-              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-            }}>Prism Shop</h1>
-            <p className="text-[9px] text-white/20 font-medium tracking-widest uppercase">Customize Your Identity</p>
-          </div>
-          <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-amber-500/15" style={{
-            background: 'linear-gradient(135deg, rgba(251,191,36,0.08), rgba(245,158,11,0.04))',
-          }}>
-            <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{
-              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-              boxShadow: '0 0 12px rgba(251,191,36,0.3)',
-            }}>
-              <Coins className="w-3 h-3 text-black" />
-            </div>
-            <span className="text-amber-300 font-black font-mono text-sm">{balance?.balance ?? 0}</span>
-          </div>
+        {/* ── Ambient background effects ── */}
+        <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+          {/* Floating orb 1 */}
+          <div
+            className="absolute w-[500px] h-[500px] rounded-full opacity-[0.04]"
+            style={{
+              top: '-10%',
+              left: '-10%',
+              background: 'radial-gradient(circle, #a855f7, transparent 70%)',
+              animation: 'forge-float-1 20s ease-in-out infinite',
+            }}
+          />
+          {/* Floating orb 2 */}
+          <div
+            className="absolute w-[400px] h-[400px] rounded-full opacity-[0.03]"
+            style={{
+              bottom: '-5%',
+              right: '-10%',
+              background: 'radial-gradient(circle, #ec4899, transparent 70%)',
+              animation: 'forge-float-2 25s ease-in-out infinite',
+            }}
+          />
+          {/* Grid overlay */}
+          <div
+            className="absolute inset-0 opacity-[0.015]"
+            style={{
+              backgroundImage: `linear-gradient(rgba(168,85,247,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(168,85,247,0.3) 1px, transparent 1px)`,
+              backgroundSize: '60px 60px',
+            }}
+          />
         </div>
-      </header>
 
-      {/* ── Tab Bar ── */}
-      <div className="flex-none z-10 relative" style={{
-        background: 'rgba(5,7,10,0.6)',
-        backdropFilter: 'blur(12px)',
-        borderBottom: '1px solid rgba(255,255,255,0.04)',
-      }}>
-        <div className="max-w-2xl mx-auto px-3 flex gap-1 py-1.5">
-          {([
-            { id: 'shop' as TopTab, label: 'Armory', icon: '🛡️' },
-            { id: 'inventory' as TopTab, label: 'Inventory', icon: '📦' },
-          ]).map((t) => (
+        {/* ── Header ── */}
+        <header
+          className="flex-none sticky top-0 z-20"
+          style={{
+            background: 'linear-gradient(180deg, rgba(5,7,10,0.95) 0%, rgba(10,14,26,0.85) 100%)',
+            backdropFilter: 'blur(20px) saturate(1.5)',
+            borderBottom: '1px solid rgba(168,85,247,0.08)',
+          }}
+        >
+          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
             <button
-              key={t.id}
-              onClick={() => setTopTab(t.id)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold tracking-wide transition-all duration-300"
-              style={topTab === t.id ? {
-                background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(236,72,153,0.1))',
-                color: '#c084fc',
-                boxShadow: '0 0 20px rgba(168,85,247,0.1), inset 0 0 20px rgba(168,85,247,0.05)',
-                border: '1px solid rgba(168,85,247,0.2)',
-              } : {
-                color: 'rgba(255,255,255,0.3)',
-                border: '1px solid transparent',
+              onClick={() => {
+                startFadeTransition(() => goBack(navigate));
+              }}
+              className="w-9 h-9 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
+            >
+              <ArrowLeft className="w-4 h-4 text-white/60" />
+            </button>
+            <div className="flex-1">
+              <h1
+                className="text-base font-black tracking-tight"
+                style={{
+                  background: 'linear-gradient(135deg, #c084fc 0%, #f472b6 40%, #fbbf24 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
+                Prism Shop
+              </h1>
+              <p className="text-[9px] text-white/20 font-medium tracking-widest uppercase">Customize Your Identity</p>
+            </div>
+            <div
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-amber-500/15"
+              style={{
+                background: 'linear-gradient(135deg, rgba(251,191,36,0.08), rgba(245,158,11,0.04))',
               }}
             >
-              <span className="text-sm">{t.icon}</span> {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Content ── */}
-      <main className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full px-4 py-5 pb-24 relative z-10">
-        {!walletAddress && (
-          <div className="text-center py-16 space-y-3">
-            <Wallet className="w-10 h-10 text-purple-400/60" />
-            <p className="text-white/50 text-sm">Connect your wallet to access the Forge</p>
-          </div>
-        )}
-
-        {/* ═══ ARMORY TAB ═══ */}
-        {walletAddress && topTab === 'shop' && (
-          <>
-            {/* Buy Coins & Staking → moved to /vault page */}
-
-            {/* Category filters — glass pills */}
-            <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
-              {SHOP_FILTERS.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setShopFilter(f.id)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all duration-300"
-                  style={shopFilter === f.id ? {
-                    background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(139,92,246,0.15))',
-                    color: '#c084fc',
-                    border: '1px solid rgba(168,85,247,0.3)',
-                    boxShadow: '0 0 15px rgba(168,85,247,0.15)',
-                  } : {
-                    background: 'rgba(255,255,255,0.03)',
-                    color: 'rgba(255,255,255,0.35)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                  }}
-                >
-                  <span>{f.icon}</span> {f.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Hint: how to earn coins */}
-            {balance && balance.balance === 0 && (
-              <button
-                onClick={() => navigate('/vault')}
-                className="w-full mb-4 px-4 py-2.5 rounded-xl text-[11px] text-amber-300/60 bg-amber-500/[0.06] border border-amber-500/10 hover:bg-amber-500/10 transition-colors text-left"
+              <div
+                className="w-5 h-5 rounded-full flex items-center justify-center"
+                style={{
+                  background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+                  boxShadow: '0 0 12px rgba(251,191,36,0.3)',
+                }}
               >
-                💡 Earn Coins by playing games, completing quests, or <span className="underline">buy in the Vault</span>
-              </button>
-            )}
-
-            {/* Items grid — with category subheadings in All tab */}
-            {shopFilter === 'all' ? (
-              <>
-                {(['ship_skin', 'frame', 'aura', 'title'] as ForgeCategory[]).map((cat) => {
-                  const catItems = ALL_FORGE_ITEMS.filter((i) => i.category === cat);
-                  if (catItems.length === 0) return null;
-                  return (
-                    <div key={cat} className="mb-6">
-                      <div className="flex items-center gap-2 mb-3 px-1">
-                        <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
-                        <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">{CATEGORY_LABELS[cat]}</span>
-                        <div className="flex-1 h-px bg-white/[0.06]" />
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {catItems.map((item) => (
-                          <ItemCard
-                            key={item.id}
-                            item={item}
-                            owned={isOwned(item.id)}
-                            equipped={isEquipped(item.id)}
-                            canAfford={(balance?.balance ?? 0) >= item.price}
-                            userRank={rangerRank}
-                            onPurchase={() => handlePurchase(item)}
-                            onEquip={() => handleEquip(item)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-                {/* Modules section in All tab */}
-                <div className="mb-6">
-                  <div className="flex items-center gap-2 mb-3 px-1">
-                    <span className="text-sm">🔧</span>
-                    <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">Modules</span>
-                    <div className="flex-1 h-px bg-white/[0.06]" />
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {MICROMODULE_DEFS.map((mod) => {
-                      const tierColor = MODULE_TIER_COLORS[mod.tier];
-                      const isModOwned = loadout?.ownedModules.includes(mod.id) || Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
-                      const canAfford = (balance?.balance ?? 0) >= mod.price;
-                      return (
-                        <div key={mod.id} className="rounded-xl p-3 transition-all duration-300" style={{
-                          background: 'rgba(255,255,255,0.02)',
-                          border: `1px solid ${tierColor}25`,
-                        }}>
-                          <div className="flex items-center gap-2 mb-2">
-                            <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
-                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0" style={{ color: tierColor, background: `${tierColor}15` }}>{mod.tier.toUpperCase()}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <p className="text-white/25 text-[10px] mb-2 line-clamp-1">{mod.description}</p>
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="text-green-400 text-[10px] font-bold">+{mod.statBonus.value} {mod.statBonus.stat}</span>
-                            {mod.tradeoff && <span className="text-red-400 text-[10px]">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
-                          </div>
-                          {isModOwned ? (
-                            <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold"><Check className="w-3 h-3" /> Owned</div>
-                          ) : (
-                            <button onClick={() => canAfford ? handlePurchaseModule(mod.id) : undefined} disabled={!canAfford || installingModule} className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all" style={{
-                              background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
-                              color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
-                              border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
-                            }}>
-                              <Coins className="w-3 h-3 inline mr-1" />{mod.price}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </>
-            ) : shopFilter === 'module' ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {MICROMODULE_DEFS.map((mod) => {
-                  const tierColor = MODULE_TIER_COLORS[mod.tier];
-                  const isModOwned = loadout?.ownedModules.includes(mod.id) || Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
-                  const canAfford = (balance?.balance ?? 0) >= mod.price;
-                  return (
-                    <div key={mod.id} className="rounded-xl p-3 transition-all duration-300" style={{
-                      background: 'rgba(255,255,255,0.02)',
-                      border: `1px solid ${tierColor}25`,
-                    }}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
-                            <span className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0" style={{ color: tierColor, background: `${tierColor}15` }}>{mod.tier.toUpperCase()}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <p className="text-white/25 text-[10px] mb-2">{mod.description}</p>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-green-400 text-[10px] font-bold">+{mod.statBonus.value} {mod.statBonus.stat}</span>
-                        {mod.tradeoff && <span className="text-red-400 text-[10px]">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
-                      </div>
-                      {isModOwned ? (
-                        <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold"><Check className="w-3 h-3" /> Owned</div>
-                      ) : (
-                        <button onClick={() => canAfford ? handlePurchaseModule(mod.id) : undefined} disabled={!canAfford || installingModule} className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all" style={{
-                          background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
-                          color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
-                          border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
-                        }}>
-                          <Coins className="w-3 h-3 inline mr-1" />{mod.price}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+                <Coins className="w-3 h-3 text-black" />
               </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {filteredItems.map((item) => (
-                  <ItemCard
-                    key={item.id}
-                    item={item}
-                    owned={isOwned(item.id)}
-                    equipped={isEquipped(item.id)}
-                    canAfford={(balance?.balance ?? 0) >= item.price}
-                    userRank={rangerRank}
-                    onPurchase={() => handlePurchase(item)}
-                    onEquip={() => handleEquip(item)}
-                  />
+              <span className="text-amber-300 font-black font-mono text-sm">{balance?.balance ?? 0}</span>
+            </div>
+          </div>
+        </header>
+
+        {/* ── Tab Bar ── */}
+        <div
+          className="flex-none z-10 relative"
+          style={{
+            background: 'rgba(5,7,10,0.6)',
+            backdropFilter: 'blur(12px)',
+            borderBottom: '1px solid rgba(255,255,255,0.04)',
+          }}
+        >
+          <div className="max-w-2xl mx-auto px-3 flex gap-1 py-1.5">
+            {[
+              { id: 'shop' as TopTab, label: 'Armory', icon: '🛡️' },
+              { id: 'inventory' as TopTab, label: 'Inventory', icon: '📦' },
+            ].map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setTopTab(t.id)}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold tracking-wide transition-all duration-300"
+                style={
+                  topTab === t.id
+                    ? {
+                        background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(236,72,153,0.1))',
+                        color: '#c084fc',
+                        boxShadow: '0 0 20px rgba(168,85,247,0.1), inset 0 0 20px rgba(168,85,247,0.05)',
+                        border: '1px solid rgba(168,85,247,0.2)',
+                      }
+                    : {
+                        color: 'rgba(255,255,255,0.3)',
+                        border: '1px solid transparent',
+                      }
+                }
+              >
+                <span className="text-sm">{t.icon}</span> {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Content ── */}
+        <main className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full px-4 py-5 pb-24 relative z-10">
+          {!walletAddress && (
+            <div className="text-center py-16 space-y-3">
+              <Wallet className="w-10 h-10 text-purple-400/60" />
+              <p className="text-white/50 text-sm">Connect your wallet to access the Forge</p>
+            </div>
+          )}
+
+          {/* ═══ ARMORY TAB ═══ */}
+          {walletAddress && topTab === 'shop' && (
+            <>
+              {/* Buy Coins & Staking → moved to /vault page */}
+
+              {/* Category filters — glass pills */}
+              <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
+                {SHOP_FILTERS.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setShopFilter(f.id)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all duration-300"
+                    style={
+                      shopFilter === f.id
+                        ? {
+                            background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(139,92,246,0.15))',
+                            color: '#c084fc',
+                            border: '1px solid rgba(168,85,247,0.3)',
+                            boxShadow: '0 0 15px rgba(168,85,247,0.15)',
+                          }
+                        : {
+                            background: 'rgba(255,255,255,0.03)',
+                            color: 'rgba(255,255,255,0.35)',
+                            border: '1px solid rgba(255,255,255,0.06)',
+                          }
+                    }
+                  >
+                    <span>{f.icon}</span> {f.label}
+                  </button>
                 ))}
               </div>
-            )}
-            {filteredItems.length === 0 && shopFilter !== 'all' && shopFilter !== 'module' && (
-              <div className="text-center py-24">
-                <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{
-                  background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(139,92,246,0.05))',
-                  border: '1px solid rgba(168,85,247,0.1)',
-                }}>
-                  <ShoppingBag className="w-7 h-7 text-purple-400/30" />
-                </div>
-                <p className="text-white/20 text-sm font-medium">No items in this category</p>
-              </div>
-            )}
 
+              {/* Hint: how to earn coins */}
+              {balance && balance.balance === 0 && (
+                <button
+                  onClick={() => navigate('/vault')}
+                  className="w-full mb-4 px-4 py-2.5 rounded-xl text-[11px] text-amber-300/60 bg-amber-500/[0.06] border border-amber-500/10 hover:bg-amber-500/10 transition-colors text-left"
+                >
+                  💡 Earn Coins by playing games, completing quests, or{' '}
+                  <span className="underline">buy in the Vault</span>
+                </button>
+              )}
 
-          </>
-        )}
-
-
-        {/* ═══ INVENTORY TAB ═══ */}
-        {walletAddress && topTab === 'inventory' && loadout && (() => {
-          // ── Equipment section data ──
-          const equipmentCats = ['frame', 'aura', 'title'] as ForgeCategory[];
-
-          // ── Ship Bay data ──
-          const equippedShipId = loadout.equippedShipSkin;
-          const equippedShip = equippedShipId ? getItemById(equippedShipId) : null;
-          const displayShipId = equippedShipId;
-          const displayShip = equippedShip;
-          const skinKey = displayShipId ? displayShipId.replace('ship_', '') : null;
-          const shipModules = displayShipId ? getItemModules(loadout, displayShipId) : [];
-          const maxSlots = displayShip?.maxModuleSlots ?? 1;
-          const stats = computeShipStats(walletPreview, loadout);
-          const ownedShips = ALL_FORGE_ITEMS.filter(i =>
-            i.category === 'ship_skin' && loadout.ownedItems.some(o => o.itemId === i.id)
-          );
-
-          const handleRemoveModule = (moduleId: string) => {
-            if (!displayShipId) return;
-            const updated = uninstallModule(loadout, displayShipId, moduleId);
-            if (updated) {
-              saveLocalLoadout(updated);
-              setLoadout(updated);
-              const mod = getModuleById(moduleId);
-              toast.success(`Removed ${mod?.name ?? 'module'}`);
-            }
-          };
-
-          const handleSwitchShip = (shipId: string) => {
-            const updated = equipItem(loadout, shipId);
-            saveLocalLoadout(updated);
-            setLoadout(updated);
-            const ship = getItemById(shipId);
-            toast.success(`Switched to ${ship?.name ?? 'ship'}`);
-          };
-
-          const statBars: { key: keyof ShipStats; label: string; color: string }[] = [
-            { key: 'speed', label: 'Speed', color: '#22d3ee' },
-            { key: 'shield', label: 'Shield', color: '#3b82f6' },
-            { key: 'firepower', label: 'Firepower', color: '#ef4444' },
-            { key: 'luck', label: 'Luck', color: '#fbbf24' },
-          ];
-
-          return (
-            <div className="space-y-5">
-
-              {/* ── Equipment Section (frame / aura / title) ── */}
-              <div className="space-y-4">
-                <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Equipment
-                </h3>
-
-                {equipmentCats.map((cat) => {
-                  const equippedId = cat === 'frame' ? loadout.equippedFrame : cat === 'aura' ? loadout.equippedAura : loadout.equippedTitle;
-                  const ownedInCat = ALL_FORGE_ITEMS.filter(i => i.category === cat && loadout.ownedItems.some(o => o.itemId === i.id));
-
-                  return (
-                    <div key={cat}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
-                        <span className="text-[11px] font-bold text-white/50 uppercase tracking-wider">{CATEGORY_LABELS[cat]}s</span>
+              {/* Items grid — with category subheadings in All tab */}
+              {shopFilter === 'all' ? (
+                <>
+                  {(['ship_skin', 'frame', 'aura', 'title'] as ForgeCategory[]).map((cat) => {
+                    const catItems = ALL_FORGE_ITEMS.filter((i) => i.category === cat);
+                    if (catItems.length === 0) return null;
+                    return (
+                      <div key={cat} className="mb-6">
+                        <div className="flex items-center gap-2 mb-3 px-1">
+                          <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
+                          <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">
+                            {CATEGORY_LABELS[cat]}
+                          </span>
+                          <div className="flex-1 h-px bg-white/[0.06]" />
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {catItems.map((item) => (
+                            <ItemCard
+                              key={item.id}
+                              item={item}
+                              owned={isOwned(item.id)}
+                              equipped={isEquipped(item.id)}
+                              canAfford={(balance?.balance ?? 0) >= item.price}
+                              userRank={rangerRank}
+                              onPurchase={() => handlePurchase(item)}
+                              onEquip={() => handleEquip(item)}
+                            />
+                          ))}
+                        </div>
                       </div>
-                      {ownedInCat.length > 0 ? (
-                        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-                          {ownedInCat.map((item) => {
-                            const isEq = item.id === equippedId;
-                            const rc = RARITY_COLORS[item.rarity];
-                            return (
+                    );
+                  })}
+                  {/* Modules section in All tab */}
+                  <div className="mb-6">
+                    <div className="flex items-center gap-2 mb-3 px-1">
+                      <span className="text-sm">🔧</span>
+                      <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">Modules</span>
+                      <div className="flex-1 h-px bg-white/[0.06]" />
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {MICROMODULE_DEFS.map((mod) => {
+                        const tierColor = MODULE_TIER_COLORS[mod.tier];
+                        const isModOwned =
+                          loadout?.ownedModules.includes(mod.id) ||
+                          Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
+                        const canAfford = (balance?.balance ?? 0) >= mod.price;
+                        return (
+                          <div
+                            key={mod.id}
+                            className="rounded-xl p-3 transition-all duration-300"
+                            style={{
+                              background: 'rgba(255,255,255,0.02)',
+                              border: `1px solid ${tierColor}25`,
+                            }}
+                          >
+                            <div className="flex items-center gap-2 mb-2">
+                              <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
+                                  <span
+                                    className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0"
+                                    style={{ color: tierColor, background: `${tierColor}15` }}
+                                  >
+                                    {mod.tier.toUpperCase()}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            <p className="text-white/25 text-[10px] mb-2 line-clamp-1">{mod.description}</p>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-green-400 text-[10px] font-bold">
+                                +{mod.statBonus.value} {mod.statBonus.stat}
+                              </span>
+                              {mod.tradeoff && (
+                                <span className="text-red-400 text-[10px]">
+                                  -{mod.tradeoff.value} {mod.tradeoff.stat}
+                                </span>
+                              )}
+                            </div>
+                            {isModOwned ? (
+                              <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold">
+                                <Check className="w-3 h-3" /> Owned
+                              </div>
+                            ) : (
                               <button
-                                key={item.id}
-                                onClick={() => isEq ? handleUnequip(cat) : handleEquip(item)}
-                                className="flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-200 hover:scale-105"
+                                onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
+                                disabled={!canAfford || installingModule}
+                                className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all"
                                 style={{
-                                  width: 72, minWidth: 72,
-                                  border: isEq ? `2px solid ${rc}60` : '1px solid rgba(255,255,255,0.06)',
-                                  background: isEq ? `${rc}10` : 'rgba(255,255,255,0.02)',
-                                  boxShadow: isEq ? `0 0 12px ${rc}20` : 'none',
+                                  background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
+                                  color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
+                                  border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
                                 }}
                               >
-                                {cat === 'title' ? (
-                                  <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ background: `${rc}10` }}>
-                                    <span className="text-[8px] font-black text-center leading-tight" style={{ color: rc }}>{item.preview}</span>
-                                  </div>
-                                ) : (
-                                  <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ background: `${rc}10` }}>
-                                    <Sparkles className="w-5 h-5" style={{ color: rc, filter: `drop-shadow(0 0 4px ${rc}40)` }} />
-                                  </div>
-                                )}
-                                <span className="text-[9px] font-bold truncate w-full text-center" style={{ color: isEq ? rc : 'rgba(255,255,255,0.4)' }}>
-                                  {item.name}
-                                </span>
-                                {isEq && <Check className="w-3 h-3" style={{ color: rc }} />}
+                                <Coins className="w-3 h-3 inline mr-1" />
+                                {mod.price}
                               </button>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="text-white/15 text-[10px] italic pl-7">No items — <span className="text-purple-400/50 cursor-pointer" onClick={() => setTopTab('shop')}>visit Armory</span></p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* ── Ship Bay ── */}
-              <div className="space-y-4">
-                <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
-                  🚀 Ship Bay
-                </h3>
-
-                {/* Ship Grid — horizontal scroll */}
-                {ownedShips.length > 0 ? (
-                  <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
-                    {ownedShips.map((ship) => {
-                      const sk = ship.id.replace('ship_', '');
-                      const isActive = ship.id === equippedShipId;
-                      const rc = RARITY_COLORS[ship.rarity];
-                      return (
-                        <button
-                          key={ship.id}
-                          onClick={() => !isActive && handleSwitchShip(ship.id)}
-                          className="flex-shrink-0 flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all duration-200"
-                          style={{
-                            border: `1px solid ${isActive ? `${rc}40` : 'rgba(255,255,255,0.06)'}`,
-                            background: isActive ? `${rc}10` : 'transparent',
-                            minWidth: 80,
-                          }}
-                        >
-                          <img
-                            src={`/textures/ships/ship_${sk}.png`}
-                            alt={ship.name}
-                            className="w-16 h-16 object-contain"
-                            style={{ filter: isActive ? `drop-shadow(0 0 8px ${rc}60)` : 'brightness(0.6)' }}
-                          />
-                          <span className="text-[9px] font-bold truncate w-full text-center" style={{ color: isActive ? rc : 'rgba(255,255,255,0.3)' }}>
-                            {ship.name.replace('Ship: ', '')}
-                          </span>
-                          {isActive && <Check className="w-3 h-3" style={{ color: rc }} />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 text-center">
-                    <img src="/textures/ship.png" alt="Standard Shuttle" className="w-16 h-16 object-contain mx-auto mb-2 opacity-30" />
-                    <p className="text-white/30 text-xs font-bold">Standard Shuttle</p>
-                    <p className="text-white/15 text-[10px] mt-1"><span className="text-purple-400/50 cursor-pointer" onClick={() => setTopTab('shop')}>Buy ships in Armory</span></p>
-                  </div>
-                )}
-
-                {/* Ship Preview */}
-                {displayShip && (
-                  <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-transparent p-5 text-center">
-                    <div className="flex justify-center mb-3">
-                      <img
-                        src={skinKey ? `/textures/ships/ship_${skinKey}.png` : '/textures/ship.png'}
-                        alt={displayShip.name}
-                        className="w-24 h-24 object-contain"
-                        style={{ filter: `drop-shadow(0 0 16px ${RARITY_COLORS[displayShip.rarity]}60)` }}
-                      />
-                    </div>
-                    <h3 className="text-white font-bold text-base">{displayShip.name}</h3>
-                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block"
-                      style={{ color: RARITY_COLORS[displayShip.rarity], background: `${RARITY_COLORS[displayShip.rarity]}12`, border: `1px solid ${RARITY_COLORS[displayShip.rarity]}25` }}>
-                      {displayShip.rarity}
-                    </span>
-                    <p className="text-white/30 text-xs mt-2">
-                      Slots: {Array(maxSlots).fill(null).map((_, i) => i < shipModules.length ? '◆' : '◇').join('')} ({shipModules.length}/{maxSlots})
-                    </p>
-                  </div>
-                )}
-
-                {/* Installed Modules */}
-                {displayShip && (
-                  <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
-                    <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Installed Modules</h4>
-                    <div className="space-y-2">
-                      {shipModules.map((mod) => {
-                        const tierColor = MODULE_TIER_COLORS[mod.tier];
-                        return (
-                          <div key={mod.id} className="flex items-center gap-3 p-2.5 rounded-xl" style={{ background: `${tierColor}08`, border: `1px solid ${tierColor}20` }}>
-                            <img src={mod.image} alt={mod.name} className="w-7 h-7 object-contain" />
-                            <div className="flex-1 min-w-0">
-                              <span className="text-xs font-bold text-white/80">{mod.name}</span>
-                              <span className="text-[10px] ml-2 font-bold" style={{ color: '#4ade80' }}>+{mod.statBonus.value} {mod.statBonus.stat}</span>
-                              {mod.tradeoff && <span className="text-[10px] ml-1 text-red-400/60">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
-                            </div>
-                            <button
-                              onClick={() => handleRemoveModule(mod.id)}
-                              className="px-2 py-1 rounded-lg text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
-                            >
-                              ✕
-                            </button>
+                            )}
                           </div>
                         );
                       })}
-                      {shipModules.length < maxSlots && (
-                        <button
-                          onClick={() => displayShipId && setModuleModal({ itemId: displayShipId, item: displayShip })}
-                          className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/[0.08] text-white/20 text-xs hover:border-purple-500/30 hover:bg-purple-500/5 transition-all"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add Module
-                        </button>
-                      )}
-                      {shipModules.length === 0 && maxSlots > 0 && (
-                        <p className="text-white/10 text-[10px] text-center py-1">No modules installed yet</p>
-                      )}
                     </div>
                   </div>
-                )}
-
-                {/* Ship Stats */}
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
-                  <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Ship Stats</h4>
-                  {!walletPreview && walletAddress && (
-                    <p className="text-white/15 text-[10px] mb-3 flex items-center gap-1.5">
-                      <Loader2 className="w-3 h-3 animate-spin" /> Loading wallet data...
-                    </p>
-                  )}
-                  <div className="space-y-3">
-                    {statBars.map(({ key, label, color }) => {
-                      const val = stats[key];
-                      const thresholds = STAT_THRESHOLDS[key];
-                      const activeThreshold = thresholds.filter(t => val >= t.at).pop();
-                      const nextThreshold = thresholds.find(t => val < t.at);
-                      return (
-                        <div key={key}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-[11px] font-bold text-white/60">{label}</span>
-                            <div className="flex items-center gap-2">
-                              {activeThreshold && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ color: activeThreshold.color, background: `${activeThreshold.color}15` }}>
-                                  {activeThreshold.label}
-                                </span>
-                              )}
-                              <span className="text-[11px] font-black tabular-nums" style={{ color }}>{val}</span>
+                </>
+              ) : shopFilter === 'module' ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {MICROMODULE_DEFS.map((mod) => {
+                    const tierColor = MODULE_TIER_COLORS[mod.tier];
+                    const isModOwned =
+                      loadout?.ownedModules.includes(mod.id) ||
+                      Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
+                    const canAfford = (balance?.balance ?? 0) >= mod.price;
+                    return (
+                      <div
+                        key={mod.id}
+                        className="rounded-xl p-3 transition-all duration-300"
+                        style={{
+                          background: 'rgba(255,255,255,0.02)',
+                          border: `1px solid ${tierColor}25`,
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
+                              <span
+                                className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0"
+                                style={{ color: tierColor, background: `${tierColor}15` }}
+                              >
+                                {mod.tier.toUpperCase()}
+                              </span>
                             </div>
                           </div>
-                          <div className="relative h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
-                            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${val}%`, background: `linear-gradient(90deg, ${color}80, ${color})` }} />
-                            {thresholds.map(t => (
-                              <div key={t.at} className="absolute top-0 h-full w-px" style={{ left: `${t.at}%`, background: val >= t.at ? `${t.color}60` : 'rgba(255,255,255,0.08)' }} />
-                            ))}
+                        </div>
+                        <p className="text-white/25 text-[10px] mb-2">{mod.description}</p>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-green-400 text-[10px] font-bold">
+                            +{mod.statBonus.value} {mod.statBonus.stat}
+                          </span>
+                          {mod.tradeoff && (
+                            <span className="text-red-400 text-[10px]">
+                              -{mod.tradeoff.value} {mod.tradeoff.stat}
+                            </span>
+                          )}
+                        </div>
+                        {isModOwned ? (
+                          <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold">
+                            <Check className="w-3 h-3" /> Owned
                           </div>
-                          {nextThreshold && (
-                            <p className="text-[10px] text-white/40 mt-0.5">
-                              +{nextThreshold.at - val} to unlock: <span className="font-medium" style={{ color: nextThreshold.color }}>{nextThreshold.label}</span> — {nextThreshold.effect}
+                        ) : (
+                          <button
+                            onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
+                            disabled={!canAfford || installingModule}
+                            className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all"
+                            style={{
+                              background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
+                              color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
+                              border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
+                            }}
+                          >
+                            <Coins className="w-3 h-3 inline mr-1" />
+                            {mod.price}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {filteredItems.map((item) => (
+                    <ItemCard
+                      key={item.id}
+                      item={item}
+                      owned={isOwned(item.id)}
+                      equipped={isEquipped(item.id)}
+                      canAfford={(balance?.balance ?? 0) >= item.price}
+                      userRank={rangerRank}
+                      onPurchase={() => handlePurchase(item)}
+                      onEquip={() => handleEquip(item)}
+                    />
+                  ))}
+                </div>
+              )}
+              {filteredItems.length === 0 && shopFilter !== 'all' && shopFilter !== 'module' && (
+                <div className="text-center py-24">
+                  <div
+                    className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(139,92,246,0.05))',
+                      border: '1px solid rgba(168,85,247,0.1)',
+                    }}
+                  >
+                    <ShoppingBag className="w-7 h-7 text-purple-400/30" />
+                  </div>
+                  <p className="text-white/20 text-sm font-medium">No items in this category</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ═══ INVENTORY TAB ═══ */}
+          {walletAddress &&
+            topTab === 'inventory' &&
+            loadout &&
+            (() => {
+              // ── Equipment section data ──
+              const equipmentCats = ['frame', 'aura', 'title'] as ForgeCategory[];
+
+              // ── Ship Bay data ──
+              const equippedShipId = loadout.equippedShipSkin;
+              const equippedShip = equippedShipId ? getItemById(equippedShipId) : null;
+              const displayShipId = equippedShipId;
+              const displayShip = equippedShip;
+              const skinKey = displayShipId ? displayShipId.replace('ship_', '') : null;
+              const shipModules = displayShipId ? getItemModules(loadout, displayShipId) : [];
+              const maxSlots = displayShip?.maxModuleSlots ?? 1;
+              const stats = computeShipStats(walletPreview, loadout);
+              const ownedShips = ALL_FORGE_ITEMS.filter(
+                (i) => i.category === 'ship_skin' && loadout.ownedItems.some((o) => o.itemId === i.id),
+              );
+
+              const handleRemoveModule = (moduleId: string) => {
+                if (!displayShipId) return;
+                const updated = uninstallModule(loadout, displayShipId, moduleId);
+                if (updated) {
+                  saveLocalLoadout(updated);
+                  setLoadout(updated);
+                  const mod = getModuleById(moduleId);
+                  toast.success(`Removed ${mod?.name ?? 'module'}`);
+                }
+              };
+
+              const handleSwitchShip = (shipId: string) => {
+                const updated = equipItem(loadout, shipId);
+                saveLocalLoadout(updated);
+                setLoadout(updated);
+                const ship = getItemById(shipId);
+                toast.success(`Switched to ${ship?.name ?? 'ship'}`);
+              };
+
+              const statBars: { key: keyof ShipStats; label: string; color: string }[] = [
+                { key: 'speed', label: 'Speed', color: '#22d3ee' },
+                { key: 'shield', label: 'Shield', color: '#3b82f6' },
+                { key: 'firepower', label: 'Firepower', color: '#ef4444' },
+                { key: 'luck', label: 'Luck', color: '#fbbf24' },
+              ];
+
+              return (
+                <div className="space-y-5">
+                  {/* ── Equipment Section (frame / aura / title) ── */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Equipment
+                    </h3>
+
+                    {equipmentCats.map((cat) => {
+                      const equippedId =
+                        cat === 'frame'
+                          ? loadout.equippedFrame
+                          : cat === 'aura'
+                            ? loadout.equippedAura
+                            : loadout.equippedTitle;
+                      const ownedInCat = ALL_FORGE_ITEMS.filter(
+                        (i) => i.category === cat && loadout.ownedItems.some((o) => o.itemId === i.id),
+                      );
+
+                      return (
+                        <div key={cat}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
+                            <span className="text-[11px] font-bold text-white/50 uppercase tracking-wider">
+                              {CATEGORY_LABELS[cat]}s
+                            </span>
+                          </div>
+                          {ownedInCat.length > 0 ? (
+                            <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+                              {ownedInCat.map((item) => {
+                                const isEq = item.id === equippedId;
+                                const rc = RARITY_COLORS[item.rarity];
+                                return (
+                                  <button
+                                    key={item.id}
+                                    onClick={() => (isEq ? handleUnequip(cat) : handleEquip(item))}
+                                    className="flex-shrink-0 flex flex-col items-center gap-1 p-2 rounded-xl transition-all duration-200 hover:scale-105"
+                                    style={{
+                                      width: 72,
+                                      minWidth: 72,
+                                      border: isEq ? `2px solid ${rc}60` : '1px solid rgba(255,255,255,0.06)',
+                                      background: isEq ? `${rc}10` : 'rgba(255,255,255,0.02)',
+                                      boxShadow: isEq ? `0 0 12px ${rc}20` : 'none',
+                                    }}
+                                  >
+                                    {cat === 'title' ? (
+                                      <div
+                                        className="w-12 h-12 rounded-lg flex items-center justify-center"
+                                        style={{ background: `${rc}10` }}
+                                      >
+                                        <span
+                                          className="text-[8px] font-black text-center leading-tight"
+                                          style={{ color: rc }}
+                                        >
+                                          {item.preview}
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <div
+                                        className="w-12 h-12 rounded-lg flex items-center justify-center"
+                                        style={{ background: `${rc}10` }}
+                                      >
+                                        <Sparkles
+                                          className="w-5 h-5"
+                                          style={{ color: rc, filter: `drop-shadow(0 0 4px ${rc}40)` }}
+                                        />
+                                      </div>
+                                    )}
+                                    <span
+                                      className="text-[9px] font-bold truncate w-full text-center"
+                                      style={{ color: isEq ? rc : 'rgba(255,255,255,0.4)' }}
+                                    >
+                                      {item.name}
+                                    </span>
+                                    {isEq && <Check className="w-3 h-3" style={{ color: rc }} />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-white/15 text-[10px] italic pl-7">
+                              No items —{' '}
+                              <span className="text-purple-400/50 cursor-pointer" onClick={() => setTopTab('shop')}>
+                                visit Armory
+                              </span>
                             </p>
                           )}
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
-        {/* ── Module Selection Modal ── */}
-        {moduleModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => { setModuleModal(null); setConfirmModule(null); }}>
-            <div className="bg-[#0a0e1a] border border-white/10 rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto p-5" onClick={(e) => e.stopPropagation()}>
-              {confirmModule ? (
-                <>
-                  <h3 className="text-white font-bold text-base mb-2">Confirm Installation</h3>
-                  <div className="p-3 rounded-xl mb-3" style={{
-                    background: `${MODULE_TIER_COLORS[confirmModule.mod.tier]}10`,
-                    border: `1px solid ${MODULE_TIER_COLORS[confirmModule.mod.tier]}25`,
-                  }}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <img src={confirmModule.mod.image} alt={confirmModule.mod.name} className="w-7 h-7 object-contain" />
-                      <span className="text-white font-bold text-sm">{confirmModule.mod.name}</span>
-                    </div>
-                    <p className="text-white/40 text-xs mb-2">{confirmModule.mod.description}</p>
-                    <p className="text-green-400 text-xs font-bold">+{confirmModule.mod.statBonus.value} {confirmModule.mod.statBonus.stat}</p>
-                    {confirmModule.mod.tradeoff && (
-                      <p className="text-red-400 text-xs">-{confirmModule.mod.tradeoff.value} {confirmModule.mod.tradeoff.stat}</p>
+                  {/* ── Ship Bay ── */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                      🚀 Ship Bay
+                    </h3>
+
+                    {/* Ship Grid — horizontal scroll */}
+                    {ownedShips.length > 0 ? (
+                      <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-1">
+                        {ownedShips.map((ship) => {
+                          const sk = ship.id.replace('ship_', '');
+                          const isActive = ship.id === equippedShipId;
+                          const rc = RARITY_COLORS[ship.rarity];
+                          return (
+                            <button
+                              key={ship.id}
+                              onClick={() => !isActive && handleSwitchShip(ship.id)}
+                              className="flex-shrink-0 flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all duration-200"
+                              style={{
+                                border: `1px solid ${isActive ? `${rc}40` : 'rgba(255,255,255,0.06)'}`,
+                                background: isActive ? `${rc}10` : 'transparent',
+                                minWidth: 80,
+                              }}
+                            >
+                              <img
+                                src={`/textures/ships/ship_${sk}.png`}
+                                alt={ship.name}
+                                className="w-16 h-16 object-contain"
+                                style={{ filter: isActive ? `drop-shadow(0 0 8px ${rc}60)` : 'brightness(0.6)' }}
+                              />
+                              <span
+                                className="text-[9px] font-bold truncate w-full text-center"
+                                style={{ color: isActive ? rc : 'rgba(255,255,255,0.3)' }}
+                              >
+                                {ship.name.replace('Ship: ', '')}
+                              </span>
+                              {isActive && <Check className="w-3 h-3" style={{ color: rc }} />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 text-center">
+                        <img
+                          src="/textures/ship.png"
+                          alt="Standard Shuttle"
+                          className="w-16 h-16 object-contain mx-auto mb-2 opacity-30"
+                        />
+                        <p className="text-white/30 text-xs font-bold">Standard Shuttle</p>
+                        <p className="text-white/15 text-[10px] mt-1">
+                          <span className="text-purple-400/50 cursor-pointer" onClick={() => setTopTab('shop')}>
+                            Buy ships in Armory
+                          </span>
+                        </p>
+                      </div>
                     )}
-                  </div>
-                  <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 mb-4">
-                    <p className="text-blue-400 text-xs font-bold flex items-center gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5" /> Module can be uninstalled later.
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <Button variant="outline" className="flex-1 h-10 text-xs" onClick={() => setConfirmModule(null)}>Cancel</Button>
-                    <Button className="flex-1 h-10 text-xs bg-purple-600 hover:bg-purple-500 font-bold" onClick={() => handleInstallModule(confirmModule.itemId, confirmModule.mod.id)} disabled={installingModule}>
-                      {installingModule ? 'Installing...' : 'Install'}
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <h3 className="text-white font-bold text-base mb-1">Install Module</h3>
-                  <p className="text-white/30 text-xs mb-4">Select a module for {moduleModal.item.name}</p>
-                  <div className="space-y-2">
-                    {MICROMODULE_DEFS
-                      .filter(m => m.compatibleCategories.includes(moduleModal.item.category))
-                      .filter(m => loadout?.ownedModules.includes(m.id))
-                      .map((mod) => {
-                        const tierColor = MODULE_TIER_COLORS[mod.tier];
-                        return (
-                          <button
-                            key={mod.id}
-                            onClick={() => setConfirmModule({ itemId: moduleModal.itemId, mod })}
-                            className="w-full text-left p-3 rounded-xl border transition-all hover:bg-white/[0.03] cursor-pointer"
-                            style={{ borderColor: `${tierColor}20` }}
-                          >
-                            <div className="flex items-center gap-2">
-                              <img src={mod.image} alt={mod.name} className="w-7 h-7 object-contain" />
-                              <div className="flex-1 min-w-0">
+
+                    {/* Ship Preview */}
+                    {displayShip && (
+                      <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-transparent p-5 text-center">
+                        <div className="flex justify-center mb-3">
+                          <img
+                            src={skinKey ? `/textures/ships/ship_${skinKey}.png` : '/textures/ship.png'}
+                            alt={displayShip.name}
+                            className="w-24 h-24 object-contain"
+                            style={{ filter: `drop-shadow(0 0 16px ${RARITY_COLORS[displayShip.rarity]}60)` }}
+                          />
+                        </div>
+                        <h3 className="text-white font-bold text-base">{displayShip.name}</h3>
+                        <span
+                          className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block"
+                          style={{
+                            color: RARITY_COLORS[displayShip.rarity],
+                            background: `${RARITY_COLORS[displayShip.rarity]}12`,
+                            border: `1px solid ${RARITY_COLORS[displayShip.rarity]}25`,
+                          }}
+                        >
+                          {displayShip.rarity}
+                        </span>
+                        <p className="text-white/30 text-xs mt-2">
+                          Slots:{' '}
+                          {Array(maxSlots)
+                            .fill(null)
+                            .map((_, i) => (i < shipModules.length ? '◆' : '◇'))
+                            .join('')}{' '}
+                          ({shipModules.length}/{maxSlots})
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Installed Modules */}
+                    {displayShip && (
+                      <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                        <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">
+                          Installed Modules
+                        </h4>
+                        <div className="space-y-2">
+                          {shipModules.map((mod) => {
+                            const tierColor = MODULE_TIER_COLORS[mod.tier];
+                            return (
+                              <div
+                                key={mod.id}
+                                className="flex items-center gap-3 p-2.5 rounded-xl"
+                                style={{ background: `${tierColor}08`, border: `1px solid ${tierColor}20` }}
+                              >
+                                <img src={mod.image} alt={mod.name} className="w-7 h-7 object-contain" />
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-xs font-bold text-white/80">{mod.name}</span>
+                                  <span className="text-[10px] ml-2 font-bold" style={{ color: '#4ade80' }}>
+                                    +{mod.statBonus.value} {mod.statBonus.stat}
+                                  </span>
+                                  {mod.tradeoff && (
+                                    <span className="text-[10px] ml-1 text-red-400/60">
+                                      -{mod.tradeoff.value} {mod.tradeoff.stat}
+                                    </span>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => handleRemoveModule(mod.id)}
+                                  className="px-2 py-1 rounded-lg text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            );
+                          })}
+                          {shipModules.length < maxSlots && (
+                            <button
+                              onClick={() =>
+                                displayShipId && setModuleModal({ itemId: displayShipId, item: displayShip })
+                              }
+                              className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl border border-dashed border-white/[0.08] text-white/20 text-xs hover:border-purple-500/30 hover:bg-purple-500/5 transition-all"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Add Module
+                            </button>
+                          )}
+                          {shipModules.length === 0 && maxSlots > 0 && (
+                            <p className="text-white/10 text-[10px] text-center py-1">No modules installed yet</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Ship Stats */}
+                    <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                      <h4 className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3">Ship Stats</h4>
+                      {!walletPreview && walletAddress && (
+                        <p className="text-white/15 text-[10px] mb-3 flex items-center gap-1.5">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Loading wallet data...
+                        </p>
+                      )}
+                      <div className="space-y-3">
+                        {statBars.map(({ key, label, color }) => {
+                          const val = stats[key];
+                          const thresholds = STAT_THRESHOLDS[key];
+                          const activeThreshold = thresholds.filter((t) => val >= t.at).pop();
+                          const nextThreshold = thresholds.find((t) => val < t.at);
+                          return (
+                            <div key={key}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[11px] font-bold text-white/60">{label}</span>
                                 <div className="flex items-center gap-2">
-                                  <span className="text-white text-xs font-bold">{mod.name}</span>
-                                  <span className="text-[8px] font-black px-1.5 py-0.5 rounded" style={{ color: tierColor, background: `${tierColor}15` }}>
-                                    {mod.tier.toUpperCase()}
+                                  {activeThreshold && (
+                                    <span
+                                      className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                                      style={{ color: activeThreshold.color, background: `${activeThreshold.color}15` }}
+                                    >
+                                      {activeThreshold.label}
+                                    </span>
+                                  )}
+                                  <span className="text-[11px] font-black tabular-nums" style={{ color }}>
+                                    {val}
                                   </span>
                                 </div>
-                                <p className="text-white/25 text-[10px] mt-0.5">{mod.description}</p>
-                                <div className="flex items-center gap-3 mt-1">
-                                  <span className="text-green-400 text-[10px] font-bold">+{mod.statBonus.value} {mod.statBonus.stat}</span>
-                                  {mod.tradeoff && <span className="text-red-400 text-[10px]">-{mod.tradeoff.value} {mod.tradeoff.stat}</span>}
+                              </div>
+                              <div className="relative h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-500"
+                                  style={{
+                                    width: `${val}%`,
+                                    background: `linear-gradient(90deg, ${color}80, ${color})`,
+                                  }}
+                                />
+                                {thresholds.map((t) => (
+                                  <div
+                                    key={t.at}
+                                    className="absolute top-0 h-full w-px"
+                                    style={{
+                                      left: `${t.at}%`,
+                                      background: val >= t.at ? `${t.color}60` : 'rgba(255,255,255,0.08)',
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                              {nextThreshold && (
+                                <p className="text-[10px] text-white/40 mt-0.5">
+                                  +{nextThreshold.at - val} to unlock:{' '}
+                                  <span className="font-medium" style={{ color: nextThreshold.color }}>
+                                    {nextThreshold.label}
+                                  </span>{' '}
+                                  — {nextThreshold.effect}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+          {/* ── Module Selection Modal ── */}
+          {moduleModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+              onClick={() => {
+                setModuleModal(null);
+                setConfirmModule(null);
+              }}
+            >
+              <div
+                className="bg-[#0a0e1a] border border-white/10 rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto p-5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {confirmModule ? (
+                  <>
+                    <h3 className="text-white font-bold text-base mb-2">Confirm Installation</h3>
+                    <div
+                      className="p-3 rounded-xl mb-3"
+                      style={{
+                        background: `${MODULE_TIER_COLORS[confirmModule.mod.tier]}10`,
+                        border: `1px solid ${MODULE_TIER_COLORS[confirmModule.mod.tier]}25`,
+                      }}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <img
+                          src={confirmModule.mod.image}
+                          alt={confirmModule.mod.name}
+                          className="w-7 h-7 object-contain"
+                        />
+                        <span className="text-white font-bold text-sm">{confirmModule.mod.name}</span>
+                      </div>
+                      <p className="text-white/40 text-xs mb-2">{confirmModule.mod.description}</p>
+                      <p className="text-green-400 text-xs font-bold">
+                        +{confirmModule.mod.statBonus.value} {confirmModule.mod.statBonus.stat}
+                      </p>
+                      {confirmModule.mod.tradeoff && (
+                        <p className="text-red-400 text-xs">
+                          -{confirmModule.mod.tradeoff.value} {confirmModule.mod.tradeoff.stat}
+                        </p>
+                      )}
+                    </div>
+                    <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 mb-4">
+                      <p className="text-blue-400 text-xs font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Module can be uninstalled later.
+                      </p>
+                    </div>
+                    <div className="flex gap-3">
+                      <Button variant="outline" className="flex-1 h-10 text-xs" onClick={() => setConfirmModule(null)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        className="flex-1 h-10 text-xs bg-purple-600 hover:bg-purple-500 font-bold"
+                        onClick={() => handleInstallModule(confirmModule.itemId, confirmModule.mod.id)}
+                        disabled={installingModule}
+                      >
+                        {installingModule ? 'Installing...' : 'Install'}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-white font-bold text-base mb-1">Install Module</h3>
+                    <p className="text-white/30 text-xs mb-4">Select a module for {moduleModal.item.name}</p>
+                    <div className="space-y-2">
+                      {MICROMODULE_DEFS.filter((m) => m.compatibleCategories.includes(moduleModal.item.category))
+                        .filter((m) => loadout?.ownedModules.includes(m.id))
+                        .map((mod) => {
+                          const tierColor = MODULE_TIER_COLORS[mod.tier];
+                          return (
+                            <button
+                              key={mod.id}
+                              onClick={() => setConfirmModule({ itemId: moduleModal.itemId, mod })}
+                              className="w-full text-left p-3 rounded-xl border transition-all hover:bg-white/[0.03] cursor-pointer"
+                              style={{ borderColor: `${tierColor}20` }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <img src={mod.image} alt={mod.name} className="w-7 h-7 object-contain" />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-white text-xs font-bold">{mod.name}</span>
+                                    <span
+                                      className="text-[8px] font-black px-1.5 py-0.5 rounded"
+                                      style={{ color: tierColor, background: `${tierColor}15` }}
+                                    >
+                                      {mod.tier.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <p className="text-white/25 text-[10px] mt-0.5">{mod.description}</p>
+                                  <div className="flex items-center gap-3 mt-1">
+                                    <span className="text-green-400 text-[10px] font-bold">
+                                      +{mod.statBonus.value} {mod.statBonus.stat}
+                                    </span>
+                                    {mod.tradeoff && (
+                                      <span className="text-red-400 text-[10px]">
+                                        -{mod.tradeoff.value} {mod.tradeoff.stat}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    {(loadout?.ownedModules.filter(id => {
-                      const m = getModuleById(id);
-                      return m && m.compatibleCategories.includes(moduleModal.item.category);
-                    }).length ?? 0) === 0 && (
-                      <p className="text-white/20 text-[10px] text-center py-4">No compatible modules in inventory. Buy modules from the shop first.</p>
-                    )}
-                  </div>
-                  <Button variant="outline" className="w-full mt-4 h-10 text-xs" onClick={() => setModuleModal(null)}>Close</Button>
-                </>
-              )}
+                            </button>
+                          );
+                        })}
+                      {(loadout?.ownedModules.filter((id) => {
+                        const m = getModuleById(id);
+                        return m && m.compatibleCategories.includes(moduleModal.item.category);
+                      }).length ?? 0) === 0 && (
+                        <p className="text-white/20 text-[10px] text-center py-4">
+                          No compatible modules in inventory. Buy modules from the shop first.
+                        </p>
+                      )}
+                    </div>
+                    <Button variant="outline" className="w-full mt-4 h-10 text-xs" onClick={() => setModuleModal(null)}>
+                      Close
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </main>
+          )}
+        </main>
 
-      {/* ── Ambient CSS animations ── */}
-      <style>{`
+        {/* ── Ambient CSS animations ── */}
+        <style>{`
         @keyframes forge-float-1 {
           0%, 100% { transform: translate(0, 0) scale(1); }
           33% { transform: translate(5%, 8%) scale(1.05); }

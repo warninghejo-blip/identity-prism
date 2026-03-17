@@ -1,31 +1,42 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useSearchParams, useLocation } from "react-router-dom";
-const CelestialCard = React.lazy(() => import("@/components/CelestialCard").then(m => ({ default: m.CelestialCard })));
-import type { PlanetTier, WalletData, WalletTraits } from "@/hooks/useWalletData";
-import { useWalletData } from "@/hooks/useWalletData";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { WalletReadyState } from "@solana/wallet-adapter-base";
-import { useWalletModal } from "@solana/wallet-adapter-react-ui";
-import { SolanaMobileWalletAdapterWalletName } from "@solana-mobile/wallet-adapter-mobile";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams, useLocation } from 'react-router-dom';
+const CelestialCard = React.lazy(() =>
+  import('@/components/CelestialCard').then((m) => ({ default: m.CelestialCard })),
+);
+import type { PlanetTier, WalletData, WalletTraits } from '@/hooks/useWalletData';
+import { useWalletData } from '@/hooks/useWalletData';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletReadyState } from '@solana/wallet-adapter-base';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 // mintIdentityPrism loaded dynamically in handleMint()
-import { extractMwaAddress, mwaAuthorizationCache } from "@/lib/mwaAuthorizationCache";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from "lucide-react";
-import LandingOverlay from "@/components/LandingOverlay";
-import { getAppBaseUrl, getHeliusProxyUrl, getMetadataBaseUrl, getHeliusRpcUrl, getCollectionMint, MINT_CONFIG, SEEKER_TOKEN } from "@/constants";
-import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import { getRandomFunnyFact } from "@/utils/funnyFacts";
+import { extractMwaAddress, mwaAuthorizationCache } from '@/lib/mwaAuthorizationCache';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from 'lucide-react';
+import LandingOverlay from '@/components/LandingOverlay';
+import { fadeOutTransition } from '@/lib/fadeTransition';
+import {
+  getAppBaseUrl,
+  getHeliusProxyUrl,
+  getMetadataBaseUrl,
+  getHeliusRpcUrl,
+  getCollectionMint,
+  MINT_CONFIG,
+  SEEKER_TOKEN,
+} from '@/constants';
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { getRandomFunnyFact } from '@/utils/funnyFacts';
 // html2canvas loaded dynamically in renderCardImage()
-const CosmicHub = React.lazy(() => import("@/components/CosmicHubV3"));
+const CosmicHub = React.lazy(() => import('@/components/CosmicHubV3'));
 import { getPrismBalance, earnPrism, canEarnFromScan, markScanEarned, type PrismBalance } from '@/lib/prismCoin';
 import { trackWalletConnect, trackWalletDisconnect, trackMint } from '@/lib/analytics';
 const OnboardingModal = React.lazy(() => import('@/components/OnboardingModal'));
 
-type ViewState = "landing" | "scanning" | "ready" | "hub";
-type PaymentToken = "SOL" | "SKR" | "COINS";
+type ViewState = 'landing' | 'scanning' | 'ready' | 'hub';
+type PaymentToken = 'SOL' | 'SKR' | 'COINS';
 
-const MWA_AUTH_CACHE_KEY = "SolanaMobileWalletAdapterDefaultAuthorizationCache";
+const MWA_AUTH_CACHE_KEY = 'SolanaMobileWalletAdapterDefaultAuthorizationCache';
 // SCANNING_MESSAGES moved to LandingOverlay.tsx
 
 const getCachedMwaAddress = async () => {
@@ -40,22 +51,22 @@ const getCachedMwaAddress = async () => {
 const purgeInvalidMwaCache = async () => {
   try {
     const cached = window.localStorage?.getItem(MWA_AUTH_CACHE_KEY);
-    if (!cached) return { cleared: false, reason: "missing" };
+    if (!cached) return { cleared: false, reason: 'missing' };
     const parsed = JSON.parse(cached);
     const accounts = parsed?.accounts;
     if (!Array.isArray(accounts) || accounts.length === 0) {
       await mwaAuthorizationCache.clear();
       window.localStorage?.removeItem(MWA_AUTH_CACHE_KEY);
-      return { cleared: true, reason: "empty_accounts" };
+      return { cleared: true, reason: 'empty_accounts' };
     }
     const firstAccount = accounts[0] as { address?: string; publicKey?: string | Record<string, number> } | undefined;
     const hasAddress = Boolean(firstAccount?.address || firstAccount?.publicKey);
     if (!hasAddress) {
       await mwaAuthorizationCache.clear();
       window.localStorage?.removeItem(MWA_AUTH_CACHE_KEY);
-      return { cleared: true, reason: "missing_address" };
+      return { cleared: true, reason: 'missing_address' };
     }
-    return { cleared: false, reason: "valid" };
+    return { cleared: false, reason: 'valid' };
   } catch (error) {
     try {
       await mwaAuthorizationCache.clear();
@@ -63,18 +74,22 @@ const purgeInvalidMwaCache = async () => {
     } catch {
       // ignore
     }
-    return { cleared: true, reason: "parse_error" };
+    return { cleared: true, reason: 'parse_error' };
   }
 };
 
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
-  const isNftMode = searchParams.get("mode") === "nft";
-  const urlAddress = searchParams.get("address");
+  const isNftMode = searchParams.get('mode') === 'nft';
+  const urlAddress = searchParams.get('address');
   const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
   const storedSubPageReturn = sessionStorage.getItem('returnedFromSubPage') === '1';
-  if (storedSubPageReturn) { try { sessionStorage.removeItem('returnedFromSubPage'); } catch {} }
+  if (storedSubPageReturn) {
+    try {
+      sessionStorage.removeItem('returnedFromSubPage');
+    } catch {}
+  }
   const locState = location.state as Record<string, unknown> | null;
   const shouldResumeFromBlackHole = Boolean(urlAddress) && (Boolean(locState?.fromBlackHole) || storedReturn);
   const shouldResumeFromGameJump = Boolean(locState?.fromGameJump);
@@ -85,6 +100,13 @@ const Index = () => {
   const returningFromGameJump = useRef(shouldResumeFromGameJump);
   const returningFromSubPage = useRef(shouldResumeFromSubPage);
   const suppressLoadingRef = useRef(shouldResumeFromBlackHole || shouldResumeFromGameJump);
+
+  // Fade out transition overlay when returning from a sub-page
+  useEffect(() => {
+    if (returningFromSubPage.current || returningFromBH.current || returningFromGameJump.current) {
+      fadeOutTransition(0);
+    }
+  }, []);
 
   // Referral claim — check for ?ref= param on first load
   useEffect(() => {
@@ -103,10 +125,12 @@ const Index = () => {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
     shouldOpenCard && urlAddress
-      ? "ready"
-      : (returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)
-        ? "hub"
-        : (urlAddress ? "scanning" : "landing")
+      ? 'ready'
+      : returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current
+        ? 'hub'
+        : urlAddress
+          ? 'scanning'
+          : 'landing',
   );
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const [jwtSigning, setJwtSigning] = useState(false);
@@ -128,7 +152,9 @@ const Index = () => {
 
   const [activeAddress, setActiveAddress] = useState<string | undefined>(urlAddress || undefined);
   const didForceDisconnect = useRef(false);
-  const [walletStable, setWalletStable] = useState(Boolean(urlAddress) || returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current);
+  const [walletStable, setWalletStable] = useState(
+    Boolean(urlAddress) || returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current,
+  );
 
   // On fresh app open (no URL address, not returning from BlackHole),
   // force-disconnect any auto-connected wallet so user must choose manually.
@@ -141,7 +167,9 @@ const Index = () => {
     }
     if (isConnected && !didForceDisconnect.current) {
       didForceDisconnect.current = true;
-      disconnect().catch(() => {}).finally(() => setTimeout(() => setWalletStable(true), 100));
+      disconnect()
+        .catch(() => {})
+        .finally(() => setTimeout(() => setWalletStable(true), 100));
       return;
     }
     if (!isConnected && !didForceDisconnect.current) {
@@ -158,10 +186,10 @@ const Index = () => {
     if (isConnected && connectedAddress) {
       const addr = connectedAddress.toBase58();
       setActiveAddress(addr);
-      setViewState("ready");
+      setViewState('ready');
       // Also update URL so refresh works
       const next = new URLSearchParams(searchParams);
-      next.set("address", addr);
+      next.set('address', addr);
       setSearchParams(next, { replace: true });
     }
   }, [isConnected, connectedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -200,7 +228,7 @@ const Index = () => {
     if (returningFromBH.current || returningFromGameJump.current) return;
     if (suppressLoadingRef.current) return;
     if (!shellRef.current) return;
-    if (viewState !== "landing" && viewState !== "scanning") return;
+    if (viewState !== 'landing' && viewState !== 'scanning') return;
 
     let cancelled = false;
     requestAnimationFrame(() => {
@@ -210,12 +238,16 @@ const Index = () => {
         requestAnimationFrame(() => {
           if (cancelled) return;
           // Extra 80ms ensures the overlay is composited on slow devices
-          setTimeout(() => { if (!cancelled) dismissPreloader(); }, 80);
+          setTimeout(() => {
+            if (!cancelled) dismissPreloader();
+          }, 80);
         });
       });
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [dismissPreloader, viewState]);
   // Safety: always dismiss preloader after 20s max
   useEffect(() => {
@@ -230,21 +262,23 @@ const Index = () => {
       if (activeAddress !== urlAddress) {
         setActiveAddress(urlAddress);
       }
-      if (viewState === "landing") {
-        setViewState("ready");
+      if (viewState === 'landing') {
+        setViewState('ready');
       }
     } catch (error) {
-      console.error("Invalid address in URL", error);
+      console.error('Invalid address in URL', error);
       if (activeAddress === urlAddress) {
         setActiveAddress(undefined);
-        setViewState("landing");
+        setViewState('landing');
       }
     }
   }, [urlAddress, activeAddress, viewState]);
 
-  const userAgent = globalThis.navigator?.userAgent ?? "";
+  const userAgent = globalThis.navigator?.userAgent ?? '';
   const isCapacitor = Boolean(
-    (globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()
+    (
+      globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }
+    ).Capacitor?.isNativePlatform?.(),
   );
   const isAndroidDevice = /android/i.test(userAgent);
   const isMobileBrowser = /android|iphone|ipad|ipod/i.test(userAgent);
@@ -254,19 +288,15 @@ const Index = () => {
 
   const mobileWallet = useMemo(
     () => availableWallets.find((w) => w.adapter.name === SolanaMobileWalletAdapterWalletName),
-    [availableWallets]
+    [availableWallets],
   );
-  const phantomWallet = useMemo(
-    () => availableWallets.find((w) => w.adapter.name === "Phantom"),
-    [availableWallets]
-  );
+  const phantomWallet = useMemo(() => availableWallets.find((w) => w.adapter.name === 'Phantom'), [availableWallets]);
   const nonMwaWallets = useMemo(
     () => availableWallets.filter((w) => w.adapter.name !== SolanaMobileWalletAdapterWalletName),
-    [availableWallets]
+    [availableWallets],
   );
   const isWalletUsable = (candidate?: typeof mobileWallet) =>
-    candidate?.readyState === WalletReadyState.Installed ||
-    candidate?.readyState === WalletReadyState.Loadable;
+    candidate?.readyState === WalletReadyState.Installed || candidate?.readyState === WalletReadyState.Loadable;
   const preferredMobileWallet = useMemo(() => {
     if (mobileWallet) return mobileWallet;
     const installed = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Installed);
@@ -296,7 +326,7 @@ const Index = () => {
     let ticks = 0;
     let intervalId: number | null = null;
     const dispatchBlur = () => {
-      window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(new Event('blur'));
       ticks += 1;
       if (ticks >= 12 && intervalId !== null) {
         window.clearInterval(intervalId);
@@ -319,35 +349,35 @@ const Index = () => {
       if (!activeAddress) {
         const resolved = pubKey?.toBase58?.();
         if (resolved) {
-          if (import.meta.env.DEV) console.log("[MobileConnect] Adapter connect event:", resolved);
+          if (import.meta.env.DEV) console.log('[MobileConnect] Adapter connect event:', resolved);
           setActiveAddress(resolved);
-          setViewState("scanning");
+          setViewState('scanning');
         }
       }
     };
 
     const handleError = (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error ?? "");
-      console.warn("[MobileConnect] Adapter error event:", error);
+      const message = error instanceof Error ? error.message : String(error ?? '');
+      console.warn('[MobileConnect] Adapter error event:', error);
       mwaErrorRef.current = message;
     };
 
-    adapter.on?.("connect", handleConnect);
-    adapter.on?.("error", handleError);
+    adapter.on?.('connect', handleConnect);
+    adapter.on?.('error', handleError);
     return () => {
-      adapter.off?.("connect", handleConnect);
-      adapter.off?.("error", handleError);
+      adapter.off?.('connect', handleConnect);
+      adapter.off?.('error', handleError);
     };
   }, [mobileWallet?.adapter, activeAddress]);
 
   useEffect(() => {
-    if (viewState === "scanning") {
+    if (viewState === 'scanning') {
       setScanningMessageIndex(0);
     }
   }, [viewState]);
 
   useEffect(() => {
-    if (viewState !== "scanning") return;
+    if (viewState !== 'scanning') return;
     const interval = window.setInterval(() => {
       setScanningMessageIndex((prev) => (prev + 1) % 3); // 3 messages in LandingOverlay
     }, 1600);
@@ -368,11 +398,11 @@ const Index = () => {
     }
 
     if (!targetWallet || !targetReady) {
-      toast.error("Wallet not detected");
+      toast.error('Wallet not detected');
       return;
     }
 
-    if (import.meta.env.DEV) console.log("[MobileConnect] Using wallet:", targetWallet.adapter.name);
+    if (import.meta.env.DEV) console.log('[MobileConnect] Using wallet:', targetWallet.adapter.name);
 
     const openPhantomDeepLink = () => {
       if (!isIosDevice) {
@@ -388,12 +418,12 @@ const Index = () => {
       mwaErrorRef.current = null;
       if (isConnected && connectedAddress) {
         setActiveAddress(connectedAddress.toBase58());
-        setViewState("scanning");
+        setViewState('scanning');
         return;
       }
 
       select(targetWallet.adapter.name);
-      if (import.meta.env.DEV) console.log("[MobileConnect] Calling adapter.connect()...");
+      if (import.meta.env.DEV) console.log('[MobileConnect] Calling adapter.connect()...');
       const stopMwaNudge =
         targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName ? startMwaAssociationNudge() : undefined;
       try {
@@ -406,9 +436,9 @@ const Index = () => {
         const resolved = targetWallet.adapter.publicKey?.toBase58();
         if (resolved) {
           setActiveAddress(resolved);
-          setViewState("scanning");
+          setViewState('scanning');
           trackWalletConnect('mobile');
-          toast.success("Wallet Connected");
+          toast.success('Wallet Connected');
           return;
         }
         if (targetWallet.readyState === WalletReadyState.Loadable) {
@@ -417,11 +447,12 @@ const Index = () => {
         throw new Error(`${targetWallet.adapter.name} connected but public key is missing.`);
       }
 
-      if (import.meta.env.DEV) console.log("[MobileConnect] Adapter state after connect():", {
-        connected: targetWallet.adapter.connected,
-        publicKey: targetWallet.adapter.publicKey?.toBase58(),
-        readyState: targetWallet.readyState,
-      });
+      if (import.meta.env.DEV)
+        console.log('[MobileConnect] Adapter state after connect():', {
+          connected: targetWallet.adapter.connected,
+          publicKey: targetWallet.adapter.publicKey?.toBase58(),
+          readyState: targetWallet.readyState,
+        });
 
       let attempts = 0;
       const maxAttempts = 60;
@@ -435,14 +466,15 @@ const Index = () => {
           const mwaAdapter = targetWallet.adapter as { _authorizationResult?: unknown };
           const internalAddress = extractMwaAddress(mwaAdapter._authorizationResult);
           if (internalAddress) {
-            if (import.meta.env.DEV) console.log("[MobileConnect] Using MWA authorization result address:", internalAddress);
+            if (import.meta.env.DEV)
+              console.log('[MobileConnect] Using MWA authorization result address:', internalAddress);
             resolvedAddress = internalAddress;
           }
         }
 
         if (!resolvedAddress && targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
-          const message = mwaErrorRef.current ?? "";
-          if (message.includes("mobile wallet protocol") || message.includes("ERROR_WALLET_NOT_FOUND")) {
+          const message = mwaErrorRef.current ?? '';
+          if (message.includes('mobile wallet protocol') || message.includes('ERROR_WALLET_NOT_FOUND')) {
             if (isConnected) {
               await disconnect();
             }
@@ -455,7 +487,7 @@ const Index = () => {
         if (!resolvedAddress) {
           const cachedAddress = await getCachedMwaAddress();
           if (cachedAddress) {
-            if (import.meta.env.DEV) console.log("[MobileConnect] Using cached MWA address:", cachedAddress);
+            if (import.meta.env.DEV) console.log('[MobileConnect] Using cached MWA address:', cachedAddress);
             resolvedAddress = cachedAddress;
           }
         }
@@ -468,17 +500,17 @@ const Index = () => {
       }
 
       if (resolvedAddress) {
-        if (import.meta.env.DEV) console.log("[MobileConnect] Success! Resolved Address:", resolvedAddress);
+        if (import.meta.env.DEV) console.log('[MobileConnect] Success! Resolved Address:', resolvedAddress);
         setActiveAddress(resolvedAddress);
-        setViewState("scanning");
+        setViewState('scanning');
         trackWalletConnect('mwa');
-        toast.success("Wallet Connected");
+        toast.success('Wallet Connected');
       } else {
-        console.error("[MobileConnect] Failure: No public key and no cache.");
+        console.error('[MobileConnect] Failure: No public key and no cache.');
         try {
           const cacheResult = await purgeInvalidMwaCache();
           if (cacheResult.cleared) {
-            if (import.meta.env.DEV) console.log("[MobileConnect] Cleared invalid MWA cache:", cacheResult.reason);
+            if (import.meta.env.DEV) console.log('[MobileConnect] Cleared invalid MWA cache:', cacheResult.reason);
           }
         } catch {
           // ignore cache cleanup failures
@@ -491,40 +523,56 @@ const Index = () => {
         }
         const hint =
           targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName
-            ? "No public key received. Make sure a Solana Mobile-compatible wallet is installed and approve the request."
-            : "Wallet connected but Public Key is missing. Please try again.";
+            ? 'No public key received. Make sure a Solana Mobile-compatible wallet is installed and approve the request.'
+            : 'Wallet connected but Public Key is missing. Please try again.';
         throw new Error(hint);
       }
     } catch (err) {
       if (targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName) {
-        const message = err instanceof Error ? err.message : String(err ?? "");
-        if (message.includes("mobile wallet protocol") || message.includes("ERROR_WALLET_NOT_FOUND")) {
+        const message = err instanceof Error ? err.message : String(err ?? '');
+        if (message.includes('mobile wallet protocol') || message.includes('ERROR_WALLET_NOT_FOUND')) {
           if (openPhantomDeepLink()) {
             return;
           }
         }
       }
-      console.error("[MobileConnect] Connection error detail:", err);
-      toast.error("Connection failed", {
+      console.error('[MobileConnect] Connection error detail:', err);
+      toast.error('Connection failed', {
         description: err instanceof Error ? err.message : String(err),
       });
       // Reset adapter state so next connect attempt starts fresh
-      try { await targetWallet.adapter.disconnect(); } catch {}
-      try { select(null); } catch {}
+      try {
+        await targetWallet.adapter.disconnect();
+      } catch {}
+      try {
+        select(null);
+      } catch {}
     }
-  }, [preferredMobileWallet, preferredMobileWalletReady, availableWallets, isCapacitor, isAndroidDevice, select, isConnected, connectedAddress, disconnect, isIosDevice, startMwaAssociationNudge]);
+  }, [
+    preferredMobileWallet,
+    preferredMobileWalletReady,
+    availableWallets,
+    isCapacitor,
+    isAndroidDevice,
+    select,
+    isConnected,
+    connectedAddress,
+    disconnect,
+    isIosDevice,
+    startMwaAssociationNudge,
+  ]);
 
   const handleDesktopConnect = useCallback(async () => {
     const targetWallet = preferredDesktopWallet;
     if (!targetWallet) {
-      toast.error("Wallet not detected");
+      toast.error('Wallet not detected');
       return;
     }
 
     try {
       if (isConnected && connectedAddress) {
         setActiveAddress(connectedAddress.toBase58());
-        setViewState("scanning");
+        setViewState('scanning');
         return;
       }
 
@@ -544,21 +592,33 @@ const Index = () => {
       const resolved = targetWallet.adapter.publicKey?.toBase58();
       if (resolved) {
         setActiveAddress(resolved);
-        setViewState("scanning");
+        setViewState('scanning');
         trackWalletConnect('desktop');
       }
     } catch (err) {
-      console.error("[DesktopConnect] Connection error:", err);
-      toast.error("Connection failed", {
+      console.error('[DesktopConnect] Connection error:', err);
+      toast.error('Connection failed', {
         description: err instanceof Error ? err.message : String(err),
       });
       // Reset adapter state so next connect attempt starts fresh
-      try { await targetWallet.adapter.disconnect(); } catch {}
-      try { select(null); } catch {}
+      try {
+        await targetWallet.adapter.disconnect();
+      } catch {}
+      try {
+        select(null);
+      } catch {}
     }
-  }, [preferredDesktopWallet, desktopWalletReady, isConnected, connectedAddress, select, connect, setWalletModalVisible]);
+  }, [
+    preferredDesktopWallet,
+    desktopWalletReady,
+    isConnected,
+    connectedAddress,
+    select,
+    connect,
+    setWalletModalVisible,
+  ]);
 
-  const previewMode = import.meta.env.DEV && searchParams.has("preview");
+  const previewMode = import.meta.env.DEV && searchParams.has('preview');
   const resolvedAddress = activeAddress;
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
@@ -572,7 +632,9 @@ const Index = () => {
     import('@/components/prism/shared').then(async ({ getCachedJwt, obtainJwt }) => {
       if (!getCachedJwt(resolvedAddress)) {
         setJwtSigning(true);
-        try { await obtainJwt(wallet); } catch {}
+        try {
+          await obtainJwt(wallet);
+        } catch {}
         setJwtSigning(false);
       }
     });
@@ -597,10 +659,13 @@ const Index = () => {
     };
 
     // Wait enough for card 3D scene to render before revealing
-    const delay = (!isLoading && traits) ? 600 : 1500;
+    const delay = !isLoading && traits ? 600 : 1500;
     const t = setTimeout(fadeTunnel, delay);
     const safety = setTimeout(fadeTunnel, 2500);
-    return () => { clearTimeout(t); clearTimeout(safety); };
+    return () => {
+      clearTimeout(t);
+      clearTimeout(safety);
+    };
   }, [isLoading, traits, dismissPreloader]);
 
   useEffect(() => {
@@ -689,69 +754,85 @@ const Index = () => {
     // When returning from BlackHole, skip scanning and go straight to ready
     // Use ref so this persists across re-renders from isLoading/traits changes
     if ((returningFromBH.current || suppressLoadingRef.current) && resolvedAddress) {
-      setViewState("ready");
+      setViewState('ready');
       return;
     }
 
     if (!resolvedAddress) {
-      setViewState("landing");
+      setViewState('landing');
       return;
     }
 
     if (isWarping) {
-      setViewState("scanning");
+      setViewState('scanning');
       return;
     }
 
     if (isLoading || !traits) {
-      setViewState("scanning");
+      setViewState('scanning');
     } else {
       // After scan → go to Hub (not card). Card accessible from Hub.
-      setViewState("hub");
+      setViewState('hub');
       // Show onboarding for first-time users
       if (!localStorage.getItem('ip_onboarding_v1')) {
         setShowOnboarding(true);
       }
       // Load Coin balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
-        getPrismBalance(resolvedAddress).then(setPrismBalance).catch(() => {});
+        getPrismBalance(resolvedAddress)
+          .then(setPrismBalance)
+          .catch(() => {});
         // Claim pending referral
         const pendingRef = sessionStorage.getItem('pending_referral');
         if (pendingRef) {
           sessionStorage.removeItem('pending_referral');
           const base = getHeliusProxyUrl() || window.location.origin;
-          const jwt = (() => { try { const r = sessionStorage.getItem('ip_auth_jwt'); if (!r) return null; const p = JSON.parse(r); return (p.expiresAt > Date.now() + 60000) ? p.token : null; } catch { return null; } })();
+          const jwt = (() => {
+            try {
+              const r = sessionStorage.getItem('ip_auth_jwt');
+              if (!r) return null;
+              const p = JSON.parse(r);
+              return p.expiresAt > Date.now() + 60000 ? p.token : null;
+            } catch {
+              return null;
+            }
+          })();
           if (jwt) {
             fetch(`${base}/api/referral/claim`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
               body: JSON.stringify({ code: pendingRef }),
-            }).then(r => r.json()).then(d => {
-              if (d.success) toast.success('Referral bonus! +50 Coins');
-            }).catch(() => {});
+            })
+              .then((r) => r.json())
+              .then((d) => {
+                if (d.success) toast.success('Referral bonus! +50 Coins');
+              })
+              .catch(() => {});
           }
         }
         if (canEarnFromScan(resolvedAddress)) {
           markScanEarned(resolvedAddress);
           earnPrism(resolvedAddress, 'scan_wallet').catch(() => {});
           // Quest auto-tracking
-          import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
-            const qs = getQuestState(resolvedAddress);
-            incrementQuest(qs, 'daily_scan');
-            incrementQuest(qs, 'ot_first_scan');
-          }).catch(() => {});
+          import('@/lib/prismQuests')
+            .then(({ getQuestState, incrementQuest }) => {
+              const qs = getQuestState(resolvedAddress);
+              incrementQuest(qs, 'daily_scan');
+              incrementQuest(qs, 'ot_first_scan');
+            })
+            .catch(() => {});
         }
       }
     }
   }, [resolvedAddress, isWarping, isLoading, traits, fromBlackHole]);
 
   // Removed auto-warp effect
-  
+
   const handleEnter = () => {
     if (connectedAddress) {
       setActiveAddress(connectedAddress.toBase58());
       setIsWarping(true);
-      setViewState("scanning"); // Immediate — prevents one-frame flash
+      setViewState('scanning'); // Immediate — prevents one-frame flash
       setTimeout(() => setIsWarping(false), 900);
     }
   };
@@ -759,19 +840,31 @@ const Index = () => {
   const handleDisconnect = async () => {
     await disconnect();
     mwaAuthorizationCache.clear().catch(() => {});
-    try { localStorage.removeItem(MWA_AUTH_CACHE_KEY); } catch { /* ignore */ }
-    try { localStorage.removeItem('walletAdapter'); } catch { /* ignore */ }
-    try { localStorage.removeItem('walletName'); } catch { /* ignore */ }
+    try {
+      localStorage.removeItem(MWA_AUTH_CACHE_KEY);
+    } catch {
+      /* ignore */
+    }
+    try {
+      localStorage.removeItem('walletAdapter');
+    } catch {
+      /* ignore */
+    }
+    try {
+      localStorage.removeItem('walletName');
+    } catch {
+      /* ignore */
+    }
     setActiveAddress(undefined);
-    setViewState("landing");
+    setViewState('landing');
     trackWalletDisconnect();
   };
 
-  const [mintState, setMintState] = useState<"idle" | "minting" | "success" | "error">("idle");
-  const [remintState, setRemintState] = useState<"idle" | "updating" | "success" | "error">("idle");
+  const [mintState, setMintState] = useState<'idle' | 'minting' | 'success' | 'error'>('idle');
+  const [remintState, setRemintState] = useState<'idle' | 'updating' | 'success' | 'error'>('idle');
   const [hasExistingId, setHasExistingId] = useState<boolean | null>(null);
   const [isMintPanelOpen, setIsMintPanelOpen] = useState(true);
-  const [paymentToken, setPaymentToken] = useState<PaymentToken>("SOL");
+  const [paymentToken, setPaymentToken] = useState<PaymentToken>('SOL');
   const [skrQuote, setSkrQuote] = useState<{ skrAmount: number; discount: number } | null>(null);
   const [skrQuoteError, setSkrQuoteError] = useState<string | null>(null);
   const [skrQuoteLoading, setSkrQuoteLoading] = useState(false);
@@ -780,7 +873,10 @@ const Index = () => {
   // Check if the wallet already owns an Identity Prism (to gate Update button)
   useEffect(() => {
     const addr = wallet?.publicKey?.toBase58();
-    if (!addr) { setHasExistingId(null); return; }
+    if (!addr) {
+      setHasExistingId(null);
+      return;
+    }
     const heliusUrl = getHeliusRpcUrl(addr);
     const collectionMint = getCollectionMint();
     if (!heliusUrl || !collectionMint) return;
@@ -790,24 +886,33 @@ const Index = () => {
         const res = await fetch(heliusUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 'check-id', method: 'getAssetsByOwner', params: { ownerAddress: addr, page: 1, limit: 1000 } }),
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'check-id',
+            method: 'getAssetsByOwner',
+            params: { ownerAddress: addr, page: 1, limit: 1000 },
+          }),
         });
         if (!res.ok || cancelled) return;
-        const data = await res.json() as { result?: { items: Array<{ grouping?: Array<{ group_key: string; group_value: string }> }> } };
-        const owns = (data.result?.items ?? []).some(a =>
-          a.grouping?.some(g => g.group_key === 'collection' && g.group_value === collectionMint)
+        const data = (await res.json()) as {
+          result?: { items: Array<{ grouping?: Array<{ group_key: string; group_value: string }> }> };
+        };
+        const owns = (data.result?.items ?? []).some((a) =>
+          a.grouping?.some((g) => g.group_key === 'collection' && g.group_value === collectionMint),
         );
         if (!cancelled) setHasExistingId(owns);
       } catch {
         if (!cancelled) setHasExistingId(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [wallet?.publicKey]);
 
   const fetchSkrQuote = useCallback(async () => {
     if (!proxyBase) {
-      setSkrQuoteError("SKR pricing unavailable");
+      setSkrQuoteError('SKR pricing unavailable');
       return;
     }
     setSkrQuoteLoading(true);
@@ -815,7 +920,7 @@ const Index = () => {
     let lastError: unknown;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500));
+        if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 1500));
         const response = await fetch(`${proxyBase}/api/market/mint-quote`);
         if (!response.ok) {
           throw new Error(`SKR quote unavailable (${response.status})`);
@@ -824,7 +929,7 @@ const Index = () => {
         const skrAmount = Number(data?.skrAmount);
         const discount = Number(data?.discount ?? SEEKER_TOKEN.DISCOUNT);
         if (!Number.isFinite(skrAmount)) {
-          throw new Error("Invalid SKR quote");
+          throw new Error('Invalid SKR quote');
         }
         setSkrQuote({ skrAmount, discount: Number.isFinite(discount) ? discount : SEEKER_TOKEN.DISCOUNT });
         setSkrQuoteError(null);
@@ -834,12 +939,14 @@ const Index = () => {
         lastError = error;
       }
     }
-    console.warn("[mint] SKR quote fetch failed after retries", lastError);
+    console.warn('[mint] SKR quote fetch failed after retries', lastError);
     // Keep previous successful quote as fallback — only clear error text
-    setSkrQuoteError("SKR pricing unavailable — retrying...");
+    setSkrQuoteError('SKR pricing unavailable — retrying...');
     setSkrQuoteLoading(false);
     // Schedule one more background retry after 10s
-    skrRetryTimerRef.current = window.setTimeout(() => { fetchSkrQuote(); }, 10_000);
+    skrRetryTimerRef.current = window.setTimeout(() => {
+      fetchSkrQuote();
+    }, 10_000);
   }, [proxyBase]);
 
   const skrRetryTimerRef = useRef<number | null>(null);
@@ -855,20 +962,20 @@ const Index = () => {
 
   // Re-fetch SKR quote when entering hub or ready state (e.g. after scan or BlackHole)
   useEffect(() => {
-    if ((viewState === "ready" || viewState === "hub") && !skrQuote) {
+    if ((viewState === 'ready' || viewState === 'hub') && !skrQuote) {
       fetchSkrQuote();
     }
   }, [viewState, skrQuote, fetchSkrQuote]);
   const renderCardImage = useCallback(async (scale: number, quality: number) => {
     if (!cardCaptureRef.current) {
-      throw new Error("Card preview is not ready yet");
+      throw new Error('Card preview is not ready yet');
     }
 
     if (document?.fonts?.ready) await document.fonts.ready;
 
     const { default: html2canvas } = await import('html2canvas');
     const canvas = await html2canvas(cardCaptureRef.current as HTMLDivElement, {
-      backgroundColor: "#0a1420",
+      backgroundColor: '#0a1420',
       scale,
       useCORS: true,
       allowTaint: true,
@@ -887,29 +994,29 @@ const Index = () => {
       ignoreElements: (el) => el.classList?.contains('mint-panel') ?? false,
     });
 
-    return canvas.toDataURL("image/jpeg", quality);
+    return canvas.toDataURL('image/jpeg', quality);
   }, []);
 
   const uploadCardImage = useCallback(async (dataUrl: string) => {
     const metadataBaseUrl = getMetadataBaseUrl();
-    if (!metadataBaseUrl) throw new Error("Metadata URL missing");
+    if (!metadataBaseUrl) throw new Error('Metadata URL missing');
 
     const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image: dataUrl, contentType: "image/jpeg" }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: dataUrl, contentType: 'image/jpeg' }),
     });
     const text = await response.text();
     if (!response.ok) {
       const error = new Error(
-        `Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 120)}`
+        `Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 120)}`,
       ) as Error & { status?: number };
       error.status = response.status;
       throw error;
     }
     const payload = JSON.parse(text);
     if (!payload?.url) {
-      throw new Error("Card image URL missing from upload response");
+      throw new Error('Card image URL missing from upload response');
     }
     return payload.url as string;
   }, []);
@@ -919,7 +1026,7 @@ const Index = () => {
     try {
       return await uploadCardImage(dataUrl);
     } catch (error) {
-      console.warn("[mint] Card image upload failed, retrying smaller payload", error);
+      console.warn('[mint] Card image upload failed, retrying smaller payload', error);
       const fallbackDataUrl = await renderCardImage(1.1, 0.72);
       return await uploadCardImage(fallbackDataUrl);
     }
@@ -927,26 +1034,26 @@ const Index = () => {
   const handleMint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
 
-    if (paymentToken === "SKR" && !skrQuote) {
-      toast.error("SKR price unavailable", {
-        description: "Please try again in a moment.",
+    if (paymentToken === 'SKR' && !skrQuote) {
+      toast.error('SKR price unavailable', {
+        description: 'Please try again in a moment.',
       });
       return;
     }
-    
-    setMintState("minting");
+
+    setMintState('minting');
     let succeeded = false;
     // Safety: auto-reset spinner if wallet promise hangs (e.g. Seeker silently drops request)
     // 30s to allow for card capture + wallet signing + finalize
     const safetyTimer = setTimeout(() => {
       if (!succeeded) {
-        setMintState("idle");
-        toast.info("Transaction timed out — please try again");
+        setMintState('idle');
+        toast.info('Transaction timed out — please try again');
       }
     }, 30_000);
     try {
       const cardImageUrl = await captureCardImage();
-      const { mintIdentityPrism } = await import("@/lib/mintIdentityPrism");
+      const { mintIdentityPrism } = await import('@/lib/mintIdentityPrism');
       const result = await mintIdentityPrism({
         wallet,
         address: wallet.publicKey.toBase58(),
@@ -955,13 +1062,13 @@ const Index = () => {
         cardImageUrl,
         paymentToken,
       });
-      
-      if (import.meta.env.DEV) console.log("Mint success:", result);
+
+      if (import.meta.env.DEV) console.log('Mint success:', result);
       succeeded = true;
       trackMint(true);
-      setMintState("success");
-      setTimeout(() => setMintState("idle"), 4000);
-      toast.success("Identity minted!", {
+      setMintState('success');
+      setTimeout(() => setMintState('idle'), 4000);
+      toast.success('Identity minted!', {
         description: `Tx: ${result.signature.slice(0, 8)}...`,
       });
     } catch (err) {
@@ -972,125 +1079,126 @@ const Index = () => {
         balanceLamports?: number;
         feeLamports?: number;
       };
-      if (error?.code === "INSUFFICIENT_SOL") {
+      if (error?.code === 'INSUFFICIENT_SOL') {
         const requiredSol =
-          typeof error.requiredLamports === "number"
-            ? error.requiredLamports / LAMPORTS_PER_SOL
-            : null;
-        const balanceSol =
-          typeof error.balanceLamports === "number"
-            ? error.balanceLamports / LAMPORTS_PER_SOL
-            : null;
-        toast.error("Insufficient SOL for transaction", {
+          typeof error.requiredLamports === 'number' ? error.requiredLamports / LAMPORTS_PER_SOL : null;
+        const balanceSol = typeof error.balanceLamports === 'number' ? error.balanceLamports / LAMPORTS_PER_SOL : null;
+        toast.error('Insufficient SOL for transaction', {
           description:
             requiredSol !== null && balanceSol !== null
               ? `Need ~${requiredSol.toFixed(4)} SOL (including fee). Available ${balanceSol.toFixed(4)} SOL.`
-              : "Please top up your wallet and try again.",
+              : 'Please top up your wallet and try again.',
         });
-      } else if (error?.code === "INSUFFICIENT_SKR") {
+      } else if (error?.code === 'INSUFFICIENT_SKR') {
         toast.error(`Insufficient ${SEEKER_TOKEN.SYMBOL} tokens`, {
           description: `You need ${SEEKER_TOKEN.SYMBOL} tokens in your wallet to mint with this option. Buy ${SEEKER_TOKEN.SYMBOL} or switch to SOL payment.`,
         });
-      } else if (error?.code === "SIMULATION_FAILED") {
-        toast.error("Transaction simulation failed", {
-          description: "Try again later or switch RPC.",
+      } else if (error?.code === 'SIMULATION_FAILED') {
+        toast.error('Transaction simulation failed', {
+          description: 'Try again later or switch RPC.',
         });
       } else {
         const msg = err instanceof Error ? err.message : String(err);
-        const code = (err as { code?: string })?.code ?? "";
-        const errName = (err as { name?: string })?.name ?? "";
-        console.error("Mint error:", { message: msg, code, name: errName, raw: err });
+        const code = (err as { code?: string })?.code ?? '';
+        const errName = (err as { name?: string })?.name ?? '';
+        console.error('Mint error:', { message: msg, code, name: errName, raw: err });
         const isUserCancel =
-          /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(msg + " " + code) ||
-          errName === "WalletSignTransactionError" ||
-          errName === "WalletSendTransactionError" ||
-          msg === "Unknown error" ||
-          msg === "";
+          /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(
+            msg + ' ' + code,
+          ) ||
+          errName === 'WalletSignTransactionError' ||
+          errName === 'WalletSendTransactionError' ||
+          msg === 'Unknown error' ||
+          msg === '';
         if (isUserCancel) {
-          toast.info("Transaction cancelled");
+          toast.info('Transaction cancelled');
         } else {
-          toast.error("Mint failed", { description: msg });
+          toast.error('Mint failed', { description: msg });
         }
       }
     } finally {
       clearTimeout(safetyTimer);
       // Guarantee spinner always stops (handles hung promises, unexpected errors)
-      if (!succeeded) setMintState("idle");
+      if (!succeeded) setMintState('idle');
     }
   }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
 
   const handleMintWithCoins = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
-    setMintState("minting");
+    setMintState('minting');
     let succeeded = false;
     const safetyTimer = setTimeout(() => {
       if (!succeeded) {
-        setMintState("idle");
-        toast.info("Transaction timed out — please try again");
+        setMintState('idle');
+        toast.info('Transaction timed out — please try again');
       }
     }, 60_000);
     try {
       const cardImageUrl = await captureCardImage();
-      const { mintIdentityPrism } = await import("@/lib/mintIdentityPrism");
+      const { mintIdentityPrism } = await import('@/lib/mintIdentityPrism');
       const result = await mintIdentityPrism({
         wallet,
         address: wallet.publicKey.toBase58(),
         traits,
         score,
         cardImageUrl,
-        paymentToken: "SOL",
+        paymentToken: 'SOL',
         paidWithCoins: true,
       });
-      if (import.meta.env.DEV) console.log("Mint-for-coins success:", result);
+      if (import.meta.env.DEV) console.log('Mint-for-coins success:', result);
       succeeded = true;
       trackMint(true);
-      setMintState("success");
-      setTimeout(() => setMintState("idle"), 4000);
+      setMintState('success');
+      setTimeout(() => setMintState('idle'), 4000);
       // Refresh coin balance after spending
-      getPrismBalance(wallet.publicKey.toBase58()).then(setPrismBalance).catch(() => {});
-      toast.success("Identity minted!", {
+      getPrismBalance(wallet.publicKey.toBase58())
+        .then(setPrismBalance)
+        .catch(() => {});
+      toast.success('Identity minted!', {
         description: `Tx: ${result.signature.slice(0, 8)}... · 10,000 coins spent`,
       });
     } catch (err) {
       trackMint(false, (err as Error)?.message);
       const error = err as Error & { code?: string };
       const msg = error?.message ?? String(err);
-      const code = error?.code ?? "";
-      const errName = (err as { name?: string })?.name ?? "";
-      console.error("Mint-for-coins error:", { message: msg, code, name: errName });
+      const code = error?.code ?? '';
+      const errName = (err as { name?: string })?.name ?? '';
+      console.error('Mint-for-coins error:', { message: msg, code, name: errName });
       const isUserCancel =
-        /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(msg + " " + code) ||
-        errName === "WalletSignTransactionError" ||
-        errName === "WalletSendTransactionError" ||
-        msg === "Unknown error" ||
-        msg === "";
+        /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(
+          msg + ' ' + code,
+        ) ||
+        errName === 'WalletSignTransactionError' ||
+        errName === 'WalletSendTransactionError' ||
+        msg === 'Unknown error' ||
+        msg === '';
       if (isUserCancel) {
-        toast.info("Transaction cancelled");
+        toast.info('Transaction cancelled');
       } else {
-        toast.error("Mint failed", { description: msg });
+        toast.error('Mint failed', { description: msg });
       }
     } finally {
       clearTimeout(safetyTimer);
-      if (!succeeded) setMintState("idle");
+      if (!succeeded) setMintState('idle');
     }
   }, [wallet, traits, score, captureCardImage, prismBalance]);
 
   const handleRemint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
-    setRemintState("updating");
+    setRemintState('updating');
     let succeeded = false;
     const safetyTimer = setTimeout(() => {
       if (!succeeded) {
-        setRemintState("idle");
-        toast.info("Update timed out — please try again");
+        setRemintState('idle');
+        toast.info('Update timed out — please try again');
       }
     }, 60_000);
     try {
-      toast.info("Updating card...", {
-        description: "Updates metadata on existing NFT — only 0.0005 SOL.",
+      toast.info('Updating card...', {
+        description: 'Updates metadata on existing NFT — only 0.0005 SOL.',
       });
       const cardImageUrl = await captureCardImage();
-      const { updateIdentityPrism } = await import("@/lib/mintIdentityPrism");
+      const { updateIdentityPrism } = await import('@/lib/mintIdentityPrism');
       const result = await updateIdentityPrism({
         wallet,
         address: wallet.publicKey.toBase58(),
@@ -1099,65 +1207,65 @@ const Index = () => {
         cardImageUrl,
       });
       succeeded = true;
-      setRemintState("success");
-      setTimeout(() => setRemintState("idle"), 4000);
+      setRemintState('success');
+      setTimeout(() => setRemintState('idle'), 4000);
       setHasExistingId(true);
-      toast.success("Card updated!", {
+      toast.success('Card updated!', {
         description: `NFT metadata updated: ${result.signature.slice(0, 8)}...`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const isUserCancel =
-        /reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(msg);
+      const isUserCancel = /reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(msg);
       if (isUserCancel) {
-        toast.info("Update cancelled");
+        toast.info('Update cancelled');
       } else {
-        toast.error("Update failed", { description: msg });
+        toast.error('Update failed', { description: msg });
       }
     } finally {
       clearTimeout(safetyTimer);
-      if (!succeeded) setRemintState("idle");
+      if (!succeeded) setRemintState('idle');
     }
   }, [wallet, traits, score, captureCardImage]);
 
   const shareInsight = useMemo(() => {
-    if (!traits) return "Cosmic insight pending... 🔮";
+    if (!traits) return 'Cosmic insight pending... 🔮';
     const insight = getRandomFunnyFact(traits);
     return insight.length > 120 ? `${insight.slice(0, 117)}...` : insight;
   }, [traits]);
 
   const handleShare = useCallback(() => {
     if (!traits || !address) {
-      toast.error("Card is not ready yet");
+      toast.error('Card is not ready yet');
       return;
     }
 
     // Format text with emojis and key stats
-    const tierLabel = traits.planetTier.replace("_", " ").toUpperCase();
-    const tierEmoji = {
-      mercury: "☄️",
-      venus: "💛",
-      mars: "🔴",
-      earth: "🌍",
-      neptune: "🔵",
-      uranus: "🧊",
-      saturn: "🪐",
-      jupiter: "🪐",
-      sun: "☀️",
-      binary_sun: "☀️",
-    }[traits.planetTier] ?? "✨";
+    const tierLabel = traits.planetTier.replace('_', ' ').toUpperCase();
+    const tierEmoji =
+      {
+        mercury: '☄️',
+        venus: '💛',
+        mars: '🔴',
+        earth: '🌍',
+        neptune: '🔵',
+        uranus: '🧊',
+        saturn: '🪐',
+        jupiter: '🪐',
+        sun: '☀️',
+        binary_sun: '☀️',
+      }[traits.planetTier] ?? '✨';
 
-    const appBaseUrl = (getAppBaseUrl() ?? "https://identityprism.xyz").replace(/\/+$/, "");
+    const appBaseUrl = (getAppBaseUrl() ?? 'https://identityprism.xyz').replace(/\/+$/, '');
     const shareUrl = `${appBaseUrl}/share`;
     const shareText = [
-      "🔮 Identity Prism",
+      '🔮 Identity Prism',
       `${tierEmoji} Tier: ${tierLabel} • 💎 Score: ${score}`,
       `🔮 Insight: ${shareInsight}`,
-      "⚡ Powered by Solana Blinks",
-      "",
-      "Scan your wallet to reveal your Identity Prism on @solana",
+      '⚡ Powered by Solana Blinks',
+      '',
+      'Scan your wallet to reveal your Identity Prism on @solana',
       shareUrl,
-    ].join("\n");
+    ].join('\n');
 
     const encodedText = encodeURIComponent(shareText);
     const twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
@@ -1167,16 +1275,15 @@ const Index = () => {
       return;
     }
 
-    const popup = window.open(twitterUrl, "_blank", "noopener,noreferrer");
+    const popup = window.open(twitterUrl, '_blank', 'noopener,noreferrer');
     if (!popup) {
-      toast.error("Popup blocked. Allow popups to share on X.");
+      toast.error('Popup blocked. Allow popups to share on X.');
     }
   }, [address, score, shareInsight, traits, isCapacitor, isMobileBrowser]);
 
-
   const showReadyView =
     previewMode ||
-    viewState === "ready" ||
+    viewState === 'ready' ||
     returningFromBH.current ||
     (suppressLoadingRef.current && Boolean(resolvedAddress));
   const cardDataReady = !!traits;
@@ -1189,7 +1296,10 @@ const Index = () => {
   const handleSceneReady = useCallback(() => setSceneReady(true), []);
 
   useEffect(() => {
-    if (!showReadyView) { setMinDelayPassed(false); return; }
+    if (!showReadyView) {
+      setMinDelayPassed(false);
+      return;
+    }
     // Longer delay ensures 3D scene has frames rendered before curtain opens
     const t = setTimeout(() => setMinDelayPassed(true), 500);
     return () => clearTimeout(t);
@@ -1221,7 +1331,7 @@ const Index = () => {
 
   // Only reset everything when explicitly going back to landing
   useEffect(() => {
-    if (viewState === "landing") {
+    if (viewState === 'landing') {
       setSceneReady(false);
       setMinDelayPassed(false);
       setCurtainOpen(false);
@@ -1242,18 +1352,15 @@ const Index = () => {
     const updateScrollbarWidth = () => {
       const shell = shellRef.current;
       const width = shell ? shell.offsetWidth - shell.clientWidth : 0;
-      document.documentElement.style.setProperty(
-        "--shell-scrollbar-width",
-        `${Math.max(width, 0)}px`
-      );
+      document.documentElement.style.setProperty('--shell-scrollbar-width', `${Math.max(width, 0)}px`);
     };
 
     updateScrollbarWidth();
     const raf = window.requestAnimationFrame(updateScrollbarWidth);
-    window.addEventListener("resize", updateScrollbarWidth);
+    window.addEventListener('resize', updateScrollbarWidth);
     return () => {
       window.cancelAnimationFrame(raf);
-      window.removeEventListener("resize", updateScrollbarWidth);
+      window.removeEventListener('resize', updateScrollbarWidth);
     };
   }, [isScrollEnabled, viewState, isMintPanelOpen, isNftMode]);
 
@@ -1262,12 +1369,12 @@ const Index = () => {
       ref={shellRef}
       className={`identity-shell relative min-h-screen ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view nft-kiosk-mode' : ''}`}
     >
-      {viewState === "hub" && activeAddress ? (
-        <React.Suspense fallback={<div style={{position:'fixed',inset:0,background:'#050510'}} />}>
+      {viewState === 'hub' && activeAddress ? (
+        <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#050510' }} />}>
           <CosmicHub
             walletAddress={activeAddress}
             prismBalance={prismBalance}
-            onNavigateToCard={() => setViewState("ready")}
+            onNavigateToCard={() => setViewState('ready')}
             onDisconnect={handleDisconnect}
             identityScore={walletData.score}
             planetTier={walletData.traits?.planetTier}
@@ -1280,7 +1387,16 @@ const Index = () => {
           <div className="identity-gradient" />
           <div className="flex items-center justify-center w-full h-screen p-0 overflow-hidden relative z-10">
             {walletData.traits ? (
-              <React.Suspense fallback={<div className="flex flex-col items-center gap-4"><img src="/phav.png" className="w-16 h-16 animate-pulse opacity-50" alt="" /><div className="text-cyan-500/50 text-xs font-bold tracking-[0.3em] uppercase animate-pulse">Loading...</div></div>}>
+              <React.Suspense
+                fallback={
+                  <div className="flex flex-col items-center gap-4">
+                    <img src="/phav.png" className="w-16 h-16 animate-pulse opacity-50" alt="" />
+                    <div className="text-cyan-500/50 text-xs font-bold tracking-[0.3em] uppercase animate-pulse">
+                      Loading...
+                    </div>
+                  </div>
+                }
+              >
                 <CelestialCard data={walletData} />
               </React.Suspense>
             ) : (
@@ -1314,18 +1430,16 @@ const Index = () => {
               {previewMode ? (
                 <PreviewGallery />
               ) : (
-                <div className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' card-stage-hidden' : ''}`}>
+                <div
+                  className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' card-stage-hidden' : ''}`}
+                >
                   {/* Transition handled by wormhole tunnel — no black overlays */}
-                  <React.Suspense fallback={<div style={{position:'absolute',inset:0,background:'#05070a'}} />}>
-                  <CelestialCard data={walletData} fromBlackHole={fromBlackHole} onSceneReady={handleSceneReady} />
-                </React.Suspense>
+                  <React.Suspense fallback={<div style={{ position: 'absolute', inset: 0, background: '#05070a' }} />}>
+                    <CelestialCard data={walletData} fromBlackHole={fromBlackHole} onSceneReady={handleSceneReady} />
+                  </React.Suspense>
                   {!previewMode && (
                     <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
-                      <button
-                        type="button"
-                        className="mint-toggle"
-                        onClick={() => setIsMintPanelOpen((prev) => !prev)}
-                      >
+                      <button type="button" className="mint-toggle" onClick={() => setIsMintPanelOpen((prev) => !prev)}>
                         {isMintPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                         <span>{isMintPanelOpen ? 'Hide controls' : 'Show controls'}</span>
                       </button>
@@ -1335,15 +1449,15 @@ const Index = () => {
                           <div className="mint-payment-options">
                             <button
                               type="button"
-                              className={`mint-payment-option ${paymentToken === "SOL" ? "is-active" : ""}`}
-                              onClick={() => setPaymentToken("SOL")}
+                              className={`mint-payment-option ${paymentToken === 'SOL' ? 'is-active' : ''}`}
+                              onClick={() => setPaymentToken('SOL')}
                             >
                               SOL
                             </button>
                             <button
                               type="button"
-                              className={`mint-payment-option ${paymentToken === "SKR" ? "is-active" : ""}`}
-                              onClick={() => setPaymentToken("SKR")}
+                              className={`mint-payment-option ${paymentToken === 'SKR' ? 'is-active' : ''}`}
+                              onClick={() => setPaymentToken('SKR')}
                               disabled={!skrQuote && !skrQuoteLoading}
                             >
                               {SEEKER_TOKEN.SYMBOL} −50%
@@ -1351,24 +1465,28 @@ const Index = () => {
                             {isConnected && (
                               <button
                                 type="button"
-                                className={`mint-payment-option ${paymentToken === "COINS" ? "is-active" : ""}`}
-                                onClick={() => setPaymentToken("COINS")}
+                                className={`mint-payment-option ${paymentToken === 'COINS' ? 'is-active' : ''}`}
+                                onClick={() => setPaymentToken('COINS')}
                                 disabled={false}
-                                style={paymentToken === "COINS" ? { borderColor: 'rgba(234,179,8,0.5)', color: 'rgba(234,179,8,0.9)' } : {}}
+                                style={
+                                  paymentToken === 'COINS'
+                                    ? { borderColor: 'rgba(234,179,8,0.5)', color: 'rgba(234,179,8,0.9)' }
+                                    : {}
+                                }
                               >
                                 COINS
                               </button>
                             )}
                           </div>
-                          {paymentToken === "SKR" && (
-                            <span className={`mint-payment-note ${skrQuoteError ? "is-error" : ""}`}>
-                              {skrQuoteError
-                                ? skrQuoteError
-                                : `50% discount with ${SEEKER_TOKEN.SYMBOL}`}
+                          {paymentToken === 'SKR' && (
+                            <span className={`mint-payment-note ${skrQuoteError ? 'is-error' : ''}`}>
+                              {skrQuoteError ? skrQuoteError : `50% discount with ${SEEKER_TOKEN.SYMBOL}`}
                             </span>
                           )}
-                          {paymentToken === "COINS" && (
-                            <span className={`mint-payment-note ${prismBalance && prismBalance.balance < 10000 ? 'is-error' : ''}`}>
+                          {paymentToken === 'COINS' && (
+                            <span
+                              className={`mint-payment-note ${prismBalance && prismBalance.balance < 10000 ? 'is-error' : ''}`}
+                            >
                               {!prismBalance
                                 ? 'Loading...'
                                 : prismBalance.balance < 10000
@@ -1379,28 +1497,35 @@ const Index = () => {
                         </div>
                         <div className="mint-action-row">
                           <Button
-                            onClick={paymentToken === "COINS" ? handleMintWithCoins : handleMint}
+                            onClick={paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
                             disabled={
-                              mintState === "minting" ||
+                              mintState === 'minting' ||
                               isLoading ||
                               !isConnected ||
-                              (paymentToken === "SKR" && !skrQuote) ||
-                              (paymentToken === "COINS" && (!prismBalance || prismBalance.balance < 10000))
+                              (paymentToken === 'SKR' && !skrQuote) ||
+                              (paymentToken === 'COINS' && (!prismBalance || prismBalance.balance < 10000))
                             }
                             className="mint-primary-btn"
-                            style={paymentToken === "COINS" ? { background: 'linear-gradient(135deg, rgba(234,179,8,0.2), rgba(234,179,8,0.1))', borderColor: 'rgba(234,179,8,0.35)' } : {}}
+                            style={
+                              paymentToken === 'COINS'
+                                ? {
+                                    background: 'linear-gradient(135deg, rgba(234,179,8,0.2), rgba(234,179,8,0.1))',
+                                    borderColor: 'rgba(234,179,8,0.35)',
+                                  }
+                                : {}
+                            }
                           >
-                            {mintState === "idle" && (
+                            {mintState === 'idle' && (
                               <span>
-                                {paymentToken === "COINS"
+                                {paymentToken === 'COINS'
                                   ? 'MINT · 10,000 COINS'
-                                  : paymentToken === "SKR"
-                                    ? `MINT · ${skrQuote ? skrQuote.skrAmount : "—"} ${SEEKER_TOKEN.SYMBOL}`
+                                  : paymentToken === 'SKR'
+                                    ? `MINT · ${skrQuote ? skrQuote.skrAmount : '—'} ${SEEKER_TOKEN.SYMBOL}`
                                     : `MINT · ${MINT_CONFIG.PRICE_SOL.toFixed(2)} SOL`}
                               </span>
                             )}
-                            {mintState === "minting" && <Loader2 className="h-5 w-5 animate-spin" />}
-                            {mintState === "success" && <span>IDENTITY SECURED</span>}
+                            {mintState === 'minting' && <Loader2 className="h-5 w-5 animate-spin" />}
+                            {mintState === 'success' && <span>IDENTITY SECURED</span>}
                           </Button>
                         </div>
                         {isConnected && (
@@ -1408,33 +1533,46 @@ const Index = () => {
                             <Button
                               onClick={handleRemint}
                               disabled={
-                                remintState === "updating" ||
-                                mintState === "minting" || isLoading || !isConnected ||
+                                remintState === 'updating' ||
+                                mintState === 'minting' ||
+                                isLoading ||
+                                !isConnected ||
                                 hasExistingId !== true
                               }
                               variant="outline"
                               className="mint-primary-btn"
-                              style={{ background: 'rgba(168,85,247,0.08)', borderColor: 'rgba(168,85,247,0.25)', opacity: hasExistingId !== true ? 0.4 : 1 }}
-                              title={hasExistingId === false ? 'Mint your Identity first' : hasExistingId === null ? 'Checking wallet...' : 'Updates metadata on existing NFT'}
+                              style={{
+                                background: 'rgba(168,85,247,0.08)',
+                                borderColor: 'rgba(168,85,247,0.25)',
+                                opacity: hasExistingId !== true ? 0.4 : 1,
+                              }}
+                              title={
+                                hasExistingId === false
+                                  ? 'Mint your Identity first'
+                                  : hasExistingId === null
+                                    ? 'Checking wallet...'
+                                    : 'Updates metadata on existing NFT'
+                              }
                             >
-                              {remintState === "idle" && <span>♻ UPDATE CARD · 0.0005 SOL</span>}
-                              {remintState === "updating" && <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />UPDATING...</>}
-                              {remintState === "success" && <span>✓ CARD UPDATED</span>}
+                              {remintState === 'idle' && <span>♻ UPDATE CARD · 0.0005 SOL</span>}
+                              {remintState === 'updating' && (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                                  UPDATING...
+                                </>
+                              )}
+                              {remintState === 'success' && <span>✓ CARD UPDATED</span>}
                             </Button>
                           </div>
                         )}
-                        <Button
-                          variant="ghost"
-                          onClick={handleShare}
-                          className="mint-share-btn"
-                        >
+                        <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
                           <Share2 className="h-4 w-4 mr-2" />
                           SHARE ON X
                         </Button>
                         <Button
                           variant="ghost"
                           onClick={() => {
-                            setViewState("hub");
+                            setViewState('hub');
                           }}
                           className="mint-secondary-btn"
                         >
@@ -1452,7 +1590,7 @@ const Index = () => {
           {/* Scanning overlay — stays mounted until curtainDone but hidden instantly behind curtains */}
           {showOverlay && (
             <LandingOverlay
-              isScanning={Boolean(resolvedAddress) || viewState !== "landing"}
+              isScanning={Boolean(resolvedAddress) || viewState !== 'landing'}
               fadeOut={curtainOpen}
               passthrough={curtainOpen}
               isConnected={walletStable && isConnected}
@@ -1494,16 +1632,16 @@ const Index = () => {
 export default Index;
 
 const PREVIEW_TIERS: PlanetTier[] = [
-  "mercury",
-  "mars",
-  "venus",
-  "earth",
-  "neptune",
-  "uranus",
-  "saturn",
-  "jupiter",
-  "sun",
-  "binary_sun",
+  'mercury',
+  'mars',
+  'venus',
+  'earth',
+  'neptune',
+  'uranus',
+  'saturn',
+  'jupiter',
+  'sun',
+  'binary_sun',
 ];
 
 const PREVIEW_SCORE: Record<PlanetTier, number> = {
@@ -1521,38 +1659,33 @@ const PREVIEW_SCORE: Record<PlanetTier, number> = {
 
 function buildPreviewTraits(tier: PlanetTier): WalletTraits {
   const base: WalletTraits = {
-    hasSeeker: tier !== "mercury",
-    hasPreorder: tier === "sun" || tier === "binary_sun",
-    hasCombo: tier === "binary_sun",
-    isOG: tier !== "mercury",
-    isWhale: tier === "sun" || tier === "binary_sun",
-    isCollector: tier !== "mercury",
-    isEarlyAdopter: tier === "sun" || tier === "binary_sun",
-    isTxTitan: tier === "jupiter" || tier === "sun" || tier === "binary_sun",
-    isSolanaMaxi: tier === "binary_sun",
-    isBlueChip: tier === "jupiter" || tier === "sun" || tier === "binary_sun",
-    isDeFiKing: tier === "saturn" || tier === "jupiter" || tier === "sun" || tier === "binary_sun",
+    hasSeeker: tier !== 'mercury',
+    hasPreorder: tier === 'sun' || tier === 'binary_sun',
+    hasCombo: tier === 'binary_sun',
+    isOG: tier !== 'mercury',
+    isWhale: tier === 'sun' || tier === 'binary_sun',
+    isCollector: tier !== 'mercury',
+    isEarlyAdopter: tier === 'sun' || tier === 'binary_sun',
+    isTxTitan: tier === 'jupiter' || tier === 'sun' || tier === 'binary_sun',
+    isSolanaMaxi: tier === 'binary_sun',
+    isBlueChip: tier === 'jupiter' || tier === 'sun' || tier === 'binary_sun',
+    isDeFiKing: tier === 'saturn' || tier === 'jupiter' || tier === 'sun' || tier === 'binary_sun',
     uniqueTokenCount: 40,
     nftCount: 12,
     txCount: 800,
     memeCoinsHeld: [],
-    isMemeLord: tier === "venus" || tier === "earth",
-    hyperactiveDegen: tier === "mars" || tier === "venus",
-    diamondHands: tier === "sun" || tier === "binary_sun",
+    isMemeLord: tier === 'venus' || tier === 'earth',
+    hyperactiveDegen: tier === 'mars' || tier === 'venus',
+    diamondHands: tier === 'sun' || tier === 'binary_sun',
     avgTxPerDay30d: 3.4,
     daysSinceLastTx: 1,
-    solBalance: tier === "binary_sun" ? 18 : tier === "sun" ? 12 : tier === "jupiter" ? 8 : 2.5,
+    solBalance: tier === 'binary_sun' ? 18 : tier === 'sun' ? 12 : tier === 'jupiter' ? 8 : 2.5,
     solBonusApplied: 0,
-    walletAgeDays: tier === "binary_sun" ? 900 : tier === "sun" ? 700 : tier === "jupiter" ? 500 : 200,
+    walletAgeDays: tier === 'binary_sun' ? 900 : tier === 'sun' ? 700 : tier === 'jupiter' ? 500 : 200,
     walletAgeBonus: 0,
     planetTier: tier,
     totalAssetsCount: 42,
-    solTier:
-      tier === "binary_sun" || tier === "sun"
-        ? "whale"
-        : tier === "jupiter"
-          ? "dolphin"
-          : "shrimp",
+    solTier: tier === 'binary_sun' || tier === 'sun' ? 'whale' : tier === 'jupiter' ? 'dolphin' : 'shrimp',
   };
 
   return base;
@@ -1578,7 +1711,7 @@ function PreviewGallery() {
       <div className="preview-grid">
         {PREVIEW_TIERS.map((tier) => (
           <div key={tier} className="preview-card">
-            <React.Suspense fallback={<div style={{height:400,background:'#05070a'}} />}>
+            <React.Suspense fallback={<div style={{ height: 400, background: '#05070a' }} />}>
               <CelestialCard data={buildPreviewWalletData(tier)} />
             </React.Suspense>
           </div>

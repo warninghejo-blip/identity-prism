@@ -1,25 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useWallet } from "@solana/wallet-adapter-react";
-import { goBack } from "@/lib/safeNavigate";
-import { startFadeTransition, fadeOutTransition } from "@/lib/fadeTransition";
-import {
-  ArrowLeft,
-  Trophy,
-  RefreshCw,
-  Loader2,
-  Coins,
-  Crosshair,
-  Orbit,
-  Rocket,
-} from "lucide-react";
-import { getHeliusProxyUrl, getAppBaseUrl } from "@/constants";
-import { getTierIcon } from "@/lib/constants/tierColors";
-import PageShell from "@/components/PageShell";
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { goBack } from '@/lib/safeNavigate';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
+import { ArrowLeft, Trophy, RefreshCw, Loader2, Coins, Crosshair, Orbit, Rocket } from 'lucide-react';
+import { TIER_HEX } from '@/lib/constants/tierColors';
+import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
+import { getTierIcon } from '@/lib/constants/tierColors';
+import PageShell from '@/components/PageShell';
 
 // ── Types ──
 
-type TabKey = "overall" | "orbit" | "destroyer" | "gravity";
+type TabKey = 'overall' | 'orbit' | 'destroyer' | 'gravity';
 
 interface OverallEntry {
   address: string;
@@ -40,7 +32,6 @@ interface GameEntry {
   gameType: string;
 }
 
-
 // ── Tab config ──
 
 interface TabConfig {
@@ -52,55 +43,35 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
   {
-    key: "overall",
-    label: "Overall",
+    key: 'overall',
+    label: 'Overall',
     icon: <Trophy className="w-3.5 h-3.5" />,
-    color: "#FFD700",
+    color: '#FFD700',
   },
   {
-    key: "orbit",
-    label: "Orbit",
+    key: 'orbit',
+    label: 'Orbit',
     icon: <Orbit className="w-3.5 h-3.5" />,
-    color: "#73C2FB",
+    color: '#73C2FB',
   },
   {
-    key: "destroyer",
-    label: "Destroyer",
+    key: 'destroyer',
+    label: 'Destroyer',
     icon: <Crosshair className="w-3.5 h-3.5" />,
-    color: "#C1440E",
+    color: '#C1440E',
   },
   {
-    key: "gravity",
-    label: "Gravity",
+    key: 'gravity',
+    label: 'Gravity',
     icon: <Rocket className="w-3.5 h-3.5" />,
-    color: "#22D3EE",
+    color: '#22D3EE',
   },
 ];
-
-// ── Tier colors (matches the rest of the app) ──
-
-const TIER_COLORS: Record<string, string> = {
-  mercury: "#8B8B8B",
-  venus: "#E8CDA0",
-  earth: "#4B9CD3",
-  mars: "#C1440E",
-  jupiter: "#C88B3A",
-  saturn: "#E8D191",
-  uranus: "#73C2FB",
-  neptune: "#3F54BE",
-  sun: "#FFD700",
-  binary_sun: "#22D3EE",
-  "binary sun": "#22D3EE",
-};
 
 // ── Helpers ──
 
 function getServerBase(): string {
-  return (
-    getHeliusProxyUrl() ||
-    getAppBaseUrl() ||
-    (typeof window !== "undefined" ? window.location.origin : "")
-  );
+  return getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
 }
 
 function formatAddr(addr: string): string {
@@ -113,26 +84,26 @@ function formatNumber(n: number): string {
 }
 
 function tierDisplayName(tier: string): string {
-  if (!tier) return "\u2014";
-  const t = tier.toLowerCase().replace("_", " ");
+  if (!tier) return '\u2014';
+  const t = tier.toLowerCase().replace('_', ' ');
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 function getTierColor(tier: string): string {
-  const key = tier?.toLowerCase() || "";
-  return TIER_COLORS[key] || TIER_COLORS[key.replace(" ", "_")] || "#888";
+  const key = (tier?.toLowerCase() || '').replace(' ', '_');
+  return TIER_HEX[key] || '#888';
 }
 
 /** Format game score: orbit & gravity are time-based (seconds survived), destroyer is points */
 function formatGameScore(score: number, gameType: TabKey): string {
-  if (gameType === "destroyer") {
-    return formatNumber(score) + " pts";
+  if (gameType === 'destroyer') {
+    return formatNumber(score) + ' pts';
   }
   // Orbit & Gravity: score = seconds survived
   if (score >= 60) {
     const min = Math.floor(score / 60);
     const sec = Math.round(score % 60);
-    return `${min}m ${sec < 10 ? "0" : ""}${sec}s`;
+    return `${min}m ${sec < 10 ? '0' : ''}${sec}s`;
   }
   return `${Math.round(score)}s`;
 }
@@ -140,30 +111,31 @@ function formatGameScore(score: number, gameType: TabKey): string {
 function formatDate(dateStr: string): string {
   try {
     const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return "\u2014";
+    if (isNaN(d.getTime())) return '\u2014';
     const now = new Date();
     const diff = now.getTime() - d.getTime();
     const days = Math.floor(diff / 86400000);
-    if (days === 0) return "Today";
-    if (days === 1) return "Yesterday";
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
     if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   } catch {
-    return "\u2014";
+    return '\u2014';
   }
 }
-
 
 // ── Component ──
 
 export default function Leaderboard() {
   const navigate = useNavigate();
   const wallet = useWallet();
-  const myAddress = wallet.publicKey?.toBase58() || "";
+  const myAddress = wallet.publicKey?.toBase58() || '';
 
-  useEffect(() => { fadeOutTransition(); }, []);
+  useEffect(() => {
+    fadeOutTransition();
+  }, []);
 
-  const [activeTab, setActiveTab] = useState<TabKey>("overall");
+  const [activeTab, setActiveTab] = useState<TabKey>('overall');
 
   // Overall tab data
   const [overallEntries, setOverallEntries] = useState<OverallEntry[]>([]);
@@ -177,7 +149,6 @@ export default function Leaderboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-
   const fetchEntries = useCallback(
     async (tab?: TabKey) => {
       const currentTab = tab ?? activeTab;
@@ -190,18 +161,16 @@ export default function Leaderboard() {
           return;
         }
 
-        if (currentTab === "overall") {
+        if (currentTab === 'overall') {
           const res = await fetch(`${base}/api/leaderboard?limit=50`);
           if (res.ok) {
             const data = await res.json();
             setOverallEntries(data?.entries || []);
           } else {
-            setError("Failed to load leaderboard");
+            setError('Failed to load leaderboard');
           }
-        } else if (currentTab !== "tournament") {
-          const res = await fetch(
-            `${base}/api/game/leaderboard?gameType=${currentTab}`
-          );
+        } else if (currentTab !== 'tournament') {
+          const res = await fetch(`${base}/api/game/leaderboard?gameType=${currentTab}`);
           if (res.ok) {
             const data = await res.json();
             setGameEntries((prev) => ({
@@ -209,17 +178,16 @@ export default function Leaderboard() {
               [currentTab]: data?.entries || [],
             }));
           } else {
-            setError("Failed to load leaderboard");
+            setError('Failed to load leaderboard');
           }
         }
       } catch {
-        setError("Network error \u2014 check your connection");
+        setError('Network error \u2014 check your connection');
       }
       setLoading(false);
     },
-    [activeTab]
+    [activeTab],
   );
-
 
   useEffect(() => {
     fetchEntries(activeTab);
@@ -232,14 +200,8 @@ export default function Leaderboard() {
 
   const activeTabConfig = TABS.find((t) => t.key === activeTab)!;
 
-  const currentGameEntries =
-    activeTab !== "overall"
-      ? gameEntries[activeTab] || []
-      : [];
-  const isEmpty =
-    activeTab === "overall"
-      ? overallEntries.length === 0
-      : currentGameEntries.length === 0;
+  const currentGameEntries = activeTab !== 'overall' ? gameEntries[activeTab] || [] : [];
+  const isEmpty = activeTab === 'overall' ? overallEntries.length === 0 : currentGameEntries.length === 0;
 
   const handleRefresh = () => {
     fetchEntries(activeTab);
@@ -251,7 +213,9 @@ export default function Leaderboard() {
       <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <button
-            onClick={() => { startFadeTransition(() => goBack(navigate)); }}
+            onClick={() => {
+              startFadeTransition(() => goBack(navigate));
+            }}
             className="text-white/50 hover:text-white transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -261,9 +225,7 @@ export default function Leaderboard() {
             <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-amber-300 leading-tight">
               Leaderboard
             </h1>
-            <span className="text-[10px] text-white/30 leading-none">
-              Top explorers across the Prism universe
-            </span>
+            <span className="text-[10px] text-white/30 leading-none">Top explorers across the Prism universe</span>
           </div>
           <div className="flex-1" />
           <button
@@ -271,9 +233,7 @@ export default function Leaderboard() {
             disabled={loading}
             className="text-white/40 hover:text-white/70 transition-colors disabled:opacity-30"
           >
-            <RefreshCw
-              className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-            />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
 
@@ -290,20 +250,20 @@ export default function Leaderboard() {
                   whitespace-nowrap transition-all duration-200 shrink-0
                   ${
                     isActive
-                      ? "text-white shadow-lg"
-                      : "text-white/40 hover:text-white/60 bg-white/[0.03] hover:bg-white/[0.06]"
+                      ? 'text-white shadow-lg'
+                      : 'text-white/40 hover:text-white/60 bg-white/[0.03] hover:bg-white/[0.06]'
                   }
                 `}
                 style={
                   isActive
                     ? {
-                        backgroundColor: tab.color + "22",
-                        borderColor: tab.color + "44",
+                        backgroundColor: tab.color + '22',
+                        borderColor: tab.color + '44',
                         border: `1px solid ${tab.color}44`,
                         color: tab.color,
                         boxShadow: `0 0 12px ${tab.color}18`,
                       }
-                    : { border: "1px solid transparent" }
+                    : { border: '1px solid transparent' }
                 }
               >
                 {tab.icon}
@@ -337,13 +297,10 @@ export default function Leaderboard() {
             <Trophy className="w-12 h-12 mx-auto mb-4 opacity-20" />
             <p className="text-sm">
               No entries yet
-              {activeTab !== "overall"
-                ? ` for ${activeTabConfig.label} mode`
-                : ""}
-              . Be the first!
+              {activeTab !== 'overall' ? ` for ${activeTabConfig.label} mode` : ''}. Be the first!
             </p>
           </div>
-        ) : activeTab === "overall" ? (
+        ) : activeTab === 'overall' ? (
           <OverallTable entries={overallEntries} myAddress={myAddress} />
         ) : (
           <GameTable
@@ -360,13 +317,7 @@ export default function Leaderboard() {
 
 // ── Overall Table ──
 
-function OverallTable({
-  entries,
-  myAddress,
-}: {
-  entries: OverallEntry[];
-  myAddress: string;
-}) {
+function OverallTable({ entries, myAddress }: { entries: OverallEntry[]; myAddress: string }) {
   const navigate = useNavigate();
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
@@ -392,8 +343,8 @@ function OverallTable({
             className={`
               grid grid-cols-[36px_1fr] sm:grid-cols-[48px_1fr_100px_80px_90px]
               px-4 py-2.5 border-b border-white/[0.03] items-center gap-y-0.5 cursor-pointer hover:bg-white/[0.04] transition-colors
-              ${isMine ? "bg-yellow-400/[0.06] border-l-2 border-l-yellow-400" : ""}
-              ${rank % 2 === 0 ? "bg-white/[0.01]" : ""}
+              ${isMine ? 'bg-yellow-400/[0.06] border-l-2 border-l-yellow-400' : ''}
+              ${rank % 2 === 0 ? 'bg-white/[0.01]' : ''}
             `}
           >
             {/* Rank */}
@@ -401,25 +352,14 @@ function OverallTable({
 
             {/* Address + minted badge */}
             <div className="flex flex-col sm:flex-row sm:items-center min-w-0">
-              <span
-                className={`text-xs font-mono truncate ${
-                  isMine ? "text-yellow-300 font-bold" : "text-white/60"
-                }`}
-              >
+              <span className={`text-xs font-mono truncate ${isMine ? 'text-yellow-300 font-bold' : 'text-white/60'}`}>
                 {formatAddr(entry.address)}
                 {entry.isMinted && (
-                  <span
-                    className="ml-1 text-yellow-400"
-                    title="Minted Identity"
-                  >
+                  <span className="ml-1 text-yellow-400" title="Minted Identity">
                     &#10022;
                   </span>
                 )}
-                {isMine && (
-                  <span className="ml-1 text-[9px] text-yellow-400/60">
-                    (you)
-                  </span>
-                )}
+                {isMine && <span className="ml-1 text-[9px] text-yellow-400/60">(you)</span>}
               </span>
 
               {/* Mobile-only: coins, score, tier inline */}
@@ -428,9 +368,7 @@ function OverallTable({
                   <Coins className="w-3 h-3 text-yellow-400/60" />
                   {formatNumber(entry.totalCoins)}
                 </span>
-                <span className="text-white/40">
-                  Score: {formatNumber(entry.score)}
-                </span>
+                <span className="text-white/40">Score: {formatNumber(entry.score)}</span>
                 <span className="flex items-center gap-0.5" style={{ color: tierColor }}>
                   <img src={getTierIcon(entry.tier)} alt="" className="w-3 h-3 object-contain" />
                   <span className="font-semibold">{tierDisplayName(entry.tier)}</span>
@@ -484,9 +422,7 @@ function GameTable({
       <div className="hidden sm:grid grid-cols-[48px_1fr_120px_100px] px-4 py-2 border-b border-white/[0.05] text-[10px] uppercase tracking-wider font-bold text-white/30">
         <span>#</span>
         <span>Address</span>
-        <span className="text-right">
-          {gameType === "destroyer" ? "Score" : "Time"}
-        </span>
+        <span className="text-right">{gameType === 'destroyer' ? 'Score' : 'Time'}</span>
         <span className="text-right">Date</span>
       </div>
 
@@ -502,10 +438,10 @@ function GameTable({
             className={`
               grid grid-cols-[36px_1fr] sm:grid-cols-[48px_1fr_120px_100px]
               px-4 py-2.5 border-b border-white/[0.03] items-center gap-y-0.5 cursor-pointer hover:bg-white/[0.04] transition-colors
-              ${isMine ? "border-l-2" : ""}
-              ${rank % 2 === 0 ? "bg-white/[0.01]" : ""}
+              ${isMine ? 'border-l-2' : ''}
+              ${rank % 2 === 0 ? 'bg-white/[0.01]' : ''}
             `}
-            style={isMine ? { borderLeftColor: accentColor, backgroundColor: accentColor + "0F" } : undefined}
+            style={isMine ? { borderLeftColor: accentColor, backgroundColor: accentColor + '0F' } : undefined}
           >
             {/* Rank */}
             <RankBadge rank={rank} color={accentColor} />
@@ -513,17 +449,12 @@ function GameTable({
             {/* Address */}
             <div className="flex flex-col sm:flex-row sm:items-center min-w-0">
               <span
-                className={`text-xs font-mono truncate ${
-                  isMine ? "font-bold" : "text-white/60"
-                }`}
+                className={`text-xs font-mono truncate ${isMine ? 'font-bold' : 'text-white/60'}`}
                 style={isMine ? { color: accentColor } : undefined}
               >
                 {formatAddr(entry.address)}
                 {isMine && (
-                  <span
-                    className="ml-1 text-[9px] opacity-60"
-                    style={{ color: accentColor }}
-                  >
+                  <span className="ml-1 text-[9px] opacity-60" style={{ color: accentColor }}>
                     (you)
                   </span>
                 )}
@@ -534,25 +465,18 @@ function GameTable({
                 <span className="font-bold" style={{ color: accentColor }}>
                   {formatGameScore(entry.score, gameType)}
                 </span>
-                {entry.playedAt && (
-                  <span className="text-white/30">
-                    {formatDate(entry.playedAt)}
-                  </span>
-                )}
+                {entry.playedAt && <span className="text-white/30">{formatDate(entry.playedAt)}</span>}
               </div>
             </div>
 
             {/* Score — desktop */}
-            <span
-              className="hidden sm:block text-xs text-right tabular-nums font-bold"
-              style={{ color: accentColor }}
-            >
+            <span className="hidden sm:block text-xs text-right tabular-nums font-bold" style={{ color: accentColor }}>
               {formatGameScore(entry.score, gameType)}
             </span>
 
             {/* Date — desktop */}
             <span className="hidden sm:block text-xs text-right text-white/30">
-              {entry.playedAt ? formatDate(entry.playedAt) : "\u2014"}
+              {entry.playedAt ? formatDate(entry.playedAt) : '\u2014'}
             </span>
           </div>
         );
@@ -565,22 +489,22 @@ function GameTable({
 
 function RankBadge({ rank, color }: { rank: number; color?: string }) {
   const defaultColors: Record<number, string> = {
-    1: "#FFD700",
-    2: "#C0C0C0",
-    3: "#CD7F32",
+    1: '#FFD700',
+    2: '#C0C0C0',
+    3: '#CD7F32',
   };
   const c = rank <= 3 ? defaultColors[rank] : undefined;
 
   return (
     <span
-      className={`text-sm font-bold ${rank > 3 ? "text-white/30" : ""}`}
+      className={`text-sm font-bold ${rank > 3 ? 'text-white/30' : ''}`}
       style={c ? { color: c } : color ? undefined : undefined}
     >
       {rank <= 3 ? (
         <span
           className="inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px]"
           style={{
-            backgroundColor: (c || color) + "20",
+            backgroundColor: (c || color) + '20',
             color: c || color,
           }}
         >

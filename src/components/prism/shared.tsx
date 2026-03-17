@@ -8,22 +8,24 @@ import { Zap } from 'lucide-react';
 import { getHeliusProxyUrl } from '@/constants';
 import type { WalletTraits } from '@/hooks/useWalletData';
 
-// Re-export canonical tier constants
-export { TIER_HEX, TIER_LABELS, TIER_COLORS_TW, TIER_ICONS, getTierIcon } from '@/lib/constants/tierColors';
-export { TIER_COLORS_TW as TIER_TEXT_COLORS } from '@/lib/constants/tierColors';
-
-export const TIER_COLORS_HEX: Record<string, string> = {
-  mercury: '#8B8B8B', mars: '#C1440E', venus: '#E8CDA0', earth: '#4B9CD3',
-  neptune: '#3F54BE', uranus: '#73C2FB', saturn: '#E8D191', jupiter: '#C88B3A',
-  sun: '#FFD700', binary_sun: '#22D3EE',
-};
+// Import + re-export canonical tier constants
+import { TIER_HEX, TIER_LABELS, TIER_COLORS_TW, TIER_ICONS, getTierIcon } from '@/lib/constants/tierColors';
+export { TIER_HEX, TIER_LABELS, TIER_COLORS_TW, TIER_ICONS, getTierIcon };
+export { TIER_COLORS_TW as TIER_TEXT_COLORS };
+// Backwards-compat alias
+export const TIER_COLORS_HEX = TIER_HEX;
 
 export const TIER_BG: Record<string, string> = {
-  mercury: 'from-stone-500/10 to-stone-600/5', mars: 'from-orange-500/10 to-red-600/5',
-  venus: 'from-yellow-500/10 to-amber-600/5', earth: 'from-blue-500/10 to-green-600/5',
-  neptune: 'from-cyan-500/10 to-blue-600/5', uranus: 'from-sky-500/10 to-cyan-600/5',
-  saturn: 'from-amber-500/10 to-yellow-600/5', jupiter: 'from-orange-500/10 to-amber-600/5',
-  sun: 'from-yellow-500/10 to-orange-600/5', binary_sun: 'from-amber-400/10 to-yellow-500/5',
+  mercury: 'from-stone-500/10 to-stone-600/5',
+  mars: 'from-orange-500/10 to-red-600/5',
+  venus: 'from-yellow-500/10 to-amber-600/5',
+  earth: 'from-blue-500/10 to-green-600/5',
+  neptune: 'from-cyan-500/10 to-blue-600/5',
+  uranus: 'from-sky-500/10 to-cyan-600/5',
+  saturn: 'from-amber-500/10 to-yellow-600/5',
+  jupiter: 'from-orange-500/10 to-amber-600/5',
+  sun: 'from-yellow-500/10 to-orange-600/5',
+  binary_sun: 'from-amber-400/10 to-yellow-500/5',
 };
 
 // ── Types ──
@@ -35,11 +37,11 @@ interface TopProgram {
 }
 
 export interface CompositeBreakdown {
-  onchain: number;      // 0-400
-  sybilTrust: number;   // 0-250
-  humanProof: number;   // 0-150
-  social: number;       // 0-100
-  engagement: number;   // 0-100
+  onchain: number; // 0-400
+  sybilTrust: number; // 0-250
+  humanProof: number; // 0-150
+  social: number; // 0-100
+  engagement: number; // 0-100
 }
 
 export interface WalletPreview {
@@ -112,7 +114,9 @@ export async function fetchWalletPreview(address: string): Promise<WalletPreview
             engagement: bd.engagement ?? 0,
           };
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     return {
       address: data.address,
@@ -133,7 +137,9 @@ export async function fetchWalletPreview(address: string): Promise<WalletPreview
       compositeBadgeCount,
       compositeBreakdown,
     };
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // ── Cached wallet preview (reads from sessionStorage synchronously) ──
@@ -145,27 +151,82 @@ export function getCachedWalletPreview(address: string): WalletPreview | null {
     const { data, ts } = JSON.parse(raw);
     if (Date.now() - ts > 5 * 60 * 1000 || !data?.breakdown) return null;
     return {
-      address, score: data.score ?? 0, tier: data.tier ?? 'mercury',
-      badges: [], solBalance: 0, txCount: 0, walletAgeDays: 0,
-      tokenCount: 0, nftCount: 0, trustGrade: null, trustScore: null,
-      riskLevel: null, topPrograms: [],
-      compositeScore: data.score ?? 0, compositeTier: data.tier ?? 'mercury',
-      compositeBadgeCount: 0, compositeBreakdown: data.breakdown,
+      address,
+      score: data.score ?? 0,
+      tier: data.tier ?? 'mercury',
+      badges: [],
+      solBalance: 0,
+      txCount: 0,
+      walletAgeDays: 0,
+      tokenCount: 0,
+      nftCount: 0,
+      trustGrade: null,
+      trustScore: null,
+      riskLevel: null,
+      topPrograms: [],
+      compositeScore: data.score ?? 0,
+      compositeTier: data.tier ?? 'mercury',
+      compositeBadgeCount: 0,
+      compositeBreakdown: data.breakdown,
     };
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // ── Build compare rows ──
 
 export function buildCompareRows(a: WalletTraits, b: WalletTraits): CompareRow[] {
   return [
-    { label: 'SOL Balance', valueA: a.solBalance.toFixed(2), valueB: b.solBalance.toFixed(2), numA: a.solBalance, numB: b.solBalance, higherIsBetter: true },
-    { label: 'Wallet Age', valueA: `${a.walletAgeDays}d`, valueB: `${b.walletAgeDays}d`, numA: a.walletAgeDays, numB: b.walletAgeDays, higherIsBetter: true },
-    { label: 'Transactions', valueA: a.txCount.toLocaleString(), valueB: b.txCount.toLocaleString(), numA: a.txCount, numB: b.txCount, higherIsBetter: true },
+    {
+      label: 'SOL Balance',
+      valueA: a.solBalance.toFixed(2),
+      valueB: b.solBalance.toFixed(2),
+      numA: a.solBalance,
+      numB: b.solBalance,
+      higherIsBetter: true,
+    },
+    {
+      label: 'Wallet Age',
+      valueA: `${a.walletAgeDays}d`,
+      valueB: `${b.walletAgeDays}d`,
+      numA: a.walletAgeDays,
+      numB: b.walletAgeDays,
+      higherIsBetter: true,
+    },
+    {
+      label: 'Transactions',
+      valueA: a.txCount.toLocaleString(),
+      valueB: b.txCount.toLocaleString(),
+      numA: a.txCount,
+      numB: b.txCount,
+      higherIsBetter: true,
+    },
     { label: 'NFTs', valueA: a.nftCount, valueB: b.nftCount, numA: a.nftCount, numB: b.nftCount, higherIsBetter: true },
-    { label: 'Tokens', valueA: a.uniqueTokenCount, valueB: b.uniqueTokenCount, numA: a.uniqueTokenCount, numB: b.uniqueTokenCount, higherIsBetter: true },
-    { label: 'Total Assets', valueA: a.totalAssetsCount, valueB: b.totalAssetsCount, numA: a.totalAssetsCount, numB: b.totalAssetsCount, higherIsBetter: true },
-    { label: 'Avg Tx/Day', valueA: a.avgTxPerDay30d.toFixed(1), valueB: b.avgTxPerDay30d.toFixed(1), numA: a.avgTxPerDay30d, numB: b.avgTxPerDay30d, higherIsBetter: true },
+    {
+      label: 'Tokens',
+      valueA: a.uniqueTokenCount,
+      valueB: b.uniqueTokenCount,
+      numA: a.uniqueTokenCount,
+      numB: b.uniqueTokenCount,
+      higherIsBetter: true,
+    },
+    {
+      label: 'Total Assets',
+      valueA: a.totalAssetsCount,
+      valueB: b.totalAssetsCount,
+      numA: a.totalAssetsCount,
+      numB: b.totalAssetsCount,
+      higherIsBetter: true,
+    },
+    {
+      label: 'Avg Tx/Day',
+      valueA: a.avgTxPerDay30d.toFixed(1),
+      valueB: b.avgTxPerDay30d.toFixed(1),
+      numA: a.avgTxPerDay30d,
+      numB: b.avgTxPerDay30d,
+      higherIsBetter: true,
+    },
   ];
 }
 
@@ -173,7 +234,7 @@ export function buildCompareRows(a: WalletTraits, b: WalletTraits): CompareRow[]
 
 export function MiniPlanet({ tier, size = 32 }: { tier: string; size?: number }) {
   const icon = getTierIcon(tier);
-  const color = TIER_COLORS_HEX[tier] || '#60a5fa';
+  const color = TIER_HEX[tier] || '#60a5fa';
   return (
     <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
       <img
@@ -191,9 +252,22 @@ export function MiniPlanet({ tier, size = 32 }: { tier: string; size?: number })
 
 // ── BattleBar (unified — supports both Scanner inline and Compare detailed modes) ──
 
-export function BattleBar({ label, valA, valB, maxVal, displayA, displayB, showValues }: {
-  label: string; valA: number; valB: number; maxVal?: number;
-  displayA?: string; displayB?: string; showValues?: boolean;
+export function BattleBar({
+  label,
+  valA,
+  valB,
+  maxVal,
+  displayA,
+  displayB,
+  showValues,
+}: {
+  label: string;
+  valA: number;
+  valB: number;
+  maxVal?: number;
+  displayA?: string;
+  displayB?: string;
+  showValues?: boolean;
 }) {
   const total = valA + valB || 1;
   const pctA = Math.max(8, (valA / total) * 100);
@@ -219,18 +293,20 @@ export function BattleBar({ label, valA, valB, maxVal, displayA, displayB, showV
           initial={{ width: '50%' }}
           animate={{ width: `${pctA}%` }}
           transition={{ delay: 0.3, duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className={`h-full rounded-l-full ${aWins
-            ? 'bg-gradient-to-r from-cyan-500 to-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.4)]'
-            : 'bg-gradient-to-r from-cyan-800/50 to-cyan-700/40'
+          className={`h-full rounded-l-full ${
+            aWins
+              ? 'bg-gradient-to-r from-cyan-500 to-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.4)]'
+              : 'bg-gradient-to-r from-cyan-800/50 to-cyan-700/40'
           }`}
         />
         <motion.div
           initial={{ width: '50%' }}
           animate={{ width: `${pctB}%` }}
           transition={{ delay: 0.3, duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
-          className={`h-full rounded-r-full ${bWins
-            ? 'bg-gradient-to-l from-purple-500 to-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.4)]'
-            : 'bg-gradient-to-l from-purple-800/50 to-purple-700/40'
+          className={`h-full rounded-r-full ${
+            bWins
+              ? 'bg-gradient-to-l from-purple-500 to-purple-400 shadow-[0_0_8px_rgba(168,85,247,0.4)]'
+              : 'bg-gradient-to-l from-purple-800/50 to-purple-700/40'
           }`}
         />
       </div>
@@ -240,7 +316,17 @@ export function BattleBar({ label, valA, valB, maxVal, displayA, displayB, showV
 
 // ── StatPill ──
 
-export function StatPill({ icon, label, value, color }: { icon: JSX.Element; label: string; value: string; color: string }) {
+export function StatPill({
+  icon,
+  label,
+  value,
+  color,
+}: {
+  icon: JSX.Element;
+  label: string;
+  value: string;
+  color: string;
+}) {
   return (
     <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
       <span className={`${color} opacity-70`}>{icon}</span>
@@ -260,7 +346,9 @@ export function getSessionJwt(): string | null {
     const parsed = JSON.parse(raw) as { token: string; expiresAt: number };
     if (parsed.expiresAt > Date.now() + 60_000) return parsed.token;
     sessionStorage.removeItem('ip_auth_jwt');
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return null;
 }
 
@@ -272,15 +360,18 @@ export function getCachedJwt(address: string): string | null {
     if (parsed.address !== address) return null;
     if (parsed.expiresAt > Date.now() + 60_000) return parsed.token;
     sessionStorage.removeItem('ip_auth_jwt');
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return null;
 }
 
 let _jwtInFlight: Promise<string | null> | null = null;
 
-export async function obtainJwt(
-  wallet: { publicKey?: { toBase58(): string } | null; signMessage?: (msg: Uint8Array) => Promise<Uint8Array> },
-): Promise<string | null> {
+export async function obtainJwt(wallet: {
+  publicKey?: { toBase58(): string } | null;
+  signMessage?: (msg: Uint8Array) => Promise<Uint8Array>;
+}): Promise<string | null> {
   const address = wallet.publicKey?.toBase58();
   if (!address || !wallet.signMessage) return null;
 
@@ -303,11 +394,12 @@ export async function obtainJwt(
         body: JSON.stringify({ address }),
       });
       if (!challengeRes.ok) return null;
-      const { nonce, message } = await challengeRes.json() as { nonce: string; message: string };
+      const { nonce, message } = (await challengeRes.json()) as { nonce: string; message: string };
 
       const msgBytes = new TextEncoder().encode(message);
       const signatureBytes = await wallet.signMessage!(msgBytes);
-      const sigArr = signatureBytes instanceof Uint8Array ? signatureBytes : new Uint8Array(signatureBytes as ArrayLike<number>);
+      const sigArr =
+        signatureBytes instanceof Uint8Array ? signatureBytes : new Uint8Array(signatureBytes as ArrayLike<number>);
       const signatureHex = Array.from(sigArr, (b: number) => b.toString(16).padStart(2, '0')).join('');
 
       const tokenRes = await fetch(`${base}/api/auth/token`, {
@@ -316,10 +408,14 @@ export async function obtainJwt(
         body: JSON.stringify({ address, nonce, signature: signatureHex }),
       });
       if (!tokenRes.ok) return null;
-      const { token } = await tokenRes.json() as { token: string };
+      const { token } = (await tokenRes.json()) as { token: string };
 
       const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
-      try { sessionStorage.setItem('ip_auth_jwt', JSON.stringify(entry)); } catch { /* ignore */ }
+      try {
+        sessionStorage.setItem('ip_auth_jwt', JSON.stringify(entry));
+      } catch {
+        /* ignore */
+      }
       return token;
     } catch {
       return null;
@@ -405,11 +501,11 @@ export function getBadgeCount(traits: WalletTraits): number {
 
 export const TRUST_GRADE_COLORS: Record<string, { text: string; bg: string; border: string }> = {
   'A+': { text: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400/30' },
-  'A':  { text: 'text-green-400', bg: 'bg-green-400/10', border: 'border-green-400/30' },
-  'B':  { text: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-400/30' },
-  'C':  { text: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/30' },
-  'D':  { text: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-400/30' },
-  'F':  { text: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/30' },
+  A: { text: 'text-green-400', bg: 'bg-green-400/10', border: 'border-green-400/30' },
+  B: { text: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-400/30' },
+  C: { text: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/30' },
+  D: { text: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-400/30' },
+  F: { text: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/30' },
 };
 
 export const BADGE_LABELS: Record<string, { label: string; color: string }> = {

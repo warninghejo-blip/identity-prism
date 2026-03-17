@@ -7,8 +7,7 @@
  * Fallback: localStorage for offline/anonymous use.
  */
 
-import { getHeliusProxyUrl } from '@/constants';
-import { getSessionJwt } from '@/components/prism/shared';
+import { getApiBase, getSessionJwt } from '@/components/prism/shared';
 
 // ── Types ──
 
@@ -23,10 +22,10 @@ export interface PrismBalance {
 // ── Coin Packages (shared between StellarForge and PrismVault) ──
 
 export const COIN_PACKAGES = [
-  { coins: 5000,    solPrice: 0.005,  label: 'Starter' },
-  { coins: 15000,   solPrice: 0.013,  label: 'Explorer' },
-  { coins: 50000,   solPrice: 0.038,  label: 'Voyager' },
-  { coins: 150000,  solPrice: 0.099,  label: 'Commander' },
+  { coins: 5000, solPrice: 0.005, label: 'Starter' },
+  { coins: 15000, solPrice: 0.013, label: 'Explorer' },
+  { coins: 50000, solPrice: 0.038, label: 'Voyager' },
+  { coins: 150000, solPrice: 0.099, label: 'Commander' },
 ] as const;
 
 export interface PrismTransaction {
@@ -66,20 +65,20 @@ export type PrismSpendSource =
 // ── Earn rates ──
 
 export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
-  game_orbit: 1,           // per 10 seconds survived
-  game_defender: 2,        // per level cleared
-  game_gravity: 1,         // per 80 points (gravity is harder)
-  burn_tokens: 5,          // per token burned
-  burn_nfts: 10,           // per NFT burned
-  scan_wallet: 3,          // per wallet scan (max 1/hour)
-  achievement: 25,         // per achievement unlocked
-  quest_daily: 15,         // per daily quest completed
-  quest_weekly: 50,        // per weekly quest completed
-  quest_milestone: 100,    // per milestone quest completed
-  challenge_win: 30,       // per challenge won
-  first_mint: 100,         // one-time bonus for first mint
-  referral: 20,            // per referred user who scans
-  text_quest: 1,           // text quest reward (custom amount)
+  game_orbit: 1, // per 10 seconds survived
+  game_defender: 2, // per level cleared
+  game_gravity: 1, // per 80 points (gravity is harder)
+  burn_tokens: 5, // per token burned
+  burn_nfts: 10, // per NFT burned
+  scan_wallet: 3, // per wallet scan (max 1/hour)
+  achievement: 25, // per achievement unlocked
+  quest_daily: 15, // per daily quest completed
+  quest_weekly: 50, // per weekly quest completed
+  quest_milestone: 100, // per milestone quest completed
+  challenge_win: 30, // per challenge won
+  first_mint: 100, // one-time bonus for first mint
+  referral: 20, // per referred user who scans
+  text_quest: 1, // text quest reward (custom amount)
 };
 
 // ── Local storage keys ──
@@ -88,13 +87,6 @@ const BALANCE_KEY = 'prism_balance_v1';
 const TRANSACTIONS_KEY = 'prism_transactions_v1';
 
 // ── API helpers ──
-
-function getApiBase(): string {
-  const proxy = getHeliusProxyUrl();
-  if (proxy) return proxy;
-  if (typeof window !== 'undefined') return window.location.origin;
-  return '';
-}
 
 async function apiCall<T>(path: string, body?: unknown): Promise<T | null> {
   try {
@@ -167,7 +159,9 @@ export function canEarnFromScan(address: string): boolean {
     const lastScan = localStorage.getItem(`${SCAN_COOLDOWN_KEY}_${address}`);
     if (!lastScan) return true;
     return Date.now() - Number(lastScan) >= SCAN_COOLDOWN_MS;
-  } catch { return true; }
+  } catch {
+    return true;
+  }
 }
 
 export function markScanEarned(address: string): void {
@@ -200,10 +194,12 @@ export async function earnPrism(
   const desc = description ?? `Earned ${earned} Coins from ${source.replace(/_/g, ' ')}`;
 
   // Try server first
-  const serverResult = await apiCall<{ balance: PrismBalance; earned: number }>(
-    '/api/prism/earn',
-    { address, source, amount: earned, description: desc },
-  );
+  const serverResult = await apiCall<{ balance: PrismBalance; earned: number }>('/api/prism/earn', {
+    address,
+    source,
+    amount: earned,
+    description: desc,
+  });
 
   if (serverResult) return serverResult;
 
@@ -241,10 +237,12 @@ export async function spendPrism(
   const desc = description ?? `Spent ${amount} Coins on ${source.replace(/_/g, ' ')}`;
 
   // Try server first
-  const serverResult = await apiCall<{ balance: PrismBalance; spent: number }>(
-    '/api/prism/spend',
-    { address, source, amount, description: desc },
-  );
+  const serverResult = await apiCall<{ balance: PrismBalance; spent: number }>('/api/prism/spend', {
+    address,
+    source,
+    amount,
+    description: desc,
+  });
 
   // Spending MUST be server-authoritative — no local fallback (prevents free purchases when server is down)
   return serverResult;
@@ -253,10 +251,7 @@ export async function spendPrism(
 /**
  * Get transaction history for a wallet.
  */
-export async function getPrismTransactions(
-  address: string,
-  limit = 50,
-): Promise<PrismTransaction[]> {
+export async function getPrismTransactions(address: string, limit = 50): Promise<PrismTransaction[]> {
   const serverTxs = await apiCall<PrismTransaction[]>(
     `/api/prism/transactions?address=${encodeURIComponent(address)}&limit=${limit}`,
   );
@@ -289,6 +284,5 @@ export function calculateGamePrism(gameMode: 'orbit' | 'destroyer' | 'gravity', 
  * Calculate PRISM earned from burning tokens in Black Hole.
  */
 export function calculateBurnPrism(tokensBurned: number, nftsBurned: number): number {
-  return tokensBurned * PRISM_EARN_RATES.burn_tokens +
-         nftsBurned * PRISM_EARN_RATES.burn_nfts;
+  return tokensBurned * PRISM_EARN_RATES.burn_tokens + nftsBurned * PRISM_EARN_RATES.burn_nfts;
 }

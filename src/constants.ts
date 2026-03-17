@@ -6,11 +6,6 @@ const COLLECTION_MINT = (import.meta.env.VITE_COLLECTION_MINT ?? '').trim();
 const COLLECTION_VERIFY_URL = (import.meta.env.VITE_COLLECTION_VERIFY_URL ?? '').trim();
 const UPDATE_AUTHORITY = (import.meta.env.VITE_UPDATE_AUTHORITY ?? '').trim();
 const CNFT_MINT_URL = (import.meta.env.VITE_CNFT_MINT_URL ?? '').trim();
-const HELIUS_KEYS = (import.meta.env.VITE_HELIUS_API_KEYS ?? import.meta.env.VITE_HELIUS_API_KEY ?? '')
-  .split(',')
-  .map((key) => key.trim())
-  .filter(Boolean);
-
 const normalizeProxyUrl = (url: string) => url.replace(/\/+$/, '');
 const isLocalDevHost = (host: string) => /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(host);
 
@@ -37,38 +32,20 @@ export const getMetadataImageUrl = () => {
 };
 export const getAppBaseUrl = () => (APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : null);
 export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : null);
-export const getCollectionVerifyUrl = () =>
-  COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null;
+export const getCollectionVerifyUrl = () => (COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null);
 export const getUpdateAuthorityAddress = () => (UPDATE_AUTHORITY ? UPDATE_AUTHORITY : null);
 export const getCnftMintUrl = () => (CNFT_MINT_URL ? normalizeProxyUrl(CNFT_MINT_URL) : null);
 
-const getHeliusKeyIndex = (seed?: string) => {
-  if (!HELIUS_KEYS.length) return -1;
-  if (!seed) return 0;
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 2147483647;
-  }
-  return Math.abs(hash) % HELIUS_KEYS.length;
-};
-
-export const getHeliusRpcUrl = (seed?: string) => {
+export const getHeliusRpcUrl = (_seed?: string) => {
   const proxyUrl = getHeliusProxyUrl();
   if (proxyUrl) return `${proxyUrl}/rpc`;
-  const index = getHeliusKeyIndex(seed);
-  if (index < 0) return null;
-  return `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEYS[index]}`;
+  return null;
 };
 
-export const getHeliusRpcUrls = (seed?: string) => {
+export const getHeliusRpcUrls = (_seed?: string) => {
   const proxyUrl = getHeliusProxyUrl();
   if (proxyUrl) return [`${proxyUrl}/rpc`];
-  if (!HELIUS_KEYS.length) return [];
-  const startIndex = Math.max(0, getHeliusKeyIndex(seed));
-  return HELIUS_KEYS.map((_, index) => {
-    const key = HELIUS_KEYS[(startIndex + index) % HELIUS_KEYS.length];
-    return `https://mainnet.helius-rpc.com/?api-key=${key}`;
-  });
+  return [];
 };
 
 export const getHeliusProxyHeaders = (seed?: string) => {
@@ -79,7 +56,6 @@ export const getHeliusProxyHeaders = (seed?: string) => {
 };
 
 export const HELIUS_CONFIG = {
-  API_KEYS: HELIUS_KEYS,
   REST_URL: 'https://api.helius.xyz/v0',
 };
 
@@ -171,8 +147,12 @@ export const BLUE_CHIP_COLLECTIONS = [
 
 // Also match by collection name (case-insensitive) for broader coverage
 export const BLUE_CHIP_COLLECTION_NAMES = [
-  'mad lads', 'solana monkey business', 'claynosaurz', 'okay bears',
-  'famous fox federation', 'taiyo robotics',
+  'mad lads',
+  'solana monkey business',
+  'claynosaurz',
+  'okay bears',
+  'famous fox federation',
+  'taiyo robotics',
 ];
 
 export const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
@@ -196,7 +176,7 @@ export const VISUAL_CONFIG = {
     MYTHIC_PRIMARY: '#FF9C6D',
     MYTHIC_SECONDARY: '#7F5BFF',
   },
-  
+
   // Planet generation
   PLANETS: {
     TOKENS_PER_PLANET: 10, // 1 planet per 10 unique tokens
@@ -205,7 +185,7 @@ export const VISUAL_CONFIG = {
     ORBIT_SPACING: 2.5,
     SIZE_RANGE: { min: 0.3, max: 0.8 },
   },
-  
+
   // Moon generation
   MOONS: {
     NFTS_PER_MOON: 50, // 1 moon per 50 NFTs
@@ -213,14 +193,14 @@ export const VISUAL_CONFIG = {
     SIZE_RANGE: { min: 0.05, max: 0.15 },
     ORBIT_RADIUS: { min: 0.8, max: 1.5 },
   },
-  
+
   // Space dust density based on activity
   DUST: {
     BASE_COUNT: 150,
     TX_MULTIPLIER: 4, // Additional particles per 100 tx
     MAX_PARTICLES: 1500, // Reduced for mobile performance
   },
-  
+
   // Animation speeds (Dramatically slowed down for a majestic cinematic feel)
   ANIMATION: {
     SUN_ROTATION: 0.001,
@@ -229,7 +209,7 @@ export const VISUAL_CONFIG = {
     MOON_ORBIT: 0.1,
     BINARY_ORBIT: 0.01,
   },
-  
+
   // Post-processing (High-Clarity Cinematic - Mobile Optimized)
   POST_PROCESSING: {
     BLOOM_INTENSITY: 1.1,
@@ -239,7 +219,7 @@ export const VISUAL_CONFIG = {
     VIGNETTE_DARKNESS: 0.3,
     NOISE_OPACITY: 0.008,
   },
-  
+
   // Starfield configuration
   STARS: {
     RADIUS: 300,
@@ -249,12 +229,12 @@ export const VISUAL_CONFIG = {
     SATURATION: 0,
     FADE: false,
   },
-  
+
   ORBITS: {
     DEFAULT: '#4488ff',
     GOLDEN: '#ffd479',
   },
-  
+
   NEBULA: {
     COLORS: ['#2b1055', '#7a00ff', '#ff8e53'],
     INTENSITY: 0.45,
@@ -265,10 +245,42 @@ export type RarityTier = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic';
 
 // Planet types for visual variety
 export const PLANET_TYPES = [
-  { name: 'terrestrial', baseColor: '#1a4d2e', accent: '#4ade80', surface: 'terrestrial', roughness: 0.8, metalness: 0.2, emissiveIntensity: 0.35 },
-  { name: 'volcanic', baseColor: '#7c2d12', accent: '#ef4444', surface: 'volcanic', roughness: 0.9, metalness: 0.2, emissiveIntensity: 0.4 },
-  { name: 'gas', baseColor: '#92400e', accent: '#f59e0b', surface: 'gas', roughness: 0.5, metalness: 0.2, emissiveIntensity: 0.25 },
-  { name: 'ice', baseColor: '#bae6fd', accent: '#ffffff', surface: 'ice', roughness: 0.2, metalness: 0.5, emissiveIntensity: 0.3 },
+  {
+    name: 'terrestrial',
+    baseColor: '#1a4d2e',
+    accent: '#4ade80',
+    surface: 'terrestrial',
+    roughness: 0.8,
+    metalness: 0.2,
+    emissiveIntensity: 0.35,
+  },
+  {
+    name: 'volcanic',
+    baseColor: '#7c2d12',
+    accent: '#ef4444',
+    surface: 'volcanic',
+    roughness: 0.9,
+    metalness: 0.2,
+    emissiveIntensity: 0.4,
+  },
+  {
+    name: 'gas',
+    baseColor: '#92400e',
+    accent: '#f59e0b',
+    surface: 'gas',
+    roughness: 0.5,
+    metalness: 0.2,
+    emissiveIntensity: 0.25,
+  },
+  {
+    name: 'ice',
+    baseColor: '#bae6fd',
+    accent: '#ffffff',
+    surface: 'ice',
+    roughness: 0.2,
+    metalness: 0.5,
+    emissiveIntensity: 0.3,
+  },
 ] as const;
 
 export const MEME_COIN_PRICES_USD: Record<keyof typeof MEME_COIN_MINTS, number> = {

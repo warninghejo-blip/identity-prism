@@ -1,13 +1,7 @@
-import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { LogOut } from "lucide-react";
-import { CosmicStarfield } from "@/components/CosmicStarfield";
-
-const SCANNING_MESSAGES = [
-  "Aligning star maps",
-  "Decoding Solana signatures",
-  "Synchronizing cosmic ledger",
-];
+import { Button } from '@/components/ui/button';
+import { LogOut } from 'lucide-react';
+import { CosmicStarfield } from '@/components/CosmicStarfield';
+import ScanProgress from '@/components/ScanProgress';
 
 export interface LandingOverlayProps {
   fadeOut?: boolean;
@@ -42,34 +36,11 @@ export default function LandingOverlay({
   scanningMessageIndex,
   jwtSigning,
 }: LandingOverlayProps) {
-  const startedScanning = useRef(isScanning);
-  useEffect(() => {
-    if (isScanning) startedScanning.current = true;
-    else startedScanning.current = false;
-  }, [isScanning]);
-  const showScanning = isScanning || startedScanning.current;
-  const msgIndexRef = useRef(0);
-  const [localMsgIndex, setLocalMsgIndex] = useState(0);
-
-  // Cycle scanning messages
-  useEffect(() => {
-    if (!showScanning) return;
-    const interval = setInterval(() => {
-      msgIndexRef.current = (msgIndexRef.current + 1) % SCANNING_MESSAGES.length;
-      setLocalMsgIndex(msgIndexRef.current);
-    }, 2800);
-    return () => clearInterval(interval);
-  }, [showScanning]);
-
-  const activeMsgIdx = scanningMessageIndex ?? localMsgIndex;
-  const activeMessage = SCANNING_MESSAGES[activeMsgIdx] ?? SCANNING_MESSAGES[0];
-
+  const showScanning = isScanning;
   const showContent = !isScanning;
 
   return (
-    <div
-      className={`landing-persistent-shell${passthrough ? " passthrough" : ""}${fadeOut ? " fade-out" : ""}`}
-    >
+    <div className={`landing-persistent-shell${passthrough ? ' passthrough' : ''}${fadeOut ? ' fade-out' : ''}`}>
       {/* Canvas starfield — always drift, never vortex */}
       <CosmicStarfield mode="drift" />
 
@@ -81,7 +52,7 @@ export default function LandingOverlay({
       </div>
 
       {/* Center content — visible when not scanning */}
-      <div className={`landing-center-content${showContent ? " content-visible" : " content-hidden"}`}>
+      <div className={`landing-center-content${showContent ? ' content-visible' : ' content-hidden'}`}>
         <img src="/phav.png" alt="Identity Prism" className="landing-v3-logo" />
         <p className="landing-v3-eyebrow">IDENTITY PRISM</p>
         <h1 className="landing-v3-title">
@@ -90,7 +61,7 @@ export default function LandingOverlay({
           reimagined
         </h1>
 
-        <div className={`landing-v3-actions${isConnected ? " connected" : ""}`}>
+        <div className={`landing-v3-actions${isConnected ? ' connected' : ''}`}>
           {isConnected && onEnter ? (
             <div className="landing-v3-connected">
               <div className="landing-v3-wallet-badge">
@@ -110,60 +81,55 @@ export default function LandingOverlay({
           ) : (
             <div className="landing-v3-connect">
               {useMobileWallet ? (
-                <Button
-                  className="landing-v3-connect-btn"
-                  onClick={onMobileConnect}
-                  disabled={!mobileWalletReady}
-                >
-                  {mobileWalletReady ? "CONNECT WALLET" : "GET WALLET"}
+                <Button className="landing-v3-connect-btn" onClick={onMobileConnect} disabled={!mobileWalletReady}>
+                  {mobileWalletReady ? 'CONNECT WALLET' : 'GET WALLET'}
                 </Button>
               ) : (
-                <Button
-                  className="landing-v3-connect-btn"
-                  onClick={onDesktopConnect}
-                >
-                  {desktopWalletReady ? "CONNECT WALLET" : "GET WALLET"}
+                <Button className="landing-v3-connect-btn" onClick={onDesktopConnect}>
+                  {desktopWalletReady ? 'CONNECT WALLET' : 'GET WALLET'}
                 </Button>
               )}
             </div>
           )}
         </div>
-
       </div>
 
       {/* Footer — always at bottom of screen */}
       <div className="landing-v3-footer">
-        <a href="/privacy.html" className="landing-v3-link">Privacy</a>
+        <a href="/privacy.html" className="landing-v3-link">
+          Privacy
+        </a>
         <span className="landing-v3-sep" />
-        <a href="/terms.html" className="landing-v3-link">Terms</a>
+        <a href="/terms.html" className="landing-v3-link">
+          Terms
+        </a>
         <span className="landing-v3-sep" />
-        <a
-          href="https://x.com/Identity_Prism"
-          target="_blank"
-          rel="noreferrer"
-          className="landing-v3-link"
-        >
+        <a href="https://x.com/Identity_Prism" target="_blank" rel="noreferrer" className="landing-v3-link">
           Twitter
         </a>
       </div>
 
-      {/* Star spinner overlay — small centered spinner during scanning */}
-      <div className={`vortex-overlay${showScanning ? " visible" : ""}`}>
-        <div className="star-spinner">
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <span
-              key={i}
-              className="star-spinner-dot"
-              style={{
-                transform: `rotate(${i * 45}deg) translateY(-24px)`,
-                animationDelay: `${i * 0.1}s`,
-              }}
-            />
-          ))}
-        </div>
-        <span key={jwtSigning ? 'jwt' : `vortex-msg-${activeMsgIdx}`} className="vortex-message">
-          {jwtSigning ? 'Verifying wallet ownership...' : activeMessage}
-        </span>
+      {/* Scan progress overlay */}
+      <div className={`vortex-overlay${showScanning ? ' visible' : ''}`}>
+        {jwtSigning ? (
+          <>
+            <div className="star-spinner">
+              {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+                <span
+                  key={i}
+                  className="star-spinner-dot"
+                  style={{
+                    transform: `rotate(${i * 45}deg) translateY(-24px)`,
+                    animationDelay: `${i * 0.1}s`,
+                  }}
+                />
+              ))}
+            </div>
+            <span className="vortex-message">Verifying wallet ownership...</span>
+          </>
+        ) : (
+          <ScanProgress active={showScanning} />
+        )}
       </div>
     </div>
   );

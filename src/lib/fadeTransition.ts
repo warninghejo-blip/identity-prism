@@ -1,9 +1,10 @@
 /**
- * Lightweight fade transitions replacing the heavy wormhole tunnel.
- * Creates a simple opacity overlay for page navigation.
+ * Lightweight fade transitions for page navigation.
+ * Creates a simple opacity overlay that fades in before navigate,
+ * then fades out after the new page mounts.
  */
 
-export function startFadeTransition(onNavigate: () => void, durationMs = 300): void {
+export function startFadeTransition(onNavigate: () => void, durationMs = 250): void {
   // Remove any existing overlay
   const existing = document.getElementById('fade-overlay');
   if (existing) existing.remove();
@@ -30,15 +31,16 @@ export function startFadeTransition(onNavigate: () => void, durationMs = 300): v
   }, durationMs);
 }
 
-export function fadeOutTransition(delayMs = 200): void {
-  // Wait for page to actually render before removing overlay
-  const remove = () => {
+export function fadeOutTransition(delayMs = 50): void {
+  const doFadeOut = () => {
     const overlay = document.getElementById('fade-overlay');
     if (!overlay) return;
-    overlay.style.transition = 'opacity 300ms ease-in-out';
+    overlay.style.transition = 'opacity 250ms ease-in-out';
     overlay.style.opacity = '0';
-    setTimeout(() => overlay.remove(), 320);
+    overlay.style.pointerEvents = 'none';
+    setTimeout(() => overlay.remove(), 270);
   };
-  // Use requestAnimationFrame to ensure at least one paint happened
-  setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(remove)), delayMs);
+
+  // Single rAF after short delay — enough for React to paint
+  setTimeout(() => requestAnimationFrame(doFadeOut), delayMs);
 }
