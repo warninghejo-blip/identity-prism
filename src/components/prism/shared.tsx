@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /**
  * Shared components and utilities for Prism Scanner & Arena pages.
  * Single source of truth — no duplicates in Compare/Scanner/Arena.
@@ -256,7 +257,7 @@ export function BattleBar({
   label,
   valA,
   valB,
-  maxVal,
+  maxVal: _maxVal,
   displayA,
   displayB,
   showValues,
@@ -367,6 +368,7 @@ export function getCachedJwt(address: string): string | null {
 }
 
 let _jwtInFlight: Promise<string | null> | null = null;
+let _lastChallengeTs = 0; // Client-side cooldown to match server's 10s rate limit
 
 export async function obtainJwt(wallet: {
   publicKey?: { toBase58(): string } | null;
@@ -381,6 +383,10 @@ export async function obtainJwt(wallet: {
   // Deduplicate in-flight requests — prevents double signature popups
   if (_jwtInFlight) return _jwtInFlight;
 
+  // Client-side rate limit guard — prevent hitting server's 10s cooldown (429)
+  const sinceLast = Date.now() - _lastChallengeTs;
+  if (sinceLast < 11_000) return null;
+
   _jwtInFlight = (async () => {
     try {
       // Re-check cache (another caller may have resolved between our check and lock)
@@ -388,6 +394,7 @@ export async function obtainJwt(wallet: {
       if (cached) return cached;
 
       const base = getApiBase();
+      _lastChallengeTs = Date.now();
       const challengeRes = await fetch(`${base}/api/auth/challenge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -9,18 +9,7 @@ import {
 } from '@solana/spl-token';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { toast, Toaster as Sonner } from 'sonner';
-import {
-  Loader2,
-  Trash2,
-  RefreshCw,
-  Shield,
-  AlertTriangle,
-  Flame,
-  Info,
-  ArrowLeft,
-  ExternalLink,
-  ArrowUpDown,
-} from 'lucide-react';
+import { Loader2, RefreshCw, Shield, AlertTriangle, Flame } from 'lucide-react';
 import {
   getHeliusProxyUrl,
   getHeliusRpcUrl,
@@ -108,13 +97,13 @@ const parseNumber = (value: unknown) => {
   return null;
 };
 
-const formatSol = (value?: number | null) => {
+const _formatSol = (value?: number | null) => {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
   if (value === 0) return '0.0000 SOL';
   return `${value.toFixed(4)} SOL`;
 };
 
-const formatSolGain = (value?: number | null) => {
+const _formatSolGain = (value?: number | null) => {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
   const sign = value >= 0 ? '+' : '';
   return `${sign}${value.toFixed(4)} SOL`;
@@ -206,7 +195,9 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
         }
       }
     }
-  } catch {}
+  } catch {
+    /* empty */
+  }
 
   // 2) Raydium fallback for anything DexScreener missed
   const remaining = mints.filter((m) => !prices.has(m));
@@ -221,19 +212,21 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
         const json = await res.json();
         const data = json?.data;
         if (data && typeof data === 'object') {
-          for (const [mint, priceStr] of Object.entries(data) as [string, any][]) {
+          for (const [mint, priceStr] of Object.entries(data) as [string, unknown][]) {
             const p = parseFloat(priceStr);
             if (!isNaN(p) && p > 0) prices.set(mint, p);
           }
         }
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
   }
 
   return prices;
 };
 
-const RENT_RECLAIM_SOL = 0.002;
+const _RENT_RECLAIM_SOL = 0.002;
 const VALUE_THRESHOLD_SOL = 0.0015;
 const COMMISSION_RATE_DEFAULT = 0.1;
 const COMMISSION_RATE_MINTED = 0.02;
@@ -325,7 +318,7 @@ const BlackHole = () => {
   const hasMintedCardRef = useRef(false);
   const [showAllAssets, setShowAllAssets] = useState(false);
   const [incinerationTokens, setIncinerationTokens] = useState<IncinerationToken[]>([]);
-  const [wormholeBack, setWormholeBack] = useState(false);
+  const [_wormholeBack, _setWormholeBack] = useState(false);
   const [solPriceUsd, setSolPriceUsd] = useState<number | null>(null);
   const collectionMarketCache = useRef(new Map<string, MarketStats>());
   const lastOwnerRef = useRef<string | null>(null);
@@ -398,7 +391,6 @@ const BlackHole = () => {
     const targetOwner = owner ?? publicKeyRef.current;
     if (!targetOwner) return;
 
-    cancelledRef.current = false;
     setIsLoading(true);
     setSelectedTokens(new Set());
 
@@ -432,22 +424,33 @@ const BlackHole = () => {
           const info = item.account.data.parsed.info;
           const isFrozen = info.state === 'frozen';
           // Check Token-2022 extensions that prevent closing
-          const exts: any[] = info.extensions ?? [];
+          const exts: unknown[] = info.extensions ?? [];
           let hasWithheldFees = false;
           try {
-            hasWithheldFees = exts.some(
-              (e: any) =>
-                e.extension === 'transferFeeAmount' && e.state?.withheldAmount && BigInt(e.state.withheldAmount) > 0n,
-            );
-          } catch {}
+            hasWithheldFees = exts.some((e: unknown) => {
+              const ext = e as Record<string, unknown>;
+              return (
+                ext.extension === 'transferFeeAmount' &&
+                (ext.state as Record<string, unknown>)?.withheldAmount &&
+                BigInt(String((ext.state as Record<string, unknown>).withheldAmount)) > 0n
+              );
+            });
+          } catch {
+            /* empty */
+          }
           let hasConfidentialPending = false;
           try {
-            hasConfidentialPending = exts.some(
-              (e: any) =>
-                e.extension === 'confidentialTransferAccount' &&
-                (e.state?.pending_balance_lo > 0 || e.state?.pending_balance_hi > 0),
-            );
-          } catch {}
+            hasConfidentialPending = exts.some((e: unknown) => {
+              const ext = e as Record<string, unknown>;
+              const state = ext.state as Record<string, unknown> | undefined;
+              return (
+                ext.extension === 'confidentialTransferAccount' &&
+                ((state?.pending_balance_lo as number) > 0 || (state?.pending_balance_hi as number) > 0)
+              );
+            });
+          } catch {
+            /* empty */
+          }
           const canClose = !isFrozen && !hasWithheldFees && !hasConfidentialPending;
           return {
             pubkey: item.pubkey,
@@ -504,12 +507,12 @@ const BlackHole = () => {
 
             const data = await dasResponse.json();
             if (data.result) {
-              data.result.forEach((asset: any) => {
+              data.result.forEach((asset: Record<string, unknown>) => {
                 if (!asset) return;
-                const content = asset.content || {};
-                const metadata = content.metadata || {};
-                const grouping = asset.grouping || [];
-                const collectionGroup = grouping.find((group: any) => group.group_key === 'collection');
+                const content = (asset.content as Record<string, unknown>) || {};
+                const metadata = (content.metadata as Record<string, unknown>) || {};
+                const grouping = (asset.grouping as Record<string, unknown>[]) || [];
+                const collectionGroup = grouping.find((group) => group.group_key === 'collection');
                 const collectionMeta = collectionGroup?.collection_metadata || {};
                 const tokenInfo = asset.token_info || {};
                 const priceInfo = tokenInfo.price_info || {};
@@ -755,12 +758,12 @@ const BlackHole = () => {
       if (cancelledRef.current) return;
       setTokens(parsedTokens);
       toast.success(`Found ${parsedTokens.length} token accounts`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (cancelledRef.current) return;
       console.error(`[BlackHole] fetchTokens error at step "${fetchStep}":`, err);
-      toast.error(`Failed to fetch tokens (${fetchStep}): ${err?.message ?? String(err)}`);
+      toast.error(`Failed to fetch tokens (${fetchStep}): ${(err as Error)?.message ?? String(err)}`);
     } finally {
-      if (!cancelledRef.current) setIsLoading(false);
+      setIsLoading(false);
     }
   }, []);
 
@@ -768,6 +771,7 @@ const BlackHole = () => {
     const ownerBase58 = ownerPublicKey?.toBase58() ?? null;
     if (!ownerBase58 || lastOwnerRef.current === ownerBase58) return;
     lastOwnerRef.current = ownerBase58;
+    cancelledRef.current = false;
     fetchTokens(ownerPublicKey);
     return () => {
       cancelledRef.current = true;
@@ -825,7 +829,7 @@ const BlackHole = () => {
         ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 }),
         ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
       );
-      const instructionCount = 0;
+      const _instructionCount = 0;
 
       const targets = tokens.filter((t) => selectedTokens.has(t.pubkey.toBase58()));
       const safeTargets = targets.filter((t) => t.assetStatus !== 'protected' && t.closeable !== false);
@@ -1139,11 +1143,11 @@ const BlackHole = () => {
           height: `${size}px`,
           left: '50%',
           top: '50%',
-          ['--start' as any]: `${i * 26}deg`,
-          ['--radius' as any]: `${55 + (i % 6) * 22}px`,
-          ['--dur' as any]: `${3.5 + (i % 5) * 1.8}s`,
-          ['--delay' as any]: `${i * 0.4}s`,
-          ['--color' as any]: `hsla(${hue}, 80%, 65%, 0.8)`,
+          ['--start' as string]: `${i * 26}deg`,
+          ['--radius' as string]: `${55 + (i % 6) * 22}px`,
+          ['--dur' as string]: `${3.5 + (i % 5) * 1.8}s`,
+          ['--delay' as string]: `${i * 0.4}s`,
+          ['--color' as string]: `hsla(${hue}, 80%, 65%, 0.8)`,
         } as React.CSSProperties,
       });
     }
@@ -1194,8 +1198,8 @@ const BlackHole = () => {
       <div className="blackhole-incineration-layer" aria-hidden>
         {incinerationTokens.map((token) => {
           const style = {
-            ['--start-x' as any]: token.startX,
-            ['--start-y' as any]: token.startY,
+            ['--start-x' as string]: token.startX,
+            ['--start-y' as string]: token.startY,
             animationDelay: `${token.delay}ms`,
           } as React.CSSProperties;
           return (

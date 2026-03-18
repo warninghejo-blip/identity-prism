@@ -22,6 +22,7 @@
  */
 
 import { useRef, useEffect, useCallback } from 'react';
+import { getShipProfile } from '@/lib/shipProfiles';
 
 interface GravityRunnerProps {
   gameState: 'start' | 'playing' | 'gameover';
@@ -29,7 +30,7 @@ interface GravityRunnerProps {
   onCoins: (coins: number) => void;
   onGameOver: (score: number, coins: number, extraStats?: { columns: number; crystals: number }) => void;
   reviveRef: React.MutableRefObject<boolean>;
-  traits: any;
+  traits: unknown;
   walletScore: number;
   hasMintedId: boolean;
   shipSkin?: string | null;
@@ -39,10 +40,17 @@ interface GravityRunnerProps {
 
 // ── Aura colors for Canvas 2D glow ──
 const AURA_CANVAS_COLORS: Record<string, string> = {
-  aura_frost: '#67e8f9', aura_ember: '#fb923c', aura_electric: '#60a5fa',
-  aura_plasma: '#c084fc', aura_dark_matter: '#8b5cf6', aura_binary_pulse: '#22d3ee',
-  aura_solar_wind: '#fde047', aura_fortune_mist: '#a78bfa', aura_crimson_tide: '#f87171',
-  aura_void_shell: '#818cf8', aura_stellar_tide: '#34d399',
+  aura_frost: '#67e8f9',
+  aura_ember: '#fb923c',
+  aura_electric: '#60a5fa',
+  aura_plasma: '#c084fc',
+  aura_dark_matter: '#8b5cf6',
+  aura_binary_pulse: '#22d3ee',
+  aura_solar_wind: '#fde047',
+  aura_fortune_mist: '#a78bfa',
+  aura_crimson_tide: '#f87171',
+  aura_void_shell: '#818cf8',
+  aura_stellar_tide: '#34d399',
 };
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -56,36 +64,95 @@ function hexToRgb(hex: string): [number, number, number] {
 const GROUND_H = 40;
 const SHIP_W = 36;
 const SHIP_H = 36;
-const GRAVITY = 0.48;              // stronger gravity, snappier feel
-const FLAP_VEL = -7.8;            // sharper jumps
-const MAX_FALL_VEL = 8;           // terminal velocity
-const BASE_SPEED = 4.0;           // fast start
-const MAX_SPEED = 7.5;            // high ceiling
-const SPEED_RAMP_INTERVAL = 250;  // fast ramp-up (~4 sec at 60fps)
-const SPEED_RAMP_AMOUNT = 0.08;   // aggressive ramp
+const GRAVITY = 0.48; // stronger gravity, snappier feel
+const FLAP_VEL = -7.8; // sharper jumps
+const MAX_FALL_VEL = 8; // terminal velocity
+const BASE_SPEED = 4.0; // fast start
+const MAX_SPEED = 7.5; // high ceiling
+const SPEED_RAMP_INTERVAL = 250; // fast ramp-up (~4 sec at 60fps)
+const SPEED_RAMP_AMOUNT = 0.08; // aggressive ramp
 const CRYSTAL_SIZE = 14;
 const CRYSTAL_INTERVAL = 45;
-const MIN_COL_GAP_PX = 115;       // minimum vertical gap between columns (px)
-const MIN_COL_SPACING_PX = 160;   // tighter horizontal distance between columns (px)
-const GAP_SHRINK_PER_MIN = 12;    // gap shrinks faster
-const DYNAMIC_COL_SCORE = 15;     // score threshold when dynamic columns start appearing
+const MIN_COL_GAP_PX = 115; // minimum vertical gap between columns (px)
+const MIN_COL_SPACING_PX = 160; // tighter horizontal distance between columns (px)
+const GAP_SHRINK_PER_MIN = 12; // gap shrinks faster
+const DYNAMIC_COL_SCORE = 15; // score threshold when dynamic columns start appearing
 
 // ── Level themes ──
 interface LevelTheme {
   name: string;
-  bg1: string; bg2: string;
-  floorColor: string; ceilColor: string;
-  accentColor: string; crystalColor: string;
-  obstacleColor: string; obstacleHighlight: string;
+  bg1: string;
+  bg2: string;
+  floorColor: string;
+  ceilColor: string;
+  accentColor: string;
+  crystalColor: string;
+  obstacleColor: string;
+  obstacleHighlight: string;
   scoreThreshold: number;
 }
 
 const LEVEL_THEMES: LevelTheme[] = [
-  { name: 'Nebula', bg1: '#0a0818', bg2: '#0d1428', floorColor: 'rgba(34,211,238,0.06)', ceilColor: 'rgba(168,85,247,0.04)', accentColor: '#22d3ee', crystalColor: '#a855f7', obstacleColor: '#374151', obstacleHighlight: '#6b7280', scoreThreshold: 0 },
-  { name: 'Asteroid Belt', bg1: '#0f0a05', bg2: '#1a1008', floorColor: 'rgba(245,158,11,0.06)', ceilColor: 'rgba(239,68,68,0.04)', accentColor: '#f59e0b', crystalColor: '#fbbf24', obstacleColor: '#57534e', obstacleHighlight: '#a8a29e', scoreThreshold: 500 },
-  { name: 'Black Hole', bg1: '#050008', bg2: '#0a0014', floorColor: 'rgba(139,92,246,0.08)', ceilColor: 'rgba(236,72,153,0.04)', accentColor: '#8b5cf6', crystalColor: '#ec4899', obstacleColor: '#4c1d95', obstacleHighlight: '#7c3aed', scoreThreshold: 1200 },
-  { name: 'Warp Zone', bg1: '#000a0f', bg2: '#001420', floorColor: 'rgba(6,182,212,0.08)', ceilColor: 'rgba(16,185,129,0.06)', accentColor: '#06b6d4', crystalColor: '#10b981', obstacleColor: '#134e4a', obstacleHighlight: '#2dd4bf', scoreThreshold: 2000 },
-  { name: 'Prism Realm', bg1: '#0f0510', bg2: '#1a0820', floorColor: 'rgba(251,191,36,0.08)', ceilColor: 'rgba(34,211,238,0.06)', accentColor: '#fbbf24', crystalColor: '#22d3ee', obstacleColor: '#713f12', obstacleHighlight: '#fbbf24', scoreThreshold: 3000 },
+  {
+    name: 'Nebula',
+    bg1: '#0a0818',
+    bg2: '#0d1428',
+    floorColor: 'rgba(34,211,238,0.06)',
+    ceilColor: 'rgba(168,85,247,0.04)',
+    accentColor: '#22d3ee',
+    crystalColor: '#a855f7',
+    obstacleColor: '#374151',
+    obstacleHighlight: '#6b7280',
+    scoreThreshold: 0,
+  },
+  {
+    name: 'Asteroid Belt',
+    bg1: '#0f0a05',
+    bg2: '#1a1008',
+    floorColor: 'rgba(245,158,11,0.06)',
+    ceilColor: 'rgba(239,68,68,0.04)',
+    accentColor: '#f59e0b',
+    crystalColor: '#fbbf24',
+    obstacleColor: '#57534e',
+    obstacleHighlight: '#a8a29e',
+    scoreThreshold: 500,
+  },
+  {
+    name: 'Black Hole',
+    bg1: '#050008',
+    bg2: '#0a0014',
+    floorColor: 'rgba(139,92,246,0.08)',
+    ceilColor: 'rgba(236,72,153,0.04)',
+    accentColor: '#8b5cf6',
+    crystalColor: '#ec4899',
+    obstacleColor: '#4c1d95',
+    obstacleHighlight: '#7c3aed',
+    scoreThreshold: 1200,
+  },
+  {
+    name: 'Warp Zone',
+    bg1: '#000a0f',
+    bg2: '#001420',
+    floorColor: 'rgba(6,182,212,0.08)',
+    ceilColor: 'rgba(16,185,129,0.06)',
+    accentColor: '#06b6d4',
+    crystalColor: '#10b981',
+    obstacleColor: '#134e4a',
+    obstacleHighlight: '#2dd4bf',
+    scoreThreshold: 2000,
+  },
+  {
+    name: 'Prism Realm',
+    bg1: '#0f0510',
+    bg2: '#1a0820',
+    floorColor: 'rgba(251,191,36,0.08)',
+    ceilColor: 'rgba(34,211,238,0.06)',
+    accentColor: '#fbbf24',
+    crystalColor: '#22d3ee',
+    obstacleColor: '#713f12',
+    obstacleHighlight: '#fbbf24',
+    scoreThreshold: 3000,
+  },
 ];
 
 function getThemeForScore(score: number): LevelTheme {
@@ -104,7 +171,7 @@ interface AsteroidColumn {
   width: number;
   passed: boolean;
   jagged: number[];
-  crackSeeds: number[];  // seeds for crack pattern rendering
+  crackSeeds: number[]; // seeds for crack pattern rendering
 }
 
 interface Comet {
@@ -131,14 +198,14 @@ interface AsteroidField {
 interface DynamicColumn {
   x: number;
   width: number;
-  fromTop: boolean;       // true = descends from ceiling, false = rises from floor
-  maxH: number;           // final height
-  currentH: number;       // current animated height
-  growSpeed: number;       // px per frame growth
+  fromTop: boolean; // true = descends from ceiling, false = rises from floor
+  maxH: number; // final height
+  currentH: number; // current animated height
+  growSpeed: number; // px per frame growth
   passed: boolean;
   jagged: number[];
   crackSeeds: number[];
-  pulsing: boolean;       // wobbles at full extension
+  pulsing: boolean; // wobbles at full extension
 }
 
 type ObstacleUnion =
@@ -166,8 +233,13 @@ interface Particle {
 }
 
 interface StarDot {
-  x: number; y: number; size: number; brightness: number;
-  color: string; twinkleSpeed: number; twinklePhase: number;
+  x: number;
+  y: number;
+  size: number;
+  brightness: number;
+  color: string;
+  twinkleSpeed: number;
+  twinklePhase: number;
 }
 
 interface StarLayer {
@@ -181,10 +253,9 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
   const animRef = useRef<number>(0);
   const shipImgRef = useRef<HTMLImageElement | null>(null);
   const shipLoadedRef = useRef(false);
+  const profileRef = useRef(getShipProfile(props.shipSkin));
   const auraColorRef = useRef<[number, number, number] | null>(
-    props.shipAura && AURA_CANVAS_COLORS[props.shipAura]
-      ? hexToRgb(AURA_CANVAS_COLORS[props.shipAura])
-      : null,
+    props.shipAura && AURA_CANVAS_COLORS[props.shipAura] ? hexToRgb(AURA_CANVAS_COLORS[props.shipAura]) : null,
   );
 
   const _lastFlush = useRef(0);
@@ -195,7 +266,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     shipRotation: 0,
     score: 0,
     coins: 0,
-    coinAccum: 0,          // fractional coin accumulator
+    coinAccum: 0, // fractional coin accumulator
     speed: BASE_SPEED,
     obstacles: [] as ObstacleUnion[],
     crystals: [] as Crystal[],
@@ -215,6 +286,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     startTime: 0,
     lastTickTime: 0,
     _grazed: false,
+    _nebulaCanvas: null as HTMLCanvasElement | null,
+    _nebulaScrollX: 0,
   });
 
   // Load ship texture
@@ -226,7 +299,16 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       shipImgRef.current = img;
       shipLoadedRef.current = true;
     };
-  }, []);
+    img.onerror = () => {
+      // Fallback to default ship if skin fails to load
+      const fallback = new Image();
+      fallback.src = '/textures/ship.png';
+      fallback.onload = () => {
+        shipImgRef.current = fallback;
+        shipLoadedRef.current = true;
+      };
+    };
+  }, [props.shipSkin]);
 
   // Flap (Flappy Bird tap) — gives upward impulse
   const flap = useCallback(() => {
@@ -240,7 +322,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         y: s.playerY + SHIP_H / 2 + (Math.random() - 0.5) * 8,
         vx: -1.5 - Math.random() * 2.5,
         vy: 1 + Math.random() * 2,
-        life: 14, maxLife: 14,
+        life: 14,
+        maxLife: 14,
         color: Math.random() > 0.5 ? '#22d3ee' : '#60a5fa',
         size: 2 + Math.random() * 3,
       });
@@ -252,7 +335,10 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     if (gameState !== 'playing') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const handleInput = (e: Event) => { e.preventDefault(); flap(); };
+    const handleInput = (e: Event) => {
+      e.preventDefault();
+      flap();
+    };
     canvas.addEventListener('touchstart', handleInput, { passive: false });
     canvas.addEventListener('mousedown', handleInput);
     const handleKey = (e: KeyboardEvent) => {
@@ -310,7 +396,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     s.crystals = [];
     s.particles = [];
     s.trail = [];
-    s.nextObstacle = 40;    // grace period at start before first obstacle
+    s.nextObstacle = 40; // grace period at start before first obstacle
     s.nextCrystal = 80;
     s.frameCount = 0;
     s.alive = true;
@@ -343,11 +429,11 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
     // Generate dense cinematic star layers (matching OrbitSurvival style)
     const STAR_COLORS = [
-      'rgba(180,200,255,A)',   // blue-white
-      'rgba(240,240,255,A)',   // pure white
-      'rgba(255,240,220,A)',   // warm white
-      'rgba(255,210,170,A)',   // orange-warm
-      'rgba(200,220,255,A)',   // cool blue
+      'rgba(180,200,255,A)', // blue-white
+      'rgba(240,240,255,A)', // pure white
+      'rgba(255,240,220,A)', // warm white
+      'rgba(255,210,170,A)', // orange-warm
+      'rgba(200,220,255,A)', // cool blue
     ];
     s.starLayers = [];
     for (let layer = 0; layer < 4; layer++) {
@@ -358,14 +444,22 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         stars.push({
           x: Math.random() * W,
           y: Math.random() * H,
-          size: layer === 0 ? 0.3 + Math.random() * 0.4
-              : layer === 1 ? 0.5 + Math.random() * 0.6
-              : layer === 2 ? 0.8 + Math.random() * 0.8
-              : 1.2 + Math.random() * 1.0,
-          brightness: layer === 0 ? 0.08 + Math.random() * 0.12
-                    : layer === 1 ? 0.15 + Math.random() * 0.2
-                    : layer === 2 ? 0.3 + Math.random() * 0.25
-                    : 0.5 + Math.random() * 0.4,
+          size:
+            layer === 0
+              ? 0.3 + Math.random() * 0.4
+              : layer === 1
+                ? 0.5 + Math.random() * 0.6
+                : layer === 2
+                  ? 0.8 + Math.random() * 0.8
+                  : 1.2 + Math.random() * 1.0,
+          brightness:
+            layer === 0
+              ? 0.08 + Math.random() * 0.12
+              : layer === 1
+                ? 0.15 + Math.random() * 0.2
+                : layer === 2
+                  ? 0.3 + Math.random() * 0.25
+                  : 0.5 + Math.random() * 0.4,
           color: colorTemplate,
           twinkleSpeed: 0.5 + Math.random() * 3.0,
           twinklePhase: Math.random() * Math.PI * 2,
@@ -398,17 +492,17 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       nCtx.fillRect(0, 0, nebulaCanvas.width, nebulaCanvas.height);
     }
     // Store reference for draw loop
-    (s as any)._nebulaCanvas = nebulaCanvas;
-    (s as any)._nebulaScrollX = 0;
+    s._nebulaCanvas = nebulaCanvas;
+    s._nebulaScrollX = 0;
 
     // ── Spawn helpers ──
 
     /** Compute current gap height based on elapsed time (progressive difficulty). */
     function currentGapH(playH: number): number {
       const elapsedMin = (performance.now() - s.startTime) / 60000;
-      const startGap = Math.max(playH * 0.38, SHIP_H * 4);       // generous initial gap
+      const startGap = Math.max(playH * 0.38, SHIP_H * 4); // generous initial gap
       const shrunk = startGap - elapsedMin * GAP_SHRINK_PER_MIN;
-      return Math.max(MIN_COL_GAP_PX, shrunk);                     // never below minimum
+      return Math.max(MIN_COL_GAP_PX, shrunk); // never below minimum
     }
 
     /** Find rightmost obstacle X so we can enforce minimum horizontal spacing. */
@@ -436,13 +530,13 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       const canDynamic = s.score >= DYNAMIC_COL_SCORE;
       const roll = Math.random();
       // At high scores, existing column types also become dynamic occasionally
-      const dynamicize = canDynamic && s.score >= 30 && Math.random() < 0.3;
+      const _dynamicize = canDynamic && s.score >= 30 && Math.random() < 0.3;
 
       if (canDynamic && roll < 0.22) {
         // Dynamic column — emerges from top or bottom
         const fromTop = Math.random() < 0.5;
         const colW = 38 + Math.random() * 16;
-        const maxH = playH * (0.30 + Math.random() * 0.25); // covers 30-55% of play area
+        const maxH = playH * (0.3 + Math.random() * 0.25); // covers 30-55% of play area
         const jagged: number[] = [];
         const crackSeeds: number[] = [];
         for (let j = 0; j < 14; j++) jagged.push((Math.random() - 0.5) * 14);
@@ -450,9 +544,16 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         s.obstacles.push({
           kind: 'dynamic',
           data: {
-            x: spawnX, width: colW, fromTop, maxH, currentH: 0,
-            growSpeed: 1.8 + Math.random() * 1.5, passed: false,
-            jagged, crackSeeds, pulsing: Math.random() < 0.4,
+            x: spawnX,
+            width: colW,
+            fromTop,
+            maxH,
+            currentH: 0,
+            growSpeed: 1.8 + Math.random() * 1.5,
+            passed: false,
+            jagged,
+            crackSeeds,
+            pulsing: Math.random() < 0.4,
           },
         });
       } else if (roll < (canDynamic ? 0.65 : 0.55)) {
@@ -472,7 +573,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           kind: 'column',
           data: { x: spawnX, gapY, gapH, width: colW, passed: false, jagged, crackSeeds },
         });
-      } else if (roll < (canDynamic ? 0.80 : 0.75)) {
+      } else if (roll < (canDynamic ? 0.8 : 0.75)) {
         // Comet — fast diagonal asteroid
         const margin = playH * 0.15;
         const y = ceilY + margin + Math.random() * (playH - margin * 2);
@@ -484,7 +585,9 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         s.obstacles.push({
           kind: 'comet',
           data: {
-            x: spawnX, y, width: cometSize * 2,
+            x: spawnX,
+            y,
+            width: cometSize * 2,
             vx: -(s.speed * 1.6 + Math.random() * 2),
             vy: (goingUp ? -1 : 1) * (1.2 + Math.random() * 1.8),
             size: cometSize,
@@ -495,7 +598,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         });
       } else {
         // Asteroid field
-        const gapH = currentGapH(playH) * 1.05;  // slightly wider for fields
+        const gapH = currentGapH(playH) * 1.05; // slightly wider for fields
         const margin = playH * 0.15;
         const minGapY = ceilY + margin + gapH / 2;
         const maxGapY = floorY - margin - gapH / 2;
@@ -535,9 +638,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       const ceilY = GROUND_H;
 
       // Try to place inside the gap of the next upcoming column
-      const nextCol = s.obstacles.find(
-        o => o.kind === 'column' && o.data.x > s.playerX + SHIP_W,
-      );
+      const nextCol = s.obstacles.find((o) => o.kind === 'column' && o.data.x > s.playerX + SHIP_W);
       let y: number;
       if (nextCol && nextCol.kind === 'column') {
         const col = nextCol.data;
@@ -563,7 +664,16 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       };
     }
 
-    function rectOverlap(ax: number, ay: number, aw: number, ah: number, bx: number, by: number, bw: number, bh: number) {
+    function rectOverlap(
+      ax: number,
+      ay: number,
+      aw: number,
+      ah: number,
+      bx: number,
+      by: number,
+      bw: number,
+      bh: number,
+    ) {
       return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
     }
 
@@ -628,7 +738,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           y: s.playerY + SHIP_H / 2,
           vx: Math.cos(angle) * (3 + Math.random() * 6),
           vy: Math.sin(angle) * (3 + Math.random() * 6),
-          life: 30 + Math.random() * 25, maxLife: 55,
+          life: 30 + Math.random() * 25,
+          maxLife: 55,
           color: ['#ef4444', '#f97316', '#fbbf24', '#22d3ee'][Math.floor(Math.random() * 4)],
           size: 2 + Math.random() * 5,
         });
@@ -643,12 +754,21 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         reviveRef.current = false;
         s.alive = true;
         // Compensate startTime for death duration (prevent score jump)
-        if (s._deathTime) { s.startTime += performance.now() - s._deathTime; s._deathTime = 0; }
+        if (s._deathTime) {
+          s.startTime += performance.now() - s._deathTime;
+          s._deathTime = 0;
+        }
         s.lastTickTime = performance.now();
         s.screenShake = 0;
         s._grazed = false; // reset graze immunity on revive
         s.velY = FLAP_VEL * 0.5; // gentle upward push on revive
-        { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }
+        {
+          let _wi = 0;
+          for (let _i = 0; _i < s.obstacles.length; _i++) {
+            if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i];
+          }
+          s.obstacles.length = _wi;
+        }
       }
 
       if (!s.alive) return;
@@ -661,7 +781,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       // Progressive speed: increases by SPEED_RAMP_AMOUNT every SPEED_RAMP_INTERVAL frames
       const spdBonus = 1 + (props.shipStats?.speed || 0) / 400; // slight initial speed boost x1.0-x1.25
       const rampSteps = Math.floor(s.frameCount / SPEED_RAMP_INTERVAL);
-      s.speed = Math.min(MAX_SPEED, (BASE_SPEED * spdBonus) + rampSteps * SPEED_RAMP_AMOUNT);
+      s.speed = Math.min(MAX_SPEED, BASE_SPEED * spdBonus + rampSteps * SPEED_RAMP_AMOUNT);
 
       // Level theme changes
       const theme = getThemeForScore(s.score);
@@ -678,7 +798,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       s.playerY += s.velY;
 
       // Ship visual tilt based on velocity
-      const targetRot = s.velY * 0.04;  // tilt nose down when falling, up when rising
+      const targetRot = s.velY * 0.04; // tilt nose down when falling, up when rising
       s.shipRotation += (targetRot - s.shipRotation) * 0.15;
       // Clamp rotation
       s.shipRotation = Math.max(-0.5, Math.min(0.5, s.shipRotation));
@@ -702,8 +822,12 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           o.data.y += o.data.vy;
           o.data.rotation += o.data.rotSpeed;
           // Bounce off floor/ceiling
-          if (o.data.y - o.data.size < ceilY) { o.data.vy = Math.abs(o.data.vy); }
-          if (o.data.y + o.data.size > floorY) { o.data.vy = -Math.abs(o.data.vy); }
+          if (o.data.y - o.data.size < ceilY) {
+            o.data.vy = Math.abs(o.data.vy);
+          }
+          if (o.data.y + o.data.size > floorY) {
+            o.data.vy = -Math.abs(o.data.vy);
+          }
         } else {
           o.data.x -= s.speed;
         }
@@ -715,14 +839,26 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         }
       }
       // Remove off-screen
-      { let wi = 0; for (let i = 0; i < s.obstacles.length; i++) { if (s.obstacles[i].data.x + (s.obstacles[i].data.width ?? 0) > -30) s.obstacles[wi++] = s.obstacles[i]; } s.obstacles.length = wi; }
+      {
+        let wi = 0;
+        for (let i = 0; i < s.obstacles.length; i++) {
+          if (s.obstacles[i].data.x + (s.obstacles[i].data.width ?? 0) > -30) s.obstacles[wi++] = s.obstacles[i];
+        }
+        s.obstacles.length = wi;
+      }
 
       // Move crystals
       for (const c of s.crystals) {
         c.x -= s.speed;
         c.pulse += 0.08;
       }
-      { let ci = 0; for (let i = 0; i < s.crystals.length; i++) { if (s.crystals[i].x > -20) s.crystals[ci++] = s.crystals[i]; } s.crystals.length = ci; }
+      {
+        let ci = 0;
+        for (let i = 0; i < s.crystals.length; i++) {
+          if (s.crystals[i].x > -20) s.crystals[ci++] = s.crystals[i];
+        }
+        s.crystals.length = ci;
+      }
 
       // Spawn obstacles — consistent intervals with minimum spacing enforced in spawnObstacle
       s.nextObstacle--;
@@ -730,8 +866,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         spawnObstacle();
         // Interval shortens slightly over time, but never too fast
         const elapsedMin = (performance.now() - s.startTime) / 60000;
-        const baseInterval = 50;      // tighter base interval (frames)
-        const minInterval = 25;       // never spawn faster than this
+        const baseInterval = 50; // tighter base interval (frames)
+        const minInterval = 25; // never spawn faster than this
         s.nextObstacle = Math.max(minInterval, baseInterval - elapsedMin * 10);
       }
 
@@ -746,18 +882,29 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       // Collision checks (shield stat gives graze chance to survive)
       const grazeChance = Math.min(1, (props.shipStats?.shield || 0) / 100); // 0-100 → 0%-100% chance, *0.5 below
       for (const o of s.obstacles) {
-        const hit = (o.kind === 'column' && checkColumnCollision(o.data))
-          || (o.kind === 'comet' && checkCometCollision(o.data))
-          || (o.kind === 'field' && checkFieldCollision(o.data))
-          || (o.kind === 'dynamic' && checkDynamicCollision(o.data));
+        const hit =
+          (o.kind === 'column' && checkColumnCollision(o.data)) ||
+          (o.kind === 'comet' && checkCometCollision(o.data)) ||
+          (o.kind === 'field' && checkFieldCollision(o.data)) ||
+          (o.kind === 'dynamic' && checkDynamicCollision(o.data));
         if (hit) {
           if (grazeChance > 0 && Math.random() < grazeChance * 0.5 && !s._grazed) {
             // Graze — survive once, brief invuln
             s._grazed = true;
             s.screenShake = 3;
-            s.particles.push({ x: s.playerX + SHIP_W, y: s.playerY + SHIP_H / 2, vx: 0, vy: -2, life: 15, maxLife: 15, color: '#22d3ee', size: 8 });
+            s.particles.push({
+              x: s.playerX + SHIP_W,
+              y: s.playerY + SHIP_H / 2,
+              vx: 0,
+              vy: -2,
+              life: 15,
+              maxLife: 15,
+              color: '#22d3ee',
+              size: 8,
+            });
           } else {
-            die(); return;
+            die();
+            return;
           }
         }
       }
@@ -773,9 +920,14 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           onCoins(s.coins);
           // Celebratory particles
           s.particles.push({
-            x: s.playerX + SHIP_W, y: s.playerY + SHIP_H / 2,
-            vx: 2, vy: -1, life: 20, maxLife: 20,
-            color: '#22d3ee', size: 4,
+            x: s.playerX + SHIP_W,
+            y: s.playerY + SHIP_H / 2,
+            vx: 2,
+            vy: -1,
+            life: 20,
+            maxLife: 20,
+            color: '#22d3ee',
+            size: 4,
           });
         }
       }
@@ -783,8 +935,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       // Crystal collection
       for (const c of s.crystals) {
         if (c.collected) continue;
-        const dx = (s.playerX + SHIP_W / 2) - c.x;
-        const dy = (s.playerY + SHIP_H / 2) - c.y;
+        const dx = s.playerX + SHIP_W / 2 - c.x;
+        const dy = s.playerY + SHIP_H / 2 - c.y;
         if (Math.sqrt(dx * dx + dy * dy) < CRYSTAL_SIZE + SHIP_W * 0.4) {
           c.collected = true;
           s.crystalsCollected++;
@@ -792,11 +944,14 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           onCoins(s.coins);
           for (let i = 0; i < 10; i++) {
             s.particles.push({
-              x: c.x, y: c.y,
+              x: c.x,
+              y: c.y,
               vx: (Math.random() - 0.5) * 6,
               vy: (Math.random() - 0.5) * 6,
-              life: 18, maxLife: 18,
-              color: theme.crystalColor, size: 2 + Math.random() * 3,
+              life: 18,
+              maxLife: 18,
+              color: theme.crystalColor,
+              size: 2 + Math.random() * 3,
             });
           }
         }
@@ -824,18 +979,24 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         p.life--;
         p.vx *= 0.95;
         p.vy *= 0.95;
-        if (p.life > 0) { s.particles[pi++] = p; }
+        if (p.life > 0) {
+          s.particles[pi++] = p;
+        }
       }
       s.particles.length = pi;
 
-      // Engine trail
-      s.trail.push({
-        x: s.playerX + 2,
-        y: s.playerY + SHIP_H / 2 + (Math.random() - 0.5) * 6,
-        alpha: 0.9,
-        size: 3 + Math.random() * 4,
-      });
-      if (s.trail.length > 15) s.trail.shift();
+      // Engine trail — per-nozzle
+      const nozzles = profileRef.current.exhausts;
+      for (const nz of nozzles) {
+        s.trail.push({
+          x: s.playerX + SHIP_W / 2 + nz.y * (SHIP_W / 2.2) + (Math.random() - 0.5) * 3,
+          y: s.playerY + SHIP_H / 2 + nz.x * (SHIP_H / 1.6) + (Math.random() - 0.5) * 3,
+          alpha: 0.9,
+          size: 3 + Math.random() * 4,
+        });
+      }
+      const maxTrail = Math.min(nozzles.length * 15, 60);
+      while (s.trail.length > maxTrail) s.trail.shift();
       for (const t of s.trail) t.alpha *= 0.86;
 
       // Score = time survived in seconds (FPS-independent)
@@ -875,10 +1036,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
       // Screen shake
       if (s.screenShake > 0.5) {
-        ctx.translate(
-          (Math.random() - 0.5) * s.screenShake,
-          (Math.random() - 0.5) * s.screenShake,
-        );
+        ctx.translate((Math.random() - 0.5) * s.screenShake, (Math.random() - 0.5) * s.screenShake);
       }
 
       // ── Deep space background ──
@@ -892,10 +1050,10 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       ctx.fillRect(0, 0, W, H);
 
       // ── Scrolling nebula overlay (pre-rendered) ──
-      const nebCanvas = (s as any)._nebulaCanvas as HTMLCanvasElement | undefined;
+      const nebCanvas = s._nebulaCanvas ?? undefined;
       if (nebCanvas) {
-        (s as any)._nebulaScrollX = ((s as any)._nebulaScrollX + s.speed * 0.08) % nebCanvas.width;
-        const nx = -(s as any)._nebulaScrollX;
+        s._nebulaScrollX = (s._nebulaScrollX + s.speed * 0.08) % nebCanvas.width;
+        const nx = -s._nebulaScrollX;
         ctx.save();
         ctx.globalAlpha = 0.7;
         ctx.drawImage(nebCanvas, nx, 0);
@@ -991,8 +1149,30 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           const bottomH = floorY - bottomTop;
 
           // Draw asteroid pillars with improved visuals
-          drawAsteroidPillar(ctx, col.x, ceilY, col.width, topH, col.jagged, col.crackSeeds, theme, false, s.frameCount);
-          drawAsteroidPillar(ctx, col.x, bottomTop, col.width, bottomH, col.jagged, col.crackSeeds, theme, true, s.frameCount);
+          drawAsteroidPillar(
+            ctx,
+            col.x,
+            ceilY,
+            col.width,
+            topH,
+            col.jagged,
+            col.crackSeeds,
+            theme,
+            false,
+            s.frameCount,
+          );
+          drawAsteroidPillar(
+            ctx,
+            col.x,
+            bottomTop,
+            col.width,
+            bottomH,
+            col.jagged,
+            col.crackSeeds,
+            theme,
+            true,
+            s.frameCount,
+          );
 
           // Small debris particles near columns
           if (Math.random() < 0.15) {
@@ -1001,7 +1181,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
               y: col.gapY + (Math.random() - 0.5) * col.gapH * 0.3,
               vx: -0.5 - Math.random(),
               vy: (Math.random() - 0.5) * 0.5,
-              life: 12, maxLife: 12,
+              life: 12,
+              maxLife: 12,
               color: theme.obstacleHighlight,
               size: 1 + Math.random() * 1.5,
             });
@@ -1101,7 +1282,18 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             ctx.restore();
           }
 
-          drawAsteroidPillar(ctx, dc.x, drawY, dc.width, drawH, dc.jagged, dc.crackSeeds, theme, dc.fromTop, s.frameCount);
+          drawAsteroidPillar(
+            ctx,
+            dc.x,
+            drawY,
+            dc.width,
+            drawH,
+            dc.jagged,
+            dc.crackSeeds,
+            theme,
+            dc.fromTop,
+            s.frameCount,
+          );
 
           // Glowing tip for dynamic columns (simple rect)
           const tipY = dc.fromTop ? drawY + drawH : drawY;
@@ -1208,9 +1400,15 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     // ── Draw asteroid pillar (improved rocky column) ──
     function drawAsteroidPillar(
       ctx: CanvasRenderingContext2D,
-      x: number, y: number, w: number, h: number,
-      jagged: number[], crackSeeds: number[],
-      theme: LevelTheme, fromTop: boolean, frame: number,
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      jagged: number[],
+      crackSeeds: number[],
+      theme: LevelTheme,
+      fromTop: boolean,
+      _frame: number,
     ) {
       if (h <= 0) return;
 
@@ -1260,7 +1458,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       ctx.globalAlpha = 0.12;
       for (let i = 0; i < 4; i++) {
         const bx = x + 2 + ((i * 7 + 3) % (w - 4));
-        const by = y + h * (0.2 + (i * 0.2));
+        const by = y + h * (0.2 + i * 0.2);
         if (by >= y && by <= y + h - 4) {
           ctx.beginPath();
           ctx.arc(bx, by, 2 + (i % 3), 0, Math.PI * 2);
@@ -1275,7 +1473,6 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       depthGrad.addColorStop(1, fromTop ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.15)');
       ctx.fillStyle = depthGrad;
       ctx.fillRect(x, y, w, h);
-
     }
 
     function loop() {
@@ -1290,11 +1487,20 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           if (reviveRef.current) {
             reviveRef.current = false;
             s.alive = true;
-            if (s._deathTime) { s.startTime += performance.now() - s._deathTime; s._deathTime = 0; }
+            if (s._deathTime) {
+              s.startTime += performance.now() - s._deathTime;
+              s._deathTime = 0;
+            }
             s.lastTickTime = performance.now();
             s.screenShake = 0;
             s.velY = FLAP_VEL * 0.5;
-            { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }
+            {
+              let _wi = 0;
+              for (let _i = 0; _i < s.obstacles.length; _i++) {
+                if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i];
+              }
+              s.obstacles.length = _wi;
+            }
             s.particles = [];
             animRef.current = requestAnimationFrame(loop);
             return;
@@ -1307,7 +1513,13 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             p.vx *= 0.95;
             p.vy *= 0.95;
           }
-          { let _pi = 0; for (let _i = 0; _i < s.particles.length; _i++) { if (s.particles[_i].life > 0) s.particles[_pi++] = s.particles[_i]; } s.particles.length = _pi; }
+          {
+            let _pi = 0;
+            for (let _i = 0; _i < s.particles.length; _i++) {
+              if (s.particles[_i].life > 0) s.particles[_pi++] = s.particles[_i];
+            }
+            s.particles.length = _pi;
+          }
           if (s.screenShake > 0) s.screenShake *= 0.85;
           draw();
           if (deathFrames < 45 && s.particles.length > 0) {
@@ -1320,11 +1532,20 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
               if (reviveRef.current) {
                 reviveRef.current = false;
                 s.alive = true;
-                if (s._deathTime) { s.startTime += performance.now() - s._deathTime; s._deathTime = 0; }
+                if (s._deathTime) {
+                  s.startTime += performance.now() - s._deathTime;
+                  s._deathTime = 0;
+                }
                 s.lastTickTime = performance.now();
                 s.screenShake = 0;
                 s.velY = FLAP_VEL * 0.5;
-                { let _wi = 0; for (let _i = 0; _i < s.obstacles.length; _i++) { if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i]; } s.obstacles.length = _wi; }
+                {
+                  let _wi = 0;
+                  for (let _i = 0; _i < s.obstacles.length; _i++) {
+                    if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i];
+                  }
+                  s.obstacles.length = _wi;
+                }
                 s.particles = [];
                 animRef.current = requestAnimationFrame(loop);
               } else {
@@ -1347,13 +1568,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       window.removeEventListener('resize', resize);
       document.removeEventListener('visibilitychange', onVisChange);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState, onScore, onCoins, onGameOver, reviveRef, hasMintedId]);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className="w-full h-full"
-      style={{ touchAction: 'none', background: '#0a0818' }}
-    />
-  );
+  return <canvas ref={canvasRef} className="w-full h-full" style={{ touchAction: 'none', background: '#0a0818' }} />;
 }

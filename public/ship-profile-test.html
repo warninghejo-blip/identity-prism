@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Ship Profile Visual Test</title>
+<style>
+  body { background: #111; color: #eee; font-family: monospace; margin: 10px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 8px; width: 200px; text-align: center; }
+  .card h3 { margin: 4px 0; font-size: 13px; color: #7dd3fc; }
+  .card canvas { border: 1px solid #333; border-radius: 4px; }
+  .legend { margin: 10px 0; font-size: 12px; }
+  .legend span { margin-right: 16px; }
+  .dot-ex { color: #ff4444; } .dot-sg { color: #44ff44; } .dot-dg { color: #ffaa00; } .dot-cp { color: #aa44ff; }
+</style>
+</head><body>
+<h2>Ship Profile Marker Test</h2>
+<div class="legend">
+  <span class="dot-ex">&#9679; Exhaust</span>
+  <span class="dot-sg">&#9679; Single Gun</span>
+  <span class="dot-dg">&#9679; Double Guns</span>
+  <span class="dot-cp">&#9679; Cockpit</span>
+</div>
+<div class="grid" id="grid"></div>
+<script>
+const PROFILES = {
+  default: {
+    exhausts: [{ x: -0.40, y: -0.95 }, { x: 0.40, y: -0.95 }],
+    singleGun: { x: 0, y: 0.85 },
+    doubleGuns: [{ x: -0.25, y: 0.85 }, { x: 0.25, y: 0.85 }],
+    cockpitY: 0.15,
+  },
+  cargo: {
+    exhausts: [{ x: -0.32, y: -1.00 }, { x: 0.32, y: -1.00 }],
+    singleGun: { x: 0, y: 0.60 },
+    doubleGuns: [{ x: -0.28, y: 0.55 }, { x: 0.28, y: 0.55 }],
+    cockpitY: 0.00,
+  },
+  cargo_b: {
+    exhausts: [{ x: -0.28, y: -1.00 }, { x: 0, y: -1.00 }, { x: 0.28, y: -1.00 }],
+    singleGun: { x: 0, y: 0.65 },
+    doubleGuns: [{ x: -0.22, y: 0.65 }, { x: 0.22, y: 0.65 }],
+    cockpitY: 0.05,
+  },
+  crystal: {
+    exhausts: [{ x: 0, y: -0.85 }],
+    singleGun: { x: 0, y: 0.75 },
+    doubleGuns: [{ x: -0.18, y: 0.65 }, { x: 0.18, y: 0.65 }],
+    cockpitY: 0.10,
+  },
+  crystal_b: {
+    exhausts: [{ x: 0, y: -0.80 }],
+    singleGun: { x: 0, y: 0.75 },
+    doubleGuns: [{ x: -0.18, y: 0.65 }, { x: 0.18, y: 0.65 }],
+    cockpitY: -0.05,
+  },
+  fighter: {
+    exhausts: [{ x: -0.28, y: -0.85 }, { x: 0.28, y: -0.85 }],
+    singleGun: { x: 0, y: 0.80 },
+    doubleGuns: [{ x: -0.38, y: 0.45 }, { x: 0.38, y: 0.45 }],
+    cockpitY: 0.25,
+  },
+  fighter_b: {
+    exhausts: [{ x: -0.20, y: -0.95 }, { x: 0.20, y: -0.95 }],
+    singleGun: { x: 0, y: 0.90 },
+    doubleGuns: [{ x: -0.15, y: 0.80 }, { x: 0.15, y: 0.80 }],
+    cockpitY: 0.20,
+  },
+  fortress: {
+    exhausts: [{ x: -0.25, y: -0.70 }, { x: 0.25, y: -0.70 }],
+    singleGun: { x: 0, y: 0.80 },
+    doubleGuns: [{ x: -0.30, y: 0.55 }, { x: 0.30, y: 0.55 }],
+    cockpitY: 0.05,
+  },
+  fortress_b: {
+    exhausts: [{ x: -0.32, y: -0.85 }, { x: -0.10, y: -0.85 }, { x: 0.10, y: -0.85 }, { x: 0.32, y: -0.85 }],
+    singleGun: { x: 0, y: 0.65 },
+    doubleGuns: [{ x: -0.22, y: 0.60 }, { x: 0.22, y: 0.60 }],
+    cockpitY: 0.10,
+  },
+  chrome: {
+    exhausts: [{ x: -0.55, y: 0.05 }, { x: -0.55, y: -0.30 }, { x: 0.55, y: 0.05 }, { x: 0.55, y: -0.30 }],
+    singleGun: { x: 0, y: 0.80 },
+    doubleGuns: [{ x: -0.20, y: 0.70 }, { x: 0.20, y: 0.70 }],
+    cockpitY: 0.15,
+  },
+  neon: {
+    exhausts: [{ x: -0.22, y: -0.90 }, { x: 0.22, y: -0.90 }],
+    singleGun: { x: 0, y: 0.80 },
+    doubleGuns: [{ x: -0.28, y: 0.35 }, { x: 0.28, y: 0.35 }],
+    cockpitY: 0.30,
+  },
+  stealth: {
+    exhausts: [{ x: 0, y: -0.65 }],
+    singleGun: { x: 0, y: 0.60 },
+    doubleGuns: [{ x: -0.18, y: 0.55 }, { x: 0.18, y: 0.55 }],
+    cockpitY: 0.20,
+  },
+  stealth_v2: {
+    exhausts: [{ x: -0.38, y: -0.80 }, { x: 0.38, y: -0.80 }],
+    singleGun: { x: 0, y: 0.65 },
+    doubleGuns: [{ x: -0.15, y: 0.60 }, { x: 0.15, y: 0.60 }],
+    cockpitY: 0.20,
+  },
+  stealth_v2_b: {
+    exhausts: [{ x: -0.38, y: -0.80 }, { x: 0.38, y: -0.80 }],
+    singleGun: { x: 0, y: 0.65 },
+    doubleGuns: [{ x: -0.15, y: 0.60 }, { x: 0.15, y: 0.60 }],
+    cockpitY: 0.20,
+  },
+  phantom: {
+    exhausts: [{ x: -0.25, y: -0.95 }, { x: 0.25, y: -0.95 }],
+    singleGun: { x: 0, y: 0.90 },
+    doubleGuns: [{ x: -0.28, y: 0.90 }, { x: 0.28, y: 0.90 }],
+    cockpitY: 0.15,
+  },
+  manta: {
+    exhausts: [{ x: 0, y: -1.00 }],
+    singleGun: { x: 0, y: 0.45 },
+    doubleGuns: [{ x: -0.35, y: 0.30 }, { x: 0.35, y: 0.30 }],
+    cockpitY: 0.40,
+  },
+  trident: {
+    exhausts: [{ x: -0.32, y: -0.95 }, { x: 0, y: -1.00 }, { x: 0.32, y: -0.95 }],
+    singleGun: { x: 0, y: 0.95 },
+    doubleGuns: [{ x: -0.32, y: 0.80 }, { x: 0.32, y: 0.80 }],
+    cockpitY: 0.20,
+  },
+  prism: {
+    exhausts: [{ x: 0, y: -0.85 }],
+    singleGun: { x: 0, y: 0.80 },
+    doubleGuns: [{ x: -0.15, y: 0.70 }, { x: 0.15, y: 0.70 }],
+    cockpitY: 0.00,
+  },
+  golden: {
+    exhausts: [{ x: 0, y: -0.80 }],
+    singleGun: { x: 0, y: 0.85 },
+    doubleGuns: [{ x: -0.12, y: 0.75 }, { x: 0.12, y: 0.75 }],
+    cockpitY: -0.05,
+  },
+};
+
+// planeGeometry(1.6, 2.2) → x: [-0.8, 0.8], y: [-1.1, 1.1]
+const GW = 1.6, GH = 2.2;
+const CW = 192, CH = Math.round(CW * GH / GW); // canvas pixels
+
+function profileToPixel(px, py) {
+  // profile coords: x [-0.8..0.8], y [-1.1..1.1]
+  // y+ = top of ship (nose), y- = bottom (engines)
+  // canvas: top=0, bottom=CH
+  const cx = (px / (GW / 2) + 1) * CW / 2;
+  const cy = (1 - py / (GH / 2)) * CH / 2;
+  return [cx, cy];
+}
+
+function dot(ctx, x, y, color, r = 5) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.85;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function cross(ctx, x, y, color, s = 6) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.moveTo(x - s, y); ctx.lineTo(x + s, y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, y - s); ctx.lineTo(x, y + s); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+const grid = document.getElementById('grid');
+const ships = Object.keys(PROFILES);
+
+ships.forEach(name => {
+  const prof = PROFILES[name];
+  const card = document.createElement('div');
+  card.className = 'card';
+  const h3 = document.createElement('h3');
+  h3.textContent = name + ` (${prof.exhausts.length}E)`;
+  card.appendChild(h3);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = CW; canvas.height = CH;
+  card.appendChild(canvas);
+  grid.appendChild(card);
+
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  const src = name === 'default' ? '/textures/ship.png' : `/textures/ships/ship_${name}.png`;
+  img.src = src;
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, CW, CH);
+
+    // Draw bounding box
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0, 0, CW, CH);
+
+    // Center crosshair
+    ctx.strokeStyle = '#333';
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(CW/2, 0); ctx.lineTo(CW/2, CH); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, CH/2); ctx.lineTo(CW, CH/2); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Exhausts (red)
+    for (const e of prof.exhausts) {
+      const [px, py] = profileToPixel(e.x, e.y);
+      dot(ctx, px, py, '#ff4444', 5);
+    }
+
+    // Single gun (green)
+    const [sgx, sgy] = profileToPixel(prof.singleGun.x, prof.singleGun.y);
+    cross(ctx, sgx, sgy, '#44ff44', 7);
+
+    // Double guns (orange)
+    for (const g of prof.doubleGuns) {
+      const [gx, gy] = profileToPixel(g.x, g.y);
+      dot(ctx, gx, gy, '#ffaa00', 4);
+    }
+
+    // Cockpit (purple)
+    const [cpx, cpy] = profileToPixel(0, prof.cockpitY);
+    ctx.beginPath();
+    ctx.arc(cpx, cpy, 8, 0, Math.PI * 2);
+    ctx.strokeStyle = '#aa44ff';
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.7;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  };
+  img.onerror = () => {
+    ctx.fillStyle = '#ff4444';
+    ctx.font = '12px monospace';
+    ctx.fillText('FAILED: ' + src, 10, CH/2);
+  };
+});
+</script>
+</body></html>

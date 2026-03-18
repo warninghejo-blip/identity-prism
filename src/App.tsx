@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Outlet, useLocation } from 'react-router-dom';
 import { cleanupOverlays } from '@/lib/safeNavigate';
 import { trackPageView } from '@/lib/analytics';
+import { useChallengeNotifier } from '@/lib/useChallengeNotifier';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +21,7 @@ const queryClient = new QueryClient({
 
 const App = () => {
   const location = useLocation();
+  useChallengeNotifier();
 
   // Dismiss HTML preloader and stale overlays on route change.
   // Index.tsx has its own preloader dismissal — cleanupOverlays handles

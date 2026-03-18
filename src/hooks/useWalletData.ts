@@ -12,7 +12,7 @@ import {
   LST_MINTS,
   SCORING,
 } from '@/constants';
-import { Connection, PublicKey, ConfirmedSignatureInfo } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 // ── Scan progress broadcasting ──
 
@@ -162,7 +162,7 @@ export function calculateScore(traits: WalletTraits): number {
 }
 
 const SOL_LAMPORTS = 1_000_000_000;
-const DEMO_WALLET_ADDRESS = '0xDemo...Wallet';
+const _DEMO_WALLET_ADDRESS = '0xDemo...Wallet';
 const MEME_MINT_LOOKUP: Record<string, keyof typeof MEME_COIN_MINTS> = Object.entries(MEME_COIN_MINTS).reduce(
   (acc, [symbol, mint]) => {
     acc[mint] = symbol as keyof typeof MEME_COIN_MINTS;
@@ -170,11 +170,11 @@ const MEME_MINT_LOOKUP: Record<string, keyof typeof MEME_COIN_MINTS> = Object.en
   },
   {} as Record<string, keyof typeof MEME_COIN_MINTS>,
 );
-const LST_ADDRESSES = Object.values(LST_MINTS);
+const _LST_ADDRESSES = Object.values(LST_MINTS);
 
 export function useWalletData(address?: string) {
   const [walletData, setWalletData] = useState<WalletData>(buildDisconnectedWalletData());
-  const isLowEndDevice =
+  const _isLowEndDevice =
     typeof navigator !== 'undefined' &&
     /android/i.test(navigator.userAgent) &&
     (navigator.hardwareConcurrency ?? 4) <= 4;
@@ -182,7 +182,7 @@ export function useWalletData(address?: string) {
 
   useEffect(() => {
     // Immediate reset when address changes or is removed
-    if (!address || address === DEMO_WALLET_ADDRESS) {
+    if (!address) {
       setWalletData(buildDisconnectedWalletData());
       return;
     }
@@ -236,6 +236,7 @@ export function useWalletData(address?: string) {
 
         emitScan('connecting', 5);
         if (isDev) {
+          // eslint-disable-next-line no-console
           console.log('%c[Scan] Starting wallet scan', 'color: #22d3ee;');
         }
         let publicKey: PublicKey;
@@ -313,6 +314,7 @@ export function useWalletData(address?: string) {
           for (const [index, rpcUrl] of heliusRpcUrls.entries()) {
             try {
               if (isDev) {
+                // eslint-disable-next-line no-console
                 console.log(`%c[DAS Request] Fetching assets for ${address}`, 'color: #fbbf24;');
               }
               const response = await fetch(rpcUrl, {
@@ -398,6 +400,7 @@ export function useWalletData(address?: string) {
         const totalAssetsCount = assets.length;
 
         if (isDev) {
+          // eslint-disable-next-line no-console
           console.log(`%c[DAS Success] ${totalAssetsCount} assets found.`, 'color: #22d3ee; font-weight: bold;');
         }
 
@@ -414,6 +417,7 @@ export function useWalletData(address?: string) {
         });
 
         if (isDev && foundAsset) {
+          // eslint-disable-next-line no-console
           console.log('%c[DAS] Preorder asset found', 'color: #10b981;');
         }
 
@@ -433,7 +437,7 @@ export function useWalletData(address?: string) {
           const metadata = content.metadata || {};
           const rawName = metadata.name || content.metadata?.name || asset.id || '';
           const name = rawName.toLowerCase();
-          const symbol = (metadata.symbol || content.metadata?.symbol || '').toLowerCase();
+          const _symbol = (metadata.symbol || content.metadata?.symbol || '').toLowerCase();
 
           const mint = asset.id;
 
@@ -485,13 +489,13 @@ export function useWalletData(address?: string) {
           if (asset.burnt) return;
 
           const hasVerifiedCreator = creators.some((c) => c.verified === true);
-          const isCompressedNFT = asset.compression?.compressed === true;
+          const _isCompressedNFT = asset.compression?.compressed === true;
           // Strict NFT filter:
           // 1. Must be verified creator + collection (Core assets: collection only)
           // 2. Must have royalties >= 1% (100 bps) — filters spam/airdrop NFTs with 0 royalties
           const isMplCore = iface === 'MPLCOREASSET' || iface === 'MPLBUBBLEGUMV2';
           const isRealNFT = isMplCore ? hasCollection : hasVerifiedCreator && hasCollection;
-          const royaltyBps = (asset as any).royalty?.basis_points ?? 0;
+          const royaltyBps = (asset as unknown as { royalty?: { basis_points?: number } }).royalty?.basis_points ?? 0;
           const hasRoyalty = royaltyBps >= 100;
           if ((isExplicitNFT || isMplCore || (isLikelyNFT && !isKnownFungible)) && isRealNFT && hasRoyalty) {
             nftCount++;
@@ -721,6 +725,7 @@ export function useWalletData(address?: string) {
           /* ignore */
         }
         if (isDev)
+          // eslint-disable-next-line no-console
           console.log(
             `%c[Scan Final] NFTs: ${nftCount} | Tx: ${txCount} | Score: ${score}`,
             'color: #fff; background: #22d3ee; padding: 4px; border-radius: 4px;',
@@ -785,6 +790,7 @@ export function useWalletData(address?: string) {
             traits.avgTxPerDay30d = traits.txCount / Math.max(1, Math.min(30, traits.walletAgeDays));
             traits.hyperactiveDegen = traits.avgTxPerDay30d >= 8;
             changed = true;
+            // eslint-disable-next-line no-console
             if (isDev) console.log(`%c[Deep Scan] Total tx: ${deepSigs.length}`, 'color: #a855f7;');
           }
 
@@ -835,7 +841,9 @@ export function useWalletData(address?: string) {
             try {
               sessionStorage.setItem(`walletData_${address}`, JSON.stringify(updated));
               sessionStorage.setItem(`walletData_ts_${address}`, String(Date.now()));
-            } catch {}
+            } catch {
+              /* empty */
+            }
           }
         });
       } catch (error) {
@@ -855,6 +863,7 @@ export function useWalletData(address?: string) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address]);
 
   return walletData;
@@ -869,5 +878,5 @@ function isFungibleAsset(asset: { interface?: string; token_info?: { supply?: nu
 }
 
 function buildDisconnectedWalletData(): WalletData {
-  return { address: DEMO_WALLET_ADDRESS, traits: null, score: 0, isLoading: false, error: null };
+  return { address: '', traits: null, score: 0, isLoading: false, error: null };
 }

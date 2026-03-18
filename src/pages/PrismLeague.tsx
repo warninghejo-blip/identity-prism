@@ -39,7 +39,7 @@ import AsteroidDestroyerScene from '@/components/game/AsteroidDestroyerScene';
 import GravityRunnerScene from '@/components/game/GravityRunnerScene';
 
 import { FpsOverlay } from '@/components/game/GameShared';
-import { computeShipStats, getEquipmentBonusLabel, DEFAULT_SHIP_STATS } from '@/lib/shipStats';
+import { computeShipStats, getEquipmentBonusLabel } from '@/lib/shipStats';
 import type { ForgeLoadout } from '@/lib/forgeItems';
 
 type GameMode = 'orbit' | 'destroyer' | 'gravity' | 'text_quest';
@@ -650,11 +650,36 @@ const PrismLeague = () => {
     const VALID_GAME_MODES: GameMode[] = ['orbit', 'destroyer', 'gravity'];
     return raw && VALID_GAME_MODES.includes(raw as GameMode) ? (raw as GameMode) : null;
   })();
-  const [activeChallengeId, setActiveChallengeId] = useState<string | null>(urlChallengeId);
+  const [activeChallengeId, _setActiveChallengeId] = useState<string | null>(urlChallengeId);
   const [challengeResult, setChallengeResult] = useState<ChallengeResult | null>(null);
   const [challengeSubmitting, setChallengeSubmitting] = useState(false);
-  const challengeSubmittedRef = useRef(false);
+  // Persist across page refresh via sessionStorage
+  const challengeSubmittedRef = useRef(
+    urlChallengeId ? sessionStorage.getItem('ip_challenge_submitted') === urlChallengeId : false,
+  );
   const [showBattleResult, setShowBattleResult] = useState(false);
+
+  // Warn on tab close / refresh if challenge active and not submitted
+  useEffect(() => {
+    if (!activeChallengeId || challengeSubmittedRef.current) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (challengeSubmittedRef.current) return;
+      // Show browser "Leave page?" confirmation — no auto-abandon
+      // (user might just be refreshing; server auto-cleanup handles truly abandoned games)
+      e.preventDefault();
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [activeChallengeId]);
+
+  // Cleanup submitted marker when leaving the page entirely
+  useEffect(() => {
+    return () => {
+      if (!activeChallengeId) sessionStorage.removeItem('ip_challenge_submitted');
+    };
+  }, [activeChallengeId]);
 
   const wallet = useWallet();
   const { publicKey, connected, wallets: availableWallets, select, connect, disconnect } = wallet;
@@ -718,7 +743,7 @@ const PrismLeague = () => {
 
   // Minimal traits adapter for game scenes (they only use planetTier)
   const traits = useMemo(
-    () => (walletPreview ? ({ planetTier: walletPreview.compositeTier } as any) : null),
+    () => (walletPreview ? ({ planetTier: walletPreview.compositeTier } as unknown) : null),
     [walletPreview],
   );
   const equippedSkin = forgeLoadout?.equippedShipSkin || null;
@@ -726,7 +751,7 @@ const PrismLeague = () => {
 
   const isMobile = useMemo(isMobileDevice, []);
   const isCapacitor = useMemo(isCapacitorNative, []);
-  const isSeeker = useMemo(isSeekerBrowser, []);
+  const _isSeeker = useMemo(isSeekerBrowser, []);
   const useMobileWallet = isCapacitor || isMobile;
 
   const isAndroid = useMemo(() => /android/i.test(navigator.userAgent), []);
@@ -768,10 +793,14 @@ const PrismLeague = () => {
           // Reset adapter state so next connect attempt starts fresh
           try {
             await finalTarget.adapter.disconnect();
-          } catch {}
+          } catch {
+            /* empty */
+          }
           try {
-            select(null as any);
-          } catch {}
+            select(null as unknown as Parameters<typeof select>[0]);
+          } catch {
+            /* empty */
+          }
         }
       } else {
         setWalletModalVisible(true);
@@ -1122,6 +1151,7 @@ const PrismLeague = () => {
         );
       })
       .join('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const _comboDomRef = useRef<HTMLDivElement>(null);
@@ -1174,7 +1204,7 @@ const PrismLeague = () => {
 
   /* MagicBlock state */
   const [mbHealthy, setMbHealthy] = useState<boolean | null>(null);
-  const [mbLatency, setMbLatency] = useState<number>(0);
+  const [_mbLatency, setMbLatency] = useState<number>(0);
   const [mbSeed, setMbSeed] = useState<string | null>(null);
   const [mbSlot, setMbSlot] = useState<number>(0);
   const [mbVerified, setMbVerified] = useState<boolean>(false);
@@ -1301,7 +1331,10 @@ const PrismLeague = () => {
     freeRevivesLeft.current = hasMintedId ? Math.max(0, FREE_REVIVES_PER_DAY - getDailyRevivesUsed()) : 0;
     pendingGameOver.current = null;
     setIsVictory(false);
-    challengeSubmittedRef.current = false;
+    // Only reset challenge submitted if not already submitted for this challenge
+    if (!activeChallengeId || sessionStorage.getItem('ip_challenge_submitted') !== activeChallengeId) {
+      challengeSubmittedRef.current = false;
+    }
     setChallengeResult(null);
     setChallengeSubmitting(false);
     // Then fetch authoritative count from server (async, overrides local)
@@ -1383,7 +1416,7 @@ const PrismLeague = () => {
               qs = incrementQuest(qs, 'ot_score1000', finalScore).state;
             }
             if (finalScore > highScore) {
-              qs = incrementQuest(qs, 'daily_highscore').state;
+              void incrementQuest(qs, 'daily_highscore');
             }
           })
           .catch(() => {});
@@ -1469,10 +1502,12 @@ const PrismLeague = () => {
         // Challenge submit — must be inside verifyAndPublish to have proof.id
         if (activeChallengeId && !challengeSubmittedRef.current) {
           challengeSubmittedRef.current = true;
+          sessionStorage.setItem('ip_challenge_submitted', activeChallengeId);
           setChallengeSubmitting(true);
           submitChallengeScore(activeChallengeId, finalScore, proof?.id)
             .then((result) => {
               setChallengeSubmitting(false);
+              sessionStorage.removeItem('ip_active_challenge');
               if (result.ok && result.challenge) {
                 setChallengeResult(result.challenge);
                 if (result.challenge.status === 'completed') {
@@ -1936,6 +1971,29 @@ const PrismLeague = () => {
     }
   };
 
+  const [showChallengeExitWarning, setShowChallengeExitWarning] = useState(false);
+
+  const handleAbandonChallenge = useCallback(async () => {
+    if (!activeChallengeId) return;
+    try {
+      const jwt = getChallengeJwt();
+      if (jwt) {
+        const base = getServerBase();
+        await fetch(`${base}/api/challenge/abandon`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ challengeId: activeChallengeId }),
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+    setShowChallengeExitWarning(false);
+    sessionStorage.removeItem('ip_active_challenge');
+    sessionStorage.removeItem('ip_challenge_submitted');
+    startFadeTransition(() => goBack(navigate));
+  }, [activeChallengeId, navigate]);
+
   const handleJumpBackToPrism = useCallback(() => {
     if (isJumpingBack) return;
 
@@ -1943,6 +2001,12 @@ const PrismLeague = () => {
     if (gameState === 'playing' || gameState === 'gameover') {
       stopAllAudio();
       setGameState('start');
+      return;
+    }
+
+    // Challenge exit protection — warn if leaving without playing
+    if (activeChallengeId && !challengeSubmittedRef.current) {
+      setShowChallengeExitWarning(true);
       return;
     }
 
@@ -1961,7 +2025,7 @@ const PrismLeague = () => {
         startFadeTransition(() => goBack(navigate));
       }, 240),
     );
-  }, [isJumpingBack, clearTransitionTimers, navigate, gameState]);
+  }, [isJumpingBack, clearTransitionTimers, navigate, gameState, activeChallengeId]);
 
   return (
     <div className="prism-league-page relative w-full h-screen overflow-hidden bg-black">
@@ -2330,12 +2394,12 @@ const PrismLeague = () => {
                       className="w-full mb-4 relative touch-pan-y"
                       onTouchStart={(e) => {
                         const touch = e.touches[0];
-                        (e.currentTarget as any)._swipeStartX = touch.clientX;
-                        (e.currentTarget as any)._swipeStartY = touch.clientY;
+                        (e.currentTarget as unknown as Record<string, number>)._swipeStartX = touch.clientX;
+                        (e.currentTarget as unknown as Record<string, number>)._swipeStartY = touch.clientY;
                       }}
                       onTouchEnd={(e) => {
-                        const startX = (e.currentTarget as any)._swipeStartX;
-                        const startY = (e.currentTarget as any)._swipeStartY;
+                        const startX = (e.currentTarget as unknown as Record<string, number>)._swipeStartX;
+                        const startY = (e.currentTarget as unknown as Record<string, number>)._swipeStartY;
                         if (startX == null) return;
                         const touch = e.changedTouches[0];
                         const dx = touch.clientX - startX;
@@ -3521,6 +3585,32 @@ const PrismLeague = () => {
           </div>
         </div>
       </div>
+      {/* Challenge Exit Warning */}
+      {showChallengeExitWarning && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-yellow-500/40 rounded-2xl p-6 max-w-sm mx-4 text-center space-y-4">
+            <Swords className="w-10 h-10 text-yellow-400 mx-auto" />
+            <h3 className="text-lg font-bold text-white">Leave Challenge?</h3>
+            <p className="text-sm text-gray-300">
+              You haven&apos;t played yet. Leaving will abandon the challenge and refund all stakes.
+            </p>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={handleAbandonChallenge}
+                className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
+              >
+                Abandon &amp; Leave
+              </button>
+              <button
+                onClick={() => setShowChallengeExitWarning(false)}
+                className="flex-1 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors"
+              >
+                Stay &amp; Play
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* BattleResultOverlay */}
       {showBattleResult && challengeResult && challengeResult.status === 'completed' && (
         <BattleResultOverlay

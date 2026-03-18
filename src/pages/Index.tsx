@@ -13,7 +13,7 @@ import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapt
 import { extractMwaAddress, mwaAuthorizationCache } from '@/lib/mwaAuthorizationCache';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, LogOut, Share2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, Share2 } from 'lucide-react';
 import LandingOverlay from '@/components/LandingOverlay';
 import { fadeOutTransition } from '@/lib/fadeTransition';
 import {
@@ -67,7 +67,7 @@ const purgeInvalidMwaCache = async () => {
       return { cleared: true, reason: 'missing_address' };
     }
     return { cleared: false, reason: 'valid' };
-  } catch (error) {
+  } catch {
     try {
       await mwaAuthorizationCache.clear();
       window.localStorage?.removeItem(MWA_AUTH_CACHE_KEY);
@@ -84,12 +84,16 @@ const Index = () => {
   const isNftMode = searchParams.get('mode') === 'nft';
   const urlAddress = searchParams.get('address');
   const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
-  const storedSubPageReturn = sessionStorage.getItem('returnedFromSubPage') === '1';
-  if (storedSubPageReturn) {
-    try {
-      sessionStorage.removeItem('returnedFromSubPage');
-    } catch {}
-  }
+  const [storedSubPageReturn] = useState(() => {
+    const val = sessionStorage.getItem('returnedFromSubPage') === '1';
+    if (val)
+      try {
+        sessionStorage.removeItem('returnedFromSubPage');
+      } catch {
+        /* empty */
+      }
+    return val;
+  });
   const locState = location.state as Record<string, unknown> | null;
   const shouldResumeFromBlackHole = Boolean(urlAddress) && (Boolean(locState?.fromBlackHole) || storedReturn);
   const shouldResumeFromGameJump = Boolean(locState?.fromGameJump);
@@ -118,11 +122,12 @@ const Index = () => {
     const next = new URLSearchParams(searchParams);
     next.delete('ref');
     setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const [isWarping, setIsWarping] = useState(false);
   const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(null);
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [_showOnboarding, setShowOnboarding] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
     shouldOpenCard && urlAddress
       ? 'ready'
@@ -147,7 +152,7 @@ const Index = () => {
     select,
     connect,
     wallets: availableWallets,
-    wallet: selectedWallet,
+    wallet: _selectedWallet,
   } = wallet;
   const { setVisible: setWalletModalVisible } = useWalletModal();
 
@@ -188,11 +193,18 @@ const Index = () => {
   // sync activeAddress from wallet so card + Update button stay visible.
   useEffect(() => {
     if (!(returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)) return;
-    if (activeAddress) return; // already set from URL
+    if (activeAddress) {
+      // Address already resolved — clear the sub-page flag so it doesn't interfere
+      // with future disconnect (the flag was only needed for the initial sync).
+      returningFromSubPage.current = false;
+      return;
+    }
     if (isConnected && connectedAddress) {
       const addr = connectedAddress.toBase58();
       setActiveAddress(addr);
       setViewState('ready');
+      // Flag served its purpose — clear it
+      returningFromSubPage.current = false;
       // Also update URL so refresh works
       const next = new URLSearchParams(searchParams);
       next.set('address', addr);
@@ -355,6 +367,7 @@ const Index = () => {
       if (!activeAddress) {
         const resolved = pubKey?.toBase58?.();
         if (resolved) {
+          // eslint-disable-next-line no-console
           if (import.meta.env.DEV) console.log('[MobileConnect] Adapter connect event:', resolved);
           setActiveAddress(resolved);
           setViewState('scanning');
@@ -408,6 +421,7 @@ const Index = () => {
       return;
     }
 
+    // eslint-disable-next-line no-console
     if (import.meta.env.DEV) console.log('[MobileConnect] Using wallet:', targetWallet.adapter.name);
 
     const openPhantomDeepLink = () => {
@@ -429,6 +443,7 @@ const Index = () => {
       }
 
       select(targetWallet.adapter.name);
+      // eslint-disable-next-line no-console
       if (import.meta.env.DEV) console.log('[MobileConnect] Calling adapter.connect()...');
       const stopMwaNudge =
         targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName ? startMwaAssociationNudge() : undefined;
@@ -454,6 +469,7 @@ const Index = () => {
       }
 
       if (import.meta.env.DEV)
+        // eslint-disable-next-line no-console
         console.log('[MobileConnect] Adapter state after connect():', {
           connected: targetWallet.adapter.connected,
           publicKey: targetWallet.adapter.publicKey?.toBase58(),
@@ -465,6 +481,7 @@ const Index = () => {
       const pollIntervalMs = 200;
       let resolvedAddress: string | undefined;
       while (!resolvedAddress && attempts < maxAttempts) {
+        // eslint-disable-next-line no-console
         if (import.meta.env.DEV) console.log(`[MobileConnect] Waiting for public key... attempt ${attempts + 1}`);
         resolvedAddress = targetWallet.adapter.publicKey?.toBase58();
 
@@ -473,6 +490,7 @@ const Index = () => {
           const internalAddress = extractMwaAddress(mwaAdapter._authorizationResult);
           if (internalAddress) {
             if (import.meta.env.DEV)
+              // eslint-disable-next-line no-console
               console.log('[MobileConnect] Using MWA authorization result address:', internalAddress);
             resolvedAddress = internalAddress;
           }
@@ -493,6 +511,7 @@ const Index = () => {
         if (!resolvedAddress) {
           const cachedAddress = await getCachedMwaAddress();
           if (cachedAddress) {
+            // eslint-disable-next-line no-console
             if (import.meta.env.DEV) console.log('[MobileConnect] Using cached MWA address:', cachedAddress);
             resolvedAddress = cachedAddress;
           }
@@ -506,6 +525,7 @@ const Index = () => {
       }
 
       if (resolvedAddress) {
+        // eslint-disable-next-line no-console
         if (import.meta.env.DEV) console.log('[MobileConnect] Success! Resolved Address:', resolvedAddress);
         setActiveAddress(resolvedAddress);
         setViewState('scanning');
@@ -516,6 +536,7 @@ const Index = () => {
         try {
           const cacheResult = await purgeInvalidMwaCache();
           if (cacheResult.cleared) {
+            // eslint-disable-next-line no-console
             if (import.meta.env.DEV) console.log('[MobileConnect] Cleared invalid MWA cache:', cacheResult.reason);
           }
         } catch {
@@ -549,10 +570,14 @@ const Index = () => {
       // Reset adapter state so next connect attempt starts fresh
       try {
         await targetWallet.adapter.disconnect();
-      } catch {}
+      } catch {
+        /* empty */
+      }
       try {
         select(null);
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
   }, [
     preferredMobileWallet,
@@ -610,10 +635,14 @@ const Index = () => {
       // Reset adapter state so next connect attempt starts fresh
       try {
         await targetWallet.adapter.disconnect();
-      } catch {}
+      } catch {
+        /* empty */
+      }
       try {
         select(null);
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
   }, [
     preferredDesktopWallet,
@@ -642,7 +671,9 @@ const Index = () => {
         setJwtSigning(true);
         try {
           await obtainJwt(wallet);
-        } catch {}
+        } catch {
+          /* empty */
+        }
         setJwtSigning(false);
       }
     });
@@ -766,13 +797,15 @@ const Index = () => {
     // During disconnect, don't let state machine override landing state
     if (isDisconnectingRef.current) return;
 
-    // When returning from BlackHole/Game, skip scanning and go straight to hub
-    if ((returningFromBH.current || suppressLoadingRef.current) && resolvedAddress) {
+    // When returning from BlackHole/Game/SubPage, skip scanning and go straight to hub
+    if ((returningFromBH.current || suppressLoadingRef.current || returningFromSubPage.current) && resolvedAddress) {
       setViewState('hub');
       return;
     }
 
     if (!resolvedAddress) {
+      // Don't flash landing screen while sub-page return is syncing wallet address
+      if (returningFromSubPage.current) return;
       setViewState('landing');
       return;
     }
@@ -842,21 +875,36 @@ const Index = () => {
 
   // Removed auto-warp effect
 
+  const warpTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const handleEnter = () => {
     if (connectedAddress) {
       isDisconnectingRef.current = false; // Clear disconnect flag on new connect
       setActiveAddress(connectedAddress.toBase58());
       setIsWarping(true);
       setViewState('scanning'); // Immediate — prevents one-frame flash
-      setTimeout(() => setIsWarping(false), 900);
+      clearTimeout(warpTimerRef.current);
+      warpTimerRef.current = setTimeout(() => setIsWarping(false), 900);
     }
   };
+  useEffect(() => () => clearTimeout(warpTimerRef.current), []);
 
   const handleDisconnect = async () => {
     // Set flag BEFORE async disconnect so state machine doesn't override viewState
     isDisconnectingRef.current = true;
+    // Clear returning refs so effects don't re-set activeAddress after disconnect
+    returningFromSubPage.current = false;
+    returningFromBH.current = false;
+    returningFromGameJump.current = false;
     setActiveAddress(undefined);
     setViewState('landing');
+    // Clear URL ?address= param so the urlAddress sync effect (line ~264) doesn't
+    // immediately re-set activeAddress from the stale URL
+    const next = new URLSearchParams(searchParams);
+    if (next.has('address')) {
+      next.delete('address');
+      next.delete('mode');
+      setSearchParams(next, { replace: true });
+    }
     // Reset force-disconnect ref so next auto-connect will be force-disconnected
     didForceDisconnect.current = false;
     // Clear wallet session data
@@ -888,8 +936,9 @@ const Index = () => {
     }
     mwaAuthorizationCache.clear().catch(() => {});
     trackWalletDisconnect();
-    // Keep flag active long enough for wallet-adapter to settle
-    // The flag is only cleared when user manually reconnects (not by state machine)
+    // Clear disconnect flag after disconnect completes — URL is already cleaned,
+    // so the urlAddress sync effect won't re-set activeAddress.
+    isDisconnectingRef.current = false;
   };
 
   const [mintState, setMintState] = useState<'idle' | 'minting' | 'success' | 'error'>('idle');
@@ -1095,6 +1144,7 @@ const Index = () => {
         paymentToken,
       });
 
+      // eslint-disable-next-line no-console
       if (import.meta.env.DEV) console.log('Mint success:', result);
       succeeded = true;
       trackMint(true);
@@ -1177,6 +1227,7 @@ const Index = () => {
         paymentToken: 'SOL',
         paidWithCoins: true,
       });
+      // eslint-disable-next-line no-console
       if (import.meta.env.DEV) console.log('Mint-for-coins success:', result);
       succeeded = true;
       trackMint(true);
@@ -1213,6 +1264,7 @@ const Index = () => {
       clearTimeout(safetyTimer);
       if (!succeeded) setMintState('idle');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet, traits, score, captureCardImage, prismBalance]);
 
   const handleRemint = useCallback(async () => {

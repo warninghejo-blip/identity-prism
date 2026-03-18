@@ -176,6 +176,13 @@ const JWT_TTL = '1h';
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 min nonce window
 const authChallenges = new Map(); // nonce → { address, expiresAt }
 
+// ── Referral salt (cached per-process; production MUST set REFERRAL_SALT env var) ──
+const _referralSalt = process.env.REFERRAL_SALT || (() => {
+  const fallback = crypto.randomBytes(16).toString('hex');
+  console.warn('[referral] REFERRAL_SALT env var not set — using random per-process fallback. Referral codes will change on restart!');
+  return fallback;
+})();
+
 // Trusted proxy IPs — only trust X-Forwarded-For from these sources
 const TRUSTED_PROXIES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 /** Extract real client IP, only trusting X-Forwarded-For from trusted proxies */
@@ -2912,6 +2919,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Reputation Attestation (Blink-compatible Solana Action) ──
   if (pathname === '/api/actions/attest' || pathname === '/api/reputation/attest') {
+    if (!ipRateLimit('attest', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
     const baseUrl = getBaseUrl(req) || PUBLIC_BASE_URL;
 
@@ -3112,15 +3120,9 @@ const server = http.createServer(async (req, res) => {
 
   // ── MagicBlock game-session proof API ──
   if (pathname === '/api/game/session' && req.method === 'POST') {
+    if (!ipRateLimit('game_session', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many session registrations' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
-    // Per-wallet rate limit: max 10 sessions per minute
-    if (!globalThis._sessionRateLimit) globalThis._sessionRateLimit = new Map();
-    const srlKey = jwtAuth.address;
-    const srl = globalThis._sessionRateLimit.get(srlKey) || { count: 0, resetAt: Date.now() + 60000 };
-    if (Date.now() > srl.resetAt) { srl.count = 0; srl.resetAt = Date.now() + 60000; }
-    if (++srl.count > 10) return respondJson(res, 429, { error: 'Too many session registrations' });
-    globalThis._sessionRateLimit.set(srlKey, srl);
     try {
       const raw = await readBody(req);
       const parsed = safeParseJson(raw);
@@ -3250,14 +3252,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname.startsWith('/api/game/session/') && req.method === 'GET') {
-    // Rate limit: 30 req/min per IP
-    const sessGetIp = getClientIp(req);
-    const sessGetKey = `sessget:${sessGetIp}`;
-    const sessGetEntry = globalThis._sessionGetRl?.get(sessGetKey) || { count: 0, resetAt: Date.now() + 60000 };
-    if (!globalThis._sessionGetRl) globalThis._sessionGetRl = new Map();
-    if (Date.now() > sessGetEntry.resetAt) { sessGetEntry.count = 0; sessGetEntry.resetAt = Date.now() + 60000; }
-    if (++sessGetEntry.count > 30) return respondJson(res, 429, { error: 'Rate limited' });
-    globalThis._sessionGetRl.set(sessGetKey, sessGetEntry);
+    if (!ipRateLimit('sess_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Rate limited' });
     pruneGameSessionProofs();
     const rawId = pathname.slice('/api/game/session/'.length);
     let sessionId = '';
@@ -3343,6 +3338,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/game/leaderboard' && req.method === 'POST') {
+    if (!ipRateLimit('lb_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -3402,6 +3398,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/game/coins' && req.method === 'POST') {
+    if (!ipRateLimit('game_coins_post', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -3475,6 +3472,7 @@ const server = http.createServer(async (req, res) => {
 
   // POST: claim a single achievement
   if (pathname === '/api/game/achievements' && req.method === 'POST') {
+    if (!ipRateLimit('ach_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -3519,6 +3517,7 @@ const server = http.createServer(async (req, res) => {
 
   // PUT: sync unlocked achievements (batch, idempotent)
   if (pathname === '/api/game/achievements' && req.method === 'PUT') {
+    if (!ipRateLimit('ach_put', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -3558,6 +3557,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/game/revives' && req.method === 'POST') {
+    if (!ipRateLimit('revive_post', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -3624,6 +3624,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/tournament/join' && req.method === 'POST') {
+    if (!ipRateLimit('tourn_join', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     checkTournaments();
@@ -3652,6 +3653,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/tournament/submit' && req.method === 'POST') {
+    if (!ipRateLimit('tourn_submit', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     checkTournaments();
@@ -3709,7 +3711,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
     // Generate deterministic code: base58 chars from sha256(address + SALT)
-    const SALT = process.env.REFERRAL_SALT || crypto.randomBytes(16).toString('hex'); // fallback generates per-restart (production MUST set env var)
+    const SALT = _referralSalt;
     const hash = crypto.createHash('sha256').update(addr + SALT).digest();
     const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
     let code = '';
@@ -3724,6 +3726,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/referral/claim' && req.method === 'POST') {
+    if (!ipRateLimit('ref_claim', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const claimer = jwtAuth.address;
@@ -3831,6 +3834,7 @@ const server = http.createServer(async (req, res) => {
   // ═══ Prism Vault (Staking) ═══
   const _pendingStakingOps = globalThis._pendingStakingOps || (globalThis._pendingStakingOps = new Set());
   if (pathname === '/api/prism/vault/stake' && req.method === 'POST') {
+    if (!ipRateLimit('vault_stake', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const addr = jwtAuth.address;
@@ -3865,6 +3869,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/prism/vault/claim' && req.method === 'POST') {
+    if (!ipRateLimit('vault_claim', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const addr = jwtAuth.address;
@@ -3888,6 +3893,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/prism/vault/unstake' && req.method === 'POST') {
+    if (!ipRateLimit('vault_unstake', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const addr = jwtAuth.address;
@@ -3949,6 +3955,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Mint ID for Coins ═══
   if (pathname === '/api/prism/mint-for-coins' && req.method === 'POST') {
+    if (!ipRateLimit('mint_coins', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const addr = jwtAuth.address;
@@ -4031,6 +4038,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/score-history' && req.method === 'POST') {
+    if (!ipRateLimit('score_hist_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -5551,6 +5559,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname.startsWith('/metadata')) {
     if (req.method === 'POST' && (pathname === '/metadata' || pathname === '/metadata/')) {
+      if (!ipRateLimit('metadata_post', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
       const jwtAuth = requireJwt(req, res);
       if (!jwtAuth.ok) return;
       try {
@@ -5632,6 +5641,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ PRISM Earn ═══
   if (pathname === '/api/prism/earn' && req.method === 'POST') {
+    if (!ipRateLimit('prism_earn', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -5762,6 +5772,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ PRISM Spend ═══
   if (pathname === '/api/prism/spend' && req.method === 'POST') {
+    if (!ipRateLimit('prism_spend', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -5853,6 +5864,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/prism/buy' && req.method === 'POST') {
+    if (!ipRateLimit('prism_buy', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -5937,6 +5949,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ PRISM Transaction History ═══
   if (pathname === '/api/prism/transactions' && req.method === 'GET') {
+    if (!ipRateLimit('prism_txs', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const address = jwtAuth.address;
@@ -7306,6 +7319,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Quest Sync ═══
   if (pathname === '/api/quest/sync' && req.method === 'POST') {
+    if (!ipRateLimit('quest_sync', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -7398,6 +7412,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Marketplace Upload ═══
   if (pathname === '/api/marketplace/upload' && req.method === 'POST') {
+    if (!ipRateLimit('mkt_upload', getClientIp(req), 5, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -7444,6 +7459,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Marketplace Purchase ═══
   if (pathname === '/api/marketplace/purchase' && req.method === 'POST') {
+    if (!ipRateLimit('mkt_purchase', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -7484,6 +7500,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Challenge: Create ──
   if (pathname === '/api/challenge/create' && req.method === 'POST') {
+    if (!ipRateLimit('ch_create', getClientIp(req), 5, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -7639,6 +7656,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Challenge: Accept ──
   if (pathname === '/api/challenge/accept' && req.method === 'POST') {
+    if (!ipRateLimit('ch_accept', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     let _acceptSolTxSig = null;
@@ -7816,6 +7834,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Challenge: Submit score (game type only) ──
   if (pathname === '/api/challenge/submit' && req.method === 'POST') {
+    if (!ipRateLimit('ch_submit', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -7945,6 +7964,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Challenge: Cancel ──
   if (pathname === '/api/challenge/cancel' && req.method === 'POST') {
+    if (!ipRateLimit('ch_cancel', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -7962,9 +7982,12 @@ const server = http.createServer(async (req, res) => {
       challenge.completedAt = Date.now();
       saveChallenges();
 
-      // Refund creator's stake
+      // Refund creator's stake minus 10% cancellation fee
+      const fee = challenge.stakeAmount * 0.1;
+      const refundAmount = challenge.stakeAmount - fee;
+
       if (challenge.stakeType === 'sol') {
-        // SOL refund — send from treasury back to creator
+        // SOL refund — send 90% from treasury back to creator (10% kept as fee)
         challenge.solPayoutStatus = 'cancel_refund_pending';
         try {
           const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
@@ -7972,7 +7995,7 @@ const server = http.createServer(async (req, res) => {
             const conn = new Connection(getRpcUrl(challenge.creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
             const kp = Keypair.fromSecretKey(treasurySecret);
             const tx = new Transaction().add(
-              SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.creator), lamports: Math.floor(challenge.stakeAmount * 1e9) })
+              SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.creator), lamports: Math.floor(refundAmount * 1e9) })
             );
             tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
             tx.feePayer = kp.publicKey;
@@ -7983,14 +8006,110 @@ const server = http.createServer(async (req, res) => {
           }
         } catch (e) { console.warn('[challenges] SOL refund failed:', e.message); }
       } else {
-        // Coin bet cancel — refund creator
-        setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
-        refundCoinSpent(challenge.creator, challenge.stakeAmount);
+        // Coin bet cancel — refund 90% to creator (10% fee kept by platform)
+        setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + refundAmount);
+        refundCoinSpent(challenge.creator, refundAmount);
         debouncedSavePrism();
       }
 
       saveChallenges(); // persist after refund
-      console.log(`[challenges] Cancelled ${challengeId} by ${canceller.slice(0, 8)}... — stake refunded`);
+      console.log(`[challenges] Cancelled ${challengeId} by ${canceller.slice(0, 8)}... — refunded ${refundAmount} (fee: ${fee})`);
+      respondJson(res, 200, { ok: true, refunded: refundAmount, fee });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ── Challenge: Abandon (leave without playing) ──
+  if (pathname === '/api/challenge/abandon' && req.method === 'POST') {
+    if (!ipRateLimit('ch_abandon', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    // Support ?token= query param for sendBeacon (no custom headers)
+    const urlToken = url.searchParams.get('token');
+    let jwtAuth;
+    if (urlToken && typeof urlToken === 'string') {
+      try {
+        const payload = jwt.verify(urlToken, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
+        jwtAuth = { ok: true, address: payload.address };
+      } catch {
+        respondJson(res, 401, { error: 'Invalid or expired auth token' });
+        return;
+      }
+    } else {
+      jwtAuth = requireJwt(req, res);
+    }
+    if (!jwtAuth.ok) return;
+    try {
+      const { challengeId } = JSON.parse(await readBody(req));
+      const abandoner = jwtAuth.address;
+      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
+
+      const challenge = challenges.find(c => c.id === challengeId);
+      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
+
+      // Must be a participant
+      if (challenge.creator !== abandoner && challenge.opponent !== abandoner) {
+        return respondJson(res, 403, { error: 'Not a participant of this challenge' });
+      }
+
+      if (challenge.status === 'open') {
+        // Open challenge — only creator can abandon (same as cancel)
+        if (challenge.creator !== abandoner) return respondJson(res, 403, { error: 'Only the creator can abandon an open challenge' });
+      } else if (challenge.status === 'playing') {
+        // Playing — only allow if neither player submitted a score
+        if (challenge.creatorScore !== null || challenge.opponentScore !== null) {
+          return respondJson(res, 400, { error: 'Cannot abandon — a score has already been submitted. Finish the game.' });
+        }
+      } else {
+        return respondJson(res, 400, { error: `Cannot abandon a ${challenge.status} challenge` });
+      }
+
+      // Lock status BEFORE refund
+      challenge.status = 'cancelled';
+      challenge.completedAt = Date.now();
+      saveChallenges();
+
+      // Refund all participants
+      if (challenge.stakeType === 'sol') {
+        challenge.solPayoutStatus = 'cancel_refund_pending';
+        try {
+          const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
+          if (treasurySecret) {
+            const conn = new Connection(getRpcUrl(challenge.creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+            const kp = Keypair.fromSecretKey(treasurySecret);
+            // Refund creator
+            const tx1 = new Transaction().add(
+              SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.creator), lamports: Math.floor(challenge.stakeAmount * 1e9) })
+            );
+            tx1.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx1.feePayer = kp.publicKey;
+            tx1.sign(kp);
+            await conn.sendRawTransaction(tx1.serialize());
+            // Refund opponent if exists
+            if (challenge.opponent) {
+              const tx2 = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.opponent), lamports: Math.floor(challenge.stakeAmount * 1e9) })
+              );
+              tx2.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+              tx2.feePayer = kp.publicKey;
+              tx2.sign(kp);
+              await conn.sendRawTransaction(tx2.serialize());
+            }
+            challenge.solPayoutStatus = 'refunded';
+          }
+        } catch (e) { console.warn('[challenges] SOL abandon refund failed:', e.message); }
+      } else {
+        // Coin refund — creator always
+        setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
+        refundCoinSpent(challenge.creator, challenge.stakeAmount);
+        // Opponent if playing
+        if (challenge.opponent) {
+          setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+          refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+        }
+        debouncedSavePrism();
+      }
+
+      saveChallenges();
+      console.log(`[challenges] Abandoned ${challengeId} by ${abandoner.slice(0, 8)}... — stakes refunded`);
       respondJson(res, 200, { ok: true });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
@@ -8270,6 +8389,7 @@ const server = http.createServer(async (req, res) => {
   // All fields are stored under wallet.userData = { loadout, gameStats, textQuests, ... }
 
   if (pathname === '/api/user-data' && req.method === 'GET') {
+    if (!ipRateLimit('user_data_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const address = jwtAuth.address;
@@ -8279,11 +8399,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/user-data' && req.method === 'POST') {
+    if (!ipRateLimit('user_data_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const address = jwtAuth.address;
-    const body = await readBody(req);
-    if (!body) return respondJson(res, 400, { error: 'Missing body' });
+    const rawBody = await readBody(req);
+    if (!rawBody) return respondJson(res, 400, { error: 'Missing body' });
+    if (rawBody.length > 512 * 1024) return respondJson(res, 413, { error: 'Payload too large (max 512KB)' });
+    let body;
+    try { body = JSON.parse(rawBody); } catch { return respondJson(res, 400, { error: 'Invalid JSON' }); }
+    if (!body || typeof body !== 'object') return respondJson(res, 400, { error: 'Body must be a JSON object' });
 
     // Merge incoming fields into existing userData (don't overwrite unrelated fields)
     const w = walletDatabase.get(address) || { address };
@@ -9496,13 +9621,13 @@ function saveChallenges() {
 setInterval(() => {
   const now = Date.now();
   const cutoff = now - 7 * 24 * 60 * 60 * 1000; // 7 days
-  const stalePlayingCutoff = now - 24 * 60 * 60 * 1000; // 24 hours
+  const stalePlayingCutoff = now - 2 * 60 * 60 * 1000; // 2 hours
   let removed = 0;
   let staleCancelled = 0;
 
-  // Cancel stale "playing" challenges (stuck for >24h) and refund both players
+  // Cancel stale "playing" challenges (stuck for >2h with no scores) and refund both players
   challenges.forEach(ch => {
-    if (ch.status === 'playing' && ch.acceptedAt < stalePlayingCutoff) {
+    if (ch.status === 'playing' && ch.acceptedAt < stalePlayingCutoff && ch.creatorScore === null && ch.opponentScore === null) {
       // Only refund coin bets automatically; SOL bets need manual payout
       if (ch.stakeType !== 'sol') {
         setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
@@ -9536,7 +9661,7 @@ setInterval(() => {
   });
 
   if (staleCancelled > 0) {
-    console.log(`[challenges] Auto-cancelled ${staleCancelled} stale challenges (playing >24h or open >7d)`);
+    console.log(`[challenges] Auto-cancelled ${staleCancelled} stale challenges (playing >2h or open >7d)`);
     debouncedSavePrism();
   }
 

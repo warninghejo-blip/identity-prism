@@ -21,7 +21,6 @@ import {
   Check,
   Play,
   Ban,
-  Shield,
   Loader2,
   Trophy,
   ArrowUpDown,
@@ -201,6 +200,7 @@ export default function PrismArena() {
                     `You lost the challenge. ${c.stakeAmount} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'} gone.`,
                   );
                 if (myAddress) invalidateCompositeCache(myAddress);
+                setBattleResult(c);
               } else if (c.status === 'cancelled') toast.info('Challenge was cancelled.');
             }
           }
@@ -289,8 +289,8 @@ export default function PrismArena() {
           await conn.confirmTransaction(sig, 'confirmed');
           solTxSignature = sig;
           toast.info('SOL transfer confirmed, creating challenge...');
-        } catch (e: any) {
-          toast.error(e?.message || 'SOL transfer failed');
+        } catch (e: unknown) {
+          toast.error((e as Error)?.message || 'SOL transfer failed');
           return;
         }
       }
@@ -316,11 +316,11 @@ export default function PrismArena() {
         fetchMine();
 
         if (formType === 'game') {
-          // Navigate directly to the game — no modal choice
           const challengeId = resData.challenge?.id ?? resData.id ?? '';
-          toast.success('Challenge created! Starting game...');
-          startFadeTransition(() => {
-            navigate(`/game?challengeId=${challengeId}&mode=${formGameMode}&role=creator`);
+          toast.success('Challenge created!');
+          setReadyModal({
+            challenge: { id: challengeId, gameMode: formGameMode, stakeAmount: formStake, stakeType: formBetType },
+            role: 'creator',
           });
         } else {
           toast.success(`Challenge created! ${isSol ? formStake + ' SOL' : formStake + ' Coins'} staked`);
@@ -396,8 +396,8 @@ export default function PrismArena() {
             await conn.confirmTransaction(sig, 'confirmed');
             solTxSignature = sig;
             toast.info('SOL transfer confirmed, accepting challenge...');
-          } catch (e: any) {
-            toast.error(e?.message || 'SOL transfer failed');
+          } catch (e: unknown) {
+            toast.error((e as Error)?.message || 'SOL transfer failed');
             return;
           }
         }
@@ -418,10 +418,15 @@ export default function PrismArena() {
           fetchMine();
 
           if (challenge?.type === 'game' && challenge.gameMode) {
-            // Navigate directly to the game — no modal choice
-            toast.success('Challenge accepted! Starting game...');
-            startFadeTransition(() => {
-              navigate(`/game?challengeId=${challenge.id}&mode=${challenge.gameMode}&role=acceptor`);
+            toast.success('Challenge accepted!');
+            setReadyModal({
+              challenge: {
+                id: challenge.id,
+                gameMode: challenge.gameMode,
+                stakeAmount: challenge.stakeAmount,
+                stakeType: challenge.stakeType,
+              },
+              role: 'acceptor',
             });
           } else if (resData.challenge?.status === 'completed') {
             setBattleResult(resData.challenge);
@@ -446,6 +451,19 @@ export default function PrismArena() {
   const handleCancel = useCallback(
     async (challengeId: string) => {
       if (actionLockRef.current) return;
+
+      // Find challenge to show fee info
+      const ch = myChallenges.find((c) => c.id === challengeId);
+      const feeAmount = ch ? ch.stakeAmount * 0.1 : 0;
+      const unit = ch?.stakeType === 'sol' ? 'SOL' : 'Coins';
+      if (
+        !window.confirm(
+          `Cancel this challenge?\n\nA 10% cancellation fee (${feeAmount} ${unit}) will be deducted.\nYou'll receive ${ch ? ch.stakeAmount - feeAmount : '?'} ${unit} back.`,
+        )
+      ) {
+        return;
+      }
+
       actionLockRef.current = true;
       setCancellingId(challengeId);
       try {
@@ -467,7 +485,10 @@ export default function PrismArena() {
         });
 
         if (res.ok) {
-          toast.info('Challenge cancelled. Stake refunded.');
+          const data = await res.json().catch(() => ({}));
+          const refunded = data.refunded != null ? data.refunded : '?';
+          const fee = data.fee != null ? data.fee : '?';
+          toast.info(`Challenge cancelled. Refunded: ${refunded} (10% fee: ${fee})`);
           fetchOpen();
           fetchMine();
         } else {
@@ -481,7 +502,7 @@ export default function PrismArena() {
         setCancellingId(null);
       }
     },
-    [myAddress, base, wallet, fetchOpen, fetchMine],
+    [myAddress, base, wallet, fetchOpen, fetchMine, myChallenges],
   );
 
   return (
@@ -913,6 +934,7 @@ export default function PrismArena() {
                         size="sm"
                         variant="ghost"
                         className="text-white/30 hover:text-red-400 hover:bg-red-400/10"
+                        title="Cancel challenge (10% fee)"
                       >
                         {cancellingId === c.id ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -940,8 +962,15 @@ export default function PrismArena() {
           challenge={readyModal.challenge}
           onConfirm={() => {
             const { id, gameMode } = readyModal.challenge;
+            const role = readyModal.role;
             setReadyModal(null);
-            navigate(`/game?challengeId=${encodeURIComponent(id)}&mode=${encodeURIComponent(gameMode || 'orbit')}`);
+            sessionStorage.setItem('ip_active_challenge', JSON.stringify({ id, role, ts: Date.now() }));
+            sessionStorage.removeItem('ip_challenge_submitted');
+            startFadeTransition(() => {
+              navigate(
+                `/game?challengeId=${encodeURIComponent(id)}&mode=${encodeURIComponent(gameMode || 'orbit')}&role=${role}`,
+              );
+            });
           }}
           onClose={() => setReadyModal(null)}
         />

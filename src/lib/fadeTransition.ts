@@ -27,7 +27,15 @@ export function startFadeTransition(onNavigate: () => void, durationMs = 250): v
   overlay.style.opacity = '1';
 
   setTimeout(() => {
-    onNavigate();
+    try {
+      onNavigate();
+    } catch (e) {
+      console.error('[fadeTransition] onNavigate failed:', e);
+      // Remove stuck overlay so app is not blocked
+      overlay.style.opacity = '0';
+      overlay.style.pointerEvents = 'none';
+      setTimeout(() => overlay.remove(), 300);
+    }
   }, durationMs);
 }
 
