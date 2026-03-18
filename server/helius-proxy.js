@@ -8360,6 +8360,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ═══ Admin: Set full wallet profile (dev/testing) ═══
+  if (pathname === '/api/admin/set-wallet' && req.method === 'POST') {
+    if (!requireAdminKey(req, res)) return;
+    try {
+      const { address, data } = JSON.parse(await readBody(req));
+      if (!address || !data || typeof data !== 'object') return respondJson(res, 400, { error: 'address and data (object) required' });
+      updateWalletEntry(address, data);
+      if (typeof data.coins === 'number') setCoinBalance(address, data.coins);
+      respondJson(res, 200, { ok: true, address, updatedFields: Object.keys(data) });
+    } catch (e) { respondJson(res, 400, { error: e.message }); }
+    return;
+  }
+
   // ═══ Wallet Database API ═══
   if (pathname === '/api/wallet-database/stats' && req.method === 'GET') {
     if (!requireAdminKey(req, res)) return;
