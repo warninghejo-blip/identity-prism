@@ -1176,12 +1176,21 @@ const PrismLeague = () => {
     }, 1800);
   }, []);
 
+  // Cleanup combo hide timer on unmount
+  useEffect(
+    () => () => {
+      if (_comboHideTimer.current) clearTimeout(_comboHideTimer.current);
+    },
+    [],
+  );
+
   const [hasMintedId, setHasMintedId] = useState(false);
   useEffect(() => {
     if (!address) return;
     const heliusUrl = getHeliusRpcUrl();
     const collectionMint = getCollectionMint();
     if (!heliusUrl || !collectionMint) return;
+    let cancelled = false;
     (async () => {
       try {
         const res = await fetch(heliusUrl, {
@@ -1195,11 +1204,14 @@ const PrismLeague = () => {
           }),
         });
         const data = await res.json();
-        setHasMintedId((data?.result?.total ?? 0) > 0);
+        if (!cancelled) setHasMintedId((data?.result?.total ?? 0) > 0);
       } catch {
         /* silent */
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [address]);
 
   /* MagicBlock state */
@@ -1215,8 +1227,9 @@ const PrismLeague = () => {
 
   /* Fetch server leaderboard when gameMode changes and merge with local */
   useEffect(() => {
+    let cancelled = false;
     fetchServerLeaderboard(gameMode).then((serverEntries) => {
-      if (!serverEntries.length) return;
+      if (cancelled || !serverEntries.length) return;
       const mergeInto = (
         prev: LeaderboardEntry[],
         writeFn: (entries: LeaderboardEntry[]) => void,
@@ -1245,14 +1258,22 @@ const PrismLeague = () => {
         setLeaderboard((prev) => mergeInto(prev, writeLeaderboard));
       }
     });
+    return () => {
+      cancelled = true;
+    };
   }, [gameMode]);
 
   /* Check MagicBlock health on mount */
   useEffect(() => {
+    let cancelled = false;
     getMagicBlockHealth().then(({ healthy, latency }) => {
+      if (cancelled) return;
       setMbHealthy(healthy);
       setMbLatency(latency);
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

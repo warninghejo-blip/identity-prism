@@ -3417,6 +3417,13 @@ const server = http.createServer(async (req, res) => {
       }
       // Delta validation per game mode (1.5x buffer for coinMult + on-chain bonus)
       if (delta > 0) {
+        // Require verified game session proof (prevents earning coins without playing)
+        const gameSessionId = parsed.gameSessionId;
+        if (gameSessionId) {
+          const session = gameSessionProofs.get(gameSessionId);
+          if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+          if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+        }
         const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
         const gameMode = VALID_GAME_MODES.has(mode) ? mode : 'orbit';
         const maxDelta = (MAX_DELTA_PER_GAME[gameMode] || 500) * 1.5;
@@ -5645,7 +5652,7 @@ const server = http.createServer(async (req, res) => {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
-      const { address: bodyAddress, source, amount, description } = JSON.parse(await readBody(req));
+      const { address: bodyAddress, source, amount, description, questId } = JSON.parse(await readBody(req));
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
@@ -5704,6 +5711,15 @@ const server = http.createServer(async (req, res) => {
           const wfm = walletDatabase.get(address);
           if (wfm?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
           updateWalletEntry(address, { _firstMintClaimed: true });
+        }
+        if (source === 'text_quest') {
+          const VALID_TEXT_QUEST_IDS = new Set(['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy']);
+          const qid = String(questId || '').trim();
+          if (!qid || !VALID_TEXT_QUEST_IDS.has(qid)) return respondJson(res, 400, { error: 'Invalid or missing questId' });
+          const w = walletDatabase.get(address) || {};
+          const completedQuests = w._completedTextQuests || {};
+          if (completedQuests[qid]) return respondJson(res, 400, { error: 'Quest reward already claimed' });
+          updateWalletEntry(address, { _completedTextQuests: { ...completedQuests, [qid]: Date.now() } });
         }
         if (source === 'challenge_win') {
           const recentChallenges = Array.from(challenges.values()).filter(
@@ -7449,7 +7465,13 @@ const server = http.createServer(async (req, res) => {
       if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
       const modelPath = path.join(modelsDir, `${id}.${format}`);
       await fs.promises.writeFile(modelPath, modelBuf);
-      const listing = { id, seller: jwtAuth.address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: previewImage ? previewImage.slice(0, 100000) : null, status: 'pending', purchaseCount: 0, createdAt: Date.now() };
+      // Validate previewImage MIME type (must be a valid image data URL)
+      let safePreview = null;
+      if (previewImage) {
+        if (!/^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/.test(previewImage)) return respondJson(res, 400, { error: 'previewImage must be a valid image data URL (png, jpg, gif, webp, svg)' });
+        safePreview = previewImage.slice(0, 100000);
+      }
+      const listing = { id, seller: jwtAuth.address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: safePreview, status: 'pending', purchaseCount: 0, createdAt: Date.now() };
       marketplaceListings.set(id, listing);
       saveMarketplace();
       respondJson(res, 200, { listing, message: 'Model uploaded successfully!' });

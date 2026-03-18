@@ -113,7 +113,9 @@ function getLocalBalance(address: string): PrismBalance {
   try {
     const data = localStorage.getItem(`${BALANCE_KEY}_${address}`);
     if (data) return JSON.parse(data);
-  } catch {}
+  } catch {
+    /* localStorage unavailable */
+  }
   return {
     address,
     balance: 0,
@@ -126,14 +128,18 @@ function getLocalBalance(address: string): PrismBalance {
 function saveLocalBalance(balance: PrismBalance): void {
   try {
     localStorage.setItem(`${BALANCE_KEY}_${balance.address}`, JSON.stringify(balance));
-  } catch {}
+  } catch {
+    /* localStorage unavailable */
+  }
 }
 
 function getLocalTransactions(address: string): PrismTransaction[] {
   try {
     const data = localStorage.getItem(`${TRANSACTIONS_KEY}_${address}`);
     if (data) return JSON.parse(data);
-  } catch {}
+  } catch {
+    /* localStorage unavailable */
+  }
   return [];
 }
 
@@ -144,7 +150,9 @@ function saveLocalTransaction(address: string, tx: PrismTransaction): void {
     // Keep last 200 transactions
     if (txs.length > 200) txs.length = 200;
     localStorage.setItem(`${TRANSACTIONS_KEY}_${address}`, JSON.stringify(txs));
-  } catch {}
+  } catch {
+    /* localStorage unavailable */
+  }
 }
 
 // ── Public API ──
@@ -167,7 +175,9 @@ export function canEarnFromScan(address: string): boolean {
 export function markScanEarned(address: string): void {
   try {
     localStorage.setItem(`${SCAN_COOLDOWN_KEY}_${address}`, String(Date.now()));
-  } catch {}
+  } catch {
+    /* localStorage unavailable */
+  }
 }
 
 /**
@@ -197,6 +207,7 @@ export async function earnPrism(
   source: PrismEarnSource,
   amount?: number,
   description?: string,
+  questId?: string,
 ): Promise<{ balance: PrismBalance; earned: number }> {
   const earned = Math.max(0, amount ?? PRISM_EARN_RATES[source] ?? 1);
   const desc = description ?? `Earned ${earned} Coins from ${source.replace(/_/g, ' ')}`;
@@ -207,6 +218,7 @@ export async function earnPrism(
     source,
     amount: earned,
     description: desc,
+    ...(questId ? { questId } : {}),
   });
 
   if (serverResult) return serverResult;

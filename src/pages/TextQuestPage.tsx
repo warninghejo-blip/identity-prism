@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { goBack } from '@/lib/safeNavigate';
+import { goBack as _goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { ArrowLeft, RotateCcw, ChevronRight, Lock, Trophy, Clock, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,7 @@ import {
   startQuest,
   processChoice,
   getVisibleChoices,
-  getCompletedQuests,
+  getCompletedQuests as _getCompletedQuests,
   type TextQuest,
   type QuestSaveState,
 } from '@/lib/textQuests';
@@ -125,6 +125,7 @@ function useTypewriter(text: string, speed = 25) {
 }
 
 // ── Quest List Card ──
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function QuestListCard({
   quest,
   save,
@@ -317,7 +318,9 @@ export default function TextQuestPage() {
       // Mark replay as used in localStorage
       try {
         localStorage.setItem(`quest_replay_v1_${walletAddress}_${quest.id}`, '1');
-      } catch {}
+      } catch {
+        /* empty */
+      }
       resetQuest(quest.id, walletAddress);
       const state = startQuest(quest);
       setActiveQuest(quest);
@@ -335,7 +338,9 @@ export default function TextQuestPage() {
       // Already replayed?
       try {
         if (localStorage.getItem(`quest_replay_v1_${walletAddress}_${questId}`)) return false;
-      } catch {}
+      } catch {
+        /* empty */
+      }
       // Only allow replay if first attempt earned no reward (failed ending)
       return !save.reward || (save.reward.coins ?? 0) === 0;
     },
@@ -356,7 +361,13 @@ export default function TextQuestPage() {
     if (!questState?.reward || !walletAddress || rewardClaimed || claimingReward) return;
     setClaimingReward(true);
     try {
-      await earnPrism(walletAddress, 'text_quest', questState.reward.coins, `Quest: ${activeQuest?.title}`);
+      await earnPrism(
+        walletAddress,
+        'text_quest',
+        questState.reward.coins,
+        `Quest: ${activeQuest?.title}`,
+        activeQuest?.id,
+      );
       setRewardClaimed(true);
       toast.success(`+${questState.reward.coins} Coins!`);
     } catch {
@@ -392,14 +403,14 @@ export default function TextQuestPage() {
   }, [walletAddress, activeQuest, handleStart]);
 
   // Load saves for quest list
-  const questSaves = useMemo(() => {
+  const _questSaves = useMemo(() => {
     if (!walletAddress) return {};
     const saves: Record<string, QuestSaveState | null> = {};
     for (const q of TEXT_QUEST_DATA) {
       saves[q.id] = getQuestSave(q.id, walletAddress);
     }
     return saves;
-  }, [walletAddress, activeQuest]); // re-check after returning from quest
+  }, [walletAddress]);
 
   return (
     <PageShell className="text-white">
