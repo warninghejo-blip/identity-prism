@@ -131,3 +131,4 @@ twitter-bot-python/.env.server
 .claude/worktrees/
 virezat/
 google-services.json
+prism_data.json

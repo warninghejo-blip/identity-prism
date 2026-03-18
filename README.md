@@ -3,216 +3,169 @@
 > **Your wallet tells a story. Identity Prism reads it.**
 
 [![Solana Mobile](https://img.shields.io/badge/Platform-Solana%20Mobile-blue)](https://solanamobile.com/)
-[![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
-[![Tapestry](https://img.shields.io/badge/Reputation-Tapestry-orange)](https://tapestry.network/)
+[![MagicBlock](https://img.shields.io/badge/Gaming-MagicBlock-purple)](https://magicblock.gg/)
+[![Tapestry](https://img.shields.io/badge/Social%20Graph-Tapestry-orange)](https://tapestry.network/)
+[![Live](https://img.shields.io/badge/Live-identityprism.xyz-brightgreen)](https://identityprism.xyz)
 
-**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo v4.0:** [YouTube](https://youtu.be/2JR4UN8-Elo) · **Demo v3.0:** [YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
-
----
-
-<details>
-<summary><b>🏆 Hackathon Submissions (Graveyard & MONOLITH)</b></summary>
-
-<br/>
-
-### 📹 Project Evolution
-
-| Version | Demo | What changed |
-|---------|------|--------------|
-| **v3.0** | [▶ YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) | Core reputation engine, 3D planet card, NFT minting, Black Hole, Orbit Survival, Tapestry, Blinks |
-| **v4.0** | [▶ YouTube](https://youtu.be/2JR4UN8-Elo) | Cosmic Defender, Update Card + Co-Sign Guard, GLSL wormhole transitions, procedural audio engine, badge redesign, Sun/Star plasma shaders, InstancedMesh optimization |
-
-### 1. MONOLITH (Solana Mobile Hackathon)
-*   **Track:** Mobile Track
-*   **Why it fits:** Identity Prism is designed **Mobile-First**. It uses Solana Mobile Wallet Adapter (MWA) for seamless Seed Vault signing without app-switching. The UI, Three.js 3D rendering, Canvas game engine, custom GLSL shader transitions, and touch controls are optimized for **Seeker**, delivering 60 FPS. Published on the Solana dApp Store.
-*   **v4.0 highlights:** Cosmic Defender (top-down shooter, 4 levels, bosses), Update Card with **Co-Sign Authority Guard** for collection integrity, procedural audio engine (20+ synthesized SFX via Web Audio API, zero audio files), custom GLSL wormhole transitions, 13 achievement badges with redesigned artwork, score history sparkline, progress ring.
-*   **Perks:** Seeker Genesis holders get a 50% discount on minting Identity Prism NFTs (Metaplex Core) when paying with SKR token.
-
-### 2. Solana Graveyard Hackathon
-Identity Prism integrates multiple advanced Solana primitives across several tracks:
-*   **Gaming (MagicBlock):** Two game modes — **Orbit Survival** (dodge asteroids, collect powerups) and **Cosmic Defender** (top-down shooter, 4 levels, boss enemies). Sessions are cryptographically seeded via MagicBlock Ephemeral Rollups; the backend validates the final score against the on-chain session before committing via Solana Memo. Scores displayed on a global leaderboard.
-*   **Onchain Social (Tapestry):** Tier (e.g., "Mars") and 13 behavioral badges are published to Tapestry under the `identity_prism` namespace, making Identity Prism a composable reputation layer for the ecosystem.
-*   **DeFi / Tooling:** **Black Hole** burns dust tokens and NFTs in batch, reclaiming rent SOL. Real-time price feeds protect valuable assets. **Update Card** updates NFT metadata in-place (~0.0005 SOL) without burning, protected by a Co-Sign Authority Guard.
-*   **Mobile / Consumer:** Native Seeker/Saga experience as PWA/APK with MWA integration. Published on Solana dApp Store.
-
-</details>
-
----
-
-## What's New in v4.0
-
-| Feature | Description |
-|---------|-------------|
-| **Cosmic Defender** | New Prism League mode — top-down shooter, 4 levels, bosses, powerups, dedicated achievements |
-| **Update Card** | Update NFT metadata in-place without burning (~0.0005 SOL), protected by **Co-Sign Authority Guard** — server co-signs the transaction to ensure collection integrity |
-| **Badge Redesign** | Overhauled badge artwork + 4 new badges (13 total) |
-| **Score History + Sparkline** | Score history chart on card back |
-| **Progress Ring** | Visual progress ring toward next tier |
-| **3D Sun/Star Overhaul** | Procedural plasma shader for Sun & Binary Sun tiers, organic godrays |
-| **Realistic Asteroid Textures** | Poly Haven CC0 textures for asteroids |
-| **InstancedMesh Optimization** | 200 → 4 draw calls (major FPS boost on mobile) |
-| **Custom GLSL Wormhole Transitions** | Hand-crafted GPU shader transitions for Black Hole entry/exit and Prism League launch/return. Plasma wormhole effect at 60 FPS |
-| **Procedural Audio Engine** | All game SFX synthesized in real-time via Web Audio API — laser shots (single/double/rocket), explosions, debris, near-miss whoosh, rumble, shield, pickups, level-up fanfare, boss warning, game-over melody, victory theme. Zero audio files |
+**Live:** [identityprism.xyz](https://identityprism.xyz) · **Demo v4.0:** [YouTube](https://youtu.be/2JR4UN8-Elo) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry:** [Explorer](https://explorer.usetapestry.dev/)
 
 ---
 
 ## What is Identity Prism?
 
-Identity Prism is an **on-chain reputation and identity scoring system** built on Solana. It analyzes wallet activity — transactions, holdings, NFTs, DeFi positions, and wallet age — to produce a **reputation score**, **celestial tier**, and **achievement badges** that represent a user's true on-chain identity.
+Identity Prism is an **on-chain reputation and identity scoring system** built on Solana. It analyzes wallet activity — transactions, holdings, NFTs, DeFi positions, and wallet age — to produce a **reputation score**, **celestial tier**, **sybil risk grade**, and **achievement badges** that represent your true on-chain identity.
 
-Unlike simple wallet trackers, Identity Prism transforms raw blockchain data into a **meaningful reputation layer** that can be used by dApps, DAOs, lending protocols, and social platforms to assess trustworthiness and engagement.
+It's not just a wallet tracker. It's a full **gamified identity platform** — with text quests, arcade games, tournaments, a cosmetics shop, an XP progression system, and an AI-powered social agent that generates video content with Veo 3.1.
 
 ### The Problem
 
-- Wallets are anonymous addresses — there's no way to quickly assess trust or reputation.
-- Airdrop farmers, sybil attackers, and low-quality accounts dilute ecosystems.
-- dApps lack a standardized way to gate features or rewards based on on-chain behavior.
+- Wallets are anonymous — no way to quickly assess trust or reputation
+- Airdrop farmers, sybil attackers, and low-quality accounts dilute ecosystems
+- dApps lack a standardized way to gate features based on on-chain behavior
 
 ### The Solution
 
-Identity Prism provides:
-1. **Reputation Score (0-1400)** — A composite score based on SOL balance, wallet age, transaction count, NFT holdings, DeFi activity, and special assets.
-2. **Celestial Tiers** — From Mercury (new wallets) through Mars, Earth, Saturn, Jupiter, to Sun (top-tier OGs). Holders of both Seeker Genesis + Chapter 2 Preorder earn the rare **Binary Sun** tier.
-3. **Achievement Badges** — OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early Adopter, and more.
-4. **API-first Design** — All reputation data is available via REST API for integration into any dApp.
-5. **Social Graph Integration** — Publish identity profiles to Tapestry protocol, making reputation composable across the Solana ecosystem.
+1. **Reputation Score (0–1400)** — Composite score from SOL balance, wallet age, txn count, NFTs, DeFi, special assets
+2. **Composite Score (0–1000)** — 5-category breakdown: On-Chain (400), Sybil Trust (250), Human Proof (150), Social (100), Engagement (100)
+3. **Celestial Tiers** — Mercury → Mars → Venus → Earth → Neptune → Uranus → Saturn → Jupiter → Sun → Binary Sun
+4. **Sybil Detection** — Risk analysis with trust grade (A+ to F), integrated into the identity card
+5. **16 Achievement Badges** across 6 categories — earned through on-chain activity and in-app engagement
+6. **API-first** — All data available via REST for integration into any dApp
+7. **Tapestry Social Graph** — Composable reputation across the Solana ecosystem
 
 ---
 
 ## Key Features
 
-### 🌐 Reputation API
-A public REST API to query any Solana wallet's reputation:
+### 🪪 Identity Card & Scoring
+A Three.js-powered 3D celestial card renders your wallet as a planet — the higher your tier, the more impressive the celestial body. Cards flip to reveal detailed stats, badges, sybil trust grade, and score history sparkline. Customizable with frames, auras, and ship skins from the Stellar Forge shop.
 
-```bash
-# Single wallet
-GET https://identityprism.xyz/api/reputation?address=<SOLANA_ADDRESS>
+### 🛡️ Sybil Detection
+Analyzes wallet behavior patterns to assign a trust grade (A+ to F). Checks for transaction clustering, balance anomalies, and farming patterns. Displayed as a badge on the card front and detailed breakdown on the card back.
 
-# Compare two wallets
-GET https://identityprism.xyz/api/reputation/compare?a=<ADDR_1>&b=<ADDR_2>
+### 🎮 Prism League (3 Game Modes)
+- **Orbit Survival** — Dodge asteroids, collect powerups. Sessions cryptographically seeded via MagicBlock Ephemeral Rollups; backend validates scores before on-chain commit
+- **Cosmic Defender** — Top-down shooter, 4 levels, boss enemies, powerups, 9 dedicated achievements
+- **Gravity Runner** — Physics-based obstacle course
 
-# Batch (up to 5 wallets)
-POST https://identityprism.xyz/api/reputation/batch
-Body: { "addresses": ["addr1", "addr2", ...] }
-```
+All scores recorded on-chain via Solana Memo. Global leaderboard with separate rankings per mode.
 
-**Response:**
-```json
-{
-  "address": "vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg",
-  "score": 230,
-  "tier": "mars",
-  "badges": ["collector", "titan"],
-  "stats": {
-    "walletAgeDays": 0,
-    "solBalance": 0,
-    "txCount": 3982,
-    "tokenCount": 6,
-    "nftCount": 11
-  }
-}
-```
+### 🏆 Tournament System
+3-tier competitive tournaments (Daily / Weekly / Monthly) with entry fees, 15% burn, and prize pool distribution to top-N players across all game modes.
 
-### 🃏 Interactive 3D Identity Card
-A visually stunning, Three.js-powered celestial card that renders your wallet's identity as a planet — the higher your tier, the more impressive your celestial body. Cards can be flipped to reveal detailed stats and badges.
+### 📖 Text Quests (16 Adventures)
+Branching narrative adventures with skill checks based on your ship stats. 8 original + 8 SR2-style quests with illustrated scenes. Choices matter — your speed, shield, firepower, and luck stats affect outcomes.
 
-### 🔗 Solana Blinks Integration
-Share your Identity Prism card directly in any Blink-compatible client (wallets, social feeds):
-- **Share Card** — Displays your identity card as a Solana Action
-- **Mint as NFT** — Mint your identity card as an on-chain NFT using Metaplex Core
-- **View Stats** — Interactive badge and score exploration
+### ⚔️ Prism Arena
+- **Wallet Battle** — Side-by-side comparison of two wallets with animated stat bars
+- **P2P Challenges** — Challenge other wallets with coin wagers, stored on-chain
 
-```
-https://identityprism.xyz/api/actions/share?address=<YOUR_WALLET>
-```
+### 🔨 Stellar Forge (Cosmetics Shop)
+- **Armory** — Ship skins, card frames, auras, titles
+- **Loadout** — Equip items that affect ship stats (speed, shield, firepower, luck)
+- **Bazaar** — Rare items, limited editions
 
-### ⛓️ On-Chain Attestation
-Record your reputation score permanently on the Solana blockchain via the **Memo Program**. The attestation is co-signed by our authority, creating a verifiable, immutable proof that any smart contract or dApp can verify.
+Economy powered by Coins earned through gameplay, quests, and wallet scanning.
 
-```
-https://identityprism.xyz/api/actions/attest?address=<YOUR_WALLET>
-```
+### 📋 Quest System
+- **Daily Quests** — Daily Scan, Curious Mind, etc.
+- **Weekly Quests** — Streak-based challenges
+- **Milestone Quests** — One-time achievements (First Contact, etc.)
 
-Also works as a **Solana Blink** — attest your reputation from any Blink-compatible wallet.
+### 🎖️ Ranger Ranks (XP Progression)
+Cadet (0 XP) → Pilot (1,500) → Captain (8,000) → Ace (25,000) → Legend (50,000). XP from game scores, achievements, arena wins, and text quests.
 
-### 🌐 Tapestry Social Graph Integration
-Publish wallet identity profiles to the [Tapestry protocol](https://www.usetapestry.dev/) — Solana's leading social graph. This makes Identity Prism scores, tiers, and badges **composable** across the entire ecosystem:
-- **Profile creation** — Wallet address, score, tier, and badges are published as a Tapestry profile
-- **Content publishing** — Each scan generates content visible to other Tapestry-integrated apps
-- **Cross-app discovery** — Other dApps can read Identity Prism reputation data via Tapestry's API
-- **Social features** — Followers, following, likes, and comments on identity profiles
+### 💰 Prism Vault
+- **Buy Coins** — SOL-to-Coins conversion
+- **Staking** — Bracket yields (1.0% → 0.2%) with tier multipliers
 
-### 🤖 AI-Powered Social Agent
-An autonomous Twitter bot ([@Identity_Prism](https://x.com/Identity_Prism)) powered by **Official Twitter API v2** + twitterapi.io fallback:
-- **Auto-replies with real reputation data** when mentioned with a Solana address
-- **Posts threads** about on-chain identity, Solana ecosystem trends, and wallet analysis
-- **Engages** with relevant Solana accounts (replies, likes, retweets)
-- **Creates trend-reactive content** based on current crypto topics
-- **Quote tweets** with identity-focused commentary
-- **Generates AI images** using Google Imagen for visual engagement
-- **Media upload** via Twitter API v1.1 (official) with automatic fallback
-- Uses **weighted random action selection** with human-like timing (1h+ intervals)
-
-### �️ Black Hole
-A smart asset management tool for cleaning up your wallet. Select dust tokens and unwanted NFTs, burn them in a single batch transaction, and reclaim the rent SOL locked inside each account. Real-time price feeds protect valuable assets from accidental burning.
-
-### 🎮 Prism League
-Two browser-based game modes running inside the app:
-- **Orbit Survival** — Dodge asteroids, collect powerups, survive as long as possible. Sessions are cryptographically seeded via MagicBlock Ephemeral Rollups; the backend validates the final score before committing it on-chain via Solana Memo.
-- **Cosmic Defender** — Top-down shooter with 4 levels, boss enemies, powerups, and 9 dedicated achievements.
-
-Scores are recorded on-chain and displayed on a global leaderboard.
+### 🕳️ Black Hole
+Burn dust tokens and unwanted NFTs in batch, reclaim rent SOL. Real-time price feeds protect valuable assets.
 
 ### ♻️ Update Card
-Update your NFT metadata in-place without burning the original NFT (~0.0005 SOL). Each update transaction is protected by a **Co-Sign Authority Guard** — the server validates and co-signs the transaction to ensure collection integrity while preserving user sovereignty.
+Update NFT metadata in-place (~0.0005 SOL) without burning, protected by **Co-Sign Authority Guard**.
 
-### 🌀 Custom GLSL Wormhole Transitions
-Hand-crafted GPU shader transitions for every navigation event — entering the Black Hole, launching into Prism League, and returning. Plasma wormhole effect runs at 60 FPS on mobile hardware.
+### 🔗 Solana Blinks
+Share your identity card, mint as NFT, or attest reputation — all as Solana Actions compatible with any Blink-enabled wallet.
+
+### 🌐 Tapestry Social Graph
+Publish identity profiles to [Tapestry protocol](https://www.usetapestry.dev/) — scores, tiers, and badges become composable across the Solana ecosystem.
+
+### ⛓️ On-Chain Attestation
+Record reputation permanently on Solana via Memo Program, co-signed by our authority for verifiable proof.
+
+### 🌀 Custom GLSL Transitions
+Hand-crafted GPU shader wormhole transitions for navigation events — 60 FPS on mobile.
 
 ### 🎵 Procedural Audio Engine
-All game sounds are synthesized in real-time via Web Audio API — no audio files, no downloads. Includes laser shots (single/double/rocket), asteroid explosions, debris, near-miss whoosh, rumble feedback, shield activation, pickup chimes, level-up fanfare, boss warning, game-over melody, and victory theme.
+All game SFX synthesized in real-time via Web Audio API — lasers, explosions, shields, pickups, boss warnings, victory themes. Zero audio files.
 
-### �📱 Android App
-Native Android application via Capacitor with Solana Mobile Wallet Adapter support. Published on Solana dApp Store.
+### 🤖 AI Social Agent
+Autonomous Twitter bot ([@Identity_Prism](https://x.com/Identity_Prism)) powered by **Gemini 3 Flash** + **Veo 3.1**:
+- Generates **AI video posts** with dynamic Solana-themed visuals (cyberpunk aesthetic, Solana logo integration)
+- Generates **AI images** via Gemini Imagen
+- Auto-replies with real wallet reputation data when mentioned with a Solana address
+- Posts provocative identity-focused content with real ecosystem data
+- Engages with priority Solana accounts (Jupiter, Phantom, Tensor, etc.)
+- Anti-repetition architecture: structural pattern dedup, content type enforcement, 5-level dedup system
+- Spam/scam mention filter with Cyrillic homoglyph detection
 
-### 🏛️ Colosseum Forum Agent
-An AI agent that participates in the Colosseum hackathon forum — posting topics, commenting, and engaging with the community.
+### 📱 Android App
+Native Android via Capacitor with Solana Mobile Wallet Adapter support. Published on Solana dApp Store.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Frontend (React + Three.js)         │
-│  - 3D Celestial Card · Stats Dashboard · Mint UI    │
-└──────────────────────┬──────────────────────────────┘
-                       │ HTTPS
-┌──────────────────────▼──────────────────────────────┐
-│              Backend (Node.js on port 8787)          │
-│  - Reputation API · Blink Actions · Market Data     │
-│  - Helius RPC proxy · NFT Minting · Card Renderer   │
-└──────────────────────┬──────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────┐
-│                  Solana Blockchain                   │
-│  - Helius DAS API · Transaction History · NFTs      │
-│  - Metaplex Core (minting) · SPL Tokens             │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│           Frontend (React 18 + Three.js + R3F)        │
+│  3D Identity Card · CosmicHub · Prism League · Forge  │
+│  Text Quests · Arena · Black Hole · Quests · Vault    │
+│  Custom GLSL Shaders · Procedural Audio · Canvas 2D   │
+└───────────────────────┬──────────────────────────────┘
+                        │ HTTPS
+┌───────────────────────▼──────────────────────────────┐
+│             Backend (Node.js HTTP on port 8787)       │
+│  Reputation API · Sybil Detection · Blink Actions    │
+│  Coin Economy · Quests · Tournaments · Challenges    │
+│  Game Session Validation · NFT Minting · Staking     │
+│  Rate Limiting · JWT Auth · Co-Sign Guard            │
+└───────────────────────┬──────────────────────────────┘
+                        │
+┌───────────────────────▼──────────────────────────────┐
+│                Solana Blockchain                      │
+│  Helius DAS API · Transaction History · SPL Tokens   │
+│  Metaplex Core (NFT minting) · Memo Program          │
+│  MagicBlock Ephemeral Rollups (game sessions)        │
+└──────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────┐
-│            Tapestry Social Graph                     │
-│  - Profile creation · Content publishing            │
-│  - Cross-app reputation discovery                   │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│              Tapestry Social Graph                    │
+│  Profile creation · Content publishing               │
+│  Cross-app reputation discovery                      │
+└──────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────┐
-│              AI Agents (Python)                      │
-│  - Twitter Bot (Official API v2 + twitterapi.io)    │
-│  - Gemini AI for content generation + Imagen        │
-│  - Content: threads, trends, quotes, engagement     │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│         AI Social Agent (Python + Docker)             │
+│  Gemini 3 Flash (text) · Veo 3.1 (video generation) │
+│  GQL Twitter integration · Anti-repetition engine    │
+│  Pattern dedup · Niche keyword filter · Spam guard   │
+└──────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Badge System (16 Badges, 6 Categories)
+
+| Category | Badges | How to Earn |
+|----------|--------|-------------|
+| **On-Chain** | Veteran, Whale, DeFi Architect | Wallet age, SOL balance, DeFi activity |
+| **Sybil Trust** | Verified Human, Clean Record | Low sybil risk score |
+| **Human Proof** | Game Master, Achievement Hunter, High Scorer | Game scores, achievements |
+| **Identity Prism** | Seeker, Visionary, Binary Sun | Seeker NFT, high tier, combo |
+| **Social** | Arena Champion, Star Navigator | Arena wins, social engagement |
+| **Engagement** | Quest Hunter, Streak Lord, Explorer | Quests, streaks, exploration |
 
 ---
 
@@ -238,15 +191,15 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 
 | Tier | Score Range | Visual |
 |------|------------|--------|
-| Mercury | 0-100 | Small rocky planet |
-| Mars | 101-250 | Red planet |
-| Venus | 251-400 | Volcanic world |
-| Earth | 401-550 | Blue marble |
-| Neptune | 551-700 | Ice giant |
-| Uranus | 701-850 | Ringed ice world |
-| Saturn | 851-950 | Ringed gas giant |
-| Jupiter | 951-1050 | Gas giant king |
-| Sun | 1051+ | Stellar body |
+| Mercury | 0–100 | Small rocky planet |
+| Mars | 101–250 | Red planet |
+| Venus | 251–400 | Volcanic world |
+| Earth | 401–550 | Blue marble |
+| Neptune | 551–700 | Ice giant |
+| Uranus | 701–850 | Ringed ice world |
+| Saturn | 851–950 | Ringed gas giant |
+| Jupiter | 951–1050 | Gas giant king |
+| Sun | 1051+ | Stellar body with plasma shader |
 | Binary Sun | Combo | Twin star system |
 
 ---
@@ -255,15 +208,16 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 
 | Layer | Technologies |
 |-------|-------------|
-| **Frontend** | React 18, TypeScript, Three.js (react-three-fiber), Tailwind CSS, shadcn/ui, Framer Motion |
-| **Backend** | Node.js, Helius DAS API, Metaplex Core/Umi, custom HTTP server |
-| **Blockchain** | Solana, SPL Tokens, Metaplex Core NFTs, Solana Actions (Blinks) |
-| **Social Graph** | Tapestry Protocol (REST API), on-chain profile + content publishing |
-| **AI Agents** | Python, Google Gemini (text + Imagen), Official Twitter API v2 (tweepy), twikit, twitterapi.io |
-| **Gaming** | MagicBlock Ephemeral Rollups, Canvas 2D game engine, Web Audio API (procedural SFX) |
-| **Shaders** | Custom GLSL fragment shaders (wormhole transitions), Three.js procedural planet/sun materials |
-| **Mobile** | Capacitor, Solana Mobile Wallet Adapter, Solana dApp Store |
-| **Infrastructure** | Nginx, systemd services, Squid proxy, logrotate |
+| **Frontend** | React 18, TypeScript, Vite 7, Three.js (R3F), Tailwind CSS, shadcn/ui, Framer Motion |
+| **Backend** | Node.js (raw HTTP), Helius DAS API, Metaplex Core/Umi, JWT auth |
+| **Blockchain** | Solana, SPL Tokens, Metaplex Core NFTs, Solana Actions (Blinks), Memo Program |
+| **Social Graph** | Tapestry Protocol (REST API) |
+| **Gaming** | MagicBlock Ephemeral Rollups, Canvas 2D engine, Web Audio API (procedural SFX) |
+| **AI Agent** | Python, Google Gemini 3 Flash, Veo 3.1 (video), Imagen (images), Twitter GQL |
+| **Shaders** | Custom GLSL (wormhole transitions, plasma sun, procedural planets) |
+| **Mobile** | Capacitor 8, Solana Mobile Wallet Adapter, Solana dApp Store |
+| **Security** | Rate limiting, game session proofs, co-sign guards, sybil detection |
+| **Infrastructure** | Docker, Nginx, Ubuntu, Playwright (bot stealth) |
 
 ---
 
@@ -276,9 +230,11 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 | `/api/reputation/compare?a=&b=` | GET | Compare two wallets |
 | `/api/actions/share?address=` | GET/POST | Blink: share identity card |
 | `/api/actions/mint-blink` | GET/POST | Blink: mint identity NFT |
-| `/api/actions/attest?address=` | GET/POST | Blink: on-chain reputation attestation |
+| `/api/actions/attest?address=` | GET/POST | Blink: on-chain attestation |
 | `/api/market/sol-price` | GET | Current SOL price |
 | `/api/market/jupiter-prices` | POST | Token prices via Jupiter |
+| `/api/coins/balance?address=` | GET | Coin balance |
+| `/api/sybil?address=` | GET | Sybil risk analysis |
 
 ---
 
@@ -287,52 +243,58 @@ An AI agent that participates in the Colosseum hackathon forum — posting topic
 ### Frontend
 ```bash
 npm install
-npm run dev
+npm run dev        # Vite dev server on port 7474
 ```
 
 ### Backend
 ```bash
-cd server
-node helius-proxy.js
+node server/helius-proxy.js   # API server on port 8787
 ```
 
-### Twitter Bot
+### Full Stack
 ```bash
-cd twitter-bot-python
-pip install -r requirements.txt
-python main.py
+npm run dev:all    # Both frontend + backend concurrently
 ```
+
+See `.env.example` for required environment variables (Helius API keys, Tapestry key, etc.)
 
 ---
 
-## Environment Variables
+<details>
+<summary><b>Hackathon Submissions</b></summary>
 
-See `.env.example` for all required variables. Key ones:
+<br/>
 
-| Variable | Description |
-|----------|-------------|
-| `HELIUS_API_KEYS` | Helius RPC API key(s) |
-| `VITE_TAPESTRY_API_KEY` | Tapestry social graph API key |
-| `GEMINI_API_KEY` | Google Gemini API key |
-| `TWITTER_CONSUMER_KEY` | Official Twitter API key |
-| `TWITTER_CONSUMER_SECRET` | Official Twitter API secret |
-| `TWITTER_ACCESS_TOKEN` | Twitter OAuth access token |
-| `TWITTER_ACCESS_TOKEN_SECRET` | Twitter OAuth access token secret |
-| `TWITTERAPI_IO_API_KEY` | twitterapi.io key (fallback) |
-| `TREASURY_ADDRESS` | SOL treasury for mint payments |
-| `PUBLIC_BASE_URL` | Public URL (https://identityprism.xyz) |
+### Project Evolution
+
+| Version | Demo | What changed |
+|---------|------|--------------|
+| **v3.0** | [YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) | Core reputation engine, 3D planet card, NFT minting, Black Hole, Orbit Survival, Tapestry, Blinks |
+| **v4.0** | [YouTube](https://youtu.be/2JR4UN8-Elo) | Cosmic Defender, Update Card + Co-Sign Guard, GLSL wormhole transitions, procedural audio engine, badge redesign |
+| **v5.0** | Coming soon | Sybil detection, composite scoring, 16 badges, Ranger Ranks, 16 text quests, tournament system, Stellar Forge shop, quest system, coin economy, staking, Prism Arena, AI video bot (Veo 3.1), security hardening |
+
+### MONOLITH (Solana Mobile Hackathon)
+* **Track:** Mobile Track
+* **Why it fits:** Mobile-first design with Solana Mobile Wallet Adapter (MWA) for seamless Seed Vault signing. UI, Three.js 3D rendering, Canvas game engine, custom GLSL shader transitions, and touch controls optimized for **Seeker** at 60 FPS. Published on Solana dApp Store.
+
+### Solana Graveyard Hackathon
+* **Gaming (MagicBlock):** Three game modes with cryptographic session verification via MagicBlock Ephemeral Rollups + on-chain score attestation
+* **Onchain Social (Tapestry):** Tiers and badges published to Tapestry, making Identity Prism a composable reputation layer
+* **DeFi / Tooling:** Black Hole (batch burn + rent reclaim), Update Card (in-place NFT update with Co-Sign Guard)
+* **Mobile / Consumer:** Native Seeker/Saga PWA/APK with MWA integration
+
+</details>
 
 ---
 
 ## Links
 
-- **Live App:** [https://identityprism.xyz](https://identityprism.xyz)
+- **Live App:** [identityprism.xyz](https://identityprism.xyz)
 - **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism)
-- **Tapestry Explorer:** [https://explorer.usetapestry.dev/](https://explorer.usetapestry.dev/)
-- **Reputation API:** [https://identityprism.xyz/api/reputation?address=YOUR_WALLET](https://identityprism.xyz/api/reputation?address=vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg)
+- **Tapestry Explorer:** [explorer.usetapestry.dev](https://explorer.usetapestry.dev/)
+- **Reputation API:** [Try it](https://identityprism.xyz/api/reputation?address=vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg)
 - **Blink:** `solana-action:https://identityprism.xyz/api/actions/share`
-- **Android APK:** [https://identityprism.xyz/app-release.apk](https://identityprism.xyz/app-release.apk)
-- **Solana Mobile:** Built for Saga & Seeker with native Mobile Wallet Adapter support
+- **Android APK:** [Download](https://identityprism.xyz/app-release.apk)
 
 ---
 
