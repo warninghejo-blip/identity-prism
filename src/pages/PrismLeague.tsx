@@ -870,7 +870,7 @@ const PrismLeague = () => {
     });
     // Sync unlocked + claimed achievements from server
     fetchServerAchievements(address).then(({ unlocked: srvUnlocked, claimed: srvClaimed }) => {
-      if (!srvUnlocked.length && !srvClaimed.length) return;
+      if (cancelled || (!srvUnlocked.length && !srvClaimed.length)) return;
       const current = getAchievements();
       let changed = false;
       const now = new Date().toISOString();

@@ -3419,11 +3419,10 @@ const server = http.createServer(async (req, res) => {
       if (delta > 0) {
         // Require verified game session proof (prevents earning coins without playing)
         const gameSessionId = parsed.gameSessionId;
-        if (gameSessionId) {
-          const session = gameSessionProofs.get(gameSessionId);
-          if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
-          if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-        }
+        if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for earning coins' });
+        const session = gameSessionProofs.get(gameSessionId);
+        if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+        if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
         const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
         const gameMode = VALID_GAME_MODES.has(mode) ? mode : 'orbit';
         const maxDelta = (MAX_DELTA_PER_GAME[gameMode] || 500) * 1.5;
@@ -5713,7 +5712,6 @@ const server = http.createServer(async (req, res) => {
           updateWalletEntry(address, { _firstMintClaimed: true });
         }
         if (source === 'text_quest') {
-          const VALID_TEXT_QUEST_IDS = new Set(['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy']);
           const qid = String(questId || '').trim();
           if (!qid || !VALID_TEXT_QUEST_IDS.has(qid)) return respondJson(res, 400, { error: 'Invalid or missing questId' });
           const w = walletDatabase.get(address) || {};
@@ -7468,7 +7466,7 @@ const server = http.createServer(async (req, res) => {
       // Validate previewImage MIME type (must be a valid image data URL)
       let safePreview = null;
       if (previewImage) {
-        if (!/^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/.test(previewImage)) return respondJson(res, 400, { error: 'previewImage must be a valid image data URL (png, jpg, gif, webp, svg)' });
+        if (!/^data:image\/(png|jpe?g|gif|webp);base64,/.test(previewImage)) return respondJson(res, 400, { error: 'previewImage must be a valid image data URL (png, jpg, gif, webp)' });
         safePreview = previewImage.slice(0, 100000);
       }
       const listing = { id, seller: jwtAuth.address, name: name.slice(0, 60), description: (description || '').slice(0, 200), category: ['ship', 'planet', 'badge', 'decoration'].includes(category) ? category : 'ship', price: priceNum, format, modelUrl: `/marketplace_models/${id}.${format}`, previewImage: safePreview, status: 'pending', purchaseCount: 0, createdAt: Date.now() };
@@ -8986,6 +8984,8 @@ const PRISM_EARN_COOLDOWN_TABLE = {
 };
 // Global daily cap for non-game earn sources (prevents coin inflation exploits)
 const NON_GAME_DAILY_EARN_CAP = 1500;
+// Valid text quest IDs (must match src/lib/textQuests.ts)
+const VALID_TEXT_QUEST_IDS = new Set(['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy']);
 const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;
 
 // Known CEX/Bridge/DEX addresses for labeling
