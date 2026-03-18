@@ -33,7 +33,7 @@ export default function LandingOverlay({
   mobileWalletReady,
   onDesktopConnect,
   desktopWalletReady,
-  scanningMessageIndex,
+  scanningMessageIndex: _scanningMessageIndex,
   jwtSigning,
 }: LandingOverlayProps) {
   const showScanning = isScanning;
@@ -80,7 +80,15 @@ export default function LandingOverlay({
             </div>
           ) : (
             <div className="landing-v3-connect">
-              {useMobileWallet ? (
+              {useMobileWallet && mobileWalletReady ? (
+                <Button className="landing-v3-connect-btn" onClick={onMobileConnect}>
+                  CONNECT WALLET
+                </Button>
+              ) : useMobileWallet && !mobileWalletReady && desktopWalletReady ? (
+                <Button className="landing-v3-connect-btn" onClick={onDesktopConnect}>
+                  CONNECT WALLET
+                </Button>
+              ) : useMobileWallet ? (
                 <Button className="landing-v3-connect-btn" onClick={onMobileConnect} disabled={!mobileWalletReady}>
                   {mobileWalletReady ? 'CONNECT WALLET' : 'GET WALLET'}
                 </Button>

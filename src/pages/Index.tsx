@@ -325,9 +325,10 @@ const Index = () => {
   }, [nonMwaWallets, mobileWallet]);
   const mobileWalletReady = isWalletUsable(mobileWallet);
   const preferredMobileWalletReady = isWalletUsable(preferredMobileWallet);
-  // On Capacitor Android (including Seeker), always allow mobile wallet connect.
+  // On Capacitor Android or Seeker device, always allow mobile wallet connect.
   // MWA adapter may start as Unsupported in WebView and change later.
-  const mobileConnectReady = (isCapacitor && isAndroidDevice) || preferredMobileWalletReady || mobileWalletReady;
+  const mobileConnectReady =
+    (isCapacitor && isAndroidDevice) || isSeekerDevice || preferredMobileWalletReady || mobileWalletReady;
   const preferredDesktopWallet = useMemo(() => {
     if (phantomWallet?.readyState === WalletReadyState.Installed) return phantomWallet;
     const installed = nonMwaWallets.find((w) => w.readyState === WalletReadyState.Installed);
@@ -407,8 +408,8 @@ const Index = () => {
     let targetWallet = preferredMobileWallet;
     let targetReady = preferredMobileWalletReady;
 
-    // On Capacitor Android (Seeker), fallback to raw MWA adapter even if not detected as ready
-    if ((!targetWallet || !targetReady) && isCapacitor && isAndroidDevice) {
+    // On Capacitor Android or Seeker device, fallback to raw MWA adapter even if not detected as ready
+    if ((!targetWallet || !targetReady) && ((isCapacitor && isAndroidDevice) || isSeekerDevice)) {
       const rawMwa = availableWallets.find((w) => w.adapter.name === SolanaMobileWalletAdapterWalletName);
       if (rawMwa) {
         targetWallet = rawMwa;
@@ -585,6 +586,7 @@ const Index = () => {
     availableWallets,
     isCapacitor,
     isAndroidDevice,
+    isSeekerDevice,
     select,
     isConnected,
     connectedAddress,
