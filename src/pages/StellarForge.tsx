@@ -1195,7 +1195,7 @@ export default function StellarForge() {
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
       toast.success(`Equipped ${item.name}`, {
-        action: { label: 'View Card', onClick: () => navigate('/') },
+        action: { label: 'View Card', onClick: () => startFadeTransition(() => goBack(navigate)) },
       });
     },
     [loadout, navigate],
@@ -1458,7 +1458,7 @@ export default function StellarForge() {
               {/* Hint: how to earn coins */}
               {balance && balance.balance === 0 && (
                 <button
-                  onClick={() => navigate('/vault')}
+                  onClick={() => startFadeTransition(() => navigate('/vault'))}
                   className="w-full mb-4 px-4 py-2.5 rounded-xl text-[11px] text-amber-300/60 bg-amber-500/[0.06] border border-amber-500/10 hover:bg-amber-500/10 transition-colors text-left"
                 >
                   💡 Earn Coins by playing games, completing quests, or{' '}

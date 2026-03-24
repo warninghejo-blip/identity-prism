@@ -349,8 +349,8 @@ function MiniPassport({
                     viewBox="0 0 10 10"
                     className="cursor-pointer hover:opacity-80 transition-opacity"
                     style={{ flexShrink: 0 }}
-                    title="Buy Coins"
                   >
+                    <title>Buy Coins</title>
                     <circle
                       cx="5"
                       cy="5"
@@ -700,6 +700,7 @@ export default function CosmicHub({
   const [sybilGrade, setSybilGrade] = useState<string | null>(null);
   const [boostRate, setBoostRate] = useState<number>(0);
   const compositeData = useCompositeScore(walletAddress || null);
+  const refetchComposite = compositeData.refetch;
 
   // Fetch sybil grade with retry
   useEffect(() => {
@@ -710,8 +711,10 @@ export default function CosmicHub({
       fetch(`${base}/api/sybil/analysis?address=${walletAddress}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          if (!cancelled && d?.trustGrade) setSybilGrade(d.trustGrade);
-          else if (!cancelled && attempt < 2) setTimeout(() => doFetch(attempt + 1), 3000);
+          if (!cancelled && d?.trustGrade) {
+            setSybilGrade(d.trustGrade);
+            setTimeout(() => refetchComposite(), 500);
+          } else if (!cancelled && attempt < 2) setTimeout(() => doFetch(attempt + 1), 3000);
         })
         .catch(() => {
           if (!cancelled && attempt < 2) setTimeout(() => doFetch(attempt + 1), 3000);
@@ -721,7 +724,7 @@ export default function CosmicHub({
     return () => {
       cancelled = true;
     };
-  }, [walletAddress]);
+  }, [walletAddress, refetchComposite]);
 
   // Fetch staking boost rate
   useEffect(() => {
@@ -746,7 +749,7 @@ export default function CosmicHub({
     [navigate],
   );
 
-  const hasIdentity = typeof identityScore === 'number' && identityScore > 0 && planetTier;
+  const hasIdentity = typeof identityScore === 'number' && identityScore >= 0 && planetTier;
 
   return (
     <motion.div

@@ -444,7 +444,9 @@ export default function PrismScanner() {
               </div>
               <div className="flex border-t border-white/[0.06]">
                 <button
-                  onClick={() => navigate(`/?address=${result.address}`, { state: { openCard: true } })}
+                  onClick={() =>
+                    startFadeTransition(() => navigate(`/?address=${result.address}`, { state: { openCard: true } }))
+                  }
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold transition-all hover:bg-white/[0.03]"
                   style={{ color: tierColor }}
                 >
@@ -452,7 +454,7 @@ export default function PrismScanner() {
                 </button>
                 {myAddress && result.address !== myAddress && (
                   <button
-                    onClick={() => navigate(`/compare?a=${myAddress}&b=${result.address}`)}
+                    onClick={() => startFadeTransition(() => navigate(`/compare?a=${myAddress}&b=${result.address}`))}
                     className="flex-1 flex items-center justify-center gap-2 py-2.5 border-l border-white/[0.06] text-sm font-bold transition-all hover:bg-white/[0.03] text-purple-400"
                   >
                     <Swords className="w-4 h-4" /> Compare

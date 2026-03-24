@@ -915,8 +915,10 @@ export default function PrismArena() {
                     {(c.status === 'playing' || c.status === 'accepted') && c.type === 'game' && c.gameMode && (
                       <Button
                         onClick={() =>
-                          navigate(
-                            `/game?challengeId=${encodeURIComponent(c.id)}&mode=${encodeURIComponent(c.gameMode || 'orbit')}`,
+                          startFadeTransition(() =>
+                            navigate(
+                              `/game?challengeId=${encodeURIComponent(c.id)}&mode=${encodeURIComponent(c.gameMode || 'orbit')}`,
+                            ),
                           )
                         }
                         size="sm"

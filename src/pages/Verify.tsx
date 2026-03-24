@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getHeliusRpcUrl } from '@/constants';
 import { goBack } from '@/lib/safeNavigate';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { getTierIcon, TIER_HEX } from '@/lib/constants/tierColors';
 
 interface AttestationData {
@@ -28,6 +29,10 @@ const Verify: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [state, setState] = useState<VerifyState>({ status: 'idle' });
   const [inputSig, setInputSig] = useState(searchParams.get('tx') || searchParams.get('sig') || '');
+
+  useEffect(() => {
+    fadeOutTransition();
+  }, []);
 
   const verify = useCallback(async (signature: string) => {
     if (!signature.trim()) return;
@@ -143,7 +148,7 @@ const Verify: React.FC = () => {
     <div className="verify-page-scroll relative z-10 min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
       {/* Header */}
       <button
-        onClick={() => goBack(navigate)}
+        onClick={() => startFadeTransition(() => goBack(navigate))}
         className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity"
       >
         <img src="/phav.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />

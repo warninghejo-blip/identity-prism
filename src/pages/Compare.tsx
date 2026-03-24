@@ -352,7 +352,7 @@ export default function Compare() {
           </h1>
           <div className="flex-1" />
           <button
-            onClick={() => startFadeTransition(() => navigate('/'))}
+            onClick={() => startFadeTransition(() => goBack(navigate))}
             className="text-white/50 hover:text-white transition-colors"
             title="Home"
           >

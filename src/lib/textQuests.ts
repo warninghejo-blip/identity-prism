@@ -1195,7 +1195,18 @@ const QUEST_DOMINATOR_FACTORY: TextQuest = {
       id: 'escape_detected',
       text: "Alarms shriek. Lights shift to red. Dominator units converge from every direction. Your charges are planted — there's no turning back, only forward. You fight through three waves of factory guards, taking hits on the way, before blasting out through the emergency exit as the first explosion rocks the building behind you.",
       image: '/quests/robots_03.jpg',
-      choices: [{ text: 'Push through to the extraction point', nextNode: 'ending_fight_out' }],
+      choices: [
+        {
+          text: 'Push through to the extraction point',
+          nextNode: 'ending_fight_out',
+          condition: { variable: 'detection', op: '<=', value: 5 },
+        },
+        {
+          text: 'Try to fight through the swarm',
+          nextNode: 'ending_captured',
+          condition: { variable: 'detection', op: '>=', value: 6 },
+        },
+      ],
     },
     ending_intel_only: {
       id: 'ending_intel_only',

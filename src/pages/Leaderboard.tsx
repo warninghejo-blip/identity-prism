@@ -346,7 +346,7 @@ function OverallTable({ entries, myAddress }: { entries: OverallEntry[]; myAddre
         return (
           <div
             key={entry.address}
-            onClick={() => navigate(`/profile/${entry.address}`)}
+            onClick={() => startFadeTransition(() => navigate(`/profile/${entry.address}`))}
             className={`
               grid grid-cols-[36px_1fr] sm:grid-cols-[48px_1fr_100px_80px_90px]
               px-4 py-2.5 border-b border-white/[0.03] items-center gap-y-0.5 cursor-pointer hover:bg-white/[0.04] transition-colors
@@ -441,7 +441,7 @@ function GameTable({
         return (
           <div
             key={`${entry.address}-${idx}`}
-            onClick={() => navigate(`/profile/${entry.address}`)}
+            onClick={() => startFadeTransition(() => navigate(`/profile/${entry.address}`))}
             className={`
               grid grid-cols-[36px_1fr] sm:grid-cols-[48px_1fr_120px_100px]
               px-4 py-2.5 border-b border-white/[0.03] items-center gap-y-0.5 cursor-pointer hover:bg-white/[0.04] transition-colors

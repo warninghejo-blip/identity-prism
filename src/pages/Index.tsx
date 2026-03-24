@@ -15,7 +15,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, Share2 } from 'lucide-react';
 import LandingOverlay from '@/components/LandingOverlay';
-import { fadeOutTransition } from '@/lib/fadeTransition';
+import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
 import {
   getAppBaseUrl,
   getHeliusProxyUrl,
@@ -105,11 +105,12 @@ const Index = () => {
   const returningFromSubPage = useRef(shouldResumeFromSubPage);
   const suppressLoadingRef = useRef(shouldResumeFromBlackHole || shouldResumeFromGameJump);
 
-  // Fade out transition overlay when returning from a sub-page
+  // Fade out transition overlay — always attempt removal on mount.
+  // Instant (delay=0) for returns; short delay for other arrivals (e.g. openCard).
+  // fadeOutTransition is a no-op if no overlay exists.
   useEffect(() => {
-    if (returningFromSubPage.current || returningFromBH.current || returningFromGameJump.current) {
-      fadeOutTransition(0);
-    }
+    const isReturn = returningFromSubPage.current || returningFromBH.current || returningFromGameJump.current;
+    fadeOutTransition(isReturn ? 0 : 50);
   }, []);
 
   // Referral claim — check for ?ref= param on first load
@@ -127,7 +128,7 @@ const Index = () => {
 
   const [isWarping, setIsWarping] = useState(false);
   const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(null);
-  const [_showOnboarding, setShowOnboarding] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
     shouldOpenCard && urlAddress
       ? 'ready'
@@ -156,7 +157,32 @@ const Index = () => {
   } = wallet;
   const { setVisible: setWalletModalVisible } = useWalletModal();
 
-  const [activeAddress, setActiveAddress] = useState<string | undefined>(urlAddress || undefined);
+  // When returning from a sub-page, initialize from the connected wallet
+  // so the hub renders immediately (prevents blank frame behind fade overlay).
+  // Fallback to sessionStorage when connectedAddress is not yet available (race condition fix).
+  const [activeAddress, setActiveAddress] = useState<string | undefined>(
+    urlAddress ||
+      (shouldResumeFromSubPage || shouldResumeFromBlackHole || shouldResumeFromGameJump
+        ? connectedAddress?.toBase58() ||
+          (() => {
+            try {
+              return sessionStorage.getItem('prism_active_address') || undefined;
+            } catch {
+              return undefined;
+            }
+          })()
+        : undefined),
+  );
+  // Persist activeAddress so it survives component remounts on sub-page returns
+  useEffect(() => {
+    try {
+      if (activeAddress) sessionStorage.setItem('prism_active_address', activeAddress);
+      else sessionStorage.removeItem('prism_active_address');
+    } catch {
+      /* ignore */
+    }
+  }, [activeAddress]);
+
   const didForceDisconnect = useRef(false);
   const [walletStable, setWalletStable] = useState(
     Boolean(urlAddress) || returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current,
@@ -194,17 +220,20 @@ const Index = () => {
   useEffect(() => {
     if (!(returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current)) return;
     if (activeAddress) {
-      // Address already resolved — clear the sub-page flag so it doesn't interfere
-      // with future disconnect (the flag was only needed for the initial sync).
-      returningFromSubPage.current = false;
+      // Address already resolved (e.g. from URL or initialized from wallet).
+      // Update URL if needed so refresh works, but don't clear returning flags —
+      // the state machine needs them to prevent scanning flash while data loads.
+      if (!searchParams.get('address') && activeAddress) {
+        const next = new URLSearchParams(searchParams);
+        next.set('address', activeAddress);
+        setSearchParams(next, { replace: true });
+      }
       return;
     }
     if (isConnected && connectedAddress) {
       const addr = connectedAddress.toBase58();
       setActiveAddress(addr);
-      setViewState('ready');
-      // Flag served its purpose — clear it
-      returningFromSubPage.current = false;
+      setViewState('hub');
       // Also update URL so refresh works
       const next = new URLSearchParams(searchParams);
       next.set('address', addr);
@@ -818,10 +847,15 @@ const Index = () => {
     }
 
     if (isLoading || !traits) {
+      // When returning from sub-page, suppress scanning flash — stay on hub
+      if (returningFromSubPage.current || returningFromGameJump.current) return;
       setViewState('scanning');
     } else {
-      // After scan → go to Hub (not card). Card accessible from Hub.
+      // After scan → go to Hub. JWT is obtained in background, doesn't block UI.
       setViewState('hub');
+      // Clear one-shot returning flags now that data is loaded
+      if (returningFromSubPage.current) returningFromSubPage.current = false;
+      if (returningFromGameJump.current) returningFromGameJump.current = false;
       // Show onboarding for first-time users
       if (!localStorage.getItem('ip_onboarding_v1')) {
         setShowOnboarding(true);
@@ -898,6 +932,7 @@ const Index = () => {
     returningFromBH.current = false;
     returningFromGameJump.current = false;
     setActiveAddress(undefined);
+    jwtPrewarmedRef.current = null;
     setViewState('landing');
     // Clear URL ?address= param so the urlAddress sync effect (line ~264) doesn't
     // immediately re-set activeAddress from the stale URL
@@ -1143,7 +1178,7 @@ const Index = () => {
         traits,
         score,
         cardImageUrl,
-        paymentToken,
+        paymentToken: paymentToken as 'SOL' | 'SKR',
       });
 
       // eslint-disable-next-line no-console
@@ -1373,19 +1408,7 @@ const Index = () => {
 
   // sceneReady: true once CelestialCard's Canvas has rendered real frames.
   const [sceneReady, setSceneReady] = useState(false);
-  // Minimum delay after data loads before allowing curtain open (prevents black flash on slow GPUs)
-  const [minDelayPassed, setMinDelayPassed] = useState(false);
   const handleSceneReady = useCallback(() => setSceneReady(true), []);
-
-  useEffect(() => {
-    if (!showReadyView) {
-      setMinDelayPassed(false);
-      return;
-    }
-    // Longer delay ensures 3D scene has frames rendered before curtain opens
-    const t = setTimeout(() => setMinDelayPassed(true), 500);
-    return () => clearTimeout(t);
-  }, [showReadyView]);
 
   // Curtain transition — STICKY: once triggered, never resets (except back to landing).
   // When returning from BlackHole/Game, skip curtains entirely — show card immediately.
@@ -1399,7 +1422,7 @@ const Index = () => {
   const [curtainOpen, setCurtainOpen] = useState(skipCurtain);
   const [curtainDone, setCurtainDone] = useState(skipCurtain);
 
-  const everythingReady = showReadyView && sceneReady && minDelayPassed;
+  const everythingReady = showReadyView && sceneReady;
 
   useEffect(() => {
     // Once curtains have started, never reset them here
@@ -1412,8 +1435,8 @@ const Index = () => {
 
   useEffect(() => {
     if (!curtainOpen || curtainDone) return;
-    // Match curtain CSS animation (0.85s) + overlay fade-out (0.4s + 0.15s delay)
-    const t = setTimeout(() => setCurtainDone(true), 1200);
+    // Overlay fade-out takes ~400ms
+    const t = setTimeout(() => setCurtainDone(true), 500);
     return () => clearTimeout(t);
   }, [curtainOpen, curtainDone]);
 
@@ -1421,7 +1444,6 @@ const Index = () => {
   useEffect(() => {
     if (viewState === 'landing') {
       setSceneReady(false);
-      setMinDelayPassed(false);
       setCurtainOpen(false);
       setCurtainDone(false);
     }
@@ -1457,17 +1479,23 @@ const Index = () => {
       ref={shellRef}
       className={`identity-shell relative min-h-screen ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view nft-kiosk-mode' : ''}`}
     >
-      {viewState === 'hub' && activeAddress ? (
+      {viewState === 'hub' && !activeAddress ? (
+        // Transitional: hub state but wallet address not synced yet.
+        // Show dark bg — preloader or fade overlay covers this briefly.
+        <div style={{ position: 'fixed', inset: 0, background: '#050510' }} />
+      ) : viewState === 'hub' && activeAddress ? (
         <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#050510' }} />}>
           <CosmicHub
             walletAddress={activeAddress}
             prismBalance={prismBalance}
             onNavigateToCard={() => {
-              // Data already loaded, skip curtain/delay
-              setCurtainOpen(true);
-              setCurtainDone(true);
-              setMinDelayPassed(true);
-              setViewState('ready');
+              // Standardize navigation effect
+              startFadeTransition(() => {
+                setCurtainOpen(true);
+                setCurtainDone(true);
+                setViewState('ready');
+                fadeOutTransition(100);
+              });
             }}
             onDisconnect={handleDisconnect}
             identityScore={walletData.score}
@@ -1525,7 +1553,7 @@ const Index = () => {
                 <PreviewGallery />
               ) : (
                 <div
-                  className={`card-stage ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' card-stage-hidden' : ''}`}
+                  className={`card-stage relative z-20 ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' hidden' : ''}`}
                 >
                   {/* Transition handled by wormhole tunnel — no black overlays */}
                   <React.Suspense fallback={<div style={{ position: 'absolute', inset: 0, background: '#05070a' }} />}>
@@ -1666,7 +1694,10 @@ const Index = () => {
                         <Button
                           variant="ghost"
                           onClick={() => {
-                            setViewState('hub');
+                            startFadeTransition(() => {
+                              setViewState('hub');
+                              fadeOutTransition(100);
+                            });
                           }}
                           className="mint-secondary-btn"
                         >
@@ -1699,16 +1730,6 @@ const Index = () => {
               scanningMessageIndex={scanningMessageIndex}
               jwtSigning={jwtSigning}
             />
-          )}
-
-          {/* Space curtain — mount when ready to open. Animation starts from
-              translateX(0) (fully closed/opaque) and slides apart. The overlay
-              (z-50) is behind curtains (z-60) so the transition is seamless. */}
-          {curtainOpen && (
-            <>
-              <div className="space-curtain space-curtain--left open" />
-              <div className="space-curtain space-curtain--right open" />
-            </>
           )}
 
           {walletData?.error && !showReadyView && (
@@ -1780,6 +1801,8 @@ function buildPreviewTraits(tier: PlanetTier): WalletTraits {
     planetTier: tier,
     totalAssetsCount: 42,
     solTier: tier === 'binary_sun' || tier === 'sun' ? 'whale' : tier === 'jupiter' ? 'dolphin' : 'shrimp',
+    totalValueUSD: tier === 'binary_sun' ? 50000 : 500,
+    cosmicRank: 'quasar',
   };
 
   return base;
@@ -1811,12 +1834,6 @@ function PreviewGallery() {
           </div>
         ))}
       </div>
-      {/* Onboarding Modal */}
-      {showOnboarding && (
-        <React.Suspense fallback={null}>
-          <OnboardingModal onClose={() => setShowOnboarding(false)} />
-        </React.Suspense>
-      )}
     </div>
   );
 }

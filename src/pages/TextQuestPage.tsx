@@ -36,6 +36,25 @@ const DIFFICULTY_COLORS: Record<string, string> = {
   hard: '#ef4444',
 };
 
+/** Check if a text quest was already completed today (1 per day limit). */
+function hasCompletedQuestToday(walletAddress: string): boolean {
+  try {
+    const raw = localStorage.getItem(`text_quest_daily_${walletAddress}`);
+    if (!raw) return false;
+    const saved = new Date(raw);
+    const now = new Date();
+    return saved.toDateString() === now.toDateString();
+  } catch {
+    return false;
+  }
+}
+
+function markQuestCompletedToday(walletAddress: string): void {
+  try {
+    localStorage.setItem(`text_quest_daily_${walletAddress}`, new Date().toISOString());
+  } catch {}
+}
+
 const STAT_LABELS: Record<string, string> = {
   speed: 'Speed',
   shield: 'Shield',
@@ -295,9 +314,14 @@ export default function TextQuestPage() {
     (quest: TextQuest) => {
       const existing = walletAddress ? getQuestSave(quest.id, walletAddress) : null;
       if (existing && !existing.completed) {
+        // Resume in-progress quest (always allowed)
         setActiveQuest(quest);
         setQuestState(existing);
         setRewardClaimed(false);
+      } else if (walletAddress && hasCompletedQuestToday(walletAddress)) {
+        // Daily limit reached — can't start new quest
+        toast.error('Daily limit reached — 1 text quest per day. Come back tomorrow!');
+        return;
       } else {
         const state = startQuest(quest);
         setActiveQuest(quest);
@@ -315,6 +339,10 @@ export default function TextQuestPage() {
   const handleReplay = useCallback(
     (quest: TextQuest) => {
       if (!walletAddress) return;
+      if (!hasMintedId) {
+        toast.error('You need a minted Identity Prism to retry quests');
+        return;
+      }
       // Mark replay as used in localStorage
       try {
         localStorage.setItem(`quest_replay_v1_${walletAddress}_${quest.id}`, '1');
@@ -328,7 +356,7 @@ export default function TextQuestPage() {
       setRewardClaimed(false);
       saveQuestState(state, walletAddress);
     },
-    [walletAddress],
+    [walletAddress, hasMintedId],
   );
 
   // canReplay: only if has minted ID, quest completed, first attempt earned nothing, and replay not yet used
@@ -352,7 +380,11 @@ export default function TextQuestPage() {
       if (!activeQuest || !questState) return;
       const newState = processChoice(activeQuest, questState, choiceIndex, shipStats);
       setQuestState(newState);
-      if (walletAddress) saveQuestState(newState, walletAddress);
+      if (walletAddress) {
+        saveQuestState(newState, walletAddress);
+        // Mark daily limit when quest is completed (even with 0 reward)
+        if (newState.completed) markQuestCompletedToday(walletAddress);
+      }
     },
     [activeQuest, questState, shipStats, walletAddress],
   );
@@ -369,6 +401,7 @@ export default function TextQuestPage() {
         activeQuest?.id,
       );
       setRewardClaimed(true);
+      markQuestCompletedToday(walletAddress);
       toast.success(`+${questState.reward.coins} Coins!`);
     } catch {
       toast.error('Failed to claim reward');
@@ -438,10 +471,20 @@ export default function TextQuestPage() {
           </div>
         )}
 
+        {/* Daily limit banner */}
+        {walletAddress && hasCompletedQuestToday(walletAddress) && !activeQuest && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+            <p className="text-amber-400 text-xs font-bold">Daily quest limit reached</p>
+            <p className="text-white/30 text-[10px] mt-0.5">
+              You can complete 1 text quest per day. Come back tomorrow for a new adventure!
+            </p>
+          </div>
+        )}
+
         {/* ═══ ACTIVE QUEST ═══ */}
         {activeQuest && questState && currentNode && (
           <div key={questState.currentNode} className="space-y-5">
-            {/* Quest title */}
+            {/* Quest title + description */}
             <div className="text-center mb-2">
               <h2 className="text-lg font-bold">{activeQuest.title}</h2>
               <span
@@ -453,6 +496,18 @@ export default function TextQuestPage() {
               >
                 {activeQuest.difficulty}
               </span>
+              <p className="text-white/25 text-[10px] mt-1.5 max-w-sm mx-auto leading-relaxed">
+                {activeQuest.description}
+              </p>
+              {/* Quest-specific variables legend */}
+              {questState && Object.keys(questState.variables).length > 0 && questState.choices.length === 0 && (
+                <p className="text-white/15 text-[9px] mt-1 italic">
+                  Your choices affect:{' '}
+                  {Object.keys(questState.variables)
+                    .map((k) => k.replace(/_/g, ' '))
+                    .join(', ')}
+                </p>
+              )}
             </div>
 
             {/* Text + image layout */}

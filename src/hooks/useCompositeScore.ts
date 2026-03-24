@@ -10,26 +10,63 @@ interface CompositeBreakdown {
 }
 
 export interface OnchainBreakdownItem {
-  pts: number; max: number; raw?: number;
+  pts: number;
+  max: number;
+  raw?: number;
   items?: string[];
-  swapPts?: number; nftTradePts?: number; protocolPts?: number; swaps?: number; protocols?: number;
+  swapPts?: number;
+  nftTradePts?: number;
+  protocolPts?: number;
+  swaps?: number;
+  protocols?: number;
 }
 
 export interface ScoreDetails {
   onchain: {
-    identityScore: number; identityMax: number; basePts: number; badgeBonus: number;
-    hasSeeker: boolean; hasPreorder: boolean; hasCombo: boolean;
+    identityScore: number;
+    identityMax: number;
+    basePts: number;
+    badgeBonus: number;
+    hasSeeker: boolean;
+    hasPreorder: boolean;
+    hasCombo: boolean;
     scoreBreakdown?: {
-      solBalance: OnchainBreakdownItem; walletAge: OnchainBreakdownItem;
-      transactions: OnchainBreakdownItem; nfts: OnchainBreakdownItem;
-      defiActivity: OnchainBreakdownItem; badges: OnchainBreakdownItem;
+      solBalance: OnchainBreakdownItem;
+      walletAge: OnchainBreakdownItem;
+      transactions: OnchainBreakdownItem;
+      nfts: OnchainBreakdownItem;
+      defiActivity: OnchainBreakdownItem;
+      badges: OnchainBreakdownItem;
       collection: OnchainBreakdownItem;
     } | null;
   };
   sybilTrust: { trustScore: number; trustMax: number; badgeBonus?: number };
-  humanProof: { gameScoreTotal: number; gameDiversity: number; achievementPts: number; achievementCount: number; gameTypesCount: number; badgeBonus?: number };
-  social: { challengesWon: number; challengePts: number; constellationExplored: number; constellationPts: number; compareCount: number; comparePts: number; badgeBonus?: number };
-  engagement: { questsCompleted: number; questPts: number; streakDays: number; streakPts: number; scanCount: number; scanPts: number; badgeBonus?: number };
+  humanProof: {
+    gameScoreTotal: number;
+    gameDiversity: number;
+    achievementPts: number;
+    achievementCount: number;
+    gameTypesCount: number;
+    badgeBonus?: number;
+  };
+  social: {
+    challengesWon: number;
+    challengePts: number;
+    constellationExplored: number;
+    constellationPts: number;
+    compareCount: number;
+    comparePts: number;
+    badgeBonus?: number;
+  };
+  engagement: {
+    questsCompleted: number;
+    questPts: number;
+    streakDays: number;
+    streakPts: number;
+    scanCount: number;
+    scanPts: number;
+    badgeBonus?: number;
+  };
 }
 
 interface CompositeData {
@@ -44,7 +81,9 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 min
 const CACHE_KEY_PREFIX = 'ip_composite_v2_';
 
 export function invalidateCompositeCache(address: string) {
-  try { sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${address}`); } catch {}
+  try {
+    sessionStorage.removeItem(`${CACHE_KEY_PREFIX}${address}`);
+  } catch {}
 }
 
 export function useCompositeScore(address: string | null): CompositeData & { refetch: () => void } {
@@ -59,12 +98,12 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
 
   const refetch = useCallback(() => {
     if (address) invalidateCompositeCache(address);
-    setFetchTick(t => t + 1);
+    setFetchTick((t) => t + 1);
   }, [address]);
 
   useEffect(() => {
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
-      setData(d => ({ ...d, isLoading: false }));
+      setData((d) => ({ ...d, isLoading: false }));
       return;
     }
 
@@ -84,10 +123,13 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
     let cancelled = false;
     const proxyUrl = getHeliusProxyUrl() || '';
     fetch(`${proxyUrl}/api/wallet-database?address=${encodeURIComponent(address)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(wallet => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((wallet) => {
         if (cancelled) return;
-        if (!wallet) { setData(d => ({ ...d, isLoading: false })); return; }
+        if (!wallet) {
+          setData((d) => ({ ...d, isLoading: false }));
+          return;
+        }
         const composite = wallet.composite || {
           compositeScore: 0,
           compositeTier: wallet.tier || 'mercury',
@@ -106,12 +148,22 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
           details,
         };
         setData({ ...result, isLoading: false });
+        // Sync tournament XP from server to localStorage for ranger rank calculation
+        if (wallet.tournamentXP && address) {
+          try {
+            localStorage.setItem(`prism_tournament_xp_${address}`, String(wallet.tournamentXP));
+          } catch {}
+        }
         try {
           sessionStorage.setItem(cacheKey, JSON.stringify({ data: result, ts: Date.now() }));
         } catch {}
       })
-      .catch(() => { if (!cancelled) setData(d => ({ ...d, isLoading: false })); });
-    return () => { cancelled = true; };
+      .catch(() => {
+        if (!cancelled) setData((d) => ({ ...d, isLoading: false }));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [address, fetchTick]);
 
   return { ...data, refetch };

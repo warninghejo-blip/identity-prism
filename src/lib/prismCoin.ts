@@ -22,10 +22,10 @@ export interface PrismBalance {
 // ── Coin Packages (shared between StellarForge and PrismVault) ──
 
 export const COIN_PACKAGES = [
-  { coins: 5000, solPrice: 0.005, label: 'Starter' },
-  { coins: 15000, solPrice: 0.013, label: 'Explorer' },
-  { coins: 50000, solPrice: 0.038, label: 'Voyager' },
-  { coins: 150000, solPrice: 0.099, label: 'Commander' },
+  { coins: 5000, solPrice: 0.015, label: 'Starter' },
+  { coins: 15000, solPrice: 0.038, label: 'Explorer' },
+  { coins: 50000, solPrice: 0.11, label: 'Voyager' },
+  { coins: 150000, solPrice: 0.23, label: 'Commander' },
 ] as const;
 
 export interface PrismTransaction {

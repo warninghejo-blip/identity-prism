@@ -21,11 +21,51 @@ export interface RangerRank {
 // Legend requires mastery across ALL systems — not achievable in days.
 
 export const RANGER_RANKS: RangerRank[] = [
-  { id: 'cadet',   name: 'Cadet',   minXP: 0,      icon: '🔰', image: '/textures/ranks/rank_cadet.png',   color: 'text-gray-400',   perks: [] },
-  { id: 'pilot',   name: 'Pilot',   minXP: 1500,   icon: '✈️',  image: '/textures/ranks/rank_pilot.png',   color: 'text-blue-400',   perks: ['Unlock text quests'] },
-  { id: 'captain', name: 'Captain', minXP: 8000,   icon: '⭐',  image: '/textures/ranks/rank_captain.png', color: 'text-yellow-400', perks: ['Yellow module slots'] },
-  { id: 'ace',     name: 'Ace',     minXP: 25000,  icon: '💫',  image: '/textures/ranks/rank_ace.png',     color: 'text-purple-400', perks: ['Red module slots'] },
-  { id: 'legend',  name: 'Legend',  minXP: 50000,  icon: '👑',  image: '/textures/ranks/rank_legend.png',  color: 'text-amber-400',  perks: ['Exclusive title frame'] },
+  {
+    id: 'cadet',
+    name: 'Cadet',
+    minXP: 0,
+    icon: '🔰',
+    image: '/textures/ranks/rank_cadet.png',
+    color: 'text-gray-400',
+    perks: [],
+  },
+  {
+    id: 'pilot',
+    name: 'Pilot',
+    minXP: 1500,
+    icon: '✈️',
+    image: '/textures/ranks/rank_pilot.png',
+    color: 'text-blue-400',
+    perks: ['Unlock text quests'],
+  },
+  {
+    id: 'captain',
+    name: 'Captain',
+    minXP: 8000,
+    icon: '⭐',
+    image: '/textures/ranks/rank_captain.png',
+    color: 'text-yellow-400',
+    perks: ['Yellow module slots'],
+  },
+  {
+    id: 'ace',
+    name: 'Ace',
+    minXP: 25000,
+    icon: '💫',
+    image: '/textures/ranks/rank_ace.png',
+    color: 'text-purple-400',
+    perks: ['Red module slots'],
+  },
+  {
+    id: 'legend',
+    name: 'Legend',
+    minXP: 50000,
+    icon: '👑',
+    image: '/textures/ranks/rank_legend.png',
+    color: 'text-amber-400',
+    perks: ['Exclusive title frame'],
+  },
 ];
 
 /*
@@ -66,19 +106,20 @@ export interface RangerXPSources {
     gravity?: { gamesPlayed: number; totalTime: number };
   };
   totalCoins?: number;
-  questXPEarned?: number;           // total XP from regular quests (stored in quest state)
-  completedTextQuests?: number;      // count of completed text quests
+  questXPEarned?: number; // total XP from regular quests (stored in quest state)
+  completedTextQuests?: number; // count of completed text quests
   challengeWins?: number;
   achievementCount?: number;
+  tournamentXP?: number; // XP earned from tournament placements
 }
 
 // Per-mode multipliers for best scores (different scoring scales)
 const GAME_XP_CONFIG: Record<string, { mult: number; cap: number }> = {
-  orbit_survival:   { mult: 5, cap: 2000 },   // 300s best → 1500 XP, cap 2000
-  cosmic_defender:  { mult: 1.5, cap: 2000 },  // 1500 pts → 2250 → capped 2000
-  gravity_rush:     { mult: 5, cap: 2000 },    // 300s best → 1500 XP, cap 2000
-  cosmic_mine:      { mult: 3, cap: 1500 },    // less established mode
-  cosmic_runner:    { mult: 3, cap: 1500 },    // less established mode
+  orbit_survival: { mult: 5, cap: 2000 }, // 300s best → 1500 XP, cap 2000
+  cosmic_defender: { mult: 1.5, cap: 2000 }, // 1500 pts → 2250 → capped 2000
+  gravity_rush: { mult: 5, cap: 2000 }, // 300s best → 1500 XP, cap 2000
+  cosmic_mine: { mult: 3, cap: 1500 }, // less established mode
+  cosmic_runner: { mult: 3, cap: 1500 }, // less established mode
 };
 
 export function computeRangerXP(sources: RangerXPSources): number {
@@ -124,6 +165,11 @@ export function computeRangerXP(sources: RangerXPSources): number {
   // ── Text Quests: ×500 (rare, hard content — coins are separate) ──
   if (sources.completedTextQuests) {
     xp += sources.completedTextQuests * 500;
+  }
+
+  // ── Tournament XP: earned from prize placements (uncapped) ──
+  if (sources.tournamentXP) {
+    xp += sources.tournamentXP;
   }
 
   // ── Total Coins Earned: /200 (minimal, bonus) ──
@@ -184,21 +230,27 @@ export function gatherXPSources(address: string): RangerXPSources {
         const p = JSON.parse(orbitRaw);
         gameStats.orbit = { gamesPlayed: p.gamesPlayed || 0, totalSurvivalTime: p.totalSurvivalTime || 0 };
       }
-    } catch { /* */ }
+    } catch {
+      /* */
+    }
     try {
       const defRaw = localStorage.getItem('cosmic_defender_stats_v1');
       if (defRaw) {
         const p = JSON.parse(defRaw);
         gameStats.defender = { gamesPlayed: p.gamesPlayed || 0, totalKills: p.totalKills || 0 };
       }
-    } catch { /* */ }
+    } catch {
+      /* */
+    }
     try {
       const gravRaw = localStorage.getItem('gravity_rush_stats_v1');
       if (gravRaw) {
         const p = JSON.parse(gravRaw);
         gameStats.gravity = { gamesPlayed: p.gamesPlayed || 0, totalTime: p.totalSurvivalTime || p.totalTime || 0 };
       }
-    } catch { /* */ }
+    } catch {
+      /* */
+    }
     if (Object.keys(gameStats).length > 0) sources.gameStats = gameStats;
 
     // Total coins
@@ -217,7 +269,24 @@ export function gatherXPSources(address: string): RangerXPSources {
 
     // Text quests completed (count)
     let textQuestCount = 0;
-    const questIds = ['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy'];
+    const questIds = [
+      'abandoned_station',
+      'pirate_ambush',
+      'dark_matter_anomaly',
+      'prison_break',
+      'dominator_factory',
+      'election_day',
+      'alien_zoo',
+      'smugglers_run',
+      'wormhole_gambit',
+      'living_city',
+      'galactic_jackpot',
+      'jungle_survey',
+      'plague_ship',
+      'fortress_heist',
+      'merc_contract',
+      'alien_embassy',
+    ];
     for (const qid of questIds) {
       const raw = localStorage.getItem(`text_quest_v1_${address}_${qid}`);
       if (raw) {
@@ -226,6 +295,12 @@ export function gatherXPSources(address: string): RangerXPSources {
       }
     }
     sources.completedTextQuests = textQuestCount;
+
+    // Tournament XP (stored by server in walletDatabase, synced to localStorage)
+    const tournamentXPRaw = localStorage.getItem(`prism_tournament_xp_${address}`);
+    if (tournamentXPRaw) {
+      sources.tournamentXP = parseInt(tournamentXPRaw, 10) || 0;
+    }
 
     // Challenge wins
     const arenaRaw = localStorage.getItem(`prism_arena_stats_${address}`);
@@ -236,7 +311,11 @@ export function gatherXPSources(address: string): RangerXPSources {
 
     // Achievements
     let achCount = 0;
-    const achKeys = ['orbit_survival_achievements_v1', 'cosmic_defender_achievements_v1', 'gravity_rush_achievements_v1'];
+    const achKeys = [
+      'orbit_survival_achievements_v1',
+      'cosmic_defender_achievements_v1',
+      'gravity_rush_achievements_v1',
+    ];
     for (const k of achKeys) {
       const raw = localStorage.getItem(k);
       if (raw) {
@@ -245,7 +324,9 @@ export function gatherXPSources(address: string): RangerXPSources {
       }
     }
     sources.achievementCount = achCount;
-  } catch { /* ignore localStorage errors */ }
+  } catch {
+    /* ignore localStorage errors */
+  }
 
   return sources;
 }

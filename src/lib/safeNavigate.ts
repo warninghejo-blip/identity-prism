@@ -36,8 +36,9 @@ export function goBack(navigate: NavigateFunction, _fallback = '/') {
   // Clean up any lingering wormhole tunnels that might block UI
   cleanupOverlays();
 
-  // Persist return flag in sessionStorage so Index.tsx can detect back-nav
-  // even if location.state is lost (e.g. browser back button)
+  // Persist return flag + active address in sessionStorage so Index.tsx can
+  // detect back-nav and restore wallet address immediately (prevents race condition
+  // where connectedAddress is undefined on first render)
   try {
     sessionStorage.setItem('returnedFromSubPage', '1');
   } catch {}

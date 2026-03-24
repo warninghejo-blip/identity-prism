@@ -131,6 +131,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     } catch {}
   }, [address]);
 
+  const refetchComposite = compositeData.refetch;
+
   // Fetch sybil risk — only in interactive mode
   useEffect(() => {
     if (!address || isCapture) return;
@@ -138,7 +140,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     fetch(`${base}/api/sybil/analysis?address=${address}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.riskScore !== undefined)
+        if (d?.riskScore !== undefined) {
           setSybilRisk({
             riskScore: d.riskScore,
             riskLevel: d.riskLevel,
@@ -147,9 +149,12 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             signals: d.signals,
             metrics: d.metrics,
           });
+          // Invalidate cached composite score to reflect new sybil trust
+          setTimeout(() => refetchComposite(), 500);
+        }
       })
       .catch(() => {});
-  }, [address, isCapture]);
+  }, [address, isCapture, refetchComposite]);
 
   const clearTransitionTimers = useCallback(() => {
     transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
