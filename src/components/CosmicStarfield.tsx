@@ -1,17 +1,15 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback } from 'react';
 
-const IS_MOBILE =
-  typeof navigator !== "undefined" &&
-  /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
 const STAR_COUNT = IS_MOBILE ? 180 : 300;
-const DPR = Math.min(typeof devicePixelRatio !== "undefined" ? devicePixelRatio : 1, 2);
+const DPR = Math.min(typeof devicePixelRatio !== 'undefined' ? devicePixelRatio : 1, 2);
 
 // 3 colour families
 const COLORS = [
-  [255, 255, 255],     // white
-  [34, 211, 238],      // cyan
-  [255, 225, 180],     // warm
+  [255, 255, 255], // white
+  [34, 211, 238], // cyan
+  [255, 225, 180], // warm
 ] as const;
 
 interface Star {
@@ -32,12 +30,16 @@ interface Star {
 }
 
 export interface CosmicStarfieldProps {
-  mode: "drift" | "vortex";
+  mode: 'drift' | 'vortex';
   /** Called once when vortex spin reaches peak speed */
   onVortexPeak?: () => void;
+  /** Pause star movement (stars stay in place) */
+  paused?: boolean;
+  /** Drift direction: 'right' (default), 'left', 'up', 'down' */
+  driftDirection?: 'right' | 'left' | 'up' | 'down';
 }
 
-export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
+export function CosmicStarfield({ mode, onVortexPeak, paused, driftDirection = 'right' }: CosmicStarfieldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<Star[]>([]);
   const rafRef = useRef(0);
@@ -45,14 +47,18 @@ export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
   const peakFiredRef = useRef(false);
   const modeRef = useRef(mode);
   const onVortexPeakRef = useRef(onVortexPeak);
+  const pausedRef = useRef(paused);
+  const driftDirRef = useRef(driftDirection);
   const sizeRef = useRef({ w: 0, h: 0 });
 
   modeRef.current = mode;
   onVortexPeakRef.current = onVortexPeak;
+  pausedRef.current = paused;
+  driftDirRef.current = driftDirection;
 
   // Reset vortex state when switching back to drift
   useEffect(() => {
-    if (mode === "drift") {
+    if (mode === 'drift') {
       vortexProgressRef.current = 0;
       peakFiredRef.current = false;
     }
@@ -92,7 +98,7 @@ export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d", { alpha: true });
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
 
     const resize = () => {
@@ -105,7 +111,7 @@ export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
       if (starsRef.current.length === 0) initStars(w, h);
     };
     resize();
-    window.addEventListener("resize", resize);
+    window.addEventListener('resize', resize);
 
     let lastTime = 0;
     let hidden = false;
@@ -114,7 +120,7 @@ export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
       hidden = document.hidden;
       if (!hidden) lastTime = 0;
     };
-    document.addEventListener("visibilitychange", onVis);
+    document.addEventListener('visibilitychange', onVis);
 
     const loop = (time: number) => {
       rafRef.current = requestAnimationFrame(loop);
@@ -131,7 +137,7 @@ export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
       const cy = h / 2;
       const maxR = Math.sqrt(cx * cx + cy * cy);
 
-      if (curMode === "vortex") {
+      if (curMode === 'vortex') {
         // Advance vortex progress: 0→1 over 2.5s
         vortexProgressRef.current = Math.min(vortexProgressRef.current + dt / 2.5, 1);
         const p = vortexProgressRef.current;
@@ -190,8 +196,24 @@ export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
         // Drift mode — gentle parallax + twinkle
         for (let i = 0; i < stars.length; i++) {
           const s = stars[i];
-          s.baseX += dt * 2 * (0.5 + s.r * 0.3);
-          s.baseY -= dt * 0.5;
+          if (!pausedRef.current) {
+            const spd = dt * 3 * (0.5 + s.r * 0.3);
+            const dir = driftDirRef.current;
+            // Direction = where STARS drift visually
+            if (dir === 'left') {
+              s.baseX -= spd;
+              s.baseY -= dt * 0.2;
+            } else if (dir === 'up') {
+              s.baseY -= spd;
+              s.baseX += dt * 0.2;
+            } else if (dir === 'down') {
+              s.baseY += spd;
+              s.baseX -= dt * 0.2;
+            } else /* right */ {
+              s.baseX += spd;
+              s.baseY -= dt * 0.3;
+            }
+          }
           if (s.baseX > w + 5) s.baseX = -5;
           if (s.baseX < -5) s.baseX = w + 5;
           if (s.baseY < -5) s.baseY = h + 5;
@@ -223,16 +245,10 @@ export function CosmicStarfield({ mode, onVortexPeak }: CosmicStarfieldProps) {
 
     return () => {
       cancelAnimationFrame(rafRef.current);
-      window.removeEventListener("resize", resize);
-      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener('resize', resize);
+      document.removeEventListener('visibilitychange', onVis);
     };
   }, [initStars]);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className="landing-starfield-canvas"
-      aria-hidden="true"
-    />
-  );
+  return <canvas ref={canvasRef} className="landing-starfield-canvas" aria-hidden="true" />;
 }

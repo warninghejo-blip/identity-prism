@@ -8,6 +8,7 @@ import { type WalletPreview } from '@/components/prism/shared';
 import { invalidateCompositeCache, useCompositeScore } from '@/hooks/useCompositeScore';
 import { toast } from 'sonner';
 import BattleResultOverlay from '@/components/BattleResultOverlay';
+import { CosmicStarfield } from '@/components/CosmicStarfield';
 import {
   ArrowLeft,
   Trophy,
@@ -235,7 +236,13 @@ const DEFENDER_LEADERBOARD_KEY = 'identity_prism_defender_board_v1';
 const GRAVITY_LEADERBOARD_KEY = 'prism_league_gravity_leaderboard_v1';
 const ONCHAIN_BONUS_MULTIPLIER = 1.5;
 const COIN_BONUS = 25;
-async function syncCoinsToServer(walletAddress: string, coins: number, delta: number, mode?: GameMode): Promise<void> {
+async function syncCoinsToServer(
+  walletAddress: string,
+  coins: number,
+  delta: number,
+  mode?: GameMode,
+  gameSessionId?: string,
+): Promise<void> {
   try {
     const base = getServerBase();
     if (!base) return;
@@ -245,7 +252,7 @@ async function syncCoinsToServer(walletAddress: string, coins: number, delta: nu
     await fetch(`${base}/api/game/coins`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ address: walletAddress, coins, delta, mode }),
+      body: JSON.stringify({ address: walletAddress, coins, delta, mode, gameSessionId }),
     });
   } catch {
     /* silent */
@@ -576,12 +583,14 @@ interface ActiveTournament {
   entryFee?: number;
   endsAt: string;
   prizePool: number;
+  basePrizes?: number[];
   entryCount: number;
   entries: TournamentEntry[];
   isEnded: boolean;
   winners?: TournamentEntry[];
   userJoined?: boolean;
   resultsHidden?: boolean;
+  xpRewards?: number[];
 }
 
 const TOURNAMENT_TIERS: { key: TournamentTierKey; label: string; fee: number; shortLabel: string }[] = [
@@ -590,29 +599,31 @@ const TOURNAMENT_TIERS: { key: TournamentTierKey; label: string; fee: number; sh
   { key: 'monthly', label: 'Monthly 25k', fee: 25000, shortLabel: 'Monthly' },
 ];
 
-const PRIZE_DIST: Record<TournamentTierKey, { place: string; pct: string }[]> = {
+const PRIZE_DIST: Record<TournamentTierKey, { place: string; pct: string; xp: number; base: number }[]> = {
   daily: [
-    { place: '1st', pct: '50%' },
-    { place: '2nd', pct: '30%' },
-    { place: '3rd', pct: '20%' },
+    { place: '1st', pct: '50%', xp: 300, base: 1000 },
+    { place: '2nd', pct: '30%', xp: 200, base: 700 },
+    { place: '3rd', pct: '20%', xp: 100, base: 400 },
   ],
   weekly: [
-    { place: '1st', pct: '35%' },
-    { place: '2nd', pct: '22%' },
-    { place: '3rd', pct: '15%' },
-    { place: '4th', pct: '10%' },
-    { place: '5th', pct: '10%' },
-    { place: '6th', pct: '8%' },
+    { place: '1st', pct: '35%', xp: 600, base: 5000 },
+    { place: '2nd', pct: '22%', xp: 500, base: 4200 },
+    { place: '3rd', pct: '15%', xp: 400, base: 3400 },
+    { place: '4th', pct: '10%', xp: 300, base: 2600 },
+    { place: '5th', pct: '10%', xp: 200, base: 1800 },
+    { place: '6th', pct: '8%', xp: 100, base: 1000 },
   ],
   monthly: [
-    { place: '1st', pct: '30%' },
-    { place: '2nd', pct: '18%' },
-    { place: '3rd', pct: '12%' },
-    { place: '4th', pct: '9%' },
-    { place: '5th', pct: '8%' },
-    { place: '6th', pct: '6%' },
-    { place: '7th', pct: '5%' },
-    { place: '8-10th', pct: '4%' },
+    { place: '1st', pct: '30%', xp: 1000, base: 25000 },
+    { place: '2nd', pct: '18%', xp: 900, base: 22500 },
+    { place: '3rd', pct: '12%', xp: 800, base: 20000 },
+    { place: '4th', pct: '9%', xp: 700, base: 17500 },
+    { place: '5th', pct: '8%', xp: 600, base: 15000 },
+    { place: '6th', pct: '6%', xp: 500, base: 12500 },
+    { place: '7th', pct: '5%', xp: 400, base: 10000 },
+    { place: '8th', pct: '4%', xp: 300, base: 7500 },
+    { place: '9th', pct: '4%', xp: 200, base: 5000 },
+    { place: '10th', pct: '4%', xp: 100, base: 2500 },
   ],
 };
 
@@ -1328,7 +1339,7 @@ const PrismLeague = () => {
 
   const handleStart = () => {
     if (gameMode === 'text_quest') {
-      navigate('/text-quest');
+      startFadeTransition(() => navigate('/text-quest'));
       return;
     }
     // Tournament mode: must join first
@@ -1414,14 +1425,13 @@ const PrismLeague = () => {
       setScore(finalScore);
       setCoins(finalCoins);
 
-      // Persist coins to wallet balance (achievement rewards are claimed separately)
+      // Persist coins to local wallet balance immediately (server sync happens in verifyAndPublish after proof)
       const walletAddr = address || 'anonymous';
       if (finalCoins > 0) {
         const prev = readWalletCoins(walletAddr);
         const next = prev + finalCoins;
         writeWalletCoins(walletAddr, next);
         setTotalCoins(next);
-        syncCoinsToServer(walletAddr, next, finalCoins, gameMode);
       }
       // Quest auto-tracking (coins already earned during gameplay above)
       if (walletAddr !== 'anonymous') {
@@ -1506,14 +1516,23 @@ const PrismLeague = () => {
           setMbVerified(false);
         }
 
+        // Sync coins to server with verified session proof
+        if (proof?.id && finalCoins > 0) {
+          const walletAddr = playerAddr;
+          const prev = readWalletCoins(walletAddr);
+          syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id);
+        }
+
         // Submit to server leaderboard with verified session proof
-        submitToServerLeaderboard({
-          address: playerAddr,
-          score: finalScore,
-          playedAt: newEntry.playedAt,
-          gameType: gameMode,
-          gameSessionId: proof?.id,
-        });
+        if (proof?.id) {
+          submitToServerLeaderboard({
+            address: playerAddr,
+            score: finalScore,
+            playedAt: newEntry.playedAt,
+            gameType: gameMode,
+            gameSessionId: proof.id,
+          });
+        }
 
         // Submit to tournament only when in tournament mode and joined
         if (playMode === 'tournament' && activeTournament?.userJoined) {
@@ -1956,7 +1975,7 @@ const PrismLeague = () => {
   const handleShare = () => {
     const isDefMode = gameMode === 'destroyer';
     const isGravity = gameMode === 'gravity';
-    const scoreText = isDefMode ? `${formatPoints(score)} pts` : formatTime(score);
+    const scoreText = isDefMode ? `${formatPoints(score)} pts` : isGravity ? `${score} columns` : formatTime(score);
     const gameName = isDefMode ? 'Cosmic Defender' : isGravity ? 'Gravity Runner' : 'Orbit Survival';
     // AI-style fun commentary based on performance
     let lines: string[];
@@ -2022,6 +2041,7 @@ const PrismLeague = () => {
     if (gameState === 'playing' || gameState === 'gameover') {
       stopAllAudio();
       setGameState('start');
+      // Background resets naturally via CosmicStarfield
       return;
     }
 
@@ -2049,7 +2069,23 @@ const PrismLeague = () => {
   }, [isJumpingBack, clearTransitionTimers, navigate, gameState, activeChallengeId]);
 
   return (
-    <div className="prism-league-page relative w-full h-screen overflow-hidden bg-black">
+    <div className="prism-league-page relative w-full h-screen overflow-hidden">
+      {/* Moving starfield background — always visible, parallax via CSS var */}
+      <div id="game-bg-parallax" className="absolute inset-0 z-0 pointer-events-none">
+        <CosmicStarfield
+          mode="drift"
+          driftDirection={
+            gameState !== 'playing'
+              ? 'right'
+              : gameMode === 'gravity'
+                ? 'left'
+                : gameMode === 'destroyer'
+                  ? 'down'
+                  : 'right'
+          }
+          paused={gameState === 'gameover'}
+        />
+      </div>
       <div className="league-aurora league-aurora--a" aria-hidden="true" />
       <div className="league-aurora league-aurora--b" aria-hidden="true" />
 
@@ -2182,19 +2218,19 @@ const PrismLeague = () => {
             {gameState === 'playing' && (
               <div className="absolute top-1 left-1/2 -translate-x-1/2 flex flex-col items-center">
                 {gameMode === 'gravity' ? (
-                  /* Gravity mode: TIME and COINS side by side with equal visual weight */
+                  /* Gravity mode: SCORE (columns) and COINS side by side */
                   <>
                     <div className="flex items-center gap-4 sm:gap-6">
-                      {/* TIME display */}
+                      {/* SCORE display */}
                       <div className="flex flex-col items-center">
                         <span className="text-[10px] uppercase tracking-widest text-cyan-400/60 font-semibold">
-                          Time
+                          Score
                         </span>
                         <span
                           ref={_scoreDomRef}
                           className="text-3xl sm:text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]"
                         >
-                          {formatTime(score)}
+                          {score}
                         </span>
                       </div>
                       {/* Divider */}
@@ -2231,7 +2267,11 @@ const PrismLeague = () => {
                       ref={_scoreDomRef}
                       className="text-3xl sm:text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]"
                     >
-                      {gameMode === 'destroyer' ? formatPoints(score) : formatTime(score)}
+                      {gameMode === 'destroyer'
+                        ? formatPoints(score)
+                        : gameMode === 'gravity'
+                          ? score
+                          : formatTime(score)}
                     </span>
                     {highScore > 0 && (
                       <span className="text-[9px] sm:text-[10px] text-cyan-400/60 uppercase tracking-widest font-semibold">
@@ -2559,6 +2599,7 @@ const PrismLeague = () => {
                                     <span className="text-xs font-bold text-yellow-300">
                                       {activeTournament.prizePool.toLocaleString()}
                                     </span>
+                                    <span className="text-[8px] text-emerald-400/60">+base prizes</span>
                                   </div>
                                   <div className="flex flex-col items-center py-2.5">
                                     <Target className="w-3.5 h-3.5 text-white/30 mb-0.5" />
@@ -2575,7 +2616,7 @@ const PrismLeague = () => {
                                   </p>
                                   <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
                                     {PRIZE_DIST[tournamentTier].map((r) => (
-                                      <div key={r.place} className="flex justify-between text-[10px]">
+                                      <div key={r.place} className="flex justify-between text-[10px] gap-1">
                                         <span
                                           className={
                                             r.place === '1st'
@@ -2589,7 +2630,11 @@ const PrismLeague = () => {
                                         >
                                           {r.place}
                                         </span>
-                                        <span className="text-white/50 font-mono">{r.pct}</span>
+                                        <span className="text-white/50 font-mono text-[9px]">
+                                          {r.pct}
+                                          <span className="text-emerald-400/70"> +{(r.base / 1000).toFixed(1)}k</span>
+                                          <span className="text-cyan-400/50"> +{r.xp}xp</span>
+                                        </span>
                                       </div>
                                     ))}
                                   </div>
@@ -3042,7 +3087,7 @@ const PrismLeague = () => {
                         </div>
                       )}
                       <button
-                        onClick={() => navigate('/forge')}
+                        onClick={() => startFadeTransition(() => navigate('/forge'))}
                         className="mt-2 w-full text-[10px] text-cyan-400/50 hover:text-cyan-300 transition-colors text-center"
                       >
                         Customize in Armory →
@@ -3313,9 +3358,9 @@ const PrismLeague = () => {
                       <div className="flex items-center gap-4 mt-2 mb-0.5">
                         <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
                           <span className="text-[10px] uppercase tracking-widest text-cyan-400/60 font-semibold">
-                            Time
+                            Score
                           </span>
-                          <span className="text-2xl font-black text-white tabular-nums">{formatTime(score)}</span>
+                          <span className="text-2xl font-black text-white tabular-nums">{score}</span>
                         </div>
                         <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-yellow-500/5 border border-yellow-500/15">
                           <span className="text-[10px] uppercase tracking-widest text-yellow-400/60 font-semibold">
@@ -3329,7 +3374,11 @@ const PrismLeague = () => {
                       </div>
                     ) : (
                       <div className="text-3xl font-black text-white mt-2 mb-0.5 tabular-nums">
-                        {gameMode === 'destroyer' ? formatPoints(score) : formatTime(score)}
+                        {gameMode === 'destroyer'
+                          ? formatPoints(score)
+                          : gameMode === 'gravity'
+                            ? score
+                            : formatTime(score)}
                       </div>
                     )}
                     {isNewBest && score > 0 && (
@@ -3647,7 +3696,7 @@ const PrismLeague = () => {
             status: challengeResult.status,
           }}
           myAddress={address || ''}
-          onReturn={() => navigate('/market?tab=challenges')}
+          onReturn={() => startFadeTransition(() => navigate('/arena?tab=challenges'))}
         />
       )}
     </div>

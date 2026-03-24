@@ -23,6 +23,7 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import { getShipProfile } from '@/lib/shipProfiles';
+import { sfxPickup } from '@/lib/gameAudio';
 
 interface GravityRunnerProps {
   gameState: 'start' | 'playing' | 'gameover';
@@ -64,17 +65,17 @@ function hexToRgb(hex: string): [number, number, number] {
 const GROUND_H = 40;
 const SHIP_W = 36;
 const SHIP_H = 36;
-const GRAVITY = 0.48; // stronger gravity, snappier feel
-const FLAP_VEL = -7.8; // sharper jumps
-const MAX_FALL_VEL = 8; // terminal velocity
-const BASE_SPEED = 4.0; // fast start
-const MAX_SPEED = 7.5; // high ceiling
-const SPEED_RAMP_INTERVAL = 250; // fast ramp-up (~4 sec at 60fps)
-const SPEED_RAMP_AMOUNT = 0.08; // aggressive ramp
+const GRAVITY = 0.5; // strong pull — like Flappy Bird
+const FLAP_VEL = -8.5; // shorter jump amplitude
+const MAX_FALL_VEL = 8.0; // fast fall
+const BASE_SPEED = 4.2; // fast start
+const MAX_SPEED = 7.0; // high ceiling
+const SPEED_RAMP_INTERVAL = 250; // ramp every ~4 sec
+const SPEED_RAMP_AMOUNT = 0.06; // steady acceleration
 const CRYSTAL_SIZE = 14;
 const CRYSTAL_INTERVAL = 45;
-const MIN_COL_GAP_PX = 115; // minimum vertical gap between columns (px)
-const MIN_COL_SPACING_PX = 160; // tighter horizontal distance between columns (px)
+const MIN_COL_GAP_PX = 70; // tight vertical gap
+const MIN_COL_SPACING_PX = 190; // +5%
 const GAP_SHRINK_PER_MIN = 12; // gap shrinks faster
 const DYNAMIC_COL_SCORE = 15; // score threshold when dynamic columns start appearing
 
@@ -286,9 +287,24 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     startTime: 0,
     lastTickTime: 0,
     _grazed: false,
+    _deathTime: 0,
     _nebulaCanvas: null as HTMLCanvasElement | null,
     _nebulaScrollX: 0,
+    _bgImg: null as HTMLImageElement | null,
+    _parImg: null as HTMLImageElement | null,
+    _bgScrollX: 0,
+    _parScrollX: 0,
   });
+
+  // Load coin powerup texture
+  const coinImgRef = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    const img = new Image();
+    img.src = '/textures/powerups/powerup_coin.png';
+    img.onload = () => {
+      coinImgRef.current = img;
+    };
+  }, []);
 
   // Load ship texture
   useEffect(() => {
@@ -315,19 +331,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     const s = stateRef.current;
     if (!s.alive) return;
     s.velY = FLAP_VEL;
-    // Thrust particles
-    for (let i = 0; i < 5; i++) {
-      s.particles.push({
-        x: s.playerX + 4,
-        y: s.playerY + SHIP_H / 2 + (Math.random() - 0.5) * 8,
-        vx: -1.5 - Math.random() * 2.5,
-        vy: 1 + Math.random() * 2,
-        life: 14,
-        maxLife: 14,
-        color: Math.random() > 0.5 ? '#22d3ee' : '#60a5fa',
-        size: 2 + Math.random() * 3,
-      });
-    }
+    // No thrust particles — clean background only
   }, []);
 
   // Input handlers
@@ -396,8 +400,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     s.crystals = [];
     s.particles = [];
     s.trail = [];
-    s.nextObstacle = 40; // grace period at start before first obstacle
-    s.nextCrystal = 80;
+    s.nextObstacle = 1; // obstacles appear immediately
+    s.nextCrystal = 0;
     s.frameCount = 0;
     s.alive = true;
     s.screenShake = 0;
@@ -427,72 +431,22 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
     const coinMult = hasMintedId ? 2 : 1;
 
-    // Generate dense cinematic star layers (matching OrbitSurvival style)
-    const STAR_COLORS = [
-      'rgba(180,200,255,A)', // blue-white
-      'rgba(240,240,255,A)', // pure white
-      'rgba(255,240,220,A)', // warm white
-      'rgba(255,210,170,A)', // orange-warm
-      'rgba(200,220,255,A)', // cool blue
-    ];
-    s.starLayers = [];
-    for (let layer = 0; layer < 4; layer++) {
-      const count = layer === 0 ? 50 : layer === 1 ? 35 : layer === 2 ? 20 : 12;
-      const stars: StarDot[] = [];
-      for (let i = 0; i < count; i++) {
-        const colorTemplate = STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)];
-        stars.push({
-          x: Math.random() * W,
-          y: Math.random() * H,
-          size:
-            layer === 0
-              ? 0.3 + Math.random() * 0.4
-              : layer === 1
-                ? 0.5 + Math.random() * 0.6
-                : layer === 2
-                  ? 0.8 + Math.random() * 0.8
-                  : 1.2 + Math.random() * 1.0,
-          brightness:
-            layer === 0
-              ? 0.08 + Math.random() * 0.12
-              : layer === 1
-                ? 0.15 + Math.random() * 0.2
-                : layer === 2
-                  ? 0.3 + Math.random() * 0.25
-                  : 0.5 + Math.random() * 0.4,
-          color: colorTemplate,
-          twinkleSpeed: 0.5 + Math.random() * 3.0,
-          twinklePhase: Math.random() * Math.PI * 2,
-        });
-      }
-      s.starLayers.push({ stars, speed: 0.1 + layer * 0.35 });
-    }
+    // Background comets
+    (s as any)._comets = Array.from({ length: 6 }, () => ({
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      life: 0,
+      maxLife: 0,
+      active: false,
+    }));
+    (s as any)._cometTimer = 0;
 
-    // Pre-render static nebula canvas (drawn once, scrolls slowly)
-    const nebulaCanvas = document.createElement('canvas');
-    nebulaCanvas.width = Math.ceil(W * 1.5);
-    nebulaCanvas.height = Math.ceil(H);
-    const nCtx = nebulaCanvas.getContext('2d')!;
-    // Dark base
-    nCtx.fillStyle = '#0a0818';
-    nCtx.fillRect(0, 0, nebulaCanvas.width, nebulaCanvas.height);
-    // Paint 3-4 nebula blobs with radial gradients
-    const nebulaBlobs = [
-      { x: W * 0.3, y: H * 0.35, r: W * 0.28, color: 'rgba(100,40,160,' },
-      { x: W * 0.9, y: H * 0.6, r: W * 0.22, color: 'rgba(30,60,140,' },
-      { x: W * 1.2, y: H * 0.25, r: W * 0.2, color: 'rgba(40,80,120,' },
-      { x: W * 0.6, y: H * 0.75, r: W * 0.18, color: 'rgba(80,30,100,' },
-    ];
-    for (const blob of nebulaBlobs) {
-      const grad = nCtx.createRadialGradient(blob.x, blob.y, 0, blob.x, blob.y, blob.r);
-      grad.addColorStop(0, blob.color + '0.07)');
-      grad.addColorStop(0.5, blob.color + '0.03)');
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      nCtx.fillStyle = grad;
-      nCtx.fillRect(0, 0, nebulaCanvas.width, nebulaCanvas.height);
-    }
-    // Store reference for draw loop
-    s._nebulaCanvas = nebulaCanvas;
+    // Stars handled by CosmicStarfield component
+
+    s.starLayers = [];
+    s._nebulaCanvas = null;
     s._nebulaScrollX = 0;
 
     // ── Spawn helpers ──
@@ -500,7 +454,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     /** Compute current gap height based on elapsed time (progressive difficulty). */
     function currentGapH(playH: number): number {
       const elapsedMin = (performance.now() - s.startTime) / 60000;
-      const startGap = Math.max(playH * 0.38, SHIP_H * 4); // generous initial gap
+      const startGap = Math.max(playH * 0.23, SHIP_H * 3); // 20% tighter
       const shrunk = startGap - elapsedMin * GAP_SHRINK_PER_MIN;
       return Math.max(MIN_COL_GAP_PX, shrunk); // never below minimum
     }
@@ -522,42 +476,17 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       const ceilY = GROUND_H;
       const playH = floorY - ceilY;
 
-      // Enforce minimum horizontal spacing from the rightmost existing obstacle
+      // Spawn just off-screen right, or after last obstacle with min spacing
       const rightEdge = rightmostObstacleX();
-      const spawnX = Math.max(W + 30, rightEdge + MIN_COL_SPACING_PX);
+      const spawnX =
+        rightEdge === -Infinity
+          ? W + 10 // no obstacles on screen — spawn just off right edge
+          : Math.max(W + 10, rightEdge + MIN_COL_SPACING_PX);
 
-      // Dynamic columns appear after DYNAMIC_COL_SCORE
-      const canDynamic = s.score >= DYNAMIC_COL_SCORE;
       const roll = Math.random();
-      // At high scores, existing column types also become dynamic occasionally
-      const _dynamicize = canDynamic && s.score >= 30 && Math.random() < 0.3;
-
-      if (canDynamic && roll < 0.22) {
-        // Dynamic column — emerges from top or bottom
-        const fromTop = Math.random() < 0.5;
-        const colW = 38 + Math.random() * 16;
-        const maxH = playH * (0.3 + Math.random() * 0.25); // covers 30-55% of play area
-        const jagged: number[] = [];
-        const crackSeeds: number[] = [];
-        for (let j = 0; j < 14; j++) jagged.push((Math.random() - 0.5) * 14);
-        for (let j = 0; j < 6; j++) crackSeeds.push(Math.random());
-        s.obstacles.push({
-          kind: 'dynamic',
-          data: {
-            x: spawnX,
-            width: colW,
-            fromTop,
-            maxH,
-            currentH: 0,
-            growSpeed: 1.8 + Math.random() * 1.5,
-            passed: false,
-            jagged,
-            crackSeeds,
-            pulsing: Math.random() < 0.4,
-          },
-        });
-      } else if (roll < (canDynamic ? 0.65 : 0.55)) {
-        // Asteroid column pair (Flappy Bird style)
+      // Flappy Bird style: mostly paired columns, occasional comets/fields at higher scores
+      if (roll < (s.score < 30 ? 0.95 : 0.7)) {
+        // Asteroid column pair — ALWAYS both top and bottom (Flappy Bird)
         const gapH = currentGapH(playH);
         // Clamp gapY to middle 70% of playable area
         const margin = playH * 0.15;
@@ -573,7 +502,9 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           kind: 'column',
           data: { x: spawnX, gapY, gapH, width: colW, passed: false, jagged, crackSeeds },
         });
-      } else if (roll < (canDynamic ? 0.8 : 0.75)) {
+        // Crystal in every column gap
+        s.crystals.push({ x: spawnX + colW / 2, y: gapY, collected: false, pulse: Math.random() * Math.PI * 2 });
+      } else if (roll < 0.85) {
         // Comet — fast diagonal asteroid
         const margin = playH * 0.15;
         const y = ceilY + margin + Math.random() * (playH - margin * 2);
@@ -630,28 +561,32 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
     }
 
-    /** Spawn crystal — prefer placing inside the gap of the nearest upcoming column. */
-    function spawnCrystal() {
-      const W = cssW();
-      const H = cssH();
-      const floorY = H - GROUND_H;
-      const ceilY = GROUND_H;
-
-      // Try to place inside the gap of the next upcoming column
-      const nextCol = s.obstacles.find((o) => o.kind === 'column' && o.data.x > s.playerX + SHIP_W);
-      let y: number;
-      if (nextCol && nextCol.kind === 'column') {
-        const col = nextCol.data;
-        // Random Y within the gap (with small margin from edges)
-        const gapTop = col.gapY - col.gapH / 2 + CRYSTAL_SIZE;
-        const gapBot = col.gapY + col.gapH / 2 - CRYSTAL_SIZE;
-        y = gapTop + Math.random() * Math.max(0, gapBot - gapTop);
-      } else {
-        // Fallback: middle 70% of playable area
-        const margin = (floorY - ceilY) * 0.15;
-        y = ceilY + margin + Math.random() * (floorY - ceilY - margin * 2);
+    // Pre-spawn columns across the screen at start so player sees them immediately
+    {
+      const preW = cssW();
+      let px = preW * 0.35; // first column at 35% screen
+      while (px < preW + MIN_COL_SPACING_PX * 2) {
+        const preH = cssH();
+        const preFloor = preH - GROUND_H;
+        const preCeil = GROUND_H;
+        const prePlayH = preFloor - preCeil;
+        const gapH = currentGapH(prePlayH);
+        const margin = prePlayH * 0.15;
+        const minGY = preCeil + margin + gapH / 2;
+        const maxGY = preFloor - margin - gapH / 2;
+        const gapY = minGY + Math.random() * Math.max(0, maxGY - minGY);
+        const colW = 34 + Math.random() * 14;
+        const jagged: number[] = [];
+        const crackSeeds: number[] = [];
+        for (let j = 0; j < 14; j++) jagged.push((Math.random() - 0.5) * 14);
+        for (let j = 0; j < 6; j++) crackSeeds.push(Math.random());
+        s.obstacles.push({
+          kind: 'column',
+          data: { x: px, gapY, gapH, width: colW, passed: false, jagged, crackSeeds },
+        });
+        s.crystals.push({ x: px + colW / 2, y: gapY, collected: false, pulse: Math.random() * Math.PI * 2 });
+        px += colW + MIN_COL_SPACING_PX;
       }
-      s.crystals.push({ x: W + 20, y, collected: false, pulse: Math.random() * Math.PI * 2 });
     }
 
     // ── Collision helpers ──
@@ -838,13 +773,72 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           }
         }
       }
-      // Remove off-screen
+      // Comet-vs-column collision: comets shatter when hitting solid obstacles
       {
-        let wi = 0;
-        for (let i = 0; i < s.obstacles.length; i++) {
-          if (s.obstacles[i].data.x + (s.obstacles[i].data.width ?? 0) > -30) s.obstacles[wi++] = s.obstacles[i];
+        const cometsToDestroy = new Set<number>();
+        for (let ci = 0; ci < s.obstacles.length; ci++) {
+          const co = s.obstacles[ci];
+          if (co.kind !== 'comet') continue;
+          const cx = co.data.x;
+          const cy = co.data.y;
+          const cr = (co.data as Comet).size;
+          for (const so of s.obstacles) {
+            if (so.kind === 'column') {
+              const col = so.data as AsteroidColumn;
+              // Top pillar
+              const topBot = col.gapY - col.gapH / 2;
+              if (cx > col.x && cx < col.x + col.width && cy - cr < topBot && cy + cr > ceilY) {
+                cometsToDestroy.add(ci);
+                break;
+              }
+              // Bottom pillar
+              const botTop = col.gapY + col.gapH / 2;
+              if (cx > col.x && cx < col.x + col.width && cy + cr > botTop && cy - cr < floorY) {
+                cometsToDestroy.add(ci);
+                break;
+              }
+            } else if (so.kind === 'dynamic') {
+              const dc = so.data as DynamicColumn;
+              if (dc.currentH <= 0) continue;
+              if (cx > dc.x && cx < dc.x + dc.width) {
+                if (dc.fromTop && cy - cr < ceilY + dc.currentH) {
+                  cometsToDestroy.add(ci);
+                  break;
+                }
+                if (!dc.fromTop && cy + cr > floorY - dc.currentH) {
+                  cometsToDestroy.add(ci);
+                  break;
+                }
+              }
+            }
+          }
         }
-        s.obstacles.length = wi;
+        // Spawn debris particles for destroyed comets
+        for (const ci of cometsToDestroy) {
+          const cd = s.obstacles[ci].data as Comet;
+          for (let pi = 0; pi < 8; pi++) {
+            const angle = (Math.PI * 2 * pi) / 8;
+            s.particles.push({
+              x: cd.x,
+              y: cd.y,
+              vx: Math.cos(angle) * (2 + Math.random() * 3),
+              vy: Math.sin(angle) * (2 + Math.random() * 3),
+              life: 18 + Math.random() * 12,
+              maxLife: 30,
+              color: ['#9ca3af', '#d1d5db', '#f59e0b'][Math.floor(Math.random() * 3)],
+              size: 2 + Math.random() * 3,
+            });
+          }
+        }
+        // Remove destroyed comets + off-screen obstacles
+        {
+          let wi = 0;
+          for (let i = 0; i < s.obstacles.length; i++) {
+            if (cometsToDestroy.has(i)) continue;
+            if (s.obstacles[i].data.x + (s.obstacles[i].data.width ?? 0) > -30) s.obstacles[wi++] = s.obstacles[i];
+          }
+          s.obstacles.length = wi;
+        }
       }
 
       // Move crystals
@@ -864,19 +858,11 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       s.nextObstacle--;
       if (s.nextObstacle <= 0) {
         spawnObstacle();
-        // Interval shortens slightly over time, but never too fast
+        // Steady interval — Flappy Bird pacing
+        const baseInterval = 28;
+        const minInterval = 18;
         const elapsedMin = (performance.now() - s.startTime) / 60000;
-        const baseInterval = 50; // tighter base interval (frames)
-        const minInterval = 25; // never spawn faster than this
-        s.nextObstacle = Math.max(minInterval, baseInterval - elapsedMin * 10);
-      }
-
-      // Spawn crystals
-      s.nextCrystal--;
-      if (s.nextCrystal <= 0) {
-        spawnCrystal();
-        const crystalLuck = 1 + (props.shipStats?.luck || 0) / 150; // x1.0 to x1.67
-        s.nextCrystal = Math.max(15, Math.floor(CRYSTAL_INTERVAL / crystalLuck));
+        s.nextObstacle = Math.max(minInterval, baseInterval - elapsedMin * 5);
       }
 
       // Collision checks (shield stat gives graze chance to survive)
@@ -918,17 +904,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           // +2 coins per column passed
           s.coins += 2 * coinMult;
           onCoins(s.coins);
-          // Celebratory particles
-          s.particles.push({
-            x: s.playerX + SHIP_W,
-            y: s.playerY + SHIP_H / 2,
-            vx: 2,
-            vy: -1,
-            life: 20,
-            maxLife: 20,
-            color: '#22d3ee',
-            size: 4,
-          });
+          // No celebratory particles — clean look
         }
       }
 
@@ -942,6 +918,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           s.crystalsCollected++;
           s.coins += 2 * coinMult;
           onCoins(s.coins);
+          sfxPickup();
           for (let i = 0; i < 10; i++) {
             s.particles.push({
               x: c.x,
@@ -985,22 +962,10 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
       s.particles.length = pi;
 
-      // Engine trail — per-nozzle
-      const nozzles = profileRef.current.exhausts;
-      for (const nz of nozzles) {
-        s.trail.push({
-          x: s.playerX + SHIP_W / 2 + nz.y * (SHIP_W / 2.2) + (Math.random() - 0.5) * 3,
-          y: s.playerY + SHIP_H / 2 + nz.x * (SHIP_H / 1.6) + (Math.random() - 0.5) * 3,
-          alpha: 0.9,
-          size: 3 + Math.random() * 4,
-        });
-      }
-      const maxTrail = Math.min(nozzles.length * 15, 60);
-      while (s.trail.length > maxTrail) s.trail.shift();
-      for (const t of s.trail) t.alpha *= 0.86;
+      // Engine trail disabled — clean background
 
-      // Score = time survived in seconds (FPS-independent)
-      s.score = Math.floor((performance.now() - s.startTime) / 1000);
+      // Score = columns passed (Flappy Bird style)
+      s.score = s.columnsPassedForBonus;
       // Batched React setState — flush every 100ms
       if (now - _lastFlush.current > 100) {
         _lastFlush.current = now;
@@ -1011,15 +976,52 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       // Screen shake decay
       if (s.screenShake > 0) s.screenShake *= 0.85;
 
-      // Stars parallax — different speeds per layer for depth
-      for (const layer of s.starLayers) {
-        for (const star of layer.stars) {
-          star.x -= layer.speed * (s.speed / BASE_SPEED);
-          if (star.x < -4) {
-            star.x = W + 4 + Math.random() * 20;
-            star.y = Math.random() * H;
-          }
+      // Background stars handled by CosmicStarfield (reverseX while playing, paused on game over)
+
+      // Background comets — spawn and fly across (like Defender)
+      const comets = (s as any)._comets;
+      (s as any)._cometTimer += 1;
+      if ((s as any)._cometTimer > 100 + Math.random() * 120) {
+        (s as any)._cometTimer = 0;
+        for (const c of comets) {
+          if (c.active) continue;
+          // Spawn from random edge
+          const edge = Math.floor(Math.random() * 4);
+          const speed = 3 + Math.random() * 5;
+          if (edge === 0) {
+            c.x = Math.random() * W;
+            c.y = -10;
+          } // top
+          else if (edge === 1) {
+            c.x = W + 10;
+            c.y = Math.random() * H;
+          } // right
+          else if (edge === 2) {
+            c.x = Math.random() * W;
+            c.y = H + 10;
+          } // bottom
+          else {
+            c.x = -10;
+            c.y = Math.random() * H;
+          } // left
+          // Aim toward center area
+          const tx = W * (0.3 + Math.random() * 0.4);
+          const ty = H * (0.3 + Math.random() * 0.4);
+          const ang = Math.atan2(ty - c.y, tx - c.x);
+          c.vx = Math.cos(ang) * speed;
+          c.vy = Math.sin(ang) * speed;
+          c.maxLife = 60 + Math.random() * 120;
+          c.life = 0;
+          c.active = true;
+          break;
         }
+      }
+      for (const c of comets) {
+        if (!c.active) continue;
+        c.x += c.vx;
+        c.y += c.vy;
+        c.life++;
+        if (c.life > c.maxLife) c.active = false;
       }
     }
 
@@ -1039,105 +1041,86 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         ctx.translate((Math.random() - 0.5) * s.screenShake, (Math.random() - 0.5) * s.screenShake);
       }
 
-      // ── Deep space background ──
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-      bgGrad.addColorStop(0, '#0a0818');
-      bgGrad.addColorStop(0.3, '#0a0c24');
-      bgGrad.addColorStop(0.5, theme.bg2);
-      bgGrad.addColorStop(0.7, '#0a0c24');
-      bgGrad.addColorStop(1, '#0a0818');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, W, H);
+      // Background is rendered by Three.js layer behind — canvas is transparent
+      // No WebGL/Canvas2D background drawing needed
 
-      // ── Scrolling nebula overlay (pre-rendered) ──
-      const nebCanvas = s._nebulaCanvas ?? undefined;
-      if (nebCanvas) {
-        s._nebulaScrollX = (s._nebulaScrollX + s.speed * 0.08) % nebCanvas.width;
-        const nx = -s._nebulaScrollX;
-        ctx.save();
-        ctx.globalAlpha = 0.7;
-        ctx.drawImage(nebCanvas, nx, 0);
-        if (nx + nebCanvas.width < W) {
-          ctx.drawImage(nebCanvas, nx + nebCanvas.width, 0);
-        }
-        ctx.restore();
-      }
-
-      // ── Subtle theme accent glow (center) ──
-      ctx.save();
-      ctx.globalAlpha = 0.025;
-      const accentGlow = ctx.createRadialGradient(W * 0.5, H * 0.45, 0, W * 0.5, H * 0.45, W * 0.5);
-      accentGlow.addColorStop(0, theme.accentColor);
-      accentGlow.addColorStop(1, 'transparent');
-      ctx.fillStyle = accentGlow;
-      ctx.fillRect(0, 0, W, H);
-      ctx.restore();
-
-      // ── Cinematic parallax stars (dense, colored, twinkling) ──
-      const time = s.frameCount * 0.016; // approximate seconds
-      for (const layer of s.starLayers) {
-        for (const star of layer.stars) {
-          const twinkle = 0.65 + 0.35 * Math.sin(time * star.twinkleSpeed + star.twinklePhase);
-          const alpha = star.brightness * twinkle;
-          if (alpha < 0.02) continue; // skip invisible stars
-          const colorStr = star.color.replace('A', alpha.toFixed(3));
-          ctx.fillStyle = colorStr;
+      // ── Background comets — bright streaks like Defender ──
+      const comets = (s as any)._comets;
+      if (comets) {
+        for (const c of comets) {
+          if (!c.active) continue;
+          const fadeIn = Math.min(1, c.life / 8);
+          const fadeOut = Math.min(1, (c.maxLife - c.life) / 12);
+          const fade = fadeIn * fadeOut;
+          if (fade < 0.01) continue;
+          const ang = Math.atan2(c.vy, c.vx);
+          const tailLen = 30 + Math.sqrt(c.vx * c.vx + c.vy * c.vy) * 8;
+          const tx = c.x - Math.cos(ang) * tailLen;
+          const ty = c.y - Math.sin(ang) * tailLen;
+          const grad = ctx.createLinearGradient(c.x, c.y, tx, ty);
+          grad.addColorStop(0, `rgba(170,204,255,${(fade * 0.35).toFixed(3)})`);
+          grad.addColorStop(0.3, `rgba(150,180,255,${(fade * 0.15).toFixed(3)})`);
+          grad.addColorStop(1, 'rgba(130,160,255,0)');
+          ctx.save();
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = 1.5;
+          ctx.lineCap = 'round';
           ctx.beginPath();
-          ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+          ctx.moveTo(c.x, c.y);
+          ctx.lineTo(tx, ty);
+          ctx.stroke();
+          ctx.fillStyle = `rgba(200,220,255,${(fade * 0.5).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, 1.5, 0, Math.PI * 2);
           ctx.fill();
+          ctx.restore();
         }
       }
 
-      // ── Vignette overlay ──
-      const vigGrad = ctx.createRadialGradient(W / 2, H / 2, W * 0.3, W / 2, H / 2, W * 0.85);
-      vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
-      vigGrad.addColorStop(1, 'rgba(0,0,0,0.35)');
-      ctx.fillStyle = vigGrad;
-      ctx.fillRect(0, 0, W, H);
-
-      // ── Floor ──
-      ctx.fillStyle = theme.floorColor;
-      ctx.fillRect(0, floorY, W, GROUND_H);
-      // Floor line glow
+      // ── Floor & Ceiling — gradient fade + glowing accent line ──
+      // Floor
+      const flGrad = ctx.createLinearGradient(0, floorY - 6, 0, H);
+      flGrad.addColorStop(0, 'rgba(0,0,0,0)');
+      flGrad.addColorStop(0.08, 'rgba(20,15,35,0.7)');
+      flGrad.addColorStop(0.3, 'rgba(15,10,28,0.95)');
+      flGrad.addColorStop(1, '#08060f');
+      ctx.fillStyle = flGrad;
+      ctx.fillRect(0, floorY - 6, W, GROUND_H + 6);
+      // Accent glow line
       ctx.strokeStyle = theme.accentColor;
-      ctx.globalAlpha = 0.3;
-      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = theme.accentColor;
+      ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.moveTo(0, floorY);
       ctx.lineTo(W, floorY);
       ctx.stroke();
-      // Floor grid lines for depth
-      ctx.globalAlpha = 0.06;
-      for (let gx = 0; gx < W; gx += 30) {
-        const offset = (s.frameCount * s.speed * 0.3) % 30;
-        ctx.beginPath();
-        ctx.moveTo(gx - offset, floorY);
-        ctx.lineTo(gx - offset - 15, H);
-        ctx.stroke();
-      }
+      ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
 
-      // ── Ceiling ──
-      ctx.fillStyle = theme.ceilColor;
-      ctx.fillRect(0, 0, W, ceilY);
+      // Ceiling
+      const clGrad = ctx.createLinearGradient(0, 0, 0, ceilY + 6);
+      clGrad.addColorStop(0, '#08060f');
+      clGrad.addColorStop(0.7, 'rgba(15,10,28,0.95)');
+      clGrad.addColorStop(0.92, 'rgba(20,15,35,0.7)');
+      clGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = clGrad;
+      ctx.fillRect(0, 0, W, ceilY + 6);
       ctx.strokeStyle = theme.accentColor;
-      ctx.globalAlpha = 0.2;
-      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.4;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = theme.accentColor;
+      ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.moveTo(0, ceilY);
       ctx.lineTo(W, ceilY);
       ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
       ctx.globalAlpha = 1;
 
-      // ── Engine trail (simple circles — no RadialGradient for perf) ──
-      for (const t of s.trail) {
-        if (t.alpha < 0.05) continue;
-        ctx.globalAlpha = t.alpha * 0.5;
-        ctx.fillStyle = '#22d3ee';
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, t.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      // Engine trail disabled
       ctx.globalAlpha = 1;
 
       // ── Obstacles ──
@@ -1174,19 +1157,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             s.frameCount,
           );
 
-          // Small debris particles near columns
-          if (Math.random() < 0.15) {
-            s.particles.push({
-              x: col.x + Math.random() * col.width,
-              y: col.gapY + (Math.random() - 0.5) * col.gapH * 0.3,
-              vx: -0.5 - Math.random(),
-              vy: (Math.random() - 0.5) * 0.5,
-              life: 12,
-              maxLife: 12,
-              color: theme.obstacleHighlight,
-              size: 1 + Math.random() * 1.5,
-            });
-          }
+          // Column debris disabled — clean background
         }
 
         if (o.kind === 'comet') {
@@ -1309,36 +1280,21 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       // ── Crystals ──
       for (const c of s.crystals) {
         if (c.collected) continue;
-        const scale = 1 + Math.sin(c.pulse) * 0.18;
+        const scale = 1 + Math.sin(c.pulse) * 0.1;
+        const sz = CRYSTAL_SIZE * 1.4; // slightly larger than old crystal
         ctx.save();
         ctx.translate(c.x, c.y);
         ctx.scale(scale, scale);
-        // PRISM diamond shape
-        ctx.fillStyle = theme.crystalColor;
-        ctx.beginPath();
-        ctx.moveTo(0, -CRYSTAL_SIZE * 0.55);
-        ctx.lineTo(CRYSTAL_SIZE * 0.55, 0);
-        ctx.lineTo(0, CRYSTAL_SIZE * 0.55);
-        ctx.lineTo(-CRYSTAL_SIZE * 0.55, 0);
-        ctx.closePath();
-        ctx.fill();
-        // Inner facets
-        ctx.fillStyle = 'rgba(255,255,255,0.45)';
-        ctx.beginPath();
-        ctx.moveTo(0, -CRYSTAL_SIZE * 0.35);
-        ctx.lineTo(CRYSTAL_SIZE * 0.2, 0);
-        ctx.lineTo(0, CRYSTAL_SIZE * 0.15);
-        ctx.lineTo(-CRYSTAL_SIZE * 0.2, 0);
-        ctx.closePath();
-        ctx.fill();
-        // Sparkle
-        ctx.fillStyle = 'rgba(255,255,255,0.8)';
-        const sparkle = Math.sin(c.pulse * 1.5) * 0.5 + 0.5;
-        ctx.globalAlpha = sparkle;
-        ctx.beginPath();
-        ctx.arc(CRYSTAL_SIZE * 0.12, -CRYSTAL_SIZE * 0.18, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
+        if (coinImgRef.current) {
+          // Draw powerup_coin.png texture — same as Orbit/Defender coin powerup
+          ctx.drawImage(coinImgRef.current, -sz / 2, -sz / 2, sz, sz);
+        } else {
+          // Fallback circle
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.arc(0, 0, sz / 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       }
 
@@ -1373,11 +1329,13 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
       // ── Particles ──
       for (const p of s.particles) {
-        const alpha = p.life / p.maxLife;
-        ctx.globalAlpha = alpha;
+        const t = p.life / p.maxLife;
+        const alpha = t * t; // quadratic fade — soft start, quick disappear
+        if (alpha < 0.02) continue;
+        ctx.globalAlpha = alpha * 0.6; // max 60% opacity — no harsh flashes
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, p.size * t, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 1;
@@ -1571,5 +1529,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState, onScore, onCoins, onGameOver, reviveRef, hasMintedId]);
 
-  return <canvas ref={canvasRef} className="w-full h-full" style={{ touchAction: 'none', background: '#0a0818' }} />;
+  return (
+    <canvas ref={canvasRef} className="w-full h-full" style={{ touchAction: 'none', background: 'transparent' }} />
+  );
 }

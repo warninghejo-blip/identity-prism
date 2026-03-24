@@ -383,7 +383,7 @@ export function SpaceBG() {
   useFrame((s) => {
     if (ref.current) {
       ref.current.uniforms.uTime.value = s.clock.elapsedTime;
-      ref.current.uniforms.uOffset.value.set(s.camera.position.x * 0.003, s.camera.position.y * 0.003);
+      ref.current.uniforms.uOffset.value.set(s.camera.position.x * 0.012, s.camera.position.y * 0.012);
     }
     if (meshRef.current) {
       meshRef.current.position.x = s.camera.position.x;
@@ -516,6 +516,102 @@ export function Dust() {
         depthWrite={false}
       />
     </points>
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   Background comets — occasional bright streaks
+   ═══════════════════════════════════════════════════ */
+
+const COMET_N = IS_MOBILE ? 3 : 6;
+export function Comets() {
+  const data = useRef<
+    { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; active: boolean }[]
+  >(Array.from({ length: COMET_N }, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, active: false })));
+  const refs = useRef<(THREE.Mesh | null)[]>([]);
+  const timer = useRef(0);
+  useFrame((s, delta) => {
+    const dt = Math.min(delta, 0.033);
+    const cx = s.camera.position.x,
+      cy = s.camera.position.y;
+    timer.current += dt;
+    if (timer.current > (IS_MOBILE ? 3.5 : 2.0)) {
+      timer.current = 0;
+      for (let ci = 0; ci < data.current.length; ci++) {
+        const c = data.current[ci];
+        if (!c.active) {
+          const edge = Math.floor(Math.random() * 4);
+          const speed = 20 + Math.random() * 40;
+          const spread = 60;
+          if (edge === 0) {
+            c.x = cx + (Math.random() - 0.5) * spread;
+            c.y = cy + 25 + Math.random() * 10;
+          } else if (edge === 1) {
+            c.x = cx + 30 + Math.random() * 10;
+            c.y = cy + (Math.random() - 0.5) * spread;
+          } else if (edge === 2) {
+            c.x = cx + (Math.random() - 0.5) * spread;
+            c.y = cy - 25 - Math.random() * 10;
+          } else {
+            c.x = cx - 30 - Math.random() * 10;
+            c.y = cy + (Math.random() - 0.5) * spread;
+          }
+          const toCx = cx - c.x + (Math.random() - 0.5) * 30;
+          const toCy = cy - c.y + (Math.random() - 0.5) * 30;
+          const ang = Math.atan2(toCy, toCx);
+          c.vx = Math.cos(ang) * speed;
+          c.vy = Math.sin(ang) * speed;
+          c.maxLife = 1.0 + Math.random() * 2.0;
+          c.life = 0;
+          c.active = true;
+          break;
+        }
+      }
+    }
+    for (let i = 0; i < COMET_N; i++) {
+      const c = data.current[i];
+      const m = refs.current[i];
+      if (!m) continue;
+      if (!c.active) {
+        m.visible = false;
+        continue;
+      }
+      c.life += dt;
+      if (c.life > c.maxLife) {
+        c.active = false;
+        m.visible = false;
+        continue;
+      }
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      m.visible = true;
+      m.position.set(c.x, c.y, -8);
+      m.rotation.z = Math.atan2(c.vy, c.vx);
+      const fade = Math.min(1, c.life * 3) * Math.min(1, (c.maxLife - c.life) * 2);
+      (m.material as THREE.MeshBasicMaterial).opacity = fade * 0.35;
+    }
+  });
+  return (
+    <>
+      {Array.from({ length: COMET_N }).map((_, i) => (
+        <mesh
+          key={i}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          visible={false}
+        >
+          <planeGeometry args={[3.5, 0.04]} />
+          <meshBasicMaterial
+            color="#aaccff"
+            transparent
+            opacity={0}
+            blending={THREE.AdditiveBlending}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </>
   );
 }
 
@@ -1448,7 +1544,7 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
       <Suspense fallback={null}>
         <Canvas
           camera={{ fov: isMobile ? 62 : 50, position: [0, 0, CAM_Z], near: 0.1, far: 400 }}
-          gl={{ antialias: false, powerPreference: 'high-performance', alpha: false }}
+          gl={{ antialias: false, powerPreference: 'high-performance', alpha: true }}
           dpr={isMobile ? 1 : [1, 1.5]}
           frameloop="always"
         >

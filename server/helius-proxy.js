@@ -134,7 +134,7 @@ const TREASURY_SECRET = (process.env.TREASURY_SECRET ?? '').trim();
 const TREASURY_SECRET_PATH = (process.env.TREASURY_SECRET_PATH ?? path.join(process.cwd(), 'keys', 'treasury.json')).trim();
 const CORE_COLLECTION = (process.env.CORE_COLLECTION ?? '').trim();
 const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS ?? '').trim();
-const MINT_PRICE_SOL_RAW = Number(process.env.MINT_PRICE_SOL ?? '0.01');
+const MINT_PRICE_SOL_RAW = Number(process.env.MINT_PRICE_SOL ?? '0.03');
 const MINT_PRICE_SOL = Number.isFinite(MINT_PRICE_SOL_RAW) && MINT_PRICE_SOL_RAW > 0
   ? MINT_PRICE_SOL_RAW
   : 0.01;
@@ -3616,9 +3616,12 @@ const server = http.createServer(async (req, res) => {
         .sort((a, b) => b.score - a.score);
       tournaments[tier] = {
         id: t.id, tier, mode: t.mode, entryFee: t.entryFee, label: t.label || TOURNAMENT_TIERS[tier].label,
-        prizePool: t.prizePool, startTime: t.startTime, endTime: t.endTime, status: t.status,
+        prizePool: t.prizePool,
+        basePrizes: TOURNAMENT_BASE_PRIZES[tier] || [],
+        startTime: t.startTime, endTime: t.endTime, status: t.status,
         entriesCount: entriesArr.length, endsAt: t.endTime, entryCount: entriesArr.length,
         isEnded: t.status === 'ended', userJoined,
+        xpRewards: TOURNAMENT_XP_REWARDS[tier] || [],
         // Gated: only show entries if user joined
         entries: userJoined ? entriesArr.slice(0, 50) : [],
         resultsHidden: !userJoined,
@@ -5854,10 +5857,10 @@ const server = http.createServer(async (req, res) => {
   })();
 
   const COIN_PACKAGES = [
-    { coins: 5000,    solPrice: 0.005 },
-    { coins: 15000,   solPrice: 0.013 },
-    { coins: 50000,   solPrice: 0.038 },
-    { coins: 150000,  solPrice: 0.099 },
+    { coins: 5000,    solPrice: 0.015 },
+    { coins: 15000,   solPrice: 0.038 },
+    { coins: 50000,   solPrice: 0.11 },
+    { coins: 150000,  solPrice: 0.23 },
   ];
   const DAILY_COIN_LIMIT = 300000;
 
@@ -6016,51 +6019,115 @@ const server = http.createServer(async (req, res) => {
       const signatures = signaturesResult.status === 'fulfilled' ? signaturesResult.value : [];
       const tokenAccounts = tokenAccountsResult.status === 'fulfilled' ? tokenAccountsResult.value?.value || [] : [];
 
-      // Wallet age + parsed txs — run in parallel (independent operations)
+      // ── Phase 1: Paginate ALL signatures (up to 10K) — single pass for timing + age ──
+      // Replaces separate findFirstTxTime pagination — saves ~100-300 credits per scan.
+      // getSignaturesForAddress = 10 credits/call, so 10 pages = 100 credits total.
+      let allSignatures = [...signatures]; // starts with first 1000
       let oldestSig = signatures.length > 0 ? signatures[signatures.length - 1] : null;
       const cachedWallet = walletDatabase.get(address);
       const cachedFirstTx = cachedWallet?.firstTxTimestamp || null;
       const sybilRpcUrl = getRpcUrl(address) || 'https://api.mainnet-beta.solana.com';
+      let earlySignatures = []; // will hold the earliest page of sigs
+      let paginationReachedEnd = signatures.length < 1000; // true if wallet has < 1000 tx total
 
-      const sigBatch = signatures.slice(0, 100).map(s => s.signature);
-      let parsedTxs = [];
-
-      // Run wallet age search + tx parsing in parallel (batch in groups of 25 for RPC limits)
-      const txBatches = [];
-      for (let i = 0; i < sigBatch.length; i += 25) {
-        txBatches.push(sigBatch.slice(i, i + 25));
+      if (signatures.length >= 1000) {
+        // Paginate to collect up to 10K signatures + capture earliest page
+        let cursor = signatures[signatures.length - 1]?.signature;
+        for (let page = 1; page < 10 && cursor; page++) {
+          try {
+            const moreSigs = await conn.getSignaturesForAddress(pubkey, { before: cursor, limit: 1000 });
+            if (moreSigs.length === 0) { paginationReachedEnd = true; break; }
+            allSignatures.push(...moreSigs);
+            cursor = moreSigs[moreSigs.length - 1].signature;
+            earlySignatures = moreSigs; // last page = earliest signatures
+            // Update oldest
+            const lastSig = moreSigs[moreSigs.length - 1];
+            if (lastSig?.blockTime && (!oldestSig?.blockTime || lastSig.blockTime < oldestSig.blockTime)) {
+              oldestSig = lastSig;
+            }
+            if (moreSigs.length < 1000) { paginationReachedEnd = true; break; }
+          } catch { break; }
+        }
       }
-      const [firstTxResult, ...parseBatchResults] = await Promise.allSettled([
-        findFirstTxTime(conn, pubkey, signatures, cachedFirstTx, sybilRpcUrl),
-        ...txBatches.map(batch => conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 })),
-      ]);
+      const totalSigCount = allSignatures.length;
 
-      // Process wallet age result (findFirstTxTime now returns { firstTxTime, totalSigs })
-      const ftResult = firstTxResult.status === 'fulfilled' ? firstTxResult.value : null;
-      const firstTxBlockTime = ftResult?.firstTxTime ?? (typeof ftResult === 'number' ? ftResult : null);
+      // Determine wallet age from our pagination (no duplicate findFirstTxTime for ≤10K wallets)
+      const SOLANA_GENESIS = 1584000000;
+      let firstTxBlockTime = null;
+      if (paginationReachedEnd && allSignatures.length > 0) {
+        // We have ALL signatures — oldest is exact, no need for findFirstTxTime
+        for (let i = allSignatures.length - 1; i >= 0; i--) {
+          if (allSignatures[i].blockTime > SOLANA_GENESIS) {
+            firstTxBlockTime = allSignatures[i].blockTime;
+            break;
+          }
+        }
+      } else if (oldestSig?.blockTime > SOLANA_GENESIS) {
+        // >10K txs — use our pagination's oldest as starting point
+        firstTxBlockTime = oldestSig.blockTime;
+      }
       if (firstTxBlockTime && (!oldestSig?.blockTime || firstTxBlockTime < oldestSig.blockTime)) {
         oldestSig = { ...(oldestSig || {}), blockTime: firstTxBlockTime };
       }
-      if (firstTxBlockTime && (!cachedFirstTx || firstTxBlockTime < cachedFirstTx)) {
-        updateWalletEntry(address, { firstTxTimestamp: firstTxBlockTime });
+
+      // ── Phase 2: Parse latest 200 + earliest 100 transactions in parallel ──
+      const recentSigBatch = allSignatures.slice(0, 200).map(s => s.signature);
+      const earlySigs = earlySignatures.length > 0
+        ? earlySignatures.slice(-100)
+        : (allSignatures.length > 300 ? allSignatures.slice(-100) : []);
+      const earlySigBatch = earlySigs.map(s => s.signature);
+      const recentSet = new Set(recentSigBatch);
+      const dedupedEarlySigBatch = earlySigBatch.filter(s => !recentSet.has(s));
+
+      let parsedTxs = [];
+      let earlyParsedTxs = [];
+
+      // Build parse batches (groups of 25)
+      const recentBatches = [];
+      for (let i = 0; i < recentSigBatch.length; i += 25) recentBatches.push(recentSigBatch.slice(i, i + 25));
+      const earlyBatches = [];
+      for (let i = 0; i < dedupedEarlySigBatch.length; i += 25) earlyBatches.push(dedupedEarlySigBatch.slice(i, i + 25));
+
+      // Only call findFirstTxTime for wallets >10K tx (binary search for exact age)
+      // For ≤10K wallets, we already have exact age from Phase 1 — saves 100-300 credits
+      const needsBinarySearch = !paginationReachedEnd;
+      const parallelTasks = [
+        ...(needsBinarySearch
+          ? [findFirstTxTime(conn, pubkey, allSignatures.slice(-1000), cachedFirstTx, sybilRpcUrl)]
+          : [Promise.resolve({ firstTxTime: firstTxBlockTime, totalSigs: totalSigCount })]),
+        ...recentBatches.map(batch => conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 })),
+        ...earlyBatches.map(batch => conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 })),
+      ];
+      const [firstTxResult, ...allParseBatchResults] = await Promise.allSettled(parallelTasks);
+
+      // Process wallet age result
+      const ftResult = firstTxResult.status === 'fulfilled' ? firstTxResult.value : null;
+      const resolvedFirstTxTime = ftResult?.firstTxTime ?? firstTxBlockTime;
+      if (resolvedFirstTxTime && (!oldestSig?.blockTime || resolvedFirstTxTime < oldestSig.blockTime)) {
+        oldestSig = { ...(oldestSig || {}), blockTime: resolvedFirstTxTime };
       }
-      // Update txCount if findFirstTxTime found more
-      if (ftResult?.totalSigs && ftResult.totalSigs > signatures.length) {
-        const cachedStats = cachedWallet?.stats || {};
-        const bestTxCount = Math.max(ftResult.totalSigs, cachedStats.transactions || 0);
-        if (bestTxCount > (cachedStats.transactions || 0)) {
-          updateWalletEntry(address, { stats: { ...cachedStats, transactions: bestTxCount } });
-        }
+      if (resolvedFirstTxTime && (!cachedFirstTx || resolvedFirstTxTime < cachedFirstTx)) {
+        updateWalletEntry(address, { firstTxTimestamp: resolvedFirstTxTime });
+      }
+      // Update txCount
+      const bestTxCount = Math.max(totalSigCount, ftResult?.totalSigs || 0, cachedWallet?.stats?.transactions || 0);
+      if (bestTxCount > (cachedWallet?.stats?.transactions || 0)) {
+        updateWalletEntry(address, { stats: { ...(cachedWallet?.stats || {}), transactions: bestTxCount } });
       }
 
-      // Process parsed txs results from all batches
-      for (const br of parseBatchResults) {
+      // Split parse results: first N are recent, rest are early
+      const recentResults = allParseBatchResults.slice(0, recentBatches.length);
+      const earlyResults = allParseBatchResults.slice(recentBatches.length);
+      for (const br of recentResults) {
         if (br.status === 'fulfilled') parsedTxs.push(...(br.value || []).filter(Boolean));
       }
+      for (const er of earlyResults) {
+        if (er.status === 'fulfilled') earlyParsedTxs.push(...(er.value || []).filter(Boolean));
+      }
 
-      // ── Derive metrics from existing data ──
+      // ── Derive metrics from ALL 10K signatures ──
 
-      const timestamps = signatures.filter(s => s.blockTime).map(s => s.blockTime * 1000);
+      const timestamps = allSignatures.filter(s => s.blockTime).map(s => s.blockTime * 1000);
       const nowMs = Date.now();
 
       // 1. Wallet Age (uses paginated oldest tx)
@@ -6215,10 +6282,20 @@ const server = http.createServer(async (req, res) => {
                   const accounts = tx.transaction.message?.accountKeys || [];
                   const pre = tx.meta.preBalances || [];
                   const post = tx.meta.postBalances || [];
+                  // Collect program IDs from this tx to filter out non-wallet accounts
+                  const txProgs = new Set();
+                  for (const ix of (tx.transaction.message?.instructions || [])) {
+                    const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+                    if (pid) txProgs.add(pid);
+                  }
                   for (let i = 0; i < accounts.length; i++) {
-                    const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+                    const accObj = accounts[i];
+                    const acc = typeof accObj === 'string' ? accObj : accObj?.pubkey?.toBase58?.() || '';
                     const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
-                    if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
+                    // Only add real wallet-like accounts: received SOL, not a program, is a signer or writable
+                    const isSigner = typeof accObj === 'object' && accObj?.signer;
+                    if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111'
+                        && !isProgramAddress(acc, txProgs)) {
                       allSiblings.add(acc);
                     }
                   }
@@ -6246,22 +6323,47 @@ const server = http.createServer(async (req, res) => {
                             const accs = tx.transaction.message?.accountKeys || [];
                             const pre2 = tx.meta.preBalances || [];
                             const post2 = tx.meta.postBalances || [];
+                            const txP2 = new Set();
+                            for (const ix of (tx.transaction.message?.instructions || [])) {
+                              const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+                              if (pid) txP2.add(pid);
+                            }
                             for (let i = 0; i < accs.length; i++) {
                               const acc = typeof accs[i] === 'string' ? accs[i] : accs[i]?.pubkey?.toBase58?.() || '';
                               const diff = ((post2[i] || 0) - (pre2[i] || 0)) / 1e9;
-                              if (diff > 0.01 && acc !== grandFunder && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
+                              if (diff > 0.01 && acc !== grandFunder && acc !== topFunder && acc !== address
+                                  && acc !== '11111111111111111111111111111111' && !isProgramAddress(acc, txP2)) {
                                 allSiblings.add(acc);
                               }
                             }
                           }
                         } catch {}
                       }
+                      // Record grandFunder in graph as suspicious intermediary
+                      if (grandFunder && fundingChainDepth >= 2) {
+                        updateSybilGraphNode(grandFunder, {
+                          riskScore: Math.max((sybilGraph.nodes[grandFunder]?.riskScore || 0), 60),
+                          inferredFromCluster: address,
+                          fundedBy: [],
+                          siblings: [topFunder, address],
+                        });
+                      }
                     }
                   } catch {}
                 }
               } catch {}
-              if (allSiblings.size >= 3) {
-                clusterSimilarity = Math.min(1, allSiblings.size / 15);
+              // Also record topFunder in graph if it's funding multiple wallets
+              if (topFunder && allSiblings.size >= 2) {
+                const existingFunderNode = sybilGraph.nodes[topFunder];
+                if (!existingFunderNode || existingFunderNode.riskScore < 40) {
+                  updateSybilGraphNode(topFunder, {
+                    riskScore: Math.max((existingFunderNode?.riskScore || 0), 40),
+                    siblings: [address, ...[...allSiblings].slice(0, 10)],
+                  });
+                }
+              }
+              if (allSiblings.size >= 2) {
+                clusterSimilarity = Math.min(1, allSiblings.size / 12);
               }
             }
           }
@@ -6436,14 +6538,14 @@ const server = http.createServer(async (req, res) => {
       // Signal 1: Wallet Age + Fresh Burst (MERGED — no double-counting)
       // Graduated: new wallet alone = moderate, new wallet + burst = high
       const isNewWallet = walletAgeDays < 30;
-      const freshBurst = isNewWallet && signatures.length > 50;
+      const freshBurst = isNewWallet && totalSigCount > 50;
       signals.push({
         id: 'wallet_age', name: freshBurst ? 'Fresh Wallet Burst' : 'New Wallet', category: 'behavioral',
         detected: isNewWallet, weight: freshBurst ? 20 : 12,
         severity: freshBurst ? 'danger' : (isNewWallet ? 'warning' : 'info'),
-        value: isNewWallet ? `${walletAgeDays}d / ${signatures.length} txs` : `${walletAgeDays}d`,
+        value: isNewWallet ? `${walletAgeDays}d / ${totalSigCount} txs` : `${walletAgeDays}d`,
         description: freshBurst
-          ? `${signatures.length} transactions in only ${walletAgeDays} days — suspicious burst`
+          ? `${totalSigCount} transactions in only ${walletAgeDays} days — suspicious burst`
           : (isNewWallet ? `Wallet is only ${walletAgeDays} days old` : `Wallet is ${walletAgeDays} days old`),
       });
 
@@ -6538,13 +6640,13 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Signal 10: Low dApp Interaction Breadth
-      const lowDappInteraction = uniquePrograms < 5 && signatures.length > 20;
+      const lowDappInteraction = uniquePrograms < 5 && totalSigCount > 20;
       signals.push({
         id: 'low_dapp_interaction', name: 'Low dApp Interaction', category: 'behavioral',
         detected: lowDappInteraction, weight: 7,
         severity: lowDappInteraction ? 'warning' : 'info',
         value: `${uniquePrograms} programs`,
-        description: lowDappInteraction ? `Only interacted with ${uniquePrograms} programs despite ${signatures.length} txs` : `Interacted with ${uniquePrograms} different programs`,
+        description: lowDappInteraction ? `Only interacted with ${uniquePrograms} programs despite ${totalSigCount} txs` : `Interacted with ${uniquePrograms} different programs`,
       });
 
       // Signal 11: Drained Balance — current balance is tiny vs historical max
@@ -6645,8 +6747,8 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Signal 19: Failed Transaction Ratio — bots/MEV have high fail rates
-      const failedTxCount = signatures.filter(s => s.err !== null).length;
-      const failedRatio = signatures.length >= 30 ? failedTxCount / signatures.length : 0;
+      const failedTxCount = allSignatures.filter(s => s.err !== null).length;
+      const failedRatio = totalSigCount >= 30 ? failedTxCount / totalSigCount : 0;
       const highFailRate = failedRatio > 0.5 && failedTxCount >= 15;
       signals.push({
         id: 'failed_tx_ratio', name: 'High Failed TX Rate', category: 'behavioral',
@@ -6654,8 +6756,89 @@ const server = http.createServer(async (req, res) => {
         severity: highFailRate ? 'warning' : 'info',
         value: `${(failedRatio * 100).toFixed(0)}% failed`,
         description: highFailRate
-          ? `${failedTxCount}/${signatures.length} transactions failed — MEV/bot pattern`
+          ? `${failedTxCount}/${totalSigCount} transactions failed — MEV/bot pattern`
           : `${(failedRatio * 100).toFixed(0)}% failure rate`,
+      });
+
+      // Signal 20: Behavior Drift — early txs vs recent txs show different patterns (account sold/repurposed)
+      let behaviorDriftDetected = false;
+      let behaviorDriftValue = '';
+      if (earlyParsedTxs.length >= 10 && parsedTxs.length >= 20) {
+        // Compare program diversity: early vs recent
+        const earlyPrograms = new Set();
+        for (const tx of earlyParsedTxs) {
+          if (!tx?.transaction?.message?.instructions) continue;
+          for (const ix of tx.transaction.message.instructions) {
+            const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+            if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') earlyPrograms.add(pid);
+          }
+        }
+        const recentPrograms = new Set();
+        for (const tx of parsedTxs.slice(0, 50)) {
+          if (!tx?.transaction?.message?.instructions) continue;
+          for (const ix of tx.transaction.message.instructions) {
+            const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+            if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') recentPrograms.add(pid);
+          }
+        }
+        // Jaccard similarity between early and recent program sets
+        const intersection = [...earlyPrograms].filter(p => recentPrograms.has(p)).length;
+        const union = new Set([...earlyPrograms, ...recentPrograms]).size;
+        const jaccard = union > 0 ? intersection / union : 1;
+        // Low overlap = wallet completely changed behavior
+        if (jaccard < 0.1 && earlyPrograms.size >= 3 && recentPrograms.size >= 3) {
+          behaviorDriftDetected = true;
+          behaviorDriftValue = `${(jaccard * 100).toFixed(0)}% overlap (${earlyPrograms.size} early → ${recentPrograms.size} recent programs)`;
+        }
+      }
+      signals.push({
+        id: 'behavior_drift', name: 'Behavior Drift', category: 'behavioral',
+        detected: behaviorDriftDetected, weight: 10,
+        severity: behaviorDriftDetected ? 'warning' : 'info',
+        value: behaviorDriftValue || 'N/A',
+        description: behaviorDriftDetected
+          ? 'Early wallet activity completely differs from recent — possible account sale/repurpose for farming'
+          : 'Consistent behavior across wallet lifetime',
+      });
+
+      // Signal 21: Rapid Token Cycling — receives tokens and immediately transfers out (wash trading)
+      let rapidCycleCount = 0;
+      if (parsedTxs.length >= 10) {
+        const txByTime = parsedTxs.filter(t => t?.blockTime).sort((a, b) => a.blockTime - b.blockTime);
+        for (let i = 0; i < txByTime.length - 1; i++) {
+          const tx1 = txByTime[i], tx2 = txByTime[i + 1];
+          if (!tx1?.meta || !tx2?.meta) continue;
+          const accs1 = tx1.transaction?.message?.accountKeys || [];
+          const accs2 = tx2.transaction?.message?.accountKeys || [];
+          let idx1 = -1, idx2 = -1;
+          for (let j = 0; j < accs1.length; j++) {
+            const a = typeof accs1[j] === 'string' ? accs1[j] : accs1[j]?.pubkey?.toBase58?.() || '';
+            if (a === address) { idx1 = j; break; }
+          }
+          for (let j = 0; j < accs2.length; j++) {
+            const a = typeof accs2[j] === 'string' ? accs2[j] : accs2[j]?.pubkey?.toBase58?.() || '';
+            if (a === address) { idx2 = j; break; }
+          }
+          if (idx1 >= 0 && idx2 >= 0) {
+            const diff1 = ((tx1.meta.postBalances?.[idx1] || 0) - (tx1.meta.preBalances?.[idx1] || 0)) / 1e9;
+            const diff2 = ((tx2.meta.postBalances?.[idx2] || 0) - (tx2.meta.preBalances?.[idx2] || 0)) / 1e9;
+            // Incoming followed immediately by outgoing of similar amount within 60 seconds
+            if (diff1 > 0.01 && diff2 < -0.01 && (tx2.blockTime - tx1.blockTime) < 60) {
+              const ratio = Math.abs(diff2) / diff1;
+              if (ratio > 0.8 && ratio < 1.2) rapidCycleCount++;
+            }
+          }
+        }
+      }
+      const isRapidCycling = rapidCycleCount >= 3;
+      signals.push({
+        id: 'rapid_cycling', name: 'Rapid SOL Cycling', category: 'financial',
+        detected: isRapidCycling, weight: 12,
+        severity: isRapidCycling ? 'danger' : 'info',
+        value: `${rapidCycleCount} cycles`,
+        description: isRapidCycling
+          ? `${rapidCycleCount} rapid in→out cycles detected (<60s) — wash trading or fund relay`
+          : 'No rapid cycling detected',
       });
 
       // ── Calculate Risk Score ──
@@ -6724,7 +6907,7 @@ const server = http.createServer(async (req, res) => {
           uniquePrograms,
           balance: Math.round(balance * 10000) / 10000,
           historicalMaxBalance: Math.round(historicalMaxBalance * 10000) / 10000,
-          txCount: signatures.length,
+          txCount: totalSigCount,
           clusterSimilarity: Math.round(clusterSimilarity * 100),
           selfTransferCount,
           counterpartyRatio: Math.round(counterpartyRatio * 100),
@@ -6744,6 +6927,9 @@ const server = http.createServer(async (req, res) => {
           defiDepth,
           defiCategories: [...defiCategories],
           hasSolDomain,
+          earlyTxsAnalyzed: earlyParsedTxs.length,
+          rapidCycleCount,
+          siblingAddresses: [...allSiblings].slice(0, 30), // expose for UI
         },
         behaviorProfile: {
           txTimingVariance: timingVariance,
@@ -6790,14 +6976,21 @@ const server = http.createServer(async (req, res) => {
         hasSolDomain,
         walletAgeDays,
       });
-      // Also record siblings in graph for future lookups
+      // Record ALL siblings in graph — both new and existing (update riskScore if higher)
       for (const sib of allSiblings) {
-        if (!sybilGraph.nodes[sib]) {
-          updateSybilGraphNode(sib, { inferredFromCluster: address, riskScore: 50 });
+        const existingNode = sybilGraph.nodes[sib];
+        const inferredRisk = Math.max(50, Math.floor(riskScore * 0.7)); // siblings inherit 70% of parent risk, min 50
+        if (!existingNode || existingNode.riskScore < inferredRisk) {
+          updateSybilGraphNode(sib, {
+            inferredFromCluster: address,
+            riskScore: inferredRisk,
+            fundedBy: resolvedTopFunder ? [resolvedTopFunder] : [],
+            siblings: [address, ...[...allSiblings].filter(s => s !== sib).slice(0, 10)],
+          });
         }
       }
-      // Auto-flag clusters: if hub funded 10+ wallets and target is high risk
-      if (allSiblings.size >= 10 && riskScore >= 50) {
+      // Auto-flag clusters: if hub funded 5+ wallets and target is medium+ risk
+      if (allSiblings.size >= 5 && riskScore >= 40) {
         // Use the top funder (by SOL amount) as cluster key, not insertion order
         const clusterKey = resolvedTopFunder || fundingSources[0] || address;
         const existing = sybilGraph.flaggedClusters.find(c => c.funder === clusterKey);
@@ -8474,6 +8667,7 @@ const server = http.createServer(async (req, res) => {
         scoreDetails: w.composite?.details || null,
         joinedAt: w.joinedAt || null,
         lastSeenAt: w.lastSeenAt || null,
+        tournamentXP: w.tournamentXP || 0,
       };
       respondJson(res, 200, publicData);
       return;
@@ -9507,6 +9701,19 @@ const PRIZE_SHARES = {
   weekly:  [0.35, 0.22, 0.15, 0.10, 0.10, 0.08],                     // top-6
   monthly: [0.30, 0.18, 0.12, 0.09, 0.08, 0.06, 0.05, 0.04, 0.04, 0.04], // top-10
 };
+// Base prizes per place — paid by platform on top of player pool (index = place-1)
+// 1st = entry fee (guaranteed break-even), equal step down per place
+const TOURNAMENT_BASE_PRIZES = {
+  daily:   [1000, 700, 400],                                                   // step 300, total 2.1k
+  weekly:  [5000, 4200, 3400, 2600, 1800, 1000],                              // step 800, total 18k
+  monthly: [25000, 22500, 20000, 17500, 15000, 12500, 10000, 7500, 5000, 2500], // step 2500, total 137.5k
+};
+// XP rewards per place — equal step of 100 XP across all tiers
+const TOURNAMENT_XP_REWARDS = {
+  daily:   [300, 200, 100],                                                     // step 100
+  weekly:  [600, 500, 400, 300, 200, 100],                                     // step 100
+  monthly: [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100],               // step 100
+};
 const activeTournaments = { daily: null, weekly: null, monthly: null };
 const tournamentHistory = [];
 let tournamentModeIndex = 0;
@@ -9573,25 +9780,39 @@ function finalizeTournamentTier(tier) {
   const shares = PRIZE_SHARES[tier] || PRIZE_SHARES.daily;
   const maxWinners = Math.min(shares.length, sorted.length);
   let totalPaid = 0;
+  const basePrizes = TOURNAMENT_BASE_PRIZES[tier] || [];
   for (let i = 0; i < maxWinners; i++) {
-    // Give 1st place the remainder to avoid losing coins to rounding
-    const prize = i === 0
+    // Pool share: 1st gets remainder to avoid rounding loss
+    const poolPrize = i === 0
       ? pool - shares.slice(1, maxWinners).reduce((acc, s) => acc + Math.floor(pool * s), 0)
       : Math.floor(pool * shares[i]);
-    if (prize > 0) {
+    // Base prize from platform (per place)
+    const basePrize = basePrizes[i] || 0;
+    const totalPrize = poolPrize + basePrize;
+    if (totalPrize > 0) {
       const cur = getCoinBalance(sorted[i].address);
-      setCoinBalance(sorted[i].address, cur + prize);
-      addCoinEarned(sorted[i].address, prize);
-      totalPaid += prize;
-      winners.push({ address: sorted[i].address, score: sorted[i].score, prize, place: i + 1 });
+      setCoinBalance(sorted[i].address, cur + totalPrize);
+      addCoinEarned(sorted[i].address, totalPrize);
+      totalPaid += poolPrize; // only track pool portion for burn calc
     }
+    // Award XP for placement
+    const xpRewards = TOURNAMENT_XP_REWARDS[tier] || [];
+    const xpAmount = xpRewards[i] || 0;
+    if (xpAmount > 0) {
+      const wEntry = walletDatabase.get(sorted[i].address);
+      if (wEntry) {
+        wEntry.tournamentXP = (wEntry.tournamentXP || 0) + xpAmount;
+        walletDatabase.set(sorted[i].address, wEntry);
+      }
+    }
+    winners.push({ address: sorted[i].address, score: sorted[i].score, prize: totalPrize, poolPrize, basePrize, place: i + 1, xp: xpAmount });
   }
-  // Any remaining dust (when fewer participants than prize slots) is burned
+  // Any remaining pool dust (fewer participants than prize slots) is burned
   if (totalPaid < pool) totalBurned += (pool - totalPaid);
   t.winners = winners;
   tournamentHistory.unshift({ ...t });
   if (tournamentHistory.length > 50) tournamentHistory.length = 50;
-  console.log(`[tournament] Finalized ${t.id}, ${winners.length} winners, pool=${pool}`);
+  console.log(`[tournament] Finalized ${t.id}, ${winners.length} winners, pool=${pool}, basePrizes=${basePrizes.slice(0, maxWinners).join('/')}`);
   activeTournaments[tier] = null;
   saveTournament();
 }

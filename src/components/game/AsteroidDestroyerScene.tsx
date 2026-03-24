@@ -122,7 +122,7 @@ interface DPowerUp {
    Constants
    ═══════════════════════════════════════════════════ */
 
-const PLAY_W = 26;
+const PLAY_W = 18; // narrower — mobile-like on desktop too
 const PLAY_H = 28;
 const HALF_W = PLAY_W / 2;
 const HALF_H = PLAY_H / 2;
@@ -997,7 +997,7 @@ function ShooterShip({
 
   return (
     <>
-      <group ref={gRef} scale={[1.15, 1.15, 1.15]}>
+      <group ref={gRef} scale={[1.035, 1.035, 1.035]}>
         <group ref={bodyRef}>
           {/* Ship sprite */}
           <mesh>
@@ -1062,9 +1062,22 @@ function ShooterShip({
    Fixed Camera (top-down)
    ═══════════════════════════════════════════════════ */
 
-function FixedCam({ shake }: { shake: React.MutableRefObject<number> }) {
+function FixedCam({
+  shake,
+  shipPos,
+}: {
+  shake: React.MutableRefObject<number>;
+  shipPos?: React.MutableRefObject<{ x: number; y: number }>;
+}) {
   useFrame(({ camera }, delta) => {
     const dt = Math.min(delta, 0.033);
+    // Parallax: camera follows ship at 30% for visible background movement
+    let tx = 0,
+      ty = 0;
+    if (shipPos) {
+      tx = shipPos.current.x * 0.3;
+      ty = shipPos.current.y * 0.3;
+    }
     let sx = 0,
       sy = 0;
     if (shake.current > 0.01) {
@@ -1073,8 +1086,8 @@ function FixedCam({ shake }: { shake: React.MutableRefObject<number> }) {
       sy = (Math.random() - 0.5) * shake.current * shakeScale;
       shake.current = Math.max(0, shake.current - dt * 4);
     }
-    camera.position.set(sx, sy, CAM_Z);
-    camera.lookAt(sx, sy, 0);
+    camera.position.set(tx + sx, ty + sy, CAM_Z);
+    camera.lookAt(tx + sx, ty + sy, 0);
   });
   return null;
 }
@@ -1555,7 +1568,7 @@ function DestroyerWorld({
       const hasDouble = doubleT.current > 0;
       let firedType: 'rocket' | 'double' | 'single' = 'single';
 
-      const SHIP_SCALE = 1.15;
+      const SHIP_SCALE = 1.035; // 10% smaller (was 1.15)
       const sg = shipProfile.singleGun;
       const dg = shipProfile.doubleGuns;
 
@@ -2069,13 +2082,11 @@ function DestroyerWorld({
 
   return (
     <>
-      <color attach="background" args={[LEVELS[level.current]?.bgTint || '#0a0818']} />
+      {/* No scene background — transparent, CosmicStarfield shows through */}
       <ambientLight intensity={IS_MOBILE ? 0.55 : 0.35} />
       <directionalLight intensity={0.65} color="#93c5fd" position={[8, 10, 14]} />
       <directionalLight intensity={0.32} color="#f8fafc" position={[-12, -8, 12]} />
       <FixedCam shake={shake} />
-      <SpaceBG />
-      <Dust />
       <ShooterShip
         posRef={shipPos}
         color={sCol}
