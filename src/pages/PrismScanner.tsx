@@ -141,6 +141,174 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/* ── Interactive Scanning Sequence ── */
+function ScanningSequence({ targetAddress }: { targetAddress: string }) {
+  const [phase, setPhase] = useState(0);
+  const [scanHits, setScanHits] = useState(0);
+  const [scanMisses, setScanMisses] = useState(0);
+  const [blips, setBlips] = useState<{ id: number; x: number; y: number; isSybil: boolean; hit?: boolean }[]>([]);
+  const blipIdRef = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Progress through scan phases
+  useEffect(() => {
+    const timers = [
+      setTimeout(() => setPhase(1), 800),
+      setTimeout(() => setPhase(2), 2000),
+      setTimeout(() => setPhase(3), 3500),
+      setTimeout(() => setPhase(4), 5000),
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  // Spawn blips for mini-game
+  useEffect(() => {
+    if (phase < 2) return;
+    const interval = setInterval(() => {
+      const id = ++blipIdRef.current;
+      const isSybil = Math.random() < 0.4;
+      setBlips((prev) => {
+        // Max 6 blips at once
+        const active = prev.filter((b) => !b.hit).slice(-5);
+        return [...active, { id, x: 10 + Math.random() * 80, y: 10 + Math.random() * 70, isSybil }];
+      });
+      // Auto-remove after 2.5s
+      setTimeout(() => setBlips((prev) => prev.filter((b) => b.id !== id)), 2500);
+    }, 700);
+    return () => clearInterval(interval);
+  }, [phase]);
+
+  const handleBlipClick = (id: number, isSybil: boolean) => {
+    if (isSybil) {
+      setScanHits((h) => h + 1);
+    } else {
+      setScanMisses((m) => m + 1);
+    }
+    setBlips((prev) => prev.map((b) => (b.id === id ? { ...b, hit: true } : b)));
+  };
+
+  const phases = [
+    'Connecting to Solana RPC...',
+    'Fetching transaction history',
+    'Analyzing 23 risk signals',
+    'Tracing funding graph',
+    'Profiling behavior patterns',
+  ];
+
+  return (
+    <div className="rounded-xl border border-amber-500/[0.15] bg-gradient-to-br from-amber-900/[0.08] to-red-900/[0.06] p-4 animate-in fade-in duration-300">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Crosshair className="w-6 h-6 text-amber-400 animate-spin" style={{ animationDuration: '3s' }} />
+            <div
+              className="absolute inset-0 w-6 h-6 rounded-full border border-amber-400/20 animate-ping"
+              style={{ animationDuration: '2s' }}
+            />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-amber-200/80">Hunting Target...</p>
+            <p className="text-[10px] text-white/25 font-mono">
+              {targetAddress.slice(0, 10)}...{targetAddress.slice(-6)}
+            </p>
+          </div>
+        </div>
+        {phase >= 2 && (scanHits > 0 || scanMisses > 0) && (
+          <div className="text-right text-[10px] font-mono">
+            <span className="text-red-400">{scanHits} hits</span>
+            {scanMisses > 0 && <span className="text-white/20 ml-2">-{scanMisses}</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Radar / Mini-game area */}
+      <div
+        ref={containerRef}
+        className="relative h-32 rounded-lg bg-black/20 border border-amber-500/[0.06] overflow-hidden mb-3"
+      >
+        {/* Radar sweep */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: 'conic-gradient(from 0deg, transparent 0deg, rgba(245,158,11,0.08) 30deg, transparent 60deg)',
+            animation: 'spin 4s linear infinite',
+          }}
+        />
+        {/* Grid lines */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)',
+            backgroundSize: '20% 20%',
+          }}
+        />
+        {/* Blips */}
+        {blips
+          .filter((b) => !b.hit)
+          .map((blip) => (
+            <button
+              key={blip.id}
+              onClick={() => handleBlipClick(blip.id, blip.isSybil)}
+              className={`absolute w-6 h-6 rounded-full -translate-x-1/2 -translate-y-1/2 transition-all cursor-crosshair animate-in fade-in zoom-in-50 duration-300 ${
+                blip.isSybil
+                  ? 'bg-red-500/30 border border-red-400/40 hover:bg-red-500/60 hover:scale-125'
+                  : 'bg-cyan-500/20 border border-cyan-400/20 hover:bg-cyan-500/40 hover:scale-125'
+              }`}
+              style={{ left: `${blip.x}%`, top: `${blip.y}%` }}
+              title={blip.isSybil ? 'Sybil!' : 'Clean wallet'}
+            >
+              <span className="text-[7px] font-mono text-white/40 block text-center leading-6">
+                {blip.isSybil ? '!' : '·'}
+              </span>
+            </button>
+          ))}
+        {/* Hit effects */}
+        {blips
+          .filter((b) => b.hit)
+          .map((blip) => (
+            <div
+              key={`hit-${blip.id}`}
+              className={`absolute w-6 h-6 rounded-full -translate-x-1/2 -translate-y-1/2 animate-ping ${
+                blip.isSybil ? 'bg-red-500/40' : 'bg-cyan-500/20'
+              }`}
+              style={{ left: `${blip.x}%`, top: `${blip.y}%`, animationDuration: '0.5s', animationIterationCount: '1' }}
+            />
+          ))}
+        {/* Center reticle */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 border border-amber-400/30 rounded-full" />
+        {phase < 2 && (
+          <p className="absolute inset-0 flex items-center justify-center text-[10px] text-amber-300/30 font-mono animate-pulse">
+            Initializing radar...
+          </p>
+        )}
+      </div>
+
+      {/* Progress steps */}
+      <div className="space-y-1">
+        {phases.map((step, i) => (
+          <div key={step} className="flex items-center gap-2">
+            <div
+              className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
+                i < phase ? 'bg-amber-400' : i === phase ? 'bg-amber-400 animate-pulse' : 'bg-white/[0.06]'
+              }`}
+            />
+            <span
+              className={`text-[10px] font-mono transition-colors duration-300 ${
+                i < phase ? 'text-amber-300/40' : i === phase ? 'text-amber-300/70' : 'text-white/[0.08]'
+              }`}
+            >
+              {step}
+              {i < phase && <span className="text-emerald-400/50 ml-1">✓</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function PrismScanner() {
   const navigate = useNavigate();
   const { publicKey } = useWallet();
@@ -369,42 +537,8 @@ export default function PrismScanner() {
           </button>
         </div>
 
-        {/* Scanning Animation */}
-        {loading && (
-          <div className="rounded-xl border border-amber-500/[0.15] bg-gradient-to-r from-amber-900/[0.08] to-red-900/[0.06] p-5 animate-in fade-in duration-300">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="relative">
-                <Crosshair className="w-6 h-6 text-amber-400 animate-spin" style={{ animationDuration: '3s' }} />
-                <div className="absolute inset-0 w-6 h-6 rounded-full border border-amber-400/30 animate-ping" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-amber-200/80">Acquiring Target...</p>
-                <p className="text-[10px] text-white/25 font-mono">
-                  {query.slice(0, 12)}...{query.slice(-6)}
-                </p>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              {[
-                'Fetching on-chain data',
-                'Analyzing 23 risk signals',
-                'Tracing funding graph',
-                'Profiling behavior patterns',
-              ].map((step, i) => (
-                <div
-                  key={step}
-                  className="flex items-center gap-2 animate-in fade-in slide-in-from-left-2"
-                  style={{ animationDelay: `${i * 400}ms`, animationFillMode: 'backwards' }}
-                >
-                  <div className={`w-1.5 h-1.5 rounded-full ${i < 2 ? 'bg-amber-400 animate-pulse' : 'bg-white/10'}`} />
-                  <span className={`text-[11px] font-mono ${i < 2 ? 'text-amber-300/60' : 'text-white/15'}`}>
-                    {step}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Scanning — Interactive Hunt Sequence */}
+        {loading && <ScanningSequence targetAddress={query} />}
 
         {/* Recent targets */}
         {!loading && recentWallets.length > 0 && !result && (

@@ -9711,6 +9711,56 @@ function extractSolTransfers(parsed, targetAddress) {
         outgoing.set(receiver.addr, existing);
       }
     }
+
+
+    // ── SPL Token Transfer Detection ──
+    // Catches funding via tokens (USDC, etc.) that don't change SOL balances
+    const preTok = tx.meta.preTokenBalances || [];
+    const postTok = tx.meta.postTokenBalances || [];
+    if (preTok.length > 0 || postTok.length > 0) {
+      // Build owner→balance maps for pre and post
+      const preMap = new Map(); // `${owner}:${mint}` → uiAmount
+      for (const tb of preTok) {
+        const owner = tb.owner;
+        if (owner) preMap.set(`${owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
+      }
+      const postMap = new Map();
+      for (const tb of postTok) {
+        const owner = tb.owner;
+        if (owner) postMap.set(`${owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
+      }
+      // Check if target gained tokens
+      let targetGained = false;
+      for (const [key, postAmt] of postMap) {
+        if (!key.startsWith(targetAddress + ':')) continue;
+        const preAmt = preMap.get(key) || 0;
+        if (postAmt > preAmt + 0.001) { targetGained = true; break; }
+      }
+      // If target gained tokens and we didn't already record a SOL sender for this tx,
+      // find who sent the tokens (owner whose balance decreased for same mint)
+      if (targetGained && Math.abs(targetDiff) < 0.001) {
+        for (const [key, preAmt] of preMap) {
+          const [owner] = key.split(':');
+          if (owner === targetAddress) continue;
+          const postAmt = postMap.get(key) || 0;
+          if (preAmt > postAmt + 0.001 && !isProgramAddress(owner, txProgramIds)) {
+            // This owner sent tokens to target — record as funding source
+            // Use 0.01 SOL equivalent per token tx as proxy (actual value unknown without price)
+            const tokenSolProxy = 0.01;
+            const existing = incoming.get(owner) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
+            existing.totalSol += tokenSolProxy;
+            existing.count += 1;
+            existing.firstTime = Math.min(existing.firstTime, blockTime);
+            existing.lastTime = Math.max(existing.lastTime, blockTime);
+            existing.txTypeSet.add('token_transfer');
+            const sig = tx.transaction.signatures?.[0];
+            if (sig) existing.signatures.push(sig);
+            incoming.set(owner, existing);
+            break; // one sender per tx is enough
+          }
+        }
+      }
+    }
   }
   return { incoming, outgoing, programIds };
 }
