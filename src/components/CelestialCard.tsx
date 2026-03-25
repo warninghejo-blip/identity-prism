@@ -2,7 +2,17 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, forwardRef
 import { motion } from 'framer-motion';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
-import { Sparkles as SparklesIcon, RotateCw, RotateCcw } from 'lucide-react';
+import {
+  Sparkles as SparklesIcon,
+  RotateCw,
+  RotateCcw,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  ArrowDownLeft,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Planet3D } from './Planet3D';
@@ -43,7 +53,7 @@ interface CelestialCardProps {
   data: WalletData;
   captureMode?: boolean;
   captureView?: 'front' | 'back';
-  captureTab?: 'stats' | 'badges';
+  captureTab?: 'stats' | 'badges' | 'intel';
   fromBlackHole?: boolean;
   onSceneReady?: () => void;
 }
@@ -96,6 +106,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
       clusterSimilarity: number;
     };
   } | null>(null);
+  const [fundingSources, setFundingSources] = useState<
+    {
+      address: string;
+      label: string | null;
+      type: string;
+      totalSolReceived: number;
+      transactionCount: number;
+      percentage: number;
+    }[]
+  >([]);
   const [forgeFrame, setForgeFrame] = useState<string | null>(null);
   const [forgeAura, setForgeAura] = useState<string | null>(null);
   const [forgeTitle, setForgeTitle] = useState<string | null>(null);
@@ -104,7 +124,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const transitionTimersRef = useRef<number[]>([]);
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
-  const defaultTab = captureTab === 'badges' ? 'badges' : 'stats';
+  const defaultTab = captureTab === 'badges' ? 'badges' : captureTab === 'intel' ? 'intel' : 'stats';
   const compositeData = useCompositeScore(address);
 
   // Forge loadout — always load (needed for NFT capture too)
@@ -155,6 +175,18 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
       })
       .catch(() => {});
   }, [address, isCapture, refetchComposite]);
+
+  // Fetch funding sources for Intel tab
+  useEffect(() => {
+    if (!address || isCapture) return;
+    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    fetch(`${base}/api/sybil/funding-sources?address=${address}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.sources) setFundingSources(d.sources);
+      })
+      .catch(() => {});
+  }, [address, isCapture]);
 
   const clearTransitionTimers = useCallback(() => {
     transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -691,18 +723,24 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 </div>
                 <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
                   <div className="px-6 pt-4">
-                    <TabsList className="w-full grid grid-cols-2 bg-white/5 border border-white/5 rounded-lg p-0.5 pointer-events-auto">
+                    <TabsList className="w-full grid grid-cols-3 bg-white/5 border border-white/5 rounded-lg p-0.5 pointer-events-auto">
                       <TabsTrigger
                         value="stats"
-                        className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto"
+                        className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto text-[11px]"
                       >
                         STATS
                       </TabsTrigger>
                       <TabsTrigger
                         value="badges"
-                        className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto"
+                        className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto text-[11px]"
                       >
                         BADGES
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="intel"
+                        className="data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto text-[11px]"
+                      >
+                        INTEL
                       </TabsTrigger>
                     </TabsList>
                   </div>
@@ -835,6 +873,240 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         })
                       )}
                     </div>
+                  </TabsContent>
+
+                  {/* INTEL CONTENT — full sybil breakdown */}
+                  <TabsContent
+                    value="intel"
+                    forceMount
+                    className="flex-1 overflow-y-auto no-scrollbar px-5 pt-3 pb-4 relative z-20 pointer-events-auto data-[state=inactive]:hidden"
+                  >
+                    {!sybilRisk ? (
+                      <div className="text-center py-10 opacity-50">
+                        <p className="text-xs text-white/40">Analyzing wallet...</p>
+                        <p className="text-[10px] text-white/20 mt-1">Sybil intelligence loading</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 pb-2">
+                        {/* Trust Overview */}
+                        <div className="rounded-xl border border-amber-500/15 bg-gradient-to-br from-amber-900/10 to-orange-900/10 p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[9px] uppercase tracking-[0.15em] text-amber-300/50 font-bold flex items-center gap-1">
+                              {sybilRisk.trustScore >= 60 ? (
+                                <ShieldCheck className="w-3 h-3" />
+                              ) : (
+                                <ShieldAlert className="w-3 h-3" />
+                              )}
+                              Trust Assessment
+                            </span>
+                            <span
+                              className="text-xs font-bold px-2 py-0.5 rounded-full"
+                              style={{
+                                background:
+                                  sybilRisk.trustScore >= 80
+                                    ? 'rgba(34,197,94,0.2)'
+                                    : sybilRisk.trustScore >= 60
+                                      ? 'rgba(59,130,246,0.2)'
+                                      : sybilRisk.trustScore >= 40
+                                        ? 'rgba(234,179,8,0.2)'
+                                        : 'rgba(239,68,68,0.2)',
+                                color:
+                                  sybilRisk.trustScore >= 80
+                                    ? '#4ade80'
+                                    : sybilRisk.trustScore >= 60
+                                      ? '#60a5fa'
+                                      : sybilRisk.trustScore >= 40
+                                        ? '#facc15'
+                                        : '#f87171',
+                              }}
+                            >
+                              {sybilRisk.trustGrade} · {sybilRisk.trustScore}
+                            </span>
+                          </div>
+                          <div className="flex gap-3">
+                            <div className="flex-1">
+                              <div className="text-[10px] text-white/30 mb-1">Risk Score</div>
+                              <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{
+                                    width: `${sybilRisk.riskScore}%`,
+                                    background:
+                                      sybilRisk.riskScore < 30
+                                        ? '#4ade80'
+                                        : sybilRisk.riskScore < 60
+                                          ? '#facc15'
+                                          : '#f87171',
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-lg font-bold text-white/80">{sybilRisk.riskScore}</span>
+                              <span className="text-[9px] text-white/20">/100</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Signals by category */}
+                        {sybilRisk.signals &&
+                          sybilRisk.signals.length > 0 &&
+                          (() => {
+                            const catOrder = ['behavioral', 'financial', 'network'] as const;
+                            const catMeta: Record<string, { label: string; color: string }> = {
+                              behavioral: { label: 'BEHAVIORAL', color: '#f59e0b' },
+                              financial: { label: 'FINANCIAL', color: '#3b82f6' },
+                              network: { label: 'NETWORK', color: '#a855f7' },
+                            };
+                            const grouped = catOrder
+                              .map((cat) => ({
+                                cat,
+                                signals: sybilRisk.signals!.filter((s) => s.category === cat),
+                              }))
+                              .filter((g) => g.signals.length > 0);
+
+                            return grouped.map(({ cat, signals }) => {
+                              const meta = catMeta[cat] || { label: cat.toUpperCase(), color: '#94a3b8' };
+                              const detected = signals.filter((s) => s.detected).length;
+                              return (
+                                <div key={cat} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span
+                                      className="text-[9px] uppercase tracking-[0.12em] font-bold"
+                                      style={{ color: `${meta.color}cc` }}
+                                    >
+                                      {meta.label}
+                                    </span>
+                                    <span
+                                      className="text-[9px] font-mono"
+                                      style={{ color: detected > 0 ? '#f87171aa' : '#4ade80aa' }}
+                                    >
+                                      {detected}/{signals.length} flagged
+                                    </span>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    {signals.map((sig) => (
+                                      <div
+                                        key={sig.id}
+                                        className={`flex items-start gap-2 p-2 rounded-lg ${sig.detected ? 'bg-red-500/5 border border-red-500/10' : 'bg-white/[0.01]'}`}
+                                      >
+                                        {sig.detected ? (
+                                          sig.severity === 'danger' ? (
+                                            <AlertTriangle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
+                                          ) : (
+                                            <XCircle className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+                                          )
+                                        ) : (
+                                          <CheckCircle2 className="w-3 h-3 text-emerald-500/50 shrink-0 mt-0.5" />
+                                        )}
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center justify-between gap-1">
+                                            <span
+                                              className={`text-[10px] font-semibold ${sig.detected ? 'text-white/80' : 'text-white/30'}`}
+                                            >
+                                              {sig.name}
+                                            </span>
+                                            {sig.detected && sig.value && (
+                                              <span className="text-[9px] text-amber-300/60 font-mono shrink-0">
+                                                {sig.value}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {sig.detected && sig.description && (
+                                            <p className="text-[9px] text-white/25 mt-0.5 leading-snug">
+                                              {sig.description}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            });
+                          })()}
+
+                        {/* Key Metrics */}
+                        {sybilRisk.metrics && (
+                          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                            <div className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold mb-2">
+                              Key Metrics
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                              {[
+                                { label: 'Wallet Age', value: `${sybilRisk.metrics.walletAgeDays}d` },
+                                { label: 'Transactions', value: sybilRisk.metrics.txCount.toLocaleString() },
+                                {
+                                  label: 'Active Days',
+                                  value: `${sybilRisk.metrics.activeDaysCount} (${(sybilRisk.metrics.activeDaysRatio * 100).toFixed(0)}%)`,
+                                },
+                                { label: 'Programs Used', value: String(sybilRisk.metrics.uniquePrograms) },
+                                { label: 'Token Types', value: String(sybilRisk.metrics.tokenDiversityCount) },
+                                { label: 'NFTs Held', value: String(sybilRisk.metrics.nftCount) },
+                                { label: 'Balance', value: `${sybilRisk.metrics.balance.toFixed(2)} SOL` },
+                                {
+                                  label: 'Peak Balance',
+                                  value: `${sybilRisk.metrics.historicalMaxBalance.toFixed(2)} SOL`,
+                                },
+                                { label: 'In Volume', value: `${sybilRisk.metrics.incomingVolume.toFixed(1)} SOL` },
+                                { label: 'Out Volume', value: `${sybilRisk.metrics.outgoingVolume.toFixed(1)} SOL` },
+                                { label: 'Dust Ratio', value: `${sybilRisk.metrics.dustRatio.toFixed(0)}%` },
+                                { label: 'Cluster Sim.', value: `${sybilRisk.metrics.clusterSimilarity.toFixed(0)}%` },
+                              ].map(({ label, value }) => (
+                                <div key={label} className="flex justify-between">
+                                  <span className="text-[10px] text-white/25">{label}</span>
+                                  <span className="text-[10px] text-white/60 font-mono">{value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Funding Sources */}
+                        {fundingSources.length > 0 && (
+                          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                            <div className="flex items-center gap-1.5 mb-2">
+                              <ArrowDownLeft className="w-3 h-3 text-blue-400/50" />
+                              <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">
+                                Funding Sources
+                              </span>
+                            </div>
+                            <div className="space-y-1.5">
+                              {fundingSources.slice(0, 8).map((src, i) => (
+                                <div key={i} className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.01]">
+                                  <div
+                                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                                    style={{
+                                      background:
+                                        src.type === 'cex' ? '#4ade80' : src.type === 'bridge' ? '#60a5fa' : '#94a3b8',
+                                    }}
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-semibold text-white/60 truncate">
+                                        {src.label || `${src.address.slice(0, 4)}...${src.address.slice(-4)}`}
+                                      </span>
+                                      <span className="text-[9px] text-white/40 font-mono shrink-0 ml-1">
+                                        {src.totalSolReceived.toFixed(1)} SOL
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between mt-0.5">
+                                      <span className="text-[9px] text-white/20">
+                                        {src.type === 'cex' ? 'Exchange' : src.type === 'bridge' ? 'Bridge' : 'Wallet'}{' '}
+                                        · {src.transactionCount} txs
+                                      </span>
+                                      <span className="text-[9px] text-white/20 font-mono">
+                                        {src.percentage.toFixed(0)}%
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </TabsContent>
                 </Tabs>
               </div>

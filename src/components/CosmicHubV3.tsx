@@ -112,12 +112,12 @@ const MODULES: ModuleDef[] = [
   },
   {
     id: 'scanner',
-    label: 'Scanner',
+    label: 'Sybil Hunt',
     route: '/scan',
-    desc: 'Scan & explore wallets',
+    desc: 'Hunt sybils for bounty',
     icon: <HubIcon name="scanner" />,
     iconName: 'scanner',
-    colorClass: 'from-cyan-500 to-sky-400',
+    colorClass: 'from-amber-500 to-red-400',
   },
   {
     id: 'arena',

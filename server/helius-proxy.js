@@ -5660,7 +5660,7 @@ const server = http.createServer(async (req, res) => {
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
       // Whitelist valid earn sources — reject unknown sources to prevent rate-limit bypass
       // burn_tokens/burn_nfts REMOVED — no on-chain verification, was exploitable for 144K coins/day
-      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20, text_quest: 1200 };
+      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 3, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20, text_quest: 1200, sybil_hunt: 10 };
       if (!source || !MAX_EARN_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
       const maxAllowed = MAX_EARN_PER_CALL[source];
       if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
@@ -6246,6 +6246,7 @@ const server = http.createServer(async (req, res) => {
       let hubSpokeScore = 0;
       const allSiblings = new Set();
       let hasSolDomain = false;
+      let topFunderPctExport = 0; // share of top funder in total received SOL
       let cexTrustBonus = 0; // CEX funding trust bonus — applied later to trustBonus
 
       let resolvedTopFunder = null; // shared: used for cluster key later
@@ -6261,6 +6262,7 @@ const server = http.createServer(async (req, res) => {
           if (topFunder && topAmount >= 0.01) {
             const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
             const topFunderPct = topAmount / totalReceived;
+            topFunderPctExport = topFunderPct;
             if (topFunderPct > 0.6) {
               fundingChainDepth = 1;
               // Skip cluster analysis if top funder is a known CEX/bridge (reduces false positives)
@@ -6535,6 +6537,20 @@ const server = http.createServer(async (req, res) => {
 
       const uniquePrograms = allProgramIds.size;
 
+      // Signal 0: No Transaction History — penalise wallets with zero or near-zero data
+      // Without any activity there's no evidence of human behaviour; don't grant high trust
+      const noHistory = totalSigCount < 3;
+      const thinHistory = !noHistory && totalSigCount < 10 && walletAgeDays < 14;
+      signals.push({
+        id: 'no_history', name: noHistory ? 'No Transaction History' : 'Thin History', category: 'behavioral',
+        detected: noHistory || thinHistory, weight: noHistory ? 30 : 15,
+        severity: noHistory ? 'danger' : 'warning',
+        value: `${totalSigCount} txs`,
+        description: noHistory
+          ? 'Wallet has virtually no transaction history — trust cannot be assessed'
+          : `Only ${totalSigCount} transactions in ${walletAgeDays} days — insufficient data`,
+      });
+
       // Signal 1: Wallet Age + Fresh Burst (MERGED — no double-counting)
       // Graduated: new wallet alone = moderate, new wallet + burst = high
       const isNewWallet = walletAgeDays < 30;
@@ -6684,27 +6700,46 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Signal 14: Funding Chain Depth — multi-hop single-source funding
+      // depth 1 + non-CEX = wallet-to-wallet funding (mild risk), depth 2+ = layered chain (high risk)
       const deepChain = fundingChainDepth >= 2;
+      const walletToWallet = fundingChainDepth === 1 && cexTrustBonus === 0; // funded by a random wallet, not CEX
       signals.push({
-        id: 'funding_chain', name: 'Funding Chain', category: 'network',
-        detected: deepChain, weight: 12,
-        severity: deepChain ? 'danger' : 'info',
+        id: 'funding_chain', name: deepChain ? 'Funding Chain' : (walletToWallet ? 'Wallet-to-Wallet Funding' : 'Funding Chain'), category: 'network',
+        detected: deepChain || walletToWallet, weight: deepChain ? 15 : (walletToWallet ? 10 : 0),
+        severity: deepChain ? 'danger' : (walletToWallet ? 'warning' : 'info'),
         value: `${fundingChainDepth} hops`,
         description: deepChain
-          ? `Funding traced through ${fundingChainDepth} intermediary wallets — layered sybil pattern`
-          : 'No suspicious funding chains',
+          ? `Funding traced through ${fundingChainDepth} intermediary wallets — layered sybil relay`
+          : walletToWallet
+            ? 'Primary funding from another wallet (not exchange) — common sybil pattern'
+            : cexTrustBonus > 0 ? 'Funded from known exchange (KYC origin)' : 'No suspicious funding chains',
       });
 
-      // Signal 15: Hub-and-Spoke — mass distribution (only fires at 15+ siblings, above cluster threshold)
-      const isHubSpoke = allSiblings.size >= 15;
+      // Signal 15: Hub-and-Spoke — mass distribution from single funder
+      const isHubSpokeMass = allSiblings.size >= 15;
+      const isHubSpokeSmall = !isHubSpokeMass && allSiblings.size >= 5;
       signals.push({
         id: 'hub_spoke', name: 'Hub-and-Spoke Funding', category: 'network',
-        detected: isHubSpoke, weight: 10,
-        severity: isHubSpoke ? 'warning' : 'info',
+        detected: isHubSpokeMass || isHubSpokeSmall, weight: isHubSpokeMass ? 15 : (isHubSpokeSmall ? 8 : 0),
+        severity: isHubSpokeMass ? 'danger' : (isHubSpokeSmall ? 'warning' : 'info'),
         value: `${allSiblings.size} siblings`,
-        description: isHubSpoke
-          ? `Funding source distributed to ${allSiblings.size}+ wallets — mass distribution pattern`
-          : 'No hub-and-spoke pattern detected',
+        description: isHubSpokeMass
+          ? `Funding source distributed to ${allSiblings.size}+ wallets — industrial sybil farm`
+          : isHubSpokeSmall
+            ? `Funding source also sent to ${allSiblings.size} other wallets — small cluster`
+            : 'No hub-and-spoke pattern detected',
+      });
+
+      // Signal 15b: Concentrated single-source funding (>90% from one non-CEX wallet)
+      const concentratedFunding = topFunderPctExport > 0.9 && cexTrustBonus === 0 && totalSolTxCount >= 3;
+      signals.push({
+        id: 'concentrated_funding', name: 'Single-Source Concentration', category: 'network',
+        detected: concentratedFunding, weight: 10,
+        severity: concentratedFunding ? 'warning' : 'info',
+        value: concentratedFunding ? `${(topFunderPctExport * 100).toFixed(0)}% from one wallet` : 'Diversified',
+        description: concentratedFunding
+          ? 'Over 90% of received SOL comes from a single non-exchange wallet — typical sybil relay'
+          : 'Funding sources are diversified or from known exchanges',
       });
 
       // Signal 16: Bot-like Hour Distribution — flat or extremely narrow time windows
@@ -6726,7 +6761,7 @@ const server = http.createServer(async (req, res) => {
       const isFarming = farmingRatio > 0.7 && shallowProtocols >= 5;
       signals.push({
         id: 'airdrop_farming', name: 'Airdrop Farming Pattern', category: 'behavioral',
-        detected: isFarming, weight: 14,
+        detected: isFarming, weight: 18,
         severity: isFarming ? 'danger' : 'info',
         value: `${shallowProtocols}/${programInteractionCounts.size} shallow`,
         description: isFarming
@@ -6888,7 +6923,15 @@ const server = http.createServer(async (req, res) => {
       }
 
       const riskLevel = riskScore >= 75 ? 'critical' : riskScore >= 50 ? 'high' : riskScore >= 30 ? 'medium' : riskScore >= 10 ? 'low' : 'clean';
-      const trustScore = Math.max(0, 100 - riskScore);
+      // Zero-data wallets get zero trust — can't assess what doesn't exist
+      let trustScore;
+      if (totalSigCount === 0) {
+        trustScore = 0;
+      } else if (totalSigCount < 3) {
+        trustScore = Math.min(10, Math.max(0, 100 - riskScore));
+      } else {
+        trustScore = Math.max(0, 100 - riskScore);
+      }
       const trustGrade = trustScore >= 90 ? 'A+' : trustScore >= 80 ? 'A' : trustScore >= 70 ? 'B' : trustScore >= 60 ? 'C' : trustScore >= 50 ? 'D' : 'F';
 
       const analysis = {
@@ -9184,6 +9227,7 @@ const PRISM_EARN_COOLDOWN_TABLE = {
   quest_milestone: 24 * 60 * 60_000,   // 1 per day
   challenge_win: 10 * 60_000,           // 10 min (was 10s — exploitable)
   scan_wallet: 60_000,                  // 1 min
+  sybil_hunt: 120_000,                  // 2 min
   text_quest: 24 * 60 * 60_000,        // 1 per day (was 30s — exploitable for 288K/day)
   first_mint: 30 * 24 * 60 * 60_000,   // effectively one-time (30 days)
   referral: 60 * 60_000,               // 1 per hour

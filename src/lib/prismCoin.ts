@@ -52,7 +52,8 @@ export type PrismEarnSource =
   | 'challenge_win'
   | 'first_mint'
   | 'referral'
-  | 'text_quest';
+  | 'text_quest'
+  | 'sybil_hunt';
 
 export type PrismSpendSource =
   | 'forge_frame'
@@ -79,6 +80,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   first_mint: 100, // one-time bonus for first mint
   referral: 20, // per referred user who scans
   text_quest: 1, // text quest reward (custom amount)
+  sybil_hunt: 10, // bounty for catching a sybil (trustScore < 50)
 };
 
 // ── Local storage keys ──

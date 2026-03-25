@@ -1,5 +1,5 @@
 /**
- * Prism Scanner — Unified Trust Report (single scroll).
+ * Sybil Hunt — Gamified sybil detection bounty system.
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -32,6 +32,10 @@ import {
   Check,
   ArrowDownLeft,
   Zap,
+  Crosshair,
+  Trophy,
+  Target,
+  Coins,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PageShell from '@/components/PageShell';
@@ -46,10 +50,36 @@ import {
   formatWalletAge,
   type WalletPreview,
 } from '@/components/prism/shared';
+import { earnPrism } from '@/lib/prismCoin';
 
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
 const MAX_RECENT = 6;
 const BASE = () => (typeof window !== 'undefined' ? window.location.origin : '');
+
+/* ── Hunt stats (localStorage) ── */
+const HUNT_STATS_KEY = 'sybil_hunt_stats_v1';
+interface HuntStats {
+  totalHunts: number;
+  sybilsCaught: number;
+  coinsEarned: number;
+}
+function getHuntStats(): HuntStats {
+  try {
+    return JSON.parse(localStorage.getItem(HUNT_STATS_KEY) || '{}') as HuntStats;
+  } catch {
+    return { totalHunts: 0, sybilsCaught: 0, coinsEarned: 0 };
+  }
+}
+function updateHuntStats(update: Partial<HuntStats>) {
+  const stats = getHuntStats();
+  const merged = {
+    totalHunts: (stats.totalHunts || 0) + (update.totalHunts || 0),
+    sybilsCaught: (stats.sybilsCaught || 0) + (update.sybilsCaught || 0),
+    coinsEarned: (stats.coinsEarned || 0) + (update.coinsEarned || 0),
+  };
+  localStorage.setItem(HUNT_STATS_KEY, JSON.stringify(merged));
+  return merged;
+}
 
 function getRecentWallets(): string[] {
   try {
@@ -141,6 +171,12 @@ export default function PrismScanner() {
   const [sybilLoading, setSybilLoading] = useState(false);
   const [fundingSources, setFundingSources] = useState<FundingSource[]>([]);
 
+  // Hunt states
+  const [huntStats, setHuntStats] = useState<HuntStats>(getHuntStats);
+  const [huntVerdict, setHuntVerdict] = useState<'sybil' | 'clean' | null>(null);
+  const [huntCoinsEarned, setHuntCoinsEarned] = useState(0);
+  const [showVerdictAnim, setShowVerdictAnim] = useState(false);
+
   // Auto-scan on wallet connect / wallet change
   const hasAutoScanned = useRef<string | null>(null);
   useEffect(() => {
@@ -176,6 +212,7 @@ export default function PrismScanner() {
     const cached = sybilClientCache.get(addr);
     if (cached && Date.now() - cached.ts < 1800_000) {
       setSybilData(cached.data);
+      processHuntVerdict(cached.data, addr);
       return;
     }
     setSybilLoading(true);
@@ -183,6 +220,7 @@ export default function PrismScanner() {
       const r = await fetch(`${BASE()}/api/sybil/analysis?address=${addr}`);
       if (r.status === 429 && cached) {
         setSybilData(cached.data);
+        processHuntVerdict(cached.data, addr);
         return;
       }
       if (!r.ok) {
@@ -192,12 +230,41 @@ export default function PrismScanner() {
       const data = await r.json();
       sybilClientCache.set(addr, { data, ts: Date.now() });
       setSybilData(data);
+      processHuntVerdict(data, addr);
     } catch {
       setSybilData(null);
     } finally {
       setSybilLoading(false);
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const processHuntVerdict = useCallback(
+    (data: SybilAnalysis, addr: string) => {
+      if (!data || !myAddress || addr === myAddress) return; // don't reward self-scan
+      const isSybil = data.trustScore < 50;
+      setHuntVerdict(isSybil ? 'sybil' : 'clean');
+      setShowVerdictAnim(true);
+      setTimeout(() => setShowVerdictAnim(false), 3000);
+
+      const coins = isSybil ? 10 : 3;
+      setHuntCoinsEarned(coins);
+      const newStats = updateHuntStats({
+        totalHunts: 1,
+        sybilsCaught: isSybil ? 1 : 0,
+        coinsEarned: coins,
+      });
+      setHuntStats(newStats);
+
+      // Award coins
+      earnPrism(
+        myAddress,
+        isSybil ? 'sybil_hunt' : 'scan_wallet',
+        coins,
+        isSybil ? `Sybil bounty: ${addr.slice(0, 8)}...` : `Scanned: ${addr.slice(0, 8)}...`,
+      ).catch(() => {});
+    },
+    [myAddress],
+  );
 
   const fetchFunding = useCallback(async (addr: string) => {
     try {
@@ -221,6 +288,8 @@ export default function PrismScanner() {
       setResult(null);
       setSybilData(null);
       setFundingSources([]);
+      setHuntVerdict(null);
+      setHuntCoinsEarned(0);
 
       const data = await fetchWalletPreview(addr);
       setLoading(false);
@@ -253,9 +322,20 @@ export default function PrismScanner() {
   const tierColor = displayTier ? (TIER_COLORS_HEX[displayTier] ?? '#888') : '#888';
   const gradeStyle = result?.trustGrade ? (TRUST_GRADE_COLORS[result.trustGrade] ?? TRUST_GRADE_COLORS['C']) : null;
 
+  const huntRank =
+    huntStats.sybilsCaught >= 50
+      ? 'Apex Hunter'
+      : huntStats.sybilsCaught >= 20
+        ? 'Veteran'
+        : huntStats.sybilsCaught >= 10
+          ? 'Specialist'
+          : huntStats.sybilsCaught >= 3
+            ? 'Tracker'
+            : 'Recruit';
+
   return (
     <PageShell>
-      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/[0.06]">
+      <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-amber-500/[0.08]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <button
             onClick={() => startFadeTransition(() => goBack(navigate))}
@@ -263,33 +343,54 @@ export default function PrismScanner() {
           >
             <ArrowLeft className="w-4 h-4" /> Back
           </button>
-          <h1 className="text-sm font-bold bg-gradient-to-r from-cyan-500 to-sky-400 bg-clip-text text-transparent">
-            PRISM SCANNER
+          <h1 className="text-sm font-bold bg-gradient-to-r from-amber-400 to-red-500 bg-clip-text text-transparent flex items-center gap-1.5">
+            <Crosshair className="w-4 h-4 text-amber-400" />
+            SYBIL HUNT
           </h1>
           <div className="w-16" />
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
+        {/* Hunter Stats Bar */}
+        {(huntStats.totalHunts > 0 || myAddress) && (
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/[0.06] to-red-500/[0.04] border border-amber-500/[0.1]">
+            <Target className="w-4 h-4 text-amber-400/60 shrink-0" />
+            <div className="flex items-center gap-4 flex-1 text-[11px] font-mono">
+              <span className="text-amber-300/80 font-bold">{huntRank}</span>
+              <span className="text-white/30">
+                <span className="text-white/50">{huntStats.totalHunts || 0}</span> hunts
+              </span>
+              <span className="text-white/30">
+                <span className="text-red-400/80">{huntStats.sybilsCaught || 0}</span> caught
+              </span>
+              <span className="text-white/30 ml-auto flex items-center gap-1">
+                <Coins className="w-3 h-3 text-amber-400/50" />
+                <span className="text-amber-300/70">{huntStats.coinsEarned || 0}</span>
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Search */}
         <div className="flex gap-2">
           <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+            <Crosshair className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-500/30" />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              placeholder="Enter any Solana wallet address..."
-              className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-cyan-500/50"
+              placeholder="Enter target wallet address..."
+              className="w-full pl-10 pr-4 py-3 bg-white/5 border border-amber-500/10 rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40 font-mono"
             />
           </div>
           <Button
             onClick={() => handleSearch()}
             disabled={loading}
-            className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold px-6"
+            className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-6"
           >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Scan'}
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'HUNT'}
           </Button>
         </div>
 
@@ -338,6 +439,50 @@ export default function PrismScanner() {
         )}
 
         {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+
+        {/* Hunt Verdict Banner */}
+        {huntVerdict && result && result.address !== myAddress && (
+          <div
+            className={`rounded-xl border p-4 text-center transition-all duration-500 ${
+              showVerdictAnim ? 'animate-in fade-in zoom-in-95 duration-500' : ''
+            } ${
+              huntVerdict === 'sybil'
+                ? 'bg-gradient-to-r from-red-500/10 to-amber-500/10 border-red-500/20'
+                : 'bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border-emerald-500/20'
+            }`}
+          >
+            {huntVerdict === 'sybil' ? (
+              <>
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                  <span className="text-lg font-black text-red-400 tracking-wide">SYBIL DETECTED</span>
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                </div>
+                <p className="text-xs text-red-300/60 mb-2">
+                  Trust Score: {sybilData?.trustScore ?? '?'}/100 — {sybilData?.trustGrade ?? '?'}
+                </p>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/20">
+                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-sm font-bold text-amber-300">+{huntCoinsEarned} Coins Bounty</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-center gap-2 mb-1">
+                  <Shield className="w-5 h-5 text-emerald-400" />
+                  <span className="text-lg font-black text-emerald-400 tracking-wide">WALLET CLEAR</span>
+                </div>
+                <p className="text-xs text-emerald-300/60 mb-2">
+                  Trust Score: {sybilData?.trustScore ?? '?'}/100 — No sybil activity detected
+                </p>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+                  <Coins className="w-3.5 h-3.5 text-white/40" />
+                  <span className="text-sm font-bold text-white/40">+{huntCoinsEarned} Coins (scan)</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Result */}
         {result && (
@@ -450,7 +595,7 @@ export default function PrismScanner() {
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold transition-all hover:bg-white/[0.03]"
                   style={{ color: tierColor }}
                 >
-                  <ExternalLink className="w-4 h-4" /> View Full Card
+                  <ExternalLink className="w-4 h-4" /> Full Card
                 </button>
                 {myAddress && result.address !== myAddress && (
                   <button
@@ -467,7 +612,7 @@ export default function PrismScanner() {
             {result.topPrograms && result.topPrograms.length > 0 && (
               <div className="glass-card p-4">
                 <p className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-white/30" /> Protocol Usage
+                  <Zap className="w-3.5 h-3.5 text-amber-400/40" /> Protocol Activity
                 </p>
                 <div className="space-y-2">
                   {(result.topPrograms as TopProgram[]).slice(0, 6).map((p, i) => {
@@ -498,9 +643,20 @@ export default function PrismScanner() {
 
         {!result && !loading && !error && (
           <div className="text-center py-16 text-white/20">
-            <Search className="w-12 h-12 mx-auto mb-4 opacity-20" />
-            <p className="text-sm">Search any Solana wallet to explore its trust profile</p>
-            <p className="text-xs text-white/10 mt-1">Trust Report, Sybil Analysis, Funding Sources & more</p>
+            <Crosshair className="w-12 h-12 mx-auto mb-4 opacity-15 text-amber-500" />
+            <p className="text-sm text-amber-200/40 font-bold">Hunt sybil wallets for bounty rewards</p>
+            <p className="text-xs text-white/15 mt-2 max-w-xs mx-auto leading-relaxed">
+              Enter any Solana address to analyze. If Trust Score &lt; 50, you collect a
+              <span className="text-amber-400/60 font-bold"> 10 coin bounty</span>. Clean wallets earn{' '}
+              <span className="text-white/30 font-bold">3 coins</span>.
+            </p>
+            <div className="flex items-center justify-center gap-4 mt-6 text-[10px] text-white/10">
+              <span>21 risk signals</span>
+              <span className="w-1 h-1 rounded-full bg-white/10" />
+              <span>funding graph</span>
+              <span className="w-1 h-1 rounded-full bg-white/10" />
+              <span>behavior analysis</span>
+            </div>
           </div>
         )}
       </div>
@@ -526,8 +682,8 @@ function SybilReportPanel({
     return (
       <div className="glass-card p-8 flex flex-col items-center gap-3 text-white/40">
         <Loader2 className="w-6 h-6 animate-spin text-cyan-400" />
-        <p className="text-sm font-bold">Analyzing wallet behavior...</p>
-        <p className="text-xs text-white/20">18+ risk signals, funding graph, timing patterns</p>
+        <p className="text-sm font-bold">Scanning target...</p>
+        <p className="text-xs text-white/20">21 risk signals, funding graph, timing patterns</p>
       </div>
     );
 
