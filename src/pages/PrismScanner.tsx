@@ -174,6 +174,19 @@ export default function PrismScanner() {
   const [huntCoinsEarned, setHuntCoinsEarned] = useState(0);
   const [showVerdictAnim, setShowVerdictAnim] = useState(false);
 
+  // Suggested targets from sybil graph
+  const [suggestedTargets, setSuggestedTargets] = useState<
+    { address: string; source: string; parentRisk?: number; parent?: string }[]
+  >([]);
+  useEffect(() => {
+    fetch(`${BASE()}/api/sybil/suggested-targets?limit=6`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.targets) setSuggestedTargets(d.targets);
+      })
+      .catch(() => {});
+  }, []);
+
   const fetchSybil = useCallback(async (addr: string) => {
     const cached = sybilClientCache.get(addr);
     if (cached && Date.now() - cached.ts < 1800_000) {
@@ -375,6 +388,36 @@ export default function PrismScanner() {
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/[0.04] border border-amber-500/[0.08] text-amber-300/40 text-xs font-mono hover:bg-amber-500/[0.1] hover:text-amber-300/70 transition-colors"
                 >
                   <Crosshair className="w-3 h-3" /> {addr.slice(0, 4)}...{addr.slice(-4)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Suggested Targets from sybil graph */}
+        {!loading && !result && suggestedTargets.length > 0 && (
+          <div>
+            <p className="text-[10px] text-red-400/30 uppercase tracking-wider mb-2 font-bold flex items-center gap-1.5">
+              <Target className="w-3 h-3" /> Bounty Board
+            </p>
+            <div className="space-y-1.5">
+              {suggestedTargets.map((t) => (
+                <button
+                  key={t.address}
+                  onClick={() => {
+                    setQuery(t.address);
+                    handleSearch(t.address);
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-red-500/[0.03] border border-red-500/[0.08] hover:bg-red-500/[0.08] transition-colors text-left"
+                >
+                  <Crosshair className="w-3.5 h-3.5 text-red-400/40 shrink-0" />
+                  <span className="text-xs font-mono text-white/50 flex-1">
+                    {t.address.slice(0, 6)}...{t.address.slice(-4)}
+                  </span>
+                  {t.parentRisk && <span className="text-[9px] font-mono text-red-400/50">risk {t.parentRisk}</span>}
+                  <span className="text-[9px] text-amber-400/40 font-bold">
+                    {t.source === 'cluster' ? 'CLUSTER' : 'LINKED'}
+                  </span>
                 </button>
               ))}
             </div>

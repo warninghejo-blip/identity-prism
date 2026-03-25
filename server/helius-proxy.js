@@ -6252,8 +6252,9 @@ const server = http.createServer(async (req, res) => {
       let resolvedTopFunder = null; // shared: used for cluster key later
       const fundingGraphPromise = (async () => {
         try {
-          // Reuse already-parsed txs from step above (no duplicate RPC calls)
-          const { incoming } = extractSolTransfers(parsedTxs, address);
+          // Combine recent + early txs for full funding picture (early txs contain first funding!)
+          const allTxsForFunding = [...parsedTxs, ...earlyParsedTxs];
+          const { incoming } = extractSolTransfers(allTxsForFunding, address);
           let topFunder = null, topAmount = 0;
           for (const [addr, info] of incoming) {
             if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
@@ -7433,6 +7434,48 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       respondJson(res, 200, { address, scamInteractions: [], scamCount: 0, riskLevel: 'unknown', error: 'Failed to check dark pool' });
     }
+    return;
+  }
+
+  // ═══ Sybil Suggested Targets — wallets to hunt ═══
+  if (pathname === '/api/sybil/suggested-targets' && req.method === 'GET') {
+    if (!ipRateLimit('sybil_targets', getClientIp(req), 5, 30000)) return respondJson(res, 429, { error: 'Rate limited' });
+    const exclude = url.searchParams.get('exclude') || '';
+    const excludeSet = new Set(exclude.split(',').filter(Boolean));
+    const limit = Math.min(20, Math.max(1, Number(url.searchParams.get('limit')) || 10));
+
+    // Collect unscanned siblings of known sybils
+    const candidates = new Map(); // address → { source, parentRisk }
+    for (const [addr, node] of Object.entries(sybilGraph.nodes)) {
+      if (!node.riskScore || node.riskScore < 40 || node.inferredFromCluster) continue;
+      // This is a directly-scanned suspicious wallet — its siblings are targets
+      for (const sib of (node.siblings || [])) {
+        if (excludeSet.has(sib)) continue;
+        const sibNode = sybilGraph.nodes[sib];
+        // Prefer siblings not yet directly scanned (only inferred)
+        if (!sibNode || sibNode.inferredFromCluster) {
+          candidates.set(sib, { source: 'sibling', parentRisk: node.riskScore, parent: addr.slice(0, 8) + '...' });
+        }
+      }
+    }
+    // Also add cluster members
+    for (const cluster of sybilGraph.flaggedClusters) {
+      for (const member of cluster.members) {
+        if (excludeSet.has(member) || candidates.has(member)) continue;
+        const mNode = sybilGraph.nodes[member];
+        if (!mNode || mNode.inferredFromCluster) {
+          candidates.set(member, { source: 'cluster', clusterLabel: cluster.label, funder: cluster.funder.slice(0, 8) + '...' });
+        }
+      }
+    }
+
+    // Sort by parent risk (highest first) and take limit
+    const sorted = [...candidates.entries()]
+      .sort((a, b) => (b[1].parentRisk || 0) - (a[1].parentRisk || 0))
+      .slice(0, limit)
+      .map(([addr, meta]) => ({ address: addr, ...meta }));
+
+    respondJson(res, 200, { targets: sorted, totalAvailable: candidates.size });
     return;
   }
 
