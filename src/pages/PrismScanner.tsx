@@ -503,19 +503,17 @@ export default function PrismScanner() {
           </div>
         )}
 
-        {/* Result */}
-        {result && (
+        {/* Result — only show after sybilData loaded (prevents score jumping) */}
+        {result && sybilData && (
           <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Target Dossier */}
             {(() => {
-              // Use sybilData trust when available (authoritative), fallback to wallet preview
-              const trustScore =
-                sybilData?.trustScore ?? (result.trustGrade === 'A+' ? 95 : result.trustGrade === 'A' ? 85 : 65);
-              const trustGrade = sybilData?.trustGrade ?? result.trustGrade ?? '?';
-              const riskScore = sybilData?.riskScore ?? 0;
-              const flaggedCount = sybilData?.signals?.filter((s) => s.detected).length ?? 0;
-              const totalSignals = sybilData?.signals?.length ?? 0;
-              const metrics = sybilData?.metrics ?? {};
+              const trustScore = sybilData.trustScore;
+              const trustGrade = sybilData.trustGrade;
+              const riskScore = sybilData.riskScore;
+              const flaggedCount = sybilData.signals.filter((s) => s.detected).length;
+              const totalSignals = sybilData.signals.length;
+              const metrics = sybilData.metrics;
               const gradeColor =
                 trustScore >= 80 ? '#22c55e' : trustScore >= 60 ? '#3b82f6' : trustScore >= 40 ? '#eab308' : '#ef4444';
 

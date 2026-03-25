@@ -6250,11 +6250,13 @@ const server = http.createServer(async (req, res) => {
       let cexTrustBonus = 0; // CEX funding trust bonus — applied later to trustBonus
 
       let resolvedTopFunder = null; // shared: used for cluster key later
+      let resolvedIncoming = null; // shared: expose for funding-sources cache
       const fundingGraphPromise = (async () => {
         try {
           // Combine recent + early txs for full funding picture (early txs contain first funding!)
           const allTxsForFunding = [...parsedTxs, ...earlyParsedTxs];
           const { incoming } = extractSolTransfers(allTxsForFunding, address);
+          resolvedIncoming = incoming;
           let topFunder = null, topAmount = 0;
           for (const [addr, info] of incoming) {
             if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
@@ -6990,7 +6992,23 @@ const server = http.createServer(async (req, res) => {
         },
         timestamp: new Date().toISOString(),
       };
-      sybilCache.set(address, { analysis, cachedAt: Date.now() });
+      // Build funding sources from the already-computed incoming data
+      let cachedFundingSources = [];
+      if (resolvedIncoming && resolvedIncoming.size > 0) {
+        const totalReceived = [...resolvedIncoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
+        cachedFundingSources = [...resolvedIncoming.entries()]
+          .sort((a, b) => b[1].totalSol - a[1].totalSol)
+          .slice(0, 20)
+          .map(([addr, info]) => {
+            const known = KNOWN_LABELS[addr];
+            return {
+              address: addr, label: known?.label || null, type: known?.type || 'wallet',
+              totalSolReceived: Math.round(info.totalSol * 10000) / 10000,
+              transactionCount: info.count, percentage: Math.round((info.totalSol / totalReceived) * 100),
+            };
+          });
+      }
+      sybilCache.set(address, { analysis, fundingSources: cachedFundingSources, cachedAt: Date.now() });
       // ── Update wallet database with sybil data ──
       const wSybil = walletDatabase.get(address) || {};
       const sybilUpdate = {
@@ -7290,8 +7308,13 @@ const server = http.createServer(async (req, res) => {
     prismEarnRateLimit.set(sybilHeavyKey, Date.now());
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
+    // Prefer cached funding sources from sybil analysis (uses recent+early txs = much more accurate)
+    const cachedSybil = sybilCache.get(address);
+    if (cachedSybil?.fundingSources && cachedSybil.fundingSources.length > 0 && Date.now() - cachedSybil.cachedAt < 3600_000) {
+      return respondJson(res, 200, { sources: cachedSybil.fundingSources });
+    }
     try {
-      const { parsed } = await fetchParsedTransactions(address, 100);
+      const { parsed } = await fetchParsedTransactions(address, 200);
       const { incoming } = extractSolTransfers(parsed, address);
       const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
       const sources = [...incoming.entries()]
