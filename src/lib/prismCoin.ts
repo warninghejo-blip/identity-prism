@@ -71,7 +71,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   game_gravity: 1, // per 80 points (gravity is harder)
   burn_tokens: 5, // per token burned
   burn_nfts: 10, // per NFT burned
-  scan_wallet: 3, // per wallet scan (max 1/hour)
+  scan_wallet: 5, // per wallet scan in sybil hunt
   achievement: 25, // per achievement unlocked
   quest_daily: 15, // per daily quest completed
   quest_weekly: 50, // per weekly quest completed
@@ -80,7 +80,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   first_mint: 100, // one-time bonus for first mint
   referral: 20, // per referred user who scans
   text_quest: 1, // text quest reward (custom amount)
-  sybil_hunt: 10, // bounty for catching a sybil (trustScore < 50)
+  sybil_hunt: 20, // bounty for catching a sybil (trustScore < 50)
 };
 
 // ── Local storage keys ──

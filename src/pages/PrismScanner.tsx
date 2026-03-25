@@ -225,7 +225,7 @@ export default function PrismScanner() {
       setShowVerdictAnim(true);
       setTimeout(() => setShowVerdictAnim(false), 3000);
 
-      const coins = isSybil ? 10 : 3;
+      const coins = isSybil ? 20 : 5;
       setHuntCoinsEarned(coins);
       const newStats = updateHuntStats({
         totalHunts: 1,
@@ -361,17 +361,64 @@ export default function PrismScanner() {
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder="Enter target wallet address..."
-              className="w-full pl-10 pr-4 py-3 bg-white/5 border border-amber-500/10 rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40 font-mono"
+              className="w-full pl-10 pr-4 py-3 bg-white/[0.04] border border-amber-500/15 rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40 font-mono"
             />
           </div>
-          <Button
+          <button
             onClick={() => handleSearch()}
             disabled={loading}
-            className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-6"
+            className="relative px-6 py-3 rounded-xl font-black text-sm tracking-wider overflow-hidden transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-amber-500 to-red-500 hover:from-amber-400 hover:to-red-400 text-black shadow-lg shadow-amber-500/20 hover:shadow-amber-500/30 active:scale-95"
           >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'HUNT'}
-          </Button>
+            {loading ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="animate-pulse">SCANNING</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <Crosshair className="w-4 h-4" />
+                HUNT
+              </span>
+            )}
+          </button>
         </div>
+
+        {/* Scanning Animation */}
+        {loading && (
+          <div className="rounded-xl border border-amber-500/[0.15] bg-gradient-to-r from-amber-900/[0.08] to-red-900/[0.06] p-5 animate-in fade-in duration-300">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="relative">
+                <Crosshair className="w-6 h-6 text-amber-400 animate-spin" style={{ animationDuration: '3s' }} />
+                <div className="absolute inset-0 w-6 h-6 rounded-full border border-amber-400/30 animate-ping" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-amber-200/80">Acquiring Target...</p>
+                <p className="text-[10px] text-white/25 font-mono">
+                  {query.slice(0, 12)}...{query.slice(-6)}
+                </p>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              {[
+                'Fetching on-chain data',
+                'Analyzing 23 risk signals',
+                'Tracing funding graph',
+                'Profiling behavior patterns',
+              ].map((step, i) => (
+                <div
+                  key={step}
+                  className="flex items-center gap-2 animate-in fade-in slide-in-from-left-2"
+                  style={{ animationDelay: `${i * 400}ms`, animationFillMode: 'backwards' }}
+                >
+                  <div className={`w-1.5 h-1.5 rounded-full ${i < 2 ? 'bg-amber-400 animate-pulse' : 'bg-white/10'}`} />
+                  <span className={`text-[11px] font-mono ${i < 2 ? 'text-amber-300/60' : 'text-white/15'}`}>
+                    {step}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Recent targets */}
         {!loading && recentWallets.length > 0 && !result && (
@@ -682,13 +729,13 @@ export default function PrismScanner() {
                 <div className="rounded-lg bg-red-500/[0.06] border border-red-500/[0.1] p-3 text-center">
                   <AlertTriangle className="w-5 h-5 text-red-400/60 mx-auto mb-1" />
                   <p className="text-[10px] text-red-300/60 font-bold">SYBIL FOUND</p>
-                  <p className="text-lg font-black text-amber-400 font-mono">+10</p>
+                  <p className="text-lg font-black text-amber-400 font-mono">+20</p>
                   <p className="text-[9px] text-white/20">coins bounty</p>
                 </div>
                 <div className="rounded-lg bg-emerald-500/[0.04] border border-emerald-500/[0.08] p-3 text-center">
                   <Shield className="w-5 h-5 text-emerald-400/40 mx-auto mb-1" />
                   <p className="text-[10px] text-emerald-300/40 font-bold">WALLET CLEAR</p>
-                  <p className="text-lg font-black text-white/30 font-mono">+3</p>
+                  <p className="text-lg font-black text-white/30 font-mono">+5</p>
                   <p className="text-[9px] text-white/20">coins scan fee</p>
                 </div>
               </div>
