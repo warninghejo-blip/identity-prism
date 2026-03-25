@@ -6091,14 +6091,57 @@ const server = http.createServer(async (req, res) => {
       // Only call findFirstTxTime for wallets >10K tx (binary search for exact age)
       // For ≤10K wallets, we already have exact age from Phase 1 — saves 100-300 credits
       const needsBinarySearch = !paginationReachedEnd;
-      const parallelTasks = [
-        ...(needsBinarySearch
-          ? [findFirstTxTime(conn, pubkey, allSignatures.slice(-1000), cachedFirstTx, sybilRpcUrl)]
-          : [Promise.resolve({ firstTxTime: firstTxBlockTime, totalSigs: totalSigCount })]),
-        ...recentBatches.map(batch => conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 })),
-        ...earlyBatches.map(batch => conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 })),
-      ];
-      const [firstTxResult, ...allParseBatchResults] = await Promise.allSettled(parallelTasks);
+      // Run firstTxTime in parallel with sequential batch parsing (avoids RPC rate-limit 429s)
+      const firstTxPromise = needsBinarySearch
+        ? findFirstTxTime(conn, pubkey, allSignatures.slice(-1000), cachedFirstTx, sybilRpcUrl)
+        : Promise.resolve({ firstTxTime: firstTxBlockTime, totalSigs: totalSigCount });
+
+      // Wait for firstTxTime + rate limit recovery before Phase 2 parsing
+      const firstTxResult = await Promise.allSettled([firstTxPromise]).then(r => r[0]);
+      await new Promise(r => setTimeout(r, 3000)); // let RPC rate limit bucket refill
+
+      // Direct HTTP JSON-RPC calls for Phase 2 parsing — bypasses @solana/web3.js retry mechanism
+      // which burns 7.5s per batch on 429 retries and exhausts ALL rate limit budget
+      const parseRpcUrl = getRpcUrl(address + ':parse') || sybilRpcUrl;
+      async function directGetParsedTxs(sigs) {
+        const body = JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'getTransaction',
+          params: [sigs[0], { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+        });
+        // Batch: one call per sig (getTransaction not getParsedTransactions to avoid batch limit)
+        const results = [];
+        for (const sig of sigs) {
+          try {
+            const r = await fetch(parseRpcUrl, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTransaction', params: [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }] }),
+            });
+            if (!r.ok) { results.push(null); continue; }
+            const d = await r.json();
+            results.push(d?.result || null);
+          } catch { results.push(null); }
+        }
+        return results;
+      }
+
+      // Limit to 50 most important transactions: first 40 recent + first 10 early
+      const limitedRecent = recentSigBatch.slice(0, 40);
+      const limitedEarly = dedupedEarlySigBatch.slice(0, 10);
+      const parseSigs = [...limitedRecent, ...limitedEarly];
+      const recentBatchCount = Math.ceil(limitedRecent.length / 10);
+
+      // Process in batches of 5 with delays
+      const allParseBatchResults = [];
+      for (let bi = 0; bi < parseSigs.length; bi += 5) {
+        const batch = parseSigs.slice(bi, bi + 5);
+        try {
+          const txs = await directGetParsedTxs(batch);
+          allParseBatchResults.push({ status: 'fulfilled', value: txs });
+        } catch (e) {
+          allParseBatchResults.push({ status: 'rejected', reason: e });
+        }
+        if (bi + 5 < parseSigs.length) await new Promise(r => setTimeout(r, 200));
+      }
 
       // Process wallet age result
       const ftResult = firstTxResult.status === 'fulfilled' ? firstTxResult.value : null;
@@ -6116,8 +6159,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Split parse results: first N are recent, rest are early
-      const recentResults = allParseBatchResults.slice(0, recentBatches.length);
-      const earlyResults = allParseBatchResults.slice(recentBatches.length);
+      const recentResults = allParseBatchResults.slice(0, recentBatchCount);
+      const earlyResults = allParseBatchResults.slice(recentBatchCount);
       for (const br of recentResults) {
         if (br.status === 'fulfilled') parsedTxs.push(...(br.value || []).filter(Boolean));
       }
@@ -6262,6 +6305,9 @@ const server = http.createServer(async (req, res) => {
             if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
           }
           resolvedTopFunder = topFunder; // expose for cluster key
+          if (incoming.size === 0 && allTxsForFunding.length > 0) {
+            console.warn(`[sybil-funding] ${address.slice(0,8)}: 0 funding sources from ${allTxsForFunding.length} parsed txs`);
+          }
           if (topFunder && topAmount >= 0.01) {
             const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
             const topFunderPct = topAmount / totalReceived;
