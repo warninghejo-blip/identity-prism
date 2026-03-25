@@ -16,6 +16,7 @@ import {
   sfxAsteroidHit,
 } from '@/lib/gameAudio';
 import { AURA_GAME_COLORS, DEFAULT_SHIP_COLORS } from './GameShared';
+import { getShipProfile } from '@/lib/shipProfiles';
 
 extend({ Line_: THREE.Line });
 
@@ -91,8 +92,8 @@ interface PowerUp {
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
 const HIT_R = 0.72;
-const NEAR_MISS_D = 1.4;
-const CAM_Z = 32;
+const NEAR_MISS_D = 2.2;
+const CAM_Z = 35;
 const SPAWN_R = 28;
 const DESPAWN_R = 42;
 
@@ -206,15 +207,14 @@ const AST_M = [
 
 // Shared Lambert materials — one per texture pair (avoids 200 duplicate materials)
 // Lambert = per-vertex lighting, much cheaper than PBR Standard
-const AST_SHARED_MATS: THREE.MeshLambertMaterial[] = [];
-// Regular rock materials (indices 0..3) — emissive so they don't vanish on dark bg
+// MeshBasicMaterial — no lighting dependence, asteroids always look identical
+const AST_SHARED_MATS: THREE.MeshBasicMaterial[] = [];
+// Regular rock materials (indices 0..3)
 AST_TEX_PAIRS.forEach((pair) => {
   AST_SHARED_MATS.push(
-    new THREE.MeshLambertMaterial({
+    new THREE.MeshBasicMaterial({
       map: pair.diffuse,
-      color: new THREE.Color('#e8ecf4'),
-      emissive: new THREE.Color('#2a3048'),
-      emissiveIntensity: 0.45,
+      color: new THREE.Color('#8a8e9a'),
       side: THREE.DoubleSide,
     }),
   );
@@ -223,11 +223,9 @@ if (!IS_MOBILE) {
   // Ice materials (indices 4..7)
   AST_TEX_PAIRS.forEach((pair) => {
     AST_SHARED_MATS.push(
-      new THREE.MeshLambertMaterial({
+      new THREE.MeshBasicMaterial({
         map: pair.diffuse,
-        color: new THREE.Color('#c8ddf0'),
-        emissive: new THREE.Color('#2a4466'),
-        emissiveIntensity: 0.25,
+        color: new THREE.Color('#7898b0'),
         side: THREE.DoubleSide,
       }),
     );
@@ -235,11 +233,9 @@ if (!IS_MOBILE) {
   // Fire materials (indices 8..11)
   AST_TEX_PAIRS.forEach((pair) => {
     AST_SHARED_MATS.push(
-      new THREE.MeshLambertMaterial({
+      new THREE.MeshBasicMaterial({
         map: pair.diffuse,
-        color: new THREE.Color('#d8c0a8'),
-        emissive: new THREE.Color('#553311'),
-        emissiveIntensity: 0.25,
+        color: new THREE.Color('#9a7860'),
         side: THREE.DoubleSide,
       }),
     );
@@ -839,11 +835,11 @@ function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
         glowM.opacity = fade * (0.12 + Math.sin(t * 0.8 + i * 2.1) * 0.04);
       }
 
-      // [3] Point light
+      // [3] Point light — very tight radius to avoid lighting asteroids
       const light = g.children[3] as THREE.PointLight;
       if (light) {
-        light.intensity = fade * 1.8;
-        light.distance = 10;
+        light.intensity = fade * 1.2;
+        light.distance = 3;
       }
     }
   });
@@ -920,11 +916,30 @@ function Ship({
   shipAura?: string | null;
 }) {
   const ac = (shipAura && AURA_GAME_COLORS[shipAura]) || DEFAULT_SHIP_COLORS;
+  const profile = useMemo(() => getShipProfile(skinId), [skinId]);
   const gRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
   const shRef = useRef<THREE.Mesh>(null);
   const shieldBub = useRef<THREE.Group>(null);
   const shipMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const auraMat = useRef<THREE.MeshBasicMaterial>(null);
+  const glowTex = useMemo(() => {
+    const s = 128;
+    const c = document.createElement('canvas');
+    c.width = s;
+    c.height = s;
+    const ctx = c.getContext('2d')!;
+    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    g.addColorStop(0, 'rgba(255,255,255,0.9)');
+    g.addColorStop(0.25, 'rgba(255,255,255,0.5)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.15)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, s, s);
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    return t;
+  }, []);
   const _shieldGeo = useMemo(() => new THREE.IcosahedronGeometry(1.65, 1), []);
   const _shieldEdgeGeo = useMemo(() => new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.66, 1)), []);
   const trailRef = useRef<THREE.InstancedMesh>(null);
@@ -966,6 +981,8 @@ function Ship({
   const texPath = skinId ? `/textures/ships/ship_${skinId.replace('ship_', '')}.png` : '/textures/ship.png';
   const shipTex = useLoader(THREE.TextureLoader, texPath);
   shipTex.colorSpace = THREE.SRGBColorSpace;
+  shipTex.minFilter = THREE.LinearMipmapLinearFilter;
+  shipTex.anisotropy = 16;
 
   useFrame((s, delta) => {
     if (!gRef.current) return;
@@ -983,10 +1000,14 @@ function Ship({
     gRef.current.rotation.z = curRot + rotDiff * (1 - Math.exp(-10 * dt));
     if (shRef.current) {
       const m = shRef.current.material as THREE.MeshBasicMaterial;
-      m.opacity = slerp(m.opacity, nearRef.current > 0.1 ? 0.25 * nearRef.current : 0, 10, dt);
+      m.opacity = slerp(m.opacity, nearRef.current > 0.1 ? 0.15 * nearRef.current : 0, 10, dt);
     }
     if (shipMatRef.current) {
       shipMatRef.current.opacity = phaseRef.current > 0 ? 0.2 + Math.sin(t * 10) * 0.1 : 1;
+    }
+    // Aura pulse
+    if (auraMat.current) {
+      auraMat.current.opacity = 0.65 + 0.15 * Math.sin(t * 2.0);
     }
     const shieldOn = shieldRef.current > 0;
     if (shieldBub.current) {
@@ -1004,24 +1025,35 @@ function Ship({
       sinR = Math.sin(rot);
     trailTimer.current += dt;
     const spawnInterval = IS_MOBILE ? 0.025 : 0.018;
+    const exhs = profile.exhausts;
+    const isBio = profile.trailStyle === 'bio';
+    const exhSpread = (isBio ? 0.7 : 0.35) * scale;
     while (trailTimer.current >= spawnInterval) {
       trailTimer.current -= spawnInterval;
-      const ly = -1.6 * scale;
-      const spread = 0.7 * scale;
-      const wx = cx - ly * sinR + (Math.random() - 0.5) * spread;
-      const wy = cy + ly * cosR + (Math.random() - 0.5) * spread;
+      const exh = exhs[Math.floor(Math.random() * exhs.length)];
+      const exhScale = scale * 1.4;
+      const lx = exh.x * exhScale;
+      const ly = exh.y * exhScale;
+      const wx = cx + (lx * cosR - ly * sinR) + (Math.random() - 0.5) * exhSpread;
+      const wy = cy + (lx * sinR + ly * cosR) + (Math.random() - 0.5) * exhSpread;
       const i = trailIdx.current % TRAIL_N;
       trailData.current[i].x = wx;
       trailData.current[i].y = wy;
       trailData.current[i].age = 0;
-      trailData.current[i].sz = 0.15 + Math.random() * 0.15;
+      trailData.current[i].sz = isBio ? 0.25 + Math.random() * 0.25 : 0.15 + Math.random() * 0.15;
       trailIdx.current++;
     }
     const mesh = trailRef.current;
+    const [tcR, tcG, tcB] = profile.trailColor;
     if (mesh) {
       for (let i = 0; i < TRAIL_N; i++) {
         const d = trailData.current[i];
         d.age += dt;
+        // Bio trail: strong sinusoidal wave + vertical drift
+        if (isBio) {
+          d.x += Math.sin(d.age * 4 + i * 1.2) * 1.2 * scale * dt;
+          d.y += Math.cos(d.age * 3 + i * 0.9) * 0.6 * scale * dt;
+        }
         const life = d.age / TRAIL_LIFE;
         if (life >= 1 || d.sz === 0) {
           _trailDummy.position.set(0, 0, -9999);
@@ -1029,15 +1061,18 @@ function Ship({
           _trailColor.setRGB(0, 0, 0);
           mesh.setColorAt(i, _trailColor);
         } else {
-          const fade = Math.pow(1 - life, 1.2);
-          const sz = d.sz * (0.5 + 0.5 * fade);
+          const fade = Math.pow(1 - life, isBio ? 0.6 : 1.2);
+          const pulse = isBio ? 0.5 + 0.5 * Math.sin(d.age * 6 + i * 0.8) : 1;
+          const sz = d.sz * (0.5 + 0.5 * fade) * pulse;
           _trailDummy.position.set(d.x, d.y, 0.2);
           _trailDummy.scale.setScalar(Math.max(sz, 0.01));
-          // Bright cyan → blue → dark
-          const r = 0.3 * fade;
-          const g = (0.85 + 0.15 * Math.sin(life * 4)) * fade;
-          const b = 1.0 * fade;
-          _trailColor.setRGB(r, g, b);
+          if (isBio) {
+            // Color shifts green↔teal with age
+            const hueShift = Math.sin(d.age * 3 + i) * 0.3;
+            _trailColor.setRGB(tcR * fade + hueShift * 0.1, tcG * fade, (tcB + hueShift * 0.2) * fade);
+          } else {
+            _trailColor.setRGB(tcR * fade, tcG * fade, tcB * fade);
+          }
           mesh.setColorAt(i, _trailColor);
         }
         _trailDummy.updateMatrix();
@@ -1050,48 +1085,35 @@ function Ship({
 
   const shipBody = (
     <>
-      {/* Main ship sprite */}
+      {/* Ship sprite */}
       <mesh>
         <planeGeometry args={[1.6, 2.2]} />
-        <meshBasicMaterial
-          ref={shipMatRef}
-          map={shipTex}
-          transparent
-          depthWrite={false}
-          side={THREE.DoubleSide}
-          toneMapped={false}
-        />
-      </mesh>
-      {/* Rim light — bright edge highlight on top for 3D pop */}
-      <mesh position={[-0.02, 0.02, 0.02]} scale={[1.03, 1.03, 1]}>
-        <planeGeometry args={[1.6, 2.2]} />
-        <meshBasicMaterial
-          map={shipTex}
-          transparent
-          depthWrite={false}
-          color={ac.rim}
-          opacity={0.18}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-      {/* Cockpit highlight glow */}
-      <mesh position={[0, 0.15, 0.03]}>
-        <sphereGeometry args={[0.15, 8, 8]} />
-        <meshBasicMaterial
-          color={ac.glow}
-          transparent
-          opacity={0.25}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
+        <meshBasicMaterial ref={shipMatRef} map={shipTex} transparent depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
     </>
   );
 
   return (
     <>
-      <group ref={gRef} scale={[scale * 1.15, scale * 1.15, scale * 1.15]}>
-        <group ref={bodyRef}>{shipBody}</group>
+      <group ref={gRef} scale={[scale, scale, scale]}>
+        <group ref={bodyRef} position-y={profile.spriteYOff || 0}>
+          {shipBody}
+        </group>
+        {/* Aura — soft glow behind ship */}
+        {shipAura && (
+          <mesh position={[0, profile.spriteYOff || 0, -0.06]}>
+            <planeGeometry args={[3.8, 3.8]} />
+            <meshBasicMaterial
+              ref={auraMat}
+              map={glowTex}
+              transparent
+              depthWrite={false}
+              color={ac.glow}
+              opacity={0.5}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        )}
         <mesh ref={shRef}>
           <ringGeometry args={[1, 1.15, 32]} />
           <meshBasicMaterial
@@ -1118,9 +1140,8 @@ function Ship({
           <lineSegments geometry={_shieldEdgeGeo}>
             <lineBasicMaterial color="#44eeff" transparent opacity={0.5} />
           </lineSegments>
-          {!IS_MOBILE && <pointLight intensity={4} color="#22d3ee" distance={6} />}
+          {/* Shield glow — no pointLight to avoid illuminating asteroids */}
         </group>
-        {!IS_MOBILE && <pointLight intensity={3} color={ac.light} distance={8} />}
       </group>
       {/* World-space instancedMesh trail */}
       <instancedMesh ref={trailRef} args={[_trailGeo, _trailMat, TRAIL_N]} frustumCulled={false} renderOrder={10} />
@@ -1266,8 +1287,8 @@ const S_PWR_TEX_PATHS: Record<PwrType, string> = {
   coin: '/textures/powerups/powerup_coin.png',
 };
 const S_PWR_TYPE_LIST: PwrType[] = ['shield', 'slowmo', 'phase', 'coin'];
-const _sPwrDiscGeo = new THREE.CircleGeometry(0.5, 48);
-const _sPwrEdgeGeo = new THREE.TorusGeometry(0.44, 0.018, 8, 48);
+const _sPwrDiscGeo = new THREE.CircleGeometry(0.5, 64);
+const _sPwrEdgeGeo = new THREE.TorusGeometry(0.48, 0.018, 16, 64);
 
 function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
@@ -1444,13 +1465,7 @@ function PickupEffect({
    ═══════════════════════════════════════════════════ */
 
 function FX() {
-  if (IS_MOBILE) return null;
-  return (
-    <EffectComposer disableNormalPass multisampling={0}>
-      <Bloom luminanceThreshold={0.3} mipmapBlur intensity={1.6} radius={0.6} />
-      <Vignette eskil={false} offset={0.08} darkness={1.15} />
-    </EffectComposer>
-  );
+  return null;
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1586,7 +1601,7 @@ function GameWorld({
   const _activeIdx = useRef(new Int32Array(MAX_ASTEROIDS));
 
   const sCol = traits?.planetTier ? TIER_COLORS[traits.planetTier] || '#22d3ee' : '#22d3ee';
-  const sSc = (traits?.planetTier === 'binary_sun' ? 1.1 : 1.0) * 0.9; // 10% smaller
+  const sSc = traits?.planetTier === 'binary_sun' ? 1.05 : 1.0;
 
   const geos = useMemo(() => {
     const s = IS_MOBILE ? 0.7 : 1;
@@ -1710,7 +1725,11 @@ function GameWorld({
         if (dx * dx + dy * dy < 64) a.active = false;
       }
     }
-    if (gameState !== 'playing' || overRef.current) return;
+    if (gameState !== 'playing' || overRef.current) {
+      // Clear visuals when not playing
+      pws.current.length = 0;
+      return;
+    }
     // Tab was hidden — skip this frame to prevent time jump
     if (tabHiddenRef.current) {
       if (!document.hidden) {
@@ -2108,7 +2127,7 @@ function GameWorld({
   return (
     <>
       {/* No scene background — transparent, CosmicStarfield shows through */}
-      <ambientLight intensity={IS_MOBILE ? 0.55 : 0.35} />
+      <ambientLight intensity={IS_MOBILE ? 0.6 : 0.5} />
       <directionalLight intensity={0.65} color="#93c5fd" position={[8, 10, 14]} />
       <directionalLight intensity={0.32} color="#f8fafc" position={[-12, -8, 12]} />
 

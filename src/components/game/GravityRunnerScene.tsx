@@ -294,6 +294,15 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     _parImg: null as HTMLImageElement | null,
     _bgScrollX: 0,
     _parScrollX: 0,
+    exhaustParticles: [] as {
+      x: number;
+      y: number;
+      vy: number;
+      vx: number;
+      life: number;
+      maxLife: number;
+      size: number;
+    }[],
   });
 
   // Load coin powerup texture
@@ -370,6 +379,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
 
     // Resize
     const dpr = Math.min(window.devicePixelRatio, 2);
@@ -400,6 +411,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     s.crystals = [];
     s.particles = [];
     s.trail = [];
+    s.exhaustParticles = [];
     s.nextObstacle = 1; // obstacles appear immediately
     s.nextCrystal = 0;
     s.frameCount = 0;
@@ -748,6 +760,50 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         s.playerY = ceilY;
         s.velY = 1; // bounce off ceiling slightly
       }
+
+      // Exhaust particles from engine nozzles
+      const exhs = profileRef.current.exhausts;
+      // Ship center in screen coords
+      const shipCX = s.playerX + SHIP_W / 2;
+      const shipCY = s.playerY + SHIP_H / 2;
+      const cosR = Math.cos(s.shipRotation - Math.PI / 2);
+      const sinR = Math.sin(s.shipRotation - Math.PI / 2);
+      const exhScale = SHIP_W * 0.55; // map profile coords to pixel space
+      const gravBio = profileRef.current.trailStyle === 'bio';
+      // Spawn 1-2 particles per frame from random exhaust
+      const spawnCount = gravBio ? 2 : 1;
+      for (let si = 0; si < spawnCount; si++) {
+        const exh = exhs[Math.floor(Math.random() * exhs.length)];
+        const lx = exh.x * exhScale;
+        const ly = exh.y * exhScale;
+        const wx = shipCX + (lx * cosR - ly * sinR);
+        const wy = shipCY + (lx * sinR + ly * cosR);
+        const spread = gravBio ? 6 : 3;
+        s.exhaustParticles.push({
+          x: wx + (Math.random() - 0.5) * spread,
+          y: wy + (Math.random() - 0.5) * spread,
+          vx: -s.speed * (gravBio ? 0.2 : 0.4),
+          vy: gravBio ? (Math.random() - 0.5) * 2 : (Math.random() - 0.5) * 0.8,
+          life: gravBio ? 0.9 + Math.random() * 0.5 : 0.6 + Math.random() * 0.4,
+          maxLife: gravBio ? 1.4 : 1.0,
+          size: gravBio ? 3.5 + Math.random() * 3 : 2.5 + Math.random() * 2,
+        });
+      }
+      // Update exhaust particles (fixed ~60fps delta)
+      const exhDt = 0.016;
+      for (let ei = s.exhaustParticles.length - 1; ei >= 0; ei--) {
+        const ep = s.exhaustParticles[ei];
+        ep.x += ep.vx;
+        ep.y += ep.vy;
+        // Bio: sinusoidal vertical wave
+        if (gravBio) ep.y += Math.sin(ep.life * 10 + ei * 0.3) * 0.5;
+        ep.life -= exhDt;
+        if (ep.life <= 0) {
+          s.exhaustParticles.splice(ei, 1);
+        }
+      }
+      // Cap exhaust pool
+      if (s.exhaustParticles.length > 80) s.exhaustParticles.splice(0, s.exhaustParticles.length - 80);
 
       // Move obstacles
       for (const o of s.obstacles) {
@@ -1298,6 +1354,25 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         ctx.restore();
       }
 
+      // ── Exhaust trail (ship-specific color) ──
+      const [tcR, tcG, tcB] = profileRef.current.trailColor;
+      const isBio = profileRef.current.trailStyle === 'bio';
+      for (const ep of s.exhaustParticles) {
+        const t = ep.life / ep.maxLife;
+        if (t < 0.05) continue;
+        const fade = t * t;
+        const pulse = isBio ? 0.7 + 0.3 * Math.sin(ep.life * 12) : 1;
+        const r = Math.round(tcR * 255 * fade * pulse);
+        const g = Math.round(tcG * 255 * fade * pulse);
+        const b = Math.round(tcB * 255 * fade * pulse);
+        ctx.globalAlpha = fade * (isBio ? 0.7 : 0.8);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.beginPath();
+        ctx.arc(ep.x, ep.y, ep.size * t * (isBio ? 1.3 : 1), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
       // ── Ship ──
       ctx.save();
       ctx.translate(s.playerX + SHIP_W / 2, s.playerY + SHIP_H / 2);
@@ -1305,11 +1380,12 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
       if (shipLoadedRef.current && shipImgRef.current) {
         ctx.rotate(Math.PI / 2);
-        // Aura glow following ship silhouette via shadowBlur
+        // Aura glow — pulsing shadowBlur around ship silhouette
         if (auraColorRef.current) {
           const [ar, ag, ab] = auraColorRef.current;
-          ctx.shadowColor = `rgba(${ar},${ag},${ab},0.8)`;
-          ctx.shadowBlur = 18;
+          const pulse = 0.7 + 0.3 * Math.sin(s.frameCount * 0.04);
+          ctx.shadowColor = `rgba(${ar},${ag},${ab},${pulse})`;
+          ctx.shadowBlur = 20 + 10 * Math.sin(s.frameCount * 0.04);
         }
         ctx.drawImage(shipImgRef.current, -SHIP_W / 2, -SHIP_H / 2, SHIP_W, SHIP_H);
         ctx.shadowColor = 'transparent';

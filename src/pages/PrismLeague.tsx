@@ -2037,11 +2037,23 @@ const PrismLeague = () => {
   const handleJumpBackToPrism = useCallback(() => {
     if (isJumpingBack) return;
 
-    // If playing or game over → return to start screen (game menu)
-    if (gameState === 'playing' || gameState === 'gameover') {
+    // If playing → return to game menu (start screen)
+    if (gameState === 'playing') {
       stopAllAudio();
       setGameState('start');
-      // Background resets naturally via CosmicStarfield
+      return;
+    }
+
+    // If game over → go back to hub (main menu)
+    if (gameState === 'gameover') {
+      stopAllAudio();
+      setIsJumpingBack(true);
+      clearTransitionTimers();
+      transitionTimersRef.current.push(
+        window.setTimeout(() => {
+          startFadeTransition(() => goBack(navigate));
+        }, 200),
+      );
       return;
     }
 
@@ -2181,7 +2193,7 @@ const PrismLeague = () => {
               </svg>
             </span>
             <span className="league-jumpgate__text hidden sm:inline-flex">
-              <strong>{gameState === 'playing' || gameState === 'gameover' ? 'Game Menu' : 'Return to Prism'}</strong>
+              <strong>{gameState === 'playing' ? 'Game Menu' : gameState === 'gameover' ? 'Home' : 'Home'}</strong>
             </span>
           </button>
 
@@ -3645,7 +3657,7 @@ const PrismLeague = () => {
                         disabled={isJumpingBack}
                       >
                         <ArrowLeft className="w-3.5 h-3.5" />
-                        {isJumpingBack ? '...' : 'Prism'}
+                        {isJumpingBack ? '...' : 'Home'}
                       </button>
                     </div>
                   </div>

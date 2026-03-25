@@ -127,7 +127,14 @@ const Index = () => {
   }, []);
 
   const [isWarping, setIsWarping] = useState(false);
-  const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(null);
+  const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(() => {
+    try {
+      const cached = sessionStorage.getItem('ip_prism_balance');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [viewState, setViewState] = useState<ViewState>(
     shouldOpenCard && urlAddress
@@ -698,7 +705,20 @@ const Index = () => {
     jwtPrewarmedRef.current = resolvedAddress;
     import('@/components/prism/shared').then(async ({ getCachedJwt, obtainJwt, setAuthWallet }) => {
       setAuthWallet(wallet);
-      if (!getCachedJwt(resolvedAddress)) {
+      const cached = getCachedJwt(resolvedAddress);
+      if (import.meta.env.DEV) {
+        const raw = sessionStorage.getItem('ip_auth_jwt');
+        // eslint-disable-next-line no-console
+        console.log(
+          '[JWT debug] cached:',
+          !!cached,
+          'raw:',
+          raw ? JSON.parse(raw).address?.slice(0, 8) : 'none',
+          'resolved:',
+          resolvedAddress?.slice(0, 8),
+        );
+      }
+      if (!cached) {
         setJwtSigning(true);
         try {
           await obtainJwt(wallet);
@@ -863,7 +883,12 @@ const Index = () => {
       // Load Coin balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
         getPrismBalance(resolvedAddress)
-          .then(setPrismBalance)
+          .then((b) => {
+            setPrismBalance(b);
+            try {
+              sessionStorage.setItem('ip_prism_balance', JSON.stringify(b));
+            } catch {}
+          })
           .catch(() => {});
         // Claim pending referral
         const pendingRef = sessionStorage.getItem('pending_referral');
@@ -1272,7 +1297,12 @@ const Index = () => {
       setTimeout(() => setMintState('idle'), 4000);
       // Refresh coin balance after spending
       getPrismBalance(wallet.publicKey.toBase58())
-        .then(setPrismBalance)
+        .then((b) => {
+          setPrismBalance(b);
+          try {
+            sessionStorage.setItem('ip_prism_balance', JSON.stringify(b));
+          } catch {}
+        })
         .catch(() => {});
       toast.success('Identity minted!', {
         description: `Tx: ${result.signature.slice(0, 8)}... · 10,000 coins spent`,

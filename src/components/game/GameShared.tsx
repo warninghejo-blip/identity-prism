@@ -107,7 +107,7 @@ export const IS_MOBILE =
 
 export const HIT_R = 0.58;
 export const NEAR_MISS_D = 1.6;
-export const CAM_Z = 32;
+export const CAM_Z = 35;
 export const SPAWN_R = 22;
 export const DESPAWN_R = 36;
 

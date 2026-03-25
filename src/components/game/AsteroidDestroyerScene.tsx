@@ -828,8 +828,8 @@ const D_PWR_TEX_PATHS: Record<DPwrType, string> = {
   nova_rockets: '/textures/powerups/powerup_nova_rockets.png',
 };
 const D_PWR_TYPES: DPwrType[] = ['prism_shield', 'photon_burst', 'quantum_core', 'nebula_bomb', 'nova_rockets'];
-const _pwrDiscGeo = new THREE.CircleGeometry(0.5, 48);
-const _pwrEdgeGeo = new THREE.TorusGeometry(0.44, 0.025, 8, 48);
+const _pwrDiscGeo = new THREE.CircleGeometry(0.5, 64);
+const _pwrEdgeGeo = new THREE.TorusGeometry(0.48, 0.02, 16, 64);
 
 function DPowerUpVisuals({ poolRef }: { poolRef: React.MutableRefObject<DPowerUp[]> }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
@@ -951,6 +951,24 @@ function ShooterShip({
   const shipMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const tiltY = useRef(0);
   const tiltX = useRef(0);
+  const auraMat = useRef<THREE.MeshBasicMaterial>(null);
+  const glowTex = useMemo(() => {
+    const s = 128;
+    const c = document.createElement('canvas');
+    c.width = s;
+    c.height = s;
+    const ctx = c.getContext('2d')!;
+    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    g.addColorStop(0, 'rgba(255,255,255,0.9)');
+    g.addColorStop(0.25, 'rgba(255,255,255,0.5)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.15)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, s, s);
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    return t;
+  }, []);
   const _shieldGeo = useMemo(() => new THREE.IcosahedronGeometry(1.65, 1), []);
   const _shieldEdgeGeo = useMemo(() => {
     const tmp = new THREE.IcosahedronGeometry(1.66, 1);
@@ -961,6 +979,29 @@ function ShooterShip({
   const texPath = skinId ? `/textures/ships/ship_${skinId.replace('ship_', '')}.png` : '/textures/ship.png';
   const shipTex = useLoader(THREE.TextureLoader, texPath);
   shipTex.colorSpace = THREE.SRGBColorSpace;
+  shipTex.minFilter = THREE.LinearMipmapLinearFilter;
+  shipTex.anisotropy = 16;
+
+  // Exhaust trail
+  const TRAIL_N = IS_MOBILE ? 40 : 60;
+  const TRAIL_LIFE = 1.5;
+  const trailRef = useRef<THREE.InstancedMesh>(null);
+  const trailData = useRef(Array.from({ length: TRAIL_N }, () => ({ x: 0, y: 0, vy: 0, age: 99, sz: 0 })));
+  const trailIdx = useRef(0);
+  const trailTimer = useRef(0);
+  const _tDummy = useMemo(() => new THREE.Object3D(), []);
+  const _tColor = useMemo(() => new THREE.Color(), []);
+  const trailGeo = useMemo(() => new THREE.CircleGeometry(0.15, 6), []);
+  const trailMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+    [],
+  );
 
   useFrame((s, delta) => {
     if (!gRef.current) return;
@@ -993,48 +1034,82 @@ function ShooterShip({
     if (shipMatRef.current) {
       shipMatRef.current.opacity = invulnRef.current > 0 ? 0.2 + Math.sin(t * 10) * 0.1 : 1;
     }
+    // Aura pulse
+    if (auraMat.current) {
+      auraMat.current.opacity = 0.15 + 0.05 * Math.sin(t * 2.0);
+    }
+
+    // Exhaust trail — spawn particles from each engine nozzle
+    const exhs = profile.exhausts;
+    trailTimer.current += dt;
+    const spawnInt = IS_MOBILE ? 0.03 : 0.02;
+    const isBio = profile.trailStyle === 'bio';
+    const [tcR, tcG, tcB] = profile.trailColor;
+    while (trailTimer.current >= spawnInt) {
+      trailTimer.current -= spawnInt;
+      const exh = exhs[Math.floor(Math.random() * exhs.length)];
+      const i = trailIdx.current % TRAIL_N;
+      const spread = isBio ? 0.25 : 0.12;
+      trailData.current[i].x = gRef.current.position.x + exh.x * 1.4 + (Math.random() - 0.5) * spread;
+      trailData.current[i].y = gRef.current.position.y + exh.y * 1.4 + (Math.random() - 0.5) * spread;
+      trailData.current[i].vy = isBio ? -(0.4 + Math.random() * 0.3) : -(0.8 + Math.random() * 0.5);
+      trailData.current[i].age = 0;
+      trailData.current[i].sz = isBio ? 0.25 + Math.random() * 0.2 : 0.18 + Math.random() * 0.12;
+      trailIdx.current++;
+    }
+    if (trailRef.current) {
+      for (let i = 0; i < TRAIL_N; i++) {
+        const d = trailData.current[i];
+        d.age += dt;
+        d.y += d.vy * dt;
+        // Bio trail: sinusoidal sideways drift
+        if (isBio) d.x += Math.sin(d.age * 6 + i) * 0.3 * dt;
+        const life = d.age / TRAIL_LIFE;
+        if (life >= 1 || d.sz === 0) {
+          _tDummy.position.set(0, 0, -9999);
+          _tDummy.scale.setScalar(0.001);
+          _tColor.setRGB(0, 0, 0);
+        } else {
+          const fade = Math.pow(1 - life, isBio ? 0.8 : 1.2);
+          const pulse = isBio ? 0.7 + 0.3 * Math.sin(d.age * 8 + i * 0.5) : 1;
+          _tDummy.position.set(d.x, d.y, -0.1);
+          _tDummy.scale.setScalar(Math.max(d.sz * (0.5 + 0.5 * fade) * pulse, 0.01));
+          _tColor.setRGB(tcR * fade, tcG * fade, tcB * fade);
+        }
+        _tDummy.updateMatrix();
+        trailRef.current.setMatrixAt(i, _tDummy.matrix);
+        trailRef.current.setColorAt(i, _tColor);
+      }
+      trailRef.current.instanceMatrix.needsUpdate = true;
+      if (trailRef.current.instanceColor) trailRef.current.instanceColor.needsUpdate = true;
+    }
   });
 
   return (
     <>
-      <group ref={gRef} scale={[1.035, 1.035, 1.035]}>
-        <group ref={bodyRef}>
+      <group ref={gRef} scale={[1.0, 1.0, 1.0]}>
+        <group ref={bodyRef} position-y={profile.spriteYOff || 0}>
           {/* Ship sprite */}
           <mesh>
             <planeGeometry args={[1.6, 2.2]} />
-            <meshBasicMaterial
-              ref={shipMatRef}
-              map={shipTex}
-              transparent
-              depthWrite={false}
-              side={THREE.DoubleSide}
-              toneMapped={false}
-            />
-          </mesh>
-          {/* Rim light */}
-          <mesh position={[-0.02, 0.02, 0.02]} scale={[1.03, 1.03, 1]}>
-            <planeGeometry args={[1.6, 2.2]} />
-            <meshBasicMaterial
-              map={shipTex}
-              transparent
-              depthWrite={false}
-              color={ac.rim}
-              opacity={0.18}
-              blending={THREE.AdditiveBlending}
-            />
-          </mesh>
-          {/* Cockpit glow */}
-          <mesh position={[0, profile.cockpitY, 0.03]}>
-            <sphereGeometry args={[0.15, 8, 8]} />
-            <meshBasicMaterial
-              color={ac.glow}
-              transparent
-              opacity={0.25}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-            />
+            <meshBasicMaterial ref={shipMatRef} map={shipTex} transparent depthWrite={false} side={THREE.DoubleSide} />
           </mesh>
         </group>
+        {/* Aura — soft glow behind ship */}
+        {shipAura && (
+          <mesh position={[0, profile.spriteYOff || 0, -0.06]}>
+            <planeGeometry args={[3.8, 3.8]} />
+            <meshBasicMaterial
+              ref={auraMat}
+              map={glowTex}
+              transparent
+              depthWrite={false}
+              color={ac.glow}
+              opacity={0.3}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        )}
         {/* Shield — hex-panel geodesic */}
         <group ref={shieldRef} visible={false}>
           <mesh geometry={_shieldGeo}>
@@ -1052,8 +1127,10 @@ function ShooterShip({
           </lineSegments>
           {!IS_MOBILE && <pointLight intensity={4} color="#22d3ee" distance={6} />}
         </group>
-        {!IS_MOBILE && <pointLight intensity={3} color={ac.light} distance={8} />}
+        {!IS_MOBILE && <pointLight intensity={6} color={ac.light} distance={2.5} />}
       </group>
+      {/* Exhaust trail particles (world space) */}
+      <instancedMesh ref={trailRef} args={[trailGeo, trailMat, TRAIL_N]} renderOrder={5} frustumCulled={false} />
     </>
   );
 }
@@ -1381,7 +1458,14 @@ function DestroyerWorld({
       invulnT.current = 3; // 3 seconds of invulnerability (semi-transparent)
       for (const b of enemyBullets.current) b.active = false;
     }
-    if (gameState !== 'playing' || overRef.current) return;
+    if (gameState !== 'playing' || overRef.current) {
+      // Clear visuals when not playing
+      for (const pw of powerups.current) pw.active = false;
+      for (const e of enemies.current) e.active = false;
+      for (const p of projectiles.current) p.active = false;
+      for (const b of enemyBullets.current) b.active = false;
+      return;
+    }
     // Tab was hidden — skip frame to prevent time jump
     if (tabHiddenRef.current) {
       if (!document.hidden) {
@@ -1568,7 +1652,7 @@ function DestroyerWorld({
       const hasDouble = doubleT.current > 0;
       let firedType: 'rocket' | 'double' | 'single' = 'single';
 
-      const SHIP_SCALE = 1.035; // 10% smaller (was 1.15)
+      const SHIP_SCALE = 1.0;
       const sg = shipProfile.singleGun;
       const dg = shipProfile.doubleGuns;
 
