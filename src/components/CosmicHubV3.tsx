@@ -130,12 +130,12 @@ const MODULES: ModuleDef[] = [
   },
   {
     id: 'blackhole',
-    label: 'Black Hole',
+    label: 'Void Purge',
     route: '/blackhole',
-    desc: 'Destroy your identity',
+    desc: 'Purge dust, salvage SOL',
     icon: <HubIcon name="blackhole" />,
     iconName: 'blackhole',
-    colorClass: 'from-purple-500 to-indigo-400',
+    colorClass: 'from-red-500 to-orange-400',
   },
   {
     id: 'shop',

@@ -6662,7 +6662,11 @@ const server = http.createServer(async (req, res) => {
         detected: lowDappInteraction, weight: 7,
         severity: lowDappInteraction ? 'warning' : 'info',
         value: `${uniquePrograms} programs`,
-        description: lowDappInteraction ? `Only interacted with ${uniquePrograms} programs despite ${totalSigCount} txs` : `Interacted with ${uniquePrograms} different programs`,
+        description: lowDappInteraction
+          ? (uniquePrograms === 0
+            ? `No dApp interactions detected among ${totalSigCount} transactions — SOL transfers only`
+            : `Only ${uniquePrograms} dApps used across ${totalSigCount} transactions`)
+          : `Interacted with ${uniquePrograms} different programs`,
       });
 
       // Signal 11: Drained Balance — current balance is tiny vs historical max

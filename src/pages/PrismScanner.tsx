@@ -7,7 +7,6 @@ import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import {
   ArrowLeft,
-  Search,
   Loader2,
   Swords,
   ChevronRight,
@@ -21,7 +20,6 @@ import {
   Activity,
   ExternalLink,
   Clock,
-  User,
   AlertTriangle,
   CheckCircle,
   XCircle,
@@ -113,7 +111,7 @@ interface SybilAnalysis {
   trustScore: number;
   trustGrade: string;
   signals: SybilSignal[];
-  metrics: Record<string, unknown>;
+  metrics: Record<string, unknown> & { siblingAddresses?: string[]; siblingCount?: number };
   behaviorProfile: Record<string, unknown>;
 }
 interface FundingSource {
@@ -164,7 +162,6 @@ export default function PrismScanner() {
   const [result, setResult] = useState<WalletPreview | null>(null);
   const [error, setError] = useState('');
   const [recentWallets, setRecentWallets] = useState<string[]>(getRecentWallets);
-  const [counterparties, setCounterparties] = useState<{ address: string; volume?: number }[]>([]);
 
   // Data states
   const [sybilData, setSybilData] = useState<SybilAnalysis | null>(null);
@@ -176,37 +173,6 @@ export default function PrismScanner() {
   const [huntVerdict, setHuntVerdict] = useState<'sybil' | 'clean' | null>(null);
   const [huntCoinsEarned, setHuntCoinsEarned] = useState(0);
   const [showVerdictAnim, setShowVerdictAnim] = useState(false);
-
-  // Auto-scan on wallet connect / wallet change
-  const hasAutoScanned = useRef<string | null>(null);
-  useEffect(() => {
-    if (myAddress && hasAutoScanned.current !== myAddress) {
-      hasAutoScanned.current = myAddress;
-      handleSearch(myAddress);
-    }
-    if (!myAddress) hasAutoScanned.current = null;
-  }, [myAddress]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fetch counterparties (constellation graph)
-  useEffect(() => {
-    if (!myAddress) {
-      setCounterparties([]);
-      return;
-    }
-    const ac = new AbortController();
-    fetch(`${BASE()}/api/constellation?address=${myAddress}&depth=1`, { signal: ac.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!d?.nodes) return;
-        const others = (d.nodes as { address?: string; volume?: number }[])
-          .filter((n) => n.address && n.address !== myAddress)
-          .sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
-          .slice(0, 10) as { address: string; volume?: number }[];
-        setCounterparties(others);
-      })
-      .catch(() => {});
-    return () => ac.abort();
-  }, [myAddress]);
 
   const fetchSybil = useCallback(async (addr: string) => {
     const cached = sybilClientCache.get(addr);
@@ -394,47 +360,24 @@ export default function PrismScanner() {
           </Button>
         </div>
 
-        {/* Quick-select */}
-        {!loading && (myAddress || recentWallets.length > 0 || counterparties.length > 0) && (
-          <div className="flex flex-wrap gap-2">
-            {myAddress && !result && (
-              <button
-                onClick={() => {
-                  setQuery(myAddress);
-                  handleSearch(myAddress);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold hover:bg-cyan-500/20 transition-colors"
-              >
-                <User className="w-3 h-3" /> My Wallet
-              </button>
-            )}
-            {counterparties.slice(0, 5).map((cp) => (
-              <button
-                key={cp.address}
-                onClick={() => {
-                  setQuery(cp.address);
-                  handleSearch(cp.address);
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/[0.06] border border-purple-500/[0.12] text-purple-300/60 text-xs font-mono hover:bg-purple-500/[0.12] transition-colors"
-              >
-                <GitBranch className="w-3 h-3" /> {cp.address.slice(0, 4)}...{cp.address.slice(-4)}
-              </button>
-            ))}
-            {recentWallets
-              .filter((a) => a !== myAddress && !counterparties.some((c) => c.address === a))
-              .slice(0, 4)
-              .map((addr) => (
+        {/* Recent targets */}
+        {!loading && recentWallets.length > 0 && !result && (
+          <div>
+            <p className="text-[10px] text-white/20 uppercase tracking-wider mb-2 font-bold">Recent Targets</p>
+            <div className="flex flex-wrap gap-2">
+              {recentWallets.slice(0, 6).map((addr) => (
                 <button
                   key={addr}
                   onClick={() => {
                     setQuery(addr);
                     handleSearch(addr);
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/50 text-xs font-mono hover:bg-white/[0.08] transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/[0.04] border border-amber-500/[0.08] text-amber-300/40 text-xs font-mono hover:bg-amber-500/[0.1] hover:text-amber-300/70 transition-colors"
                 >
-                  <Clock className="w-3 h-3" /> {addr.slice(0, 4)}...{addr.slice(-4)}
+                  <Crosshair className="w-3 h-3" /> {addr.slice(0, 4)}...{addr.slice(-4)}
                 </button>
               ))}
+            </div>
           </div>
         )}
 
@@ -608,6 +551,43 @@ export default function PrismScanner() {
               </div>
             </div>
 
+            {/* Connected Wallets (siblings from sybil analysis) */}
+            {sybilData?.metrics?.siblingAddresses && (sybilData.metrics.siblingAddresses as string[]).length > 0 && (
+              <div className="glass-card p-4">
+                <p className="text-xs font-bold text-red-400/60 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                  <GitBranch className="w-3.5 h-3.5" /> Linked Wallets
+                  <span className="ml-auto text-[10px] text-white/20 font-mono">
+                    {(sybilData.metrics.siblingAddresses as string[]).length} found
+                  </span>
+                </p>
+                <div className="space-y-1.5">
+                  {(sybilData.metrics.siblingAddresses as string[]).slice(0, 10).map((addr) => (
+                    <div
+                      key={addr}
+                      className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-red-500/[0.03] border border-red-500/[0.06] hover:bg-red-500/[0.06] transition-colors"
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-red-400/40 shrink-0" />
+                      <span className="text-xs font-mono text-white/40 truncate flex-1">
+                        {addr.slice(0, 6)}...{addr.slice(-4)}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setQuery(addr);
+                          handleSearch(addr);
+                        }}
+                        className="text-[10px] text-amber-400/50 hover:text-amber-400 font-bold transition-colors"
+                      >
+                        HUNT
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[9px] text-white/15 mt-2">
+                  Wallets funded by the same source — potential sybil cluster
+                </p>
+              </div>
+            )}
+
             {/* Protocol Usage */}
             {result.topPrograms && result.topPrograms.length > 0 && (
               <div className="glass-card p-4">
@@ -642,21 +622,78 @@ export default function PrismScanner() {
         )}
 
         {!result && !loading && !error && (
-          <div className="text-center py-16 text-white/20">
-            <Crosshair className="w-12 h-12 mx-auto mb-4 opacity-15 text-amber-500" />
-            <p className="text-sm text-amber-200/40 font-bold">Hunt sybil wallets for bounty rewards</p>
-            <p className="text-xs text-white/15 mt-2 max-w-xs mx-auto leading-relaxed">
-              Enter any Solana address to analyze. If Trust Score &lt; 50, you collect a
-              <span className="text-amber-400/60 font-bold"> 10 coin bounty</span>. Clean wallets earn{' '}
-              <span className="text-white/30 font-bold">3 coins</span>.
-            </p>
-            <div className="flex items-center justify-center gap-4 mt-6 text-[10px] text-white/10">
-              <span>21 risk signals</span>
-              <span className="w-1 h-1 rounded-full bg-white/10" />
-              <span>funding graph</span>
-              <span className="w-1 h-1 rounded-full bg-white/10" />
-              <span>behavior analysis</span>
+          <div className="space-y-4 py-4">
+            {/* Mission Briefing */}
+            <div className="rounded-xl border border-amber-500/[0.1] bg-gradient-to-br from-amber-900/[0.08] to-red-900/[0.04] p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-[10px] uppercase tracking-[0.15em] text-amber-300/50 font-bold">
+                  Mission Briefing
+                </span>
+              </div>
+              <p className="text-sm text-white/60 leading-relaxed">
+                Sybil wallets pollute the ecosystem with fake identities. Your mission: scan suspicious addresses and
+                expose them.
+              </p>
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                <div className="rounded-lg bg-red-500/[0.06] border border-red-500/[0.1] p-3 text-center">
+                  <AlertTriangle className="w-5 h-5 text-red-400/60 mx-auto mb-1" />
+                  <p className="text-[10px] text-red-300/60 font-bold">SYBIL FOUND</p>
+                  <p className="text-lg font-black text-amber-400 font-mono">+10</p>
+                  <p className="text-[9px] text-white/20">coins bounty</p>
+                </div>
+                <div className="rounded-lg bg-emerald-500/[0.04] border border-emerald-500/[0.08] p-3 text-center">
+                  <Shield className="w-5 h-5 text-emerald-400/40 mx-auto mb-1" />
+                  <p className="text-[10px] text-emerald-300/40 font-bold">WALLET CLEAR</p>
+                  <p className="text-lg font-black text-white/30 font-mono">+3</p>
+                  <p className="text-[9px] text-white/20">coins scan fee</p>
+                </div>
+              </div>
             </div>
+
+            {/* Detection Capabilities */}
+            <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-4">
+              <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-3">Detection Arsenal</p>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { icon: <BarChart3 className="w-3.5 h-3.5" />, label: '23 Signals', sub: 'risk analysis' },
+                  { icon: <GitBranch className="w-3.5 h-3.5" />, label: 'Fund Graph', sub: 'chain tracing' },
+                  { icon: <Fingerprint className="w-3.5 h-3.5" />, label: 'Behavior', sub: 'pattern match' },
+                ].map((item) => (
+                  <div key={item.label} className="flex flex-col items-center gap-1.5 py-2 rounded-lg bg-white/[0.02]">
+                    <span className="text-amber-400/40">{item.icon}</span>
+                    <span className="text-[10px] text-white/40 font-bold">{item.label}</span>
+                    <span className="text-[9px] text-white/15">{item.sub}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Rank progression */}
+            {huntStats.totalHunts > 0 && (
+              <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-4">
+                <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-2">Hunter Ranks</p>
+                <div className="flex items-center gap-1">
+                  {[
+                    { name: 'Recruit', min: 0 },
+                    { name: 'Tracker', min: 3 },
+                    { name: 'Specialist', min: 10 },
+                    { name: 'Veteran', min: 20 },
+                    { name: 'Apex', min: 50 },
+                  ].map((rank) => {
+                    const active = huntStats.sybilsCaught >= rank.min;
+                    return (
+                      <div key={rank.name} className="flex-1 flex flex-col items-center gap-1">
+                        <div className={`w-full h-1 rounded-full ${active ? 'bg-amber-400/60' : 'bg-white/[0.06]'}`} />
+                        <span className={`text-[8px] ${active ? 'text-amber-300/60' : 'text-white/15'}`}>
+                          {rank.name}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

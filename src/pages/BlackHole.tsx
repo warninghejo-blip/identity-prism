@@ -1222,8 +1222,8 @@ const BlackHole = () => {
 
       {/* ══ Hero: Title + Cinematic Black Hole ══ */}
       <div className="blackhole-hero">
-        <h1 className="blackhole-hero__title">Black Hole</h1>
-        <p className="blackhole-hero__sub">Feed the void &middot; Reclaim your SOL</p>
+        <h1 className="blackhole-hero__title">Void Purge</h1>
+        <p className="blackhole-hero__sub">Purge the contamination &middot; Salvage your SOL</p>
 
         <div
           className="blackhole-visual"
@@ -1268,37 +1268,49 @@ const BlackHole = () => {
         {/* If no wallet and no address param — show connect prompt */}
         {!ownerPublicKey ? (
           <div className="blackhole-panel flex flex-col items-center gap-6 py-12 text-center">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-[10px] uppercase tracking-[0.15em] text-red-400/50 font-bold">
+                Mission Available
+              </span>
+            </div>
             <p className="text-zinc-400 text-sm max-w-md leading-relaxed">
-              Connect your wallet to scan for dust tokens and abandoned NFTs.
+              Your wallet is contaminated with dust tokens and abandoned NFTs.
               <br />
-              Burn them to reclaim locked SOL rent.
+              Connect to scan the threat level and purge them for SOL salvage.
             </p>
             <WalletMultiButton className="!bg-gradient-to-r !from-red-600 !to-orange-600 hover:!from-red-500 hover:!to-orange-500 !rounded-xl !h-12 !px-8 !text-base !font-bold !shadow-lg !shadow-red-900/30" />
             <p className="text-zinc-600 text-xs">
-              Valuable assets (Seeker, preorder, blue chips) are automatically protected.
+              Protected assets (Seeker, Identity Prism, blue chips) are shielded automatically.
             </p>
           </div>
         ) : (
           <div className="blackhole-panel space-y-6">
-            {/* Description + wallet */}
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pb-4 border-b border-white/6">
+            {/* Mission Status Header */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pb-4 border-b border-red-500/[0.08]">
               <div className="text-center sm:text-left max-w-lg">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                  <span className="text-[10px] uppercase tracking-[0.12em] text-red-400/50 font-bold">
+                    Active Mission
+                  </span>
+                </div>
                 <p className="text-zinc-500 text-sm leading-relaxed">
-                  Burn dust tokens and abandoned NFTs to reclaim locked SOL rent. Valuable assets are automatically
-                  protected.
+                  Scan for contamination — dust tokens and dead NFTs locking your SOL. Purge them to salvage rent.
+                  Protected assets are shielded.
                 </p>
                 <p className="text-[11px] mt-1.5 leading-relaxed">
                   {hasMintedCard ? (
                     <span className="text-emerald-400/80">
                       <Shield className="inline w-3 h-3 mr-0.5 -mt-0.5" />
-                      ID Holder — reduced fee: <strong>{(COMMISSION_RATE_MINTED * 100).toFixed(0)}%</strong> (vs{' '}
+                      ID Holder — salvage fee: <strong>{(COMMISSION_RATE_MINTED * 100).toFixed(0)}%</strong> (vs{' '}
                       {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% standard)
                     </span>
                   ) : (
                     <span className="text-zinc-500">
-                      Fee: {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% ·{' '}
+                      Salvage fee: {(COMMISSION_RATE_DEFAULT * 100).toFixed(0)}% ·{' '}
                       <span className="text-cyan-400/70">
-                        Mint your Identity Prism ID to get only {(COMMISSION_RATE_MINTED * 100).toFixed(0)}%
+                        Mint Identity Prism ID for only {(COMMISSION_RATE_MINTED * 100).toFixed(0)}%
                       </span>
                     </span>
                   )}
@@ -1307,48 +1319,105 @@ const BlackHole = () => {
               <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0 hidden sm:inline-flex" />
             </div>
 
-            {/* Asset Summary Stats */}
-            {tokens.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3 text-center">
-                  <div className="text-xl font-bold text-zinc-100">{tokens.length}</div>
-                  <div className="text-[11px] text-zinc-500 mt-0.5">Total Accounts</div>
-                </div>
-                <div className="bg-emerald-950/20 border border-emerald-900/20 rounded-xl p-3 text-center">
-                  <div className="flex items-center justify-center gap-1.5">
-                    <Shield className="h-3.5 w-3.5 text-emerald-400" />
-                    <span className="text-xl font-bold text-emerald-400">{summary.protectedCount}</span>
-                  </div>
-                  <div className="text-[11px] text-emerald-600/80 mt-0.5">Protected</div>
-                </div>
-                <div className="bg-amber-950/20 border border-amber-900/20 rounded-xl p-3 text-center">
-                  <div className="flex items-center justify-center gap-1.5">
-                    <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                    <span className="text-xl font-bold text-amber-400">{summary.valuableCount}</span>
-                  </div>
-                  <div className="text-[11px] text-amber-600/80 mt-0.5">Valuable</div>
-                </div>
-                <div className="bg-red-950/20 border border-red-900/20 rounded-xl p-3 text-center">
-                  <div className="flex items-center justify-center gap-1.5">
-                    <Flame className="h-3.5 w-3.5 text-red-400" />
-                    <span className="text-xl font-bold text-red-400">{summary.burnableCount}</span>
-                  </div>
-                  <div className="text-[11px] text-red-600/80 mt-0.5">Burnable</div>
-                </div>
-              </div>
-            )}
+            {/* Threat Assessment */}
+            {tokens.length > 0 &&
+              (() => {
+                const contaminationPct =
+                  tokens.length > 0 ? Math.round((summary.burnableCount / tokens.length) * 100) : 0;
+                const threatLevel =
+                  contaminationPct >= 70
+                    ? 'CRITICAL'
+                    : contaminationPct >= 40
+                      ? 'HIGH'
+                      : contaminationPct >= 15
+                        ? 'MODERATE'
+                        : 'LOW';
+                const threatColor =
+                  contaminationPct >= 70
+                    ? '#ef4444'
+                    : contaminationPct >= 40
+                      ? '#f97316'
+                      : contaminationPct >= 15
+                        ? '#eab308'
+                        : '#22c55e';
+                return (
+                  <div className="space-y-3">
+                    {/* Contamination meter */}
+                    <div className="rounded-xl border border-red-500/[0.1] bg-gradient-to-r from-red-950/[0.15] to-zinc-900/30 p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] uppercase tracking-[0.12em] text-zinc-500 font-bold">
+                          Contamination Level
+                        </span>
+                        <span className="text-xs font-black font-mono" style={{ color: threatColor }}>
+                          {threatLevel}
+                        </span>
+                      </div>
+                      <div className="h-2.5 rounded-full bg-zinc-900/80 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-700"
+                          style={{
+                            width: `${contaminationPct}%`,
+                            background: `linear-gradient(90deg, ${threatColor}90, ${threatColor})`,
+                          }}
+                        />
+                      </div>
+                      <div className="flex justify-between mt-1.5">
+                        <span className="text-[10px] text-zinc-600 font-mono">{contaminationPct}% contaminated</span>
+                        <span className="text-[10px] text-zinc-600">
+                          {summary.burnableCount} threats / {tokens.length} total
+                        </span>
+                      </div>
+                    </div>
 
-            {/* Selection & Burn Summary */}
+                    {/* Stats grid */}
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-2.5 text-center">
+                        <div className="text-lg font-bold text-zinc-100">{tokens.length}</div>
+                        <div className="text-[9px] text-zinc-500 mt-0.5 uppercase tracking-wider">Scanned</div>
+                      </div>
+                      <div className="bg-emerald-950/20 border border-emerald-900/20 rounded-xl p-2.5 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Shield className="h-3 w-3 text-emerald-400" />
+                          <span className="text-lg font-bold text-emerald-400">{summary.protectedCount}</span>
+                        </div>
+                        <div className="text-[9px] text-emerald-600/80 mt-0.5 uppercase tracking-wider">Shielded</div>
+                      </div>
+                      <div className="bg-amber-950/20 border border-amber-900/20 rounded-xl p-2.5 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <AlertTriangle className="h-3 w-3 text-amber-400" />
+                          <span className="text-lg font-bold text-amber-400">{summary.valuableCount}</span>
+                        </div>
+                        <div className="text-[9px] text-amber-600/80 mt-0.5 uppercase tracking-wider">Caution</div>
+                      </div>
+                      <div className="bg-red-950/20 border border-red-900/20 rounded-xl p-2.5 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Flame className="h-3 w-3 text-red-400" />
+                          <span className="text-lg font-bold text-red-400">{summary.burnableCount}</span>
+                        </div>
+                        <div className="text-[9px] text-red-600/80 mt-0.5 uppercase tracking-wider">Threats</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+            {/* Purge Manifest */}
             {selectedTokens.size > 0 && (
               <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <Flame className="w-3.5 h-3.5 text-red-400/60" />
+                  <span className="text-[10px] uppercase tracking-[0.12em] text-red-400/50 font-bold">
+                    Purge Manifest
+                  </span>
+                </div>
                 <div className="flex flex-col gap-4">
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
                     <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Accounts</div>
+                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Targets</div>
                       <div className="text-lg font-bold text-red-400 mt-1">{summary.totalAccounts}</div>
                     </div>
                     <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Rent Reclaim</div>
+                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Salvage</div>
                       <div className="text-lg font-bold font-mono text-zinc-200 mt-1">
                         {parseFloat(summary.grossReclaim.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span>
                       </div>
@@ -1398,9 +1467,9 @@ const BlackHole = () => {
                         <Flame className="mr-2 h-5 w-5" />
                       )}
                       <span className="hidden sm:inline">
-                        Incinerate {summary.totalAccounts} account{summary.totalAccounts !== 1 ? 's' : ''} &rarr;{' '}
+                        PURGE {summary.totalAccounts} target{summary.totalAccounts !== 1 ? 's' : ''} &rarr;{' '}
                       </span>
-                      <span className="sm:hidden">Burn {summary.totalAccounts} &rarr; </span>~
+                      <span className="sm:hidden">PURGE {summary.totalAccounts} &rarr; </span>~
                       {parseFloat(summary.netReturn.toFixed(4))} SOL
                     </Button>
                   </div>
@@ -1408,12 +1477,12 @@ const BlackHole = () => {
               </div>
             )}
 
-            {/* SOL Recovery Calculator */}
+            {/* Salvage Reward */}
             {tokens.length > 0 && totalRecoverableSol > 0 && selectedTokens.size === 0 && (
               <div className="bg-gradient-to-r from-emerald-950/30 via-emerald-950/20 to-zinc-900/30 border border-emerald-800/30 rounded-2xl p-4 flex items-center justify-between">
                 <div>
-                  <div className="text-[10px] text-emerald-500/80 uppercase tracking-wider font-bold">
-                    Total Recoverable SOL
+                  <div className="text-[10px] text-emerald-500/80 uppercase tracking-[0.12em] font-bold">
+                    Salvage Reward
                   </div>
                   <div className="text-xl font-black font-mono text-emerald-400 mt-0.5">
                     ~{parseFloat(totalRecoverableSol.toFixed(4))} <span className="text-sm text-emerald-600">SOL</span>
@@ -1423,7 +1492,9 @@ const BlackHole = () => {
                       </span>
                     )}
                   </div>
-                  <div className="text-[10px] text-zinc-600 mt-0.5">Select tokens below to burn and reclaim rent</div>
+                  <div className="text-[10px] text-zinc-600 mt-0.5">
+                    Select threats below to purge and reclaim locked rent
+                  </div>
                 </div>
                 <Flame className="h-8 w-8 text-emerald-600/40" />
               </div>
@@ -1443,7 +1514,7 @@ const BlackHole = () => {
                 ) : (
                   <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                 )}
-                Rescan
+                Re-scan
               </Button>
 
               {/* Quick Filters */}
@@ -1497,7 +1568,9 @@ const BlackHole = () => {
 
               {visibleTokens.length === 0 ? (
                 <div className="py-10 text-center text-zinc-600 text-sm">
-                  {isLoading ? 'Scanning event horizon...' : 'No burn candidates found. Toggle "Show all" to review.'}
+                  {isLoading
+                    ? 'Scanning for threats...'
+                    : 'No threats detected. Toggle "Show all" to review all assets.'}
                 </div>
               ) : (
                 <div className="space-y-0.5">
@@ -1625,8 +1698,8 @@ const BlackHole = () => {
                     <TableRow>
                       <TableCell colSpan={6} className="h-20 text-center text-zinc-600 text-sm">
                         {isLoading
-                          ? 'Scanning event horizon...'
-                          : 'No burn candidates found. Toggle "Show all" to review.'}
+                          ? 'Scanning for threats...'
+                          : 'No threats detected. Toggle "Show all" to review all assets.'}
                       </TableCell>
                     </TableRow>
                   ) : (

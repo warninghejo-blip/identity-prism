@@ -740,7 +740,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         value="intel"
                         className="data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto text-[11px]"
                       >
-                        INTEL
+                        X-RAY
                       </TabsTrigger>
                     </TabsList>
                   </div>
