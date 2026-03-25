@@ -39,15 +39,7 @@ import { Button } from '@/components/ui/button';
 import PageShell from '@/components/PageShell';
 import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
-import {
-  fetchWalletPreview,
-  StatPill,
-  TIER_COLORS_HEX,
-  TIER_LABELS,
-  TRUST_GRADE_COLORS,
-  formatWalletAge,
-  type WalletPreview,
-} from '@/components/prism/shared';
+import { fetchWalletPreview, formatWalletAge, type WalletPreview } from '@/components/prism/shared';
 import { earnPrism } from '@/lib/prismCoin';
 
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
@@ -295,12 +287,6 @@ export default function PrismScanner() {
     [query, myAddress, fetchSybil, fetchFunding],
   );
 
-  const displayScore = result ? result.compositeScore || result.score || 0 : 0;
-  const maxScore = 1000;
-  const displayTier = result ? result.compositeTier || result.tier || 'mercury' : 'mercury';
-  const tierColor = displayTier ? (TIER_COLORS_HEX[displayTier] ?? '#888') : '#888';
-  const gradeStyle = result?.trustGrade ? (TRUST_GRADE_COLORS[result.trustGrade] ?? TRUST_GRADE_COLORS['C']) : null;
-
   const huntRank =
     huntStats.sybilsCaught >= 50
       ? 'Apex Hunter'
@@ -520,126 +506,182 @@ export default function PrismScanner() {
         {/* Result */}
         {result && (
           <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Header card */}
-            <div className="glass-card overflow-hidden" style={{ borderColor: `${tierColor}20` }}>
-              <div className="p-4">
-                <div className="flex items-center gap-4">
-                  <div className="relative flex-shrink-0">
-                    <svg width="68" height="68" viewBox="0 0 68 68">
-                      <circle cx="34" cy="34" r="28" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="4" />
-                      <circle
-                        cx="34"
-                        cy="34"
-                        r="28"
-                        fill="none"
-                        stroke={tierColor}
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                        strokeDasharray={`${Math.min(displayScore / maxScore, 1) * 2 * Math.PI * 28} ${2 * Math.PI * 28}`}
-                        transform="rotate(-90 34 34)"
-                        style={{ filter: `drop-shadow(0 0 6px ${tierColor}80)` }}
-                      />
-                      <text
-                        x="34"
-                        y="31"
-                        textAnchor="middle"
-                        fill={tierColor}
-                        fontSize="15"
-                        fontWeight="bold"
-                        fontFamily="monospace"
-                      >
-                        {displayScore}
-                      </text>
-                      <text x="34" y="42" textAnchor="middle" fill="rgba(255,255,255,0.2)" fontSize="8">
-                        /{maxScore}
-                      </text>
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <p className="text-white/40 text-xs font-mono truncate">
-                        {result.address.slice(0, 6)}...{result.address.slice(-4)}
-                      </p>
-                      <CopyButton text={result.address} />
+            {/* Target Dossier */}
+            {(() => {
+              // Use sybilData trust when available (authoritative), fallback to wallet preview
+              const trustScore =
+                sybilData?.trustScore ?? (result.trustGrade === 'A+' ? 95 : result.trustGrade === 'A' ? 85 : 65);
+              const trustGrade = sybilData?.trustGrade ?? result.trustGrade ?? '?';
+              const riskScore = sybilData?.riskScore ?? 0;
+              const flaggedCount = sybilData?.signals?.filter((s) => s.detected).length ?? 0;
+              const totalSignals = sybilData?.signals?.length ?? 0;
+              const metrics = sybilData?.metrics ?? {};
+              const gradeColor =
+                trustScore >= 80 ? '#22c55e' : trustScore >= 60 ? '#3b82f6' : trustScore >= 40 ? '#eab308' : '#ef4444';
+
+              return (
+                <div className="rounded-xl border overflow-hidden" style={{ borderColor: `${gradeColor}20` }}>
+                  <div className="p-4">
+                    {/* Address + Trust Gauge */}
+                    <div className="flex items-center gap-4">
+                      <div className="flex-shrink-0">
+                        <svg width="72" height="72" viewBox="0 0 72 72">
+                          <circle cx="36" cy="36" r="29" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="5" />
+                          <circle
+                            cx="36"
+                            cy="36"
+                            r="29"
+                            fill="none"
+                            stroke={gradeColor}
+                            strokeWidth="5"
+                            strokeLinecap="round"
+                            strokeDasharray={`${(trustScore / 100) * 2 * Math.PI * 29} ${2 * Math.PI * 29}`}
+                            transform="rotate(-90 36 36)"
+                            style={{ filter: `drop-shadow(0 0 8px ${gradeColor}60)` }}
+                          />
+                          <text
+                            x="36"
+                            y="33"
+                            textAnchor="middle"
+                            fill={gradeColor}
+                            fontSize="18"
+                            fontWeight="bold"
+                            fontFamily="monospace"
+                          >
+                            {trustGrade}
+                          </text>
+                          <text x="36" y="46" textAnchor="middle" fill="rgba(255,255,255,0.2)" fontSize="9">
+                            {trustScore}/100
+                          </text>
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <p className="text-white/40 text-xs font-mono truncate">
+                            {result.address.slice(0, 6)}...{result.address.slice(-4)}
+                          </p>
+                          <CopyButton text={result.address} />
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold" style={{ color: gradeColor }}>
+                            Trust {trustScore}/100
+                          </span>
+                          {sybilData && (
+                            <span
+                              className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${riskScore >= 50 ? 'bg-red-500/15 text-red-400' : riskScore >= 20 ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}
+                            >
+                              Risk {riskScore}
+                            </span>
+                          )}
+                          {sybilData && (
+                            <span className="text-[10px] text-white/25 font-mono">
+                              {flaggedCount}/{totalSignals} flags
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <p className="font-bold text-lg" style={{ color: tierColor }}>
-                      {TIER_LABELS[displayTier] ?? displayTier.toUpperCase()}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      {gradeStyle && (
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${gradeStyle.bg} ${gradeStyle.border} ${gradeStyle.text}`}
+
+                    {/* Key Metrics Grid */}
+                    <div className="grid grid-cols-3 gap-2 mt-3">
+                      {[
+                        {
+                          label: 'Age',
+                          value: formatWalletAge(Number(metrics.walletAgeDays) || result.walletAgeDays),
+                          color: 'text-green-400/70',
+                        },
+                        {
+                          label: 'Txns',
+                          value: (Number(metrics.txCount) || result.txCount).toLocaleString(),
+                          color: 'text-cyan-400/70',
+                        },
+                        {
+                          label: 'Balance',
+                          value: `${(Number(metrics.balance) || result.solBalance).toFixed(2)}◎`,
+                          color: 'text-yellow-400/70',
+                        },
+                        {
+                          label: 'Tokens',
+                          value: String(Number(metrics.tokenDiversityCount) || result.tokenCount),
+                          color: 'text-blue-400/70',
+                        },
+                        {
+                          label: 'NFTs',
+                          value: String(Number(metrics.nftCount) || result.nftCount),
+                          color: 'text-purple-400/70',
+                        },
+                        {
+                          label: 'Programs',
+                          value: String(Number(metrics.uniquePrograms) || 0),
+                          color: 'text-orange-400/70',
+                        },
+                      ].map((m) => (
+                        <div
+                          key={m.label}
+                          className="flex justify-between items-center px-2 py-1 rounded-md bg-white/[0.02]"
                         >
-                          <Shield className="w-3 h-3" /> Trust {result.trustGrade}
-                        </span>
-                      )}
-                      {(result.compositeBadgeCount > 0 || result.badges.length > 0) && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold text-amber-400 border border-amber-400/20 bg-amber-400/10">
-                          {result.compositeBadgeCount || result.badges.length} badges
-                        </span>
-                      )}
+                          <span className="text-[10px] text-white/25">{m.label}</span>
+                          <span className={`text-[11px] font-mono font-bold ${m.color}`}>{m.value}</span>
+                        </div>
+                      ))}
                     </div>
+
+                    {/* Funding Source (from sybil data) */}
+                    {fundingSources.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-white/[0.05]">
+                        <p className="text-[9px] text-white/20 uppercase tracking-wider mb-1.5 font-bold">
+                          Primary Funding
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{
+                              background:
+                                fundingSources[0].type === 'cex'
+                                  ? '#22c55e'
+                                  : fundingSources[0].type === 'bridge'
+                                    ? '#3b82f6'
+                                    : '#ef4444',
+                            }}
+                          />
+                          <span className="text-xs text-white/50 font-mono">
+                            {fundingSources[0].label ||
+                              `${fundingSources[0].address.slice(0, 6)}...${fundingSources[0].address.slice(-4)}`}
+                          </span>
+                          <span className="text-[10px] text-white/25 font-mono ml-auto">
+                            {fundingSources[0].totalSolReceived.toFixed(2)}◎ ({fundingSources[0].percentage.toFixed(0)}
+                            %)
+                          </span>
+                          <span
+                            className={`text-[9px] font-bold ${fundingSources[0].type === 'cex' ? 'text-emerald-400/60' : 'text-red-400/50'}`}
+                          >
+                            {fundingSources[0].type === 'cex'
+                              ? 'EXCHANGE'
+                              : fundingSources[0].type === 'bridge'
+                                ? 'BRIDGE'
+                                : 'WALLET'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex border-t border-white/[0.06]">
+                    <button
+                      onClick={() =>
+                        startFadeTransition(() =>
+                          navigate(`/?address=${result.address}`, { state: { openCard: true } }),
+                        )
+                      }
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold transition-all hover:bg-white/[0.03] text-cyan-400/70"
+                    >
+                      <ExternalLink className="w-4 h-4" /> Full Card
+                    </button>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <StatPill
-                    icon={<Wallet className="w-3 h-3" />}
-                    label="SOL"
-                    value={result.solBalance.toFixed(2)}
-                    color="text-yellow-400"
-                  />
-                  <StatPill
-                    icon={<Layers className="w-3 h-3" />}
-                    label="Tokens"
-                    value={String(result.tokenCount)}
-                    color="text-blue-400"
-                  />
-                  <StatPill
-                    icon={<Image className="w-3 h-3" />}
-                    label="NFTs"
-                    value={String(result.nftCount)}
-                    color="text-purple-400"
-                  />
-                  <StatPill
-                    icon={<Hash className="w-3 h-3" />}
-                    label="Txns"
-                    value={result.txCount.toLocaleString()}
-                    color="text-cyan-400"
-                  />
-                  <StatPill
-                    icon={<Calendar className="w-3 h-3" />}
-                    label="Age"
-                    value={formatWalletAge(result.walletAgeDays)}
-                    color="text-green-400"
-                  />
-                  <StatPill
-                    icon={<Activity className="w-3 h-3" />}
-                    label="Tx/Day"
-                    value={result.walletAgeDays > 0 ? (result.txCount / result.walletAgeDays).toFixed(1) : '—'}
-                    color="text-orange-400"
-                  />
-                </div>
-              </div>
-              <div className="flex border-t border-white/[0.06]">
-                <button
-                  onClick={() =>
-                    startFadeTransition(() => navigate(`/?address=${result.address}`, { state: { openCard: true } }))
-                  }
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-bold transition-all hover:bg-white/[0.03]"
-                  style={{ color: tierColor }}
-                >
-                  <ExternalLink className="w-4 h-4" /> Full Card
-                </button>
-                {myAddress && result.address !== myAddress && (
-                  <button
-                    onClick={() => startFadeTransition(() => navigate(`/compare?a=${myAddress}&b=${result.address}`))}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 border-l border-white/[0.06] text-sm font-bold transition-all hover:bg-white/[0.03] text-purple-400"
-                  >
-                    <Swords className="w-4 h-4" /> Compare
-                  </button>
-                )}
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Connected Wallets (siblings from sybil analysis) */}
             {sybilData?.metrics?.siblingAddresses && (sybilData.metrics.siblingAddresses as string[]).length > 0 && (
