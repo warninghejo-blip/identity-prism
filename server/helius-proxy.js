@@ -7181,8 +7181,34 @@ const server = http.createServer(async (req, res) => {
       }
       const trustGrade = trustScore >= 90 ? 'A+' : trustScore >= 80 ? 'A' : trustScore >= 70 ? 'B' : trustScore >= 60 ? 'C' : trustScore >= 50 ? 'D' : 'F';
 
+      // ── Wallet Classification ──
+      const walletType = (() => {
+        if (trustScore <= 20) return 'sybil';
+        if (trustScore <= 40 && allSiblings.size >= 5) return 'sybil_cluster';
+        if (isRobotic && farmingRatio > 0.5) return 'bot';
+        if (balance > 100 && totalSigCount > 500) return 'whale';
+        if (defiDepth >= 3 && totalSolTxCount > 100) return 'defi_power_user';
+        if (defiDepth >= 1 && totalSolTxCount > 30) return 'defi_user';
+        if (nftCount >= 10) return 'nft_collector';
+        if (farmingRatio > 0.6 && shallowProtocols >= 5) return 'airdrop_farmer';
+        if (totalSigCount > 200 && activeDaysRatio > 0.15) return 'active_user';
+        if (totalSigCount > 50) return 'regular_user';
+        if (totalSigCount > 10) return 'light_user';
+        if (totalSigCount <= 2) return 'empty';
+        return 'new_user';
+      })();
+
+      // ── Top Programs from parsed txs ──
+      const topProgramsList = [...programInteractionCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 15)
+        .map(([pid, count]) => {
+          const n = PROGRAM_LABELS[pid];
+          return { programId: pid, name: n || null, interactions: count };
+        });
+
       const analysis = {
-        address, riskScore, riskLevel, trustScore, trustGrade, signals,
+        address, riskScore, riskLevel, trustScore, trustGrade, walletType, signals,
         metrics: {
           walletAgeDays,
           activeDaysCount, activeDaysRatio,
@@ -7221,7 +7247,8 @@ const server = http.createServer(async (req, res) => {
           hasSolDomain,
           earlyTxsAnalyzed: earlyParsedTxs.length,
           rapidCycleCount,
-          siblingAddresses: [...allSiblings].slice(0, 30), // expose for UI
+          siblingAddresses: [...allSiblings].slice(0, 30),
+          topPrograms: topProgramsList,
         },
         behaviorProfile: {
           txTimingVariance: timingVariance,
@@ -7251,27 +7278,89 @@ const server = http.createServer(async (req, res) => {
           });
       }
       sybilCache.set(address, { analysis, fundingSources: cachedFundingSources, cachedAt: Date.now() });
-      // ── Update wallet database with sybil data ──
-      const wSybil = walletDatabase.get(address) || {};
-      const sybilUpdate = {
+
+      // ── Update wallet database — FULL intelligence profile ──
+      const m = analysis.metrics || {};
+      const bp = analysis.behaviorProfile || {};
+      const detectedSignals = signals.filter(s => s.detected).map(s => s.id);
+
+      const walletProfile = {
+        // Core identity
         sybil: {
           riskScore: analysis.riskScore,
           riskLevel: analysis.riskLevel,
           trustScore: analysis.trustScore,
           trustGrade: analysis.trustGrade,
+          walletType: analysis.walletType,
           updatedAt: new Date().toISOString(),
+          detectedSignals,
+          signalCount: detectedSignals.length,
         },
+        // On-chain stats
+        stats: {
+          tokens: m.tokenDiversityCount || 0,
+          nfts: m.nftCount || 0,
+          transactions: m.txCount || 0,
+          solBalance: m.balance || 0,
+          historicalMaxBalance: m.historicalMaxBalance || 0,
+          walletAgeDays: m.walletAgeDays || 0,
+          walletAgeYears: Math.floor((m.walletAgeDays || 0) / 365),
+          activeDays: m.activeDaysCount || 0,
+          activeDaysRatio: m.activeDaysRatio || 0,
+        },
+        // Financial profile
+        financial: {
+          incomingVolume: m.incomingVolume || 0,
+          outgoingVolume: m.outgoingVolume || 0,
+          incomingCount: m.incomingCount || 0,
+          outgoingCount: m.outgoingCount || 0,
+          uniqueSenders: m.uniqueSenders || 0,
+          uniqueRecipients: m.uniqueRecipients || 0,
+          flowRatio: m.flowRatio || 0,
+          dustRatio: m.dustRatio || 0,
+          selfTransferCount: m.selfTransferCount || 0,
+          rapidCycleCount: m.rapidCycleCount || 0,
+        },
+        // Funding intelligence
+        funding: {
+          chainDepth: m.fundingChainDepth || 0,
+          topFunderPct: m.topFunderPct || 0,
+          topFunderTxCount: m.topFunderTxCount || 0,
+          sources: cachedFundingSources.slice(0, 10),
+          siblingCount: m.siblingCount || 0,
+          hubSpokeScore: m.hubSpokeScore || 0,
+          clusterSimilarity: m.clusterSimilarity || 0,
+        },
+        // Behavioral fingerprint
+        behavior: {
+          timingCV: bp.timingCV,
+          hourEntropy: bp.hourEntropy || 0,
+          intervalEntropy: bp.intervalEntropy || 0,
+          weekendRatio: m.weekendRatio || 0,
+          hourDistribution: m.hourBuckets || [],
+          dayDistribution: m.dayBuckets || [],
+          protocolDiversity: bp.protocolDiversity || 0,
+        },
+        // DeFi / Protocol usage
+        protocols: {
+          uniquePrograms: m.uniquePrograms || 0,
+          defiDepth: m.defiDepth || 0,
+          defiCategories: m.defiCategories || [],
+          topPrograms: topProgramsList.slice(0, 10),
+          shallowProtocols: m.shallowProtocols || 0,
+          deepProtocols: m.deepProtocols || 0,
+          farmingRatio: m.farmingRatio || 0,
+        },
+        // Network graph
+        network: {
+          siblings: [...allSiblings].slice(0, 30),
+          hasSolDomain: m.hasSolDomain || false,
+        },
+        // Metadata
+        lastScannedAt: new Date().toISOString(),
+        firstSeenAt: walletDatabase.get(address)?.firstSeenAt || new Date().toISOString(),
       };
-      if (analysis.metrics) {
-        sybilUpdate.stats = {
-          tokens: analysis.metrics.tokenDiversityCount,
-          nfts: analysis.metrics.nftCount,
-          transactions: analysis.metrics.txCount,
-          solBalance: analysis.metrics.balance,
-          walletAgeYears: Math.floor((analysis.metrics.walletAgeDays || 0) / 365),
-        };
-      }
-      updateWalletEntry(address, sybilUpdate);
+      updateWalletEntry(address, walletProfile);
       triggerCompositeUpdate(address);
 
       // ── Persist to sybil graph ──
@@ -9825,6 +9914,43 @@ const NON_GAME_DAILY_EARN_CAP = 1500;
 // Valid text quest IDs (must match src/lib/textQuests.ts)
 const VALID_TEXT_QUEST_IDS = new Set(['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy']);
 const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;
+
+// Known program IDs → human-readable names (used for wallet profiling)
+const PROGRAM_LABELS = {
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': 'Jupiter',
+  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX9t': 'Jupiter V4',
+  'DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M': 'Jupiter DCA',
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': 'Orca',
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK': 'Raydium CLMM',
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': 'Raydium AMM',
+  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo': 'Meteora',
+  'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY': 'Phoenix',
+  'SSwpkEEcbUqx4vtoEByFjSkhKdCT862DNVb52nZg1UZ': 'Saber',
+  'SSwapUtytfBdBn1b9NUGG6foMVPtcWgpRU32HToDUZr': 'Step Finance',
+  'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68': 'Marinade',
+  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': 'Marinade Finance',
+  'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD': 'Marinade',
+  'jCebN34bUfdeUhR6bhNixjhCSnx9CY23HsmUkT7XjVV': 'Jito',
+  'So1endDq2YkqhipRh3WViPa8hFb7GVEtcEMF3CBAK8h': 'Solend',
+  'CMZYPASGWeTz7RNGHaRJfCq2XQ5pYK6nDvVQxzkH51zb': 'Solend',
+  'KLend2g3cP87ber41GXWsSZQz9R1hGT2bVBaeEdnKHR': 'Kamino',
+  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': 'marginfi',
+  'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1': 'Tensor',
+  'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN': 'Tensor Swap',
+  'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K': 'Magic Eden V2',
+  'hadeK9DLv9eA7ya5KnRSb4dTSitisSCRoB68Y8hmjtR': 'Magic Eden V3',
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s': 'Metaplex',
+  'BGUMAp9Gq7iTEuizy4pqAxsTkFQ1XyUbSreFdn6YqwPc': 'Bubblegum',
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA': 'Token Program',
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL': 'ATA Program',
+  'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb': 'Wormhole',
+  'FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH': 'Pyth Oracle',
+  'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy': 'Stake Pool',
+  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr': 'Memo',
+  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB': 'Phantom',
+  'ComputeBudget111111111111111111111111111111': 'Compute Budget',
+  '11111111111111111111111111111111': 'System Program',
+};
 
 // Known CEX/Bridge/DEX addresses for labeling
 const KNOWN_LABELS = {
