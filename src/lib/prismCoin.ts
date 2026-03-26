@@ -53,7 +53,8 @@ export type PrismEarnSource =
   | 'first_mint'
   | 'referral'
   | 'text_quest'
-  | 'sybil_hunt';
+  | 'sybil_hunt'
+  | 'quiz';
 
 export type PrismSpendSource =
   | 'forge_frame'
@@ -81,6 +82,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   referral: 20, // per referred user who scans
   text_quest: 1, // text quest reward (custom amount)
   sybil_hunt: 20, // bounty for catching a sybil (trustScore < 50)
+  quiz: 5, // per correct quiz answer
 };
 
 // ── Local storage keys ──

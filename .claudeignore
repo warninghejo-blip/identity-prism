@@ -1,3 +1,9 @@
+# Secrets — never read
+.env
+.env.*
+*firebase-adminsdk*.json
+*service-account*.json
+
 # Dependencies
 node_modules/
 

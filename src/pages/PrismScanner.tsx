@@ -141,50 +141,82 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-/* ── Interactive Scanning Sequence ── */
-function ScanningSequence({ targetAddress }: { targetAddress: string }) {
-  const [phase, setPhase] = useState(0);
-  const [scanHits, setScanHits] = useState(0);
-  const [scanMisses, setScanMisses] = useState(0);
-  const [blips, setBlips] = useState<{ id: number; x: number; y: number; isSybil: boolean; hit?: boolean }[]>([]);
-  const blipIdRef = useRef(0);
-  const containerRef = useRef<HTMLDivElement>(null);
+/* ── Quiz while scanning ── */
+interface QuizQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  category: string;
+  difficulty: string;
+}
 
-  // Progress through scan phases
+function ScanningSequence({ targetAddress, walletAddress }: { targetAddress: string; walletAddress: string }) {
+  const [phase, setPhase] = useState(0);
+  const [quiz, setQuiz] = useState<QuizQuestion | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [result, setResult] = useState<{ correct: boolean; correctAnswer: string; earned: number } | null>(null);
+  const [quizScore, setQuizScore] = useState({ correct: 0, wrong: 0, earned: 0 });
+  const [loadingAnswer, setLoadingAnswer] = useState(false);
+  const fetchedRef = useRef(false);
+
+  // Progress phases
   useEffect(() => {
     const timers = [
-      setTimeout(() => setPhase(1), 800),
-      setTimeout(() => setPhase(2), 2000),
+      setTimeout(() => setPhase(1), 600),
+      setTimeout(() => setPhase(2), 1800),
       setTimeout(() => setPhase(3), 3500),
-      setTimeout(() => setPhase(4), 5000),
+      setTimeout(() => setPhase(4), 5500),
     ];
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  // Spawn blips for mini-game
-  useEffect(() => {
-    if (phase < 2) return;
-    const interval = setInterval(() => {
-      const id = ++blipIdRef.current;
-      const isSybil = Math.random() < 0.4;
-      setBlips((prev) => {
-        // Max 6 blips at once
-        const active = prev.filter((b) => !b.hit).slice(-5);
-        return [...active, { id, x: 10 + Math.random() * 80, y: 10 + Math.random() * 70, isSybil }];
-      });
-      // Auto-remove after 2.5s
-      setTimeout(() => setBlips((prev) => prev.filter((b) => b.id !== id)), 2500);
-    }, 700);
-    return () => clearInterval(interval);
-  }, [phase]);
-
-  const handleBlipClick = (id: number, isSybil: boolean) => {
-    if (isSybil) {
-      setScanHits((h) => h + 1);
-    } else {
-      setScanMisses((m) => m + 1);
+  // Fetch first question
+  const fetchQuestion = useCallback(async () => {
+    try {
+      const r = await fetch(`${BASE()}/api/quiz/question`);
+      if (r.ok) {
+        const q = await r.json();
+        setQuiz(q);
+        setSelected(null);
+        setResult(null);
+      }
+    } catch {
+      /* ignore */
     }
-    setBlips((prev) => prev.map((b) => (b.id === id ? { ...b, hit: true } : b)));
+  }, []);
+
+  useEffect(() => {
+    if (!fetchedRef.current) {
+      fetchedRef.current = true;
+      fetchQuestion();
+    }
+  }, [fetchQuestion]);
+
+  const handleAnswer = async (answer: string) => {
+    if (selected || !quiz) return;
+    setSelected(answer);
+    setLoadingAnswer(true);
+    try {
+      const r = await fetch(`${BASE()}/api/quiz/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: quiz.id, answer, address: walletAddress }),
+      });
+      if (r.ok) {
+        const res = await r.json();
+        setResult(res);
+        setQuizScore((prev) => ({
+          correct: prev.correct + (res.correct ? 1 : 0),
+          wrong: prev.wrong + (res.correct ? 0 : 1),
+          earned: prev.earned + (res.earned || 0),
+        }));
+        // Auto-fetch next question after 2s
+        setTimeout(() => fetchQuestion(), 2000);
+      }
+    } catch {
+      /* ignore */
+    }
+    setLoadingAnswer(false);
   };
 
   const phases = [
@@ -194,6 +226,14 @@ function ScanningSequence({ targetAddress }: { targetAddress: string }) {
     'Tracing funding graph',
     'Profiling behavior patterns',
   ];
+
+  const catLabel: Record<string, string> = {
+    solana: 'Solana',
+    blockchain: 'Blockchain',
+    culture: 'Crypto Culture',
+    security: 'Security',
+    technical: 'Technical',
+  };
 
   return (
     <div className="rounded-xl border border-amber-500/[0.15] bg-gradient-to-br from-amber-900/[0.08] to-red-900/[0.06] p-4 animate-in fade-in duration-300">
@@ -214,76 +254,67 @@ function ScanningSequence({ targetAddress }: { targetAddress: string }) {
             </p>
           </div>
         </div>
-        {phase >= 2 && (scanHits > 0 || scanMisses > 0) && (
-          <div className="text-right text-[10px] font-mono">
-            <span className="text-red-400">{scanHits} hits</span>
-            {scanMisses > 0 && <span className="text-white/20 ml-2">-{scanMisses}</span>}
+        {quizScore.earned > 0 && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <Coins className="w-3 h-3 text-amber-400" />
+            <span className="text-xs font-bold text-amber-300">+{quizScore.earned}</span>
           </div>
         )}
       </div>
 
-      {/* Radar / Mini-game area */}
-      <div
-        ref={containerRef}
-        className="relative h-32 rounded-lg bg-black/20 border border-amber-500/[0.06] overflow-hidden mb-3"
-      >
-        {/* Radar sweep */}
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background: 'conic-gradient(from 0deg, transparent 0deg, rgba(245,158,11,0.08) 30deg, transparent 60deg)',
-            animation: 'spin 4s linear infinite',
-          }}
-        />
-        {/* Grid lines */}
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)',
-            backgroundSize: '20% 20%',
-          }}
-        />
-        {/* Blips */}
-        {blips
-          .filter((b) => !b.hit)
-          .map((blip) => (
-            <button
-              key={blip.id}
-              onClick={() => handleBlipClick(blip.id, blip.isSybil)}
-              className={`absolute w-6 h-6 rounded-full -translate-x-1/2 -translate-y-1/2 transition-all cursor-crosshair animate-in fade-in zoom-in-50 duration-300 ${
-                blip.isSybil
-                  ? 'bg-red-500/30 border border-red-400/40 hover:bg-red-500/60 hover:scale-125'
-                  : 'bg-cyan-500/20 border border-cyan-400/20 hover:bg-cyan-500/40 hover:scale-125'
-              }`}
-              style={{ left: `${blip.x}%`, top: `${blip.y}%` }}
-              title={blip.isSybil ? 'Sybil!' : 'Clean wallet'}
-            >
-              <span className="text-[7px] font-mono text-white/40 block text-center leading-6">
-                {blip.isSybil ? '!' : '·'}
+      {/* Quiz Area */}
+      {quiz ? (
+        <div className="mb-3 rounded-lg bg-black/20 border border-amber-500/[0.08] p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400/70">
+              {catLabel[quiz.category] || quiz.category}
+            </span>
+            <span className="text-[9px] text-white/20">+5 coins</span>
+            {quizScore.correct + quizScore.wrong > 0 && (
+              <span className="text-[9px] text-white/20 ml-auto">
+                {quizScore.correct}/{quizScore.correct + quizScore.wrong}
               </span>
-            </button>
-          ))}
-        {/* Hit effects */}
-        {blips
-          .filter((b) => b.hit)
-          .map((blip) => (
+            )}
+          </div>
+          <p className="text-xs text-white/70 mb-3 leading-relaxed">{quiz.question}</p>
+          <div className="grid grid-cols-1 gap-1.5">
+            {quiz.options.map((opt) => {
+              let cls = 'text-left w-full px-3 py-2 rounded-lg text-xs transition-all duration-200 ';
+              if (!selected) {
+                cls +=
+                  'bg-white/[0.03] border border-white/[0.06] text-white/60 hover:bg-amber-500/10 hover:border-amber-500/20 hover:text-amber-200/80';
+              } else if (opt === result?.correctAnswer) {
+                cls += 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300';
+              } else if (opt === selected && !result?.correct) {
+                cls += 'bg-red-500/15 border border-red-500/30 text-red-300';
+              } else {
+                cls += 'bg-white/[0.02] border border-white/[0.04] text-white/20';
+              }
+              return (
+                <button
+                  key={opt}
+                  onClick={() => handleAnswer(opt)}
+                  disabled={!!selected || loadingAnswer}
+                  className={cls}
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+          {result && (
             <div
-              key={`hit-${blip.id}`}
-              className={`absolute w-6 h-6 rounded-full -translate-x-1/2 -translate-y-1/2 animate-ping ${
-                blip.isSybil ? 'bg-red-500/40' : 'bg-cyan-500/20'
-              }`}
-              style={{ left: `${blip.x}%`, top: `${blip.y}%`, animationDuration: '0.5s', animationIterationCount: '1' }}
-            />
-          ))}
-        {/* Center reticle */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 border border-amber-400/30 rounded-full" />
-        {phase < 2 && (
-          <p className="absolute inset-0 flex items-center justify-center text-[10px] text-amber-300/30 font-mono animate-pulse">
-            Initializing radar...
-          </p>
-        )}
-      </div>
+              className={`mt-2 text-center text-xs font-bold ${result.correct ? 'text-emerald-400' : 'text-red-400/70'}`}
+            >
+              {result.correct ? `Correct! +${result.earned} coins` : `Wrong — ${result.correctAnswer}`}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mb-3 h-24 rounded-lg bg-black/20 border border-amber-500/[0.06] flex items-center justify-center">
+          <Loader2 className="w-4 h-4 text-amber-400/30 animate-spin" />
+        </div>
+      )}
 
       {/* Progress steps */}
       <div className="space-y-1">
@@ -431,8 +462,8 @@ export default function PrismScanner() {
       setHuntCoinsEarned(0);
 
       const data = await fetchWalletPreview(addr);
-      setLoading(false);
       if (!data) {
+        setLoading(false);
         setError('Could not load wallet data');
         return;
       }
@@ -440,8 +471,9 @@ export default function PrismScanner() {
       addRecentWallet(addr);
       setRecentWallets(getRecentWallets());
 
-      // Parallel background fetches
-      fetchSybil(addr);
+      // Sequential: sybil first (caches funding on server), then funding from cache
+      await fetchSybil(addr);
+      setLoading(false);
       fetchFunding(addr);
 
       if (myAddress && addr !== myAddress) {
@@ -538,7 +570,7 @@ export default function PrismScanner() {
         </div>
 
         {/* Scanning — Interactive Hunt Sequence */}
-        {loading && <ScanningSequence targetAddress={query} />}
+        {loading && <ScanningSequence targetAddress={query} walletAddress={myAddress} />}
 
         {/* Recent targets */}
         {!loading && recentWallets.length > 0 && !result && (
@@ -817,38 +849,27 @@ export default function PrismScanner() {
 
             {/* Connected Wallets (siblings from sybil analysis) */}
             {sybilData?.metrics?.siblingAddresses && (sybilData.metrics.siblingAddresses as string[]).length > 0 && (
-              <div className="glass-card p-4">
-                <p className="text-xs font-bold text-red-400/60 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <GitBranch className="w-3.5 h-3.5" /> Linked Wallets
-                  <span className="ml-auto text-[10px] text-white/20 font-mono">
+              <div className="glass-card p-3">
+                <p className="text-[10px] font-bold text-red-400/50 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <GitBranch className="w-3 h-3" /> Linked Wallets
+                  <span className="ml-auto text-[9px] text-white/15 font-mono">
                     {(sybilData.metrics.siblingAddresses as string[]).length} found
                   </span>
                 </p>
-                <div className="space-y-1.5">
-                  {(sybilData.metrics.siblingAddresses as string[]).slice(0, 10).map((addr) => (
-                    <div
+                <div className="flex flex-wrap gap-1">
+                  {(sybilData.metrics.siblingAddresses as string[]).slice(0, 15).map((addr) => (
+                    <button
                       key={addr}
-                      className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-red-500/[0.03] border border-red-500/[0.06] hover:bg-red-500/[0.06] transition-colors"
+                      onClick={() => {
+                        setQuery(addr);
+                        handleSearch(addr);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/[0.04] border border-red-500/[0.08] text-[10px] font-mono text-white/30 hover:bg-red-500/[0.1] hover:text-amber-300/60 transition-colors"
                     >
-                      <div className="w-1.5 h-1.5 rounded-full bg-red-400/40 shrink-0" />
-                      <span className="text-xs font-mono text-white/40 truncate flex-1">
-                        {addr.slice(0, 6)}...{addr.slice(-4)}
-                      </span>
-                      <button
-                        onClick={() => {
-                          setQuery(addr);
-                          handleSearch(addr);
-                        }}
-                        className="text-[10px] text-amber-400/50 hover:text-amber-400 font-bold transition-colors"
-                      >
-                        HUNT
-                      </button>
-                    </div>
+                      {addr.slice(0, 4)}..{addr.slice(-3)}
+                    </button>
                   ))}
                 </div>
-                <p className="text-[9px] text-white/15 mt-2">
-                  Wallets funded by the same source — potential sybil cluster
-                </p>
               </div>
             )}
 

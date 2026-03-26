@@ -1339,9 +1339,16 @@ function calculateCompositeScore(input) {
   const onchain = Math.min(400, onchainScore);
   const basePts = onchain;
 
-  // Sybil Trust (25%, max 250)
+  // Sybil Trust (25%, max 250) — with trust recovery bonus
   const safeTrust = Number.isFinite(trustScore) ? Math.max(0, Math.min(100, trustScore)) : 0;
-  const sybilBase = Math.round((safeTrust / 100) * 250);
+  const recovery = input.trustRecovery || {};
+  const recoveryBonus = Math.min(25,
+    (recovery.twitterBonus || 0) +    // max 12
+    (recovery.activityBonus || 0) +   // max 8
+    (recovery.crossVerifBonus || 0)   // max 5
+  );
+  const adjustedTrust = Math.min(100, safeTrust + recoveryBonus);
+  const sybilBase = Math.round((adjustedTrust / 100) * 250);
   const sybilTrust = Math.min(250, Math.max(0, sybilBase + sybilBadgeBonus));
 
   // Human Proof (15%, max 150)
@@ -1370,12 +1377,67 @@ function calculateCompositeScore(input) {
     breakdown: { onchain, sybilTrust, humanProof, social, engagement },
     details: {
       onchain: { identityScore: onchainScore, identityMax: 400, basePts, badgeBonus: 0, hasSeeker, hasPreorder, hasCombo, scoreBreakdown },
-      sybilTrust: { trustScore, trustMax: 100, badgeBonus: sybilBadgeBonus },
+      sybilTrust: { trustScore, adjustedTrust, trustMax: 100, badgeBonus: sybilBadgeBonus, recoveryBonus, recoveryBreakdown: recovery },
       humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount, badgeBonus: humanBadgeBonus },
       social: { challengesWon, challengePts, constellationExplored, constellationPts, compareCount, comparePts, badgeBonus: socialBadgeBonus },
       engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
     },
   };
+}
+
+// ── Trust Recovery: compute bonus from Twitter verification + in-app activity ──
+const twitterWalletMap = new Map(); // twitterUserId → walletAddress (1:1 dedup)
+
+// Rebuild twitterWalletMap from walletDatabase on startup
+function rebuildTwitterWalletMap() {
+  twitterWalletMap.clear();
+  for (const [addr, entry] of walletDatabase) {
+    const tw = entry.trustRecovery?.twitter;
+    if (tw?.verified && tw.userId) twitterWalletMap.set(tw.userId, addr);
+  }
+}
+
+function computeTrustRecovery(address, activityData) {
+  const entry = walletDatabase.get(address) || {};
+  const rd = entry.trustRecovery || {};
+
+  // 1. Twitter bonus (max 12)
+  let twitterBonus = 0;
+  const tw = rd.twitter;
+  if (tw?.verified && !tw.suspended) {
+    twitterBonus = 3; // base link bonus
+    const ageYears = (tw.accountAgeDays || 0) / 365;
+    if (ageYears >= 3) twitterBonus += 4;
+    else if (ageYears >= 1) twitterBonus += 2;
+    if ((tw.followers || 0) >= 500) twitterBonus += 3;
+    else if ((tw.followers || 0) >= 50) twitterBonus += 1;
+    if ((tw.tweets || 0) >= 1000) twitterBonus += 2;
+    else if ((tw.tweets || 0) >= 100) twitterBonus += 1;
+    twitterBonus = Math.min(12, twitterBonus);
+  }
+
+  // 2. Activity bonus (max 8) — computed from existing data
+  let activityBonus = 0;
+  const a = activityData || {};
+  if ((a.gameTypesCount || 0) >= 3) activityBonus += 1;
+  if ((a.achievementCount || 0) >= 15) activityBonus += 2;
+  else if ((a.achievementCount || 0) >= 5) activityBonus += 1;
+  if ((a.questsCompleted || 0) >= 5) activityBonus += 1;
+  if ((a.streakDays || 0) >= 7) activityBonus += 1;
+  if ((a.scanCount || 0) >= 10) activityBonus += 1;
+  if ((a.challengesWon || 0) >= 3) activityBonus += 1;
+  if ((a.totalCoinsEarned || 0) >= 500) activityBonus += 1;
+  activityBonus = Math.min(8, activityBonus);
+
+  // 3. Cross-verification bonus (max 5) — requires multiple methods
+  let crossVerifBonus = 0;
+  if (twitterBonus >= 3 && activityBonus >= 5) crossVerifBonus = 3;
+  else if (twitterBonus >= 3 && activityBonus >= 3) crossVerifBonus = 2;
+  else if (twitterBonus >= 3 && activityBonus >= 1) crossVerifBonus = 1;
+  // Extra for really strong Twitter + full activity
+  if (twitterBonus >= 8 && activityBonus >= 6) crossVerifBonus = 5;
+
+  return { twitterBonus, activityBonus, crossVerifBonus };
 }
 
 function buildCompositeInput(address) {
@@ -1432,7 +1494,9 @@ function buildCompositeInput(address) {
     gameScores,
     gameTypes,
     achievementCount,
-    challengesWon: socialStats.challengesWon || 0,
+    // challengesWon: use authoritative challenges array (socialStats can be stale)
+    // constellationExplored, compareCount, scanCount: only source is socialStats/walletEntry
+    challengesWon: challenges.filter(c => c.status === 'completed' && c.winner === address).length,
     constellationExplored: socialStats.constellationExplored || 0,
     compareCount: socialStats.compareCount || 0,
     questsCompleted,
@@ -1442,6 +1506,15 @@ function buildCompositeInput(address) {
     hasPreorder: Boolean(traits.hasPreorder),
     hasCombo: Boolean(traits.hasCombo),
     scoreBreakdown,
+    trustRecovery: computeTrustRecovery(address, {
+      gameTypesCount: gameTypes.size,
+      achievementCount,
+      questsCompleted,
+      streakDays,
+      scanCount: walletEntry.scanCount || 0,
+      challengesWon: challenges.filter(c => c.status === 'completed' && c.winner === address).length,
+      totalCoinsEarned: getCoinBalance(address),
+    }),
   };
 }
 
@@ -1510,6 +1583,28 @@ async function backfillCompositeScores() {
     if (count % 50 === 0) await new Promise(r => setTimeout(r, 100));
   }
   console.log(`[composite] Backfilled ${count} wallets (recalculated ${recalculated} identities)`);
+  // One-time cleanup: validate socialStats against authoritative sources
+  let cleaned = 0;
+  for (const [addr, entry] of walletDatabase) {
+    const ss = entry.socialStats;
+    if (!ss) continue;
+    const realChallengeWins = challenges.filter(c => c.status === 'completed' && c.winner === addr).length;
+    if ((ss.challengesWon || 0) > realChallengeWins) {
+      ss.challengesWon = realChallengeWins;
+      cleaned++;
+    }
+    // constellation and compare: cap at reasonable max (no user can do 50+ compares organically in early stage)
+    if ((ss.constellationExplored || 0) > 20) { ss.constellationExplored = 0; cleaned++; }
+    if ((ss.compareCount || 0) > 20) { ss.compareCount = 0; cleaned++; }
+  }
+  if (cleaned > 0) {
+    console.log(`[cleanup] Fixed ${cleaned} suspicious socialStats entries`);
+    saveWalletDatabaseDebounced();
+    // Recalculate composite for affected wallets
+    for (const [addr] of walletDatabase) { try { triggerCompositeUpdate(addr); } catch {} }
+  }
+  rebuildTwitterWalletMap();
+  if (twitterWalletMap.size > 0) console.log(`[recovery] ${twitterWalletMap.size} Twitter-linked wallets`);
 }
 
 const getHeliusKeyIndex = (seed = '') => {
@@ -1557,6 +1652,128 @@ const getRpcUrls = (seed) => {
     return buildRpcUrl(key);
   }).filter(Boolean);
 };
+
+// ── JSON-RPC batch helper: up to 100 getTransaction per HTTP call ──
+// Tries batch first (supported by Alchemy, Helius paid plans).
+// Falls back to sequential single calls if batch is rejected (Helius free = 403).
+let _batchSupported = new Map(); // rpcUrl → boolean (cache per-provider)
+
+// Prefer Alchemy for batch calls (it supports JSON-RPC batch on all plans)
+function getBatchRpcUrl(seed) {
+  if (ALCHEMY_RPC_URL) return ALCHEMY_RPC_URL;
+  return getRpcUrl(seed);
+}
+
+async function batchGetParsedTxs(rpcUrl, signatures, { batchSize = 100, delayMs = 300 } = {}) {
+  if (!signatures.length) return [];
+  const results = new Array(signatures.length).fill(null);
+
+  // Check if this RPC supports batching
+  const batchOk = _batchSupported.get(rpcUrl);
+  if (batchOk === false) {
+    // Fallback: sequential single calls
+    return _sequentialGetParsedTxs(rpcUrl, signatures, delayMs);
+  }
+
+  for (let offset = 0; offset < signatures.length; offset += batchSize) {
+    const chunk = signatures.slice(offset, Math.min(offset + batchSize, signatures.length));
+    const payload = chunk.map((sig, idx) => ({
+      jsonrpc: '2.0',
+      id: offset + idx,
+      method: 'getTransaction',
+      params: [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+    }));
+    try {
+      const r = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (r.status === 403) {
+        // Batch not supported on this plan — fallback to sequential forever
+        _batchSupported.set(rpcUrl, false);
+        console.log('[rpc-batch] Batch not supported on', rpcUrl.replace(/api-key=[^&]+/, 'api-key=***'), '— falling back to sequential');
+        return _sequentialGetParsedTxs(rpcUrl, signatures, delayMs);
+      }
+      if (!r.ok) {
+        if (r.status === 429 || r.status >= 500) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const retry = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (retry.ok) {
+            const data = await retry.json();
+            if (Array.isArray(data)) {
+              for (const item of data) {
+                if (item && typeof item.id === 'number' && item.result) results[item.id] = item.result;
+              }
+            }
+          }
+        }
+        if (offset + batchSize < signatures.length) await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+      const data = await r.json();
+      if (Array.isArray(data)) {
+        _batchSupported.set(rpcUrl, true);
+        for (const item of data) {
+          if (item && typeof item.id === 'number' && item.result) results[item.id] = item.result;
+        }
+      } else if (data?.error?.code === -32403) {
+        // Batch rejected in response body
+        _batchSupported.set(rpcUrl, false);
+        return _sequentialGetParsedTxs(rpcUrl, signatures, delayMs);
+      }
+    } catch { /* network error — skip this batch */ }
+    if (offset + batchSize < signatures.length) await new Promise(r => setTimeout(r, delayMs));
+  }
+  return results;
+}
+
+// Sequential fallback: individual getTransaction calls (for free-tier RPC)
+async function _sequentialGetParsedTxs(rpcUrl, signatures, delayMs = 50) {
+  const results = new Array(signatures.length).fill(null);
+  for (let i = 0; i < signatures.length; i++) {
+    try {
+      const r = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'getTransaction',
+          params: [signatures[i], { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+        }),
+      });
+      if (r.status === 429) {
+        // Rate limited — pause and retry once
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        const retry = await fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: 1, method: 'getTransaction',
+            params: [signatures[i], { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+          }),
+        });
+        if (retry.ok) {
+          const d = await retry.json();
+          results[i] = d?.result || null;
+        }
+        continue;
+      }
+      if (r.ok) {
+        const d = await r.json();
+        results[i] = d?.result || null;
+      }
+    } catch { /* skip */ }
+    // Small delay between calls to avoid rate limits
+    if (i < signatures.length - 1 && (i + 1) % 10 === 0) {
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  return results;
+}
 
 const parseSecretKey = (value) => {
   if (!value) return null;
@@ -2631,14 +2848,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Reputation API ──
-  // Rate limit: 1 request per 10 seconds per IP for /api/reputation, /api/reputation/compare, /api/reputation/batch
+  // Rate limit: 1 request per second per IP for /api/reputation, /api/reputation/compare, /api/reputation/batch
   if ((pathname === '/api/reputation' || pathname === '/api/reputation/compare' || pathname === '/api/reputation/batch')
       && (req.method === 'GET' || req.method === 'POST')) {
     const rlIp = getClientIp(req);
     const rlKey = `repv1:${rlIp}`;
     const lastReq = reputationRateLimit.get(rlKey) || 0;
-    if (Date.now() - lastReq < 10_000) {
-      return respondJson(res, 429, { error: 'Rate limited — 1 request per 10 seconds', retryAfterMs: 10_000 - (Date.now() - lastReq) });
+    if (Date.now() - lastReq < 1_000) {
+      return respondJson(res, 429, { error: 'Rate limited', retryAfterMs: 1_000 - (Date.now() - lastReq) });
     }
     reputationRateLimit.set(rlKey, Date.now());
     if (reputationRateLimit.size > 5000) {
@@ -2658,6 +2875,11 @@ const server = http.createServer(async (req, res) => {
     } catch {
       respondJson(res, 400, { error: 'Invalid Solana address' });
       return;
+    }
+    // Fast path: return cached reputation from walletDatabase if fresh (< 60s)
+    const cachedWallet = walletDatabase.get(address);
+    if (cachedWallet?.lastReputationAt && Date.now() - cachedWallet.lastReputationAt < 60_000 && cachedWallet._lastReputation) {
+      return respondJson(res, 200, cachedWallet._lastReputation);
     }
     try {
       const snapshot = await fetchIdentitySnapshot(address);
@@ -2701,24 +2923,19 @@ const server = http.createServer(async (req, res) => {
         // Fetch top interacted programs from recent transactions
         if (topPrograms.length === 0) {
           try {
-            const recentSigs = await conn.getSignaturesForAddress(pubkey, { limit: 50 });
-            const sigBatch = recentSigs.slice(0, 20).map(s => s.signature);
+            const recentSigs = await conn.getSignaturesForAddress(pubkey, { limit: 100 });
+            const sigBatch = recentSigs.map(s => s.signature);
             if (sigBatch.length > 0) {
               const programCounts = new Map();
-              for (let i = 0; i < sigBatch.length; i += 10) {
-                const batch = sigBatch.slice(i, i + 10);
-                try {
-                  const txs = await conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 });
-                  for (const tx of txs) {
-                    if (!tx?.transaction?.message?.instructions) continue;
-                    for (const ix of tx.transaction.message.instructions) {
-                      const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
-                      if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') {
-                        programCounts.set(pid, (programCounts.get(pid) || 0) + 1);
-                      }
-                    }
+              const batchTxs = await batchGetParsedTxs(getBatchRpcUrl(address), sigBatch, { batchSize: 100 });
+              for (const tx of batchTxs) {
+                if (!tx?.transaction?.message?.instructions) continue;
+                for (const ix of tx.transaction.message.instructions) {
+                  const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
+                  if (pid && pid !== '11111111111111111111111111111111' && pid !== 'ComputeBudget111111111111111111111111111111') {
+                    programCounts.set(pid, (programCounts.get(pid) || 0) + 1);
                   }
-                } catch { /* partial failure ok */ }
+                }
               }
               // Map known program IDs to human-readable names
               const PROGRAM_NAMES = {
@@ -2775,7 +2992,7 @@ const server = http.createServer(async (req, res) => {
       });
       triggerCompositeUpdate(address);
 
-      respondJson(res, 200, {
+      const repResponse = {
         address,
         score: identity.score,
         tier: identity.tier,
@@ -2792,7 +3009,10 @@ const server = http.createServer(async (req, res) => {
           tokenCount,
           nftCount,
         },
-      });
+      };
+      // Cache for 60s to avoid redundant RPC calls on repeated requests
+      updateWalletEntry(address, { _lastReputation: repResponse, lastReputationAt: Date.now() });
+      respondJson(res, 200, repResponse);
       return;
     } catch (error) {
       console.error('[reputation] failed for', address, error);
@@ -6098,50 +6318,18 @@ const server = http.createServer(async (req, res) => {
 
       // Wait for firstTxTime + rate limit recovery before Phase 2 parsing
       const firstTxResult = await Promise.allSettled([firstTxPromise]).then(r => r[0]);
-      await new Promise(r => setTimeout(r, 3000)); // let RPC rate limit bucket refill
+      await new Promise(r => setTimeout(r, 1500)); // let RPC rate limit bucket refill
 
-      // Direct HTTP JSON-RPC calls for Phase 2 parsing — bypasses @solana/web3.js retry mechanism
-      // which burns 7.5s per batch on 429 retries and exhausts ALL rate limit budget
-      const parseRpcUrl = getRpcUrl(address + ':parse') || sybilRpcUrl;
-      async function directGetParsedTxs(sigs) {
-        const body = JSON.stringify({
-          jsonrpc: '2.0', id: 1, method: 'getTransaction',
-          params: [sigs[0], { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
-        });
-        // Batch: one call per sig (getTransaction not getParsedTransactions to avoid batch limit)
-        const results = [];
-        for (const sig of sigs) {
-          try {
-            const r = await fetch(parseRpcUrl, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTransaction', params: [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }] }),
-            });
-            if (!r.ok) { results.push(null); continue; }
-            const d = await r.json();
-            results.push(d?.result || null);
-          } catch { results.push(null); }
-        }
-        return results;
-      }
-
-      // Limit to 50 most important transactions: first 40 recent + first 10 early
-      const limitedRecent = recentSigBatch.slice(0, 40);
-      const limitedEarly = dedupedEarlySigBatch.slice(0, 10);
+      // ── Phase 2 parsing via JSON-RPC batch (up to 100 getTransaction per HTTP call) ──
+      // Max 100 per batch at same credit cost — more data = better detection
+      const parseRpcUrl = getBatchRpcUrl(address + ':parse');
+      const limitedRecent = recentSigBatch.slice(0, 100);
+      const limitedEarly = dedupedEarlySigBatch.slice(0, 100);
+      // Combine: up to 200 sigs → 2 batch calls of 100
       const parseSigs = [...limitedRecent, ...limitedEarly];
-      const recentBatchCount = Math.ceil(limitedRecent.length / 10);
+      const recentCount = limitedRecent.length;
 
-      // Process in batches of 5 with delays
-      const allParseBatchResults = [];
-      for (let bi = 0; bi < parseSigs.length; bi += 5) {
-        const batch = parseSigs.slice(bi, bi + 5);
-        try {
-          const txs = await directGetParsedTxs(batch);
-          allParseBatchResults.push({ status: 'fulfilled', value: txs });
-        } catch (e) {
-          allParseBatchResults.push({ status: 'rejected', reason: e });
-        }
-        if (bi + 5 < parseSigs.length) await new Promise(r => setTimeout(r, 200));
-      }
+      const allParsedResults = await batchGetParsedTxs(parseRpcUrl, parseSigs, { batchSize: 100, delayMs: 500 });
 
       // Process wallet age result
       const ftResult = firstTxResult.status === 'fulfilled' ? firstTxResult.value : null;
@@ -6158,15 +6346,9 @@ const server = http.createServer(async (req, res) => {
         updateWalletEntry(address, { stats: { ...(cachedWallet?.stats || {}), transactions: bestTxCount } });
       }
 
-      // Split parse results: first N are recent, rest are early
-      const recentResults = allParseBatchResults.slice(0, recentBatchCount);
-      const earlyResults = allParseBatchResults.slice(recentBatchCount);
-      for (const br of recentResults) {
-        if (br.status === 'fulfilled') parsedTxs.push(...(br.value || []).filter(Boolean));
-      }
-      for (const er of earlyResults) {
-        if (er.status === 'fulfilled') earlyParsedTxs.push(...(er.value || []).filter(Boolean));
-      }
+      // Split flat results array: first recentCount are recent, rest are early
+      parsedTxs = allParsedResults.slice(0, recentCount).filter(Boolean);
+      earlyParsedTxs = allParsedResults.slice(recentCount).filter(Boolean);
 
       // ── Derive metrics from ALL 10K signatures ──
 
@@ -6257,7 +6439,7 @@ const server = http.createServer(async (req, res) => {
         const post = tx.meta.postBalances || [];
         let targetIdx = -1;
         for (let i = 0; i < accounts.length; i++) {
-          const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+          const acc = resolveAccountKey(accounts[i]);
           if (acc === address) { targetIdx = i; break; }
         }
         if (targetIdx >= 0) {
@@ -6274,7 +6456,7 @@ const server = http.createServer(async (req, res) => {
           // Identify counterparties: accounts with opposite balance change
           for (let i = 0; i < accounts.length; i++) {
             if (i === targetIdx) continue;
-            const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+            const acc = resolveAccountKey(accounts[i]);
             if (!acc || acc === '11111111111111111111111111111111') continue;
             const otherDiff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
             if (diffSol > 0.001 && otherDiff < -0.001) incomingSenders.add(acc);
@@ -6290,6 +6472,7 @@ const server = http.createServer(async (req, res) => {
       const allSiblings = new Set();
       let hasSolDomain = false;
       let topFunderPctExport = 0; // share of top funder in total received SOL
+      let topFunderTxCount = 0; // how many times top funder sent to target
       let cexTrustBonus = 0; // CEX funding trust bonus — applied later to trustBonus
 
       let resolvedTopFunder = null; // shared: used for cluster key later
@@ -6300,10 +6483,11 @@ const server = http.createServer(async (req, res) => {
           const allTxsForFunding = [...parsedTxs, ...earlyParsedTxs];
           const { incoming } = extractSolTransfers(allTxsForFunding, address);
           resolvedIncoming = incoming;
-          let topFunder = null, topAmount = 0;
+          let topFunder = null, topAmount = 0, topFunderCount = 0;
           for (const [addr, info] of incoming) {
-            if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
+            if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; topFunderCount = info.count; }
           }
+          topFunderTxCount = topFunderCount;
           resolvedTopFunder = topFunder; // expose for cluster key
           if (incoming.size === 0 && allTxsForFunding.length > 0) {
             console.warn(`[sybil-funding] ${address.slice(0,8)}: 0 funding sources from ${allTxsForFunding.length} parsed txs`);
@@ -6312,7 +6496,7 @@ const server = http.createServer(async (req, res) => {
             const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
             const topFunderPct = topAmount / totalReceived;
             topFunderPctExport = topFunderPct;
-            if (topFunderPct > 0.6) {
+            if (topFunderPct > 0.3) {
               fundingChainDepth = 1;
               // Skip cluster analysis if top funder is a known CEX/bridge (reduces false positives)
               const topFunderLabel = KNOWN_LABELS[topFunder];
@@ -6321,13 +6505,9 @@ const server = http.createServer(async (req, res) => {
                 cexTrustBonus = 3;
               } else
               try {
-                const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
-                const funderBatch = funderSigs.slice(0, 20).map(s => s.signature);
-                let funderParsed = [];
-                try {
-                  const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
-                  funderParsed = txs.filter(Boolean);
-                } catch {}
+                const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 100 });
+                const funderBatch = funderSigs.map(s => s.signature);
+                const funderParsed = (await batchGetParsedTxs(getBatchRpcUrl(topFunder), funderBatch, { batchSize: 100, delayMs: 300 })).filter(Boolean);
                 for (const tx of funderParsed) {
                   if (!tx?.meta || !tx?.transaction) continue;
                   const accounts = tx.transaction.message?.accountKeys || [];
@@ -6341,7 +6521,7 @@ const server = http.createServer(async (req, res) => {
                   }
                   for (let i = 0; i < accounts.length; i++) {
                     const accObj = accounts[i];
-                    const acc = typeof accObj === 'string' ? accObj : accObj?.pubkey?.toBase58?.() || '';
+                    const acc = resolveAccountKey(accObj);
                     const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
                     // Only add real wallet-like accounts: received SOL, not a program, is a signer or writable
                     const isSigner = typeof accObj === 'object' && accObj?.signer;
@@ -6353,9 +6533,9 @@ const server = http.createServer(async (req, res) => {
                 }
                 hubSpokeScore = Math.min(1, allSiblings.size / 20);
                 // Level 2: only if strong single-source signal
-                if (topFunderPct > 0.8 && funderParsed.length > 0) {
+                if (topFunderPct > 0.5 && funderParsed.length > 0) {
                   try {
-                    const { parsed: level2Parsed } = await fetchParsedTransactions(topFunder, 20);
+                    const { parsed: level2Parsed } = await fetchParsedTransactions(topFunder, 100);
                     const { incoming: level2In } = extractSolTransfers(level2Parsed, topFunder);
                     let grandFunder = null, grandAmount = 0;
                     for (const [addr, info] of level2In) {
@@ -6366,9 +6546,9 @@ const server = http.createServer(async (req, res) => {
                       if (grandAmount / totalL2 > 0.7) {
                         fundingChainDepth = 2;
                         try {
-                          const gfSigs = await conn.getSignaturesForAddress(new PublicKey(grandFunder), { limit: 30 });
-                          const gfBatch = gfSigs.slice(0, 10).map(s => s.signature);
-                          const gfTxs = await conn.getParsedTransactions(gfBatch, { maxSupportedTransactionVersion: 0 });
+                          const gfSigs = await conn.getSignaturesForAddress(new PublicKey(grandFunder), { limit: 100 });
+                          const gfBatch = gfSigs.map(s => s.signature);
+                          const gfTxs = await batchGetParsedTxs(getBatchRpcUrl(grandFunder), gfBatch, { batchSize: 100, delayMs: 300 });
                           for (const tx of (gfTxs || []).filter(Boolean)) {
                             if (!tx?.meta || !tx?.transaction) continue;
                             const accs = tx.transaction.message?.accountKeys || [];
@@ -6380,7 +6560,7 @@ const server = http.createServer(async (req, res) => {
                               if (pid) txP2.add(pid);
                             }
                             for (let i = 0; i < accs.length; i++) {
-                              const acc = typeof accs[i] === 'string' ? accs[i] : accs[i]?.pubkey?.toBase58?.() || '';
+                              const acc = resolveAccountKey(accs[i]);
                               const diff = ((post2[i] || 0) - (pre2[i] || 0)) / 1e9;
                               if (diff > 0.01 && acc !== grandFunder && acc !== topFunder && acc !== address
                                   && acc !== '11111111111111111111111111111111' && !isProgramAddress(acc, txP2)) {
@@ -6545,7 +6725,7 @@ const server = http.createServer(async (req, res) => {
         const post = tx.meta.postBalances || [];
         let targetIdx = -1;
         for (let i = 0; i < accounts.length; i++) {
-          const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+          const acc = resolveAccountKey(accounts[i]);
           if (acc === address) { targetIdx = i; break; }
         }
         if (targetIdx >= 0) {
@@ -6784,18 +6964,32 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Signal 15b: Concentrated single-source funding (>90% from one non-CEX wallet)
-      const concentratedFunding = topFunderPctExport > 0.9 && cexTrustBonus === 0 && totalSolTxCount >= 3;
+      const concentratedFunding = topFunderPctExport > 0.4 && cexTrustBonus === 0 && totalSolTxCount >= 3;
       signals.push({
         id: 'concentrated_funding', name: 'Single-Source Concentration', category: 'network',
         detected: concentratedFunding, weight: 10,
         severity: concentratedFunding ? 'warning' : 'info',
         value: concentratedFunding ? `${(topFunderPctExport * 100).toFixed(0)}% from one wallet` : 'Diversified',
         description: concentratedFunding
-          ? 'Over 90% of received SOL comes from a single non-exchange wallet — typical sybil relay'
+          ? `${(topFunderPctExport * 100).toFixed(0)}% of funding from a single non-exchange wallet`
           : 'Funding sources are diversified or from known exchanges',
       });
 
-      // Signal 16: Bot-like Hour Distribution — flat or extremely narrow time windows
+      // Signal 16: Repeated Funder — same wallet funds target multiple times (sybil relay pattern)
+      const repeatedFunder = topFunderTxCount >= 3 && cexTrustBonus === 0;
+      // Weight scales: 3 txs = 8, 5 txs = 12, 7+ txs = 18 (capped)
+      const repeatedFunderWeight = repeatedFunder ? Math.min(18, 4 + topFunderTxCount * 2) : 0;
+      signals.push({
+        id: 'repeated_funder', name: 'Repeated Funder', category: 'network',
+        detected: repeatedFunder, weight: repeatedFunderWeight,
+        severity: repeatedFunder ? (topFunderTxCount >= 5 ? 'danger' : 'warning') : 'info',
+        value: `${topFunderTxCount} deposits from same wallet`,
+        description: repeatedFunder
+          ? `Same non-exchange wallet funded this address ${topFunderTxCount} times — typical sybil relay pattern`
+          : topFunderTxCount <= 1 ? 'No repeated funding from same wallet' : `Top funder sent ${topFunderTxCount} txs (within normal range)`,
+      });
+
+      // Signal 17: Bot-like Hour Distribution — flat or extremely narrow time windows
       // Max entropy for 24 bins = log2(24) ≈ 4.58 — bots are near-max (all hours equal)
       // Humans typically use 3-4.0 range (concentrated in waking hours)
       const botlikeHours = timestamps.length >= 20 && hourEntropy > 4.2;
@@ -7010,6 +7204,8 @@ const server = http.createServer(async (req, res) => {
           burstRatio: Math.round(burstRatio * 100),
           trustBonus,
           fundingChainDepth,
+          topFunderTxCount,
+          topFunderPct: Math.round(topFunderPctExport * 100),
           hourBuckets,
           dayBuckets,
           hubSpokeScore: Math.round(hubSpokeScore * 100),
@@ -7291,17 +7487,15 @@ const server = http.createServer(async (req, res) => {
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
-      const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+      const rpcUrl = getRpcUrl(address) || 'https://api.mainnet-beta.solana.com';
+      const conn = new Connection(rpcUrl, 'confirmed');
       const pubkey = new PublicKey(address);
       const sigs = await conn.getSignaturesForAddress(pubkey, { limit: 15 });
       const sigBatch = sigs.map(s => s.signature);
-      let parsed = [];
-      if (sigBatch.length > 0) {
-        try {
-          const txs = await conn.getParsedTransactions(sigBatch, { maxSupportedTransactionVersion: 0 });
-          parsed = txs.filter(Boolean);
-        } catch {}
-      }
+      // Single batch call for 15 txs (well within 100 limit)
+      const parsed = sigBatch.length > 0
+        ? (await batchGetParsedTxs(getBatchRpcUrl(address), sigBatch, { batchSize: 15 })).filter(Boolean)
+        : [];
       const txs = [];
       for (let i = 0; i < parsed.length; i++) {
         const tx = parsed[i];
@@ -7311,7 +7505,7 @@ const server = http.createServer(async (req, res) => {
         const post = tx.meta.postBalances || [];
         let targetIdx = -1;
         for (let j = 0; j < accounts.length; j++) {
-          const acc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
+          const acc = resolveAccountKey(accounts[j]);
           if (acc === address) { targetIdx = j; break; }
         }
         const balChange = targetIdx >= 0 ? ((post[targetIdx] || 0) - (pre[targetIdx] || 0)) / 1e9 : 0;
@@ -7347,18 +7541,17 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ Sybil Funding Sources ═══
   if (pathname === '/api/sybil/funding-sources' && req.method === 'GET') {
-    const sybilHeavyIp = getClientIp(req);
-    const sybilHeavyKey = `sybilHeavy:${sybilHeavyIp}`;
-    const lastSybilHeavy = prismEarnRateLimit.get(sybilHeavyKey) || 0;
-    if (Date.now() - lastSybilHeavy < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
-    prismEarnRateLimit.set(sybilHeavyKey, Date.now());
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
-    // Prefer cached funding sources from sybil analysis (uses recent+early txs = much more accurate)
+    // Cache-first: return cached funding sources immediately (no rate limit)
     const cachedSybil = sybilCache.get(address);
     if (cachedSybil?.fundingSources && cachedSybil.fundingSources.length > 0 && Date.now() - cachedSybil.cachedAt < 3600_000) {
       return respondJson(res, 200, { sources: cachedSybil.fundingSources });
     }
+    // Fresh fetch: rate limited (5s per IP)
+    const fsRlKey = `fundSrc:${getClientIp(req)}`;
+    if (Date.now() - (prismEarnRateLimit.get(fsRlKey) || 0) < 5_000) return respondJson(res, 429, { error: 'Rate limited' });
+    prismEarnRateLimit.set(fsRlKey, Date.now());
     try {
       const { parsed } = await fetchParsedTransactions(address, 200);
       const { incoming } = extractSolTransfers(parsed, address);
@@ -7408,14 +7601,11 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 200, result);
         return;
       }
-      const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-      const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 50 });
-      const funderBatch = funderSigs.slice(0, 20).map(s => s.signature);
-      let funderParsed = [];
-      try {
-        const txs = await conn.getParsedTransactions(funderBatch, { maxSupportedTransactionVersion: 0 });
-        funderParsed = txs.filter(Boolean);
-      } catch {}
+      const clusterRpcUrl = getRpcUrl(address) || 'https://api.mainnet-beta.solana.com';
+      const conn = new Connection(clusterRpcUrl, 'confirmed');
+      const funderSigs = await conn.getSignaturesForAddress(new PublicKey(topFunder), { limit: 100 });
+      const funderBatch = funderSigs.map(s => s.signature);
+      const funderParsed = (await batchGetParsedTxs(getBatchRpcUrl(topFunder), funderBatch, { batchSize: 100, delayMs: 300 })).filter(Boolean);
       const siblings = new Set();
       for (const tx of funderParsed) {
         if (!tx?.meta || !tx?.transaction) continue;
@@ -7423,7 +7613,7 @@ const server = http.createServer(async (req, res) => {
         const pre = tx.meta.preBalances || [];
         const post = tx.meta.postBalances || [];
         for (let i = 0; i < accounts.length; i++) {
-          const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+          const acc = resolveAccountKey(accounts[i]);
           const diff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
           if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111') {
             siblings.add(acc);
@@ -7545,6 +7735,200 @@ const server = http.createServer(async (req, res) => {
       .map(([addr, meta]) => ({ address: addr, ...meta }));
 
     respondJson(res, 200, { targets: sorted, totalAvailable: candidates.size });
+    return;
+  }
+
+  // ═══ Trust Recovery — Twitter link + status ═══
+  if (pathname === '/api/recovery/twitter/link' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address;
+    try {
+      const body = JSON.parse(await readBody(req));
+      const { twitterUserId, twitterUsername, displayName, photoURL, accountCreatedAt, followers, tweets } = body;
+      if (!twitterUserId || !twitterUsername) return respondJson(res, 400, { error: 'twitterUserId and twitterUsername required' });
+
+      // Check 1:1 mapping — each Twitter account can only link to ONE wallet
+      const existingWallet = twitterWalletMap.get(twitterUserId);
+      if (existingWallet && existingWallet !== address) {
+        return respondJson(res, 409, { error: 'This Twitter account is already linked to another wallet' });
+      }
+
+      // Check unlink cooldown (30 days)
+      const entry = walletDatabase.get(address) || {};
+      const cooldownUntil = entry.trustRecovery?.unlinkCooldownUntil;
+      if (cooldownUntil && Date.now() < cooldownUntil) {
+        const daysLeft = Math.ceil((cooldownUntil - Date.now()) / 86400000);
+        return respondJson(res, 429, { error: `Unlink cooldown active. ${daysLeft} days remaining.` });
+      }
+
+      // Remove old twitter link if switching
+      const oldTw = entry.trustRecovery?.twitter;
+      if (oldTw?.userId && oldTw.userId !== twitterUserId) {
+        twitterWalletMap.delete(oldTw.userId);
+      }
+
+      // Calculate account age
+      const accountAgeDays = accountCreatedAt
+        ? Math.floor((Date.now() - new Date(accountCreatedAt).getTime()) / 86400000)
+        : 0;
+
+      // Save
+      const twitterData = {
+        verified: true,
+        userId: twitterUserId,
+        username: twitterUsername,
+        displayName: displayName || twitterUsername,
+        photoURL: photoURL || null,
+        linkedAt: new Date().toISOString(),
+        accountAgeDays,
+        followers: followers || 0,
+        tweets: tweets || 0,
+        lastChecked: new Date().toISOString(),
+        suspended: false,
+      };
+      updateWalletEntry(address, {
+        trustRecovery: { ...(entry.trustRecovery || {}), twitter: twitterData },
+      });
+      twitterWalletMap.set(twitterUserId, address);
+
+      // Trigger composite update
+      triggerCompositeUpdate(address);
+
+      const bonus = computeTrustRecovery(address, {});
+      respondJson(res, 200, { success: true, twitterBonus: bonus.twitterBonus, twitter: twitterData });
+    } catch (e) {
+      respondJson(res, 400, { error: 'Invalid request' });
+    }
+    return;
+  }
+
+  if (pathname === '/api/recovery/twitter/unlink' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address;
+    const entry = walletDatabase.get(address) || {};
+    const tw = entry.trustRecovery?.twitter;
+    if (!tw?.verified) return respondJson(res, 400, { error: 'No Twitter linked' });
+    twitterWalletMap.delete(tw.userId);
+    updateWalletEntry(address, {
+      trustRecovery: {
+        ...(entry.trustRecovery || {}),
+        twitter: null,
+        unlinkCooldownUntil: Date.now() + 30 * 86400000, // 30 day cooldown
+      },
+    });
+    triggerCompositeUpdate(address);
+    respondJson(res, 200, { success: true, cooldownDays: 30 });
+    return;
+  }
+
+  if (pathname === '/api/recovery/status' && req.method === 'GET') {
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    const entry = walletDatabase.get(address) || {};
+    const rd = entry.trustRecovery || {};
+
+    // Compute activity data for bonus — use verified sources, not socialStats (can be stale/wrong)
+    const achEntry = achievementData.get(address);
+    const qp = questProgress.get(address);
+    let questsCompleted = 0, streakDays = 0;
+    if (qp?.quests) { for (const q of Object.values(qp.quests)) { if (q.completed) questsCompleted++; } streakDays = qp.streakDays || 0; }
+    const playerEntries = leaderboardEntries.filter(e => e.address === address);
+    const gameTypesCount = new Set(playerEntries.map(e => e.gameType || 'orbit')).size;
+    // Count real challenge wins from challenges array (authoritative)
+    const realChallengeWins = challenges.filter(c => c.status === 'completed' && c.winner === address).length;
+    // Count real scans from sybilCache (how many addresses this user has scanned)
+    const realScanCount = [...sybilCache.entries()].filter(([, v]) => v.scannedBy === address).length;
+
+    const bonus = computeTrustRecovery(address, {
+      gameTypesCount,
+      achievementCount: achEntry ? achEntry.unlocked.size : 0,
+      questsCompleted, streakDays,
+      scanCount: realScanCount,
+      challengesWon: realChallengeWins,
+      totalCoinsEarned: getCoinBalance(address),
+    });
+
+    const totalBonus = Math.min(25, bonus.twitterBonus + bonus.activityBonus + bonus.crossVerifBonus);
+    const sybilTrust = entry.sybil?.trustScore || 0;
+
+    respondJson(res, 200, {
+      currentTrustScore: sybilTrust,
+      adjustedTrustScore: Math.min(100, sybilTrust + totalBonus),
+      recoveryBonus: totalBonus,
+      maxRecovery: 25,
+      breakdown: bonus,
+      twitter: rd.twitter ? {
+        verified: true,
+        username: rd.twitter.username,
+        displayName: rd.twitter.displayName,
+        photoURL: rd.twitter.photoURL,
+        accountAgeDays: rd.twitter.accountAgeDays,
+        followers: rd.twitter.followers,
+        bonus: bonus.twitterBonus,
+      } : null,
+      activity: {
+        gameTypes: gameTypesCount,
+        achievements: achEntry ? achEntry.unlocked.size : 0,
+        quests: questsCompleted,
+        streak: streakDays,
+        scans: realScanCount,
+        challengeWins: realChallengeWins,
+        bonus: bonus.activityBonus,
+      },
+      cooldownUntil: rd.unlinkCooldownUntil || null,
+    });
+    return;
+  }
+
+  // ═══ Sybil Hunt Quiz — blockchain trivia for coins ═══
+  if (pathname === '/api/quiz/question' && req.method === 'GET') {
+    if (!ipRateLimit('quiz', getClientIp(req), 10, 5000)) return respondJson(res, 429, { error: 'Rate limited' });
+    // Pick random question, return without correct answer
+    const q = QUIZ_BANK[Math.floor(Math.random() * QUIZ_BANK.length)];
+    const qId = crypto.createHash('sha256').update(q.q + q.a).digest('hex').slice(0, 12);
+    // Store answer temporarily (60s TTL)
+    quizAnswers.set(qId, { correct: q.a, expiresAt: Date.now() + 60_000 });
+    // Shuffle options
+    const options = [...q.options].sort(() => Math.random() - 0.5);
+    respondJson(res, 200, { id: qId, question: q.q, options, category: q.cat, difficulty: q.diff || 'medium' });
+    return;
+  }
+  if (pathname === '/api/quiz/answer' && req.method === 'POST') {
+    if (!ipRateLimit('quiz_ans', getClientIp(req), 10, 3000)) return respondJson(res, 429, { error: 'Rate limited' });
+    try {
+      const body = JSON.parse(await readBody(req));
+      const { id, answer, address } = body;
+      if (!id || !answer) return respondJson(res, 400, { error: 'id and answer required' });
+      const stored = quizAnswers.get(id);
+      if (!stored) return respondJson(res, 400, { error: 'Question expired or invalid' });
+      quizAnswers.delete(id);
+      if (Date.now() > stored.expiresAt) return respondJson(res, 400, { error: 'Time expired' });
+      const isCorrect = answer === stored.correct;
+      let earned = 0;
+      if (isCorrect && address) {
+        // Earn 5 coins per correct answer (max 50/day via quiz)
+        const dailyKey = `quiz:${address}:${new Date().toISOString().slice(0, 10)}`;
+        const dailyCount = (prismEarnRateLimit.get(dailyKey) || 0);
+        if (dailyCount < 50) {
+          prismEarnRateLimit.set(dailyKey, dailyCount + 1);
+          earned = 5;
+          const prevBal = getCoinBalance(address);
+          setCoinBalance(address, prevBal + earned);
+          addCoinEarned(address, earned);
+          const txRecord = { id: `quiz_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, address, amount: earned, type: 'earn', source: 'quiz', description: 'Quiz correct answer', timestamp: new Date().toISOString() };
+          const txs = prismTransactions.get(address) || [];
+          txs.unshift(txRecord);
+          if (txs.length > 500) txs.length = 500;
+          prismTransactions.set(address, txs);
+          debouncedSavePrism();
+        }
+      }
+      respondJson(res, 200, { correct: isCorrect, correctAnswer: stored.correct, earned });
+    } catch {
+      respondJson(res, 400, { error: 'Invalid request body' });
+    }
     return;
   }
 
@@ -9332,6 +9716,93 @@ function ipRateLimit(prefix, ip, maxReqs, windowMs) {
 
 // PRISM earn rate-limit: per-source cooldowns
 const prismEarnRateLimit = new Map(); // key: `${address}:${source}` → timestamp
+
+// ── Quiz System: Blockchain Trivia ──
+const quizAnswers = new Map(); // qId → { correct, expiresAt }
+// Cleanup expired quiz answers every 5 minutes
+setInterval(() => { const now = Date.now(); for (const [k, v] of quizAnswers) { if (now > v.expiresAt) quizAnswers.delete(k); } }, 300_000);
+
+// q=question, a=correct answer, options=all 4 options, cat=category, diff=difficulty
+const QUIZ_BANK = [
+  // ── Solana ──
+  { q: 'What consensus mechanism does Solana use alongside Proof of Stake?', a: 'Proof of History', options: ['Proof of History', 'Proof of Work', 'Proof of Authority', 'Proof of Burn'], cat: 'solana' },
+  { q: 'What is the native token of Solana?', a: 'SOL', options: ['SOL', 'SRM', 'RAY', 'ORCA'], cat: 'solana', diff: 'easy' },
+  { q: 'What programming language are Solana programs (smart contracts) typically written in?', a: 'Rust', options: ['Rust', 'Solidity', 'Go', 'Python'], cat: 'solana' },
+  { q: 'What is the smallest unit of SOL called?', a: 'Lamport', options: ['Lamport', 'Wei', 'Gwei', 'Satoshi'], cat: 'solana' },
+  { q: 'What is Solana\'s theoretical max TPS (transactions per second)?', a: '65,000', options: ['65,000', '10,000', '1,000,000', '4,500'], cat: 'solana' },
+  { q: 'Which Solana DEX aggregator is known for finding the best swap routes?', a: 'Jupiter', options: ['Jupiter', 'Uniswap', 'SushiSwap', '1inch'], cat: 'solana' },
+  { q: 'What is the Solana runtime environment called?', a: 'Sealevel', options: ['Sealevel', 'EVM', 'MoveVM', 'CosmWasm'], cat: 'solana' },
+  { q: 'Who is the co-founder and CEO of Solana Labs?', a: 'Anatoly Yakovenko', options: ['Anatoly Yakovenko', 'Vitalik Buterin', 'Charles Hoskinson', 'Raj Gokal'], cat: 'solana' },
+  { q: 'What is the name of the Solana NFT standard by Metaplex?', a: 'Token Metadata', options: ['Token Metadata', 'ERC-721', 'CW-721', 'SPL-NFT'], cat: 'solana' },
+  { q: 'What does SPL stand for in Solana?', a: 'Solana Program Library', options: ['Solana Program Library', 'Solana Protocol Layer', 'Smart Program Logic', 'Solana Public Ledger'], cat: 'solana' },
+  { q: 'What is the block time on Solana?', a: '~400 milliseconds', options: ['~400 milliseconds', '~12 seconds', '~1 second', '~6 seconds'], cat: 'solana' },
+  { q: 'Which Solana wallet is most popular for browser use?', a: 'Phantom', options: ['Phantom', 'MetaMask', 'Keplr', 'Trust Wallet'], cat: 'solana', diff: 'easy' },
+  { q: 'What is the name of Solana\'s PoS leader selection algorithm?', a: 'Tower BFT', options: ['Tower BFT', 'Tendermint', 'Casper FFG', 'HotStuff'], cat: 'solana', diff: 'hard' },
+  { q: 'What year was Solana mainnet beta launched?', a: '2020', options: ['2020', '2018', '2019', '2021'], cat: 'solana' },
+  { q: 'What is the name of Solana\'s data propagation protocol?', a: 'Turbine', options: ['Turbine', 'Gossip', 'libp2p', 'DevP2P'], cat: 'solana', diff: 'hard' },
+  { q: 'Which token standard handles fungible tokens on Solana?', a: 'SPL Token', options: ['SPL Token', 'ERC-20', 'BEP-20', 'CW-20'], cat: 'solana' },
+  { q: 'What is the Solana validator client written in Rust called?', a: 'Agave', options: ['Agave', 'Geth', 'Prysm', 'Lighthouse'], cat: 'solana', diff: 'hard' },
+  { q: 'What Solana feature allows parallel transaction processing?', a: 'Sealevel', options: ['Sealevel', 'Sharding', 'Rollups', 'Channels'], cat: 'solana' },
+  { q: 'What is the minimum SOL needed to create a token account on Solana?', a: '~0.002 SOL (rent-exempt)', options: ['~0.002 SOL (rent-exempt)', '0.1 SOL', '1 SOL', '0.01 SOL'], cat: 'solana' },
+  { q: 'Which Solana AMM was one of the first and uses constant product formula?', a: 'Raydium', options: ['Raydium', 'Uniswap', 'Curve', 'Balancer'], cat: 'solana' },
+  { q: 'What is the name of Solana\'s mempool replacement?', a: 'Gulf Stream', options: ['Gulf Stream', 'Dark Forest', 'Flashbots', 'MEV Boost'], cat: 'solana', diff: 'hard' },
+  { q: 'What compression technology reduces Solana NFT costs by 99%+?', a: 'State Compression (cNFTs)', options: ['State Compression (cNFTs)', 'zk-Rollups', 'Plasma', 'Validium'], cat: 'solana' },
+  { q: 'Which Solana liquid staking protocol lets you stake SOL for mSOL?', a: 'Marinade Finance', options: ['Marinade Finance', 'Lido', 'Rocket Pool', 'Ankr'], cat: 'solana' },
+  { q: 'What is the Solana account model based on?', a: 'Account-based (like a file system)', options: ['Account-based (like a file system)', 'UTXO-based', 'eUTXO-based', 'Object-based'], cat: 'solana' },
+
+  // ── Blockchain General ──
+  { q: 'What is the maximum supply of Bitcoin?', a: '21 million', options: ['21 million', '100 million', '18.5 million', 'Unlimited'], cat: 'blockchain', diff: 'easy' },
+  { q: 'What cryptographic function does Bitcoin mining use?', a: 'SHA-256', options: ['SHA-256', 'Keccak-256', 'Scrypt', 'Blake2b'], cat: 'blockchain' },
+  { q: 'What does DeFi stand for?', a: 'Decentralized Finance', options: ['Decentralized Finance', 'Digital Finance', 'Distributed Fintech', 'Deflationary Finance'], cat: 'blockchain', diff: 'easy' },
+  { q: 'What is a "smart contract"?', a: 'Self-executing code on a blockchain', options: ['Self-executing code on a blockchain', 'A legal document on paper', 'An AI-written agreement', 'A centralized database query'], cat: 'blockchain', diff: 'easy' },
+  { q: 'What was the first cryptocurrency?', a: 'Bitcoin', options: ['Bitcoin', 'Ethereum', 'Litecoin', 'Dogecoin'], cat: 'blockchain', diff: 'easy' },
+  { q: 'What is a "51% attack"?', a: 'When an entity controls majority of network hashrate', options: ['When an entity controls majority of network hashrate', 'When 51% of nodes go offline', 'When 51% of tokens are burned', 'When gas fees exceed 51 gwei'], cat: 'blockchain' },
+  { q: 'What does AMM stand for in DeFi?', a: 'Automated Market Maker', options: ['Automated Market Maker', 'Advanced Money Management', 'Algorithmic Mining Mechanism', 'Asset Margin Module'], cat: 'blockchain' },
+  { q: 'What is the Byzantine Generals Problem?', a: 'Reaching consensus in a distributed system with potential traitors', options: ['Reaching consensus in a distributed system with potential traitors', 'A military strategy game', 'A type of blockchain attack', 'An encryption algorithm'], cat: 'blockchain', diff: 'hard' },
+  { q: 'What is "impermanent loss" in DeFi?', a: 'Loss from providing liquidity vs holding tokens', options: ['Loss from providing liquidity vs holding tokens', 'Permanent loss of funds in a hack', 'Temporary network downtime losses', 'Loss from failed transactions'], cat: 'blockchain' },
+  { q: 'What does TVL stand for in DeFi?', a: 'Total Value Locked', options: ['Total Value Locked', 'Token Volume Limit', 'Transaction Verification Layer', 'Total Validator Listings'], cat: 'blockchain' },
+  { q: 'What is a "rug pull" in crypto?', a: 'Developers abandoning a project after taking investor funds', options: ['Developers abandoning a project after taking investor funds', 'A legitimate exit strategy', 'Network consensus failure', 'A type of MEV extraction'], cat: 'blockchain' },
+  { q: 'What is the Ethereum merge?', a: 'Transition from Proof of Work to Proof of Stake', options: ['Transition from Proof of Work to Proof of Stake', 'Merging ETH and BTC blockchains', 'Combining L1 and L2 networks', 'A hard fork creating two chains'], cat: 'blockchain' },
+  { q: 'What does MEV stand for?', a: 'Maximal Extractable Value', options: ['Maximal Extractable Value', 'Minimum Exchange Value', 'Multi-chain EVM Version', 'Market Efficiency Validator'], cat: 'blockchain', diff: 'hard' },
+  { q: 'What is a "sybil attack" in blockchain?', a: 'Creating many fake identities to gain disproportionate influence', options: ['Creating many fake identities to gain disproportionate influence', 'Attacking a node with DDoS', 'Exploiting a smart contract bug', 'Double-spending coins'], cat: 'blockchain' },
+  { q: 'What is a Merkle tree used for in blockchain?', a: 'Efficiently verifying data integrity', options: ['Efficiently verifying data integrity', 'Generating private keys', 'Mining new blocks', 'Storing transaction history'], cat: 'blockchain' },
+  { q: 'What does "gas" represent in blockchain transactions?', a: 'Computational cost of executing operations', options: ['Computational cost of executing operations', 'Transaction speed', 'Network bandwidth', 'Storage space used'], cat: 'blockchain' },
+  { q: 'What is a "flash loan" in DeFi?', a: 'An uncollateralized loan that must be repaid in the same transaction', options: ['An uncollateralized loan that must be repaid in the same transaction', 'A very fast bank transfer', 'A loan with lightning-fast approval', 'A micro-loan under $100'], cat: 'blockchain' },
+  { q: 'What year was the Bitcoin whitepaper published?', a: '2008', options: ['2008', '2009', '2010', '2007'], cat: 'blockchain' },
+  { q: 'What is a "hard fork"?', a: 'A non-backward-compatible protocol upgrade', options: ['A non-backward-compatible protocol upgrade', 'A hardware wallet reset', 'A network shutdown', 'A type of consensus mechanism'], cat: 'blockchain' },
+  { q: 'What is the purpose of a "nonce" in blockchain?', a: 'A number used once in mining/transaction ordering', options: ['A number used once in mining/transaction ordering', 'A type of cryptocurrency', 'A network identifier', 'A wallet address format'], cat: 'blockchain' },
+  { q: 'What layer are rollups considered in blockchain scaling?', a: 'Layer 2', options: ['Layer 2', 'Layer 0', 'Layer 1', 'Layer 3'], cat: 'blockchain' },
+  { q: 'What is an "oracle" in blockchain context?', a: 'A service that provides real-world data to smart contracts', options: ['A service that provides real-world data to smart contracts', 'A prediction market', 'A type of validator', 'A consensus algorithm'], cat: 'blockchain' },
+
+  // ── Crypto Culture & History ──
+  { q: 'What is "HODL" originally?', a: 'A typo for "hold" in a 2013 Bitcoin forum post', options: ['A typo for "hold" in a 2013 Bitcoin forum post', 'Hold On for Dear Life (official acronym)', 'A trading strategy name', 'A protocol name'], cat: 'culture', diff: 'easy' },
+  { q: 'What was the first item purchased with Bitcoin?', a: 'Two pizzas', options: ['Two pizzas', 'A car', 'A house', 'A laptop'], cat: 'culture', diff: 'easy' },
+  { q: 'How much Bitcoin was paid for two pizzas on Bitcoin Pizza Day?', a: '10,000 BTC', options: ['10,000 BTC', '1,000 BTC', '100 BTC', '50,000 BTC'], cat: 'culture' },
+  { q: 'Who is Satoshi Nakamoto?', a: 'The pseudonymous creator of Bitcoin', options: ['The pseudonymous creator of Bitcoin', 'The CEO of Binance', 'Ethereum\'s founder', 'A Japanese mathematician'], cat: 'culture', diff: 'easy' },
+  { q: 'What does "DYOR" stand for?', a: 'Do Your Own Research', options: ['Do Your Own Research', 'Did You Order Recently', 'Decentralized Yield On Returns', 'Don\'t Yield On Rewards'], cat: 'culture', diff: 'easy' },
+  { q: 'What event halves Bitcoin\'s block reward approximately every 4 years?', a: 'The Halving', options: ['The Halving', 'The Merge', 'The Fork', 'The Burn'], cat: 'culture' },
+  { q: 'What is a "whale" in crypto terminology?', a: 'An entity holding a very large amount of cryptocurrency', options: ['An entity holding a very large amount of cryptocurrency', 'A type of scam', 'A mining pool', 'A blockchain explorer'], cat: 'culture', diff: 'easy' },
+  { q: 'What does "GM" mean in crypto Twitter?', a: 'Good Morning', options: ['Good Morning', 'General Manager', 'Gain More', 'Governance Model'], cat: 'culture', diff: 'easy' },
+  { q: 'What is "alpha" in crypto context?', a: 'Insider or early information about profitable opportunities', options: ['Insider or early information about profitable opportunities', 'The first version of a protocol', 'A type of token', 'A consensus mechanism'], cat: 'culture' },
+  { q: 'What is a "airdrop" in crypto?', a: 'Free distribution of tokens to wallet addresses', options: ['Free distribution of tokens to wallet addresses', 'Dropping prices suddenly', 'A DDoS attack method', 'Sending tokens to a burn address'], cat: 'culture', diff: 'easy' },
+
+  // ── Security & Privacy ──
+  { q: 'What is a "seed phrase" (mnemonic)?', a: '12-24 words that can restore a crypto wallet', options: ['12-24 words that can restore a crypto wallet', 'A password for exchanges', 'An API key for dApps', 'A type of encryption'], cat: 'security' },
+  { q: 'What is a "cold wallet"?', a: 'An offline wallet not connected to the internet', options: ['An offline wallet not connected to the internet', 'A wallet with zero balance', 'A wallet in cold storage (freezer)', 'A deactivated exchange account'], cat: 'security', diff: 'easy' },
+  { q: 'What is "phishing" in the crypto context?', a: 'Tricking users into revealing private keys or signing malicious transactions', options: ['Tricking users into revealing private keys or signing malicious transactions', 'Mining tokens on someone else\'s computer', 'A legitimate marketing strategy', 'A type of consensus attack'], cat: 'security' },
+  { q: 'What is a "multisig" wallet?', a: 'A wallet requiring multiple signatures to authorize transactions', options: ['A wallet requiring multiple signatures to authorize transactions', 'A wallet that holds multiple tokens', 'A wallet with multiple addresses', 'A wallet for multiple users to view'], cat: 'security' },
+  { q: 'What is "front-running" in blockchain?', a: 'Placing a transaction ahead of a known pending transaction for profit', options: ['Placing a transaction ahead of a known pending transaction for profit', 'Being the first to validate a block', 'Running a node before mainnet launch', 'A marketing strategy for token launches'], cat: 'security', diff: 'hard' },
+
+  // ── Technical Deep ──
+  { q: 'What is an ERC-20 token?', a: 'A fungible token standard on Ethereum', options: ['A fungible token standard on Ethereum', 'An NFT standard', 'A Solana token type', 'A Bitcoin improvement proposal'], cat: 'technical' },
+  { q: 'What is the difference between L1 and L2?', a: 'L1 is the base blockchain, L2 processes transactions off-chain', options: ['L1 is the base blockchain, L2 processes transactions off-chain', 'L1 is faster than L2', 'L2 is more secure than L1', 'L1 and L2 are the same'], cat: 'technical' },
+  { q: 'What is a "zero-knowledge proof"?', a: 'Proving you know something without revealing the information itself', options: ['Proving you know something without revealing the information itself', 'A proof that no transactions occurred', 'An empty block validation', 'A way to hide wallet balances'], cat: 'technical', diff: 'hard' },
+  { q: 'What is "sharding" in blockchain?', a: 'Splitting the network into parallel processing groups', options: ['Splitting the network into parallel processing groups', 'Breaking encryption keys', 'Destroying unused tokens', 'A type of fork'], cat: 'technical' },
+  { q: 'What is a "bridge" in crypto?', a: 'A protocol that transfers assets between different blockchains', options: ['A protocol that transfers assets between different blockchains', 'A physical network connector', 'A type of liquidity pool', 'A governance mechanism'], cat: 'technical' },
+  { q: 'What is a "wrapped" token?', a: 'A token pegged 1:1 to another asset on a different chain', options: ['A token pegged 1:1 to another asset on a different chain', 'A hidden token in a wallet', 'A compressed NFT', 'A token with limited supply'], cat: 'technical' },
+  { q: 'What is the purpose of a "governance token"?', a: 'Voting on protocol decisions and parameter changes', options: ['Voting on protocol decisions and parameter changes', 'Paying gas fees', 'Mining new blocks', 'Backing stablecoin value'], cat: 'technical' },
+  { q: 'What is "composability" in DeFi?', a: 'The ability of protocols to interact with each other like building blocks', options: ['The ability of protocols to interact with each other like building blocks', 'The process of creating new tokens', 'Writing smart contract code', 'Combining multiple wallets'], cat: 'technical' },
+];
 // Reputation v1 rate-limit: 1 request per 10 seconds per IP
 const reputationRateLimit = new Map(); // key: `repv1:${ip}` → timestamp
 const PRISM_EARN_COOLDOWN_TABLE = {
@@ -9387,20 +9858,15 @@ try {
   }
 } catch {}
 
-// Shared helper: fetch parsed transactions for an address
+// Shared helper: fetch parsed transactions for an address (uses JSON-RPC batch)
 async function fetchParsedTransactions(address, limit = 50) {
-  const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+  const rpcUrl = getRpcUrl(address) || 'https://api.mainnet-beta.solana.com';
+  const conn = new Connection(rpcUrl, 'confirmed');
   const pubkey = new PublicKey(address);
   const sigs = await conn.getSignaturesForAddress(pubkey, { limit });
   if (!sigs.length) return { signatures: sigs, parsed: [] };
-  const parsed = [];
-  for (let i = 0; i < sigs.length; i += 10) {
-    const batch = sigs.slice(i, i + 10).map(s => s.signature);
-    try {
-      const txs = await conn.getParsedTransactions(batch, { maxSupportedTransactionVersion: 0 });
-      parsed.push(...txs.filter(Boolean));
-    } catch { /* partial failure ok */ }
-  }
+  const sigStrings = sigs.map(s => s.signature);
+  const parsed = (await batchGetParsedTxs(getBatchRpcUrl(address), sigStrings, { batchSize: 100, delayMs: 300 })).filter(Boolean);
   return { signatures: sigs, parsed };
 }
 
@@ -9591,6 +10057,17 @@ function classifyTxType(txProgramIdSet) {
 }
 
 // Extract SOL transfers from parsed transactions — wallet-to-wallet only
+// Helper: extract address string from accountKey (works with both batch JSON-RPC and @solana/web3.js)
+function resolveAccountKey(accKey) {
+  if (typeof accKey === 'string') return accKey;
+  if (!accKey) return '';
+  // @solana/web3.js returns PublicKey objects with .toBase58()
+  if (accKey.pubkey?.toBase58) return accKey.pubkey.toBase58();
+  // Raw JSON-RPC returns { pubkey: "string", signer: bool, ... }
+  if (typeof accKey.pubkey === 'string') return accKey.pubkey;
+  return '';
+}
+
 function extractSolTransfers(parsed, targetAddress) {
   const incoming = new Map();
   const outgoing = new Map();
@@ -9598,27 +10075,23 @@ function extractSolTransfers(parsed, targetAddress) {
 
   for (const tx of parsed) {
     if (!tx?.meta || !tx?.transaction) continue;
-    if (tx.meta.err) continue; // skip failed transactions
+    if (tx.meta.err) continue;
     const blockTime = tx.blockTime ? tx.blockTime * 1000 : Date.now();
 
-    // Collect all program IDs from this transaction's instructions
     const txProgramIds = new Set();
     const ixs = tx.transaction.message?.instructions || [];
     for (const ix of ixs) {
       if (ix.programId) {
-        const pid = typeof ix.programId === 'string' ? ix.programId : ix.programId.toBase58();
-        txProgramIds.add(pid);
-        programIds.add(pid);
+        const pid = typeof ix.programId === 'string' ? ix.programId : (ix.programId?.toBase58?.() || ix.programId?.toString?.() || '');
+        if (pid) { txProgramIds.add(pid); programIds.add(pid); }
       }
     }
-    // Also collect from inner instructions (CPI calls)
     const innerIxs = tx.meta.innerInstructions || [];
     for (const inner of innerIxs) {
       for (const iix of (inner.instructions || [])) {
         if (iix.programId) {
-          const pid = typeof iix.programId === 'string' ? iix.programId : iix.programId.toBase58();
-          txProgramIds.add(pid);
-          programIds.add(pid);
+          const pid = typeof iix.programId === 'string' ? iix.programId : (iix.programId?.toBase58?.() || iix.programId?.toString?.() || '');
+          if (pid) { txProgramIds.add(pid); programIds.add(pid); }
         }
       }
     }
@@ -9627,126 +10100,110 @@ function extractSolTransfers(parsed, targetAddress) {
     const pre = tx.meta.preBalances || [];
     const post = tx.meta.postBalances || [];
 
-    // Build a set of signer addresses for this transaction — signers are real wallets
     const signerAddresses = new Set();
     for (const acc of accounts) {
       if (typeof acc === 'object' && acc?.signer) {
-        const addr = acc?.pubkey?.toBase58?.() || '';
+        const addr = resolveAccountKey(acc);
         if (addr) signerAddresses.add(addr);
       }
     }
 
-    // Find SOL balance changes for target address
     let targetIdx = -1;
     let targetDiff = 0;
     for (let i = 0; i < accounts.length; i++) {
-      const acc = typeof accounts[i] === 'string' ? accounts[i] : accounts[i]?.pubkey?.toBase58?.() || '';
+      const acc = resolveAccountKey(accounts[i]);
       if (acc === targetAddress) {
         targetIdx = i;
         targetDiff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
         break;
       }
     }
-    if (targetIdx === -1 || Math.abs(targetDiff) < 0.001) continue;
+    if (targetIdx === -1) continue;
 
-    // Find the best counterparty: prefer signers, exclude programs
-    // Collect all candidates with their balance diffs
-    const candidates = [];
-    for (let j = 0; j < accounts.length; j++) {
-      if (j === targetIdx) continue;
-      const acc = typeof accounts[j] === 'string' ? accounts[j] : accounts[j]?.pubkey?.toBase58?.() || '';
-      if (!acc) continue;
-      const diff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
-      const isSigner = typeof accounts[j] === 'object' ? !!accounts[j]?.signer : signerAddresses.has(acc);
-      candidates.push({ addr: acc, diff, isSigner, isProgram: isProgramAddress(acc, txProgramIds) });
-    }
-
-    if (targetDiff > 0.001) {
-      // Target received SOL — find who sent it
-      // Best: a signer that lost SOL and is not a program
-      const senders = candidates
-        .filter(c => c.diff < -0.001 && !c.isProgram)
-        .sort((a, b) => {
-          // Prefer signers over non-signers
-          if (a.isSigner && !b.isSigner) return -1;
-          if (!a.isSigner && b.isSigner) return 1;
-          // Then prefer largest loss
-          return a.diff - b.diff; // more negative = larger loss = first
-        });
-
-      const sender = senders[0];
-      if (sender) {
-        const existing = incoming.get(sender.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
-        existing.totalSol += Math.abs(targetDiff);
-        existing.count += 1;
-        existing.firstTime = Math.min(existing.firstTime, blockTime);
-        existing.lastTime = Math.max(existing.lastTime, blockTime);
-        for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
-        const sig = tx.transaction.signatures?.[0];
-        if (sig) existing.signatures.push(sig);
-        incoming.set(sender.addr, existing);
+    // ── SOL Transfer Detection ──
+    // Threshold 0.0003 SOL — catches micro-transfers but ignores pure fee dust
+    if (Math.abs(targetDiff) >= 0.0003) {
+      const candidates = [];
+      for (let j = 0; j < accounts.length; j++) {
+        if (j === targetIdx) continue;
+        const acc = resolveAccountKey(accounts[j]);
+        if (!acc) continue;
+        const diff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
+        const isSigner = typeof accounts[j] === 'object' ? !!accounts[j]?.signer : signerAddresses.has(acc);
+        candidates.push({ addr: acc, diff, isSigner, isProgram: isProgramAddress(acc, txProgramIds) });
       }
-    } else if (targetDiff < -0.001) {
-      // Target sent SOL — find who received it
-      const receivers = candidates
-        .filter(c => c.diff > 0.001 && !c.isProgram)
-        .sort((a, b) => {
-          // Prefer signers over non-signers
-          if (a.isSigner && !b.isSigner) return -1;
-          if (!a.isSigner && b.isSigner) return 1;
-          // Then prefer largest gain
-          return b.diff - a.diff;
-        });
 
-      const receiver = receivers[0];
-      if (receiver) {
-        const existing = outgoing.get(receiver.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
-        existing.totalSol += Math.abs(receiver.diff);
-        existing.count += 1;
-        existing.firstTime = Math.min(existing.firstTime, blockTime);
-        existing.lastTime = Math.max(existing.lastTime, blockTime);
-        for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
-        const sig = tx.transaction.signatures?.[0];
-        if (sig) existing.signatures.push(sig);
-        outgoing.set(receiver.addr, existing);
+      if (targetDiff > 0.0003) {
+        const senders = candidates
+          .filter(c => c.diff < -0.0003 && !c.isProgram)
+          .sort((a, b) => {
+            if (a.isSigner && !b.isSigner) return -1;
+            if (!a.isSigner && b.isSigner) return 1;
+            return a.diff - b.diff;
+          });
+        const sender = senders[0];
+        if (sender) {
+          const existing = incoming.get(sender.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
+          existing.totalSol += Math.abs(targetDiff);
+          existing.count += 1;
+          existing.firstTime = Math.min(existing.firstTime, blockTime);
+          existing.lastTime = Math.max(existing.lastTime, blockTime);
+          for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
+          const sig = tx.transaction.signatures?.[0];
+          if (sig) existing.signatures.push(sig);
+          incoming.set(sender.addr, existing);
+        }
+      } else if (targetDiff < -0.0003) {
+        const receivers = candidates
+          .filter(c => c.diff > 0.0003 && !c.isProgram)
+          .sort((a, b) => {
+            if (a.isSigner && !b.isSigner) return -1;
+            if (!a.isSigner && b.isSigner) return 1;
+            return b.diff - a.diff;
+          });
+        const receiver = receivers[0];
+        if (receiver) {
+          const existing = outgoing.get(receiver.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
+          existing.totalSol += Math.abs(receiver.diff);
+          existing.count += 1;
+          existing.firstTime = Math.min(existing.firstTime, blockTime);
+          existing.lastTime = Math.max(existing.lastTime, blockTime);
+          for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
+          const sig = tx.transaction.signatures?.[0];
+          if (sig) existing.signatures.push(sig);
+          outgoing.set(receiver.addr, existing);
+        }
       }
     }
-
 
     // ── SPL Token Transfer Detection ──
-    // Catches funding via tokens (USDC, etc.) that don't change SOL balances
+    // Runs ALWAYS (not gated by SOL diff) — catches funding via USDC, tokens, etc.
     const preTok = tx.meta.preTokenBalances || [];
     const postTok = tx.meta.postTokenBalances || [];
     if (preTok.length > 0 || postTok.length > 0) {
-      // Build owner→balance maps for pre and post
-      const preMap = new Map(); // `${owner}:${mint}` → uiAmount
+      const preMap = new Map();
       for (const tb of preTok) {
-        const owner = tb.owner;
-        if (owner) preMap.set(`${owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
+        if (tb.owner) preMap.set(`${tb.owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
       }
       const postMap = new Map();
       for (const tb of postTok) {
-        const owner = tb.owner;
-        if (owner) postMap.set(`${owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
+        if (tb.owner) postMap.set(`${tb.owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
       }
       // Check if target gained tokens
-      let targetGained = false;
+      let targetGainedToken = false;
       for (const [key, postAmt] of postMap) {
         if (!key.startsWith(targetAddress + ':')) continue;
         const preAmt = preMap.get(key) || 0;
-        if (postAmt > preAmt + 0.001) { targetGained = true; break; }
+        if (postAmt > preAmt + 0.001) { targetGainedToken = true; break; }
       }
-      // If target gained tokens and we didn't already record a SOL sender for this tx,
-      // find who sent the tokens (owner whose balance decreased for same mint)
-      if (targetGained && Math.abs(targetDiff) < 0.001) {
+      // If target gained tokens and SOL diff was negligible (fee-only), record token sender as funder
+      if (targetGainedToken && Math.abs(targetDiff) < 0.01) {
         for (const [key, preAmt] of preMap) {
           const [owner] = key.split(':');
           if (owner === targetAddress) continue;
           const postAmt = postMap.get(key) || 0;
           if (preAmt > postAmt + 0.001 && !isProgramAddress(owner, txProgramIds)) {
-            // This owner sent tokens to target — record as funding source
-            // Use 0.01 SOL equivalent per token tx as proxy (actual value unknown without price)
-            const tokenSolProxy = 0.01;
+            const tokenSolProxy = 0.05; // proxy value per token tx (better weight than 0.01)
             const existing = incoming.get(owner) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
             existing.totalSol += tokenSolProxy;
             existing.count += 1;
@@ -9756,7 +10213,7 @@ function extractSolTransfers(parsed, targetAddress) {
             const sig = tx.transaction.signatures?.[0];
             if (sig) existing.signatures.push(sig);
             incoming.set(owner, existing);
-            break; // one sender per tx is enough
+            break;
           }
         }
       }

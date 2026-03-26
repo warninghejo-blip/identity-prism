@@ -84,8 +84,20 @@ export function getApiBase(): string {
 }
 
 // ── Fetch wallet preview (reputation + wallet-database in parallel) ──
+// Request deduplication: if same address is already being fetched, reuse the in-flight promise
+const _inflightPreviews = new Map<string, Promise<WalletPreview | null>>();
 
-export async function fetchWalletPreview(address: string): Promise<WalletPreview | null> {
+export function fetchWalletPreview(address: string): Promise<WalletPreview | null> {
+  const existing = _inflightPreviews.get(address);
+  if (existing) return existing;
+  const p = _fetchWalletPreviewImpl(address).finally(() => {
+    _inflightPreviews.delete(address);
+  });
+  _inflightPreviews.set(address, p);
+  return p;
+}
+
+async function _fetchWalletPreviewImpl(address: string): Promise<WalletPreview | null> {
   try {
     const base = getApiBase();
     const [repRes, dbRes] = await Promise.all([

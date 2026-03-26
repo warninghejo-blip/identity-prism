@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, forwardRef } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
@@ -153,40 +154,53 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
   const refetchComposite = compositeData.refetch;
 
-  // Fetch sybil risk — only in interactive mode
+  // Fetch sybil risk THEN funding sources — sequential to avoid rate limits
   useEffect(() => {
     if (!address || isCapture) return;
     const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-    fetch(`${base}/api/sybil/analysis?address=${address}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.riskScore !== undefined) {
-          setSybilRisk({
-            riskScore: d.riskScore,
-            riskLevel: d.riskLevel,
-            trustScore: d.trustScore ?? 100 - d.riskScore,
-            trustGrade: d.trustGrade ?? 'N/A',
-            signals: d.signals,
-            metrics: d.metrics,
-          });
-          // Invalidate cached composite score to reflect new sybil trust
-          setTimeout(() => refetchComposite(), 500);
-        }
-      })
-      .catch(() => {});
-  }, [address, isCapture, refetchComposite]);
+    let cancelled = false;
 
-  // Fetch funding sources for Intel tab
-  useEffect(() => {
-    if (!address || isCapture) return;
-    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-    fetch(`${base}/api/sybil/funding-sources?address=${address}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.sources) setFundingSources(d.sources);
-      })
-      .catch(() => {});
-  }, [address, isCapture]);
+    (async () => {
+      // Step 1: sybil analysis (this also caches funding sources on server)
+      try {
+        const r = await fetch(`${base}/api/sybil/analysis?address=${address}`);
+        if (cancelled) return;
+        if (r.ok) {
+          const d = await r.json();
+          if (d?.riskScore !== undefined) {
+            setSybilRisk({
+              riskScore: d.riskScore,
+              riskLevel: d.riskLevel,
+              trustScore: d.trustScore ?? 100 - d.riskScore,
+              trustGrade: d.trustGrade ?? 'N/A',
+              signals: d.signals,
+              metrics: d.metrics,
+            });
+            setTimeout(() => refetchComposite(), 500);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+
+      if (cancelled) return;
+
+      // Step 2: funding sources (server returns from sybilCache — no extra RPC calls)
+      try {
+        const r2 = await fetch(`${base}/api/sybil/funding-sources?address=${address}`);
+        if (!cancelled && r2.ok) {
+          const d2 = await r2.json();
+          if (d2?.sources) setFundingSources(d2.sources);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, isCapture, refetchComposite]);
 
   const clearTransitionTimers = useCallback(() => {
     transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -947,6 +961,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                             </div>
                           </div>
                         </div>
+
+                        {/* Trust Recovery link */}
+                        {sybilRisk.trustScore < 80 && (
+                          <Link
+                            to="/recovery"
+                            className="block w-full py-2 rounded-lg bg-cyan-500/[0.06] border border-cyan-500/[0.12] text-cyan-300/70 text-xs font-bold hover:bg-cyan-500/[0.12] transition-colors text-center"
+                          >
+                            Improve Trust Score →
+                          </Link>
+                        )}
 
                         {/* Signals by category */}
                         {sybilRisk.signals &&
