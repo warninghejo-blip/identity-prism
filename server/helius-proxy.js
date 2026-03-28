@@ -8577,8 +8577,8 @@ const server = http.createServer(async (req, res) => {
       }
       // Validate stakeAmount
       const stake = isSolBet ? Number(stakeAmount) : Math.floor(Number(stakeAmount));
-      if (!Number.isFinite(stake) || stake <= 0) {
-        return respondJson(res, 400, { error: 'stakeAmount must be a positive number' });
+      if (!Number.isFinite(stake) || stake < 5) {
+        return respondJson(res, 400, { error: 'Minimum stake is 5 Coins' });
       }
       if (!isSolBet && stake > 1000) {
         return respondJson(res, 400, { error: 'stakeAmount cannot exceed 1000 Coins' });
@@ -8776,6 +8776,10 @@ const server = http.createServer(async (req, res) => {
 
       const challenge = challenges.find(c => c.id === challengeId);
       if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
+      // Block expired challenges (cron may not have fired yet)
+      if (challenge.expiresAt && Date.now() > challenge.expiresAt) {
+        return respondJson(res, 409, { error: 'Challenge has expired' });
+      }
       // Allow accept for 'open' (score challenges) and 'playing' without opponent (game challenges where creator already played)
       if (challenge.status !== 'open' && !(challenge.status === 'playing' && !challenge.opponent)) {
         return respondJson(res, 409, { error: 'Challenge no longer available' });
@@ -9001,14 +9005,25 @@ const server = http.createServer(async (req, res) => {
       const chMaxScore = CH_MAX_SCORES[challenge.gameMode] || 600;
       if (scoreNum > chMaxScore) return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
 
-      // Validate game session proof if provided (optional — blur-kill may not have proof)
+      // Validate game session proof
+      // Without proof (blur-kill): accept but cap at low score to prevent abuse
+      const NO_PROOF_MAX = 30; // blur-kill can only submit low scores
       if (gameSessionId) {
         const cSession = gameSessionProofs.get(gameSessionId);
-        if (cSession && cSession.verified) {
+        if (!cSession || !cSession.verified) {
+          if (scoreNum > NO_PROOF_MAX) return respondJson(res, 400, { error: 'Unverified session — score too high' });
+        } else {
           if (cSession.walletAddress !== submitter) return respondJson(res, 403, { error: 'Session wallet mismatch' });
           if (Math.abs(cSession.score - scoreNum) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
           if (challenge.gameMode && cSession.gameMode !== challenge.gameMode) return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
+          // Block reuse of session across different challenges
+          if (cSession.usedForChallenge && cSession.usedForChallenge.challengeId !== challengeId) {
+            return respondJson(res, 400, { error: 'Game session already used for another challenge' });
+          }
         }
+      } else {
+        // No session at all (blur-kill fallback) — hard cap
+        if (scoreNum > NO_PROOF_MAX) return respondJson(res, 400, { error: 'Game session required for this score' });
       }
 
       // Race condition guard: atomic check-and-set
@@ -9126,16 +9141,15 @@ const server = http.createServer(async (req, res) => {
       const challenge = challenges.find(c => c.id === challengeId);
       if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
       if (challenge.creator !== canceller) return respondJson(res, 403, { error: 'Only the creator can cancel a challenge' });
-      // Block cancel if opponent is currently playing or already submitted
-      if (challenge.acceptorStartedAt && !challenge.opponentScore) {
-        return respondJson(res, 409, { error: 'Your opponent is currently in battle. Please wait for them to finish.' });
-      }
-      if (challenge.opponent && challenge.opponentScore !== null) {
-        return respondJson(res, 409, { error: 'Your opponent has already submitted their score.' });
-      }
+      // Terminal states
       if (challenge.status === 'completed' || challenge.status === 'cancelled' || challenge.status === 'expired') {
         return respondJson(res, 400, { error: 'Challenge already finished' });
       }
+      // Once opponent accepted (playing/accepted), creator cannot cancel — both committed
+      if (challenge.status === 'playing' || challenge.status === 'accepted') {
+        return respondJson(res, 409, { error: 'Opponent has accepted — challenge cannot be cancelled' });
+      }
+      // Only 'open' challenges can be cancelled
 
       // Lock status BEFORE refund to prevent double-cancel race condition
       challenge.status = 'cancelled';
@@ -11087,23 +11101,49 @@ setInterval(() => {
   let removed = 0;
   let staleCancelled = 0;
 
-  // Safety net: cancel playing/accepted challenges stuck >24h (anomaly — both committed but something broke)
-  const stuckCutoff = now - 24 * 60 * 60 * 1000; // 24 hours
+  // Safety net: expire playing/accepted challenges stuck >24h
+  // CRITICAL: only refund players who haven't had coins awarded via win resolution
+  const stuckCutoff = now - 24 * 60 * 60 * 1000;
   challenges.forEach(ch => {
     if ((ch.status === 'playing' || ch.status === 'accepted') && (ch.acceptedAt || ch.createdAt) < stuckCutoff) {
-      if (ch.creatorScore !== null && ch.opponentScore !== null) return; // both scored, should resolve
-      if (ch.stakeAmount > 0) {
-        setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
-        refundCoinSpent(ch.creator, ch.stakeAmount);
-        if (ch.opponent) {
-          setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
-          refundCoinSpent(ch.opponent, ch.stakeAmount);
+      // If both scored, try to resolve instead of refunding
+      if (ch.creatorScore !== null && ch.opponentScore !== null) {
+        // Attempt resolution — winner gets prize, no double-payout
+        const totalPot = ch.stakeAmount * 2;
+        const winnerPrize = Math.floor(totalPot * 0.95);
+        if (ch.creatorScore > ch.opponentScore) {
+          ch.winner = ch.creator;
+          setCoinBalance(ch.creator, getCoinBalance(ch.creator) + winnerPrize);
+          addCoinEarned(ch.creator, winnerPrize);
+        } else if (ch.opponentScore > ch.creatorScore) {
+          ch.winner = ch.opponent;
+          setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + winnerPrize);
+          addCoinEarned(ch.opponent, winnerPrize);
+        } else {
+          ch.winner = null;
+          setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
+          if (ch.opponent) setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
         }
+        ch.status = 'completed';
+      } else if (ch.winner) {
+        // Winner already resolved but status stuck — just mark completed, NO refund
+        ch.status = 'completed';
+      } else {
+        // No winner, no both-scores — safe to refund only players who staked
+        // Only refund if no score was submitted (no partial resolution happened)
+        if (ch.stakeAmount > 0 && ch.creatorScore === null && ch.opponentScore === null) {
+          setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
+          refundCoinSpent(ch.creator, ch.stakeAmount);
+          if (ch.opponent) {
+            setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
+            refundCoinSpent(ch.opponent, ch.stakeAmount);
+          }
+        }
+        ch.status = 'expired';
       }
-      ch.status = 'expired';
       ch.completedAt = Date.now();
       staleCancelled++;
-      console.log(`[challenges] Safety-expired stuck ${ch.id} (${ch.status} >24h)`);
+      console.log(`[challenges] Safety-resolved stuck ${ch.id} → ${ch.status} (>24h)`);
     }
   });
 

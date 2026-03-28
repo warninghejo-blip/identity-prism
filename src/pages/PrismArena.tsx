@@ -416,8 +416,8 @@ export default function PrismArena() {
       return;
     }
     const isSol = formBetType === 'sol';
-    if (!isSol && (formStake < 1 || formStake > 1000)) {
-      toast.error('Stake must be between 1 and 1000 Coins');
+    if (!isSol && (formStake < 5 || formStake > 1000)) {
+      toast.error('Stake must be between 5 and 1000 Coins');
       return;
     }
     if (isSol && (formStake <= 0 || formStake > 10)) {
@@ -904,13 +904,13 @@ export default function PrismArena() {
               <div className="relative">
                 <input
                   type="number"
-                  min={1}
+                  min={5}
                   max={1000}
                   step={1}
                   value={formStake}
                   onChange={(e) => {
                     const v = Number(e.target.value) || 0;
-                    setFormStake(Math.max(1, Math.min(1000, Math.floor(v))));
+                    setFormStake(Math.max(5, Math.min(1000, Math.floor(v))));
                   }}
                   className="w-full px-4 py-3 pr-20 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-white font-bold focus:outline-none focus:border-amber-500/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
