@@ -262,6 +262,70 @@ body:has(.page-shell) #root > * {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+/* Arena challenge card buttons — glass pill style */
+.arena-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.arena-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+}
+.arena-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.arena-btn-accent {
+  border-color: rgba(250, 204, 21, 0.2);
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.08);
+}
+.arena-btn-accent:hover {
+  background: rgba(250, 204, 21, 0.15);
+  border-color: rgba(250, 204, 21, 0.3);
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.1);
+}
+.arena-btn-win {
+  border-color: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+}
+.arena-btn-win:hover {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.1);
+}
+.arena-btn-lose {
+  border-color: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+.arena-btn-lose:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.1);
+}
+.arena-btn-ghost {
+  color: rgba(255, 255, 255, 0.3);
+}
+.arena-btn-ghost:hover {
+  color: rgba(255, 255, 255, 0.5);
+}
+
 .identity-gradient {
   position: fixed;
   inset: 0;

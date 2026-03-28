@@ -429,15 +429,12 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
 
       try {
         // 1. Get JWT FIRST (before SOL transfer — prevents fund loss on auth failure)
-        const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
-        let jwt = getCachedJwt(walletAddress);
+        const { ensureJwt } = await import('@/components/prism/shared');
+        const jwt = await ensureJwt();
         if (!jwt) {
-          jwt = await obtainJwt(wallet);
-          if (!jwt) {
-            toast.error('Authentication required to purchase');
-            setBuyingIdx(null);
-            return;
-          }
+          toast.error('Authentication required to purchase');
+          setBuyingIdx(null);
+          return;
         }
 
         // 2. Send SOL to treasury
@@ -685,10 +682,8 @@ function PrismVaultSection({
   }, [walletAddress]);
 
   const getJwt = async () => {
-    const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
-    let jwt = getCachedJwt(walletAddress);
-    if (!jwt) jwt = await obtainJwt(wallet);
-    return jwt;
+    const { ensureJwt } = await import('@/components/prism/shared');
+    return ensureJwt();
   };
 
   const handleStake = useCallback(async () => {
@@ -1113,10 +1108,16 @@ export default function StellarForge() {
   // Load data
   useEffect(() => {
     if (!walletAddress) return;
-    getPrismBalance(walletAddress).then(setBalance);
+    const base = getApiBase();
+    if (base)
+      fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d) setBalance(d);
+        })
+        .catch(() => {});
     setLoadout(getLocalLoadout(walletAddress));
     // Check identity card status via wallet-database
-    const base = getApiBase();
     fetch(`${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {

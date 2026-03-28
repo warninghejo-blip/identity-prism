@@ -35,6 +35,8 @@ export interface GameProps {
   shipSkin?: string | null;
   shipAura?: string | null;
   shipStats?: ShipStats;
+  /** Challenge mode — blur/minimize = instant game over (anti-abuse) */
+  challengeMode?: boolean;
 }
 
 // ── Aura colors for in-game ship glow ──

@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import { Swords, ArrowLeft } from 'lucide-react';
+import { sfxVictory, sfxGameOver } from '@/lib/gameAudio';
+import { hapticSuccess, hapticError } from '@/lib/haptics';
 
 /* ── Helpers ── */
 
@@ -71,18 +73,20 @@ function ParticleBurst({ show }: { show: boolean }) {
       <div
         key={i}
         className="absolute rounded-full"
-        style={{
-          width: size,
-          height: size,
-          background: color,
-          left: '50%',
-          top: '50%',
-          boxShadow: `0 0 6px ${color}`,
-          animation: `particle-float 1.2s ease-out forwards`,
-          animationDelay: `${Math.random() * 0.3}s`,
-          '--px': `${px}px`,
-          '--py': `${py}px`,
-        } as React.CSSProperties}
+        style={
+          {
+            width: size,
+            height: size,
+            background: color,
+            left: '50%',
+            top: '50%',
+            boxShadow: `0 0 6px ${color}`,
+            animation: `particle-float 1.2s ease-out forwards`,
+            animationDelay: `${Math.random() * 0.3}s`,
+            '--px': `${px}px`,
+            '--py': `${py}px`,
+          } as React.CSSProperties
+        }
       />
     );
   });
@@ -90,6 +94,12 @@ function ParticleBurst({ show }: { show: boolean }) {
 }
 
 /* ── Main Overlay ── */
+
+const GAME_COVERS: Record<string, { label: string; cover: string; glow: string }> = {
+  orbit: { label: 'Orbit Survival', cover: '/games/orbit_cover.png', glow: '#22d3ee' },
+  destroyer: { label: 'Cosmic Defender', cover: '/games/wars_cover.png', glow: '#f87171' },
+  gravity: { label: 'Gravity Runner', cover: '/games/gravity_cover.png', glow: '#a855f6' },
+};
 
 export interface ChallengeResult {
   id: string;
@@ -101,6 +111,7 @@ export interface ChallengeResult {
   stakeAmount: number;
   stakeType: 'coins' | 'sol';
   status: string;
+  gameMode?: string | null;
 }
 
 interface BattleResultOverlayProps {
@@ -112,6 +123,7 @@ interface BattleResultOverlayProps {
 export default function BattleResultOverlay({ challenge, myAddress, onReturn }: BattleResultOverlayProps) {
   const [phase, setPhase] = useState(0);
   // Phases: 0=backdrop, 1=panel, 2=sides, 3=counters, 4=shake, 5=result text, 6=particles+buttons
+  const soundPlayedRef = useRef(false);
 
   const isCreator = myAddress.toLowerCase() === challenge.creator.toLowerCase();
   const myScore = isCreator ? (challenge.creatorScore ?? 0) : (challenge.opponentScore ?? 0);
@@ -120,9 +132,9 @@ export default function BattleResultOverlay({ challenge, myAddress, onReturn }: 
   const won = challenge.winner?.toLowerCase() === myAddress.toLowerCase();
   const draw = challenge.winner === null && challenge.status === 'completed';
 
-  const stakeLabel = challenge.stakeType === 'sol'
-    ? `${challenge.stakeAmount} SOL`
-    : `${challenge.stakeAmount} Coins`;
+  const game = challenge.gameMode ? GAME_COVERS[challenge.gameMode] : null;
+
+  const stakeLabel = challenge.stakeType === 'sol' ? `${challenge.stakeAmount} SOL` : `${challenge.stakeAmount} Coins`;
 
   useEffect(() => {
     const timers = [
@@ -136,6 +148,20 @@ export default function BattleResultOverlay({ challenge, myAddress, onReturn }: 
     return () => timers.forEach(clearTimeout);
   }, []);
 
+  // Play sound + haptic when result text reveals (phase 5)
+  useEffect(() => {
+    if (phase >= 5 && !soundPlayedRef.current) {
+      soundPlayedRef.current = true;
+      if (won) {
+        sfxVictory();
+        hapticSuccess();
+      } else if (!draw) {
+        sfxGameOver();
+        hapticError();
+      }
+    }
+  }, [phase, won, draw]);
+
   return (
     <AnimatePresence>
       <motion.div
@@ -148,20 +174,37 @@ export default function BattleResultOverlay({ challenge, myAddress, onReturn }: 
         {phase >= 1 && (
           <motion.div
             initial={{ y: 100, opacity: 0 }}
-            animate={phase >= 4
-              ? { y: 0, opacity: 1, x: [0, -6, 6, -4, 4, 0] }
-              : { y: 0, opacity: 1 }
-            }
-            transition={phase >= 4
-              ? { x: { duration: 0.4, ease: 'easeOut' }, y: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } }
-              : { duration: 0.6, ease: [0.22, 1, 0.36, 1] }
+            animate={phase >= 4 ? { y: 0, opacity: 1, x: [0, -6, 6, -4, 4, 0] } : { y: 0, opacity: 1 }}
+            transition={
+              phase >= 4
+                ? { x: { duration: 0.4, ease: 'easeOut' }, y: { duration: 0.6, ease: [0.22, 1, 0.36, 1] } }
+                : { duration: 0.6, ease: [0.22, 1, 0.36, 1] }
             }
             className="relative w-[92vw] max-w-md rounded-2xl bg-gradient-to-b from-white/[0.1] to-white/[0.03] backdrop-blur-2xl border border-white/[0.12] p-8 text-center overflow-visible"
           >
             <ParticleBurst show={phase >= 6} />
 
+            {/* Game cover */}
+            {game && (
+              <motion.div
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.4, delay: 0.1 }}
+                className="flex justify-center mb-4"
+              >
+                <img
+                  src={game.cover}
+                  alt={game.label}
+                  className="w-[72px] h-[72px] rounded-xl object-cover"
+                  style={{ boxShadow: `0 0 24px ${game.glow}55, 0 0 48px ${game.glow}22` }}
+                />
+              </motion.div>
+            )}
+
             {/* Title */}
-            <div className="text-xs font-bold tracking-[0.3em] text-white/30 mb-6">BATTLE RESULT</div>
+            <div className="text-xs font-bold tracking-[0.3em] text-white/30 mb-6">
+              {game?.label?.toUpperCase() ?? 'BATTLE RESULT'}
+            </div>
 
             {/* VS Layout */}
             <div className="flex items-center justify-center gap-4 mb-6">
@@ -175,9 +218,7 @@ export default function BattleResultOverlay({ challenge, myAddress, onReturn }: 
                 >
                   <div className="text-[10px] text-cyan-400/60 font-mono tracking-wider mb-2">YOU</div>
                   <div className="text-xs text-white/40 font-mono mb-3">{truncAddr(myAddress)}</div>
-                  {phase >= 3 && (
-                    <SlotCounter target={myScore} delay={0} color={won ? '#22c55e' : '#ef4444'} />
-                  )}
+                  {phase >= 3 && <SlotCounter target={myScore} delay={0} color={won ? '#22c55e' : '#ef4444'} />}
                 </motion.div>
               )}
 
@@ -204,9 +245,7 @@ export default function BattleResultOverlay({ challenge, myAddress, onReturn }: 
                 >
                   <div className="text-[10px] text-pink-400/60 font-mono tracking-wider mb-2">OPP</div>
                   <div className="text-xs text-white/40 font-mono mb-3">{truncAddr(opponentAddr)}</div>
-                  {phase >= 3 && (
-                    <SlotCounter target={opponentScore} delay={0} color={won ? '#ef4444' : '#22c55e'} />
-                  )}
+                  {phase >= 3 && <SlotCounter target={opponentScore} delay={0} color={won ? '#ef4444' : '#22c55e'} />}
                 </motion.div>
               )}
             </div>
@@ -259,7 +298,9 @@ export default function BattleResultOverlay({ challenge, myAddress, onReturn }: 
                 animate={{ opacity: 1, scale: [1, 1.05, 1] }}
                 transition={{ scale: { duration: 1.5, repeat: Infinity } }}
                 className="absolute -top-20 left-1/2 -translate-x-1/2 w-60 h-60 rounded-full blur-3xl pointer-events-none"
-                style={{ background: draw ? 'rgba(251,191,36,0.1)' : won ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.08)' }}
+                style={{
+                  background: draw ? 'rgba(251,191,36,0.1)' : won ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.08)',
+                }}
               />
             )}
           </motion.div>

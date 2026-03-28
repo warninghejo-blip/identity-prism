@@ -24,8 +24,8 @@ import {
   type QuestState,
 } from '@/lib/prismQuests';
 import type { PrismBalance } from '@/lib/prismCoin';
-import { getPrismBalance } from '@/lib/prismCoin';
 import PageShell from '@/components/PageShell';
+import { getApiBase } from '@/components/prism/shared';
 import { computeRangerXP, getRangerRank, getRankProgress, getNextRank, gatherXPSources } from '@/lib/rangerRanks';
 import { getCompletedQuests } from '@/lib/textQuests';
 
@@ -126,32 +126,47 @@ export default function QuestsPage() {
   const [balance, setBalance] = useState<PrismBalance | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
 
-  useEffect(() => { fadeOutTransition(); }, []);
+  useEffect(() => {
+    fadeOutTransition();
+  }, []);
 
   useEffect(() => {
     if (!walletAddress) return;
     setQuestState(getQuestState(walletAddress));
-    getPrismBalance(walletAddress).then(setBalance).catch(() => {});
+    const base = getApiBase();
+    if (base)
+      fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d) setBalance(d);
+        })
+        .catch(() => {});
   }, [walletAddress]);
 
   const quests = useMemo(() => {
     switch (activeTab) {
-      case 'daily': return DAILY_QUESTS;
-      case 'weekly': return WEEKLY_QUESTS;
-      case 'milestones': return ONE_TIME_QUESTS;
+      case 'daily':
+        return DAILY_QUESTS;
+      case 'weekly':
+        return WEEKLY_QUESTS;
+      case 'milestones':
+        return ONE_TIME_QUESTS;
     }
   }, [activeTab]);
 
-  const handleClaim = useCallback((quest: Quest) => {
-    if (!walletAddress || !questState || claiming) return;
-    // Mark as claimed locally — XP is stored in quest state
-    const updatedState = claimQuestReward(questState, quest.id);
-    if (updatedState === questState) return; // already claimed — no change
-    setQuestState({ ...updatedState });
-    setClaiming(quest.id);
-    toast.success(`+${quest.reward} XP`, { description: quest.name });
-    setClaiming(null);
-  }, [walletAddress, questState, claiming]);
+  const handleClaim = useCallback(
+    (quest: Quest) => {
+      if (!walletAddress || !questState || claiming) return;
+      // Mark as claimed locally — XP is stored in quest state
+      const updatedState = claimQuestReward(questState, quest.id);
+      if (updatedState === questState) return; // already claimed — no change
+      setQuestState({ ...updatedState });
+      setClaiming(quest.id);
+      toast.success(`+${quest.reward} XP`, { description: quest.name });
+      setClaiming(null);
+    },
+    [walletAddress, questState, claiming],
+  );
 
   const unclaimedCount = questState ? getUnclaimedCount(questState) : 0;
 
@@ -162,7 +177,10 @@ export default function QuestsPage() {
     if (!dailyReset) return;
     const tick = () => {
       const diff = new Date(dailyReset).getTime() - Date.now();
-      if (diff <= 0) { setTimeLeft('Resetting...'); return; }
+      if (diff <= 0) {
+        setTimeLeft('Resetting...');
+        return;
+      }
       const h = Math.floor(diff / 3600000);
       const m = Math.floor((diff % 3600000) / 60000);
       setTimeLeft(`${h}h ${m}m`);
@@ -177,7 +195,12 @@ export default function QuestsPage() {
       {/* Header */}
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button onClick={() => { startFadeTransition(() => goBack(navigate)); }} className="flex items-center gap-2 text-white/50 hover:text-white text-sm">
+          <button
+            onClick={() => {
+              startFadeTransition(() => goBack(navigate));
+            }}
+            className="flex items-center gap-2 text-white/50 hover:text-white text-sm"
+          >
             <ArrowLeft className="w-4 h-4" />
             Back
           </button>
@@ -197,40 +220,56 @@ export default function QuestsPage() {
 
       <div className="max-w-2xl mx-auto px-4 py-6">
         {/* Ranger Rank */}
-        {walletAddress && (() => {
-          const sources = gatherXPSources(walletAddress);
-          const xp = computeRangerXP(sources);
-          const rank = getRangerRank(xp);
-          const progress = getRankProgress(xp);
-          const next = getNextRank(xp);
-          return (
-            <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <img src={rank.image} alt={rank.name} className="w-7 h-7 object-contain" style={(rank.id === 'ace' || rank.id === 'legend') ? { filter: `drop-shadow(0 0 5px ${rank.id === 'legend' ? '#f59e0b' : '#a855f7'})` } : undefined} />
-                  <div>
-                    <span className={`text-sm font-bold ${rank.color}`}>{rank.name}</span>
-                    <span className="text-white/20 text-[10px] ml-2">{xp} XP</span>
+        {walletAddress &&
+          (() => {
+            const sources = gatherXPSources(walletAddress);
+            const xp = computeRangerXP(sources);
+            const rank = getRangerRank(xp);
+            const progress = getRankProgress(xp);
+            const next = getNextRank(xp);
+            return (
+              <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={rank.image}
+                      alt={rank.name}
+                      className="w-7 h-7 object-contain"
+                      style={
+                        rank.id === 'ace' || rank.id === 'legend'
+                          ? { filter: `drop-shadow(0 0 5px ${rank.id === 'legend' ? '#f59e0b' : '#a855f7'})` }
+                          : undefined
+                      }
+                    />
+                    <div>
+                      <span className={`text-sm font-bold ${rank.color}`}>{rank.name}</span>
+                      <span className="text-white/20 text-[10px] ml-2">{xp} XP</span>
+                    </div>
                   </div>
+                  {next && (
+                    <span className="text-white/20 text-[10px]">
+                      {next.xpNeeded} XP to {next.rank.name}
+                    </span>
+                  )}
                 </div>
-                {next && (
-                  <span className="text-white/20 text-[10px]">{next.xpNeeded} XP to {next.rank.name}</span>
+                <div className="mt-2 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-purple-500 to-cyan-400 transition-all"
+                    style={{ width: `${progress * 100}%` }}
+                  />
+                </div>
+                {rank.perks.length > 0 && (
+                  <div className="mt-1.5 flex gap-2 flex-wrap">
+                    {rank.perks.map((p, i) => (
+                      <span key={i} className="text-[9px] text-purple-300/50 px-1.5 py-0.5 bg-purple-500/5 rounded">
+                        {p}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
-              <div className="mt-2 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div className="h-full rounded-full bg-gradient-to-r from-purple-500 to-cyan-400 transition-all" style={{ width: `${progress * 100}%` }} />
-              </div>
-              {rank.perks.length > 0 && (
-                <div className="mt-1.5 flex gap-2 flex-wrap">
-                  {rank.perks.map((p, i) => (
-                    <span key={i} className="text-[9px] text-purple-300/50 px-1.5 py-0.5 bg-purple-500/5 rounded">{p}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
+            );
+          })()}
 
         {/* Title + streak */}
         <div className="flex items-center justify-between mb-6">
@@ -262,9 +301,7 @@ export default function QuestsPage() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-all ${
-                activeTab === tab.id
-                  ? 'bg-white/10 text-white'
-                  : 'text-white/30 hover:text-white/50'
+                activeTab === tab.id ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/50'
               }`}
             >
               <span>{tab.icon}</span>
@@ -279,7 +316,11 @@ export default function QuestsPage() {
             <QuestCard
               key={quest.id}
               quest={quest}
-              progress={questState ? getQuestProgress(questState, quest.id) : { questId: quest.id, current: 0, completed: false, completedAt: null, claimedAt: null }}
+              progress={
+                questState
+                  ? getQuestProgress(questState, quest.id)
+                  : { questId: quest.id, current: 0, completed: false, completedAt: null, claimedAt: null }
+              }
               onClaim={() => handleClaim(quest)}
               claiming={claiming === quest.id}
             />

@@ -124,6 +124,18 @@ const DAS_METHODS = new Set([
   'getSignaturesForAsset', 'getTokenAccounts', 'getNftEditions',
 ]);
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'https://identityprism.xyz';
+
+// Twitter OAuth 2.0 (direct, no Firebase Auth dependency)
+const TWITTER_CLIENT_ID = (process.env.TWITTER_CLIENT_ID ?? '').trim();
+const TWITTER_CLIENT_SECRET = (process.env.TWITTER_CLIENT_SECRET ?? '').trim();
+const twitterOAuthStates = new Map(); // state → { codeVerifier, wallet, redirectUri, createdAt }
+// Cleanup expired OAuth states every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of twitterOAuthStates) {
+    if (now - v.createdAt > 300_000) twitterOAuthStates.delete(k);
+  }
+}, 300_000);
 const METADATA_DIR = process.env.METADATA_DIR
   ? path.resolve(process.env.METADATA_DIR)
   : path.join(process.cwd(), 'metadata');
@@ -172,7 +184,7 @@ const JWT_SECRET = (() => {
   try { fs.writeFileSync(JWT_SECRET_FILE, secret, 'utf8'); } catch (e) { console.warn('[jwt] Could not persist secret:', e.message); }
   return secret;
 })();
-const JWT_TTL = '1h';
+const JWT_TTL = '24h';
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 min nonce window
 const authChallenges = new Map(); // nonce → { address, expiresAt }
 
@@ -2765,7 +2777,7 @@ const server = http.createServer(async (req, res) => {
     const challengeIp = getClientIp(req);
     const challengeRlKey = `authChallenge:${challengeIp}`;
     const lastChallengeTs = prismEarnRateLimit.get(challengeRlKey) || 0;
-    if (Date.now() - lastChallengeTs < 10_000) return respondJson(res, 429, { error: 'Too many auth challenges, try again later' });
+    if (Date.now() - lastChallengeTs < 3_000) return respondJson(res, 429, { error: 'Too many auth challenges, try again later' });
     prismEarnRateLimit.set(challengeRlKey, Date.now());
     try {
       const body = await readBody(req);
@@ -3148,7 +3160,7 @@ const server = http.createServer(async (req, res) => {
       if (!address) {
         respondJson(res, 200, {
           type: 'action',
-          icon: `${baseUrl}/assets/identity-prism.png`,
+          icon: `${baseUrl}/assets/icon.png`,
           title: 'Attest Your On-Chain Reputation',
           description: 'Record your Identity Prism reputation score permanently on the Solana blockchain. This creates a verifiable, immutable attestation signed by both you and our authority.',
           label: 'Attest Reputation',
@@ -3643,6 +3655,8 @@ const server = http.createServer(async (req, res) => {
         const session = gameSessionProofs.get(gameSessionId);
         if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
         if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+        // Block coin earning if this session was used for a challenge — earnings come from challenge result
+        if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
         const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
         const gameMode = VALID_GAME_MODES.has(mode) ? mode : 'orbit';
         const maxDelta = (MAX_DELTA_PER_GAME[gameMode] || 500) * 1.5;
@@ -6216,13 +6230,10 @@ const server = http.createServer(async (req, res) => {
         return respondJson(res, 500, { error: 'Analysis failed (in-flight)' });
       }
     }
-    // Rate limit: 15s per IP (optimized — fewer RPC calls now)
-    const sybilIp = getClientIp(req);
-    const sybilRlKey = `sybil:${sybilIp}`;
-    if (Date.now() - (reputationRateLimit.get(sybilRlKey) || 0) < 15_000) {
-      return respondJson(res, 429, { error: 'Rate limited. Try again in 15 seconds.' });
+    // Rate limit: 5 new analyses per minute per IP (cache + in-flight dedup handles the rest)
+    if (!ipRateLimit('sybil_new', getClientIp(req), 5, 60_000)) {
+      return respondJson(res, 429, { error: 'Rate limited. Try again in a minute.' });
     }
-    reputationRateLimit.set(sybilRlKey, Date.now());
     // Wrap in a shared promise for in-flight dedup
     const analysisPromise = (async () => {
     try {
@@ -6459,6 +6470,7 @@ const server = http.createServer(async (req, res) => {
             const acc = resolveAccountKey(accounts[i]);
             if (!acc || acc === '11111111111111111111111111111111') continue;
             const otherDiff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
+            if (TREASURY_WALLETS.has(acc)) continue; // skip treasury wallets
             if (diffSol > 0.001 && otherDiff < -0.001) incomingSenders.add(acc);
             if (diffSol < -0.001 && otherDiff > 0.001) outgoingRecipients.add(acc);
           }
@@ -6485,6 +6497,7 @@ const server = http.createServer(async (req, res) => {
           resolvedIncoming = incoming;
           let topFunder = null, topAmount = 0, topFunderCount = 0;
           for (const [addr, info] of incoming) {
+            if (TREASURY_WALLETS.has(addr)) continue; // skip treasury
             if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; topFunderCount = info.count; }
           }
           topFunderTxCount = topFunderCount;
@@ -6539,6 +6552,7 @@ const server = http.createServer(async (req, res) => {
                     const { incoming: level2In } = extractSolTransfers(level2Parsed, topFunder);
                     let grandFunder = null, grandAmount = 0;
                     for (const [addr, info] of level2In) {
+                      if (TREASURY_WALLETS.has(addr)) continue; // skip treasury
                       if (info.totalSol > grandAmount) { grandFunder = addr; grandAmount = info.totalSol; }
                     }
                     if (grandFunder && grandAmount > 0.01) {
@@ -7132,7 +7146,7 @@ const server = http.createServer(async (req, res) => {
       riskScore = Math.min(100, riskScore);
 
       // ── Cross-session graph intelligence (applied BEFORE trust bonus) ──
-      const fundingSources = [...incomingSenders];
+      const fundingSources = [...incomingSenders].filter(a => !TREASURY_WALLETS.has(a));
       const { graphRisk, graphDetails } = checkGraphForKnownSybils(address, fundingSources, [...allSiblings]);
       if (graphRisk > 0) {
         riskScore = Math.min(100, riskScore + graphRisk);
@@ -7646,6 +7660,7 @@ const server = http.createServer(async (req, res) => {
       const { incoming } = extractSolTransfers(parsed, address);
       const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
       const sources = [...incoming.entries()]
+        .filter(([addr]) => !TREASURY_WALLETS.has(addr))
         .sort((a, b) => b[1].totalSol - a[1].totalSol)
         .slice(0, 20)
         .map(([addr, info]) => {
@@ -7682,6 +7697,7 @@ const server = http.createServer(async (req, res) => {
       const { incoming } = extractSolTransfers(parsed, address);
       let topFunder = null, topAmount = 0;
       for (const [addr, info] of incoming) {
+        if (TREASURY_WALLETS.has(addr)) continue; // skip treasury
         if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; }
       }
       if (!topFunder || topAmount < 0.01) {
@@ -7827,7 +7843,199 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ Trust Recovery — Twitter link + status ═══
+  // ═══ Trust Recovery — Twitter OAuth 2.0 (direct, no Firebase) ═══
+
+  // Step 1: Generate Twitter OAuth URL
+  if (pathname === '/api/recovery/twitter/auth' && req.method === 'GET') {
+    if (!TWITTER_CLIENT_ID || !TWITTER_CLIENT_SECRET) {
+      return respondJson(res, 500, { error: 'Twitter OAuth not configured (TWITTER_CLIENT_ID / TWITTER_CLIENT_SECRET missing)' });
+    }
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+
+    const state = crypto.randomBytes(16).toString('hex');
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+    // Redirect URI = frontend /recovery page (same origin, works on localhost)
+    const origin = req.headers.origin || req.headers.referer?.replace(/\/[^/]*$/, '') || 'http://localhost:7474';
+    const redirectUri = `${origin.replace(/\/$/, '')}/recovery`;
+
+    twitterOAuthStates.set(state, {
+      codeVerifier,
+      wallet: jwtAuth.address,
+      redirectUri,
+      createdAt: Date.now(),
+    });
+
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: TWITTER_CLIENT_ID,
+      redirect_uri: redirectUri,
+      scope: 'tweet.read users.read',
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+    });
+
+    respondJson(res, 200, { url: `https://x.com/i/oauth2/authorize?${params}` });
+    return;
+  }
+
+  // Step 2: Exchange OAuth code for token + fetch profile + link wallet
+  if (pathname === '/api/recovery/twitter/exchange' && req.method === 'POST') {
+    if (!TWITTER_CLIENT_ID || !TWITTER_CLIENT_SECRET) {
+      return respondJson(res, 500, { error: 'Twitter OAuth not configured' });
+    }
+    try {
+      const body = JSON.parse(await readBody(req));
+      const { code, state } = body;
+      if (!code || !state) return respondJson(res, 400, { error: 'code and state required' });
+
+      const stored = twitterOAuthStates.get(state);
+      if (!stored) return respondJson(res, 400, { error: 'Invalid or expired OAuth state. Please try again.' });
+      twitterOAuthStates.delete(state);
+
+      const address = stored.wallet;
+
+      // Exchange code for access token
+      const tokenRes = await fetch('https://api.twitter.com/2/oauth2/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: `Basic ${Buffer.from(`${TWITTER_CLIENT_ID}:${TWITTER_CLIENT_SECRET}`).toString('base64')}`,
+        },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: stored.redirectUri,
+          code_verifier: stored.codeVerifier,
+        }),
+      });
+      const tokenData = await tokenRes.json();
+      console.log('[twitter-oauth] Token response status:', tokenRes.status, 'has_token:', !!tokenData.access_token, 'scope:', tokenData.scope);
+      if (!tokenData.access_token) {
+        console.error('[twitter-oauth] Token exchange failed:', JSON.stringify(tokenData));
+        return respondJson(res, 400, { error: tokenData.error_description || tokenData.detail || 'Token exchange failed' });
+      }
+
+      // Fetch user profile — try v2 first, fallback to v1.1
+      let twitterUser = null;
+      // Try v2 API
+      const userRes = await fetch('https://api.twitter.com/2/users/me?user.fields=profile_image_url,username,name,created_at,public_metrics', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      });
+      const userText = await userRes.text();
+      console.log('[twitter-oauth] v2 users/me status:', userRes.status, 'body:', userText.slice(0, 300));
+      try {
+        const userData = JSON.parse(userText);
+        if (userData.data) {
+          twitterUser = {
+            id: userData.data.id,
+            username: userData.data.username,
+            name: userData.data.name,
+            profile_image_url: userData.data.profile_image_url,
+            created_at: userData.data.created_at,
+            public_metrics: userData.data.public_metrics,
+          };
+        }
+      } catch {}
+
+      // Fallback: v1.1 verify_credentials (works with OAuth 2.0 Bearer on some plans)
+      if (!twitterUser) {
+        console.log('[twitter-oauth] v2 failed, trying v1.1 fallback...');
+        try {
+          const v1Res = await fetch('https://api.twitter.com/1.1/account/verify_credentials.json?include_entities=false&skip_status=true', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` },
+          });
+          const v1Text = await v1Res.text();
+          console.log('[twitter-oauth] v1.1 verify_credentials status:', v1Res.status, 'body:', v1Text.slice(0, 300));
+          const v1Data = JSON.parse(v1Text);
+          if (v1Data.id_str && v1Data.screen_name) {
+            twitterUser = {
+              id: v1Data.id_str,
+              username: v1Data.screen_name,
+              name: v1Data.name,
+              profile_image_url: v1Data.profile_image_url_https,
+              created_at: v1Data.created_at,
+              public_metrics: { followers_count: v1Data.followers_count, tweet_count: v1Data.statuses_count },
+            };
+          }
+        } catch (e) {
+          console.error('[twitter-oauth] v1.1 fallback failed:', e.message);
+        }
+      }
+
+      if (!twitterUser) {
+        // API can't fetch profile (app enrollment issue), but OAuth succeeded — return partial success
+        // Client will ask user to enter username manually
+        console.warn('[twitter-oauth] Could not fetch profile via API, returning oauth_only mode');
+        return respondJson(res, 200, {
+          success: false,
+          oauth_only: true,
+          access_token_obtained: true,
+          error: 'Twitter API profile fetch unavailable. Please enter your username manually.',
+        });
+      }
+
+      const tw = twitterUser;
+      const twitterUserId = tw.id;
+      const twitterUsername = tw.username;
+
+      // Check 1:1 mapping
+      const existingWallet = twitterWalletMap.get(twitterUserId);
+      if (existingWallet && existingWallet !== address) {
+        return respondJson(res, 409, { error: 'This Twitter account is already linked to another wallet' });
+      }
+
+      // Check unlink cooldown
+      const entry = walletDatabase.get(address) || {};
+      const cooldownUntil = entry.trustRecovery?.unlinkCooldownUntil;
+      if (cooldownUntil && Date.now() < cooldownUntil) {
+        const daysLeft = Math.ceil((cooldownUntil - Date.now()) / 86400000);
+        return respondJson(res, 429, { error: `Unlink cooldown active. ${daysLeft} days remaining.` });
+      }
+
+      // Remove old twitter link if switching
+      const oldTw = entry.trustRecovery?.twitter;
+      if (oldTw?.userId && oldTw.userId !== twitterUserId) {
+        twitterWalletMap.delete(oldTw.userId);
+      }
+
+      // Calculate account age
+      const accountAgeDays = tw.created_at
+        ? Math.floor((Date.now() - new Date(tw.created_at).getTime()) / 86400000)
+        : 0;
+
+      const twitterData = {
+        verified: true,
+        userId: twitterUserId,
+        username: twitterUsername,
+        displayName: tw.name || twitterUsername,
+        photoURL: tw.profile_image_url || null,
+        linkedAt: new Date().toISOString(),
+        accountAgeDays,
+        followers: tw.public_metrics?.followers_count || 0,
+        tweets: tw.public_metrics?.tweet_count || 0,
+        lastChecked: new Date().toISOString(),
+        suspended: false,
+      };
+      updateWalletEntry(address, {
+        trustRecovery: { ...(entry.trustRecovery || {}), twitter: twitterData },
+      });
+      twitterWalletMap.set(twitterUserId, address);
+      triggerCompositeUpdate(address);
+
+      const bonus = computeTrustRecovery(address, {});
+      respondJson(res, 200, { success: true, twitterBonus: bonus.twitterBonus, twitter: twitterData });
+    } catch (e) {
+      console.error('[twitter-oauth] Exchange error:', e);
+      respondJson(res, 500, { error: 'OAuth exchange failed' });
+    }
+    return;
+  }
+
+  // ═══ Trust Recovery — Legacy Firebase link (kept for backwards compat) ═══
   if (pathname === '/api/recovery/twitter/link' && req.method === 'POST') {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
@@ -8131,7 +8339,8 @@ const server = http.createServer(async (req, res) => {
       const latestScores = (history.scores || []).slice(0, 5);
       const coinBal = getCoinBalance(address);
       // Composite score
-      const compositeData = (walletDatabase.get(address) || {}).composite || calculateCompositeScore(buildCompositeInput(address));
+      // Always recalculate composite to avoid stale data (cheap operation)
+      const compositeData = calculateCompositeScore(buildCompositeInput(address));
       const achEntry = achievementData.get(address);
       const response = {
         version: '2.1', address,
@@ -8350,9 +8559,11 @@ const server = http.createServer(async (req, res) => {
     if (!jwtAuth.ok) return;
     try {
       const body = JSON.parse(await readBody(req));
-      const { type, gameMode, stakeAmount, opponent, betType, solTxSignature } = body;
+      const { type, gameMode, stakeAmount, opponent, betType, expiresMinutes } = body;
       const creator = jwtAuth.address;
-      const isSolBet = betType === 'sol';
+      // SOL stakes disabled — security risk without escrow smart contract
+      if (betType === 'sol') return respondJson(res, 400, { error: 'SOL stakes are temporarily disabled. Use Coins.' });
+      const isSolBet = false;
 
       // Validate type
       if (!type || !['score', 'game'].includes(type)) {
@@ -8440,11 +8651,14 @@ const server = http.createServer(async (req, res) => {
         gameMode: type === 'game' ? gameMode : null,
         stakeType: isSolBet ? 'sol' : 'coins',
         stakeAmount: stake,
-        status: 'open',
+        status: type === 'game' ? 'playing' : 'open',
         creatorScore: null,
         opponentScore: null,
         winner: null,
         createdAt: Date.now(),
+        expiresAt: expiresMinutes && [15, 30, 60, 180, 360, 720, 1440].includes(Number(expiresMinutes))
+          ? Date.now() + Number(expiresMinutes) * 60_000
+          : Date.now() + 60 * 60_000, // default 1 hour
         acceptedAt: null,
         completedAt: null,
         solTxCreator: isSolBet ? solTxSignature : null,
@@ -8471,7 +8685,9 @@ const server = http.createServer(async (req, res) => {
     if (!ipRateLimit('ch_list', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
       const open = (challenges || [])
-        .filter(c => c && c.status === 'open')
+        .filter(c => c && (c.status === 'open' || (c.status === 'playing' && !c.opponent)))
+        // Hide game challenges where creator hasn't played yet (not ready for opponents)
+        .filter(c => c.type !== 'game' || c.creatorScore !== null)
         .slice(0, 50);
       respondJson(res, 200, { ok: true, challenges: open });
     } catch (e) {
@@ -8513,7 +8729,14 @@ const server = http.createServer(async (req, res) => {
 
       const challenge = challenges.find(c => c.id === challengeId);
       if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
-      if (challenge.status !== 'open') return respondJson(res, 409, { error: 'Challenge no longer available' });
+      // Allow accept for 'open' (score challenges) and 'playing' without opponent (game challenges where creator already played)
+      if (challenge.status !== 'open' && !(challenge.status === 'playing' && !challenge.opponent)) {
+        return respondJson(res, 409, { error: 'Challenge no longer available' });
+      }
+      // Game challenges: creator must have played before opponent can accept
+      if (challenge.type === 'game' && challenge.creatorScore === null) {
+        return respondJson(res, 400, { error: 'Creator hasn\'t played yet — challenge not ready' });
+      }
       if (challenge.creator === acceptor) return respondJson(res, 400, { error: 'Cannot accept your own challenge' });
       if (challenge.opponent && challenge.opponent !== acceptor) {
         return respondJson(res, 403, { error: 'This challenge is for a specific opponent' });
@@ -8568,6 +8791,7 @@ const server = http.createServer(async (req, res) => {
         // Lock Coins from acceptor
         setCoinBalance(acceptor, accBal - challenge.stakeAmount);
         addCoinSpent(acceptor, challenge.stakeAmount);
+        debouncedSavePrism();
       }
 
       if (challenge.type === 'score') {
@@ -8677,6 +8901,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Challenge: Mark player as "started playing" (prevents cancel) ──
+  if (pathname === '/api/challenge/start' && req.method === 'POST') {
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { challengeId } = JSON.parse(await readBody(req));
+      const player = jwtAuth.address;
+      const challenge = challenges.find(c => c.id === challengeId);
+      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
+      if (player === challenge.creator) {
+        challenge.creatorStartedAt = Date.now();
+      } else if (player === challenge.opponent) {
+        challenge.acceptorStartedAt = Date.now();
+      }
+      saveChallenges();
+      respondJson(res, 200, { ok: true });
+    } catch { respondJson(res, 400, { error: 'Invalid request' }); }
+    return;
+  }
+
   // ── Challenge: Submit score (game type only) ──
   if (pathname === '/api/challenge/submit' && req.method === 'POST') {
     if (!ipRateLimit('ch_submit', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
@@ -8697,33 +8941,38 @@ const server = http.createServer(async (req, res) => {
       const challenge = challenges.find(c => c.id === challengeId);
       if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
       if (challenge.type !== 'game') return respondJson(res, 400, { error: 'Score submission is for game challenges only' });
-      if (challenge.status !== 'playing') return respondJson(res, 400, { error: 'Challenge is not in playing state' });
+      // Allow submit in 'playing' or 'open' (creator plays before anyone accepts)
+      if (challenge.status !== 'playing' && challenge.status !== 'open') return respondJson(res, 400, { error: 'Challenge is not in playing state' });
 
-      // Require game session proof for challenge
-      if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for challenge' });
-      const cSession = gameSessionProofs.get(gameSessionId);
-      if (!cSession || !cSession.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
-      if (cSession.walletAddress !== submitter) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-      if (Math.abs(cSession.score - scoreNum) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
-      // Strict gameMode check (no falsy guard — fail-closed like tournament)
-      if (!challenge.gameMode) return respondJson(res, 400, { error: 'Challenge gameMode not set' });
-      if (cSession.gameMode !== challenge.gameMode) return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
-      if (cSession.usedForChallenge) return respondJson(res, 400, { error: 'Session already used for a challenge submission' });
-
-      // Per-gameMode score validation — BEFORE marking session used
+      // Per-gameMode score validation
       const CH_MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
       const chMaxScore = CH_MAX_SCORES[challenge.gameMode] || 600;
       if (scoreNum > chMaxScore) return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
 
-      // Race condition guard: atomic check-and-set BEFORE marking session used
+      // Validate game session proof if provided (optional — blur-kill may not have proof)
+      if (gameSessionId) {
+        const cSession = gameSessionProofs.get(gameSessionId);
+        if (cSession && cSession.verified) {
+          if (cSession.walletAddress !== submitter) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+          if (Math.abs(cSession.score - scoreNum) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
+          if (challenge.gameMode && cSession.gameMode !== challenge.gameMode) return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
+        }
+      }
+
+      // Race condition guard: atomic check-and-set
       const submitKey = `${challengeId}:${submitter}`;
       if (!globalThis._pendingSubmits) globalThis._pendingSubmits = new Set();
       if (globalThis._pendingSubmits.has(submitKey)) return respondJson(res, 409, { error: 'Submission in progress' });
       globalThis._pendingSubmits.add(submitKey);
 
-      // Mark session used AFTER pendingSubmits guard
-      cSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
-      persistGameSessionProofs();
+      // Mark session used AFTER pendingSubmits guard (if session exists)
+      if (gameSessionId) {
+        const cSession = gameSessionProofs.get(gameSessionId);
+        if (cSession) {
+          cSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
+          persistGameSessionProofs();
+        }
+      }
 
       if (submitter === challenge.creator) {
         if (challenge.creatorScore !== null) { globalThis._pendingSubmits.delete(submitKey); return respondJson(res, 400, { error: 'Score already submitted' }); }
@@ -8789,11 +9038,11 @@ const server = http.createServer(async (req, res) => {
             refundCoinSpent(challenge.opponent, challenge.stakeAmount);
           }
         }
-        if (!isSolBet && challenge.winner && fee > 0) {
-          // Burn challenge fee (deflationary, consistent with marketplace)
+        if (!isSolBet && fee > 0 && challenge.winner) {
           totalBurned += fee;
-          debouncedSavePrism();
         }
+        // Always persist coin changes (winner prize, tie refund, fee burn)
+        debouncedSavePrism();
         challenge.status = 'completed';
         challenge.completedAt = Date.now();
         console.log(`[challenges] Completed ${challengeId}: creator=${challenge.creatorScore}, opponent=${challenge.opponentScore}, winner=${challenge.winner ? challenge.winner.slice(0, 8) + '...' : 'tie'}`);
@@ -8820,15 +9069,25 @@ const server = http.createServer(async (req, res) => {
       const challenge = challenges.find(c => c.id === challengeId);
       if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
       if (challenge.creator !== canceller) return respondJson(res, 403, { error: 'Only the creator can cancel a challenge' });
-      if (challenge.status !== 'open') return respondJson(res, 400, { error: 'Can only cancel open challenges (no opponent yet)' });
+      // Block cancel if opponent is currently playing or already submitted
+      if (challenge.acceptorStartedAt && !challenge.opponentScore) {
+        return respondJson(res, 409, { error: 'Your opponent is currently in battle. Please wait for them to finish.' });
+      }
+      if (challenge.opponent && challenge.opponentScore !== null) {
+        return respondJson(res, 409, { error: 'Your opponent has already submitted their score.' });
+      }
+      if (challenge.status === 'completed' || challenge.status === 'cancelled' || challenge.status === 'expired') {
+        return respondJson(res, 400, { error: 'Challenge already finished' });
+      }
 
       // Lock status BEFORE refund to prevent double-cancel race condition
       challenge.status = 'cancelled';
       challenge.completedAt = Date.now();
       saveChallenges();
 
-      // Refund creator's stake minus 10% cancellation fee
-      const fee = challenge.stakeAmount * 0.1;
+      // Early close penalty: 20% fee if creator already played, 10% if not
+      const feeRate = challenge.creatorScore !== null ? 0.2 : 0.1;
+      const fee = Math.ceil(challenge.stakeAmount * feeRate);
       const refundAmount = challenge.stakeAmount - fee;
 
       if (challenge.stakeType === 'sol') {
@@ -8851,9 +9110,15 @@ const server = http.createServer(async (req, res) => {
           }
         } catch (e) { console.warn('[challenges] SOL refund failed:', e.message); }
       } else {
-        // Coin bet cancel — refund 90% to creator (10% fee kept by platform)
+        // Coin bet cancel — refund minus fee, burn the fee
         setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + refundAmount);
         refundCoinSpent(challenge.creator, refundAmount);
+        totalBurned += fee; // burn cancellation fee
+        // If opponent had joined and staked, refund them fully
+        if (challenge.opponent) {
+          setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+          refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+        }
         debouncedSavePrism();
       }
 
@@ -9952,6 +10217,11 @@ const PROGRAM_LABELS = {
   '11111111111111111111111111111111': 'System Program',
 };
 
+// Treasury / project wallets — excluded from sybil detection entirely
+const TREASURY_WALLETS = new Set([
+  '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN', // Identity Prism treasury
+]);
+
 // Known CEX/Bridge/DEX addresses for labeling
 const KNOWN_LABELS = {
   '2ojv9BAiHUrvsm9gxDe7fJSzbNZSJcxZvf8dqmWGHG8S': { label: 'Binance', type: 'cex' },
@@ -10268,7 +10538,7 @@ function extractSolTransfers(parsed, targetAddress) {
             return a.diff - b.diff;
           });
         const sender = senders[0];
-        if (sender) {
+        if (sender && !TREASURY_WALLETS.has(sender.addr)) {
           const existing = incoming.get(sender.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
           existing.totalSol += Math.abs(targetDiff);
           existing.count += 1;
@@ -10288,7 +10558,7 @@ function extractSolTransfers(parsed, targetAddress) {
             return b.diff - a.diff;
           });
         const receiver = receivers[0];
-        if (receiver) {
+        if (receiver && !TREASURY_WALLETS.has(receiver.addr)) {
           const existing = outgoing.get(receiver.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
           existing.totalSol += Math.abs(receiver.diff);
           existing.count += 1;
@@ -10659,6 +10929,30 @@ try {
   }
 } catch { /* first run */ }
 
+// Auto-expire challenges — runs every 60 seconds
+// Only OPEN challenges expire by timer. Accepted/playing = both committed.
+setInterval(() => {
+  const now = Date.now();
+  let changed = false;
+  for (const c of challenges) {
+    if (!c.expiresAt || c.status === 'completed' || c.status === 'cancelled' || c.status === 'expired') continue;
+    if (now < c.expiresAt) continue;
+    // Only expire 'open' challenges (waiting for opponent)
+    // 'playing'/'accepted' = opponent committed, timer no longer applies
+    if (c.status !== 'open') continue;
+    c.status = 'expired';
+    c.completedAt = now;
+    changed = true;
+    // Refund creator (only one who staked in open challenge)
+    if (c.stakeAmount > 0) {
+      setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
+      refundCoinSpent(c.creator, c.stakeAmount);
+    }
+    console.log(`[challenges] Expired ${c.id} (open, no opponent, ${Math.round((now - c.createdAt) / 60000)}m)`);
+  }
+  if (changed) { debouncedSavePrism(); saveChallenges(); }
+}, 60_000);
+
 function saveChallenges() {
   const tmp = CHALLENGES_FILE + '.tmp';
   fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2))
@@ -10674,38 +10968,23 @@ setInterval(() => {
   let removed = 0;
   let staleCancelled = 0;
 
-  // Cancel stale "playing" challenges (stuck for >2h with no scores) and refund both players
+  // Safety net: cancel playing/accepted challenges stuck >24h (anomaly — both committed but something broke)
+  const stuckCutoff = now - 24 * 60 * 60 * 1000; // 24 hours
   challenges.forEach(ch => {
-    if (ch.status === 'playing' && ch.acceptedAt < stalePlayingCutoff && ch.creatorScore === null && ch.opponentScore === null) {
-      // Only refund coin bets automatically; SOL bets need manual payout
-      if (ch.stakeType !== 'sol') {
+    if ((ch.status === 'playing' || ch.status === 'accepted') && (ch.acceptedAt || ch.createdAt) < stuckCutoff) {
+      if (ch.creatorScore !== null && ch.opponentScore !== null) return; // both scored, should resolve
+      if (ch.stakeAmount > 0) {
         setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
         refundCoinSpent(ch.creator, ch.stakeAmount);
         if (ch.opponent) {
           setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
           refundCoinSpent(ch.opponent, ch.stakeAmount);
         }
-      } else {
-        ch.solPayoutStatus = 'stale_refund_pending';
       }
-      ch.status = 'cancelled';
+      ch.status = 'expired';
       ch.completedAt = Date.now();
       staleCancelled++;
-    }
-  });
-
-  // Cancel stale "open" challenges (no one accepted for >7 days) and refund creator
-  challenges.forEach(ch => {
-    if (ch.status === 'open' && ch.createdAt < cutoff) {
-      if (ch.stakeType !== 'sol') {
-        setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
-        refundCoinSpent(ch.creator, ch.stakeAmount);
-      } else {
-        ch.solPayoutStatus = 'stale_refund_pending';
-      }
-      ch.status = 'cancelled';
-      ch.completedAt = Date.now();
-      staleCancelled++;
+      console.log(`[challenges] Safety-expired stuck ${ch.id} (${ch.status} >24h)`);
     }
   });
 
@@ -10717,7 +10996,7 @@ setInterval(() => {
   // Remove completed/cancelled challenges older than 7 days
   for (let i = challenges.length - 1; i >= 0; i--) {
     const c = challenges[i];
-    if ((c.status === 'completed' || c.status === 'cancelled') && c.createdAt < cutoff) {
+    if ((c.status === 'completed' || c.status === 'cancelled' || c.status === 'expired') && c.createdAt < cutoff) {
       challenges.splice(i, 1);
       removed++;
     }

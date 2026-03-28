@@ -39,6 +39,15 @@ export function getCachedBalance(address: string) {
   }
 }
 
+/** Force-clear cached balance so next read hits the server */
+export function invalidateBalanceCache(address: string) {
+  try {
+    sessionStorage.removeItem(`${BAL_KEY}${address}`);
+  } catch {
+    /* ignore */
+  }
+}
+
 // ── Leaderboard ──
 
 const LB_KEY = 'ip_prefetch_leaderboard';

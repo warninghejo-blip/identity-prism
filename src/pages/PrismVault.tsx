@@ -70,15 +70,12 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
         toast.info('Confirming transaction...');
         await conn.confirmTransaction(sig, 'confirmed');
 
-        const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
-        let jwt = getCachedJwt(walletAddress);
+        const { ensureJwt } = await import('@/components/prism/shared');
+        const jwt = await ensureJwt();
         if (!jwt) {
-          jwt = await obtainJwt(wallet);
-          if (!jwt) {
-            toast.error('Authentication failed');
-            setBuyingIdx(null);
-            return;
-          }
+          toast.error('Authentication failed');
+          setBuyingIdx(null);
+          return;
         }
 
         const res = await fetch(`${base}/api/prism/buy`, {
@@ -292,10 +289,8 @@ function PrismVaultSection({
   }, [walletAddress]);
 
   const getJwt = async () => {
-    const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
-    let jwt = getCachedJwt(walletAddress);
-    if (!jwt) jwt = await obtainJwt(wallet);
-    return jwt;
+    const { ensureJwt } = await import('@/components/prism/shared');
+    return ensureJwt();
   };
 
   const handleStake = useCallback(async () => {
@@ -679,13 +674,23 @@ export default function PrismVault() {
     fadeOutTransition();
   }, []);
 
-  useEffect(() => {
-    if (walletAddress) getPrismBalance(walletAddress).then(setBalance);
+  const fetchBalanceDirect = useCallback(() => {
+    if (!walletAddress) return;
+    const base = getApiBase();
+    if (!base) return;
+    fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setBalance(d);
+      })
+      .catch(() => {});
   }, [walletAddress]);
 
-  const refreshBalance = () => {
-    if (walletAddress) getPrismBalance(walletAddress).then(setBalance);
-  };
+  useEffect(() => {
+    fetchBalanceDirect();
+  }, [fetchBalanceDirect]);
+
+  const refreshBalance = fetchBalanceDirect;
 
   return (
     <PageShell className="text-white">

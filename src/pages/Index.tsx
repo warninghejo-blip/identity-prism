@@ -136,7 +136,7 @@ const Index = () => {
     }
   });
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [viewState, setViewState] = useState<ViewState>(
+  const [viewState, _setViewState] = useState<ViewState>(
     shouldOpenCard && urlAddress
       ? 'ready'
       : returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current
@@ -145,12 +145,18 @@ const Index = () => {
           ? 'scanning'
           : 'landing',
   );
+  const setViewState = useCallback((v: ViewState) => {
+    viewStateRef.current = v;
+    _setViewState(v);
+  }, []);
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const [jwtSigning, setJwtSigning] = useState(false);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mwaErrorRef = useRef<string | null>(null);
   const isDisconnectingRef = useRef(false);
+  const viewStateRef = useRef(viewState);
+  const hasReachedHub = useRef(false); // once we reach hub/ready, stop state machine from re-triggering
 
   const wallet = useWallet();
   const {
@@ -247,6 +253,25 @@ const Index = () => {
       setSearchParams(next, { replace: true });
     }
   }, [isConnected, connectedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh coin balance when returning to hub (e.g. after challenge/game)
+  // Direct server fetch — bypasses prefetch cache to always show real balance
+  useEffect(() => {
+    if (viewState !== 'hub' || !activeAddress) return;
+    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+    if (!base) return;
+    fetch(`${base}/api/prism/balance?address=${encodeURIComponent(activeAddress)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.balance != null) {
+          setPrismBalance(data);
+          try {
+            sessionStorage.setItem('ip_prism_balance', JSON.stringify(data));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, [viewState, activeAddress]);
 
   // If app was reopened with a stale BlackHole flag but no address,
   // clear it immediately so loading overlay is not suppressed.
@@ -866,13 +891,18 @@ const Index = () => {
       return;
     }
 
-    if (isLoading || !traits) {
+    if (!traits) {
       // When returning from sub-page, suppress scanning flash — stay on hub
       if (returningFromSubPage.current || returningFromGameJump.current) return;
       setViewState('scanning');
     } else {
-      // After scan → go to Hub. JWT is obtained in background, doesn't block UI.
-      setViewState('hub');
+      // After scan → go to Hub. But only once — don't re-trigger on background trait updates.
+      if (!hasReachedHub.current) {
+        hasReachedHub.current = true;
+        if (viewStateRef.current !== 'ready' && viewStateRef.current !== 'hub') {
+          setViewState('hub');
+        }
+      }
       // Clear one-shot returning flags now that data is loaded
       if (returningFromSubPage.current) returningFromSubPage.current = false;
       if (returningFromGameJump.current) returningFromGameJump.current = false;
@@ -932,7 +962,7 @@ const Index = () => {
         }
       }
     }
-  }, [resolvedAddress, isWarping, isLoading, traits, fromBlackHole]);
+  }, [resolvedAddress, isWarping, traits, fromBlackHole]);
 
   // Removed auto-warp effect
 
@@ -956,6 +986,7 @@ const Index = () => {
     returningFromSubPage.current = false;
     returningFromBH.current = false;
     returningFromGameJump.current = false;
+    hasReachedHub.current = false;
     setActiveAddress(undefined);
     jwtPrewarmedRef.current = null;
     setViewState('landing');

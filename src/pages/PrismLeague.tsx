@@ -6,6 +6,7 @@ import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapt
 import { Button } from '@/components/ui/button';
 import { type WalletPreview } from '@/components/prism/shared';
 import { invalidateCompositeCache, useCompositeScore } from '@/hooks/useCompositeScore';
+import { invalidateBalanceCache } from '@/lib/prefetch';
 import { toast } from 'sonner';
 import BattleResultOverlay from '@/components/BattleResultOverlay';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
@@ -383,6 +384,10 @@ const formatTime = (seconds: number) => {
 
 const formatPoints = (pts: number) => pts.toLocaleString();
 
+/** Format score by game mode: orbit=time, destroyer=points, gravity=columns */
+const fmtScore = (s: number, mode: string) =>
+  mode === 'destroyer' ? `${formatPoints(s)} pts` : mode === 'gravity' ? `${s}` : formatTime(s);
+
 const readDefenderLeaderboard = (): LeaderboardEntry[] => {
   try {
     const raw = window.localStorage.getItem(DEFENDER_LEADERBOARD_KEY);
@@ -530,7 +535,10 @@ function WaitingForOpponentBanner({
     const controller = new AbortController();
     const poll = async () => {
       try {
-        const res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(address)}`, {
+        const jwt = getChallengeJwt();
+        if (!jwt) return;
+        const res = await fetch(`${base}/api/challenge/my`, {
+          headers: { Authorization: `Bearer ${jwt}` },
           signal: controller.signal,
         });
         if (!res.ok) return;
@@ -539,6 +547,7 @@ function WaitingForOpponentBanner({
         const ch = list.find((c) => c.id === challengeId);
         if (ch && ch.status === 'completed' && !receivedRef.current) {
           receivedRef.current = true;
+          if (address) invalidateBalanceCache(address);
           onResultReceived(ch);
         }
       } catch {
@@ -658,7 +667,7 @@ const PrismLeague = () => {
   const urlChallengeId = rawChallengeId && /^[a-zA-Z0-9_-]{1,64}$/.test(rawChallengeId) ? rawChallengeId : null;
   const urlMode = (() => {
     const raw = searchParams.get('mode');
-    const VALID_GAME_MODES: GameMode[] = ['orbit', 'destroyer', 'gravity'];
+    const VALID_GAME_MODES: GameMode[] = ['orbit', 'destroyer', 'gravity', 'text_quest'];
     return raw && VALID_GAME_MODES.includes(raw as GameMode) ? (raw as GameMode) : null;
   })();
   const [activeChallengeId, _setActiveChallengeId] = useState<string | null>(urlChallengeId);
@@ -1225,6 +1234,21 @@ const PrismLeague = () => {
     };
   }, [address]);
 
+  // Update freeRevivesLeft when hasMintedId resolves late (e.g. challenge auto-start)
+  useEffect(() => {
+    if (hasMintedId && freeRevivesLeft.current === 0) {
+      freeRevivesLeft.current = Math.max(0, FREE_REVIVES_PER_DAY - getDailyRevivesUsed());
+      if (address) {
+        const mode = gameMode === 'destroyer' ? 'destroyer' : 'orbit';
+        fetchServerRevives(address, mode)
+          .then((result) => {
+            if (result) freeRevivesLeft.current = result.left;
+          })
+          .catch(() => {});
+      }
+    }
+  }, [hasMintedId, address, gameMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* MagicBlock state */
   const [mbHealthy, setMbHealthy] = useState<boolean | null>(null);
   const [_mbLatency, setMbLatency] = useState<number>(0);
@@ -1409,6 +1433,26 @@ const PrismLeague = () => {
       });
   };
 
+  // Auto-start for challenge mode — wait for wallet + hasMintedId before calling handleStart
+  const challengeAutoStarted = useRef(false);
+  useEffect(() => {
+    if (!urlChallengeId || !urlMode) return;
+    if (challengeAutoStarted.current) return;
+    if (!connected || !address) return; // wait for wallet
+    // hasMintedId is loaded — either true or false (fetch completed when address changes)
+    challengeAutoStarted.current = true;
+    // Notify server that player started playing (prevents opponent from cancelling)
+    const jwt = getChallengeJwt();
+    if (jwt) {
+      fetch(`${getServerBase()}/api/challenge/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ challengeId: urlChallengeId }),
+      }).catch(() => {});
+    }
+    handleStart();
+  }, [urlChallengeId, urlMode, connected, address, hasMintedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const finalizeDeath = useCallback(
     (finalScore: number, finalCoins: number, victory = false) => {
       stopAllAudio();
@@ -1426,8 +1470,9 @@ const PrismLeague = () => {
       setCoins(finalCoins);
 
       // Persist coins to local wallet balance immediately (server sync happens in verifyAndPublish after proof)
+      // Skip coin earning when playing a challenge — earnings come from challenge result
       const walletAddr = address || 'anonymous';
-      if (finalCoins > 0) {
+      if (finalCoins > 0 && !activeChallengeId) {
         const prev = readWalletCoins(walletAddr);
         const next = prev + finalCoins;
         writeWalletCoins(walletAddr, next);
@@ -1517,14 +1562,15 @@ const PrismLeague = () => {
         }
 
         // Sync coins to server with verified session proof
-        if (proof?.id && finalCoins > 0) {
+        // Skip coin earning when playing a challenge — earnings come from challenge result
+        if (proof?.id && finalCoins > 0 && !activeChallengeId) {
           const walletAddr = playerAddr;
           const prev = readWalletCoins(walletAddr);
           syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id);
         }
 
-        // Submit to server leaderboard with verified session proof
-        if (proof?.id) {
+        // Submit to server leaderboard with verified session proof (skip for challenges)
+        if (proof?.id && !activeChallengeId) {
           submitToServerLeaderboard({
             address: playerAddr,
             score: finalScore,
@@ -1551,6 +1597,7 @@ const PrismLeague = () => {
               if (result.ok && result.challenge) {
                 setChallengeResult(result.challenge);
                 if (result.challenge.status === 'completed') {
+                  if (playerAddr) invalidateBalanceCache(playerAddr);
                   setTimeout(() => setShowBattleResult(true), 1500);
                   if (result.challenge.winner === playerAddr) hapticSuccess();
                   else hapticError();
@@ -1673,9 +1720,7 @@ const PrismLeague = () => {
       if (finalScore > highScore) {
         setIsNewBest(true);
         setHighScore(finalScore);
-        toast.success(
-          `New High Score: ${gameMode === 'destroyer' ? formatPoints(finalScore) : formatTime(finalScore)}!`,
-        );
+        toast.success(`New High Score: ${fmtScore(finalScore, gameMode)}!`);
       } else {
         setIsNewBest(false);
       }
@@ -2117,6 +2162,7 @@ const PrismLeague = () => {
             shipSkin={equippedSkin}
             shipAura={equippedAura}
             shipStats={shipStats}
+            challengeMode={!!activeChallengeId}
           />
         )}
         {gameMode === 'destroyer' && (
@@ -2134,6 +2180,7 @@ const PrismLeague = () => {
             shipSkin={equippedSkin}
             shipAura={equippedAura}
             shipStats={shipStats}
+            challengeMode={!!activeChallengeId}
           />
         )}
         {gameMode === 'gravity' && (
@@ -2149,6 +2196,7 @@ const PrismLeague = () => {
             shipSkin={equippedSkin}
             shipAura={equippedAura}
             shipStats={shipStats}
+            challengeMode={!!activeChallengeId}
           />
         )}
       </div>
@@ -2265,7 +2313,7 @@ const PrismLeague = () => {
                     </div>
                     {highScore > 0 && (
                       <span className="text-[9px] sm:text-[10px] text-cyan-400/60 uppercase tracking-widest font-semibold mt-0.5">
-                        Best: {formatTime(highScore)}
+                        Best: {fmtScore(highScore, gameMode)}
                       </span>
                     )}
                     {totalCoins > 0 && (
@@ -2279,15 +2327,11 @@ const PrismLeague = () => {
                       ref={_scoreDomRef}
                       className="text-3xl sm:text-4xl md:text-5xl font-black text-white tabular-nums tracking-tight drop-shadow-[0_0_20px_rgba(255,255,255,0.5)]"
                     >
-                      {gameMode === 'destroyer'
-                        ? formatPoints(score)
-                        : gameMode === 'gravity'
-                          ? score
-                          : formatTime(score)}
+                      {fmtScore(score, gameMode)}
                     </span>
                     {highScore > 0 && (
                       <span className="text-[9px] sm:text-[10px] text-cyan-400/60 uppercase tracking-widest font-semibold">
-                        Best: {gameMode === 'destroyer' ? formatPoints(highScore) : formatTime(highScore)}
+                        Best: {fmtScore(highScore, gameMode)}
                       </span>
                     )}
 
@@ -2782,10 +2826,10 @@ const PrismLeague = () => {
                               : '0'
                             : gameMode === 'gravity'
                               ? gravityLeaderboard.length > 0
-                                ? formatTime(
+                                ? String(
                                     gravityLeaderboard.find((e) => e.address === (address || 'anonymous'))?.score || 0,
                                   )
-                                : '--:--'
+                                : '0'
                               : playerStats.gamesPlayed > 0
                                 ? formatTime(playerStats.bestScore)
                                 : '--:--'}
@@ -3386,11 +3430,7 @@ const PrismLeague = () => {
                       </div>
                     ) : (
                       <div className="text-3xl font-black text-white mt-2 mb-0.5 tabular-nums">
-                        {gameMode === 'destroyer'
-                          ? formatPoints(score)
-                          : gameMode === 'gravity'
-                            ? score
-                            : formatTime(score)}
+                        {fmtScore(score, gameMode)}
                       </div>
                     )}
                     {isNewBest && score > 0 && (
@@ -3399,9 +3439,7 @@ const PrismLeague = () => {
                       </div>
                     )}
                     {!isNewBest && highScore > 0 && (
-                      <div className="text-[10px] text-white/25">
-                        Best: {gameMode === 'destroyer' ? formatPoints(highScore) : formatTime(highScore)}
-                      </div>
+                      <div className="text-[10px] text-white/25">Best: {fmtScore(highScore, gameMode)}</div>
                     )}
                   </div>
                   {/* Scrollable content */}
@@ -3432,7 +3470,9 @@ const PrismLeague = () => {
                       <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-yellow-500/10 border border-yellow-500/25">
                         <Coins className="w-3.5 h-3.5 text-yellow-400" />
                         <span className="text-sm font-bold text-yellow-300">
-                          +{onchainBonusApplied ? Math.round(coins * ONCHAIN_BONUS_MULTIPLIER) : coins}
+                          {activeChallengeId
+                            ? 'Challenge'
+                            : `+${onchainBonusApplied ? Math.round(coins * ONCHAIN_BONUS_MULTIPLIER) : coins}`}
                         </span>
                         {onchainBonusApplied && (
                           <span className="text-[10px] font-bold text-green-400 animate-in fade-in slide-in-from-left-2 duration-500">
@@ -3587,79 +3627,112 @@ const PrismLeague = () => {
                     className="shrink-0 px-5 pb-5 pt-2 w-full flex flex-col items-center gap-2"
                     style={{ background: 'linear-gradient(0deg,#020408 70%,transparent)' }}
                   >
-                    <button
-                      className="w-full h-14 rounded-2xl font-black text-base uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95"
-                      style={{
-                        background: 'linear-gradient(135deg,#22d3ee,#0ea5e9)',
-                        color: '#000',
-                        boxShadow: '0 0 24px rgba(34,211,238,0.4)',
-                      }}
-                      onClick={handleStart}
-                    >
-                      <RotateCcw className="w-5 h-5" />
-                      Play Again
-                    </button>
-                    <button
-                      className="w-full h-12 rounded-2xl font-bold text-sm uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95"
-                      style={{
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        color: 'rgba(255,255,255,0.75)',
-                      }}
-                      onClick={handleShare}
-                    >
-                      <Share2 className="w-4 h-4" />
-                      Share Result
-                    </button>
-                    <div className="flex gap-2 w-full">
-                      <button
-                        className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                        style={{
-                          background: 'rgba(255,255,255,0.04)',
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          color: 'rgba(255,255,255,0.5)',
-                        }}
-                        onClick={() => {
-                          stopAllAudio();
-                          setGameState('start');
-                        }}
-                      >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        Menu
-                      </button>
-                      <button
-                        className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                        style={{
-                          background: 'rgba(6,182,212,0.06)',
-                          border: '1px solid rgba(6,182,212,0.2)',
-                          color: 'rgba(34,211,238,0.7)',
-                        }}
-                        onClick={() => {
-                          stopAllAudio();
-                          const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
-                          let ni = (idx + 1) % GAME_MODES.length;
-                          if (GAME_MODES[ni].id === 'text_quest') ni = (ni + 1) % GAME_MODES.length;
-                          setGameMode(GAME_MODES[ni].id);
-                          setGameState('start');
-                        }}
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        Next Mode
-                      </button>
-                      <button
-                        className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                        style={{
-                          background: 'rgba(168,85,247,0.06)',
-                          border: '1px solid rgba(168,85,247,0.2)',
-                          color: 'rgba(196,148,255,0.7)',
-                        }}
-                        onClick={handleJumpBackToPrism}
-                        disabled={isJumpingBack}
-                      >
-                        <ArrowLeft className="w-3.5 h-3.5" />
-                        {isJumpingBack ? '...' : 'Home'}
-                      </button>
-                    </div>
+                    {activeChallengeId ? (
+                      /* Challenge mode — only "Back to Arena" */
+                      <>
+                        <button
+                          className="w-full h-14 rounded-2xl font-black text-base uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95"
+                          style={{
+                            background: 'linear-gradient(135deg,#f59e0b,#d97706)',
+                            color: '#000',
+                            boxShadow: '0 0 24px rgba(245,158,11,0.4)',
+                          }}
+                          onClick={() => startFadeTransition(() => navigate('/arena'))}
+                        >
+                          <Swords className="w-5 h-5" />
+                          Back to Arena
+                        </button>
+                        <button
+                          className="w-full h-12 rounded-2xl font-bold text-sm uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95"
+                          style={{
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid rgba(255,255,255,0.15)',
+                            color: 'rgba(255,255,255,0.75)',
+                          }}
+                          onClick={handleShare}
+                        >
+                          <Share2 className="w-4 h-4" />
+                          Share Result
+                        </button>
+                      </>
+                    ) : (
+                      /* Normal mode — full controls */
+                      <>
+                        <button
+                          className="w-full h-14 rounded-2xl font-black text-base uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95"
+                          style={{
+                            background: 'linear-gradient(135deg,#22d3ee,#0ea5e9)',
+                            color: '#000',
+                            boxShadow: '0 0 24px rgba(34,211,238,0.4)',
+                          }}
+                          onClick={handleStart}
+                        >
+                          <RotateCcw className="w-5 h-5" />
+                          Play Again
+                        </button>
+                        <button
+                          className="w-full h-12 rounded-2xl font-bold text-sm uppercase tracking-wider flex items-center justify-center gap-2 transition-all active:scale-95"
+                          style={{
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid rgba(255,255,255,0.15)',
+                            color: 'rgba(255,255,255,0.75)',
+                          }}
+                          onClick={handleShare}
+                        >
+                          <Share2 className="w-4 h-4" />
+                          Share Result
+                        </button>
+                        <div className="flex gap-2 w-full">
+                          <button
+                            className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                            style={{
+                              background: 'rgba(255,255,255,0.04)',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                              color: 'rgba(255,255,255,0.5)',
+                            }}
+                            onClick={() => {
+                              stopAllAudio();
+                              setGameState('start');
+                            }}
+                          >
+                            <ArrowLeft className="w-3.5 h-3.5" />
+                            Menu
+                          </button>
+                          <button
+                            className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                            style={{
+                              background: 'rgba(6,182,212,0.06)',
+                              border: '1px solid rgba(6,182,212,0.2)',
+                              color: 'rgba(34,211,238,0.7)',
+                            }}
+                            onClick={() => {
+                              stopAllAudio();
+                              const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
+                              let ni = (idx + 1) % GAME_MODES.length;
+                              if (GAME_MODES[ni].id === 'text_quest') ni = (ni + 1) % GAME_MODES.length;
+                              setGameMode(GAME_MODES[ni].id);
+                              setGameState('start');
+                            }}
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            Next Mode
+                          </button>
+                          <button
+                            className="flex-1 h-10 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95"
+                            style={{
+                              background: 'rgba(168,85,247,0.06)',
+                              border: '1px solid rgba(168,85,247,0.2)',
+                              color: 'rgba(196,148,255,0.7)',
+                            }}
+                            onClick={handleJumpBackToPrism}
+                            disabled={isJumpingBack}
+                          >
+                            <ArrowLeft className="w-3.5 h-3.5" />
+                            {isJumpingBack ? '...' : 'Home'}
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

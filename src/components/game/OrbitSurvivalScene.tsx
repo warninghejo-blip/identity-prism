@@ -33,6 +33,7 @@ interface GameProps {
   reviveRef?: React.MutableRefObject<boolean>;
   gameState: GameState;
   traits: WalletTraits | null;
+  challengeMode?: boolean;
   walletScore: number;
   hasMintedId?: boolean;
   shipSkin?: string | null;
@@ -1538,6 +1539,7 @@ function GameWorld({
   shipSkin,
   shipAura,
   shipStats,
+  challengeMode,
 }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   const asteroidPool = useRef<AsteroidData[]>([]);
@@ -1697,12 +1699,18 @@ function GameWorld({
   useEffect(() => {
     const handler = () => {
       if (document.hidden) {
+        if (challengeMode && gameState === 'playing' && !overRef.current) {
+          // Challenge anti-abuse: instant game over on tab hide
+          overRef.current = true;
+          onGameOver(Math.floor(elapsed.current) + (bonusPoints?.current ?? 0), coinBank.current);
+          return;
+        }
         tabHiddenRef.current = true;
       }
     };
     document.addEventListener('visibilitychange', handler);
     return () => document.removeEventListener('visibilitychange', handler);
-  }, []);
+  }, [challengeMode, gameState, onGameOver]);
 
   const physAccum = useRef(0);
   const PHYS_DT = IS_MOBILE ? 1 / 60 : 1 / 90; // fixed physics timestep

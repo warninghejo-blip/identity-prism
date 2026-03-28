@@ -35,6 +35,7 @@ interface GravityRunnerProps {
   walletScore: number;
   hasMintedId: boolean;
   shipSkin?: string | null;
+  challengeMode?: boolean;
   shipAura?: string | null;
   shipStats?: { speed: number; shield: number; firepower: number; luck: number };
 }
@@ -429,8 +430,14 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     let unmounted = false;
 
     // Pause score timer when tab is hidden (prevents score inflation)
+    // Challenge mode: instant game over on tab hide (anti-abuse)
     const onVisChange = () => {
       if (document.hidden) {
+        if (props.challengeMode && !s.dead) {
+          s.dead = true;
+          onGameOver(s.score, s.coins, { columns: s.columnsPassedForBonus, crystals: s.crystalsCollected });
+          return;
+        }
         hiddenAt = performance.now();
       } else if (hiddenAt > 0) {
         const pauseDuration = performance.now() - hiddenAt;
@@ -1593,7 +1600,15 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
     }
 
-    loop();
+    // Wait for ship sprite before starting game loop (prevents arrow placeholder)
+    const startWhenReady = () => {
+      if (shipLoadedRef.current || unmounted) {
+        if (!unmounted) loop();
+      } else {
+        animRef.current = requestAnimationFrame(startWhenReady);
+      }
+    };
+    startWhenReady();
 
     return () => {
       unmounted = true;

@@ -1186,6 +1186,7 @@ function DestroyerWorld({
   shipSkin,
   shipAura,
   shipStats,
+  challengeMode,
 }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   // Throttled score/coins updates — batch React setState to max once per 100ms
@@ -1434,13 +1435,21 @@ function DestroyerWorld({
   const tabHiddenRef = useRef(false);
 
   // Pause when tab is hidden to prevent time jumps
+  // Challenge mode: instant game over on tab hide (anti-abuse)
   useEffect(() => {
     const handler = () => {
-      if (document.hidden) tabHiddenRef.current = true;
+      if (document.hidden) {
+        if (challengeMode && gameState === 'playing' && !overRef.current) {
+          overRef.current = true;
+          onGameOver(scoreRef.current, coinBank.current);
+          return;
+        }
+        tabHiddenRef.current = true;
+      }
     };
     document.addEventListener('visibilitychange', handler);
     return () => document.removeEventListener('visibilitychange', handler);
-  }, []);
+  }, [challengeMode, gameState, onGameOver]);
 
   useFrame(({ camera }, delta) => {
     // Compute visible bounds from camera
