@@ -8715,9 +8715,8 @@ const server = http.createServer(async (req, res) => {
       const MIN_GAMES = 3;
       const weekly = [...weeklyStats.values()].filter(p => p.played >= MIN_GAMES).sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 20);
       const allTime = [...allTimeStats.values()].sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 20);
-      // Weekly rewards info
-      const REWARDS = [1000, 500, 250, 100, 100, 100, 100, 100, 100, 100];
-      const weeklyWithRewards = weekly.map((p, i) => ({ ...p, reward: REWARDS[i] || 0 }));
+      // Weekly rewards info (matches cron distribution)
+      const weeklyWithRewards = weekly.map((p, i) => ({ ...p, reward: WEEKLY_REWARDS[i] || 0, xpReward: WEEKLY_XP_REWARDS[i] || 0 }));
       // Next reset (next Monday 00:00 UTC)
       const nextReset = weekStart + 7 * 24 * 60 * 60 * 1000;
       // Last week's winners (from challengeWeeklyHistory)
@@ -10990,7 +10989,10 @@ try {
 // ── Weekly Challenge Rewards — checks every hour, distributes Monday 00:00 UTC ──
 globalThis._challengeWeeklyHistory = globalThis._challengeWeeklyHistory || [];
 globalThis._lastWeeklyRewardAt = globalThis._lastWeeklyRewardAt || 0;
-const WEEKLY_REWARDS = [1000, 500, 250, 100, 100, 100, 100, 100, 100, 100];
+// Coins: aligned with daily tournament base prizes (1000/700/400) but lower since no entry fee
+// XP: matches daily tournament XP tier (300/200/100) — rewards skill progression
+const WEEKLY_REWARDS =    [500, 300, 150, 75, 75, 50, 50, 50, 50, 50]; // total: 1,400/week
+const WEEKLY_XP_REWARDS = [300, 200, 100,  0,  0,  0,  0,  0,  0,  0]; // top-3 only
 const WEEKLY_MIN_GAMES = 3;
 setInterval(() => {
   const now = Date.now();
@@ -11018,10 +11020,25 @@ setInterval(() => {
   const winners = [];
   ranked.forEach((p, i) => {
     const reward = WEEKLY_REWARDS[i] || 0;
+    const xpReward = WEEKLY_XP_REWARDS[i] || 0;
     if (reward > 0) {
       setCoinBalance(p.address, getCoinBalance(p.address) + reward);
       addCoinEarned(p.address, reward);
-      winners.push({ address: p.address, rank: i + 1, reward, wins: p.wins, earned: p.earned });
+      // Record transaction
+      const txs = prismTransactions.get(p.address) || [];
+      txs.unshift({ id: `ch_weekly_${Date.now()}_${i}`, address: p.address, amount: reward, type: 'earn', source: 'challenge_win', description: `Weekly Arena #${i + 1}: +${reward} Coins${xpReward ? ` +${xpReward} XP` : ''}`, timestamp: new Date().toISOString() });
+      if (txs.length > 200) txs.length = 200;
+      prismTransactions.set(p.address, txs);
+      // Store XP reward in socialStats for client-side rangerRanks computation
+      if (xpReward > 0) {
+        const wdb = walletDatabase.get(p.address);
+        if (wdb) {
+          if (!wdb.socialStats) wdb.socialStats = {};
+          wdb.socialStats.arenaWeeklyXP = (wdb.socialStats.arenaWeeklyXP || 0) + xpReward;
+          walletDatabase.set(p.address, wdb);
+        }
+      }
+      winners.push({ address: p.address, rank: i + 1, reward, xp: xpReward, wins: p.wins, earned: p.earned });
     }
   });
   globalThis._challengeWeeklyHistory = winners;

@@ -212,7 +212,15 @@ export default function PrismArena() {
   const [coinBalance, setCoinBalance] = useState<number | null>(null);
   const [showCoinHistory, setShowCoinHistory] = useState(false);
   const [weeklyBoard, setWeeklyBoard] = useState<
-    { address: string; wins: number; losses: number; earned: number; played: number; reward: number }[]
+    {
+      address: string;
+      wins: number;
+      losses: number;
+      earned: number;
+      played: number;
+      reward: number;
+      xpReward?: number;
+    }[]
   >([]);
   const [allTimeBoard, setAllTimeBoard] = useState<
     { address: string; wins: number; losses: number; earned: number; played: number }[]
@@ -1279,11 +1287,14 @@ export default function PrismArena() {
                       </div>
                     </div>
                     {p.reward > 0 && (
-                      <div className="text-right shrink-0">
+                      <div className="text-right shrink-0 space-y-0.5">
                         <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 border border-amber-400/20">
                           <Zap className="w-3 h-3 text-amber-400" />
                           <span className="text-[10px] font-bold text-amber-300">+{p.reward}</span>
                         </div>
+                        {p.xpReward ? (
+                          <div className="text-[9px] text-purple-400/60 text-center">+{p.xpReward} XP</div>
+                        ) : null}
                       </div>
                     )}
                   </div>
