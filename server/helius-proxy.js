@@ -10990,9 +10990,10 @@ try {
 globalThis._challengeWeeklyHistory = globalThis._challengeWeeklyHistory || [];
 globalThis._lastWeeklyRewardAt = globalThis._lastWeeklyRewardAt || 0;
 // Coins: aligned with daily tournament base prizes (1000/700/400) but lower since no entry fee
-// XP: matches daily tournament XP tier (300/200/100) — rewards skill progression
-const WEEKLY_REWARDS =    [500, 300, 150, 75, 75, 50, 50, 50, 50, 50]; // total: 1,400/week
-const WEEKLY_XP_REWARDS = [300, 200, 100,  0,  0,  0,  0,  0,  0,  0]; // top-3 only
+// Coins: between daily (1k base) and weekly (5k base) tournament — motivating but not game-breaking
+// XP: top-3 get meaningful XP toward Ranger ranks
+const WEEKLY_REWARDS =    [2000, 1200, 600, 200, 200, 100, 100, 100, 100, 100]; // total: ~4,700/week
+const WEEKLY_XP_REWARDS = [ 500,  300, 200,   0,   0,   0,   0,   0,   0,   0]; // top-3 only
 const WEEKLY_MIN_GAMES = 3;
 setInterval(() => {
   const now = Date.now();
