@@ -266,9 +266,11 @@ body:has(.page-shell) #root > * {
 .arena-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 5px 12px;
-  border-radius: 8px;
+  padding: 8px 14px;
+  min-height: 36px;
+  border-radius: 12px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -279,15 +281,23 @@ body:has(.page-shell) #root > * {
   color: rgba(255, 255, 255, 0.5);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
+  -webkit-tap-highlight-color: transparent;
 }
 .arena-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.7);
 }
+.arena-btn:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.5);
+  outline-offset: 2px;
+}
 .arena-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+@media (pointer: coarse) {
+  .arena-btn { min-height: 44px; padding: 10px 16px; }
 }
 .arena-btn-accent {
   border-color: rgba(250, 204, 21, 0.2);

@@ -762,7 +762,7 @@ export default function PrismArena() {
           <div className="flex gap-1 bg-white/[0.04] rounded-xl p-0.5 border border-white/[0.06]">
             <button
               onClick={() => setSubTab('open')}
-              className={`px-4 py-1.5 rounded-[10px] text-xs font-bold transition-all ${
+              className={`px-4 py-2 min-h-[36px] rounded-[10px] text-xs font-bold transition-all cursor-pointer ${
                 subTab === 'open' ? 'bg-white/[0.1] text-white shadow-sm' : 'text-white/30 hover:text-white/50'
               }`}
             >
@@ -770,7 +770,7 @@ export default function PrismArena() {
             </button>
             <button
               onClick={() => setSubTab('mine')}
-              className={`px-4 py-1.5 rounded-[10px] text-xs font-bold transition-all ${
+              className={`px-4 py-2 min-h-[36px] rounded-[10px] text-xs font-bold transition-all cursor-pointer ${
                 subTab === 'mine' ? 'bg-white/[0.1] text-white shadow-sm' : 'text-white/30 hover:text-white/50'
               }`}
             >
@@ -778,7 +778,7 @@ export default function PrismArena() {
             </button>
             <button
               onClick={() => setSubTab('top')}
-              className={`px-4 py-1.5 rounded-[10px] text-xs font-bold transition-all ${
+              className={`px-4 py-2 min-h-[36px] rounded-[10px] text-xs font-bold transition-all cursor-pointer ${
                 subTab === 'top' ? 'bg-white/[0.1] text-white shadow-sm' : 'text-white/30 hover:text-white/50'
               }`}
             >
@@ -952,7 +952,7 @@ export default function PrismArena() {
                   <button
                     key={val}
                     onClick={() => setFormExpiry(val)}
-                    className={`flex-1 min-w-[40px] py-2 rounded-lg text-xs font-bold transition-all border ${
+                    className={`flex-1 min-w-[40px] py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
                       formExpiry === val
                         ? 'bg-amber-400/15 border-amber-400/40 text-amber-400'
                         : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50'
