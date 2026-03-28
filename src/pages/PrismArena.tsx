@@ -182,7 +182,7 @@ export default function PrismArena() {
   const [openChallenges, setOpenChallenges] = useState<Challenge[]>([]);
   const [myChallenges, setMyChallenges] = useState<Challenge[]>([]);
   const [creating, setCreating] = useState(false);
-  const [subTab, setSubTab] = useState<'open' | 'mine'>(() => {
+  const [subTab, setSubTab] = useState<'open' | 'mine' | 'top'>(() => {
     // Auto-switch to Mine tab when returning from game or having active challenges
     try {
       if (sessionStorage.getItem('ip_challenge_submitted') || sessionStorage.getItem('ip_active_challenge'))
@@ -210,6 +210,10 @@ export default function PrismArena() {
   const [battleResult, setBattleResult] = useState<ChallengeResult | null>(null);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [coinBalance, setCoinBalance] = useState<number | null>(null);
+  const [showCoinHistory, setShowCoinHistory] = useState(false);
+  const [challengeBoard, setChallengeBoard] = useState<
+    { address: string; wins: number; losses: number; earned: number; played: number }[]
+  >([]);
 
   const prevMineRef = useRef<string>('');
   const actionLockRef = useRef(false);
@@ -226,6 +230,17 @@ export default function PrismArena() {
       })
       .catch(() => {});
   }, [myAddress, base]);
+
+  // Fetch challenge leaderboard
+  useEffect(() => {
+    if (subTab !== 'top' || !base) return;
+    fetch(`${base}/api/challenge/leaderboard`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.leaderboard) setChallengeBoard(d.leaderboard);
+      })
+      .catch(() => {});
+  }, [subTab, base]);
 
   useEffect(() => {
     refreshBalance();
@@ -713,10 +728,13 @@ export default function PrismArena() {
             PRISM ARENA
           </h1>
           {coinBalance !== null && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20">
+            <button
+              onClick={() => setShowCoinHistory(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer"
+            >
               <Zap className="w-3 h-3 text-amber-400" />
               <span className="text-xs font-bold text-amber-300">{coinBalance.toLocaleString()}</span>
-            </div>
+            </button>
           )}
           {coinBalance === null && <div className="w-16" />}
         </div>
@@ -740,7 +758,15 @@ export default function PrismArena() {
                 subTab === 'mine' ? 'bg-white/[0.1] text-white shadow-sm' : 'text-white/30 hover:text-white/50'
               }`}
             >
-              Mine
+              My Battles
+            </button>
+            <button
+              onClick={() => setSubTab('top')}
+              className={`px-4 py-1.5 rounded-[10px] text-xs font-bold transition-all ${
+                subTab === 'top' ? 'bg-white/[0.1] text-white shadow-sm' : 'text-white/30 hover:text-white/50'
+              }`}
+            >
+              Top
             </button>
           </div>
           <button
@@ -1181,6 +1207,51 @@ export default function PrismArena() {
               })}
           </div>
         )}
+
+        {/* ── Top Challengers ── */}
+        {subTab === 'top' && (
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-2">
+              <Trophy className="w-3.5 h-3.5 text-amber-400" />
+              Top Challengers
+            </h3>
+            {challengeBoard.length === 0 && (
+              <div className="text-center py-12 text-white/20">
+                <Trophy className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                <p className="text-sm">No completed challenges yet</p>
+              </div>
+            )}
+            {challengeBoard.map((p, i) => {
+              const isMe = p.address === myAddress;
+              const winRate = p.played > 0 ? Math.round((p.wins / p.played) * 100) : 0;
+              const medalColor =
+                i === 0 ? 'text-amber-400' : i === 1 ? 'text-slate-300' : i === 2 ? 'text-orange-400' : 'text-white/20';
+              return (
+                <div
+                  key={p.address}
+                  className={`glass-card p-3 flex items-center gap-3 ${isMe ? 'border-amber-500/30' : ''}`}
+                >
+                  <span className={`text-sm font-black w-6 text-center ${medalColor}`}>{i + 1}</span>
+                  <MiniPlanet tier={i < 3 ? 'binary_sun' : 'mercury'} size={28} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-mono ${isMe ? 'text-amber-300' : 'text-white/50'}`}>
+                        {isMe ? 'You' : formatAddr(p.address)}
+                      </span>
+                      <span className="text-[10px] text-white/20">{winRate}% WR</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-green-400">{p.wins}W</span>
+                      <span className="text-[10px] text-red-400">{p.losses}L</span>
+                      <span className="text-[10px] text-white/15">·</span>
+                      <span className="text-[10px] text-amber-400">+{p.earned}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Challenge flow modals */}
@@ -1228,6 +1299,83 @@ export default function PrismArena() {
             fetchMine();
           }}
         />
+      )}
+
+      {/* ── Coin History Modal ── */}
+      {showCoinHistory && (
+        <div
+          className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowCoinHistory(false)}
+        >
+          <div
+            className="w-full max-w-md max-h-[70vh] rounded-t-2xl sm:rounded-2xl bg-[#0a0e1a]/95 backdrop-blur-xl border border-white/[0.08] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-amber-400" />
+                <span className="text-sm font-bold text-white">Coin History</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-bold text-amber-300">{coinBalance?.toLocaleString() ?? '...'} Coins</span>
+                <button onClick={() => setShowCoinHistory(false)} className="text-white/30 hover:text-white/60">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto max-h-[55vh] p-3 space-y-2">
+              {myChallenges.length === 0 && (
+                <div className="text-center py-8 text-white/20 text-xs">No challenge transactions yet</div>
+              )}
+              {myChallenges
+                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+                .map((c) => {
+                  const isCreator = c.creator === myAddress;
+                  const gm = GAME_MODE_LABELS[c.gameMode || ''];
+                  const gameName = gm?.label || 'Score Battle';
+                  const didWin = c.winner === myAddress;
+                  let label = '';
+                  let amount = '';
+                  let color = '';
+                  if (c.status === 'completed') {
+                    label = didWin ? 'Won' : 'Lost';
+                    amount = didWin ? `+${(c.stakeAmount * 2 * 0.95) | 0}` : `-${c.stakeAmount}`;
+                    color = didWin ? 'text-green-400' : 'text-red-400';
+                  } else if (c.status === 'cancelled') {
+                    label = 'Cancelled';
+                    const fee =
+                      c.creatorScore !== null ? Math.ceil(c.stakeAmount * 0.2) : Math.ceil(c.stakeAmount * 0.1);
+                    amount = `-${fee} fee`;
+                    color = 'text-slate-400';
+                  } else if (c.status === 'expired') {
+                    label = 'Expired';
+                    amount = 'Refunded';
+                    color = 'text-orange-400';
+                  } else {
+                    label = c.status === 'open' ? 'Pending' : 'In Progress';
+                    amount = `-${c.stakeAmount}`;
+                    color = 'text-cyan-400';
+                  }
+                  return (
+                    <div
+                      key={c.id}
+                      className="flex items-center gap-3 px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.05]"
+                    >
+                      {gm?.cover && <img src={gm.cover} alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-bold text-white/60">{gameName}</div>
+                        <div className="text-[10px] text-white/25">{new Date(c.createdAt).toLocaleDateString()}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className={`text-[11px] font-bold ${color}`}>{amount}</div>
+                        <div className="text-[9px] text-white/20">{label}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
       )}
     </PageShell>
   );

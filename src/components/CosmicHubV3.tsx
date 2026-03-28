@@ -3,7 +3,7 @@
  * 3D rotating glass prism background + Glassmorphism Bento Box navigation grid.
  * Mini Identity Passport replaces the old "My Card" button.
  */
-import { useCallback, useRef, useEffect, useState } from 'react';
+import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -15,6 +15,8 @@ import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { getTierIcon } from '@/lib/constants/tierColors';
 import { toast } from 'sonner';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
+import { getBoostedCompositeScore } from '@/lib/shipStats';
+import { fetchSybilAnalysis } from '@/components/prism/shared';
 import type { PlanetTier } from '@/hooks/useWalletData';
 import {
   Trophy,
@@ -130,9 +132,9 @@ const MODULES: ModuleDef[] = [
   },
   {
     id: 'blackhole',
-    label: 'Void Purge',
+    label: 'Black Hole',
     route: '/blackhole',
-    desc: 'Purge dust, salvage SOL',
+    desc: 'Burn dust, salvage SOL',
     icon: <HubIcon name="blackhole" />,
     iconName: 'blackhole',
     colorClass: 'from-red-500 to-orange-400',
@@ -591,7 +593,7 @@ function MiniPassport({
         {/* Stats row: Grade / Coins / Boost */}
         <div className="flex items-center justify-center gap-3 mb-3">
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
             style={{ background: `${gradeColor}10`, border: `1px solid ${gradeColor}20` }}
           >
             <Shield size={11} style={{ color: gradeColor }} />
@@ -600,7 +602,7 @@ function MiniPassport({
             </span>
           </div>
           <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
             style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.15)' }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24">
@@ -631,7 +633,7 @@ function MiniPassport({
           </div>
           {boostRate != null && boostRate > 0 && (
             <div
-              className="flex items-center gap-1 px-2 py-1 rounded-lg"
+              className="flex items-center gap-1 px-2 py-1 rounded-xl"
               style={{
                 background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(251,146,60,0.15))',
                 border: '1px solid rgba(168,85,247,0.3)',
@@ -702,25 +704,37 @@ export default function CosmicHub({
   const compositeData = useCompositeScore(walletAddress || null);
   const refetchComposite = compositeData.refetch;
 
-  // Fetch sybil grade with retry
+  // Apply Forge Frame boost to match CelestialCard display
+  const [forgeFrame, setForgeFrame] = useState<string | null>(null);
+  useEffect(() => {
+    if (!walletAddress) return;
+    try {
+      const raw = localStorage.getItem(`prism_forge_loadout_v1_${walletAddress}`);
+      if (raw) {
+        const loadout = JSON.parse(raw);
+        if (loadout.equippedFrame) setForgeFrame(loadout.equippedFrame);
+      }
+    } catch {}
+  }, [walletAddress]);
+  const frameLoadout = useMemo(
+    () => (forgeFrame ? { equippedShipSkin: null, equippedFrame: forgeFrame, equippedAura: null } : null),
+    [forgeFrame],
+  );
+  const boostedComposite = useMemo(() => {
+    const result = getBoostedCompositeScore(compositeData.breakdown, frameLoadout);
+    return result ?? { score: compositeData.score, breakdown: compositeData.breakdown };
+  }, [compositeData.breakdown, compositeData.score, frameLoadout]);
+
+  // Fetch sybil grade (shared deduped — same promise as CelestialCard)
   useEffect(() => {
     if (!walletAddress) return;
     let cancelled = false;
-    const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-    const doFetch = (attempt: number) => {
-      fetch(`${base}/api/sybil/analysis?address=${walletAddress}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (!cancelled && d?.trustGrade) {
-            setSybilGrade(d.trustGrade);
-            setTimeout(() => refetchComposite(), 500);
-          } else if (!cancelled && attempt < 2) setTimeout(() => doFetch(attempt + 1), 3000);
-        })
-        .catch(() => {
-          if (!cancelled && attempt < 2) setTimeout(() => doFetch(attempt + 1), 3000);
-        });
-    };
-    doFetch(0);
+    fetchSybilAnalysis(walletAddress).then((d) => {
+      if (!cancelled && d?.trustGrade) {
+        setSybilGrade(d.trustGrade);
+        setTimeout(() => refetchComposite(), 500);
+      }
+    });
     return () => {
       cancelled = true;
     };
@@ -813,8 +827,8 @@ export default function CosmicHub({
             {hasIdentity ? (
               <MiniPassport
                 walletAddress={walletAddress}
-                score={compositeData.score > 0 ? compositeData.score : identityScore}
-                tier={compositeData.score > 0 ? compositeData.tier : planetTier}
+                score={boostedComposite.score > 0 ? boostedComposite.score : identityScore}
+                tier={boostedComposite.score > 0 ? compositeData.tier : planetTier}
                 coins={prismBalance?.balance ?? 0}
                 sybilGrade={sybilGrade}
                 onClick={onNavigateToCard}
@@ -823,7 +837,7 @@ export default function CosmicHub({
                   startFadeTransition(() => navigate('/vault'));
                 }}
                 boostRate={boostRate}
-                breakdown={compositeData.breakdown}
+                breakdown={boostedComposite.breakdown}
               />
             ) : (
               <NoCardFallback onClick={onNavigateToCard} />
@@ -866,9 +880,8 @@ function ReferralInviteButton({ walletAddress }: { walletAddress: string }) {
     setLoading(true);
     try {
       const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-      const { getCachedJwt, obtainJwt } = await import('@/components/prism/shared');
-      let jwt = getCachedJwt(walletAddress);
-      if (!jwt && wallet.publicKey && wallet.signMessage) jwt = await obtainJwt(wallet);
+      const { ensureJwt } = await import('@/components/prism/shared');
+      const jwt = await ensureJwt();
       if (!base || !jwt) {
         setLoading(false);
         return;

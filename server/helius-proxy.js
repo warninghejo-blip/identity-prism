@@ -8681,6 +8681,40 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Challenge: List open (public — no auth required) ──
+  // ── Challenge Leaderboard ──
+  if (pathname === '/api/challenge/leaderboard' && req.method === 'GET') {
+    if (!ipRateLimit('ch_lb', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    try {
+      const stats = new Map(); // address → { wins, losses, earned, lost, played }
+      for (const c of challenges) {
+        if (c.status !== 'completed' || !c.winner) continue;
+        const loser = c.winner === c.creator ? c.opponent : c.creator;
+        const prize = Math.floor(c.stakeAmount * 2 * 0.95);
+        // Winner
+        const ws = stats.get(c.winner) || { address: c.winner, wins: 0, losses: 0, earned: 0, lost: 0, played: 0 };
+        ws.wins++;
+        ws.earned += prize;
+        ws.played++;
+        stats.set(c.winner, ws);
+        // Loser
+        if (loser) {
+          const ls = stats.get(loser) || { address: loser, wins: 0, losses: 0, earned: 0, lost: 0, played: 0 };
+          ls.losses++;
+          ls.lost += c.stakeAmount;
+          ls.played++;
+          stats.set(loser, ls);
+        }
+      }
+      const board = [...stats.values()]
+        .sort((a, b) => b.earned - a.earned || b.wins - a.wins)
+        .slice(0, 20);
+      respondJson(res, 200, { ok: true, leaderboard: board });
+    } catch (e) {
+      respondJson(res, 200, { ok: true, leaderboard: [] });
+    }
+    return;
+  }
+
   if (pathname === '/api/challenge/list' && req.method === 'GET') {
     if (!ipRateLimit('ch_list', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
