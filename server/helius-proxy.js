@@ -8640,6 +8640,10 @@ const server = http.createServer(async (req, res) => {
         // Lock Coins from creator
         setCoinBalance(creator, creatorBal.balance - stake);
         addCoinSpent(creator, stake);
+        const _txs = prismTransactions.get(creator) || [];
+        _txs.unshift({ id: `ch_stake_${Date.now()}`, address: creator, amount: stake, type: 'spend', source: 'challenge_entry', description: `Challenge stake: -${stake} Coins`, timestamp: new Date().toISOString() });
+        if (_txs.length > 200) _txs.length = 200;
+        prismTransactions.set(creator, _txs);
         debouncedSavePrism();
       }
 
@@ -8858,6 +8862,11 @@ const server = http.createServer(async (req, res) => {
           const resolveCoinWinner = (winnerAddr) => {
             setCoinBalance(winnerAddr, getCoinBalance(winnerAddr) + winnerPrize);
             addCoinEarned(winnerAddr, winnerPrize);
+            // Record transaction
+            const txs = prismTransactions.get(winnerAddr) || [];
+            txs.unshift({ id: `ch_win_${Date.now()}`, address: winnerAddr, amount: winnerPrize, type: 'earn', source: 'challenge_win', description: `Challenge won: +${winnerPrize} Coins`, timestamp: new Date().toISOString() });
+            if (txs.length > 200) txs.length = 200;
+            prismTransactions.set(winnerAddr, txs);
           };
 
           const resolveSolWinner = async (winnerAddr) => {
@@ -9040,6 +9049,11 @@ const server = http.createServer(async (req, res) => {
         const awardCoinWinner = (addr) => {
           setCoinBalance(addr, getCoinBalance(addr) + winnerPrize);
           addCoinEarned(addr, winnerPrize);
+          // Record transaction
+          const txs = prismTransactions.get(addr) || [];
+          txs.unshift({ id: `ch_win_${Date.now()}`, address: addr, amount: winnerPrize, type: 'earn', source: 'challenge_win', description: `Challenge won: +${winnerPrize} Coins`, timestamp: new Date().toISOString() });
+          if (txs.length > 200) txs.length = 200;
+          prismTransactions.set(addr, txs);
         };
 
         const awardSolWinner = async (addr) => {

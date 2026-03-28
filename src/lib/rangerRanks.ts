@@ -152,9 +152,9 @@ export function computeRangerXP(sources: RangerXPSources): number {
     xp += sources.achievementCount * 200;
   }
 
-  // ── Arena Challenge Wins: ×300 (uncapped — primary Legend grind) ──
+  // ── Arena Challenge Wins: ×300, capped at 5000 XP (≈17 wins) ──
   if (sources.challengeWins) {
-    xp += sources.challengeWins * 300;
+    xp += Math.min(sources.challengeWins * 300, 5000);
   }
 
   // ── Quest XP: earned directly from quest rewards ──
