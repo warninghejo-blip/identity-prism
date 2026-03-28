@@ -8681,36 +8681,46 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Challenge: List open (public — no auth required) ──
-  // ── Challenge Leaderboard ──
+  // ── Challenge Leaderboard (weekly + all-time) ──
   if (pathname === '/api/challenge/leaderboard' && req.method === 'GET') {
     if (!ipRateLimit('ch_lb', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
-      const stats = new Map(); // address → { wins, losses, earned, lost, played }
+      const now = Date.now();
+      // Monday 00:00 UTC of current week
+      const d = new Date(now);
+      d.setUTCHours(0, 0, 0, 0);
+      d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+      const weekStart = d.getTime();
+      const weeklyStats = new Map();
+      const allTimeStats = new Map();
+      const buildEntry = (addr) => ({ address: addr, wins: 0, losses: 0, earned: 0, played: 0 });
       for (const c of challenges) {
         if (c.status !== 'completed' || !c.winner) continue;
         const loser = c.winner === c.creator ? c.opponent : c.creator;
         const prize = Math.floor(c.stakeAmount * 2 * 0.95);
-        // Winner
-        const ws = stats.get(c.winner) || { address: c.winner, wins: 0, losses: 0, earned: 0, lost: 0, played: 0 };
-        ws.wins++;
-        ws.earned += prize;
-        ws.played++;
-        stats.set(c.winner, ws);
-        // Loser
-        if (loser) {
-          const ls = stats.get(loser) || { address: loser, wins: 0, losses: 0, earned: 0, lost: 0, played: 0 };
-          ls.losses++;
-          ls.lost += c.stakeAmount;
-          ls.played++;
-          stats.set(loser, ls);
+        const isThisWeek = (c.completedAt || c.createdAt) >= weekStart;
+        // All-time
+        const aw = allTimeStats.get(c.winner) || buildEntry(c.winner); aw.wins++; aw.earned += prize; aw.played++; allTimeStats.set(c.winner, aw);
+        if (loser) { const al = allTimeStats.get(loser) || buildEntry(loser); al.losses++; al.played++; allTimeStats.set(loser, al); }
+        // Weekly
+        if (isThisWeek) {
+          const ww = weeklyStats.get(c.winner) || buildEntry(c.winner); ww.wins++; ww.earned += prize; ww.played++; weeklyStats.set(c.winner, ww);
+          if (loser) { const wl = weeklyStats.get(loser) || buildEntry(loser); wl.losses++; wl.played++; weeklyStats.set(loser, wl); }
         }
       }
-      const board = [...stats.values()]
-        .sort((a, b) => b.earned - a.earned || b.wins - a.wins)
-        .slice(0, 20);
-      respondJson(res, 200, { ok: true, leaderboard: board });
+      const MIN_GAMES = 3;
+      const weekly = [...weeklyStats.values()].filter(p => p.played >= MIN_GAMES).sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 20);
+      const allTime = [...allTimeStats.values()].sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 20);
+      // Weekly rewards info
+      const REWARDS = [1000, 500, 250, 100, 100, 100, 100, 100, 100, 100];
+      const weeklyWithRewards = weekly.map((p, i) => ({ ...p, reward: REWARDS[i] || 0 }));
+      // Next reset (next Monday 00:00 UTC)
+      const nextReset = weekStart + 7 * 24 * 60 * 60 * 1000;
+      // Last week's winners (from challengeWeeklyHistory)
+      const lastWeek = globalThis._challengeWeeklyHistory || [];
+      respondJson(res, 200, { ok: true, weekly: weeklyWithRewards, allTime, nextReset, lastWeekWinners: lastWeek, minGames: MIN_GAMES });
     } catch (e) {
-      respondJson(res, 200, { ok: true, leaderboard: [] });
+      respondJson(res, 200, { ok: true, weekly: [], allTime: [], nextReset: 0, lastWeekWinners: [], minGames: 3 });
     }
     return;
   }
@@ -10962,6 +10972,49 @@ try {
     console.log(`[challenges] Loaded ${challenges.length} challenges`);
   }
 } catch { /* first run */ }
+
+// ── Weekly Challenge Rewards — checks every hour, distributes Monday 00:00 UTC ──
+globalThis._challengeWeeklyHistory = globalThis._challengeWeeklyHistory || [];
+globalThis._lastWeeklyRewardAt = globalThis._lastWeeklyRewardAt || 0;
+const WEEKLY_REWARDS = [1000, 500, 250, 100, 100, 100, 100, 100, 100, 100];
+const WEEKLY_MIN_GAMES = 3;
+setInterval(() => {
+  const now = Date.now();
+  const d = new Date(now);
+  // Check if it's Monday and we haven't distributed this week yet
+  if (d.getUTCDay() !== 1) return; // only on Mondays
+  const mondayStart = new Date(now); mondayStart.setUTCHours(0, 0, 0, 0);
+  if (globalThis._lastWeeklyRewardAt >= mondayStart.getTime()) return; // already done this week
+  // Calculate last week's range
+  const lastWeekEnd = mondayStart.getTime();
+  const lastWeekStart = lastWeekEnd - 7 * 24 * 60 * 60 * 1000;
+  const stats = new Map();
+  for (const c of challenges) {
+    if (c.status !== 'completed' || !c.winner) continue;
+    const t = c.completedAt || c.createdAt;
+    if (t < lastWeekStart || t >= lastWeekEnd) continue;
+    const s = stats.get(c.winner) || { address: c.winner, wins: 0, earned: 0, played: 0 };
+    s.wins++; s.earned += Math.floor(c.stakeAmount * 2 * 0.95); s.played++;
+    stats.set(c.winner, s);
+    const loser = c.winner === c.creator ? c.opponent : c.creator;
+    if (loser) { const l = stats.get(loser) || { address: loser, wins: 0, earned: 0, played: 0 }; l.played++; stats.set(loser, l); }
+  }
+  const ranked = [...stats.values()].filter(p => p.played >= WEEKLY_MIN_GAMES).sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 10);
+  if (ranked.length === 0) { globalThis._lastWeeklyRewardAt = mondayStart.getTime(); return; }
+  const winners = [];
+  ranked.forEach((p, i) => {
+    const reward = WEEKLY_REWARDS[i] || 0;
+    if (reward > 0) {
+      setCoinBalance(p.address, getCoinBalance(p.address) + reward);
+      addCoinEarned(p.address, reward);
+      winners.push({ address: p.address, rank: i + 1, reward, wins: p.wins, earned: p.earned });
+    }
+  });
+  globalThis._challengeWeeklyHistory = winners;
+  globalThis._lastWeeklyRewardAt = mondayStart.getTime();
+  debouncedSavePrism();
+  console.log(`[challenges] Weekly rewards distributed to ${winners.length} challengers: ${winners.map(w => `#${w.rank} ${w.address.slice(0,8)}.. +${w.reward}`).join(', ')}`);
+}, 60 * 60 * 1000); // check every hour
 
 // Auto-expire challenges — runs every 60 seconds
 // Only OPEN challenges expire by timer. Accepted/playing = both committed.

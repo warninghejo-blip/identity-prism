@@ -211,9 +211,13 @@ export default function PrismArena() {
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [coinBalance, setCoinBalance] = useState<number | null>(null);
   const [showCoinHistory, setShowCoinHistory] = useState(false);
-  const [challengeBoard, setChallengeBoard] = useState<
+  const [weeklyBoard, setWeeklyBoard] = useState<
+    { address: string; wins: number; losses: number; earned: number; played: number; reward: number }[]
+  >([]);
+  const [allTimeBoard, setAllTimeBoard] = useState<
     { address: string; wins: number; losses: number; earned: number; played: number }[]
   >([]);
+  const [nextReset, setNextReset] = useState(0);
 
   const prevMineRef = useRef<string>('');
   const actionLockRef = useRef(false);
@@ -237,7 +241,11 @@ export default function PrismArena() {
     fetch(`${base}/api/challenge/leaderboard`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.leaderboard) setChallengeBoard(d.leaderboard);
+        if (d) {
+          if (d.weekly) setWeeklyBoard(d.weekly);
+          if (d.allTime) setAllTimeBoard(d.allTime);
+          if (d.nextReset) setNextReset(d.nextReset);
+        }
       })
       .catch(() => {});
   }, [subTab, base]);
@@ -1210,46 +1218,122 @@ export default function PrismArena() {
 
         {/* ── Top Challengers ── */}
         {subTab === 'top' && (
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-2">
-              <Trophy className="w-3.5 h-3.5 text-amber-400" />
-              Top Challengers
-            </h3>
-            {challengeBoard.length === 0 && (
-              <div className="text-center py-12 text-white/20">
-                <Trophy className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                <p className="text-sm">No completed challenges yet</p>
+          <div className="space-y-4">
+            {/* Weekly countdown */}
+            {nextReset > 0 && (
+              <div className="glass-card p-3 text-center">
+                <div className="text-[10px] text-white/30 uppercase tracking-wider mb-1">Weekly rewards reset</div>
+                <div className="text-xs font-bold text-amber-400">
+                  {(() => {
+                    const diff = Math.max(0, nextReset - Date.now());
+                    const days = Math.floor(diff / 86400000);
+                    const hrs = Math.floor((diff % 86400000) / 3600000);
+                    return `${days}d ${hrs}h`;
+                  })()}
+                </div>
+                <div className="text-[9px] text-white/20 mt-1">Min {3} completed battles to qualify</div>
               </div>
             )}
-            {challengeBoard.map((p, i) => {
-              const isMe = p.address === myAddress;
-              const winRate = p.played > 0 ? Math.round((p.wins / p.played) * 100) : 0;
-              const medalColor =
-                i === 0 ? 'text-amber-400' : i === 1 ? 'text-slate-300' : i === 2 ? 'text-orange-400' : 'text-white/20';
-              return (
-                <div
-                  key={p.address}
-                  className={`glass-card p-3 flex items-center gap-3 ${isMe ? 'border-amber-500/30' : ''}`}
-                >
-                  <span className={`text-sm font-black w-6 text-center ${medalColor}`}>{i + 1}</span>
-                  <MiniPlanet tier={i < 3 ? 'binary_sun' : 'mercury'} size={28} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+
+            {/* Weekly leaderboard */}
+            <div>
+              <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-2 mb-2">
+                <Flame className="w-3.5 h-3.5 text-orange-400" />
+                This Week
+              </h3>
+              {weeklyBoard.length === 0 && (
+                <div className="text-center py-8 text-white/20">
+                  <p className="text-xs">No qualifying challengers this week</p>
+                </div>
+              )}
+              {weeklyBoard.map((p, i) => {
+                const isMe = p.address === myAddress;
+                const winRate = p.played > 0 ? Math.round((p.wins / p.played) * 100) : 0;
+                const medalColor =
+                  i === 0
+                    ? 'text-amber-400'
+                    : i === 1
+                      ? 'text-slate-300'
+                      : i === 2
+                        ? 'text-orange-400'
+                        : 'text-white/20';
+                return (
+                  <div
+                    key={p.address}
+                    className={`glass-card p-3 flex items-center gap-3 mb-2 ${isMe ? 'border-amber-500/30' : ''}`}
+                  >
+                    <span className={`text-sm font-black w-6 text-center ${medalColor}`}>{i + 1}</span>
+                    <MiniPlanet tier={i < 3 ? 'binary_sun' : 'mercury'} size={28} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-mono ${isMe ? 'text-amber-300' : 'text-white/50'}`}>
+                          {isMe ? 'You' : formatAddr(p.address)}
+                        </span>
+                        <span className="text-[10px] text-white/20">{winRate}%</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-green-400">{p.wins}W</span>
+                        <span className="text-[10px] text-red-400">{p.losses}L</span>
+                        <span className="text-[10px] text-white/15">·</span>
+                        <span className="text-[10px] text-amber-400">+{p.earned}</span>
+                      </div>
+                    </div>
+                    {p.reward > 0 && (
+                      <div className="text-right shrink-0">
+                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 border border-amber-400/20">
+                          <Zap className="w-3 h-3 text-amber-400" />
+                          <span className="text-[10px] font-bold text-amber-300">+{p.reward}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* All-time leaderboard */}
+            <div>
+              <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-2 mb-2">
+                <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                All Time
+              </h3>
+              {allTimeBoard.length === 0 && (
+                <div className="text-center py-8 text-white/20">
+                  <p className="text-xs">No completed challenges yet</p>
+                </div>
+              )}
+              {allTimeBoard.slice(0, 10).map((p, i) => {
+                const isMe = p.address === myAddress;
+                const medalColor =
+                  i === 0
+                    ? 'text-amber-400'
+                    : i === 1
+                      ? 'text-slate-300'
+                      : i === 2
+                        ? 'text-orange-400'
+                        : 'text-white/20';
+                return (
+                  <div
+                    key={p.address}
+                    className={`glass-card p-3 flex items-center gap-3 mb-2 ${isMe ? 'border-amber-500/30' : ''}`}
+                  >
+                    <span className={`text-sm font-black w-6 text-center ${medalColor}`}>{i + 1}</span>
+                    <MiniPlanet tier={i < 3 ? 'binary_sun' : 'mercury'} size={28} />
+                    <div className="flex-1 min-w-0">
                       <span className={`text-xs font-mono ${isMe ? 'text-amber-300' : 'text-white/50'}`}>
                         {isMe ? 'You' : formatAddr(p.address)}
                       </span>
-                      <span className="text-[10px] text-white/20">{winRate}% WR</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-green-400">{p.wins}W</span>
-                      <span className="text-[10px] text-red-400">{p.losses}L</span>
-                      <span className="text-[10px] text-white/15">·</span>
-                      <span className="text-[10px] text-amber-400">+{p.earned}</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-green-400">{p.wins}W</span>
+                        <span className="text-[10px] text-red-400">{p.losses}L</span>
+                        <span className="text-[10px] text-white/15">·</span>
+                        <span className="text-[10px] text-amber-400">+{p.earned}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
