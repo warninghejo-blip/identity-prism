@@ -434,7 +434,7 @@ function PrismVaultSection({
               </div>
             </div>
             <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
               style={{
                 background: isLocked ? 'rgba(239,68,68,0.08)' : 'rgba(74,222,128,0.08)',
                 border: `1px solid ${isLocked ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.2)'}`,
@@ -600,7 +600,7 @@ function PrismVaultSection({
               style={{ fontSize: 16 }}
             />
             <button
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-2 py-1 rounded-lg"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-colors"
               style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)' }}
               onClick={() => setStakeAmount(String(balance))}
             >
@@ -700,7 +700,7 @@ export default function PrismVault() {
             onClick={() => {
               startFadeTransition(() => goBack(navigate));
             }}
-            className="w-9 h-9 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
+            className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
           >
             <ArrowLeft className="w-4 h-4 text-white/60" />
           </button>
@@ -713,7 +713,7 @@ export default function PrismVault() {
           </div>
           <div className="flex-1" />
           {balance && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.06]">
               <Coins className="w-3.5 h-3.5 text-amber-400" />
               <span className="text-xs font-bold text-white/70">{balance.balance.toLocaleString()}</span>
             </div>

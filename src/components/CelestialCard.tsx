@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, forwardRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { fetchSybilAnalysis } from '@/components/prism/shared';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Environment, Float, OrbitControls } from '@react-three/drei';
 import {
@@ -161,23 +162,20 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     let cancelled = false;
 
     (async () => {
-      // Step 1: sybil analysis (this also caches funding sources on server)
+      // Step 1: sybil analysis (shared deduped fetch — no duplicate requests)
       try {
-        const r = await fetch(`${base}/api/sybil/analysis?address=${address}`);
+        const d = await fetchSybilAnalysis(address);
         if (cancelled) return;
-        if (r.ok) {
-          const d = await r.json();
-          if (d?.riskScore !== undefined) {
-            setSybilRisk({
-              riskScore: d.riskScore,
-              riskLevel: d.riskLevel,
-              trustScore: d.trustScore ?? 100 - d.riskScore,
-              trustGrade: d.trustGrade ?? 'N/A',
-              signals: d.signals,
-              metrics: d.metrics,
-            });
-            setTimeout(() => refetchComposite(), 500);
-          }
+        if (d) {
+          setSybilRisk({
+            riskScore: d.riskScore,
+            riskLevel: d.riskLevel,
+            trustScore: d.trustScore ?? 100 - d.riskScore,
+            trustGrade: d.trustGrade ?? 'N/A',
+            signals: d.signals as typeof sybilRisk.signals,
+            metrics: d.metrics,
+          });
+          setTimeout(() => refetchComposite(), 500);
         }
       } catch {
         /* ignore */
@@ -509,7 +507,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   e.stopPropagation();
                   setIsFlipped(true);
                 }}
-                className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
+                className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
                 title="Flip Card"
               >
                 <RotateCw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:rotate-180 duration-500" />
@@ -674,7 +672,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     e.stopPropagation();
                     setIsFlipped(false);
                   }}
-                  className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
+                  className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
                   title="Flip Back"
                 >
                   <RotateCcw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:-rotate-180 duration-500" />
@@ -737,24 +735,24 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 </div>
                 <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
                   <div className="px-6 pt-4">
-                    <TabsList className="w-full grid grid-cols-3 bg-white/5 border border-white/5 rounded-lg p-0.5 pointer-events-auto">
+                    <TabsList className="w-full grid grid-cols-3 bg-white/5 border border-white/5 rounded-xl p-0.5 pointer-events-auto">
                       <TabsTrigger
                         value="stats"
-                        className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto text-[11px]"
+                        className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
                       >
                         STATS
                       </TabsTrigger>
                       <TabsTrigger
-                        value="badges"
-                        className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto text-[11px]"
-                      >
-                        BADGES
-                      </TabsTrigger>
-                      <TabsTrigger
                         value="intel"
-                        className="data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-200 data-[state=active]:shadow-none rounded-md cursor-pointer pointer-events-auto text-[11px]"
+                        className="data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
                       >
                         X-RAY
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="badges"
+                        className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
+                      >
+                        BADGES
                       </TabsTrigger>
                     </TabsList>
                   </div>
@@ -966,7 +964,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         {sybilRisk.trustScore < 80 && (
                           <Link
                             to="/recovery"
-                            className="block w-full py-2 rounded-lg bg-cyan-500/[0.06] border border-cyan-500/[0.12] text-cyan-300/70 text-xs font-bold hover:bg-cyan-500/[0.12] transition-colors text-center"
+                            className="block w-full py-2 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/[0.12] text-cyan-300/70 text-xs font-bold hover:bg-cyan-500/[0.12] transition-colors text-center"
                           >
                             Improve Trust Score →
                           </Link>

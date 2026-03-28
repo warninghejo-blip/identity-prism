@@ -2561,13 +2561,17 @@ const PrismLeague = () => {
                         {GAME_MODES.map((mode) => (
                           <button
                             key={mode.id}
-                            className={`w-2 h-2 rounded-full transition-all duration-300 ${
-                              gameMode === mode.id
-                                ? 'bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.6)] scale-125'
-                                : 'bg-white/20 hover:bg-white/40'
-                            }`}
+                            className="p-2 -m-2 flex items-center justify-center"
                             onClick={() => setGameMode(mode.id)}
-                          />
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full transition-all duration-300 block ${
+                                gameMode === mode.id
+                                  ? 'bg-cyan-400 shadow-[0_0_6px_rgba(6,182,212,0.6)] scale-125'
+                                  : 'bg-white/20 hover:bg-white/40'
+                              }`}
+                            />
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -2577,7 +2581,7 @@ const PrismLeague = () => {
                       <>
                         <div className="w-full mb-4 flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                           <button
-                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all ${
                               playMode === 'free'
                                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
                                 : 'text-white/40 hover:text-white/60 border border-transparent'
@@ -2587,7 +2591,7 @@ const PrismLeague = () => {
                             <Play className="w-3.5 h-3.5 fill-current" /> Free Play
                           </button>
                           <button
-                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all ${
                               playMode === 'tournament'
                                 ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                                 : 'text-white/40 hover:text-white/60 border border-transparent'
@@ -2607,7 +2611,7 @@ const PrismLeague = () => {
                                 <button
                                   key={t.key}
                                   onClick={() => setTournamentTier(t.key)}
-                                  className={`flex-1 py-2 px-2 rounded-lg text-[11px] font-bold transition-all ${
+                                  className={`flex-1 py-2 px-2 rounded-xl text-[11px] font-bold transition-all ${
                                     tournamentTier === t.key
                                       ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                                       : 'text-white/40 hover:text-white/60 border border-transparent'
@@ -2739,14 +2743,14 @@ const PrismLeague = () => {
                                 {/* Join / Joined */}
                                 <div className="px-4 py-3 flex flex-col gap-2">
                                   {activeTournament.userJoined ? (
-                                    <div className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-center bg-purple-500/15 text-purple-300">
+                                    <div className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-center bg-purple-500/15 text-purple-300">
                                       Joined — good luck!
                                     </div>
                                   ) : (
                                     <button
                                       onClick={() => handleJoinTournament(tournamentTier)}
                                       disabled={joinLoading || !connected}
-                                      className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-2 text-white"
+                                      className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-2 text-white"
                                       style={{ backgroundColor: '#A855F7', boxShadow: '0 0 20px rgba(168,85,247,0.3)' }}
                                     >
                                       {joinLoading ? (
@@ -2790,7 +2794,7 @@ const PrismLeague = () => {
                             )}
 
                             {/* Score submission note */}
-                            <div className="px-3 py-2 rounded-lg bg-purple-500/[0.06] border border-purple-500/15 flex items-start gap-2">
+                            <div className="px-3 py-2 rounded-xl bg-purple-500/[0.06] border border-purple-500/15 flex items-start gap-2">
                               <Zap className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
                               <p className="text-[10px] text-white/40 leading-relaxed">
                                 Scores are submitted automatically when your game ends. Your best run during the
@@ -3233,7 +3237,7 @@ const PrismLeague = () => {
                                 return (
                                   <div
                                     key={ach.id}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${
+                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${
                                       canClaim
                                         ? 'bg-yellow-500/[0.06] border-yellow-500/25'
                                         : ach.unlocked
@@ -3274,7 +3278,7 @@ const PrismLeague = () => {
                                     </div>
                                     {canClaim ? (
                                       <button
-                                        className="shrink-0 px-2.5 py-1 rounded-md bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors"
+                                        className="shrink-0 px-3 py-2 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors"
                                         onClick={() => handleClaimAchievement(ach.id)}
                                       >
                                         Claim
@@ -3412,13 +3416,13 @@ const PrismLeague = () => {
                     {gameMode === 'gravity' ? (
                       /* Gravity mode: TIME and COINS side by side */
                       <div className="flex items-center gap-4 mt-2 mb-0.5">
-                        <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+                        <div className="flex flex-col items-center px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
                           <span className="text-[10px] uppercase tracking-widest text-cyan-400/60 font-semibold">
                             Score
                           </span>
                           <span className="text-2xl font-black text-white tabular-nums">{score}</span>
                         </div>
-                        <div className="flex flex-col items-center px-3 py-1.5 rounded-lg bg-yellow-500/5 border border-yellow-500/15">
+                        <div className="flex flex-col items-center px-3 py-1.5 rounded-xl bg-yellow-500/5 border border-yellow-500/15">
                           <span className="text-[10px] uppercase tracking-widest text-yellow-400/60 font-semibold">
                             Coins
                           </span>
@@ -3502,7 +3506,7 @@ const PrismLeague = () => {
                           return (
                             <div
                               key={ach.id}
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/25 animate-in slide-in-from-bottom duration-500"
+                              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-500/10 border border-yellow-500/25 animate-in slide-in-from-bottom duration-500"
                             >
                               <img src={ach.image} alt={ach.name} className="w-12 h-12 rounded-md object-cover" />
                               <div className="text-left flex-1">
@@ -3511,7 +3515,7 @@ const PrismLeague = () => {
                               </div>
                               {!isClaimed ? (
                                 <button
-                                  className="shrink-0 px-3 py-1.5 rounded-md bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors animate-pulse"
+                                  className="shrink-0 px-3 py-2 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors animate-pulse"
                                   onClick={() => handleClaimAchievement(ach.id)}
                                 >
                                   +{reward}
@@ -3606,7 +3610,7 @@ const PrismLeague = () => {
                     )}
 
                     {lastTxSignature && (
-                      <div className="w-full mb-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-green-500/20 bg-green-500/5">
+                      <div className="w-full mb-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-green-500/20 bg-green-500/5">
                         <Shield className="w-3 h-3 text-green-400 flex-shrink-0" />
                         <span className="text-[10px] text-green-400 font-bold flex-1">
                           On-Chain ✓ +{Math.round((ONCHAIN_BONUS_MULTIPLIER - 1) * 100)}%
@@ -3752,13 +3756,13 @@ const PrismLeague = () => {
             <div className="flex gap-3 pt-2">
               <button
                 onClick={handleAbandonChallenge}
-                className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
+                className="flex-1 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
               >
                 Abandon &amp; Leave
               </button>
               <button
                 onClick={() => setShowChallengeExitWarning(false)}
-                className="flex-1 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors"
+                className="flex-1 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors"
               >
                 Stay &amp; Play
               </button>

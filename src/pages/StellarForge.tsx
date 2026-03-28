@@ -304,7 +304,7 @@ function ItemCard({
         {/* Rarity + Category header */}
         <div className="flex items-center justify-between mb-2.5">
           <span
-            className="text-[8px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-md"
+            className="text-[8px] font-black uppercase tracking-[0.15em] px-2 py-1 rounded-xl"
             style={{
               color: rarityColor,
               background: `${rarityColor}10`,
@@ -336,7 +336,7 @@ function ItemCard({
         {/* Lock label — fixed height zone so cards don't jump */}
         <div className="min-h-[28px] mb-3">
           {lockLabel && !owned && (
-            <div className="flex items-center justify-center gap-1.5 text-amber-400/50 text-[10px] px-2 py-1.5 rounded-lg bg-amber-500/[0.04] border border-amber-500/10">
+            <div className="flex items-center justify-center gap-1.5 text-amber-400/50 text-[10px] px-2 py-1.5 rounded-xl bg-amber-500/[0.04] border border-amber-500/10">
               <Lock className="w-3 h-3" /> {lockLabel}
             </div>
           )}
@@ -830,7 +830,7 @@ function PrismVaultSection({
               </div>
             </div>
             <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
               style={{
                 background: isLocked ? 'rgba(239,68,68,0.08)' : 'rgba(74,222,128,0.08)',
                 border: `1px solid ${isLocked ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.2)'}`,
@@ -1002,7 +1002,7 @@ function PrismVaultSection({
               style={{ fontSize: 16 }}
             />
             <button
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-2 py-1 rounded-lg"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-colors"
               style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)' }}
               onClick={() => setStakeAmount(String(balance))}
             >
@@ -1340,7 +1340,7 @@ export default function StellarForge() {
               onClick={() => {
                 startFadeTransition(() => goBack(navigate));
               }}
-              className="w-9 h-9 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
+              className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
             >
               <ArrowLeft className="w-4 h-4 text-white/60" />
             </button>
@@ -1394,7 +1394,7 @@ export default function StellarForge() {
               <button
                 key={t.id}
                 onClick={() => setTopTab(t.id)}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold tracking-wide transition-all duration-300"
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-bold tracking-wide transition-all duration-300"
                 style={
                   topTab === t.id
                     ? {
@@ -1555,7 +1555,7 @@ export default function StellarForge() {
                               <button
                                 onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
                                 disabled={!canAfford || installingModule}
-                                className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all"
+                                className="w-full py-1.5 rounded-xl text-[10px] font-bold transition-all"
                                 style={{
                                   background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
                                   color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
@@ -1622,7 +1622,7 @@ export default function StellarForge() {
                           <button
                             onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
                             disabled={!canAfford || installingModule}
-                            className="w-full py-1.5 rounded-lg text-[10px] font-bold transition-all"
+                            className="w-full py-1.5 rounded-xl text-[10px] font-bold transition-all"
                             style={{
                               background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
                               color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
@@ -1879,7 +1879,7 @@ export default function StellarForge() {
                         </div>
                         <h3 className="text-white font-bold text-base">{displayShip.name}</h3>
                         <span
-                          className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md mt-1 inline-block"
+                          className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-xl mt-1 inline-block"
                           style={{
                             color: RARITY_COLORS[displayShip.rarity],
                             background: `${RARITY_COLORS[displayShip.rarity]}12`,
@@ -1928,7 +1928,7 @@ export default function StellarForge() {
                                 </div>
                                 <button
                                   onClick={() => handleRemoveModule(mod.id)}
-                                  className="px-2 py-1 rounded-lg text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
+                                  className="px-2 py-1 rounded-xl text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
                                 >
                                   ✕
                                 </button>

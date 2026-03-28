@@ -821,7 +821,7 @@ export default function PrismArena() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setFormType('score')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-all border ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
                     formType === 'score'
                       ? 'bg-amber-400/15 border-amber-400/40 text-amber-400'
                       : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50'
@@ -832,7 +832,7 @@ export default function PrismArena() {
                 </button>
                 <button
                   onClick={() => setFormType('game')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-all border ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
                     formType === 'game'
                       ? 'bg-purple-400/15 border-purple-400/40 text-purple-400'
                       : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50'

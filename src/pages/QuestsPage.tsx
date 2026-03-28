@@ -199,7 +199,7 @@ export default function QuestsPage() {
             onClick={() => {
               startFadeTransition(() => goBack(navigate));
             }}
-            className="flex items-center gap-2 text-white/50 hover:text-white text-sm"
+            className="flex items-center gap-2 text-white/50 hover:text-white text-sm transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             Back
@@ -300,7 +300,7 @@ export default function QuestsPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-all ${
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
                 activeTab === tab.id ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/50'
               }`}
             >

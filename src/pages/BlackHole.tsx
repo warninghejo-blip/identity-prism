@@ -1222,8 +1222,8 @@ const BlackHole = () => {
 
       {/* ══ Hero: Title + Cinematic Black Hole ══ */}
       <div className="blackhole-hero">
-        <h1 className="blackhole-hero__title">Void Purge</h1>
-        <p className="blackhole-hero__sub">Purge the contamination &middot; Salvage your SOL</p>
+        <h1 className="blackhole-hero__title">Black Hole</h1>
+        <p className="blackhole-hero__sub">Burn the dust &middot; Salvage your SOL</p>
 
         <div
           className="blackhole-visual"
@@ -1316,7 +1316,7 @@ const BlackHole = () => {
                   )}
                 </p>
               </div>
-              <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-lg !h-10 !text-sm shrink-0 hidden sm:inline-flex" />
+              <WalletMultiButton className="!bg-zinc-900/80 !border !border-zinc-800 hover:!bg-zinc-800 !rounded-xl !h-10 !text-sm shrink-0 hidden sm:inline-flex" />
             </div>
 
             {/* Threat Assessment */}
@@ -1459,7 +1459,7 @@ const BlackHole = () => {
                     <Button
                       onClick={handleIncinerate}
                       disabled={isBurning || summary.totalAccounts === 0}
-                      className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-12 text-base shadow-lg shadow-red-900/30"
+                      className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-12 text-base shadow-lg shadow-red-900/30 transition-all duration-200"
                     >
                       {isBurning ? (
                         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -1518,12 +1518,12 @@ const BlackHole = () => {
               </Button>
 
               {/* Quick Filters */}
-              <div className="flex rounded-lg border border-zinc-800/60 overflow-hidden">
+              <div className="flex rounded-xl border border-zinc-800/60 overflow-hidden">
                 {(['all', 'nft', 'token'] as const).map((f) => (
                   <button
                     key={f}
                     onClick={() => setAssetFilter(f)}
-                    className={`px-3 py-1 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
+                    className={`px-3 py-2 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
                   >
                     {f === 'all' ? 'All' : f === 'nft' ? 'NFTs' : 'Tokens'}
                   </button>
@@ -1555,13 +1555,22 @@ const BlackHole = () => {
                   />
                 </div>
                 <span className="text-center">Asset</span>
-                <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('value')}>
+                <span
+                  className="text-center cursor-pointer hover:text-zinc-300 py-1.5 px-1"
+                  onClick={() => handleSort('value')}
+                >
                   Bal{sortField === 'value' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                 </span>
-                <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('return')}>
+                <span
+                  className="text-center cursor-pointer hover:text-zinc-300 py-1.5 px-1"
+                  onClick={() => handleSort('return')}
+                >
                   Return{sortField === 'return' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                 </span>
-                <span className="text-center cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>
+                <span
+                  className="text-center cursor-pointer hover:text-zinc-300 py-1.5 px-1"
+                  onClick={() => handleSort('status')}
+                >
                   Status
                 </span>
               </div>
@@ -1581,7 +1590,7 @@ const BlackHole = () => {
                     return (
                       <div
                         key={token.pubkey.toBase58()}
-                        className={`grid items-center py-1 rounded-md border transition-colors ${
+                        className={`grid items-center py-1 min-h-[44px] rounded-xl border transition-colors cursor-pointer ${
                           selectedTokens.has(token.pubkey.toBase58())
                             ? 'bg-cyan-950/15 border-cyan-900/30'
                             : 'bg-zinc-900/20 border-zinc-800/30'

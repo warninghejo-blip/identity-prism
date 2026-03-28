@@ -457,7 +457,7 @@ function MiniPassport({
         {boostRate != null && boostRate > 0 && (
           <div className="mt-2 flex justify-center">
             <div
-              className="flex items-center gap-1 px-2 py-0.5 rounded-lg"
+              className="flex items-center gap-1 px-2 py-0.5 rounded-xl"
               style={{
                 background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(251,146,60,0.1))',
                 border: '1px solid rgba(168,85,247,0.2)',
@@ -806,7 +806,7 @@ export default function CosmicHub({
             {onDisconnect && (
               <button
                 onClick={onDisconnect}
-                className="ml-1 p-1.5 rounded-lg bg-white/[0.06] hover:bg-red-500/20 border border-white/[0.08] hover:border-red-500/30 transition-colors group"
+                className="ml-1 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] hover:bg-red-500/20 border border-white/[0.08] hover:border-red-500/30 transition-colors group"
                 title="Disconnect wallet"
               >
                 <LogOut className="w-3.5 h-3.5 text-white/40 group-hover:text-red-400 transition-colors" />
@@ -967,6 +967,7 @@ function ReferralInviteButton({ walletAddress }: { walletAddress: string }) {
         <div
           className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-auto"
           onClick={() => setShowModal(false)}
+          style={{ cursor: 'pointer' }}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
@@ -981,7 +982,10 @@ function ReferralInviteButton({ walletAddress }: { walletAddress: string }) {
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-white font-bold text-lg">Invite Friends</h2>
-              <button onClick={() => setShowModal(false)} className="text-white/30 hover:text-white/60">
+              <button
+                onClick={() => setShowModal(false)}
+                className="text-white/30 hover:text-white/60 transition-colors"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -994,7 +998,7 @@ function ReferralInviteButton({ walletAddress }: { walletAddress: string }) {
                   <p className="text-white/40 text-xs mb-2">Your referral code</p>
                   <div className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1]">
                     <span className="text-2xl font-mono font-bold text-cyan-400 tracking-widest">{code}</span>
-                    <button onClick={copyLink} className="text-white/30 hover:text-cyan-400">
+                    <button onClick={copyLink} className="text-white/30 hover:text-cyan-400 transition-colors">
                       <Copy className="w-4 h-4" />
                     </button>
                   </div>

@@ -105,6 +105,8 @@ export default function TrustRecovery() {
   const [loading, setLoading] = useState(true);
   const [twitterLoading, setTwitterLoading] = useState(false);
   const [error, setError] = useState('');
+  const [manualUsername, setManualUsername] = useState('');
+  const [showManualInput, setShowManualInput] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     if (!address) return;
@@ -121,33 +123,40 @@ export default function TrustRecovery() {
     fetchStatus();
   }, [fetchStatus]);
 
-  // Handle Twitter redirect result (after redirect flow returns)
+  // Handle Twitter OAuth callback (after redirect from Twitter back to /recovery)
   useEffect(() => {
     if (!address) return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    if (!code || !state) return;
+
+    // Clean URL immediately so refresh doesn't re-trigger
+    window.history.replaceState({}, '', '/recovery');
+
     (async () => {
+      setTwitterLoading(true);
+      setError('');
       try {
-        const { checkTwitterRedirectResult } = await import('@/lib/firebaseAuth');
-        const profile = await checkTwitterRedirectResult();
-        if (profile) {
-          setTwitterLoading(true);
-          const jwt = await ensureJwt();
-          const r = await fetch(`${BASE()}/api/recovery/twitter/link`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) },
-            body: JSON.stringify({
-              twitterUserId: profile.userId,
-              twitterUsername: profile.username,
-              displayName: profile.displayName,
-              photoURL: profile.photoURL,
-            }),
-          });
-          if (r.ok) await fetchStatus();
-          else setError('Failed to link Twitter after redirect');
-          setTwitterLoading(false);
+        const r = await fetch(`${BASE()}/api/recovery/twitter/exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, state }),
+        });
+        const data = await r.json();
+        if (data.success) {
+          await fetchStatus();
+        } else if (data.oauth_only) {
+          // OAuth succeeded but API can't fetch profile — ask for manual username
+          setShowManualInput(true);
+          setError('');
+        } else {
+          setError(data.error || 'Failed to link Twitter');
         }
-      } catch {
-        /* no redirect pending */
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Twitter link failed');
       }
+      setTwitterLoading(false);
     })();
   }, [address, fetchStatus]);
 
@@ -156,29 +165,62 @@ export default function TrustRecovery() {
     setTwitterLoading(true);
     setError('');
     try {
-      const { signInWithTwitter } = await import('@/lib/firebaseAuth');
-      const profile = await signInWithTwitter();
-
-      // Send to our server
       const jwt = await ensureJwt();
-      const r = await fetch(`${BASE()}/api/recovery/twitter/link`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}) },
-        body: JSON.stringify({
-          twitterUserId: profile.userId,
-          twitterUsername: profile.username,
-          displayName: profile.displayName,
-          photoURL: profile.photoURL,
-        }),
-      });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({ error: 'Link failed' }));
-        setError(err.error || 'Failed to link Twitter');
-      } else {
-        await fetchStatus();
+      if (!jwt) {
+        setError('Wallet auth required. Reconnect wallet.');
+        setTwitterLoading(false);
+        return;
       }
+      // Get Twitter OAuth URL from our server
+      const r = await fetch(`${BASE()}/api/recovery/twitter/auth`, {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      const data = await r.json();
+      if (!data.url) {
+        setError(data.error || 'Failed to start Twitter auth');
+        setTwitterLoading(false);
+        return;
+      }
+      // Redirect current page to Twitter (no popup, no Firebase — just works)
+      window.location.href = data.url;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Twitter authentication failed');
+      setTwitterLoading(false);
+    }
+  };
+
+  const handleManualTwitterLink = async () => {
+    const username = manualUsername.replace(/^@/, '').trim();
+    if (!username || !address) return;
+    setTwitterLoading(true);
+    setError('');
+    try {
+      const jwt = await ensureJwt();
+      if (!jwt) {
+        setError('Wallet auth required.');
+        setTwitterLoading(false);
+        return;
+      }
+      const r = await fetch(`${BASE()}/api/recovery/twitter/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({
+          twitterUserId: `oauth_verified_${username}`,
+          twitterUsername: username,
+          displayName: username,
+          photoURL: null,
+        }),
+      });
+      const data = await r.json();
+      if (r.ok && data.success) {
+        setShowManualInput(false);
+        setManualUsername('');
+        await fetchStatus();
+      } else {
+        setError(data.error || 'Failed to link Twitter');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Link failed');
     }
     setTwitterLoading(false);
   };
@@ -217,7 +259,11 @@ export default function TrustRecovery() {
       <div className="max-w-lg mx-auto px-4 pb-20 pt-4 space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3">
-          <button onClick={() => goBack(navigate)} className="p-2 rounded-lg hover:bg-white/5" title="Back">
+          <button
+            onClick={() => goBack(navigate)}
+            className="p-2.5 rounded-xl hover:bg-white/5 transition-colors"
+            title="Back"
+          >
             <ArrowLeft className="w-5 h-5 text-white/40" />
           </button>
           <div className="flex-1">
@@ -231,7 +277,7 @@ export default function TrustRecovery() {
               startFadeTransition();
               navigate('/');
             }}
-            className="px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06] text-white/30 text-xs hover:bg-white/[0.06] hover:text-white/50 transition-colors"
+            className="px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-white/30 text-xs hover:bg-white/[0.06] hover:text-white/50 transition-colors"
           >
             Home
           </button>
@@ -278,7 +324,7 @@ export default function TrustRecovery() {
 
               {s.twitter ? (
                 <div className="space-y-2">
-                  <div className="flex items-center gap-3 p-2 rounded-lg bg-emerald-500/[0.06] border border-emerald-500/[0.1]">
+                  <div className="flex items-center gap-3 p-2 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/[0.1]">
                     {s.twitter.photoURL && <img src={s.twitter.photoURL} alt="" className="w-8 h-8 rounded-full" />}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-white/80 truncate">{s.twitter.displayName}</p>
@@ -291,7 +337,7 @@ export default function TrustRecovery() {
                   </div>
                   <button
                     onClick={handleTwitterUnlink}
-                    className="text-[10px] text-red-400/40 hover:text-red-400/70 transition-colors"
+                    className="text-[10px] text-red-400/40 hover:text-red-400/70 transition-colors p-2 -m-1"
                   >
                     Unlink (30d cooldown)
                   </button>
@@ -320,6 +366,27 @@ export default function TrustRecovery() {
                     </Button>
                   )}
                   {error && <p className="text-xs text-red-400">{error}</p>}
+                  {showManualInput && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-amber-400/80">OAuth verified. Enter your X username:</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={manualUsername}
+                          onChange={(e) => setManualUsername(e.target.value)}
+                          placeholder="@username"
+                          className="flex-1 px-3 py-2 rounded-lg bg-white/[0.05] border border-white/10 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-sky-500/40"
+                        />
+                        <Button
+                          onClick={handleManualTwitterLink}
+                          disabled={twitterLoading || !manualUsername.replace(/^@/, '').trim()}
+                          className="bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-300 text-sm"
+                        >
+                          {twitterLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Link'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -352,7 +419,7 @@ export default function TrustRecovery() {
                   return (
                     <div
                       key={item.label}
-                      className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${
+                      className={`flex items-center gap-2 p-2 rounded-xl border transition-colors ${
                         done ? 'bg-emerald-500/[0.06] border-emerald-500/[0.1]' : 'bg-white/[0.01] border-white/[0.04]'
                       }`}
                     >
@@ -392,12 +459,12 @@ export default function TrustRecovery() {
               </p>
               <div className="flex gap-2">
                 <div
-                  className={`flex-1 text-center p-1.5 rounded text-[10px] ${s.twitter ? 'bg-emerald-500/10 text-emerald-300/70' : 'bg-white/[0.02] text-white/15'}`}
+                  className={`flex-1 text-center p-1.5 rounded-lg text-[10px] ${s.twitter ? 'bg-emerald-500/10 text-emerald-300/70' : 'bg-white/[0.02] text-white/15'}`}
                 >
                   Twitter {s.twitter ? '✓' : '—'}
                 </div>
                 <div
-                  className={`flex-1 text-center p-1.5 rounded text-[10px] ${(bd?.activityBonus || 0) >= 3 ? 'bg-emerald-500/10 text-emerald-300/70' : 'bg-white/[0.02] text-white/15'}`}
+                  className={`flex-1 text-center p-1.5 rounded-lg text-[10px] ${(bd?.activityBonus || 0) >= 3 ? 'bg-emerald-500/10 text-emerald-300/70' : 'bg-white/[0.02] text-white/15'}`}
                 >
                   Activity {(bd?.activityBonus || 0) >= 3 ? '✓' : '—'}
                 </div>
