@@ -5882,6 +5882,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ═══ Daily Limits (public, no auth) ═══
+  if (pathname === '/api/daily-limits' && req.method === 'GET') {
+    if (!ipRateLimit('dailyLimits', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const address = url.searchParams.get('address');
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    const today = new Date().toISOString().slice(0, 10);
+    // Game coins
+    const gameToday = getGameCoinsToday ? getGameCoinsToday(address) : 0;
+    // Non-game global
+    const ngKey = `nongame_daily:${address}`;
+    const ngEntry = prismEarnRateLimit.get(ngKey);
+    const nonGameToday = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
+    // Sub-caps
+    const huntToday = prismEarnRateLimit.get(`subcap:${address}:sybil_hunt:${today}`) || 0;
+    const scanToday = prismEarnRateLimit.get(`subcap:${address}:scan_wallet:${today}`) || 0;
+    const quizToday = (prismEarnRateLimit.get(`quiz:${address}:${today}`) || 0) * 5; // answers × 5 coins
+    respondJson(res, 200, {
+      game:    { earned: gameToday, cap: typeof DAILY_GAME_COIN_CAP !== 'undefined' ? DAILY_GAME_COIN_CAP : 500 },
+      hunt:    { earned: huntToday, cap: DAILY_HUNT_CAP },
+      scan:    { earned: scanToday, cap: DAILY_SCAN_CAP },
+      quiz:    { earned: quizToday, cap: DAILY_QUIZ_CAP },
+      nonGame: { earned: nonGameToday, cap: NON_GAME_DAILY_EARN_CAP },
+    });
+    return;
+  }
+
   // ═══ PRISM Earn ═══
   if (pathname === '/api/prism/earn' && req.method === 'POST') {
     if (!ipRateLimit('prism_earn', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
@@ -5894,7 +5920,7 @@ const server = http.createServer(async (req, res) => {
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
       // Whitelist valid earn sources — reject unknown sources to prevent rate-limit bypass
       // burn_tokens/burn_nfts REMOVED — no on-chain verification, was exploitable for 144K coins/day
-      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 5, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20, text_quest: 1200, sybil_hunt: 20 };
+      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 5, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20, text_quest: 1200, sybil_hunt: 70 };
       if (!source || !MAX_EARN_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
       const maxAllowed = MAX_EARN_PER_CALL[source];
       if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
@@ -5969,15 +5995,24 @@ const server = http.createServer(async (req, res) => {
             await fs.promises.rename(_tmp, CHALLENGES_FILE);
           } catch { /* saveChallenges debounced will retry */ }
         }
-        // Track pre-boost base in daily cap (consistent with game approach — boost is bonus ON TOP)
-        const ngKey = `nongame_daily:${address}`;
+        // Per-activity daily sub-caps
         const today = new Date().toISOString().slice(0, 10);
+        const SUB_CAPS = { sybil_hunt: DAILY_HUNT_CAP, scan_wallet: DAILY_SCAN_CAP };
+        if (SUB_CAPS[source]) {
+          const subKey = `subcap:${address}:${source}:${today}`;
+          const subEntry = prismEarnRateLimit.get(subKey) || 0;
+          if (subEntry >= SUB_CAPS[source]) return respondJson(res, 429, { error: `Daily ${source.replace('_', ' ')} cap reached (${SUB_CAPS[source]} coins/day)`, dailyRemaining: 0 });
+          earned = Math.min(earned, SUB_CAPS[source] - subEntry);
+          prismEarnRateLimit.set(subKey, subEntry + earned);
+        }
+        // Global non-game daily cap
+        const ngKey = `nongame_daily:${address}`;
         const ngEntry = prismEarnRateLimit.get(ngKey);
         let ngEarned = 0;
         if (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) {
           ngEarned = ngEntry.total || 0;
         }
-        if (ngEarned >= NON_GAME_DAILY_EARN_CAP) return respondJson(res, 429, { error: 'Daily non-game earn cap reached', dailyRemaining: 0 });
+        if (ngEarned >= NON_GAME_DAILY_EARN_CAP) return respondJson(res, 429, { error: 'Daily earn cap reached', dailyRemaining: 0 });
         earned = Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned);
         prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
         // Apply staking boost AFTER cap (bonus coins don't count towards cap)
@@ -10251,6 +10286,10 @@ const PRISM_EARN_COOLDOWN_TABLE = {
 };
 // Global daily cap for non-game earn sources (prevents coin inflation exploits)
 const NON_GAME_DAILY_EARN_CAP = 1500;
+// Sub-caps per activity type (within the global cap)
+const DAILY_HUNT_CAP = 500;    // max 500 coins/day from sybil hunts
+const DAILY_SCAN_CAP = 100;    // max 100 coins/day from clean scans
+const DAILY_QUIZ_CAP = 500;    // max 500 coins/day from quiz (100 answers × 5)
 // Valid text quest IDs (must match src/lib/textQuests.ts)
 const VALID_TEXT_QUEST_IDS = new Set(['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy']);
 const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;

@@ -79,7 +79,7 @@ const SPEED_RAMP_AMOUNT = 0.05;
 const CRYSTAL_SIZE = 14;
 const CRYSTAL_INTERVAL = 40;
 const MIN_COL_GAP_PX = 63;
-const MIN_COL_SPACING_PX = 250; // comfortable horizontal
+const MIN_COL_SPACING_PX = 280; // wider horizontal
 const GAP_SHRINK_PER_MIN = 10; // progressive difficulty
 const DYNAMIC_COL_SCORE = 12; // dynamic columns appear earlier
 
@@ -278,7 +278,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     crystals: [] as Crystal[],
     particles: [] as Particle[],
     trail: [] as { x: number; y: number; alpha: number; size: number }[],
-    nextObstacle: 300,
+    nextObstacle: 90,
     nextCrystal: 70,
     frameCount: 0,
     alive: true,
@@ -429,7 +429,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       s.particles = [];
       s.trail = [];
       s.exhaustParticles = [];
-      s.nextObstacle = 300; // ~5 sec grace period (normalized by dtScale)
+      s.nextObstacle = 90; // ~1.5 sec grace period (normalized by dtScale)
       s.nextCrystal = 0;
       s.frameCount = 0;
       s.alive = true;
@@ -488,13 +488,12 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     // ── Spawn helpers ──
 
     /** Compute current gap height based on elapsed time (progressive difficulty). */
-    function currentGapH(_playH: number): number {
+    function currentGapH(playH: number): number {
       const elapsedMin = (performance.now() - s.startTime) / 60000;
-      // Start at ~90px (jump arc ≈ 80px, so snug from the start)
-      // Shrinks to MIN_COL_GAP_PX over ~3-4 minutes
       const startGap = 135;
       const shrunk = startGap - elapsedMin * GAP_SHRINK_PER_MIN;
-      return Math.max(MIN_COL_GAP_PX, shrunk);
+      // Never smaller than MIN_COL_GAP_PX, and never more than 60% of playable area
+      return Math.max(MIN_COL_GAP_PX, Math.min(shrunk, playH * 0.6));
     }
 
     /** Find rightmost obstacle X so we can enforce minimum horizontal spacing. */
@@ -599,33 +598,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
     }
 
-    // Pre-spawn columns far ahead so they scroll in naturally after grace period
-    {
-      const preW = cssW();
-      let px = preW + 80; // start off-screen right — player gets clear space first
-      for (let i = 0; i < 3; i++) {
-        const preH = cssH();
-        const preFloor = preH - GROUND_H;
-        const preCeil = GROUND_H;
-        const prePlayH = preFloor - preCeil;
-        const gapH = currentGapH(prePlayH);
-        const margin = prePlayH * 0.15;
-        const minGY = preCeil + margin + gapH / 2;
-        const maxGY = preFloor - margin - gapH / 2;
-        const gapY = minGY + Math.random() * Math.max(0, maxGY - minGY);
-        const colW = 34 + Math.random() * 14;
-        const jagged: number[] = [];
-        const crackSeeds: number[] = [];
-        for (let j = 0; j < 14; j++) jagged.push((Math.random() - 0.5) * 14);
-        for (let j = 0; j < 6; j++) crackSeeds.push(Math.random());
-        s.obstacles.push({
-          kind: 'column',
-          data: { x: px, gapY, gapH, width: colW, passed: false, jagged, crackSeeds },
-        });
-        s.crystals.push({ x: px + colW / 2, y: gapY, collected: false, pulse: Math.random() * Math.PI * 2 });
-        px += colW + MIN_COL_SPACING_PX;
-      }
-    }
+    // No pre-spawn — nextObstacle grace period handles the delay naturally
 
     // ── Collision helpers ──
     function shipHitbox() {

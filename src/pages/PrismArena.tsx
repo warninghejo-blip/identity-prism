@@ -1053,70 +1053,52 @@ export default function PrismArena() {
                     />
                   )}
 
-                  <div className="flex-1 p-3.5 flex items-center gap-3">
-                    {/* Game cover thumbnail */}
+                  <div className="flex-1 p-3.5 flex gap-3">
+                    {/* Cover */}
                     {gm ? (
-                      <div className="relative shrink-0">
-                        <img
-                          src={gm.cover}
-                          alt={gm.label}
-                          className="w-12 h-12 rounded-xl object-cover"
-                          style={{ boxShadow: `0 0 16px ${gm.accent}0.2)` }}
-                        />
-                        <div
-                          className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-black"
-                          style={{ background: gm.glow, color: '#000' }}
-                        >
-                          <Swords className="w-2.5 h-2.5" />
-                        </div>
-                      </div>
+                      <img
+                        src={gm.cover}
+                        alt={gm.label}
+                        className="w-11 h-11 rounded-xl object-cover shrink-0 mt-0.5"
+                        style={{ boxShadow: `0 0 14px ${gm.accent}0.2)` }}
+                      />
                     ) : (
-                      <MiniPlanet tier="mercury" size={40} />
+                      <MiniPlanet tier="mercury" size={36} />
                     )}
 
-                    {/* Info */}
+                    {/* Info — vertical: name → wallet → stake */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        {gm && (
-                          <span
-                            className="text-[9px] font-bold uppercase tracking-wider opacity-60"
-                            style={{ color: gm.glow }}
-                          >
-                            {gm.label}
-                          </span>
-                        )}
-                        <span className="text-[10px] text-white/20">·</span>
-                        <span className="text-[10px] text-white/30 font-mono truncate">{formatAddr(c.creator)}</span>
-                      </div>
-                      <div className="flex items-center gap-2.5">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 text-[11px] font-bold text-amber-400">
-                          <Coins className="w-3 h-3" />
+                      {gm && (
+                        <div className="text-[13px] font-black tracking-wide mb-0.5" style={{ color: gm.glow }}>
+                          {gm.label}
+                        </div>
+                      )}
+                      <div className="text-[10px] text-white/30 font-mono truncate mb-1">{formatAddr(c.creator)}</div>
+                      <div className="flex items-center gap-1">
+                        <Coins className="w-3 h-3 text-amber-400" />
+                        <span className="text-[11px] font-bold text-amber-400">
                           {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
                         </span>
-                        <span className="text-[10px] text-white/15">{timeAgo(c.createdAt)}</span>
                       </div>
                     </div>
 
-                    {/* Accept button */}
-                    {c.creator !== myAddress && (
-                      <button
-                        onClick={() => handleAccept(c.id)}
-                        disabled={acceptingId === c.id || !myAddress}
-                        className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/25 hover:bg-green-500/25 hover:border-green-500/40 transition-all shrink-0 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {acceptingId === c.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : c.type === 'game' ? (
-                          <>
-                            <Swords className="w-3.5 h-3.5" /> Accept
-                          </>
-                        ) : (
-                          <>
-                            <Check className="w-3.5 h-3.5" /> Accept
-                          </>
-                        )}
-                      </button>
-                    )}
+                    {/* Right: accept + time under button */}
+                    <div className="flex flex-col items-center shrink-0 gap-1.5">
+                      {c.creator !== myAddress && (
+                        <button
+                          onClick={() => handleAccept(c.id)}
+                          disabled={acceptingId === c.id || !myAddress}
+                          className="w-10 h-10 rounded-xl flex items-center justify-center bg-green-500/15 text-green-400 border border-green-500/25 hover:bg-green-500/25 hover:border-green-500/40 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {acceptingId === c.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Swords className="w-4 h-4" />
+                          )}
+                        </button>
+                      )}
+                      <span className="text-[8px] text-white/15">{timeAgo(c.createdAt)}</span>
+                    </div>
                   </div>
 
                   {/* Ambient glow */}

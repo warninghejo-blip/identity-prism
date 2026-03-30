@@ -420,7 +420,10 @@ export default function PrismScanner() {
       setShowVerdictAnim(true);
       setTimeout(() => setShowVerdictAnim(false), 3000);
 
-      const coins = isSybil ? 20 : 5;
+      // Rank-based rewards: higher rank = more coins per sybil catch
+      const caught = huntStats.sybilsCaught + (isSybil ? 1 : 0);
+      const rankBonus = caught >= 50 ? 50 : caught >= 20 ? 30 : caught >= 10 ? 20 : caught >= 3 ? 10 : 0;
+      const coins = isSybil ? 20 + rankBonus : 5;
       setHuntCoinsEarned(coins);
       const newStats = updateHuntStats({
         totalHunts: 1,
@@ -437,7 +440,7 @@ export default function PrismScanner() {
         isSybil ? `Sybil bounty: ${addr.slice(0, 8)}...` : `Scanned: ${addr.slice(0, 8)}...`,
       ).catch(() => {});
     },
-    [myAddress],
+    [myAddress, huntStats.sybilsCaught],
   );
 
   const fetchFunding = useCallback(async (addr: string) => {
@@ -491,16 +494,16 @@ export default function PrismScanner() {
     [query, myAddress, fetchSybil, fetchFunding],
   );
 
-  const huntRank =
-    huntStats.sybilsCaught >= 50
-      ? 'Apex Hunter'
-      : huntStats.sybilsCaught >= 20
-        ? 'Veteran'
-        : huntStats.sybilsCaught >= 10
-          ? 'Specialist'
-          : huntStats.sybilsCaught >= 3
-            ? 'Tracker'
-            : 'Recruit';
+  const HUNT_RANKS = [
+    { name: 'Recruit', min: 0, icon: '🔰', color: 'text-white/40', perk: '' },
+    { name: 'Tracker', min: 3, icon: '🎯', color: 'text-green-400', perk: '+10 coins per sybil' },
+    { name: 'Specialist', min: 10, icon: '⚡', color: 'text-blue-400', perk: '+20 coins per sybil' },
+    { name: 'Veteran', min: 20, icon: '🔥', color: 'text-purple-400', perk: '+30 coins, 2× quiz reward' },
+    { name: 'Apex Hunter', min: 50, icon: '💀', color: 'text-amber-400', perk: '+50 coins, 3× quiz reward' },
+  ];
+  const currentRankIdx = HUNT_RANKS.reduce((best, r, i) => (huntStats.sybilsCaught >= r.min ? i : best), 0);
+  const huntRankData = HUNT_RANKS[currentRankIdx];
+  const nextRankData = HUNT_RANKS[currentRankIdx + 1] || null;
 
   return (
     <PageShell>
@@ -521,23 +524,52 @@ export default function PrismScanner() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-4 space-y-4">
-        {/* Hunter Stats Bar */}
+        {/* Hunter Rank Card */}
         {(huntStats.totalHunts > 0 || myAddress) && (
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500/[0.06] to-red-500/[0.04] border border-amber-500/[0.1]">
-            <Target className="w-4 h-4 text-amber-400/60 shrink-0" />
-            <div className="flex items-center gap-4 flex-1 text-[11px] font-mono">
-              <span className="text-amber-300/80 font-bold">{huntRank}</span>
-              <span className="text-white/30">
-                <span className="text-white/50">{huntStats.totalHunts || 0}</span> hunts
-              </span>
-              <span className="text-white/30">
-                <span className="text-red-400/80">{huntStats.sybilsCaught || 0}</span> caught
-              </span>
-              <span className="text-white/30 ml-auto flex items-center gap-1">
-                <Coins className="w-3 h-3 text-amber-400/50" />
-                <span className="text-amber-300/70">{huntStats.coinsEarned || 0}</span>
-              </span>
+          <div className="rounded-2xl bg-gradient-to-r from-amber-500/[0.06] to-red-500/[0.04] border border-amber-500/[0.1] p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="text-2xl">{huntRankData.icon}</div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-black ${huntRankData.color}`}>{huntRankData.name}</span>
+                  {huntRankData.perk && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-lg bg-amber-400/10 text-amber-300/60 font-bold">
+                      {huntRankData.perk}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mt-0.5 text-[10px]">
+                  <span className="text-white/30">
+                    <span className="text-white/50 font-bold">{huntStats.totalHunts || 0}</span> hunts
+                  </span>
+                  <span className="text-white/30">
+                    <span className="text-red-400/80 font-bold">{huntStats.sybilsCaught || 0}</span> caught
+                  </span>
+                  <span className="flex items-center gap-1 text-white/30 ml-auto">
+                    <Coins className="w-3 h-3 text-amber-400/50" />
+                    <span className="text-amber-300/70 font-bold">{huntStats.coinsEarned || 0}</span>
+                  </span>
+                </div>
+              </div>
             </div>
+            {/* Progress to next rank */}
+            {nextRankData && (
+              <div>
+                <div className="flex justify-between text-[9px] mb-1">
+                  <span className="text-white/20">Next: {nextRankData.name}</span>
+                  <span className="text-white/20">
+                    {huntStats.sybilsCaught}/{nextRankData.min} sybils
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-amber-400/60 to-red-400/60 transition-all"
+                    style={{ width: `${Math.min(100, (huntStats.sybilsCaught / nextRankData.min) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            {!nextRankData && <div className="text-[9px] text-amber-400/40 text-center font-bold">MAX RANK</div>}
           </div>
         )}
 
@@ -958,31 +990,62 @@ export default function PrismScanner() {
               </div>
             </div>
 
-            {/* Rank progression */}
+            {/* Rank progression with perks */}
             {huntStats.totalHunts > 0 && (
               <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-4">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-2">Hunter Ranks</p>
-                <div className="flex items-center gap-1">
-                  {[
-                    { name: 'Recruit', min: 0 },
-                    { name: 'Tracker', min: 3 },
-                    { name: 'Specialist', min: 10 },
-                    { name: 'Veteran', min: 20 },
-                    { name: 'Apex', min: 50 },
-                  ].map((rank) => {
-                    const active = huntStats.sybilsCaught >= rank.min;
+                <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-3">
+                  All Ranks & Perks
+                </p>
+                <div className="space-y-2">
+                  {HUNT_RANKS.map((rank, i) => {
+                    const unlocked = huntStats.sybilsCaught >= rank.min;
+                    const isCurrent = i === currentRankIdx;
                     return (
-                      <div key={rank.name} className="flex-1 flex flex-col items-center gap-1">
-                        <div className={`w-full h-1 rounded-full ${active ? 'bg-amber-400/60' : 'bg-white/[0.06]'}`} />
-                        <span className={`text-[8px] ${active ? 'text-amber-300/60' : 'text-white/15'}`}>
-                          {rank.name}
-                        </span>
+                      <div
+                        key={rank.name}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-xl transition-colors ${isCurrent ? 'bg-amber-400/[0.08] border border-amber-400/20' : unlocked ? 'bg-white/[0.02]' : 'opacity-40'}`}
+                      >
+                        <span className="text-lg">{rank.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-[11px] font-bold ${unlocked ? rank.color : 'text-white/20'}`}>
+                            {rank.name}
+                          </span>
+                          {rank.perk && <span className="text-[9px] text-white/25 ml-2">{rank.perk}</span>}
+                        </div>
+                        <span className="text-[9px] text-white/15">{rank.min}+</span>
                       </div>
                     );
                   })}
                 </div>
               </div>
             )}
+
+            {/* How to Earn */}
+            <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-4">
+              <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-2">How to Earn Coins</p>
+              <div className="space-y-1.5 text-[10px]">
+                {[
+                  { label: '🎮 Games', limit: 'per session', sub: 'Orbit, Defender, Gravity — coins from gameplay' },
+                  { label: '🎯 Sybil Hunt', limit: '500/day', sub: '20-70 per sybil (rank bonus), 2 min cooldown' },
+                  { label: '🧠 Quiz', limit: '500/day', sub: '5 coins per correct answer during scan' },
+                  { label: '⚔️ Arena', limit: 'no cap', sub: 'Win P2P challenges — earn opponent stake' },
+                  { label: '📋 Quests', limit: 'daily+weekly', sub: 'Complete tasks for coins + XP' },
+                  { label: '📖 Text Quests', limit: 'one-time', sub: 'Story adventures — up to 1200 coins each' },
+                  { label: '💰 Vault', limit: 'passive', sub: 'Stake coins — earn interest over time' },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-white/[0.02]"
+                  >
+                    <div className="min-w-0">
+                      <span className="text-white/50 font-bold">{item.label}</span>
+                      <p className="text-white/15 mt-0.5">{item.sub}</p>
+                    </div>
+                    <span className="text-amber-300/40 font-bold shrink-0 ml-3 text-[9px]">{item.limit}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>

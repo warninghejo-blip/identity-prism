@@ -861,8 +861,89 @@ export default function CosmicHub({
           </div>
         </div>
 
+        {/* Daily Earnings Progress */}
+        {walletAddress && <DailyEarnings address={walletAddress} />}
+
         {/* Invite Button — bottom */}
         {walletAddress && <ReferralInviteButton walletAddress={walletAddress} />}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ── Daily Earnings Widget ── */
+function DailyEarnings({ address }: { address: string }) {
+  const [data, setData] = useState<{
+    game: { earned: number; cap: number };
+    hunt: { earned: number; cap: number };
+    scan: { earned: number; cap: number };
+    quiz: { earned: number; cap: number };
+    nonGame: { earned: number; cap: number };
+  } | null>(null);
+
+  useEffect(() => {
+    const base = getHeliusProxyUrl() || '';
+    if (!base || !address) return;
+    fetch(`${base}/api/daily-limits?address=${encodeURIComponent(address)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setData(d);
+      })
+      .catch(() => {});
+  }, [address]);
+
+  if (!data) return null;
+  const totalEarned = data.game.earned + data.nonGame.earned;
+  if (totalEarned === 0) return null;
+
+  const huntTotal = data.hunt.earned + data.scan.earned;
+  const huntCap = data.hunt.cap; // scan is part of hunt activity
+  const otherEarned = Math.max(0, data.nonGame.earned - huntTotal - data.quiz.earned);
+  const bars = [
+    { label: 'Games', earned: data.game.earned, cap: data.game.cap, color: '#22d3ee' },
+    { label: 'Sybil Hunt', earned: huntTotal, cap: huntCap, color: '#f87171' },
+    { label: 'Quiz', earned: data.quiz.earned, cap: data.quiz.cap, color: '#a78bfa' },
+    { label: 'Other', earned: otherEarned, cap: data.nonGame.cap - huntCap - data.quiz.cap, color: '#34d399' },
+  ].filter((b) => b.earned > 0);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, delay: 0.5 }}
+      className="w-full max-w-xs mx-auto rounded-2xl p-3.5 pointer-events-auto mb-3"
+      style={{
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}
+    >
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Today's Earnings</span>
+        <span className="text-[11px] font-black text-amber-300">
+          {totalEarned} <span className="text-[9px] text-white/20 font-normal">coins today</span>
+        </span>
+      </div>
+      <div className="space-y-2">
+        {bars.map((b) => {
+          const pct = b.cap > 0 ? Math.min(100, (b.earned / b.cap) * 100) : 0;
+          return (
+            <div key={b.label} className="flex items-center gap-2.5">
+              <span className="text-[9px] font-bold w-11 text-right" style={{ color: b.color }}>
+                {b.label}
+              </span>
+              <div className="flex-1 h-[6px] rounded-full overflow-hidden bg-white/[0.06]">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${b.color}60, ${b.color})` }}
+                />
+              </div>
+              <span className="text-[9px] w-16 font-mono text-right">
+                <span className="text-white/50 font-bold">{b.earned}</span>
+                <span className="text-white/20">/{b.cap}</span>
+              </span>
+            </div>
+          );
+        })}
       </div>
     </motion.div>
   );

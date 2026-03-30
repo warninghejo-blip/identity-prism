@@ -2228,16 +2228,15 @@ const PrismLeague = () => {
           <div className="text-center">
             <div
               key={countdownNum}
-              className="text-7xl font-black text-white animate-ping"
+              className="text-8xl font-black text-white"
               style={{
-                animationDuration: '0.8s',
-                animationIterationCount: 1,
                 textShadow: '0 0 40px rgba(56,189,248,0.6), 0 0 80px rgba(56,189,248,0.3)',
+                animation: 'countdown-pop 0.9s ease-out forwards',
               }}
             >
               {countdownNum > 0 ? countdownNum : 'GO!'}
             </div>
-            <p className="text-sm text-white/40 mt-4 font-bold tracking-widest uppercase">Challenge Mode</p>
+            <p className="text-sm text-white/40 mt-6 font-bold tracking-widest uppercase">Challenge Mode</p>
           </div>
         </div>
       )}

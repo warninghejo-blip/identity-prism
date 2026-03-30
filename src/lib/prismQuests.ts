@@ -72,13 +72,13 @@ export const DAILY_QUESTS: Quest[] = [
   },
   {
     id: 'daily_explore',
-    name: 'Curious Mind',
-    description: 'View another wallet in Prism Arena',
+    name: 'Sybil Hunter',
+    description: 'Scan a wallet in Sybil Hunt',
     category: 'explore',
     frequency: 'daily',
     reward: 15,
     target: 1,
-    icon: '🔭',
+    icon: '🎯',
   },
   {
     id: 'daily_highscore',
@@ -237,14 +237,14 @@ export const ONE_TIME_QUESTS: Quest[] = [
     icon: '📊',
   },
   {
-    id: 'ot_constellation',
-    name: 'Star Mapper',
-    description: 'View your Constellation Network',
+    id: 'ot_text_quest',
+    name: 'Story Explorer',
+    description: 'Complete a text quest adventure',
     category: 'explore',
     frequency: 'one_time',
-    reward: 50,
+    reward: 100,
     target: 1,
-    icon: '🗺️',
+    icon: '📖',
   },
 ];
 
@@ -457,6 +457,130 @@ export function claimQuestReward(state: QuestState, questId: string): QuestState
   for (const p of newState.progress) questMap[p.questId] = p;
   syncQuestsToServer(newState.address, questMap);
   return newState;
+}
+
+/**
+ * Retroactively sync milestone quest progress from localStorage/game data.
+ * Fixes quests that weren't tracked when the action originally happened.
+ */
+export function syncMilestoneProgress(state: QuestState, address: string): QuestState {
+  let s = state;
+
+  // ot_first_mint — check if user has minted
+  const hasMinted =
+    localStorage.getItem(`prism_minted_${address}`) === 'true' ||
+    localStorage.getItem(`hasMintedIdCard_${address}`) === 'true';
+  if (hasMinted) {
+    const r = incrementQuest(s, 'ot_first_mint');
+    s = r.state;
+  }
+
+  // ot_first_scan — check if any scan happened
+  const scanCount = parseInt(localStorage.getItem(`prism_scan_count_${address}`) || '0', 10);
+  if (scanCount > 0) {
+    const r = incrementQuest(s, 'ot_first_scan', scanCount);
+    s = r.state;
+  }
+
+  // ot_first_game — check game stats
+  const gameModes = ['orbit_survival_stats_v1', 'cosmic_defender_stats_v1', 'gravity_rush_stats_v1'];
+  let totalGames = 0;
+  for (const key of gameModes) {
+    try {
+      const p = JSON.parse(localStorage.getItem(key) || '{}');
+      totalGames += p.gamesPlayed || 0;
+    } catch {}
+  }
+  if (totalGames > 0) {
+    const r = incrementQuest(s, 'ot_first_game', totalGames);
+    s = r.state;
+  }
+
+  // ot_reach_sun — check tier from composite cache
+  try {
+    const compositeRaw = sessionStorage.getItem(`composite_score_${address}`);
+    if (compositeRaw) {
+      const cd = JSON.parse(compositeRaw);
+      const tier = cd?.tier || cd?.compositeTier || '';
+      const highTiers = ['sun', 'binary_sun', 'neutron', 'pulsar', 'black_hole'];
+      if (highTiers.includes(tier)) {
+        const r = incrementQuest(s, 'ot_reach_sun');
+        s = r.state;
+      }
+    }
+  } catch {}
+
+  // ot_first_burn — check burn stats
+  const burnStats = localStorage.getItem(`blackhole_stats_${address}`);
+  if (burnStats) {
+    try {
+      const p = JSON.parse(burnStats);
+      const totalBurned = (p.tokensBurned || 0) + (p.nftsBurned || 0);
+      if (totalBurned > 0) {
+        let r = incrementQuest(s, 'ot_first_burn', totalBurned);
+        s = r.state;
+        r = incrementQuest(s, 'ot_burn100', totalBurned);
+        s = r.state;
+      }
+    } catch {}
+  }
+
+  // ot_forge5 — check owned items
+  const inventory = localStorage.getItem(`prism_inventory_${address}`);
+  if (inventory) {
+    try {
+      const items = JSON.parse(inventory);
+      const count = Array.isArray(items) ? items.length : Object.keys(items).length;
+      if (count > 0) {
+        const r = incrementQuest(s, 'ot_forge5', count);
+        s = r.state;
+      }
+    } catch {}
+  }
+
+  // ot_score1000 — check best scores
+  const scoreKeys = ['orbit_survival', 'cosmic_defender', 'gravity_rush'];
+  for (const mode of scoreKeys) {
+    const best = parseInt(localStorage.getItem(`prism_league_best_${mode}_${address}`) || '0', 10);
+    if (best >= 1000) {
+      const r = incrementQuest(s, 'ot_score1000', best);
+      s = r.state;
+      break;
+    }
+  }
+
+  // ot_text_quest — check completed text quests
+  const textQuestIds = [
+    'abandoned_station',
+    'pirate_ambush',
+    'dark_matter_anomaly',
+    'prison_break',
+    'dominator_factory',
+    'election_day',
+    'alien_zoo',
+    'smugglers_run',
+    'wormhole_gambit',
+    'living_city',
+    'galactic_jackpot',
+    'jungle_survey',
+    'plague_ship',
+    'fortress_heist',
+    'merc_contract',
+    'alien_embassy',
+  ];
+  let textQuestsDone = 0;
+  for (const qid of textQuestIds) {
+    try {
+      const raw = localStorage.getItem(`text_quest_v1_${address}_${qid}`);
+      if (raw && JSON.parse(raw)?.completed) textQuestsDone++;
+    } catch {}
+  }
+  if (textQuestsDone > 0) {
+    const r = incrementQuest(s, 'ot_text_quest', textQuestsDone);
+    s = r.state;
+  }
+
+  return s;
 }
 
 /**

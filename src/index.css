@@ -4234,6 +4234,14 @@ body:has(.page-shell) #root > * {
   .quest-claim-btn { min-width: 72px; min-height: 44px; }
 }
 
+/* Countdown pop animation */
+@keyframes countdown-pop {
+  0% { transform: scale(2); opacity: 0; }
+  20% { transform: scale(1); opacity: 1; }
+  80% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.8); opacity: 0; }
+}
+
 /* Scrollbar hide for horizontal tab bars */
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 .scrollbar-hide::-webkit-scrollbar { display: none; }

@@ -19,6 +19,7 @@ import {
   getQuestProgress,
   claimQuestReward,
   getUnclaimedCount,
+  syncMilestoneProgress,
   type Quest,
   type QuestProgress,
   type QuestState,
@@ -132,7 +133,8 @@ export default function QuestsPage() {
 
   useEffect(() => {
     if (!walletAddress) return;
-    setQuestState(getQuestState(walletAddress));
+    const base_state = getQuestState(walletAddress);
+    setQuestState(syncMilestoneProgress(base_state, walletAddress));
     const base = getApiBase();
     if (base)
       fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
@@ -286,16 +288,8 @@ export default function QuestsPage() {
           </div>
         </div>
 
-        {/* Timer */}
-        {activeTab === 'daily' && timeLeft && (
-          <div className="flex items-center gap-2 text-white/20 text-xs mb-4">
-            <Clock className="w-3 h-3" />
-            <span>Resets in {timeLeft}</span>
-          </div>
-        )}
-
         {/* Tabs */}
-        <div className="flex gap-1 mb-6 bg-white/5 rounded-xl p-1">
+        <div className="flex gap-1 mb-3 bg-white/5 rounded-xl p-1">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -308,6 +302,31 @@ export default function QuestsPage() {
               {tab.label}
             </button>
           ))}
+        </div>
+
+        {/* Timer — fixed height to prevent jumping */}
+        <div className="h-5 mb-4 flex items-center">
+          {activeTab === 'daily' && timeLeft && (
+            <div className="flex items-center gap-2 text-white/20 text-xs">
+              <Clock className="w-3 h-3" />
+              <span>Resets in {timeLeft}</span>
+            </div>
+          )}
+          {activeTab === 'weekly' && questState?.weeklyResetAt && (
+            <div className="flex items-center gap-2 text-white/20 text-xs">
+              <Clock className="w-3 h-3" />
+              <span>
+                Resets{' '}
+                {(() => {
+                  const diff = new Date(questState.weeklyResetAt).getTime() - Date.now();
+                  if (diff <= 0) return 'soon';
+                  const d = Math.floor(diff / 86400000);
+                  const h = Math.floor((diff % 86400000) / 3600000);
+                  return `in ${d}d ${h}h`;
+                })()}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Quest list */}
