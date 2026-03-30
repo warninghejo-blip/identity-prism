@@ -12,7 +12,7 @@ import { getShipProfile } from '@/lib/shipProfiles';
    Types
    ═══════════════════════════════════════════════════ */
 
-export type GameState = 'start' | 'playing' | 'gameover';
+export type GameState = 'start' | 'countdown' | 'playing' | 'gameover';
 export interface ActiveBonus {
   type: string;
   label: string;
@@ -1537,12 +1537,18 @@ export function GameCanvas({ children }: { children: React.ReactNode }) {
     () => typeof window !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent),
     [],
   );
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const prevent = (e: TouchEvent) => {
+      if (e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchmove', prevent, { passive: false });
+    return () => el.removeEventListener('touchmove', prevent);
+  }, []);
   return (
-    <div
-      className="absolute inset-0 w-full h-full"
-      style={{ touchAction: 'none' }}
-      onTouchMove={(e) => e.preventDefault()}
-    >
+    <div ref={containerRef} className="absolute inset-0 w-full h-full" style={{ touchAction: 'none' }}>
       <Suspense fallback={null}>
         <Canvas
           camera={{ fov: isMobile ? 62 : 50, position: [0, 0, CAM_Z], near: 0.1, far: 400 }}

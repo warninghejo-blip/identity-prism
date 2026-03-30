@@ -837,7 +837,8 @@ const PrismLeague = () => {
       setGameMode(urlMode);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const [gameState, setGameState] = useState<'start' | 'playing' | 'gameover'>('start');
+  const [gameState, setGameState] = useState<'start' | 'countdown' | 'playing' | 'gameover'>('start');
+  const [countdownNum, setCountdownNum] = useState(3);
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [isNewBest, setIsNewBest] = useState(false);
@@ -851,7 +852,8 @@ const PrismLeague = () => {
     (v: number) => {
       _liveScore.current = v;
       if (_scoreDomRef.current)
-        _scoreDomRef.current.textContent = gameMode === 'destroyer' ? formatPoints(v) : formatTime(v);
+        _scoreDomRef.current.textContent =
+          gameMode === 'destroyer' ? formatPoints(v) : gameMode === 'gravity' ? `${v}` : formatTime(v);
     },
     [gameMode],
   );
@@ -1411,9 +1413,14 @@ const PrismLeague = () => {
     mbSlotRef.current = 0;
     runStartedAtRef.current = Date.now();
 
-    /* Start game immediately — fetch MagicBlock seed in background (non-blocking) */
+    /* Start game — countdown for challenges, instant for normal play */
     trackGameStart(gameMode);
-    setGameState('playing');
+    if (activeChallengeId) {
+      setCountdownNum(3);
+      setGameState('countdown');
+    } else {
+      setGameState('playing');
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
@@ -1432,6 +1439,17 @@ const PrismLeague = () => {
         clearTimeout(timeout);
       });
   };
+
+  // Countdown 3-2-1 for challenge mode
+  useEffect(() => {
+    if (gameState !== 'countdown') return;
+    if (countdownNum <= 0) {
+      setGameState('playing');
+      return;
+    }
+    const t = setTimeout(() => setCountdownNum((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [gameState, countdownNum]);
 
   // Auto-start for challenge mode — wait for wallet + hasMintedId before calling handleStart
   const challengeAutoStarted = useRef(false);
@@ -2132,7 +2150,7 @@ const PrismLeague = () => {
         <CosmicStarfield
           mode="drift"
           driftDirection={
-            gameState !== 'playing'
+            gameState !== 'playing' && gameState !== 'countdown'
               ? 'right'
               : gameMode === 'gravity'
                 ? 'left'
@@ -2204,6 +2222,26 @@ const PrismLeague = () => {
       {/* FPS overlay */}
       {gameState === 'playing' && <FpsOverlay />}
 
+      {/* Challenge countdown overlay */}
+      {gameState === 'countdown' && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="text-center">
+            <div
+              key={countdownNum}
+              className="text-7xl font-black text-white animate-ping"
+              style={{
+                animationDuration: '0.8s',
+                animationIterationCount: 1,
+                textShadow: '0 0 40px rgba(56,189,248,0.6), 0 0 80px rgba(56,189,248,0.3)',
+              }}
+            >
+              {countdownNum > 0 ? countdownNum : 'GO!'}
+            </div>
+            <p className="text-sm text-white/40 mt-4 font-bold tracking-widest uppercase">Challenge Mode</p>
+          </div>
+        </div>
+      )}
+
       {/* UI Overlay */}
       <div className="absolute inset-0 pointer-events-none z-10 flex flex-col">
         {/* Top Bar */}
@@ -2260,8 +2298,8 @@ const PrismLeague = () => {
 
         {/* Main content area (title + game area) */}
         <div className="flex-1 flex flex-col min-h-0">
-          {/* Title — centered in the gap above the card, hidden during play */}
-          {gameState !== 'playing' && (
+          {/* Title — centered in the gap above the card, hidden during play/countdown */}
+          {gameState !== 'playing' && gameState !== 'countdown' && (
             <div
               className="flex-none flex items-center justify-center py-3 pointer-events-none"
               onMouseDown={(e) => e.stopPropagation()}

@@ -120,7 +120,7 @@ export default function PreviewDeck() {
             <div className="preview-header flex items-center justify-between mb-12">
               <button
                 onClick={() => startFadeTransition(() => goBack(navigate))}
-                className="inline-flex items-center text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/30 rounded-md px-3 py-2 text-sm font-medium"
+                className="inline-flex items-center text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/30 rounded-xl px-3 py-2 text-sm font-medium transition-colors"
               >
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back

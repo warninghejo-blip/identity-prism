@@ -26,7 +26,7 @@ import { getShipProfile } from '@/lib/shipProfiles';
 import { sfxPickup } from '@/lib/gameAudio';
 
 interface GravityRunnerProps {
-  gameState: 'start' | 'playing' | 'gameover';
+  gameState: 'start' | 'countdown' | 'playing' | 'gameover';
   onScore: (score: number) => void;
   onCoins: (coins: number) => void;
   onGameOver: (score: number, coins: number, extraStats?: { columns: number; crystals: number }) => void;
@@ -66,19 +66,22 @@ function hexToRgb(hex: string): [number, number, number] {
 const GROUND_H = 40;
 const SHIP_W = 36;
 const SHIP_H = 36;
-const GRAVITY = 0.5; // strong pull — like Flappy Bird
-const FLAP_VEL = -8.5; // shorter jump amplitude
-const MAX_FALL_VEL = 8.0; // fast fall
-const BASE_SPEED = 4.2; // fast start
-const MAX_SPEED = 7.0; // high ceiling
-const SPEED_RAMP_INTERVAL = 250; // ramp every ~4 sec
-const SPEED_RAMP_AMOUNT = 0.06; // steady acceleration
+// Physics balanced so gap ≈ ship visual (36px) + ~20px margin
+// Jump arc = FLAP_VEL² / (2*GRAVITY) = 7² / (2*0.40) = 61px
+// Gap 56px = tight but always passable with one well-timed flap
+const GRAVITY = 0.4;
+const FLAP_VEL = -8.0;
+const MAX_FALL_VEL = 6.0;
+const BASE_SPEED = 2.8;
+const MAX_SPEED = 5.5;
+const SPEED_RAMP_INTERVAL = 200;
+const SPEED_RAMP_AMOUNT = 0.05;
 const CRYSTAL_SIZE = 14;
-const CRYSTAL_INTERVAL = 45;
-const MIN_COL_GAP_PX = 70; // tight vertical gap
-const MIN_COL_SPACING_PX = 190; // +5%
-const GAP_SHRINK_PER_MIN = 12; // gap shrinks faster
-const DYNAMIC_COL_SCORE = 15; // score threshold when dynamic columns start appearing
+const CRYSTAL_INTERVAL = 40;
+const MIN_COL_GAP_PX = 63;
+const MIN_COL_SPACING_PX = 250; // comfortable horizontal
+const GAP_SHRINK_PER_MIN = 10; // progressive difficulty
+const DYNAMIC_COL_SCORE = 12; // dynamic columns appear earlier
 
 // ── Level themes ──
 interface LevelTheme {
@@ -253,6 +256,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
   const { gameState, onScore, onCoins, onGameOver, reviveRef, hasMintedId } = props;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
+  const countdownDidReset = useRef(false);
   const shipImgRef = useRef<HTMLImageElement | null>(null);
   const shipLoadedRef = useRef(false);
   const profileRef = useRef(getShipProfile(props.shipSkin));
@@ -274,7 +278,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     crystals: [] as Crystal[],
     particles: [] as Particle[],
     trail: [] as { x: number; y: number; alpha: number; size: number }[],
-    nextObstacle: 100,
+    nextObstacle: 300,
     nextCrystal: 70,
     frameCount: 0,
     alive: true,
@@ -344,17 +348,23 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     // No thrust particles — clean background only
   }, []);
 
-  // Input handlers
+  // Input handlers — prevent double-flap from touch+mouse emulation
   useEffect(() => {
     if (gameState !== 'playing') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const handleInput = (e: Event) => {
-      e.preventDefault();
+    let usesTouch = false;
+    const handleTouch = (e: TouchEvent) => {
+      usesTouch = true;
+      if (e.cancelable) e.preventDefault();
       flap();
     };
-    canvas.addEventListener('touchstart', handleInput, { passive: false });
-    canvas.addEventListener('mousedown', handleInput);
+    const handleMouse = () => {
+      if (usesTouch) return;
+      flap();
+    };
+    canvas.addEventListener('touchstart', handleTouch, { passive: false });
+    canvas.addEventListener('mousedown', handleMouse);
     const handleKey = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.code === 'ArrowUp') {
         e.preventDefault();
@@ -363,19 +373,20 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     };
     window.addEventListener('keydown', handleKey);
     return () => {
-      canvas.removeEventListener('touchstart', handleInput);
-      canvas.removeEventListener('mousedown', handleInput);
+      canvas.removeEventListener('touchstart', handleTouch);
+      canvas.removeEventListener('mousedown', handleMouse);
       window.removeEventListener('keydown', handleKey);
     };
   }, [gameState, flap]);
 
   // ── Main game loop ──
   useEffect(() => {
-    if (gameState !== 'playing') {
+    if (gameState !== 'playing' && gameState !== 'countdown') {
       cancelAnimationFrame(animRef.current);
       clearTimeout(animRef.current);
       return;
     }
+    const isCountdown = gameState === 'countdown';
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -397,30 +408,36 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     const cssW = () => canvas.width / dpr;
     const cssH = () => canvas.height / dpr;
 
-    // Reset state
+    // Reset state — skip only when countdown already did the reset
     const s = stateRef.current;
-    const W = cssW();
-    const H = cssH();
-    s.playerY = H / 2 - SHIP_H / 2;
-    s.velY = 0;
-    s.shipRotation = 0;
-    s.score = 0;
-    s.coins = 0;
-    s.coinAccum = 0;
-    s.speed = BASE_SPEED;
-    s.obstacles = [];
-    s.crystals = [];
-    s.particles = [];
-    s.trail = [];
-    s.exhaustParticles = [];
-    s.nextObstacle = 1; // obstacles appear immediately
-    s.nextCrystal = 0;
-    s.frameCount = 0;
-    s.alive = true;
-    s.screenShake = 0;
-    s.levelName = 'Nebula';
-    s.levelBanner = 0;
-    s.prevLevelName = '';
+    const skipReset = isCountdown ? false : countdownDidReset.current;
+    if (isCountdown) countdownDidReset.current = true;
+    if (!isCountdown) countdownDidReset.current = false;
+
+    if (!skipReset) {
+      const W = cssW();
+      const H = cssH();
+      s.playerY = H / 2 - SHIP_H / 2;
+      s.velY = 0;
+      s.shipRotation = 0;
+      s.score = 0;
+      s.coins = 0;
+      s.coinAccum = 0;
+      s.speed = BASE_SPEED;
+      s.obstacles = [];
+      s.crystals = [];
+      s.particles = [];
+      s.trail = [];
+      s.exhaustParticles = [];
+      s.nextObstacle = 300; // ~5 sec grace period (normalized by dtScale)
+      s.nextCrystal = 0;
+      s.frameCount = 0;
+      s.alive = true;
+      s.screenShake = 0;
+      s.levelName = 'Nebula';
+      s.levelBanner = 0;
+      s.prevLevelName = '';
+    }
     s.columnsPassedForBonus = 0;
     s.crystalsCollected = 0;
     s._grazed = false;
@@ -451,7 +468,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     const coinMult = hasMintedId ? 2 : 1;
 
     // Background comets
-    (s as any)._comets = Array.from({ length: 6 }, () => ({
+    (s as any)._comets = Array.from({ length: 2 }, () => ({
       x: 0,
       y: 0,
       vx: 0,
@@ -471,11 +488,13 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     // ── Spawn helpers ──
 
     /** Compute current gap height based on elapsed time (progressive difficulty). */
-    function currentGapH(playH: number): number {
+    function currentGapH(_playH: number): number {
       const elapsedMin = (performance.now() - s.startTime) / 60000;
-      const startGap = Math.max(playH * 0.23, SHIP_H * 3); // 20% tighter
+      // Start at ~90px (jump arc ≈ 80px, so snug from the start)
+      // Shrinks to MIN_COL_GAP_PX over ~3-4 minutes
+      const startGap = 135;
       const shrunk = startGap - elapsedMin * GAP_SHRINK_PER_MIN;
-      return Math.max(MIN_COL_GAP_PX, shrunk); // never below minimum
+      return Math.max(MIN_COL_GAP_PX, shrunk);
     }
 
     /** Find rightmost obstacle X so we can enforce minimum horizontal spacing. */
@@ -580,11 +599,11 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
     }
 
-    // Pre-spawn columns across the screen at start so player sees them immediately
+    // Pre-spawn columns far ahead so they scroll in naturally after grace period
     {
       const preW = cssW();
-      let px = preW * 0.35; // first column at 35% screen
-      while (px < preW + MIN_COL_SPACING_PX * 2) {
+      let px = preW + 80; // start off-screen right — player gets clear space first
+      for (let i = 0; i < 3; i++) {
         const preH = cssH();
         const preFloor = preH - GROUND_H;
         const preCeil = GROUND_H;
@@ -731,6 +750,12 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       const floorY = H - GROUND_H;
       const ceilY = GROUND_H;
 
+      // Delta-time normalization: all physics tuned for 60fps (16.67ms)
+      const now60 = performance.now();
+      const rawDt = now60 - (s as any)._prevFrame || 16.67;
+      (s as any)._prevFrame = now60;
+      const dtScale = Math.min(rawDt / 16.67, 2.5); // cap at 2.5× to prevent death spikes
+
       s.frameCount++;
       // Progressive speed: increases by SPEED_RAMP_AMOUNT every SPEED_RAMP_INTERVAL frames
       const spdBonus = 1 + (props.shipStats?.speed || 0) / 400; // slight initial speed boost x1.0-x1.25
@@ -746,10 +771,10 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
       if (s.levelBanner > 0) s.levelBanner--;
 
-      // Physics — gravity always pulls down
-      s.velY += GRAVITY;
+      // Physics — gravity always pulls down (normalized to 60fps)
+      s.velY += GRAVITY * dtScale;
       if (s.velY > MAX_FALL_VEL) s.velY = MAX_FALL_VEL;
-      s.playerY += s.velY;
+      s.playerY += s.velY * dtScale;
 
       // Ship visual tilt based on velocity
       const targetRot = s.velY * 0.04; // tilt nose down when falling, up when rising
@@ -827,7 +852,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             o.data.vy = -Math.abs(o.data.vy);
           }
         } else {
-          o.data.x -= s.speed;
+          o.data.x -= s.speed * dtScale;
         }
         if (o.kind === 'dynamic') {
           // Grow dynamic column towards max height
@@ -906,8 +931,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
       // Move crystals
       for (const c of s.crystals) {
-        c.x -= s.speed;
-        c.pulse += 0.08;
+        c.x -= s.speed * dtScale;
+        c.pulse += 0.08 * dtScale;
       }
       {
         let ci = 0;
@@ -918,7 +943,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
 
       // Spawn obstacles — consistent intervals with minimum spacing enforced in spawnObstacle
-      s.nextObstacle--;
+      s.nextObstacle -= dtScale;
       if (s.nextObstacle <= 0) {
         spawnObstacle();
         // Steady interval — Flappy Bird pacing
@@ -1044,7 +1069,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       // Background comets — spawn and fly across (like Defender)
       const comets = (s as any)._comets;
       (s as any)._cometTimer += 1;
-      if ((s as any)._cometTimer > 100 + Math.random() * 120) {
+      if ((s as any)._cometTimer > 400 + Math.random() * 300) {
         (s as any)._cometTimer = 0;
         for (const c of comets) {
           if (c.active) continue;
@@ -1517,7 +1542,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     }
 
     function loop() {
-      tick();
+      if (!isCountdown) tick();
       draw();
       if (s.alive) {
         animRef.current = requestAnimationFrame(loop);
@@ -1600,15 +1625,12 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       }
     }
 
-    // Wait for ship sprite before starting game loop (prevents arrow placeholder)
-    const startWhenReady = () => {
-      if (shipLoadedRef.current || unmounted) {
-        if (!unmounted) loop();
-      } else {
-        animRef.current = requestAnimationFrame(startWhenReady);
-      }
-    };
-    startWhenReady();
+    // Reset timing and start immediately — ship draws placeholder if sprite not loaded yet
+    const now = performance.now();
+    s.startTime = now;
+    s.lastTickTime = now;
+    (s as any)._prevFrame = now;
+    loop();
 
     return () => {
       unmounted = true;

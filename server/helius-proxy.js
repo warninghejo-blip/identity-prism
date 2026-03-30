@@ -8205,10 +8205,10 @@ const server = http.createServer(async (req, res) => {
       const isCorrect = answer === stored.correct;
       let earned = 0;
       if (isCorrect && address) {
-        // Earn 5 coins per correct answer (max 50/day via quiz)
+        // Earn 5 coins per correct answer (max 100/day via quiz = 500 coins)
         const dailyKey = `quiz:${address}:${new Date().toISOString().slice(0, 10)}`;
         const dailyCount = (prismEarnRateLimit.get(dailyKey) || 0);
-        if (dailyCount < 50) {
+        if (dailyCount < 100) {
           prismEarnRateLimit.set(dailyKey, dailyCount + 1);
           earned = 5;
           const prevBal = getCoinBalance(address);
@@ -9145,9 +9145,13 @@ const server = http.createServer(async (req, res) => {
       if (challenge.status === 'completed' || challenge.status === 'cancelled' || challenge.status === 'expired') {
         return respondJson(res, 400, { error: 'Challenge already finished' });
       }
-      // Once opponent accepted (playing/accepted), creator cannot cancel — both committed
-      if (challenge.status === 'playing' || challenge.status === 'accepted') {
+      // Once opponent accepted, creator cannot cancel — both committed
+      // But if status is 'playing' with no opponent, creator is still solo — allow cancel
+      if (challenge.status === 'accepted') {
         return respondJson(res, 409, { error: 'Opponent has accepted — challenge cannot be cancelled' });
+      }
+      if (challenge.status === 'playing' && challenge.opponent) {
+        return respondJson(res, 409, { error: 'Opponent is playing — challenge cannot be cancelled' });
       }
       // Only 'open' challenges can be cancelled
 

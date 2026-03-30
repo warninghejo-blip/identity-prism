@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import {
   ArrowLeft,
-  Zap,
+  Coins,
   Plus,
   X,
   Swords,
@@ -102,23 +102,30 @@ const STATUS_STYLES: Record<string, { dot: string; text: string; bg: string }> =
   expired: { dot: 'bg-orange-400', text: 'text-orange-400', bg: 'bg-orange-400/10' },
 };
 
-const GAME_MODE_LABELS: Record<string, { label: string; color: string; cover: string }> = {
-  orbit: {
-    label: 'Orbit Survival',
-    color: 'text-cyan-400 border-cyan-400/30 bg-cyan-400/10',
-    cover: '/games/orbit_cover.png',
-  },
-  destroyer: {
-    label: 'Cosmic Defender',
-    color: 'text-red-400 border-red-400/30 bg-red-400/10',
-    cover: '/games/wars_cover.png',
-  },
-  gravity: {
-    label: 'Gravity Runner',
-    color: 'text-purple-400 border-purple-400/30 bg-purple-400/10',
-    cover: '/games/gravity_cover.png',
-  },
-};
+const GAME_MODE_LABELS: Record<string, { label: string; color: string; cover: string; glow: string; accent: string }> =
+  {
+    orbit: {
+      label: 'Orbit Survival',
+      color: 'text-cyan-400 border-cyan-400/30 bg-cyan-400/10',
+      cover: '/games/orbit_cover.png',
+      glow: '#22d3ee',
+      accent: 'rgba(34,211,238,',
+    },
+    destroyer: {
+      label: 'Cosmic Defender',
+      color: 'text-red-400 border-red-400/30 bg-red-400/10',
+      cover: '/games/wars_cover.png',
+      glow: '#f87171',
+      accent: 'rgba(248,113,113,',
+    },
+    gravity: {
+      label: 'Gravity Runner',
+      color: 'text-purple-400 border-purple-400/30 bg-purple-400/10',
+      cover: '/games/gravity_cover.png',
+      glow: '#a855f6',
+      accent: 'rgba(168,85,246,',
+    },
+  };
 
 /** Format challenge score with units based on game mode */
 function fmtChallengeScore(score: number | null, gameMode: string | null): string {
@@ -137,11 +144,9 @@ function TypeBadge({ challenge }: { challenge: Challenge }) {
   if (challenge.type === 'game' && challenge.gameMode) {
     const mode = GAME_MODE_LABELS[challenge.gameMode];
     return (
-      <span
-        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${mode?.color ?? 'text-white/40 border-white/10 bg-white/5'}`}
-      >
-        <Gamepad2 className="w-3 h-3" />
-        {mode?.label ?? challenge.gameMode}
+      <span className="inline-flex items-center gap-1.5 rounded-full text-[10px] font-bold text-white/50">
+        {mode?.cover && <img src={mode.cover} alt="" className="w-5 h-5 rounded object-cover" />}
+        <span className="sr-only">{mode?.label ?? challenge.gameMode}</span>
       </span>
     );
   }
@@ -211,6 +216,13 @@ export default function PrismArena() {
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [coinBalance, setCoinBalance] = useState<number | null>(null);
   const [showCoinHistory, setShowCoinHistory] = useState(false);
+  const [cancelConfirm, setCancelConfirm] = useState<{
+    challengeId: string;
+    fee: number;
+    refund: number;
+    feeRate: number;
+    unit: string;
+  } | null>(null);
   const [weeklyBoard, setWeeklyBoard] = useState<
     {
       address: string;
@@ -518,7 +530,14 @@ export default function PrismArena() {
 
         if (formType === 'game') {
           const challengeId = resData.challenge?.id ?? resData.id ?? '';
-          toast.success('Challenge created! Starting game...');
+          toast.success(
+            <ArenaToast
+              cover={GAME_MODE_LABELS[formGameMode]?.cover}
+              color="#22c55e"
+              title="Challenge Created!"
+              sub={`${formStake} ${formBetType === 'sol' ? 'SOL' : 'Coins'} staked — starting game...`}
+            />,
+          );
           // Navigate directly to game — no intermediate modal
           sessionStorage.setItem(
             'ip_active_challenge',
@@ -531,7 +550,13 @@ export default function PrismArena() {
             );
           });
         } else {
-          toast.success(`Challenge created! ${formStake} Coins staked`);
+          toast.success(
+            <ArenaToast
+              color="#22c55e"
+              title="Challenge Created!"
+              sub={`${formStake} ${formBetType === 'sol' ? 'SOL' : 'Coins'} staked`}
+            />,
+          );
           setSubTab('mine');
         }
       } else {
@@ -660,22 +685,24 @@ export default function PrismArena() {
   );
 
   // ── Cancel challenge ──
+  // Show cancel confirm modal
+  const promptCancel = useCallback(
+    (challengeId: string) => {
+      const ch = myChallenges.find((c) => c.id === challengeId);
+      if (!ch) return;
+      const feeRate = ch.creatorScore !== null && ch.creatorScore !== undefined ? 0.2 : 0.1;
+      const fee = Math.ceil(ch.stakeAmount * feeRate);
+      const refund = ch.stakeAmount - fee;
+      const unit = ch.stakeType === 'sol' ? 'SOL' : 'Coins';
+      setCancelConfirm({ challengeId, fee, refund, feeRate, unit });
+    },
+    [myChallenges],
+  );
+
   const handleCancel = useCallback(
     async (challengeId: string) => {
       if (actionLockRef.current) return;
-
-      // Find challenge to show fee info — 20% fee if already played, 10% if not
-      const ch = myChallenges.find((c) => c.id === challengeId);
-      const feeRate = ch?.creatorScore !== null && ch?.creatorScore !== undefined ? 0.2 : 0.1;
-      const feeAmount = ch ? Math.ceil(ch.stakeAmount * feeRate) : 0;
-      const refundAmount = ch ? ch.stakeAmount - feeAmount : 0;
-      const unit = ch?.stakeType === 'sol' ? 'SOL' : 'Coins';
-      const pct = Math.round(feeRate * 100);
-      if (
-        !window.confirm(`Cancel this challenge?\n\n${pct}% fee: -${feeAmount} ${unit}\nRefund: ${refundAmount} ${unit}`)
-      ) {
-        return;
-      }
+      setCancelConfirm(null);
 
       actionLockRef.current = true;
       setCancellingId(challengeId);
@@ -748,7 +775,7 @@ export default function PrismArena() {
               onClick={() => setShowCoinHistory(true)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer"
             >
-              <Zap className="w-3 h-3 text-amber-400" />
+              <Coins className="w-3 h-3 text-amber-400" />
               <span className="text-xs font-bold text-amber-300">{coinBalance.toLocaleString()}</span>
             </button>
           )}
@@ -1011,50 +1038,97 @@ export default function PrismArena() {
               </div>
             )}
 
-            {openChallenges.map((c) => (
-              <div key={c.id} className="glass-card p-4 hover:bg-white/[0.06] transition-all hover:border-white/[0.12]">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <MiniPlanet tier="mercury" size={32} />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-xs font-mono text-white/50">{formatAddr(c.creator)}</span>
-                        <TypeBadge challenge={c} />
+            {openChallenges.map((c) => {
+              const gm = c.type === 'game' && c.gameMode ? GAME_MODE_LABELS[c.gameMode] : null;
+              return (
+                <div
+                  key={c.id}
+                  className="relative flex overflow-hidden rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.1] transition-all"
+                >
+                  {/* Left accent bar */}
+                  {gm && (
+                    <div
+                      className="w-1 shrink-0 rounded-l-2xl"
+                      style={{ background: `linear-gradient(to bottom, ${gm.glow}, transparent)` }}
+                    />
+                  )}
+
+                  <div className="flex-1 p-3.5 flex items-center gap-3">
+                    {/* Game cover thumbnail */}
+                    {gm ? (
+                      <div className="relative shrink-0">
+                        <img
+                          src={gm.cover}
+                          alt={gm.label}
+                          className="w-12 h-12 rounded-xl object-cover"
+                          style={{ boxShadow: `0 0 16px ${gm.accent}0.2)` }}
+                        />
+                        <div
+                          className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-black"
+                          style={{ background: gm.glow, color: '#000' }}
+                        >
+                          <Swords className="w-2.5 h-2.5" />
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-bold text-amber-400 bg-amber-400/10 border border-amber-400/20">
-                          <Zap className="w-3 h-3" />
+                    ) : (
+                      <MiniPlanet tier="mercury" size={40} />
+                    )}
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        {gm && (
+                          <span
+                            className="text-[9px] font-bold uppercase tracking-wider opacity-60"
+                            style={{ color: gm.glow }}
+                          >
+                            {gm.label}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-white/20">·</span>
+                        <span className="text-[10px] text-white/30 font-mono truncate">{formatAddr(c.creator)}</span>
+                      </div>
+                      <div className="flex items-center gap-2.5">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 text-[11px] font-bold text-amber-400">
+                          <Coins className="w-3 h-3" />
                           {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
                         </span>
-                        <span className="text-[10px] text-white/20">
-                          <Clock className="w-3 h-3 inline mr-0.5 -mt-0.5" />
-                          {timeAgo(c.createdAt)}
-                        </span>
+                        <span className="text-[10px] text-white/15">{timeAgo(c.createdAt)}</span>
                       </div>
                     </div>
+
+                    {/* Accept button */}
+                    {c.creator !== myAddress && (
+                      <button
+                        onClick={() => handleAccept(c.id)}
+                        disabled={acceptingId === c.id || !myAddress}
+                        className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/25 hover:bg-green-500/25 hover:border-green-500/40 transition-all shrink-0 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {acceptingId === c.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : c.type === 'game' ? (
+                          <>
+                            <Swords className="w-3.5 h-3.5" /> Accept
+                          </>
+                        ) : (
+                          <>
+                            <Check className="w-3.5 h-3.5" /> Accept
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
-                  {c.creator !== myAddress && (
-                    <button
-                      onClick={() => handleAccept(c.id)}
-                      disabled={acceptingId === c.id || !myAddress}
-                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-green-500/15 text-green-400 border border-green-500/25 hover:bg-green-500/25 hover:border-green-500/40 transition-all shrink-0 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {acceptingId === c.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : c.type === 'game' ? (
-                        <>
-                          <Swords className="w-3.5 h-3.5" /> Accept & Play
-                        </>
-                      ) : (
-                        <>
-                          <Check className="w-3.5 h-3.5" /> Accept
-                        </>
-                      )}
-                    </button>
+
+                  {/* Ambient glow */}
+                  {gm && (
+                    <div
+                      className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-32 h-8 rounded-full blur-2xl pointer-events-none"
+                      style={{ background: gm.glow, opacity: 0.06 }}
+                    />
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -1073,7 +1147,7 @@ export default function PrismArena() {
 
             {!myAddress && (
               <div className="text-center py-12 text-white/20">
-                <Zap className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                <Coins className="w-10 h-10 mx-auto mb-3 opacity-20" />
                 <p className="text-sm">Connect your wallet to see your challenges</p>
               </div>
             )}
@@ -1093,7 +1167,13 @@ export default function PrismArena() {
             )}
 
             {myChallenges
-              .filter((c) => c.status !== 'cancelled' && c.status !== 'expired' && !dismissedIds.has(c.id))
+              .filter((c) => {
+                if (c.status === 'cancelled' || dismissedIds.has(c.id)) return false;
+                if (c.status === 'expired') return false;
+                // Hide expired: timer ran out, no opponent joined
+                if (c.expiresAt && c.expiresAt < Date.now() && !c.opponent) return false;
+                return true;
+              })
               .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
               .map((c) => {
                 const isCreator = c.creator === myAddress;
@@ -1103,121 +1183,168 @@ export default function PrismArena() {
                 const didWin = c.winner === myAddress;
                 const isFinished = c.status === 'completed' || c.status === 'cancelled' || c.status === 'expired';
 
+                const gm = c.type === 'game' && c.gameMode ? GAME_MODE_LABELS[c.gameMode] : null;
                 return (
-                  <div key={c.id} className="glass-card p-4 hover:bg-white/[0.06] transition-all">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <MiniPlanet tier="mercury" size={24} />
-                        <span className="text-xs font-mono text-white/40">
-                          vs {opponentAddr ? formatAddr(opponentAddr) : 'Open'}
-                        </span>
-                        <TypeBadge challenge={c} />
-                      </div>
-                      <StatusBadge status={c.status} />
-                    </div>
-
-                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold text-amber-400 bg-amber-400/10 border border-amber-400/20 mb-3">
-                      <Zap className="w-3 h-3" />
-                      {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
-                    </div>
-
-                    {(c.status === 'open' || c.status === 'playing' || c.status === 'accepted') && myScore !== null && (
-                      <div className="rounded-xl p-3 mb-3 bg-sky-500/10 border border-sky-500/20">
-                        <p className="text-xs font-bold text-sky-400">
-                          Your score: {fmtChallengeScore(myScore, c.gameMode)}
-                        </p>
-                        <p className="text-[10px] text-white/30 mt-0.5">
-                          {!c.opponent
-                            ? 'Waiting for opponent...'
-                            : theirScore === null
-                              ? 'Opponent playing...'
-                              : `Opponent: ${fmtChallengeScore(theirScore, c.gameMode)}`}
-                        </p>
-                      </div>
-                    )}
-
-                    {c.status === 'completed' && (
+                  <div
+                    key={c.id}
+                    className="relative flex overflow-hidden rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.1] transition-all"
+                  >
+                    {/* Left accent bar */}
+                    {gm && (
                       <div
-                        className={`rounded-xl p-3 mb-3 ${didWin ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/10 border border-red-500/20'}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className={`text-xs font-bold ${didWin ? 'text-green-400' : 'text-red-400'}`}>
-                              {didWin ? `Won ${c.stakeAmount * 2} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'}` : 'Lost'}
-                            </p>
-                            {(myScore !== null || theirScore !== null) && (
-                              <p className="text-[10px] text-white/30 mt-0.5">
-                                You: {fmtChallengeScore(myScore, c.gameMode)} / Opponent:{' '}
-                                {fmtChallengeScore(theirScore, c.gameMode)}
-                              </p>
-                            )}
-                          </div>
-                          <Trophy className={`w-5 h-5 ${didWin ? 'text-green-400' : 'text-white/10'}`} />
-                        </div>
-                      </div>
+                        className="w-1 shrink-0 rounded-l-2xl"
+                        style={{ background: `linear-gradient(to bottom, ${gm.glow}, transparent)` }}
+                      />
                     )}
 
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {(c.status === 'playing' || c.status === 'accepted') && c.type === 'game' && c.gameMode && (
-                        <button
-                          onClick={() =>
-                            startFadeTransition(() =>
-                              navigate(
-                                `/game?challengeId=${encodeURIComponent(c.id)}&mode=${encodeURIComponent(c.gameMode || 'orbit')}&role=${c.creator === myAddress ? 'creator' : 'acceptor'}`,
-                              ),
-                            )
-                          }
-                          className="arena-btn arena-btn-accent"
-                        >
-                          <Play className="w-3 h-3" />
-                          Play
-                        </button>
-                      )}
+                    <div className="flex-1 p-3.5">
+                      {/* Header: cover + info + status */}
+                      <div className="flex items-center gap-2.5 mb-3">
+                        {gm ? (
+                          <img
+                            src={gm.cover}
+                            alt={gm.label}
+                            className="w-10 h-10 rounded-xl object-cover shrink-0"
+                            style={{ boxShadow: `0 0 12px ${gm.accent}0.18)` }}
+                          />
+                        ) : (
+                          <MiniPlanet tier="mercury" size={28} />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            {gm && (
+                              <span
+                                className="text-[9px] font-bold uppercase tracking-wider opacity-50"
+                                style={{ color: gm.glow }}
+                              >
+                                {gm.label}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-white/20">·</span>
+                            <span className="text-[10px] text-white/30 font-mono truncate">
+                              vs {opponentAddr ? formatAddr(opponentAddr) : 'Waiting...'}
+                            </span>
+                          </div>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 border border-amber-400/15 text-[11px] font-bold text-amber-400">
+                            <Coins className="w-3 h-3" />
+                            {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
+                          </span>
+                        </div>
+                        <StatusBadge status={c.status} />
+                      </div>
+
+                      {(c.status === 'open' || c.status === 'playing' || c.status === 'accepted') &&
+                        myScore !== null && (
+                          <div className="rounded-xl p-3 mb-3 bg-sky-500/10 border border-sky-500/20">
+                            <p className="text-xs font-bold text-sky-400">
+                              Your score: {fmtChallengeScore(myScore, c.gameMode)}
+                            </p>
+                            <p className="text-[10px] text-white/30 mt-0.5">
+                              {!c.opponent
+                                ? 'Waiting for opponent...'
+                                : theirScore === null
+                                  ? 'Opponent playing...'
+                                  : `Opponent: ${fmtChallengeScore(theirScore, c.gameMode)}`}
+                            </p>
+                          </div>
+                        )}
 
                       {c.status === 'completed' && (
-                        <button
-                          onClick={() => setBattleResult(c)}
-                          className={`arena-btn ${didWin ? 'arena-btn-win' : 'arena-btn-lose'}`}
+                        <div
+                          className={`rounded-xl p-3 mb-3 ${didWin ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/10 border border-red-500/20'}`}
                         >
-                          <Eye className="w-3 h-3" />
-                          Result
-                        </button>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className={`text-xs font-bold ${didWin ? 'text-green-400' : 'text-red-400'}`}>
+                                {didWin
+                                  ? `Won ${c.stakeAmount * 2} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'}`
+                                  : 'Lost'}
+                              </p>
+                              {(myScore !== null || theirScore !== null) && (
+                                <p className="text-[10px] text-white/30 mt-0.5">
+                                  You: {fmtChallengeScore(myScore, c.gameMode)} / Opponent:{' '}
+                                  {fmtChallengeScore(theirScore, c.gameMode)}
+                                </p>
+                              )}
+                            </div>
+                            <Trophy className={`w-5 h-5 ${didWin ? 'text-green-400' : 'text-white/10'}`} />
+                          </div>
+                        </div>
                       )}
 
-                      {!isFinished && isCreator && (
-                        <button
-                          onClick={() => handleCancel(c.id)}
-                          disabled={cancellingId === c.id}
-                          className="arena-btn arena-btn-ghost"
-                        >
-                          {cancellingId === c.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <>
-                              <Ban className="w-3 h-3" /> Cancel
-                            </>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {(c.status === 'playing' || c.status === 'accepted') &&
+                          c.type === 'game' &&
+                          c.gameMode &&
+                          myScore === null && (
+                            <button
+                              onClick={() =>
+                                startFadeTransition(() =>
+                                  navigate(
+                                    `/game?challengeId=${encodeURIComponent(c.id)}&mode=${encodeURIComponent(c.gameMode || 'orbit')}&role=${c.creator === myAddress ? 'creator' : 'acceptor'}`,
+                                  ),
+                                )
+                              }
+                              className="arena-btn arena-btn-accent"
+                            >
+                              <Play className="w-3 h-3" />
+                              Play
+                            </button>
                           )}
-                        </button>
-                      )}
 
-                      {isFinished && (
-                        <button
-                          onClick={() => setDismissedIds((prev) => new Set([...prev, c.id]))}
-                          className="arena-btn arena-btn-ghost"
-                        >
-                          <XCircle className="w-3 h-3" /> Dismiss
-                        </button>
-                      )}
+                        {c.status === 'completed' && (
+                          <button
+                            onClick={() => setBattleResult(c)}
+                            className={`arena-btn ${didWin ? 'arena-btn-win' : 'arena-btn-lose'}`}
+                          >
+                            <Eye className="w-3 h-3" />
+                            Result
+                          </button>
+                        )}
 
-                      <span className="ml-auto text-[10px] text-white/15">
-                        {c.expiresAt && c.status !== 'completed' && c.status !== 'cancelled' && c.status !== 'expired'
-                          ? (() => {
-                              const mins = Math.max(0, Math.ceil((c.expiresAt - Date.now()) / 60000));
-                              return mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m left` : `${mins}m left`;
-                            })()
-                          : timeAgo(c.createdAt)}
-                      </span>
+                        {(c.status === 'open' || (c.status === 'playing' && !c.opponent)) && isCreator && (
+                          <button
+                            onClick={() => promptCancel(c.id)}
+                            disabled={cancellingId === c.id}
+                            className="arena-btn arena-btn-ghost"
+                          >
+                            {cancellingId === c.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <>
+                                <Ban className="w-3 h-3" /> Cancel
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {isFinished && (
+                          <button
+                            onClick={() => setDismissedIds((prev) => new Set([...prev, c.id]))}
+                            className="arena-btn arena-btn-ghost"
+                          >
+                            <XCircle className="w-3 h-3" /> Dismiss
+                          </button>
+                        )}
+
+                        <span className="ml-auto text-[10px] text-white/15">
+                          {c.expiresAt && c.status !== 'completed' && c.status !== 'cancelled' && c.status !== 'expired'
+                            ? (() => {
+                                const mins = Math.max(0, Math.ceil((c.expiresAt - Date.now()) / 60000));
+                                return mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m left` : `${mins}m left`;
+                              })()
+                            : timeAgo(c.createdAt)}
+                        </span>
+                      </div>
                     </div>
+                    {/* close flex-1 p-3.5 */}
+                    {/* Ambient glow */}
+                    {gm && (
+                      <div
+                        className="absolute -bottom-3 left-1/3 w-24 h-6 rounded-full blur-2xl pointer-events-none"
+                        style={{ background: gm.glow, opacity: 0.05 }}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -1270,8 +1397,19 @@ export default function PrismArena() {
                     key={p.address}
                     className={`glass-card p-3 flex items-center gap-3 mb-2 ${isMe ? 'border-amber-500/30' : ''}`}
                   >
-                    <span className={`text-sm font-black w-6 text-center ${medalColor}`}>{i + 1}</span>
-                    <MiniPlanet tier={i < 3 ? 'binary_sun' : 'mercury'} size={28} />
+                    <div
+                      className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-black shrink-0 ${
+                        i === 0
+                          ? 'bg-amber-400/20 text-amber-400'
+                          : i === 1
+                            ? 'bg-slate-300/20 text-slate-300'
+                            : i === 2
+                              ? 'bg-orange-400/20 text-orange-400'
+                              : 'bg-white/5 text-white/25'
+                      }`}
+                    >
+                      {i + 1}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-mono ${isMe ? 'text-amber-300' : 'text-white/50'}`}>
@@ -1289,7 +1427,7 @@ export default function PrismArena() {
                     {p.reward > 0 && (
                       <div className="text-right shrink-0 space-y-0.5">
                         <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 border border-amber-400/20">
-                          <Zap className="w-3 h-3 text-amber-400" />
+                          <Coins className="w-3 h-3 text-amber-400" />
                           <span className="text-[10px] font-bold text-amber-300">+{p.reward}</span>
                         </div>
                         {p.xpReward ? (
@@ -1328,8 +1466,19 @@ export default function PrismArena() {
                     key={p.address}
                     className={`glass-card p-3 flex items-center gap-3 mb-2 ${isMe ? 'border-amber-500/30' : ''}`}
                   >
-                    <span className={`text-sm font-black w-6 text-center ${medalColor}`}>{i + 1}</span>
-                    <MiniPlanet tier={i < 3 ? 'binary_sun' : 'mercury'} size={28} />
+                    <div
+                      className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-black shrink-0 ${
+                        i === 0
+                          ? 'bg-amber-400/20 text-amber-400'
+                          : i === 1
+                            ? 'bg-slate-300/20 text-slate-300'
+                            : i === 2
+                              ? 'bg-orange-400/20 text-orange-400'
+                              : 'bg-white/5 text-white/25'
+                      }`}
+                    >
+                      {i + 1}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <span className={`text-xs font-mono ${isMe ? 'text-amber-300' : 'text-white/50'}`}>
                         {isMe ? 'You' : formatAddr(p.address)}
@@ -1372,11 +1521,15 @@ export default function PrismArena() {
               const jwt = sessionStorage.getItem('ip_auth_jwt');
               const token = jwt ? JSON.parse(jwt).token : null;
               if (token) {
-                await fetch(`${getApiBase()}/api/challenge/cancel`, {
+                const r = await fetch(`${getApiBase()}/api/challenge/cancel`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                   body: JSON.stringify({ challengeId: id }),
                 });
+                if (!r.ok) {
+                  const err = await r.json().catch(() => ({ error: 'Cannot cancel' }));
+                  toast.error(err.error || 'Cannot cancel challenge');
+                }
               }
             } catch {}
             setReadyModal(null);
@@ -1396,6 +1549,59 @@ export default function PrismArena() {
         />
       )}
 
+      {/* ── Cancel Confirm Modal ── */}
+      {cancelConfirm && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setCancelConfirm(null)}
+        >
+          <div
+            className="w-[88%] max-w-sm rounded-2xl bg-[#0a0e1a]/95 backdrop-blur-xl border border-white/[0.08] p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center mb-5">
+              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                <Ban className="w-5 h-5 text-red-400" />
+              </div>
+              <h3 className="text-base font-bold text-white/90">Cancel Challenge?</h3>
+              <p className="text-xs text-white/30 mt-1">This action cannot be undone</p>
+            </div>
+
+            <div className="space-y-2 mb-5">
+              <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-red-500/[0.06] border border-red-500/[0.1]">
+                <span className="text-xs text-white/40">
+                  Cancellation fee ({Math.round(cancelConfirm.feeRate * 100)}%)
+                </span>
+                <span className="text-xs font-bold text-red-400">
+                  -{cancelConfirm.fee} {cancelConfirm.unit}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/[0.1]">
+                <span className="text-xs text-white/40">You will receive</span>
+                <span className="text-xs font-bold text-emerald-400">
+                  +{cancelConfirm.refund} {cancelConfirm.unit}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCancelConfirm(null)}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-white/[0.05] border border-white/[0.08] text-white/50 hover:bg-white/[0.08] hover:text-white/70 transition-all"
+              >
+                Keep Challenge
+              </button>
+              <button
+                onClick={() => handleCancel(cancelConfirm.challengeId)}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-red-500/15 border border-red-500/25 text-red-400 hover:bg-red-500/25 transition-all"
+              >
+                Cancel & Refund
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Coin History Modal ── */}
       {showCoinHistory && (
         <div
@@ -1408,7 +1614,7 @@ export default function PrismArena() {
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
               <div className="flex items-center gap-2">
-                <Zap className="w-4 h-4 text-amber-400" />
+                <Coins className="w-4 h-4 text-amber-400" />
                 <span className="text-sm font-bold text-white">Coin History</span>
               </div>
               <div className="flex items-center gap-3">

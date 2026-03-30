@@ -39,9 +39,26 @@ export interface CosmicStarfieldProps {
   driftDirection?: 'right' | 'left' | 'up' | 'down';
 }
 
+// Background comets — lightweight canvas streaks
+const COMET_MAX = IS_MOBILE ? 2 : 4;
+interface BgComet {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  active: boolean;
+  len: number;
+}
+
 export function CosmicStarfield({ mode, onVortexPeak, paused, driftDirection = 'right' }: CosmicStarfieldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<Star[]>([]);
+  const cometsRef = useRef<BgComet[]>(
+    Array.from({ length: COMET_MAX }, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 0, active: false, len: 0 })),
+  );
+  const cometTimer = useRef(0);
   const rafRef = useRef(0);
   const vortexProgressRef = useRef(0); // 0→1 over ~2.5s
   const peakFiredRef = useRef(false);
@@ -236,6 +253,73 @@ export function CosmicStarfield({ mode, onVortexPeak, paused, driftDirection = '
           ctx.beginPath();
           ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
           ctx.fillStyle = `rgba(${s.color[0]},${s.color[1]},${s.color[2]},${alpha})`;
+          ctx.fill();
+        }
+      }
+
+      // ── Background comets ──
+      if (!pausedRef.current) {
+        const comets = cometsRef.current;
+        cometTimer.current += dt;
+        if (cometTimer.current > (IS_MOBILE ? 4.0 : 2.5)) {
+          cometTimer.current = 0;
+          for (const cm of comets) {
+            if (cm.active) continue;
+            // Spawn from random edge
+            const edge = Math.floor(Math.random() * 4);
+            const speed = 150 + Math.random() * 250;
+            if (edge === 0) {
+              cm.x = Math.random() * w;
+              cm.y = -10;
+            } else if (edge === 1) {
+              cm.x = w + 10;
+              cm.y = Math.random() * h;
+            } else if (edge === 2) {
+              cm.x = Math.random() * w;
+              cm.y = h + 10;
+            } else {
+              cm.x = -10;
+              cm.y = Math.random() * h;
+            }
+            const ang = Math.atan2(
+              h / 2 - cm.y + (Math.random() - 0.5) * h * 0.6,
+              w / 2 - cm.x + (Math.random() - 0.5) * w * 0.6,
+            );
+            cm.vx = Math.cos(ang) * speed;
+            cm.vy = Math.sin(ang) * speed;
+            cm.maxLife = 1.2 + Math.random() * 1.5;
+            cm.life = 0;
+            cm.len = 30 + Math.random() * 50;
+            cm.active = true;
+            break;
+          }
+        }
+        for (const cm of comets) {
+          if (!cm.active) continue;
+          cm.life += dt;
+          if (cm.life > cm.maxLife) {
+            cm.active = false;
+            continue;
+          }
+          cm.x += cm.vx * dt;
+          cm.y += cm.vy * dt;
+          const fade = Math.min(1, cm.life * 4) * Math.min(1, (cm.maxLife - cm.life) * 3);
+          const ang = Math.atan2(cm.vy, cm.vx);
+          const tx = cm.x - Math.cos(ang) * cm.len;
+          const ty = cm.y - Math.sin(ang) * cm.len;
+          const grad = ctx.createLinearGradient(tx, ty, cm.x, cm.y);
+          grad.addColorStop(0, `rgba(170,200,255,0)`);
+          grad.addColorStop(1, `rgba(170,200,255,${fade * 0.3})`);
+          ctx.beginPath();
+          ctx.moveTo(tx, ty);
+          ctx.lineTo(cm.x, cm.y);
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          // Head glow
+          ctx.beginPath();
+          ctx.arc(cm.x, cm.y, 2, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(200,220,255,${fade * 0.5})`;
           ctx.fill();
         }
       }

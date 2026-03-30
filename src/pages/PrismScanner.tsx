@@ -306,7 +306,11 @@ function ScanningSequence({ targetAddress, walletAddress }: { targetAddress: str
             <div
               className={`mt-2 text-center text-xs font-bold ${result.correct ? 'text-emerald-400' : 'text-red-400/70'}`}
             >
-              {result.correct ? `Correct! +${result.earned} coins` : `Wrong — ${result.correctAnswer}`}
+              {result.correct
+                ? result.earned > 0
+                  ? `Correct! +${result.earned} coins`
+                  : 'Correct! (daily limit reached)'
+                : `Wrong — ${result.correctAnswer}`}
             </div>
           )}
         </div>
@@ -782,7 +786,7 @@ export default function PrismScanner() {
                       ].map((m) => (
                         <div
                           key={m.label}
-                          className="flex justify-between items-center px-2 py-1 rounded-md bg-white/[0.02]"
+                          className="flex justify-between items-center px-2 py-1 rounded-xl bg-white/[0.02]"
                         >
                           <span className="text-[10px] text-white/25">{m.label}</span>
                           <span className={`text-[11px] font-mono font-bold ${m.color}`}>{m.value}</span>
