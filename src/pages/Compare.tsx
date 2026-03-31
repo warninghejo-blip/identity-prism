@@ -292,8 +292,6 @@ export default function Compare() {
         .then(({ getQuestState, incrementQuest }) => {
           const qs = getQuestState(myAddr);
           const onComplete = (q: { name: string }) => toast.success(`Quest completed: ${q.name}!`, { duration: 4000 });
-          incrementQuest(qs, 'weekly_compare3', 1, onComplete);
-          incrementQuest(qs, 'ot_compare10', 1, onComplete);
           incrementQuest(qs, 'daily_explore', 1, onComplete);
         })
         .catch(() => {});

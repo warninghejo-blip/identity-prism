@@ -42,6 +42,7 @@ interface RecoveryStatus {
     challengeWins: number;
     gamesPlayed: number;
     textQuests: number;
+    vaultStaked: boolean;
     bonus: number;
   };
 }
@@ -224,6 +225,7 @@ export default function TrustRecovery() {
                   { label: 'Wallet Scans', value: s.activity.scans, need: 10, icon: Shield, desc: 'scans' },
                   { label: 'Achievements', value: s.activity.achievements, need: 5, icon: Star, desc: 'earned' },
                   { label: 'Arena Wins', value: s.activity.challengeWins, need: 3, icon: Award, desc: 'wins' },
+                  { label: 'Vault Staker', value: s.activity.vaultStaked ? 1 : 0, need: 1, icon: Lock, desc: 'active' },
                 ].map((item) => {
                   const done = item.value >= item.need;
                   const pct = Math.min((item.value / item.need) * 100, 100);

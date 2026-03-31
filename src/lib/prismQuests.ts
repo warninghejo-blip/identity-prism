@@ -43,7 +43,7 @@ export const DAILY_QUESTS: Quest[] = [
   {
     id: 'daily_scan',
     name: 'Daily Scan',
-    description: 'Scan your wallet once',
+    description: 'Scan any wallet',
     category: 'identity',
     frequency: 'daily',
     reward: 15,
@@ -53,7 +53,7 @@ export const DAILY_QUESTS: Quest[] = [
   {
     id: 'daily_game',
     name: 'Daily Player',
-    description: 'Play one game in Prism League',
+    description: 'Play 1 game',
     category: 'game',
     frequency: 'daily',
     reward: 30,
@@ -63,7 +63,7 @@ export const DAILY_QUESTS: Quest[] = [
   {
     id: 'daily_burn',
     name: 'Dust Collector',
-    description: 'Burn 1 token in Black Hole',
+    description: 'Burn 1 token',
     category: 'burn',
     frequency: 'daily',
     reward: 25,
@@ -73,7 +73,7 @@ export const DAILY_QUESTS: Quest[] = [
   {
     id: 'daily_explore',
     name: 'Sybil Hunter',
-    description: 'Scan a wallet in Sybil Hunt',
+    description: 'Hunt 1 sybil',
     category: 'explore',
     frequency: 'daily',
     reward: 15,
@@ -83,7 +83,7 @@ export const DAILY_QUESTS: Quest[] = [
   {
     id: 'daily_highscore',
     name: 'Beat Yourself',
-    description: 'Set a new personal best in any game',
+    description: 'New personal best',
     category: 'game',
     frequency: 'daily',
     reward: 50,
@@ -96,7 +96,7 @@ export const WEEKLY_QUESTS: Quest[] = [
   {
     id: 'weekly_burn5',
     name: 'Purge Week',
-    description: 'Burn 5 tokens in Black Hole',
+    description: 'Burn 5 tokens',
     category: 'burn',
     frequency: 'weekly',
     reward: 150,
@@ -106,7 +106,7 @@ export const WEEKLY_QUESTS: Quest[] = [
   {
     id: 'weekly_games5',
     name: 'Marathon Runner',
-    description: 'Play 5 games in Prism League',
+    description: 'Play 5 games',
     category: 'game',
     frequency: 'weekly',
     reward: 120,
@@ -116,7 +116,7 @@ export const WEEKLY_QUESTS: Quest[] = [
   {
     id: 'weekly_arena',
     name: 'Arena Fighter',
-    description: 'Complete 3 arena challenges',
+    description: 'Finish 3 arena battles',
     category: 'game',
     frequency: 'weekly',
     reward: 100,
@@ -126,7 +126,7 @@ export const WEEKLY_QUESTS: Quest[] = [
   {
     id: 'weekly_streak',
     name: 'Dedication',
-    description: 'Complete daily quests 5 days in a row',
+    description: '5-day quest streak',
     category: 'identity',
     frequency: 'weekly',
     reward: 200,
@@ -135,13 +135,13 @@ export const WEEKLY_QUESTS: Quest[] = [
   },
   {
     id: 'weekly_forge',
-    name: 'Forge Apprentice',
-    description: 'Purchase 1 item from Stellar Forge',
+    name: 'Shop Haul',
+    description: 'Buy 1 item from the Shop',
     category: 'explore',
     frequency: 'weekly',
     reward: 100,
     target: 1,
-    icon: '⚒️',
+    icon: '🛒',
   },
 ];
 
@@ -149,7 +149,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_first_scan',
     name: 'First Contact',
-    description: 'Scan your wallet for the first time',
+    description: 'First wallet scan',
     category: 'identity',
     frequency: 'one_time',
     reward: 50,
@@ -159,7 +159,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_first_mint',
     name: 'Minted!',
-    description: 'Mint your Identity Prism NFT',
+    description: 'Mint your Identity Card',
     category: 'identity',
     frequency: 'one_time',
     reward: 250,
@@ -169,7 +169,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_first_burn',
     name: 'Into the Void',
-    description: 'Burn your first token in Black Hole',
+    description: 'First token burn',
     category: 'burn',
     frequency: 'one_time',
     reward: 50,
@@ -179,7 +179,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_first_game',
     name: 'Player One',
-    description: 'Play your first game',
+    description: 'First game played',
     category: 'game',
     frequency: 'one_time',
     reward: 75,
@@ -189,7 +189,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_reach_sun',
     name: 'Solar Ascension',
-    description: 'Reach Sun tier or higher',
+    description: 'Reach Sun tier',
     category: 'identity',
     frequency: 'one_time',
     reward: 500,
@@ -199,7 +199,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_burn100',
     name: 'Black Hole Master',
-    description: 'Burn 100 tokens total',
+    description: 'Burn 100 tokens',
     category: 'burn',
     frequency: 'one_time',
     reward: 300,
@@ -209,7 +209,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_score1000',
     name: 'Cosmic Legend',
-    description: 'Score 1000+ in any game',
+    description: 'Score 1000+ in a game',
     category: 'game',
     frequency: 'one_time',
     reward: 150,
@@ -219,7 +219,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_forge5',
     name: 'Collector',
-    description: 'Own 5 items from Stellar Forge',
+    description: 'Own 5 shop items',
     category: 'explore',
     frequency: 'one_time',
     reward: 200,
@@ -229,7 +229,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_arena_wins',
     name: 'Champion',
-    description: 'Win 10 arena challenges',
+    description: 'Win 10 arena battles',
     category: 'game',
     frequency: 'one_time',
     reward: 200,
@@ -239,7 +239,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_text_quest',
     name: 'Story Explorer',
-    description: 'Complete a text quest adventure',
+    description: 'Finish a text quest',
     category: 'explore',
     frequency: 'one_time',
     reward: 100,

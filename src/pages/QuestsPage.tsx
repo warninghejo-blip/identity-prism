@@ -28,6 +28,7 @@ import {
 import type { PrismBalance } from '@/lib/prismCoin';
 import PageShell from '@/components/PageShell';
 import { getApiBase } from '@/components/prism/shared';
+import { getHeliusRpcUrl, getCollectionMint } from '@/constants';
 import { computeRangerXP, getRangerRank, getRankProgress, getNextRank, gatherXPSources } from '@/lib/rangerRanks';
 import { getCompletedQuests } from '@/lib/textQuests';
 
@@ -182,9 +183,10 @@ export default function QuestsPage() {
       .catch(() => {});
 
     // Async: check if minted via DAS (searchAssets)
-    const collectionMint = import.meta.env?.VITE_CORE_COLLECTION;
-    if (collectionMint) {
-      fetch(base, {
+    const heliusUrl = getHeliusRpcUrl();
+    const collectionMint = getCollectionMint();
+    if (heliusUrl && collectionMint) {
+      fetch(heliusUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -197,6 +199,8 @@ export default function QuestsPage() {
         .then((r) => r.json())
         .then((data) => {
           if ((data?.result?.total ?? 0) > 0) {
+            // Cache for sync functions
+            localStorage.setItem(`prism_minted_${walletAddress}`, 'true');
             const st = getQuestState(walletAddress);
             const r = incrementQuest(st, 'ot_first_mint');
             if (r.justCompleted) setQuestState({ ...r.state });

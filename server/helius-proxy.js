@@ -7895,6 +7895,9 @@ const server = http.createServer(async (req, res) => {
     const tqMap = userData.textQuests || {};
     const textQuestsCompleted = Object.values(tqMap).filter(tq => tq && tq.completed).length;
 
+    // Vault check
+    const vaultStaked = Boolean(entry.staking?.tier);
+
     // Activity bonus calculation (max 25)
     let activityBonus = 0;
     if (gamesPlayedCount > 0) activityBonus += Math.min(6, gameTypesCount * 2); // up to 3 game types = +6
@@ -7905,6 +7908,7 @@ const server = http.createServer(async (req, res) => {
     if (realChallengeWins > 0) activityBonus += 2;
     if (textQuestsCompleted > 0) activityBonus += 2;
     if (gamesPlayedCount > 20) activityBonus += 3;
+    if (vaultStaked) activityBonus += 2;
     activityBonus = Math.min(25, activityBonus);
 
     const currentTrustScore = entry.sybil?.trustScore || 0;
@@ -7926,6 +7930,7 @@ const server = http.createServer(async (req, res) => {
         challengeWins: realChallengeWins,
         gamesPlayed: gamesPlayedCount,
         textQuests: textQuestsCompleted,
+        vaultStaked,
       },
     });
     return;

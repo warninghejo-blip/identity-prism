@@ -1614,6 +1614,16 @@ const PrismLeague = () => {
               sessionStorage.removeItem('ip_active_challenge');
               if (result.ok && result.challenge) {
                 setChallengeResult(result.challenge);
+                // Increment arena quests
+                if (playerAddr) {
+                  import('@/lib/prismQuests')
+                    .then(({ getQuestState, incrementQuest }) => {
+                      let qs = getQuestState(playerAddr);
+                      qs = incrementQuest(qs, 'weekly_arena').state;
+                      incrementQuest(qs, 'ot_arena_wins');
+                    })
+                    .catch(() => {});
+                }
                 if (result.challenge.status === 'completed') {
                   if (playerAddr) invalidateBalanceCache(playerAddr);
                   setTimeout(() => setShowBattleResult(true), 1500);
