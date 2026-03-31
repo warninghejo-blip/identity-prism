@@ -220,9 +220,9 @@ export function useWalletData(address?: string) {
     }
     // Skip re-fetch if cache is fresh (< 5 min old)
     if (cacheIsFresh) return;
-    if (hasCached) {
-      setWalletData((prev) => ({ ...prev, isLoading: true }));
-    }
+    // Don't set isLoading:true when we have cached data — it causes card flicker
+    // (card appears from cache → hides during loading → reappears after fetch)
+    // The card stays visible with cached data while fresh data loads in background
 
     let cancelled = false;
 

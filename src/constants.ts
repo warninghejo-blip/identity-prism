@@ -60,7 +60,7 @@ export const HELIUS_CONFIG = {
 };
 
 export const MINT_CONFIG = {
-  PRICE_SOL: 0.01,
+  PRICE_SOL: 0.03,
   NETWORK: 'mainnet-beta',
   COLLECTION: 'Identity Prism',
   SYMBOL: 'PRISM',

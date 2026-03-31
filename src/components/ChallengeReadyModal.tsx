@@ -1,10 +1,11 @@
 /**
  * ChallengeReadyModal — "Arena Ready" modal shown after creating/accepting a game challenge.
- * Provides animated entry and auto-navigate to game.
+ * Creator MUST play — cancel only available for coin challenges (refunds coins).
+ * SOL challenges cannot be cancelled (SOL already sent).
  */
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Swords, Sparkles, X } from 'lucide-react';
+import { Swords, Sparkles } from 'lucide-react';
 
 const GAME_ICONS: Record<string, string> = {
   orbit: '\u{1F6F8}',
@@ -27,11 +28,12 @@ interface ChallengeReadyModalProps {
     stakeType: 'coins' | 'sol';
   };
   onConfirm: () => void;
-  onClose: () => void;
+  onCancel: () => void;
 }
 
-export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onClose }: ChallengeReadyModalProps) {
+export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCancel }: ChallengeReadyModalProps) {
   const [showContent, setShowContent] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -44,9 +46,8 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCl
   const gameMode = challenge.gameMode ?? 'orbit';
   const icon = GAME_ICONS[gameMode] ?? '\u{1F3AE}';
   const name = GAME_NAMES[gameMode] ?? gameMode;
-  const stakeLabel = challenge.stakeType === 'sol'
-    ? `${challenge.stakeAmount} SOL`
-    : `${challenge.stakeAmount} Coins`;
+  const isSol = challenge.stakeType === 'sol';
+  const stakeLabel = isSol ? `${challenge.stakeAmount} SOL` : `${challenge.stakeAmount} Coins`;
 
   return (
     <AnimatePresence>
@@ -57,7 +58,6 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCl
           exit={{ opacity: 0 }}
           transition={{ duration: 0.4 }}
           className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          onClick={onClose}
         >
           <motion.div
             initial={{ scale: 0.7, opacity: 0, y: 40 }}
@@ -67,11 +67,6 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCl
             onClick={(e) => e.stopPropagation()}
             className="relative w-[90vw] max-w-sm rounded-2xl bg-gradient-to-b from-white/[0.08] to-white/[0.03] backdrop-blur-2xl border border-white/[0.12] p-8 text-center overflow-hidden"
           >
-            {/* Close button */}
-            <button onClick={onClose} className="absolute top-4 right-4 text-white/30 hover:text-white/60 transition-colors">
-              <X size={18} />
-            </button>
-
             {/* Animated sword icon */}
             {showContent && (
               <motion.div
@@ -80,7 +75,11 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCl
                 transition={{ duration: 0.5, delay: 0.2, type: 'spring', stiffness: 200 }}
                 className="mb-4"
               >
-                <Swords size={40} className="mx-auto text-amber-400 animate-bounce" style={{ animationDuration: '2s' }} />
+                <Swords
+                  size={40}
+                  className="mx-auto text-amber-400 animate-bounce"
+                  style={{ animationDuration: '2s' }}
+                />
               </motion.div>
             )}
 
@@ -100,7 +99,13 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCl
               <motion.button
                 onClick={onConfirm}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-sm tracking-wider hover:from-amber-400 hover:to-orange-400 transition-all"
-                animate={{ boxShadow: ['0 0 20px rgba(251,191,36,0.3)', '0 0 40px rgba(251,191,36,0.5)', '0 0 20px rgba(251,191,36,0.3)'] }}
+                animate={{
+                  boxShadow: [
+                    '0 0 20px rgba(251,191,36,0.3)',
+                    '0 0 40px rgba(251,191,36,0.5)',
+                    '0 0 20px rgba(251,191,36,0.3)',
+                  ],
+                }}
                 transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
               >
                 <span className="flex items-center justify-center gap-2">
@@ -110,12 +115,20 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCl
                 </span>
               </motion.button>
 
-              <button
-                onClick={onClose}
-                className="w-full py-2.5 rounded-xl bg-white/[0.05] text-white/40 text-sm font-medium hover:bg-white/[0.08] hover:text-white/60 transition-all"
-              >
-                Wait in Arena
-              </button>
+              {/* Cancel only for coin challenges — SOL already sent, can't refund */}
+              {!isSol && (
+                <button
+                  onClick={() => {
+                    setCancelling(true);
+                    onCancel();
+                  }}
+                  disabled={cancelling}
+                  className="w-full py-2.5 rounded-xl bg-white/[0.05] text-white/40 text-sm font-medium hover:bg-red-500/10 hover:text-red-400/60 transition-all"
+                >
+                  {cancelling ? 'Cancelling...' : 'Cancel Challenge'}
+                </button>
+              )}
+              {isSol && <p className="text-[10px] text-white/20 mt-2">SOL stake sent — play to compete</p>}
             </div>
 
             {/* Background glow */}

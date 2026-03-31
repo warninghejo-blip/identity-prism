@@ -83,6 +83,47 @@ export function getApiBase(): string {
   return '';
 }
 
+// ── Shared sybil analysis fetch (deduped + cached) ──
+export interface SybilResult {
+  riskScore: number;
+  riskLevel: string;
+  trustScore: number;
+  trustGrade: string;
+  signals?: unknown[];
+  metrics?: unknown;
+  [key: string]: unknown;
+}
+const _sybilCache = new Map<string, { data: SybilResult; ts: number }>();
+const _sybilInflight = new Map<string, Promise<SybilResult | null>>();
+
+export function fetchSybilAnalysis(address: string): Promise<SybilResult | null> {
+  // Check client cache (5 min)
+  const cached = _sybilCache.get(address);
+  if (cached && Date.now() - cached.ts < 300_000) return Promise.resolve(cached.data);
+  // Dedup in-flight
+  const existing = _sybilInflight.get(address);
+  if (existing) return existing;
+  const p = (async (): Promise<SybilResult | null> => {
+    try {
+      const base = getApiBase();
+      const r = await fetch(`${base}/api/sybil/analysis?address=${address}`);
+      if (!r.ok) return null;
+      const data = await r.json();
+      if (data?.riskScore !== undefined) {
+        _sybilCache.set(address, { data, ts: Date.now() });
+        return data as SybilResult;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  })().finally(() => {
+    _sybilInflight.delete(address);
+  });
+  _sybilInflight.set(address, p);
+  return p;
+}
+
 // ── Fetch wallet preview (reputation + wallet-database in parallel) ──
 // Request deduplication: if same address is already being fetched, reuse the in-flight promise
 const _inflightPreviews = new Map<string, Promise<WalletPreview | null>>();
@@ -380,7 +421,7 @@ export function getCachedJwt(address: string): string | null {
 }
 
 let _jwtInFlight: Promise<string | null> | null = null;
-let _lastChallengeTs = 0; // Client-side cooldown to match server's 10s rate limit
+let _lastChallengeTs = 0;
 
 export async function obtainJwt(wallet: {
   publicKey?: { toBase58(): string } | null;
@@ -392,12 +433,19 @@ export async function obtainJwt(wallet: {
   const existing = getCachedJwt(address);
   if (existing) return existing;
 
-  // Deduplicate in-flight requests — prevents double signature popups
+  // Deduplicate in-flight requests — all callers share the same promise
   if (_jwtInFlight) return _jwtInFlight;
 
-  // Client-side rate limit guard — prevent hitting server's 10s cooldown (429)
+  // Client-side cooldown — but WAIT instead of returning null
   const sinceLast = Date.now() - _lastChallengeTs;
-  if (sinceLast < 11_000) return null;
+  if (sinceLast < 3_500) {
+    // Wait out the cooldown then check cache (another call likely just completed)
+    await new Promise((r) => setTimeout(r, 3_500 - sinceLast));
+    const cached2 = getCachedJwt(address);
+    if (cached2) return cached2;
+    // Still in-flight from the waited call?
+    if (_jwtInFlight) return _jwtInFlight;
+  }
 
   _jwtInFlight = (async () => {
     try {
@@ -429,7 +477,7 @@ export async function obtainJwt(wallet: {
       if (!tokenRes.ok) return null;
       const { token } = (await tokenRes.json()) as { token: string };
 
-      const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
+      const entry = { token, address, expiresAt: Date.now() + 23 * 60 * 60 * 1000 }; // 23h (server = 24h)
       try {
         sessionStorage.setItem('ip_auth_jwt', JSON.stringify(entry));
       } catch {

@@ -24,6 +24,10 @@ export default defineConfig(({ mode }) => {
   server: {
     host: "::",
     port: 7474,
+    headers: {
+      // Required for Firebase signInWithPopup — prevents false popup-closed detection
+      'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+    },
     proxy: {
       "/api": {
         target: apiProxyTarget,
