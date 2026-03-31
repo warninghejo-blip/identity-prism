@@ -125,17 +125,7 @@ const DAS_METHODS = new Set([
 ]);
 const CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'https://identityprism.xyz';
 
-// Twitter OAuth 2.0 (direct, no Firebase Auth dependency)
-const TWITTER_CLIENT_ID = (process.env.TWITTER_CLIENT_ID ?? '').trim();
-const TWITTER_CLIENT_SECRET = (process.env.TWITTER_CLIENT_SECRET ?? '').trim();
-const twitterOAuthStates = new Map(); // state → { codeVerifier, wallet, redirectUri, createdAt }
-// Cleanup expired OAuth states every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of twitterOAuthStates) {
-    if (now - v.createdAt > 300_000) twitterOAuthStates.delete(k);
-  }
-}, 300_000);
+const walletIpLog = new Map(); // address → Set of IPs seen
 const METADATA_DIR = process.env.METADATA_DIR
   ? path.resolve(process.env.METADATA_DIR)
   : path.join(process.cwd(), 'metadata');
@@ -305,6 +295,12 @@ function requireJwt(req, res) {
   }
   try {
     const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
+    const clientIp = getClientIp(req);
+    if (payload.address && clientIp) {
+      const ips = walletIpLog.get(payload.address) || new Set();
+      ips.add(clientIp);
+      walletIpLog.set(payload.address, ips);
+    }
     return { ok: true, address: payload.address };
   } catch {
     respondJson(res, 401, { error: 'Invalid or expired auth token' });
@@ -7878,338 +7874,59 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ Trust Recovery — Twitter OAuth 2.0 (direct, no Firebase) ═══
-
-  // Step 1: Generate Twitter OAuth URL
-  if (pathname === '/api/recovery/twitter/auth' && req.method === 'GET') {
-    if (!TWITTER_CLIENT_ID || !TWITTER_CLIENT_SECRET) {
-      return respondJson(res, 500, { error: 'Twitter OAuth not configured (TWITTER_CLIENT_ID / TWITTER_CLIENT_SECRET missing)' });
-    }
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-
-    const state = crypto.randomBytes(16).toString('hex');
-    const codeVerifier = crypto.randomBytes(32).toString('base64url');
-    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-
-    // Redirect URI = frontend /recovery page (same origin, works on localhost)
-    const origin = req.headers.origin || req.headers.referer?.replace(/\/[^/]*$/, '') || 'http://localhost:7474';
-    const redirectUri = `${origin.replace(/\/$/, '')}/recovery`;
-
-    twitterOAuthStates.set(state, {
-      codeVerifier,
-      wallet: jwtAuth.address,
-      redirectUri,
-      createdAt: Date.now(),
-    });
-
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id: TWITTER_CLIENT_ID,
-      redirect_uri: redirectUri,
-      scope: 'tweet.read users.read',
-      state,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256',
-    });
-
-    respondJson(res, 200, { url: `https://x.com/i/oauth2/authorize?${params}` });
-    return;
-  }
-
-  // Step 2: Exchange OAuth code for token + fetch profile + link wallet
-  if (pathname === '/api/recovery/twitter/exchange' && req.method === 'POST') {
-    if (!TWITTER_CLIENT_ID || !TWITTER_CLIENT_SECRET) {
-      return respondJson(res, 500, { error: 'Twitter OAuth not configured' });
-    }
-    try {
-      const body = JSON.parse(await readBody(req));
-      const { code, state } = body;
-      if (!code || !state) return respondJson(res, 400, { error: 'code and state required' });
-
-      const stored = twitterOAuthStates.get(state);
-      if (!stored) return respondJson(res, 400, { error: 'Invalid or expired OAuth state. Please try again.' });
-      twitterOAuthStates.delete(state);
-
-      const address = stored.wallet;
-
-      // Exchange code for access token
-      const tokenRes = await fetch('https://api.twitter.com/2/oauth2/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: `Basic ${Buffer.from(`${TWITTER_CLIENT_ID}:${TWITTER_CLIENT_SECRET}`).toString('base64')}`,
-        },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: stored.redirectUri,
-          code_verifier: stored.codeVerifier,
-        }),
-      });
-      const tokenData = await tokenRes.json();
-      console.log('[twitter-oauth] Token response status:', tokenRes.status, 'has_token:', !!tokenData.access_token, 'scope:', tokenData.scope);
-      if (!tokenData.access_token) {
-        console.error('[twitter-oauth] Token exchange failed:', JSON.stringify(tokenData));
-        return respondJson(res, 400, { error: tokenData.error_description || tokenData.detail || 'Token exchange failed' });
-      }
-
-      // Fetch user profile — try v2 first, fallback to v1.1
-      let twitterUser = null;
-      // Try v2 API
-      const userRes = await fetch('https://api.twitter.com/2/users/me?user.fields=profile_image_url,username,name,created_at,public_metrics', {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      });
-      const userText = await userRes.text();
-      console.log('[twitter-oauth] v2 users/me status:', userRes.status, 'body:', userText.slice(0, 300));
-      try {
-        const userData = JSON.parse(userText);
-        if (userData.data) {
-          twitterUser = {
-            id: userData.data.id,
-            username: userData.data.username,
-            name: userData.data.name,
-            profile_image_url: userData.data.profile_image_url,
-            created_at: userData.data.created_at,
-            public_metrics: userData.data.public_metrics,
-          };
-        }
-      } catch {}
-
-      // Fallback: v1.1 verify_credentials (works with OAuth 2.0 Bearer on some plans)
-      if (!twitterUser) {
-        console.log('[twitter-oauth] v2 failed, trying v1.1 fallback...');
-        try {
-          const v1Res = await fetch('https://api.twitter.com/1.1/account/verify_credentials.json?include_entities=false&skip_status=true', {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` },
-          });
-          const v1Text = await v1Res.text();
-          console.log('[twitter-oauth] v1.1 verify_credentials status:', v1Res.status, 'body:', v1Text.slice(0, 300));
-          const v1Data = JSON.parse(v1Text);
-          if (v1Data.id_str && v1Data.screen_name) {
-            twitterUser = {
-              id: v1Data.id_str,
-              username: v1Data.screen_name,
-              name: v1Data.name,
-              profile_image_url: v1Data.profile_image_url_https,
-              created_at: v1Data.created_at,
-              public_metrics: { followers_count: v1Data.followers_count, tweet_count: v1Data.statuses_count },
-            };
-          }
-        } catch (e) {
-          console.error('[twitter-oauth] v1.1 fallback failed:', e.message);
-        }
-      }
-
-      if (!twitterUser) {
-        // API can't fetch profile (app enrollment issue), but OAuth succeeded — return partial success
-        // Client will ask user to enter username manually
-        console.warn('[twitter-oauth] Could not fetch profile via API, returning oauth_only mode');
-        return respondJson(res, 200, {
-          success: false,
-          oauth_only: true,
-          access_token_obtained: true,
-          error: 'Twitter API profile fetch unavailable. Please enter your username manually.',
-        });
-      }
-
-      const tw = twitterUser;
-      const twitterUserId = tw.id;
-      const twitterUsername = tw.username;
-
-      // Check 1:1 mapping
-      const existingWallet = twitterWalletMap.get(twitterUserId);
-      if (existingWallet && existingWallet !== address) {
-        return respondJson(res, 409, { error: 'This Twitter account is already linked to another wallet' });
-      }
-
-      // Check unlink cooldown
-      const entry = walletDatabase.get(address) || {};
-      const cooldownUntil = entry.trustRecovery?.unlinkCooldownUntil;
-      if (cooldownUntil && Date.now() < cooldownUntil) {
-        const daysLeft = Math.ceil((cooldownUntil - Date.now()) / 86400000);
-        return respondJson(res, 429, { error: `Unlink cooldown active. ${daysLeft} days remaining.` });
-      }
-
-      // Remove old twitter link if switching
-      const oldTw = entry.trustRecovery?.twitter;
-      if (oldTw?.userId && oldTw.userId !== twitterUserId) {
-        twitterWalletMap.delete(oldTw.userId);
-      }
-
-      // Calculate account age
-      const accountAgeDays = tw.created_at
-        ? Math.floor((Date.now() - new Date(tw.created_at).getTime()) / 86400000)
-        : 0;
-
-      const twitterData = {
-        verified: true,
-        userId: twitterUserId,
-        username: twitterUsername,
-        displayName: tw.name || twitterUsername,
-        photoURL: tw.profile_image_url || null,
-        linkedAt: new Date().toISOString(),
-        accountAgeDays,
-        followers: tw.public_metrics?.followers_count || 0,
-        tweets: tw.public_metrics?.tweet_count || 0,
-        lastChecked: new Date().toISOString(),
-        suspended: false,
-      };
-      updateWalletEntry(address, {
-        trustRecovery: { ...(entry.trustRecovery || {}), twitter: twitterData },
-      });
-      twitterWalletMap.set(twitterUserId, address);
-      triggerCompositeUpdate(address);
-
-      const bonus = computeTrustRecovery(address, {});
-      respondJson(res, 200, { success: true, twitterBonus: bonus.twitterBonus, twitter: twitterData });
-    } catch (e) {
-      console.error('[twitter-oauth] Exchange error:', e);
-      respondJson(res, 500, { error: 'OAuth exchange failed' });
-    }
-    return;
-  }
-
-  // ═══ Trust Recovery — Legacy Firebase link (kept for backwards compat) ═══
-  if (pathname === '/api/recovery/twitter/link' && req.method === 'POST') {
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const address = jwtAuth.address;
-    try {
-      const body = JSON.parse(await readBody(req));
-      const { twitterUserId, twitterUsername, displayName, photoURL, accountCreatedAt, followers, tweets } = body;
-      if (!twitterUserId || !twitterUsername) return respondJson(res, 400, { error: 'twitterUserId and twitterUsername required' });
-
-      // Check 1:1 mapping — each Twitter account can only link to ONE wallet
-      const existingWallet = twitterWalletMap.get(twitterUserId);
-      if (existingWallet && existingWallet !== address) {
-        return respondJson(res, 409, { error: 'This Twitter account is already linked to another wallet' });
-      }
-
-      // Check unlink cooldown (30 days)
-      const entry = walletDatabase.get(address) || {};
-      const cooldownUntil = entry.trustRecovery?.unlinkCooldownUntil;
-      if (cooldownUntil && Date.now() < cooldownUntil) {
-        const daysLeft = Math.ceil((cooldownUntil - Date.now()) / 86400000);
-        return respondJson(res, 429, { error: `Unlink cooldown active. ${daysLeft} days remaining.` });
-      }
-
-      // Remove old twitter link if switching
-      const oldTw = entry.trustRecovery?.twitter;
-      if (oldTw?.userId && oldTw.userId !== twitterUserId) {
-        twitterWalletMap.delete(oldTw.userId);
-      }
-
-      // Calculate account age
-      const accountAgeDays = accountCreatedAt
-        ? Math.floor((Date.now() - new Date(accountCreatedAt).getTime()) / 86400000)
-        : 0;
-
-      // Save
-      const twitterData = {
-        verified: true,
-        userId: twitterUserId,
-        username: twitterUsername,
-        displayName: displayName || twitterUsername,
-        photoURL: photoURL || null,
-        linkedAt: new Date().toISOString(),
-        accountAgeDays,
-        followers: followers || 0,
-        tweets: tweets || 0,
-        lastChecked: new Date().toISOString(),
-        suspended: false,
-      };
-      updateWalletEntry(address, {
-        trustRecovery: { ...(entry.trustRecovery || {}), twitter: twitterData },
-      });
-      twitterWalletMap.set(twitterUserId, address);
-
-      // Trigger composite update
-      triggerCompositeUpdate(address);
-
-      const bonus = computeTrustRecovery(address, {});
-      respondJson(res, 200, { success: true, twitterBonus: bonus.twitterBonus, twitter: twitterData });
-    } catch (e) {
-      respondJson(res, 400, { error: 'Invalid request' });
-    }
-    return;
-  }
-
-  if (pathname === '/api/recovery/twitter/unlink' && req.method === 'POST') {
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const address = jwtAuth.address;
-    const entry = walletDatabase.get(address) || {};
-    const tw = entry.trustRecovery?.twitter;
-    if (!tw?.verified) return respondJson(res, 400, { error: 'No Twitter linked' });
-    twitterWalletMap.delete(tw.userId);
-    updateWalletEntry(address, {
-      trustRecovery: {
-        ...(entry.trustRecovery || {}),
-        twitter: null,
-        unlinkCooldownUntil: Date.now() + 30 * 86400000, // 30 day cooldown
-      },
-    });
-    triggerCompositeUpdate(address);
-    respondJson(res, 200, { success: true, cooldownDays: 30 });
-    return;
-  }
-
   if (pathname === '/api/recovery/status' && req.method === 'GET') {
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
     const entry = walletDatabase.get(address) || {};
-    const rd = entry.trustRecovery || {};
 
-    // Compute activity data for bonus — use verified sources, not socialStats (can be stale/wrong)
+    // Gather activity data from authoritative server-side sources
     const achEntry = achievementData.get(address);
     const qp = questProgress.get(address);
     let questsCompleted = 0, streakDays = 0;
     if (qp?.quests) { for (const q of Object.values(qp.quests)) { if (q.completed) questsCompleted++; } streakDays = qp.streakDays || 0; }
     const playerEntries = leaderboardEntries.filter(e => e.address === address);
     const gameTypesCount = new Set(playerEntries.map(e => e.gameType || 'orbit')).size;
-    // Count real challenge wins from challenges array (authoritative)
+    const gamesPlayedCount = playerEntries.length;
     const realChallengeWins = challenges.filter(c => c.status === 'completed' && c.winner === address).length;
-    // Count real scans from sybilCache (how many addresses this user has scanned)
     const realScanCount = [...sybilCache.entries()].filter(([, v]) => v.scannedBy === address).length;
+    const achievementCount = achEntry ? achEntry.unlocked.size : 0;
+    // Text quests completed count — stored in userData.textQuests (object keyed by questId with completed flag)
+    const userData = entry.userData || {};
+    const tqMap = userData.textQuests || {};
+    const textQuestsCompleted = Object.values(tqMap).filter(tq => tq && tq.completed).length;
 
-    const bonus = computeTrustRecovery(address, {
-      gameTypesCount,
-      achievementCount: achEntry ? achEntry.unlocked.size : 0,
-      questsCompleted, streakDays,
-      scanCount: realScanCount,
-      challengesWon: realChallengeWins,
-      totalCoinsEarned: getCoinBalance(address),
-    });
+    // Activity bonus calculation (max 25)
+    let activityBonus = 0;
+    if (gamesPlayedCount > 0) activityBonus += Math.min(6, gameTypesCount * 2); // up to 3 game types = +6
+    if (achievementCount > 3) activityBonus += 3;
+    if (questsCompleted > 3) activityBonus += 3;
+    if (streakDays > 3) activityBonus += 3;
+    if (realScanCount > 5) activityBonus += 3;
+    if (realChallengeWins > 0) activityBonus += 2;
+    if (textQuestsCompleted > 0) activityBonus += 2;
+    if (gamesPlayedCount > 20) activityBonus += 3;
+    activityBonus = Math.min(25, activityBonus);
 
-    const totalBonus = Math.min(25, bonus.twitterBonus + bonus.activityBonus + bonus.crossVerifBonus);
-    const sybilTrust = entry.sybil?.trustScore || 0;
+    const currentTrustScore = entry.sybil?.trustScore || 0;
+    const adjustedTrustScore = Math.min(100, currentTrustScore + activityBonus);
 
     respondJson(res, 200, {
-      currentTrustScore: sybilTrust,
-      adjustedTrustScore: Math.min(100, sybilTrust + totalBonus),
-      recoveryBonus: totalBonus,
-      maxRecovery: 25,
-      breakdown: bonus,
-      twitter: rd.twitter ? {
-        verified: true,
-        username: rd.twitter.username,
-        displayName: rd.twitter.displayName,
-        photoURL: rd.twitter.photoURL,
-        accountAgeDays: rd.twitter.accountAgeDays,
-        followers: rd.twitter.followers,
-        bonus: bonus.twitterBonus,
-      } : null,
+      currentTrustScore,
+      adjustedTrustScore,
+      recoveryBonus: activityBonus,
+      breakdown: {
+        activityBonus,
+      },
       activity: {
         gameTypes: gameTypesCount,
-        achievements: achEntry ? achEntry.unlocked.size : 0,
+        achievements: achievementCount,
         quests: questsCompleted,
         streak: streakDays,
         scans: realScanCount,
         challengeWins: realChallengeWins,
-        bonus: bonus.activityBonus,
+        gamesPlayed: gamesPlayedCount,
+        textQuests: textQuestsCompleted,
       },
-      cooldownUntil: rd.unlinkCooldownUntil || null,
     });
     return;
   }
