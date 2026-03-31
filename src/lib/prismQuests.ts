@@ -114,14 +114,14 @@ export const WEEKLY_QUESTS: Quest[] = [
     icon: '🏃',
   },
   {
-    id: 'weekly_compare3',
-    name: 'Social Butterfly',
-    description: 'Compare wallets 3 times',
-    category: 'social',
+    id: 'weekly_arena',
+    name: 'Arena Fighter',
+    description: 'Complete 3 arena challenges',
+    category: 'game',
     frequency: 'weekly',
-    reward: 80,
+    reward: 100,
     target: 3,
-    icon: '🦋',
+    icon: '⚔️',
   },
   {
     id: 'weekly_streak',
@@ -227,14 +227,14 @@ export const ONE_TIME_QUESTS: Quest[] = [
     icon: '🗃️',
   },
   {
-    id: 'ot_compare10',
-    name: 'Analyst',
-    description: 'Compare 10 different wallets',
-    category: 'social',
+    id: 'ot_arena_wins',
+    name: 'Champion',
+    description: 'Win 10 arena challenges',
+    category: 'game',
     frequency: 'one_time',
-    reward: 100,
+    reward: 200,
     target: 10,
-    icon: '📊',
+    icon: '🏆',
   },
   {
     id: 'ot_text_quest',
@@ -525,12 +525,12 @@ export function syncMilestoneProgress(state: QuestState, address: string): Quest
     } catch {}
   }
 
-  // ot_forge5 — check owned items
-  const inventory = localStorage.getItem(`prism_inventory_${address}`);
-  if (inventory) {
+  // ot_forge5 — check owned items from forge loadout
+  const loadoutRaw = localStorage.getItem(`prism_forge_loadout_v1_${address}`);
+  if (loadoutRaw) {
     try {
-      const items = JSON.parse(inventory);
-      const count = Array.isArray(items) ? items.length : Object.keys(items).length;
+      const loadout = JSON.parse(loadoutRaw);
+      const count = Array.isArray(loadout?.ownedItems) ? loadout.ownedItems.length : 0;
       if (count > 0) {
         const r = incrementQuest(s, 'ot_forge5', count);
         s = r.state;

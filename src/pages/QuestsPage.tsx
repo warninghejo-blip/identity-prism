@@ -20,6 +20,7 @@ import {
   claimQuestReward,
   getUnclaimedCount,
   syncMilestoneProgress,
+  incrementQuest,
   type Quest,
   type QuestProgress,
   type QuestState,
@@ -70,25 +71,25 @@ function QuestCard({
             <h3 className="text-white font-bold text-sm">{quest.name}</h3>
             {isClaimed && <Check className="w-4 h-4 text-green-400" />}
           </div>
-          <p className="text-white/40 text-xs mb-3">{quest.description}</p>
+          <p className="text-white/40 text-xs mb-1">{quest.description}</p>
 
-          {/* Progress bar */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${pct}%`,
-                  background: isComplete
-                    ? 'linear-gradient(90deg, #22c55e, #4ade80)'
-                    : 'linear-gradient(90deg, #8b5cf6, #a78bfa)',
-                }}
-              />
+          {/* Progress bar — hide when complete */}
+          {!isComplete && (
+            <div className="flex items-center gap-3 mt-2">
+              <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${pct}%`,
+                    background: 'linear-gradient(90deg, #8b5cf6, #a78bfa)',
+                  }}
+                />
+              </div>
+              <span className="text-white/30 text-[10px] font-mono whitespace-nowrap">
+                {progress.current}/{quest.target}
+              </span>
             </div>
-            <span className="text-white/30 text-[10px] font-mono whitespace-nowrap">
-              {progress.current}/{quest.target}
-            </span>
-          </div>
+          )}
         </div>
 
         {/* Reward / Claim button */}
@@ -133,16 +134,76 @@ export default function QuestsPage() {
 
   useEffect(() => {
     if (!walletAddress) return;
-    const base_state = getQuestState(walletAddress);
-    setQuestState(syncMilestoneProgress(base_state, walletAddress));
+    let s = getQuestState(walletAddress);
+    s = syncMilestoneProgress(s, walletAddress);
+    setQuestState(s);
+
     const base = getApiBase();
-    if (base)
-      fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (d) setBalance(d);
+    if (!base) return;
+
+    // Fetch balance
+    fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setBalance(d);
+      })
+      .catch(() => {});
+
+    // Async: check mint + inventory via wallet-database for milestone quests
+    fetch(`${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((wallet) => {
+        if (!wallet) return;
+        let updated = getQuestState(walletAddress); // re-read fresh
+        let changed = false;
+
+        // Mint check — wallet exists in DB means they were scanned, check badges/tier for minted
+        if (wallet.badges?.length > 0 || wallet.tier !== 'mercury') {
+          const r = incrementQuest(updated, 'ot_first_scan');
+          updated = r.state;
+          if (r.justCompleted) changed = true;
+        }
+
+        // Check arena wins
+        const arenaRaw = localStorage.getItem(`prism_arena_stats_${walletAddress}`);
+        if (arenaRaw) {
+          try {
+            const wins = JSON.parse(arenaRaw)?.wins || 0;
+            if (wins > 0) {
+              const r = incrementQuest(updated, 'ot_arena_wins', wins);
+              updated = r.state;
+              if (r.justCompleted) changed = true;
+            }
+          } catch {}
+        }
+
+        if (changed) setQuestState({ ...updated });
+      })
+      .catch(() => {});
+
+    // Async: check if minted via DAS (searchAssets)
+    const collectionMint = import.meta.env?.VITE_CORE_COLLECTION;
+    if (collectionMint) {
+      fetch(base, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'qm',
+          method: 'searchAssets',
+          params: { ownerAddress: walletAddress, grouping: ['collection', collectionMint], page: 1, limit: 1 },
+        }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if ((data?.result?.total ?? 0) > 0) {
+            const st = getQuestState(walletAddress);
+            const r = incrementQuest(st, 'ot_first_mint');
+            if (r.justCompleted) setQuestState({ ...r.state });
+          }
         })
         .catch(() => {});
+    }
   }, [walletAddress]);
 
   const quests = useMemo(() => {
