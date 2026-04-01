@@ -1,10 +1,12 @@
 import { useLocation, Link } from 'react-router-dom';
 import { useEffect } from 'react';
+import { fadeOutTransition } from '@/lib/fadeTransition';
 
 const NotFound = () => {
   const location = useLocation();
 
   useEffect(() => {
+    fadeOutTransition();
     console.warn('[404] Non-existent route:', location.pathname);
   }, [location.pathname]);
 

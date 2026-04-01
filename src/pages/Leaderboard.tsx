@@ -43,12 +43,6 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
   {
-    key: 'overall',
-    label: 'Overall',
-    icon: <Trophy className="w-3.5 h-3.5" />,
-    color: '#FFD700',
-  },
-  {
     key: 'orbit',
     label: 'Orbit',
     icon: <Orbit className="w-3.5 h-3.5" />,
@@ -65,6 +59,12 @@ const TABS: TabConfig[] = [
     label: 'Gravity',
     icon: <Rocket className="w-3.5 h-3.5" />,
     color: '#22D3EE',
+  },
+  {
+    key: 'overall',
+    label: 'Overall',
+    icon: <Trophy className="w-3.5 h-3.5" />,
+    color: '#FFD700',
   },
 ];
 
@@ -135,7 +135,7 @@ export default function Leaderboard() {
     fadeOutTransition();
   }, []);
 
-  const [activeTab, setActiveTab] = useState<TabKey>('overall');
+  const [activeTab, setActiveTab] = useState<TabKey>('orbit');
 
   // Overall tab data
   const [overallEntries, setOverallEntries] = useState<OverallEntry[]>([]);

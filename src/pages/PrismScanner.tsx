@@ -73,7 +73,7 @@ function updateHuntStats(update: Partial<HuntStats>) {
 
 function getRecentWallets(): string[] {
   try {
-    return JSON.parse(sessionStorage.getItem(RECENT_WALLETS_KEY) || '[]');
+    return JSON.parse(localStorage.getItem(RECENT_WALLETS_KEY) || '[]');
   } catch {
     return [];
   }
@@ -82,8 +82,11 @@ function addRecentWallet(addr: string) {
   try {
     const list = getRecentWallets().filter((a) => a !== addr);
     list.unshift(addr);
-    sessionStorage.setItem(RECENT_WALLETS_KEY, JSON.stringify(list.slice(0, MAX_RECENT)));
+    localStorage.setItem(RECENT_WALLETS_KEY, JSON.stringify(list.slice(0, 200)));
   } catch {}
+}
+function isAlreadyScanned(addr: string): boolean {
+  return getRecentWallets().includes(addr);
 }
 
 /* ── Types ── */
@@ -608,10 +611,12 @@ export default function PrismScanner() {
         {/* Scanning — Interactive Hunt Sequence */}
         {loading && <ScanningSequence targetAddress={query} walletAddress={myAddress} />}
 
-        {/* Recent targets */}
+        {/* Recent targets — show last 6 as quick access */}
         {!loading && recentWallets.length > 0 && !result && (
           <div>
-            <p className="text-[10px] text-white/20 uppercase tracking-wider mb-2 font-bold">Recent Targets</p>
+            <p className="text-[10px] text-white/20 uppercase tracking-wider mb-2 font-bold">
+              Scanned ({recentWallets.length})
+            </p>
             <div className="flex flex-wrap gap-2">
               {recentWallets.slice(0, 6).map((addr) => (
                 <button
@@ -629,32 +634,34 @@ export default function PrismScanner() {
           </div>
         )}
 
-        {/* Suggested Targets from sybil graph */}
-        {!loading && !result && suggestedTargets.length > 0 && (
+        {/* Suggested Targets from sybil graph — hide already scanned */}
+        {!loading && !result && suggestedTargets.filter((t) => !isAlreadyScanned(t.address)).length > 0 && (
           <div>
             <p className="text-[10px] text-red-400/30 uppercase tracking-wider mb-2 font-bold flex items-center gap-1.5">
               <Target className="w-3 h-3" /> Bounty Board
             </p>
             <div className="space-y-1.5">
-              {suggestedTargets.map((t) => (
-                <button
-                  key={t.address}
-                  onClick={() => {
-                    setQuery(t.address);
-                    handleSearch(t.address);
-                  }}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-red-500/[0.03] border border-red-500/[0.08] hover:bg-red-500/[0.08] transition-colors text-left"
-                >
-                  <Crosshair className="w-3.5 h-3.5 text-red-400/40 shrink-0" />
-                  <span className="text-xs font-mono text-white/50 flex-1">
-                    {t.address.slice(0, 6)}...{t.address.slice(-4)}
-                  </span>
-                  {t.parentRisk && <span className="text-[9px] font-mono text-red-400/50">risk {t.parentRisk}</span>}
-                  <span className="text-[9px] text-amber-400/40 font-bold">
-                    {t.source === 'cluster' ? 'CLUSTER' : 'LINKED'}
-                  </span>
-                </button>
-              ))}
+              {suggestedTargets
+                .filter((t) => !isAlreadyScanned(t.address))
+                .map((t) => (
+                  <button
+                    key={t.address}
+                    onClick={() => {
+                      setQuery(t.address);
+                      handleSearch(t.address);
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-red-500/[0.03] border border-red-500/[0.08] hover:bg-red-500/[0.08] transition-colors text-left"
+                  >
+                    <Crosshair className="w-3.5 h-3.5 text-red-400/40 shrink-0" />
+                    <span className="text-xs font-mono text-white/50 flex-1">
+                      {t.address.slice(0, 6)}...{t.address.slice(-4)}
+                    </span>
+                    {t.parentRisk && <span className="text-[9px] font-mono text-red-400/50">risk {t.parentRisk}</span>}
+                    <span className="text-[9px] text-amber-400/40 font-bold">
+                      {t.source === 'cluster' ? 'CLUSTER' : 'LINKED'}
+                    </span>
+                  </button>
+                ))}
             </div>
           </div>
         )}

@@ -82,8 +82,8 @@ export const DAILY_QUESTS: Quest[] = [
   },
   {
     id: 'daily_highscore',
-    name: 'Beat Yourself',
-    description: 'New personal best',
+    name: 'New Record',
+    description: 'Beat your high score in any game',
     category: 'game',
     frequency: 'daily',
     reward: 50,
@@ -363,25 +363,30 @@ export function getQuestProgress(state: QuestState, questId: string): QuestProgr
  * Sync quest progress to server (fire-and-forget).
  */
 export function syncQuestsToServer(address: string, quests: Record<string, QuestProgress>): void {
-  const proxyUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_HELIUS_PROXY_URL) || '';
-  const jwt = (() => {
-    try {
-      const r = sessionStorage.getItem('ip_auth_jwt');
-      if (!r) return '';
-      const p = JSON.parse(r);
-      return p.expiresAt > Date.now() + 60000 ? p.token : '';
-    } catch {
-      return '';
-    }
-  })();
-  fetch(`${proxyUrl}/api/quest/sync`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
-    },
-    body: JSON.stringify({ address, quests }),
-  }).catch(() => {}); // fire-and-forget
+  import('@/components/prism/shared')
+    .then(({ getApiBase, ensureJwt }) => {
+      const base = getApiBase();
+      if (!base) return;
+      const jwt = (() => {
+        try {
+          const r = sessionStorage.getItem('ip_auth_jwt');
+          if (!r) return '';
+          const p = JSON.parse(r);
+          return p.expiresAt > Date.now() + 60000 ? p.token : '';
+        } catch {
+          return '';
+        }
+      })();
+      fetch(`${base}/api/quest/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+        },
+        body: JSON.stringify({ address, quests }),
+      }).catch(() => {});
+    })
+    .catch(() => {});
 }
 
 /**

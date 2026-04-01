@@ -1518,12 +1518,12 @@ const BlackHole = () => {
               </Button>
 
               {/* Quick Filters */}
-              <div className="flex rounded-xl border border-zinc-800/60 overflow-hidden">
+              <div className="flex rounded-lg border border-zinc-800/60 overflow-hidden">
                 {(['all', 'nft', 'token'] as const).map((f) => (
                   <button
                     key={f}
                     onClick={() => setAssetFilter(f)}
-                    className={`px-3 py-2 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
+                    className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
                   >
                     {f === 'all' ? 'All' : f === 'nft' ? 'NFTs' : 'Tokens'}
                   </button>
@@ -1534,7 +1534,7 @@ const BlackHole = () => {
                 <Checkbox
                   checked={showAllAssets}
                   onCheckedChange={handleShowAllToggle}
-                  className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 h-3.5 w-3.5"
+                  className="border-zinc-600 data-[state=checked]:bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:text-cyan-400 h-4 w-4"
                 />
                 Show all
               </label>

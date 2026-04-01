@@ -361,6 +361,15 @@ export default function PrismArena() {
                   invalidateCompositeCache(myAddress);
                   invalidateBalanceCache(myAddress);
                   refreshBalance();
+                  // Track arena quests (fallback — primary tracking is in PrismLeague on score submit)
+                  import('@/lib/prismQuests')
+                    .then(({ getQuestState, incrementQuest }) => {
+                      let qs = getQuestState(myAddress);
+                      qs = incrementQuest(qs, 'weekly_arena').state;
+                      qs = incrementQuest(qs, 'weekly_games5').state;
+                      incrementQuest(qs, 'ot_arena_wins');
+                    })
+                    .catch(() => {});
                 }
                 setBattleResult(c);
               } else if (c.status === 'cancelled') {

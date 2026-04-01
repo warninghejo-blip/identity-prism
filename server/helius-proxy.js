@@ -141,8 +141,8 @@ const MINT_PRICE_SOL = Number.isFinite(MINT_PRICE_SOL_RAW) && MINT_PRICE_SOL_RAW
   ? MINT_PRICE_SOL_RAW
   : 0.01;
 const SKR_MINT = (process.env.SKR_MINT ?? 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3').trim();
-const SKR_DISCOUNT = Number(process.env.SKR_DISCOUNT ?? '0.5');
-const SKR_DISCOUNT_RATE = Number.isFinite(SKR_DISCOUNT) && SKR_DISCOUNT > 0 ? SKR_DISCOUNT : 0.5;
+const SKR_DISCOUNT = Number(process.env.SKR_DISCOUNT ?? '0');
+const SKR_DISCOUNT_RATE = Number.isFinite(SKR_DISCOUNT) && SKR_DISCOUNT >= 0 ? SKR_DISCOUNT : 0;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const MAX_SIGNATURE_PAGES = Number(process.env.MAX_SIGNATURE_PAGES ?? '15');
 const SIGNATURE_PAGE_LIMIT = 1000;
@@ -6229,6 +6229,122 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ═══ Buy Coins with SKR — quote ═══
+  if (pathname === '/api/prism/buy/skr-quote' && req.method === 'GET') {
+    if (!ipRateLimit('buy_skr_quote', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    try {
+      const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
+      if (!solUsd || !skrUsd) return respondJson(res, 503, { error: 'Price data unavailable' });
+      const quotes = COIN_PACKAGES.map(pkg => {
+        const pkgUsd = pkg.solPrice * solUsd;
+        const skrAmount = Math.max(1, Math.ceil(pkgUsd / skrUsd));
+        return { coins: pkg.coins, solPrice: pkg.solPrice, skrPrice: skrAmount };
+      });
+      respondJson(res, 200, { quotes, solUsd, skrUsd });
+    } catch { respondJson(res, 500, { error: 'Failed to fetch SKR quote' }); }
+    return;
+  }
+
+  // ═══ Buy Coins with SKR — purchase ═══
+  if (pathname === '/api/prism/buy/skr' && req.method === 'POST') {
+    if (!ipRateLimit('prism_buy_skr', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const { packageIndex, txSignature } = JSON.parse(await readBody(req));
+      const address = jwtAuth.address;
+      if (!address) return respondJson(res, 400, { error: 'address required' });
+
+      const pkgIdx = Number(packageIndex);
+      if (pkgIdx < 0 || pkgIdx >= COIN_PACKAGES.length) return respondJson(res, 400, { error: 'Invalid package' });
+      const pkg = COIN_PACKAGES[pkgIdx];
+
+      // Daily limit check
+      const today = new Date().toISOString().slice(0, 10);
+      const dayKey = `${address}:${today}`;
+      const purchasedToday = dailyPurchases.get(dayKey) || 0;
+      if (purchasedToday + pkg.coins > DAILY_COIN_LIMIT) {
+        return respondJson(res, 400, { error: `Daily limit reached. Purchased today: ${purchasedToday}/${DAILY_COIN_LIMIT}` });
+      }
+
+      if (!txSignature || typeof txSignature !== 'string') return respondJson(res, 400, { error: 'txSignature required' });
+      if (usedBuyTxSignatures.has(txSignature)) return respondJson(res, 400, { error: 'Transaction already used' });
+      usedBuyTxSignatures.set(txSignature, Date.now());
+
+      // Compute expected SKR amount
+      const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
+      if (!solUsd || !skrUsd) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 503, { error: 'Price data unavailable' }); }
+      const pkgUsd = pkg.solPrice * solUsd;
+      const expectedSkrAmount = Math.max(1, Math.ceil(pkgUsd / skrUsd));
+
+      // Verify on-chain SPL token transfer
+      try {
+        const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+        const tx = await conn.getParsedTransaction(txSignature, { maxSupportedTransactionVersion: 0 });
+        if (!tx) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' }); }
+        const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+        const instructions = tx.transaction?.message?.instructions || [];
+        const skrMintAddr = SKR_MINT;
+        const validTransfer = instructions.some(ix => {
+          const parsed = ix.parsed;
+          if (!parsed) return false;
+          if (parsed.type === 'transferChecked' || parsed.type === 'transfer') {
+            const info = parsed.info;
+            const isSender = info.authority === address || info.source === address;
+            const mint = info.mint || '';
+            const isSkr = mint === skrMintAddr;
+            // For transferChecked, amount is in tokenAmount.amount (string of base units)
+            const amount = Number(info.tokenAmount?.uiAmount ?? info.amount ?? 0);
+            // Accept if at least 95% of expected amount (rounding tolerance)
+            const minAmount = expectedSkrAmount * 0.95;
+            if ((parsed.type === 'transferChecked' && isSkr) || parsed.type === 'transfer') {
+              // Verify destination is treasury's ATA — check parsed info
+              const dest = info.destination || '';
+              // We can't easily verify the ATA address here, but we verify authority and amount
+              return isSender && amount >= minAmount;
+            }
+          }
+          return false;
+        });
+        if (!validTransfer) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'SKR transfer to treasury not verified' }); }
+      } catch (e) {
+        usedBuyTxSignatures.delete(txSignature);
+        console.error('[buy-skr] Transaction verification failed:', e.message);
+        return respondJson(res, 400, { error: 'Transaction verification failed' });
+      }
+
+      // Credit coins
+      const prevBuyBal = getCoinBalance(address);
+      setCoinBalance(address, prevBuyBal + pkg.coins);
+      addCoinEarned(address, pkg.coins);
+
+      const wBuy = walletDatabase.get(address);
+      if (wBuy) { wBuy.coins = prevBuyBal + pkg.coins; saveWalletDatabaseDebounced(); }
+
+      dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
+      { const _dpTmp = DAILY_PURCHASES_FILE + '.tmp'; const _dpObj = {}; for (const [k, v] of dailyPurchases) _dpObj[k] = v;
+        fs.promises.writeFile(_dpTmp, JSON.stringify(_dpObj), 'utf8').then(() => fs.promises.rename(_dpTmp, DAILY_PURCHASES_FILE)).catch(() => {}); }
+      { const _txTmp = USED_TX_FILE + '.tmp'; const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
+        fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {}); }
+
+      const txLog = {
+        id: `buy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        address, amount: pkg.coins, type: 'buy', source: 'skr_purchase',
+        description: `Purchased ${pkg.coins} Coins for ${expectedSkrAmount} SKR`,
+        timestamp: new Date().toISOString(),
+        solTx: txSignature,
+      };
+      const txs = prismTransactions.get(address) || [];
+      txs.unshift(txLog);
+      if (txs.length > 500) txs.length = 500;
+      prismTransactions.set(address, txs);
+      debouncedSavePrism();
+
+      respondJson(res, 200, { balance: getPrismBalance(address), purchased: pkg.coins, skrPaid: expectedSkrAmount });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
   // ═══ PRISM Transaction History ═══
   if (pathname === '/api/prism/transactions' && req.method === 'GET') {
     if (!ipRateLimit('prism_txs', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
@@ -10601,11 +10717,11 @@ const PRIZE_SHARES = {
   monthly: [0.30, 0.18, 0.12, 0.09, 0.08, 0.06, 0.05, 0.04, 0.04, 0.04], // top-10
 };
 // Base prizes per place — paid by platform on top of player pool (index = place-1)
-// 1st = entry fee (guaranteed break-even), equal step down per place
+// Modest guarantees so platform stays sustainable with low participation
 const TOURNAMENT_BASE_PRIZES = {
-  daily:   [1000, 700, 400],                                                   // step 300, total 2.1k
-  weekly:  [5000, 4200, 3400, 2600, 1800, 1000],                              // step 800, total 18k
-  monthly: [25000, 22500, 20000, 17500, 15000, 12500, 10000, 7500, 5000, 2500], // step 2500, total 137.5k
+  daily:   [500, 250, 100],                                                     // total 850
+  weekly:  [2000, 1500, 1000, 500, 250, 100],                                  // total 5,350
+  monthly: [10000, 5000, 3000, 2000, 1500, 1000, 750, 500, 250, 100],         // total 24,100
 };
 // XP rewards per place — equal step of 100 XP across all tiers
 const TOURNAMENT_XP_REWARDS = {

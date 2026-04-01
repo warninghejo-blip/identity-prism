@@ -1,6 +1,6 @@
 /**
  * Prism Vault — Buy Coins + Staking.
- * Extracted from StellarForge for dedicated financial hub.
+ * Dedicated financial hub page.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -8,47 +8,133 @@ import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
-import { ArrowLeft, Coins, Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap } from 'lucide-react';
+import { ArrowLeft, Coins, Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap, Check } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { getPrismBalance, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
 import { getApiBase } from '@/components/prism/shared';
 
-// COIN_PACKAGES imported from prismCoin.ts
+// ── Buy Coins Section ──
 
 function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
   const wallet = useWallet();
   const [buyingIdx, setBuyingIdx] = useState<number | null>(null);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [status, setStatus] = useState<{ purchasedToday: number; remainingToday: number } | null>(null);
+  const [payWith, setPayWith] = useState<'sol' | 'skr'>('sol');
+  const [skrQuotes, setSkrQuotes] = useState<{ coins: number; skrPrice: number }[] | null>(null);
 
   useEffect(() => {
     if (!walletAddress) return;
     const base = getApiBase();
-    fetch(`${base}/api/prism/buy/status?address=${walletAddress}`)
+    fetch(`${base}/api/prism/buy/status?address=${encodeURIComponent(walletAddress)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d) setStatus(d);
       })
       .catch(() => {});
+    fetch(`${base}/api/prism/buy/skr-quote`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.quotes) setSkrQuotes(d.quotes);
+      })
+      .catch(() => {});
   }, [walletAddress]);
 
-  const handleBuy = useCallback(
-    async (pkgIndex: number) => {
-      if (buyingIdx !== null || !walletAddress || !wallet.publicKey || !wallet.signTransaction) return;
-      const pkg = COIN_PACKAGES[pkgIndex];
-      setBuyingIdx(pkgIndex);
+  const handleBuy = useCallback(async () => {
+    if (selectedIdx === null || buyingIdx !== null || !walletAddress || !wallet.publicKey || !wallet.signTransaction)
+      return;
+    const pkg = COIN_PACKAGES[selectedIdx];
+    setBuyingIdx(selectedIdx);
 
-      try {
+    try {
+      const { ensureJwt } = await import('@/components/prism/shared');
+      const jwt = await ensureJwt();
+      if (!jwt) {
+        toast.error('Authentication required');
+        setBuyingIdx(null);
+        return;
+      }
+
+      const {
+        Connection: SolConn,
+        PublicKey: SolPK,
+        SystemProgram: SolSP,
+        Transaction: SolTx,
+      } = await import('@solana/web3.js');
+      const base = getApiBase();
+      const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
+      const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+
+      let sig: string;
+
+      if (payWith === 'skr') {
+        const skrQuote = skrQuotes?.[selectedIdx];
+        if (!skrQuote) {
+          toast.error('SKR price unavailable');
+          setBuyingIdx(null);
+          return;
+        }
         const {
-          Connection: SolConn,
-          PublicKey: SolPK,
-          SystemProgram: SolSP,
-          Transaction: SolTx,
-        } = await import('@solana/web3.js');
-        const base = getApiBase();
-        const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
-        const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          getAssociatedTokenAddress,
+          createTransferCheckedInstruction,
+          createAssociatedTokenAccountInstruction,
+          TOKEN_PROGRAM_ID,
+        } = await import('@solana/spl-token');
+        const skrMint = new SolPK('SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3');
+        const ownerKey = new SolPK(walletAddress);
+        const treasuryKey = new SolPK(treasuryAddr);
+        const mintInfo = await conn.getParsedAccountInfo(skrMint);
+        const decimals = (mintInfo.value?.data as any)?.parsed?.info?.decimals ?? 6;
+        const amountBaseUnits = BigInt(skrQuote.skrPrice) * 10n ** BigInt(decimals);
+        const ownerAta = await getAssociatedTokenAddress(skrMint, ownerKey, false, TOKEN_PROGRAM_ID);
+        const treasuryAta = await getAssociatedTokenAddress(skrMint, treasuryKey, false, TOKEN_PROGRAM_ID);
+        const tx = new SolTx();
+        const treasuryAtaInfo = await conn.getAccountInfo(treasuryAta);
+        if (!treasuryAtaInfo) {
+          tx.add(
+            createAssociatedTokenAccountInstruction(ownerKey, treasuryAta, treasuryKey, skrMint, TOKEN_PROGRAM_ID),
+          );
+        }
+        tx.add(
+          createTransferCheckedInstruction(
+            ownerAta,
+            skrMint,
+            treasuryAta,
+            ownerKey,
+            amountBaseUnits,
+            decimals,
+            [],
+            TOKEN_PROGRAM_ID,
+          ),
+        );
+        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+        tx.feePayer = ownerKey;
+        const signed = await wallet.signTransaction(tx);
+        sig = await conn.sendRawTransaction(signed.serialize());
+        toast.info('Confirming SKR transaction...');
+        await conn.confirmTransaction(sig, 'confirmed');
+
+        const res = await fetch(`${base}/api/prism/buy/skr`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
+        });
+        if (res.ok) {
+          toast.success(`Purchased ${pkg.coins} Coins for ${skrQuote.skrPrice} SKR!`);
+          if (status)
+            setStatus({
+              ...status,
+              purchasedToday: status.purchasedToday + pkg.coins,
+              remainingToday: status.remainingToday - pkg.coins,
+            });
+          onPurchased();
+        } else {
+          const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
+          toast.error(err.error || 'Purchase failed');
+        }
+      } else {
         const tx = new SolTx().add(
           SolSP.transfer({
             fromPubkey: new SolPK(walletAddress),
@@ -61,29 +147,20 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
         const simulation = await conn.simulateTransaction(tx, undefined, {
           sigVerify: false,
           replaceRecentBlockhash: true,
-        });
+        } as any);
         if (simulation.value.err)
           throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
         tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
         const signed = await wallet.signTransaction(tx);
-        const sig = await conn.sendRawTransaction(signed.serialize());
+        sig = await conn.sendRawTransaction(signed.serialize());
         toast.info('Confirming transaction...');
         await conn.confirmTransaction(sig, 'confirmed');
-
-        const { ensureJwt } = await import('@/components/prism/shared');
-        const jwt = await ensureJwt();
-        if (!jwt) {
-          toast.error('Authentication failed');
-          setBuyingIdx(null);
-          return;
-        }
 
         const res = await fetch(`${base}/api/prism/buy`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ packageIndex: pkgIndex, txSignature: sig }),
+          body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
         });
-
         if (res.ok) {
           toast.success(`Purchased ${pkg.coins} Coins!`);
           if (status)
@@ -97,59 +174,138 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
           const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
           toast.error(err.error || 'Purchase failed');
         }
-      } catch (e: any) {
-        if (e?.message?.includes('User rejected')) {
-          toast.info('Transaction cancelled');
-        } else {
-          toast.error(e?.message || 'Purchase failed');
-        }
       }
-      setBuyingIdx(null);
-    },
-    [walletAddress, wallet, buyingIdx, status, onPurchased],
-  );
+      setSelectedIdx(null);
+    } catch (e: any) {
+      if (e?.message?.includes('User rejected')) {
+        toast.info('Transaction cancelled');
+      } else {
+        toast.error(e?.message || 'Purchase failed');
+      }
+    }
+    setBuyingIdx(null);
+  }, [walletAddress, wallet, buyingIdx, selectedIdx, status, onPurchased, payWith, skrQuotes]);
+
+  const selectedPkg = selectedIdx !== null ? COIN_PACKAGES[selectedIdx] : null;
+  const selectedSkr = selectedIdx !== null ? skrQuotes?.[selectedIdx]?.skrPrice : null;
 
   return (
-    <div className="mb-6">
-      <div className="flex items-center justify-between mb-3">
+    <div className="mb-8">
+      <div className="flex items-center justify-between mb-4">
         <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5">
           <Plus className="w-3.5 h-3.5 text-amber-400" />
           Buy Coins
         </h3>
-        {status && (
-          <span className="text-[10px] text-white/20">{status.remainingToday.toLocaleString()} remaining today</span>
-        )}
+        <div className="flex items-center gap-3">
+          <div className="flex rounded-lg border border-white/10 overflow-hidden">
+            <button
+              onClick={() => setPayWith('sol')}
+              className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${payWith === 'sol' ? 'bg-purple-500/20 text-purple-300' : 'text-white/30 hover:text-white/50'}`}
+            >
+              SOL
+            </button>
+            <button
+              onClick={() => setPayWith('skr')}
+              className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${payWith === 'skr' ? 'bg-cyan-500/20 text-cyan-300' : 'text-white/30 hover:text-white/50'}`}
+            >
+              SKR
+            </button>
+          </div>
+          {status && (
+            <span className="text-[10px] text-white/20">{status.remainingToday.toLocaleString()} left today</span>
+          )}
+        </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {COIN_PACKAGES.map((pkg, i) => (
-          <button
-            key={i}
-            onClick={() => handleBuy(i)}
-            disabled={buyingIdx !== null || !walletAddress}
-            className="relative overflow-hidden rounded-xl bg-white/[0.04] border border-white/[0.08] p-3 text-left hover:bg-white/[0.07] hover:border-amber-400/20 transition-all duration-300 disabled:opacity-50"
-          >
-            <div className="text-[10px] text-amber-400/60 font-bold uppercase mb-1">{pkg.label}</div>
-            <div className="flex items-center gap-1 mb-1">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5" />
-              </svg>
-              <span className="text-lg font-black text-white">{pkg.coins.toLocaleString()}</span>
-            </div>
-            <div className="text-[11px] font-bold text-purple-400">{pkg.solPrice} SOL</div>
-            {buyingIdx === i && (
-              <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-xl">
-                <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        {COIN_PACKAGES.map((pkg, i) => {
+          const skrPrice = skrQuotes?.[i]?.skrPrice;
+          const isSelected = selectedIdx === i;
+          return (
+            <button
+              key={i}
+              onClick={() => setSelectedIdx(isSelected ? null : i)}
+              disabled={buyingIdx !== null}
+              className={`relative overflow-hidden rounded-xl p-3 text-left transition-all duration-200 ${
+                isSelected
+                  ? 'bg-amber-400/[0.08] border-amber-400/30 ring-1 ring-amber-400/20'
+                  : 'bg-white/[0.04] border-white/[0.08] hover:bg-white/[0.07]'
+              } border disabled:opacity-50`}
+            >
+              {isSelected && (
+                <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-amber-400/20 flex items-center justify-center">
+                  <Check className="w-2.5 h-2.5 text-amber-400" />
+                </div>
+              )}
+              <div className="text-[10px] text-amber-400/60 font-bold uppercase mb-1">{pkg.label}</div>
+              <div className="flex items-center gap-1 mb-1">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5" />
+                </svg>
+                <span className="text-lg font-black text-white">{pkg.coins.toLocaleString()}</span>
               </div>
-            )}
-          </button>
-        ))}
+              {payWith === 'sol' ? (
+                <div className="text-[11px] font-bold text-purple-400">{pkg.solPrice} SOL</div>
+              ) : (
+                <div className="text-[11px] font-bold text-cyan-400">
+                  {skrPrice ? `${skrPrice.toLocaleString()} SKR` : '...'}
+                </div>
+              )}
+              {buyingIdx === i && (
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-xl">
+                  <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
+                </div>
+              )}
+            </button>
+          );
+        })}
       </div>
+
+      {/* Buy confirmation button */}
+      {selectedPkg && (
+        <Button
+          className="w-full h-11 font-bold text-sm"
+          style={{
+            background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+            color: '#000',
+            boxShadow: '0 4px 20px rgba(251,191,36,0.25)',
+          }}
+          onClick={handleBuy}
+          disabled={buyingIdx !== null || (payWith === 'skr' && !selectedSkr)}
+        >
+          {buyingIdx !== null ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin mr-2" /> Processing...
+            </>
+          ) : (
+            <>
+              Buy {selectedPkg.coins.toLocaleString()} Coins for{' '}
+              {payWith === 'sol'
+                ? `${selectedPkg.solPrice} SOL`
+                : selectedSkr
+                  ? `${selectedSkr.toLocaleString()} SKR`
+                  : '...'}
+            </>
+          )}
+        </Button>
+      )}
     </div>
   );
 }
 
-// ── Prism Vault (Staking) ──
+// ── Vault Staking Section ──
+
+type VaultTierId = 'bronze' | 'silver' | 'gold';
+interface VaultStatus {
+  staked: boolean;
+  tier?: string;
+  amount?: number;
+  unlocksAt?: number;
+  unclaimedYield?: number;
+  dailyYield?: number;
+  effectiveRate?: number;
+}
 
 const YIELD_BRACKETS = [
   { upTo: 5000, baseDailyRate: 0.01 },
@@ -177,12 +333,12 @@ function calcClientDailyYield(amount: number, tierMultiplier: number): number {
 function rateRangeLabel(mult: number): string {
   const high = (YIELD_BRACKETS[0].baseDailyRate * mult * 100).toFixed(1);
   const low = (YIELD_BRACKETS[YIELD_BRACKETS.length - 1].baseDailyRate * mult * 100).toFixed(1);
-  return `${high}\u2013${low}%/day`;
+  return `${high}–${low}%/day`;
 }
 
 const VAULT_TIERS = [
   {
-    id: 'bronze',
+    id: 'bronze' as const,
     label: 'Bronze',
     min: 10000,
     lock: 7,
@@ -190,10 +346,10 @@ const VAULT_TIERS = [
     boost: 10,
     color: '#cd7f32',
     glow: 'rgba(205,127,50,0.25)',
-    icon: '\u{1F949}',
+    icon: '🥉',
   },
   {
-    id: 'silver',
+    id: 'silver' as const,
     label: 'Silver',
     min: 30000,
     lock: 30,
@@ -201,44 +357,28 @@ const VAULT_TIERS = [
     boost: 20,
     color: '#c0c0c0',
     glow: 'rgba(192,192,192,0.2)',
-    icon: '\u{1F948}',
+    icon: '🥈',
   },
   {
-    id: 'gold',
+    id: 'gold' as const,
     label: 'Gold',
     min: 75000,
     lock: 90,
     rateMultiplier: 2.0,
     boost: 35,
-    color: '#fbbf24',
-    glow: 'rgba(251,191,36,0.3)',
-    icon: '\u{1F947}',
+    color: '#ffd700',
+    glow: 'rgba(255,215,0,0.25)',
+    icon: '🥇',
   },
-] as const;
+];
 
-type VaultTierId = 'bronze' | 'silver' | 'gold';
-
-interface VaultStatus {
-  staked: boolean;
-  tier?: VaultTierId;
-  amount?: number;
-  stakedAt?: number;
-  lockDays?: number;
-  unlocksAt?: number;
-  unclaimedYield?: number;
-  earlyUnstakePenalty?: number;
-  dailyYield?: number;
-  effectiveRate?: number;
-}
-
-function formatVaultTimeLeft(ms: number): string {
+function formatTimeLeft(ms: number): string {
   if (ms <= 0) return 'Unlocked';
-  const totalSeconds = Math.floor(ms / 1000);
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const mins = Math.floor((totalSeconds % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${mins}m`;
+  const days = Math.floor(ms / 86400000);
+  if (days > 0) return `${days}d left`;
+  const hrs = Math.floor(ms / 3600000);
+  if (hrs > 0) return `${hrs}h left`;
+  const mins = Math.floor(ms / 60000);
   return `${mins}m`;
 }
 
@@ -267,7 +407,7 @@ function PrismVaultSection({
     if (!walletAddress) return;
     setLoadingStatus(true);
     const base = getApiBase();
-    fetch(`${base}/api/prism/vault/status?address=${walletAddress}`)
+    fetch(`${base}/api/prism/vault/status?address=${encodeURIComponent(walletAddress)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d?.staking) {
@@ -296,7 +436,7 @@ function PrismVaultSection({
   const handleStake = useCallback(async () => {
     const amount = Number(stakeAmount);
     if (!amount || amount < tier.min) {
-      toast.error(`Minimum stake is ${tier.min} coins for ${tier.label}`);
+      toast.error(`Minimum stake is ${tier.min.toLocaleString()} coins for ${tier.label}`);
       return;
     }
     if (amount > balance) {
@@ -322,7 +462,7 @@ function PrismVaultSection({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Stake failed');
-      toast.success(`Staked ${amount} coins in ${tier.label} Vault!`);
+      toast.success(`Staked ${amount.toLocaleString()} coins in ${tier.label} Vault!`);
       setVaultStatus(data.status || { staked: true, tier: selectedTier, amount });
       setStakeAmount('');
       onBalanceChange();
@@ -395,38 +535,40 @@ function PrismVaultSection({
   const canStake = stakeAmountNum >= tier.min && stakeAmountNum <= balance && !staking;
 
   return (
-    <div className="mb-6">
-      <div className="flex items-center justify-between mb-3">
+    <div>
+      <div className="flex items-center justify-between mb-4">
         <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5">
           <Shield className="w-3.5 h-3.5 text-amber-400" />
-          Prism Vault
+          Prism Vault — Staking
         </h3>
         <span className="text-[10px] text-white/20">Earn yield on your coins</span>
       </div>
 
       {loadingStatus ? (
-        <div className="flex justify-center py-8">
+        <div className="flex justify-center py-12">
           <Loader2 className="w-5 h-5 animate-spin text-purple-400/40" />
         </div>
       ) : vaultStatus?.staked ? (
+        /* ── Active Stake ── */
         <div
-          className="rounded-2xl p-4 border"
+          className="rounded-2xl p-5 border"
           style={{
             background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}08, ${stakedTierInfo?.color ?? '#fbbf24'}03)`,
             borderColor: `${stakedTierInfo?.color ?? '#fbbf24'}25`,
             boxShadow: `0 0 30px ${stakedTierInfo?.glow ?? 'rgba(251,191,36,0.1)'}`,
           }}
         >
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2.5">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-3">
               <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                className="w-11 h-11 rounded-xl flex items-center justify-center text-xl"
                 style={{
                   background: `${stakedTierInfo?.color ?? '#fbbf24'}15`,
                   border: `1px solid ${stakedTierInfo?.color ?? '#fbbf24'}25`,
                 }}
               >
-                {stakedTierInfo?.icon ?? '\u{1F3C6}'}
+                {stakedTierInfo?.icon ?? '🏆'}
               </div>
               <div>
                 <p className="text-white font-bold text-sm">{stakedTierInfo?.label ?? vaultStatus.tier} Vault</p>
@@ -434,7 +576,7 @@ function PrismVaultSection({
               </div>
             </div>
             <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
               style={{
                 background: isLocked ? 'rgba(239,68,68,0.08)' : 'rgba(74,222,128,0.08)',
                 border: `1px solid ${isLocked ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.2)'}`,
@@ -442,41 +584,42 @@ function PrismVaultSection({
             >
               <Clock className="w-3 h-3" style={{ color: isLocked ? '#f87171' : '#4ade80' }} />
               <span className="text-[10px] font-bold" style={{ color: isLocked ? '#f87171' : '#4ade80' }}>
-                {isLocked ? formatVaultTimeLeft(timeLeft) : 'Unlocked'}
+                {isLocked ? formatTimeLeft(timeLeft) : 'Unlocked'}
               </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <div
-              className="rounded-xl p-2.5 text-center"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-            >
-              <TrendingUp className="w-3.5 h-3.5 mx-auto mb-1" style={{ color: stakedTierInfo?.color ?? '#fbbf24' }} />
-              <p className="text-white font-black text-sm">{vaultStatus.dailyYield ?? 0}</p>
-              <p className="text-white/25 text-[9px]">coins/day</p>
-            </div>
-            <div
-              className="rounded-xl p-2.5 text-center"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-            >
-              <Coins className="w-3.5 h-3.5 mx-auto mb-1 text-amber-400" />
-              <p className="text-white font-black text-sm">{Math.floor(vaultStatus.unclaimedYield ?? 0)}</p>
-              <p className="text-white/25 text-[9px]">unclaimed</p>
-            </div>
-            <div
-              className="rounded-xl p-2.5 text-center"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-            >
-              <Zap className="w-3.5 h-3.5 mx-auto mb-1 text-purple-400" />
-              <p className="text-white font-black text-sm">+{stakedTierInfo?.boost ?? 0}%</p>
-              <p className="text-white/25 text-[9px]">boost</p>
-            </div>
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            {[
+              {
+                icon: <TrendingUp className="w-4 h-4" style={{ color: stakedTierInfo?.color ?? '#fbbf24' }} />,
+                value: String(vaultStatus.dailyYield ?? 0),
+                label: 'coins/day',
+              },
+              {
+                icon: <Coins className="w-4 h-4 text-amber-400" />,
+                value: String(Math.floor(vaultStatus.unclaimedYield ?? 0)),
+                label: 'unclaimed',
+              },
+              {
+                icon: <Zap className="w-4 h-4 text-purple-400" />,
+                value: `+${stakedTierInfo?.boost ?? 0}%`,
+                label: 'boost',
+              },
+            ].map((s, i) => (
+              <div key={i} className="rounded-xl p-3 text-center bg-white/[0.03] border border-white/[0.05]">
+                <div className="flex justify-center mb-1.5">{s.icon}</div>
+                <p className="text-white font-black text-base">{s.value}</p>
+                <p className="text-white/25 text-[9px] mt-0.5">{s.label}</p>
+              </div>
+            ))}
           </div>
 
+          {/* Actions */}
           <div className="flex gap-2">
             <Button
-              className="flex-1 h-10 text-xs font-bold"
+              className="flex-1 h-11 text-xs font-bold"
               style={{
                 background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}, ${stakedTierInfo?.color ?? '#fbbf24'}cc)`,
                 color: '#000',
@@ -490,7 +633,7 @@ function PrismVaultSection({
             </Button>
             <Button
               variant="outline"
-              className="h-10 px-4 text-xs font-bold border-red-500/20 text-red-400/70 hover:bg-red-500/10"
+              className="h-11 px-5 text-xs font-bold border-red-500/20 text-red-400/70 hover:bg-red-500/10"
               onClick={() => {
                 if (isLocked) setShowUnstakeWarning(true);
                 else handleUnstake();
@@ -502,14 +645,8 @@ function PrismVaultSection({
           </div>
 
           {showUnstakeWarning && (
-            <div
-              className="mt-3 p-3 rounded-xl flex flex-col gap-2"
-              style={{
-                background: 'rgba(239,68,68,0.06)',
-                border: '1px solid rgba(239,68,68,0.2)',
-              }}
-            >
-              <div className="flex items-center gap-2 text-red-400 text-xs font-bold">
+            <div className="mt-3 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/20">
+              <div className="flex items-center gap-2 text-red-400 text-xs font-bold mb-2">
                 <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
                 25% penalty will be burned on early unstake
               </div>
@@ -535,59 +672,45 @@ function PrismVaultSection({
           )}
         </div>
       ) : (
+        /* ── Stake UI ── */
         <div>
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            {VAULT_TIERS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setSelectedTier(t.id)}
-                className="rounded-xl p-3 text-left transition-all duration-300 hover:scale-[1.02]"
-                style={{
-                  background:
-                    selectedTier === t.id
-                      ? `linear-gradient(135deg, ${t.color}18, ${t.color}08)`
+          {/* Tier selection */}
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            {VAULT_TIERS.map((t) => {
+              const active = selectedTier === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedTier(t.id)}
+                  className="rounded-xl p-3.5 text-center transition-all duration-300"
+                  style={{
+                    background: active
+                      ? `linear-gradient(135deg, ${t.color}15, ${t.color}08)`
                       : 'rgba(255,255,255,0.03)',
-                  border: `1px solid ${selectedTier === t.id ? t.color + '35' : 'rgba(255,255,255,0.06)'}`,
-                  boxShadow: selectedTier === t.id ? `0 0 20px ${t.glow}` : 'none',
-                }}
-              >
-                <div className="text-xl mb-1.5">{t.icon}</div>
-                <p
-                  className="text-white font-bold text-xs mb-1"
-                  style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.7)' }}
+                    border: `1px solid ${active ? t.color + '40' : 'rgba(255,255,255,0.06)'}`,
+                    boxShadow: active ? `0 0 20px ${t.glow}` : 'none',
+                  }}
                 >
-                  {t.label}
-                </p>
-                <div className="space-y-0.5">
-                  <p
-                    className="text-[9px]"
-                    style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}
-                  >
-                    Min: {t.min.toLocaleString()}
+                  <div className="text-2xl mb-2">{t.icon}</div>
+                  <p className="font-bold text-xs mb-2" style={{ color: active ? t.color : 'rgba(255,255,255,0.6)' }}>
+                    {t.label}
                   </p>
-                  <p
-                    className="text-[9px]"
-                    style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}
-                  >
-                    {t.lock}d lock
-                  </p>
-                  <p
-                    className="text-[9px] font-bold"
-                    style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.3)' }}
-                  >
-                    {rateRangeLabel(t.rateMultiplier)}
-                  </p>
-                  <p
-                    className="text-[9px]"
-                    style={{ color: selectedTier === t.id ? '#c084fc' : 'rgba(192,132,252,0.4)' }}
-                  >
-                    +{t.boost}% boost
-                  </p>
-                </div>
-              </button>
-            ))}
+                  <div className="space-y-1 text-[9px]">
+                    <p style={{ color: active ? t.color + 'bb' : 'rgba(255,255,255,0.25)' }}>
+                      Min {t.min.toLocaleString()}
+                    </p>
+                    <p style={{ color: active ? t.color + 'bb' : 'rgba(255,255,255,0.25)' }}>{t.lock}d lock</p>
+                    <p className="font-bold" style={{ color: active ? t.color : 'rgba(255,255,255,0.3)' }}>
+                      {rateRangeLabel(t.rateMultiplier)}
+                    </p>
+                    <p style={{ color: active ? '#c084fc' : 'rgba(192,132,252,0.3)' }}>+{t.boost}% game boost</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
+          {/* Amount input */}
           <div className="relative mb-3">
             <input
               type="number"
@@ -600,7 +723,7 @@ function PrismVaultSection({
               style={{ fontSize: 16 }}
             />
             <button
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-3 py-1.5 rounded-xl"
               style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)' }}
               onClick={() => setStakeAmount(String(balance))}
             >
@@ -608,14 +731,9 @@ function PrismVaultSection({
             </button>
           </div>
 
+          {/* Projected yield */}
           {stakeAmountNum >= tier.min && (
-            <div
-              className="mb-3 px-3 py-2 rounded-xl flex items-center justify-between"
-              style={{
-                background: 'rgba(255,255,255,0.02)',
-                border: '1px solid rgba(255,255,255,0.05)',
-              }}
-            >
+            <div className="mb-4 px-4 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-between">
               <span className="text-[10px] text-white/30">Est. daily yield</span>
               <span className="text-[10px] font-bold" style={{ color: tier.color }}>
                 +{calcClientDailyYield(stakeAmountNum, tier.rateMultiplier).toFixed(1)} coins/day
@@ -623,6 +741,7 @@ function PrismVaultSection({
             </div>
           )}
 
+          {/* Stake button */}
           <Button
             className="w-full h-12 font-bold text-sm"
             style={
@@ -632,10 +751,7 @@ function PrismVaultSection({
                     color: '#000',
                     boxShadow: `0 4px 20px ${tier.glow}`,
                   }
-                : {
-                    background: 'rgba(255,255,255,0.05)',
-                    color: 'rgba(255,255,255,0.25)',
-                  }
+                : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.25)' }
             }
             onClick={handleStake}
             disabled={!canStake || staking}
@@ -690,16 +806,12 @@ export default function PrismVault() {
     fetchBalanceDirect();
   }, [fetchBalanceDirect]);
 
-  const refreshBalance = fetchBalanceDirect;
-
   return (
     <PageShell className="text-white">
       <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
           <button
-            onClick={() => {
-              startFadeTransition(() => goBack(navigate));
-            }}
+            onClick={() => startFadeTransition(() => goBack(navigate))}
             className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
           >
             <ArrowLeft className="w-4 h-4 text-white/60" />
@@ -729,11 +841,11 @@ export default function PrismVault() {
           </div>
         ) : (
           <>
-            <BuyCoinsSection walletAddress={walletAddress} onPurchased={refreshBalance} />
+            <BuyCoinsSection walletAddress={walletAddress} onPurchased={fetchBalanceDirect} />
             <PrismVaultSection
               walletAddress={walletAddress}
               balance={balance?.balance ?? 0}
-              onBalanceChange={refreshBalance}
+              onBalanceChange={fetchBalanceDirect}
             />
           </>
         )}

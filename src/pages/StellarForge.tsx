@@ -54,14 +54,17 @@ import {
   type ForgeLoadout,
   type Micromodule,
 } from '@/lib/forgeItems';
-import { computeShipStats, type ShipStats } from '@/lib/shipStats';
+import { computeShipStats, getEquipmentBonusLines, SKIN_RARITY_BONUS, type ShipStats } from '@/lib/shipStats';
 import { gatherXPSources, computeRangerXP, getRangerRank } from '@/lib/rangerRanks';
 import { fetchWalletPreview, getCachedWalletPreview, type WalletPreview } from '@/components/prism/shared';
-import { getPrismBalance, spendPrism, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
+import { getPrismBalance, spendPrism, type PrismBalance } from '@/lib/prismCoin';
 import { getApiBase } from '@/components/prism/shared';
 
 type TopTab = 'shop' | 'inventory';
 type ShopFilter = ForgeCategory | 'all' | 'module';
+
+const TIER_ORDER: Record<string, number> = { blue: 0, yellow: 1, red: 2 };
+const SORTED_MODULES = [...MICROMODULE_DEFS].sort((a, b) => (TIER_ORDER[a.tier] ?? 0) - (TIER_ORDER[b.tier] ?? 0));
 
 // ── Stat thresholds: milestones with gameplay effects ──
 const STAT_THRESHOLDS: Record<string, { at: number; label: string; effect: string; color: string }[]> = {
@@ -213,45 +216,44 @@ function ItemPreview({ item }: { item: ForgeItem }) {
   // Title — premium badge display
   return (
     <div
-      className="w-full h-28 rounded-lg flex flex-col items-center justify-center gap-2"
+      className="w-full h-28 rounded-lg flex flex-col items-center justify-center gap-1.5 px-2"
       style={{ background: 'radial-gradient(ellipse at center, rgba(10,15,30,0.9), rgba(5,7,10,0.95))' }}
     >
-      {/* Decorative line */}
       <div
         style={{
-          width: 40,
+          width: 32,
           height: 1,
-          background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)`,
+          background: `linear-gradient(90deg, transparent, ${rarityColor}40, transparent)`,
         }}
       />
-      {/* Title badge */}
       <div
+        className="max-w-full"
         style={{
-          padding: '6px 14px',
+          padding: '5px 10px',
           borderRadius: 8,
           background: `linear-gradient(135deg, ${rarityColor}12, ${rarityColor}06)`,
           border: `1px solid ${rarityColor}25`,
-          boxShadow: `0 0 25px ${rarityColor}12, inset 0 0 15px ${rarityColor}05`,
+          boxShadow: `0 0 20px ${rarityColor}10`,
         }}
       >
         <span
+          className="block text-center leading-tight truncate"
           style={{
-            fontSize: 12,
+            fontSize: item.preview.length > 18 ? 10 : 11,
             fontWeight: 800,
-            letterSpacing: '0.04em',
+            letterSpacing: '0.03em',
             color: rarityColor,
-            textShadow: `0 0 12px ${rarityColor}50`,
+            textShadow: `0 0 10px ${rarityColor}40`,
           }}
         >
           {item.preview}
         </span>
       </div>
-      {/* Decorative line */}
       <div
         style={{
-          width: 40,
+          width: 32,
           height: 1,
-          background: `linear-gradient(90deg, transparent, ${rarityColor}50, transparent)`,
+          background: `linear-gradient(90deg, transparent, ${rarityColor}40, transparent)`,
         }}
       />
     </div>
@@ -301,6 +303,16 @@ function ItemCard({
           boxShadow: equipped ? `0 0 30px ${rarityColor}15, inset 0 0 30px ${rarityColor}05` : 'none',
         }}
       >
+        {/* Owned badge */}
+        {owned && !equipped && (
+          <div
+            className="absolute top-3 right-3 z-10 w-5 h-5 rounded-full flex items-center justify-center"
+            style={{ background: `${rarityColor}30` }}
+          >
+            <Check className="w-3 h-3" style={{ color: rarityColor }} />
+          </div>
+        )}
+
         {/* Rarity + Category header */}
         <div className="flex items-center justify-between mb-2.5">
           <span
@@ -329,12 +341,54 @@ function ItemCard({
 
         {/* Info */}
         <h3 className="text-white font-bold text-[13px] mb-0.5 leading-tight text-center">{item.name}</h3>
-        <p className="text-white/25 text-[10px] mb-3 leading-relaxed line-clamp-2 text-center min-h-[33px]">
+        <p className="text-white/25 text-[10px] mb-2 leading-relaxed line-clamp-2 text-center min-h-[28px]">
           {item.description}
         </p>
 
-        {/* Lock label — fixed height zone so cards don't jump */}
-        <div className="min-h-[28px] mb-3">
+        {/* Stat bonuses */}
+        {(() => {
+          if (item.category === 'ship_skin') {
+            const bonus = SKIN_RARITY_BONUS[item.rarity] ?? 0;
+            return (
+              <div className="mb-2 flex flex-col items-center gap-0.5">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-green-400 font-bold w-7 text-right">+{bonus}</span>
+                  <span className="text-white/50">All Stats</span>
+                </div>
+                <div className="flex items-center justify-center gap-1 mt-0.5">
+                  {Array.from({ length: item.maxModuleSlots ?? 3 }).map((_, si) => (
+                    <div key={si} className="w-2 h-2 rounded-full border border-cyan-400/30 bg-cyan-400/10" />
+                  ))}
+                  <span className="text-[8px] text-cyan-400/40 ml-1">slots</span>
+                </div>
+              </div>
+            );
+          }
+          const typeMap: Record<string, 'frame' | 'aura' | 'title'> = {
+            frame: 'frame',
+            aura: 'aura',
+            title: 'title',
+          };
+          const bonusType = typeMap[item.category];
+          const lines = bonusType ? getEquipmentBonusLines(item.id, bonusType) : [];
+          if (lines.length === 0) return null;
+          const isAura = item.category === 'aura';
+          return (
+            <div className="mb-2 flex flex-col items-center gap-0.5">
+              {lines.map((l, i) => (
+                <div key={i} className="flex items-center text-[10px]">
+                  <span className={`w-8 text-right font-bold ${isAura ? 'text-purple-400' : 'text-green-400'}`}>
+                    {l.value}
+                  </span>
+                  <span className="text-white/50 ml-1.5">{l.label}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* Lock label */}
+        <div className="mb-2">
           {lockLabel && !owned && (
             <div className="flex items-center justify-center gap-1.5 text-amber-400/50 text-[10px] px-2 py-1.5 rounded-xl bg-amber-500/[0.04] border border-amber-500/10">
               <Lock className="w-3 h-3" /> {lockLabel}
@@ -403,669 +457,6 @@ function ItemCard({
   );
 }
 
-// COIN_PACKAGES imported from prismCoin.ts
-
-function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
-  const wallet = useWallet();
-  const [buyingIdx, setBuyingIdx] = useState<number | null>(null);
-  const [status, setStatus] = useState<{ purchasedToday: number; remainingToday: number } | null>(null);
-
-  useEffect(() => {
-    if (!walletAddress) return;
-    const base = getApiBase();
-    fetch(`${base}/api/prism/buy/status?address=${encodeURIComponent(walletAddress)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d) setStatus(d);
-      })
-      .catch(() => {});
-  }, [walletAddress]);
-
-  const handleBuy = useCallback(
-    async (pkgIndex: number) => {
-      if (buyingIdx !== null || !walletAddress || !wallet.publicKey || !wallet.signTransaction) return;
-      const pkg = COIN_PACKAGES[pkgIndex];
-      setBuyingIdx(pkgIndex);
-
-      try {
-        // 1. Get JWT FIRST (before SOL transfer — prevents fund loss on auth failure)
-        const { ensureJwt } = await import('@/components/prism/shared');
-        const jwt = await ensureJwt();
-        if (!jwt) {
-          toast.error('Authentication required to purchase');
-          setBuyingIdx(null);
-          return;
-        }
-
-        // 2. Send SOL to treasury
-        const {
-          Connection: SolConn,
-          PublicKey: SolPK,
-          SystemProgram: SolSP,
-          Transaction: SolTx,
-        } = await import('@solana/web3.js');
-        const base = getApiBase();
-        const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
-        const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-        const tx = new SolTx().add(
-          SolSP.transfer({
-            fromPubkey: new SolPK(walletAddress),
-            toPubkey: new SolPK(treasuryAddr),
-            lamports: Math.floor(pkg.solPrice * 1e9),
-          }),
-        );
-        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-        tx.feePayer = new SolPK(walletAddress);
-        const simulation = await conn.simulateTransaction(tx, undefined, {
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-        });
-        if (simulation.value.err)
-          throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-        const signed = await wallet.signTransaction(tx);
-        const sig = await conn.sendRawTransaction(signed.serialize());
-        toast.info('Confirming transaction...');
-        await conn.confirmTransaction(sig, 'confirmed');
-
-        // 3. POST to buy endpoint
-        const res = await fetch(`${base}/api/prism/buy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ packageIndex: pkgIndex, txSignature: sig }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          toast.success(`Purchased ${pkg.coins} Coins!`);
-          if (status)
-            setStatus({
-              ...status,
-              purchasedToday: status.purchasedToday + pkg.coins,
-              remainingToday: status.remainingToday - pkg.coins,
-            });
-          onPurchased();
-        } else {
-          const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
-          toast.error(err.error || 'Purchase failed');
-        }
-      } catch (e: any) {
-        if (e?.message?.includes('User rejected')) {
-          toast.info('Transaction cancelled');
-        } else {
-          toast.error(e?.message || 'Purchase failed');
-        }
-      }
-      setBuyingIdx(null);
-    },
-    [walletAddress, wallet, buyingIdx, status, onPurchased],
-  );
-
-  return (
-    <div className="mb-6">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5">
-          <Plus className="w-3.5 h-3.5 text-amber-400" />
-          Buy Coins
-        </h3>
-        {status && (
-          <span className="text-[10px] text-white/20">{status.remainingToday.toLocaleString()} remaining today</span>
-        )}
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {COIN_PACKAGES.map((pkg, i) => (
-          <button
-            key={i}
-            onClick={() => handleBuy(i)}
-            disabled={buyingIdx !== null || !walletAddress}
-            className="relative overflow-hidden rounded-xl bg-white/[0.04] border border-white/[0.08] p-3 text-left hover:bg-white/[0.07] hover:border-amber-400/20 transition-all duration-300 disabled:opacity-50"
-          >
-            <div className="text-[10px] text-amber-400/60 font-bold uppercase mb-1">{pkg.label}</div>
-            <div className="flex items-center gap-1 mb-1">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="#fbbf24">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 6v12M8 10h8M8 14h8" stroke="#000" strokeWidth="1.5" />
-              </svg>
-              <span className="text-lg font-black text-white">{pkg.coins.toLocaleString()}</span>
-            </div>
-            <div className="text-[11px] font-bold text-purple-400">{pkg.solPrice} SOL</div>
-            {buyingIdx === i && (
-              <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-xl">
-                <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
-              </div>
-            )}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── Prism Vault (Staking) ──
-
-const YIELD_BRACKETS = [
-  { upTo: 5000, baseDailyRate: 0.01 },
-  { upTo: 20000, baseDailyRate: 0.007 },
-  { upTo: 50000, baseDailyRate: 0.005 },
-  { upTo: 100000, baseDailyRate: 0.0035 },
-  { upTo: Infinity, baseDailyRate: 0.002 },
-];
-
-function calcClientDailyYield(amount: number, tierMultiplier: number): number {
-  let remaining = amount;
-  let daily = 0;
-  let prevUpTo = 0;
-  for (const b of YIELD_BRACKETS) {
-    const sliceMax = b.upTo - prevUpTo;
-    const slice = Math.min(remaining, sliceMax);
-    if (slice <= 0) break;
-    daily += slice * b.baseDailyRate * tierMultiplier;
-    remaining -= slice;
-    prevUpTo = b.upTo;
-  }
-  return daily;
-}
-
-function rateRangeLabel(mult: number): string {
-  const high = (YIELD_BRACKETS[0].baseDailyRate * mult * 100).toFixed(1);
-  const low = (YIELD_BRACKETS[YIELD_BRACKETS.length - 1].baseDailyRate * mult * 100).toFixed(1);
-  return `${high}–${low}%/day`;
-}
-
-const VAULT_TIERS = [
-  {
-    id: 'bronze',
-    label: 'Bronze',
-    min: 10000,
-    lock: 7,
-    rateMultiplier: 1.0,
-    boost: 10,
-    color: '#cd7f32',
-    glow: 'rgba(205,127,50,0.25)',
-    icon: '🥉',
-  },
-  {
-    id: 'silver',
-    label: 'Silver',
-    min: 30000,
-    lock: 30,
-    rateMultiplier: 1.4,
-    boost: 20,
-    color: '#c0c0c0',
-    glow: 'rgba(192,192,192,0.2)',
-    icon: '🥈',
-  },
-  {
-    id: 'gold',
-    label: 'Gold',
-    min: 75000,
-    lock: 90,
-    rateMultiplier: 2.0,
-    boost: 35,
-    color: '#fbbf24',
-    glow: 'rgba(251,191,36,0.3)',
-    icon: '🥇',
-  },
-] as const;
-
-type VaultTierId = 'bronze' | 'silver' | 'gold';
-
-interface VaultStatus {
-  staked: boolean;
-  tier?: VaultTierId;
-  amount?: number;
-  stakedAt?: number;
-  lockDays?: number;
-  unlocksAt?: number;
-  unclaimedYield?: number;
-  earlyUnstakePenalty?: number;
-  dailyYield?: number;
-  effectiveRate?: number;
-}
-
-function formatTimeLeft(ms: number): string {
-  if (ms <= 0) return 'Unlocked';
-  const totalSeconds = Math.floor(ms / 1000);
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const mins = Math.floor((totalSeconds % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${mins}m`;
-  return `${mins}m`;
-}
-
-function PrismVaultSection({
-  walletAddress,
-  balance,
-  onBalanceChange,
-}: {
-  walletAddress: string;
-  balance: number;
-  onBalanceChange: () => void;
-}) {
-  const wallet = useWallet();
-  const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState(false);
-  const [selectedTier, setSelectedTier] = useState<VaultTierId>('bronze');
-  const [stakeAmount, setStakeAmount] = useState('');
-  const [staking, setStaking] = useState(false);
-  const [claiming, setClaiming] = useState(false);
-  const [unstaking, setUnstaking] = useState(false);
-  const [showUnstakeWarning, setShowUnstakeWarning] = useState(false);
-
-  const tier = VAULT_TIERS.find((t) => t.id === selectedTier)!;
-
-  // Fetch vault status
-  useEffect(() => {
-    if (!walletAddress) return;
-    setLoadingStatus(true);
-    const base = getApiBase();
-    fetch(`${base}/api/prism/vault/status?address=${encodeURIComponent(walletAddress)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.staking) {
-          setVaultStatus({
-            staked: true,
-            tier: d.staking.tier,
-            amount: d.staking.amount,
-            unlocksAt: d.staking.lockEnd,
-            unclaimedYield: d.unclaimedYield ?? 0,
-            dailyYield: d.dailyYield ?? 0,
-            effectiveRate: d.effectiveRate ?? 0,
-          });
-        } else {
-          setVaultStatus({ staked: false });
-        }
-      })
-      .catch(() => setVaultStatus({ staked: false }))
-      .finally(() => setLoadingStatus(false));
-  }, [walletAddress]);
-
-  const getJwt = async () => {
-    const { ensureJwt } = await import('@/components/prism/shared');
-    return ensureJwt();
-  };
-
-  const handleStake = useCallback(async () => {
-    const amount = Number(stakeAmount);
-    if (!amount || amount < tier.min) {
-      toast.error(`Minimum stake is ${tier.min} coins for ${tier.label}`);
-      return;
-    }
-    if (amount > balance) {
-      toast.error('Insufficient balance');
-      return;
-    }
-    if (!walletAddress) {
-      toast.error('Connect wallet first');
-      return;
-    }
-    setStaking(true);
-    try {
-      const jwt = await getJwt();
-      if (!jwt) {
-        toast.error('Authentication failed');
-        return;
-      }
-      const base = getApiBase();
-      const res = await fetch(`${base}/api/prism/vault/stake`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ amount, tier: selectedTier }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Stake failed');
-      toast.success(`Staked ${amount} coins in ${tier.label} Vault!`);
-      setVaultStatus(data.status || { staked: true, tier: selectedTier, amount });
-      setStakeAmount('');
-      onBalanceChange();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Stake failed');
-    } finally {
-      setStaking(false);
-    }
-  }, [stakeAmount, tier, balance, walletAddress, selectedTier, onBalanceChange, wallet]);
-
-  const handleClaim = useCallback(async () => {
-    if (!walletAddress) return;
-    setClaiming(true);
-    try {
-      const jwt = await getJwt();
-      if (!jwt) {
-        toast.error('Authentication failed');
-        return;
-      }
-      const base = getApiBase();
-      const res = await fetch(`${base}/api/prism/vault/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Claim failed');
-      toast.success(`Claimed ${data.claimed ?? ''} coins!`);
-      setVaultStatus((v) => (v ? { ...v, unclaimedYield: 0 } : v));
-      onBalanceChange();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Claim failed');
-    } finally {
-      setClaiming(false);
-    }
-  }, [walletAddress, onBalanceChange, wallet]);
-
-  const handleUnstake = useCallback(async () => {
-    if (!walletAddress) return;
-    setUnstaking(true);
-    setShowUnstakeWarning(false);
-    try {
-      const jwt = await getJwt();
-      if (!jwt) {
-        toast.error('Authentication failed');
-        return;
-      }
-      const base = getApiBase();
-      const res = await fetch(`${base}/api/prism/vault/unstake`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unstake failed');
-      toast.success(data.message || 'Unstaked successfully');
-      setVaultStatus({ staked: false });
-      onBalanceChange();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Unstake failed');
-    } finally {
-      setUnstaking(false);
-    }
-  }, [walletAddress, onBalanceChange, wallet]);
-
-  const stakedTierInfo = vaultStatus?.tier ? VAULT_TIERS.find((t) => t.id === vaultStatus.tier) : null;
-  const isLocked = vaultStatus?.unlocksAt ? Date.now() < vaultStatus.unlocksAt : false;
-  const timeLeft = vaultStatus?.unlocksAt ? vaultStatus.unlocksAt - Date.now() : 0;
-  const stakeAmountNum = Number(stakeAmount);
-  const canStake = stakeAmountNum >= tier.min && stakeAmountNum <= balance && !staking;
-
-  return (
-    <div className="mb-6">
-      {/* Section header */}
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-bold text-white/50 uppercase tracking-wider flex items-center gap-1.5">
-          <Shield className="w-3.5 h-3.5 text-amber-400" />
-          Prism Vault — Staking
-        </h3>
-        <span className="text-[10px] text-white/20">Earn yield on your coins</span>
-      </div>
-
-      {loadingStatus ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="w-5 h-5 animate-spin text-purple-400/40" />
-        </div>
-      ) : vaultStatus?.staked ? (
-        /* ── Active Stake Card ── */
-        <div
-          className="rounded-2xl p-4 border"
-          style={{
-            background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}08, ${stakedTierInfo?.color ?? '#fbbf24'}03)`,
-            borderColor: `${stakedTierInfo?.color ?? '#fbbf24'}25`,
-            boxShadow: `0 0 30px ${stakedTierInfo?.glow ?? 'rgba(251,191,36,0.1)'}`,
-          }}
-        >
-          {/* Tier badge + lock status */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2.5">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
-                style={{
-                  background: `${stakedTierInfo?.color ?? '#fbbf24'}15`,
-                  border: `1px solid ${stakedTierInfo?.color ?? '#fbbf24'}25`,
-                }}
-              >
-                {stakedTierInfo?.icon ?? '🏆'}
-              </div>
-              <div>
-                <p className="text-white font-bold text-sm">{stakedTierInfo?.label ?? vaultStatus.tier} Vault</p>
-                <p className="text-white/30 text-[10px]">{vaultStatus.amount?.toLocaleString()} coins staked</p>
-              </div>
-            </div>
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
-              style={{
-                background: isLocked ? 'rgba(239,68,68,0.08)' : 'rgba(74,222,128,0.08)',
-                border: `1px solid ${isLocked ? 'rgba(239,68,68,0.2)' : 'rgba(74,222,128,0.2)'}`,
-              }}
-            >
-              <Clock className="w-3 h-3" style={{ color: isLocked ? '#f87171' : '#4ade80' }} />
-              <span className="text-[10px] font-bold" style={{ color: isLocked ? '#f87171' : '#4ade80' }}>
-                {isLocked ? formatTimeLeft(timeLeft) : 'Unlocked'}
-              </span>
-            </div>
-          </div>
-
-          {/* Stats row */}
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <div
-              className="rounded-xl p-2.5 text-center"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-            >
-              <TrendingUp className="w-3.5 h-3.5 mx-auto mb-1" style={{ color: stakedTierInfo?.color ?? '#fbbf24' }} />
-              <p className="text-white font-black text-sm">{vaultStatus.dailyYield ?? 0}</p>
-              <p className="text-white/25 text-[9px]">coins/day</p>
-            </div>
-            <div
-              className="rounded-xl p-2.5 text-center"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-            >
-              <Coins className="w-3.5 h-3.5 mx-auto mb-1 text-amber-400" />
-              <p className="text-white font-black text-sm">{Math.floor(vaultStatus.unclaimedYield ?? 0)}</p>
-              <p className="text-white/25 text-[9px]">unclaimed</p>
-            </div>
-            <div
-              className="rounded-xl p-2.5 text-center"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
-            >
-              <Zap className="w-3.5 h-3.5 mx-auto mb-1 text-purple-400" />
-              <p className="text-white font-black text-sm">+{stakedTierInfo?.boost ?? 0}%</p>
-              <p className="text-white/25 text-[9px]">boost</p>
-            </div>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex gap-2">
-            <Button
-              className="flex-1 h-10 text-xs font-bold"
-              style={{
-                background: `linear-gradient(135deg, ${stakedTierInfo?.color ?? '#fbbf24'}, ${stakedTierInfo?.color ?? '#fbbf24'}cc)`,
-                color: '#000',
-                boxShadow: `0 4px 15px ${stakedTierInfo?.glow ?? 'rgba(251,191,36,0.3)'}`,
-              }}
-              onClick={handleClaim}
-              disabled={claiming || (vaultStatus.unclaimedYield ?? 0) < 1}
-            >
-              {claiming ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Coins className="w-3 h-3 mr-1" />}
-              Claim Yield
-            </Button>
-            <Button
-              variant="outline"
-              className="h-10 px-4 text-xs font-bold border-red-500/20 text-red-400/70 hover:bg-red-500/10"
-              onClick={() => {
-                if (isLocked) setShowUnstakeWarning(true);
-                else handleUnstake();
-              }}
-              disabled={unstaking}
-            >
-              {unstaking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Unstake'}
-            </Button>
-          </div>
-
-          {/* Early unstake warning */}
-          {showUnstakeWarning && (
-            <div
-              className="mt-3 p-3 rounded-xl flex flex-col gap-2"
-              style={{
-                background: 'rgba(239,68,68,0.06)',
-                border: '1px solid rgba(239,68,68,0.2)',
-              }}
-            >
-              <div className="flex items-center gap-2 text-red-400 text-xs font-bold">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                25% penalty will be burned on early unstake
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="flex-1 h-8 text-[10px] border-white/10 text-white/40"
-                  onClick={() => setShowUnstakeWarning(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  className="flex-1 h-8 text-[10px] bg-red-600 hover:bg-red-500 text-white"
-                  onClick={handleUnstake}
-                  disabled={unstaking}
-                >
-                  {unstaking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm Unstake'}
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        /* ── Stake UI ── */
-        <div>
-          {/* Tier cards */}
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            {VAULT_TIERS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setSelectedTier(t.id)}
-                className="rounded-xl p-3 text-left transition-all duration-300 hover:scale-[1.02]"
-                style={{
-                  background:
-                    selectedTier === t.id
-                      ? `linear-gradient(135deg, ${t.color}18, ${t.color}08)`
-                      : 'rgba(255,255,255,0.03)',
-                  border: `1px solid ${selectedTier === t.id ? t.color + '35' : 'rgba(255,255,255,0.06)'}`,
-                  boxShadow: selectedTier === t.id ? `0 0 20px ${t.glow}` : 'none',
-                }}
-              >
-                <div className="text-xl mb-1.5">{t.icon}</div>
-                <p
-                  className="text-white font-bold text-xs mb-1"
-                  style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.7)' }}
-                >
-                  {t.label}
-                </p>
-                <div className="space-y-0.5">
-                  <p
-                    className="text-[9px]"
-                    style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}
-                  >
-                    Min: {t.min.toLocaleString()}
-                  </p>
-                  <p
-                    className="text-[9px]"
-                    style={{ color: selectedTier === t.id ? t.color + 'cc' : 'rgba(255,255,255,0.25)' }}
-                  >
-                    {t.lock}d lock
-                  </p>
-                  <p
-                    className="text-[9px] font-bold"
-                    style={{ color: selectedTier === t.id ? t.color : 'rgba(255,255,255,0.3)' }}
-                  >
-                    {rateRangeLabel(t.rateMultiplier)}
-                  </p>
-                  <p
-                    className="text-[9px]"
-                    style={{ color: selectedTier === t.id ? '#c084fc' : 'rgba(192,132,252,0.4)' }}
-                  >
-                    +{t.boost}% boost
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* Amount input */}
-          <div className="relative mb-3">
-            <input
-              type="number"
-              value={stakeAmount}
-              onChange={(e) => setStakeAmount(e.target.value)}
-              placeholder={`Stake amount (min ${tier.min.toLocaleString()})`}
-              min={tier.min}
-              max={balance}
-              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-white/20 focus:outline-none focus:border-amber-500/40 pr-20"
-              style={{ fontSize: 16 }}
-            />
-            <button
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold px-3 py-1.5 rounded-xl transition-colors"
-              style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)' }}
-              onClick={() => setStakeAmount(String(balance))}
-            >
-              MAX
-            </button>
-          </div>
-
-          {/* Projected yield info */}
-          {stakeAmountNum >= tier.min && (
-            <div
-              className="mb-3 px-3 py-2 rounded-xl flex items-center justify-between"
-              style={{
-                background: 'rgba(255,255,255,0.02)',
-                border: '1px solid rgba(255,255,255,0.05)',
-              }}
-            >
-              <span className="text-[10px] text-white/30">Est. daily yield</span>
-              <span className="text-[10px] font-bold" style={{ color: tier.color }}>
-                +{calcClientDailyYield(stakeAmountNum, tier.rateMultiplier).toFixed(1)} coins/day
-              </span>
-            </div>
-          )}
-
-          {/* Stake button */}
-          <Button
-            className="w-full h-12 font-bold text-sm"
-            style={
-              canStake
-                ? {
-                    background: `linear-gradient(135deg, ${tier.color}, ${tier.color}cc)`,
-                    color: '#000',
-                    boxShadow: `0 4px 20px ${tier.glow}`,
-                  }
-                : {
-                    background: 'rgba(255,255,255,0.05)',
-                    color: 'rgba(255,255,255,0.25)',
-                  }
-            }
-            onClick={handleStake}
-            disabled={!canStake || staking}
-          >
-            {staking ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin mr-2" /> Staking...
-              </>
-            ) : (
-              <>
-                <Shield className="w-4 h-4 mr-2" /> Stake{' '}
-                {stakeAmountNum >= tier.min ? stakeAmountNum.toLocaleString() : ''} coins
-              </>
-            )}
-          </Button>
-          {stakeAmountNum > 0 && stakeAmountNum < tier.min && (
-            <p className="text-red-400/60 text-[10px] mt-2 text-center">
-              Minimum for {tier.label} is {tier.min.toLocaleString()} coins
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Main Component ──
 export default function StellarForge() {
   const navigate = useNavigate();
@@ -1127,9 +518,13 @@ export default function StellarForge() {
   }, [walletAddress]);
 
   // Shop logic
+  const RARITY_ORDER: Record<string, number> = { common: 0, rare: 1, epic: 2, legendary: 3 };
   const filteredItems = useMemo(() => {
-    if (shopFilter === 'all' || shopFilter === 'module') return ALL_FORGE_ITEMS;
-    return ALL_FORGE_ITEMS.filter((i) => i.category === shopFilter);
+    const items =
+      shopFilter === 'all' || shopFilter === 'module'
+        ? ALL_FORGE_ITEMS
+        : ALL_FORGE_ITEMS.filter((i) => i.category === shopFilter);
+    return [...items].sort((a, b) => (RARITY_ORDER[a.rarity] ?? 0) - (RARITY_ORDER[b.rarity] ?? 0));
   }, [shopFilter]);
 
   const handlePurchase = useCallback(
@@ -1258,14 +653,37 @@ export default function StellarForge() {
       if (!loadout || !walletAddress || installingModule) return;
       const mod = getModuleById(moduleId);
       if (!mod) return;
-      // Module must be in ownedModules
+      // Specific pre-checks with clear error messages
       if (!loadout.ownedModules.includes(moduleId)) {
         toast.error('You need to purchase this module first');
         return;
       }
+      const item = getItemById(itemId);
+      if (!item) return;
+      if (!loadout.ownedItems.some((o) => o.itemId === itemId)) {
+        toast.error('You need to own this ship first');
+        return;
+      }
+      const currentModules = loadout.installedModules[itemId] || [];
+      const maxSlots = item.maxModuleSlots ?? 3;
+      if (currentModules.length >= maxSlots) {
+        toast.error(`All ${maxSlots} module slot${maxSlots > 1 ? 's' : ''} are full on this ship`);
+        return;
+      }
+      if (currentModules.includes(moduleId)) {
+        toast.error('This module is already installed on this ship');
+        return;
+      }
+      const alreadyElsewhere = Object.entries(loadout.installedModules).some(
+        ([key, mods]) => key !== itemId && mods.includes(moduleId),
+      );
+      if (alreadyElsewhere) {
+        toast.error('This module is already installed on another ship — uninstall it first');
+        return;
+      }
       const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
       if (!newLoadout) {
-        toast.error('Cannot install module — check slot limits or identity card requirement');
+        toast.error('Cannot install module');
         return;
       }
       saveLocalLoadout(newLoadout);
@@ -1507,7 +925,7 @@ export default function StellarForge() {
                       <div className="flex-1 h-px bg-white/[0.06]" />
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {MICROMODULE_DEFS.map((mod) => {
+                      {SORTED_MODULES.map((mod) => {
                         const tierColor = MODULE_TIER_COLORS[mod.tier];
                         const isModOwned =
                           loadout?.ownedModules.includes(mod.id) ||
@@ -1516,42 +934,44 @@ export default function StellarForge() {
                         return (
                           <div
                             key={mod.id}
-                            className="rounded-xl p-3 transition-all duration-300"
+                            className="relative rounded-xl p-3 transition-all duration-300"
                             style={{
-                              background: 'rgba(255,255,255,0.02)',
-                              border: `1px solid ${tierColor}25`,
+                              background: isModOwned ? `${tierColor}08` : 'rgba(255,255,255,0.02)',
+                              border: `1px solid ${isModOwned ? `${tierColor}35` : `${tierColor}25`}`,
                             }}
                           >
-                            <div className="flex items-center gap-2 mb-2">
+                            {isModOwned && (
+                              <div
+                                className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+                                style={{ background: `${tierColor}25` }}
+                              >
+                                <Check className="w-3 h-3" style={{ color: tierColor }} />
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 mb-1.5">
                               <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
-                                  <span
-                                    className="text-[8px] font-black px-1.5 py-0.5 rounded shrink-0"
-                                    style={{ color: tierColor, background: `${tierColor}15` }}
-                                  >
-                                    {mod.tier.toUpperCase()}
-                                  </span>
                                 </div>
                               </div>
                             </div>
-                            <p className="text-white/25 text-[10px] mb-2 line-clamp-1">{mod.description}</p>
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="text-green-400 text-[10px] font-bold">
-                                +{mod.statBonus.value} {mod.statBonus.stat}
-                              </span>
+                            <p className="text-white/30 text-[10px] mb-2 line-clamp-2 min-h-[28px]">
+                              {mod.description}
+                            </p>
+                            <div className="space-y-0.5 mb-2">
+                              <div className="flex items-center text-[10px]">
+                                <span className="text-green-400 font-bold w-7 text-right">+{mod.statBonus.value}</span>
+                                <span className="text-white/50 ml-1.5">{mod.statBonus.stat}</span>
+                              </div>
                               {mod.tradeoff && (
-                                <span className="text-red-400 text-[10px]">
-                                  -{mod.tradeoff.value} {mod.tradeoff.stat}
-                                </span>
+                                <div className="flex items-center text-[10px]">
+                                  <span className="text-red-400 font-bold w-7 text-right">-{mod.tradeoff.value}</span>
+                                  <span className="text-white/50 ml-1.5">{mod.tradeoff.stat}</span>
+                                </div>
                               )}
                             </div>
-                            {isModOwned ? (
-                              <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold">
-                                <Check className="w-3 h-3" /> Owned
-                              </div>
-                            ) : (
+                            {!isModOwned && (
                               <button
                                 onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
                                 disabled={!canAfford || installingModule}
@@ -1563,7 +983,7 @@ export default function StellarForge() {
                                 }}
                               >
                                 <Coins className="w-3 h-3 inline mr-1" />
-                                {mod.price}
+                                {mod.price.toLocaleString()}
                               </button>
                             )}
                           </div>
@@ -1574,7 +994,7 @@ export default function StellarForge() {
                 </>
               ) : shopFilter === 'module' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {MICROMODULE_DEFS.map((mod) => {
+                  {SORTED_MODULES.map((mod) => {
                     const tierColor = MODULE_TIER_COLORS[mod.tier];
                     const isModOwned =
                       loadout?.ownedModules.includes(mod.id) ||
@@ -1583,13 +1003,21 @@ export default function StellarForge() {
                     return (
                       <div
                         key={mod.id}
-                        className="rounded-xl p-3 transition-all duration-300"
+                        className="relative rounded-xl p-3 transition-all duration-300"
                         style={{
-                          background: 'rgba(255,255,255,0.02)',
-                          border: `1px solid ${tierColor}25`,
+                          background: isModOwned ? `${tierColor}08` : 'rgba(255,255,255,0.02)',
+                          border: `1px solid ${isModOwned ? `${tierColor}35` : `${tierColor}25`}`,
                         }}
                       >
-                        <div className="flex items-center gap-2 mb-2">
+                        {isModOwned && (
+                          <div
+                            className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+                            style={{ background: `${tierColor}25` }}
+                          >
+                            <Check className="w-3 h-3" style={{ color: tierColor }} />
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 mb-1.5">
                           <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
@@ -1603,22 +1031,20 @@ export default function StellarForge() {
                             </div>
                           </div>
                         </div>
-                        <p className="text-white/25 text-[10px] mb-2">{mod.description}</p>
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-green-400 text-[10px] font-bold">
-                            +{mod.statBonus.value} {mod.statBonus.stat}
-                          </span>
+                        <p className="text-white/30 text-[10px] mb-2 line-clamp-2 min-h-[28px]">{mod.description}</p>
+                        <div className="space-y-0.5 mb-2">
+                          <div className="flex items-center gap-1.5 text-[10px]">
+                            <span className="text-green-400 font-bold">+{mod.statBonus.value}</span>
+                            <span className="text-white/50">{mod.statBonus.stat}</span>
+                          </div>
                           {mod.tradeoff && (
-                            <span className="text-red-400 text-[10px]">
-                              -{mod.tradeoff.value} {mod.tradeoff.stat}
-                            </span>
+                            <div className="flex items-center gap-1.5 text-[10px]">
+                              <span className="text-red-400 font-bold">-{mod.tradeoff.value}</span>
+                              <span className="text-white/50">{mod.tradeoff.stat}</span>
+                            </div>
                           )}
                         </div>
-                        {isModOwned ? (
-                          <div className="flex items-center gap-1 text-green-400 text-[10px] font-bold">
-                            <Check className="w-3 h-3" /> Owned
-                          </div>
-                        ) : (
+                        {!isModOwned && (
                           <button
                             onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
                             disabled={!canAfford || installingModule}
@@ -1630,7 +1056,7 @@ export default function StellarForge() {
                             }}
                           >
                             <Coins className="w-3 h-3 inline mr-1" />
-                            {mod.price}
+                            {mod.price.toLocaleString()}
                           </button>
                         )}
                       </div>

@@ -75,8 +75,8 @@ const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; cont
     id: 'text_quest',
     name: 'Text Adventures',
     icon: '📖',
-    desc: 'Daily narrative quests — explore stories, earn Coins',
-    controls: 'Read and make choices',
+    desc: 'Branching story quests. Your choices shape the narrative — no reflexes, just decisions. New chapters daily.',
+    controls: 'Read the story, pick your path',
     cover: '/games/quest_cover.png',
   },
 ];
@@ -610,29 +610,29 @@ const TOURNAMENT_TIERS: { key: TournamentTierKey; label: string; fee: number; sh
 
 const PRIZE_DIST: Record<TournamentTierKey, { place: string; pct: string; xp: number; base: number }[]> = {
   daily: [
-    { place: '1st', pct: '50%', xp: 300, base: 1000 },
-    { place: '2nd', pct: '30%', xp: 200, base: 700 },
-    { place: '3rd', pct: '20%', xp: 100, base: 400 },
+    { place: '1st', pct: '50%', xp: 300, base: 500 },
+    { place: '2nd', pct: '30%', xp: 200, base: 250 },
+    { place: '3rd', pct: '20%', xp: 100, base: 100 },
   ],
   weekly: [
-    { place: '1st', pct: '35%', xp: 600, base: 5000 },
-    { place: '2nd', pct: '22%', xp: 500, base: 4200 },
-    { place: '3rd', pct: '15%', xp: 400, base: 3400 },
-    { place: '4th', pct: '10%', xp: 300, base: 2600 },
-    { place: '5th', pct: '10%', xp: 200, base: 1800 },
-    { place: '6th', pct: '8%', xp: 100, base: 1000 },
+    { place: '1st', pct: '35%', xp: 600, base: 2000 },
+    { place: '2nd', pct: '22%', xp: 500, base: 1500 },
+    { place: '3rd', pct: '15%', xp: 400, base: 1000 },
+    { place: '4th', pct: '10%', xp: 300, base: 500 },
+    { place: '5th', pct: '10%', xp: 200, base: 250 },
+    { place: '6th', pct: '8%', xp: 100, base: 100 },
   ],
   monthly: [
-    { place: '1st', pct: '30%', xp: 1000, base: 25000 },
-    { place: '2nd', pct: '18%', xp: 900, base: 22500 },
-    { place: '3rd', pct: '12%', xp: 800, base: 20000 },
-    { place: '4th', pct: '9%', xp: 700, base: 17500 },
-    { place: '5th', pct: '8%', xp: 600, base: 15000 },
-    { place: '6th', pct: '6%', xp: 500, base: 12500 },
-    { place: '7th', pct: '5%', xp: 400, base: 10000 },
-    { place: '8th', pct: '4%', xp: 300, base: 7500 },
-    { place: '9th', pct: '4%', xp: 200, base: 5000 },
-    { place: '10th', pct: '4%', xp: 100, base: 2500 },
+    { place: '1st', pct: '30%', xp: 1000, base: 10000 },
+    { place: '2nd', pct: '18%', xp: 900, base: 5000 },
+    { place: '3rd', pct: '12%', xp: 800, base: 3000 },
+    { place: '4th', pct: '9%', xp: 700, base: 2000 },
+    { place: '5th', pct: '8%', xp: 600, base: 1500 },
+    { place: '6th', pct: '6%', xp: 500, base: 1000 },
+    { place: '7th', pct: '5%', xp: 400, base: 750 },
+    { place: '8th', pct: '4%', xp: 300, base: 500 },
+    { place: '9th', pct: '4%', xp: 200, base: 250 },
+    { place: '10th', pct: '4%', xp: 100, base: 100 },
   ],
 };
 
@@ -968,7 +968,12 @@ const PrismLeague = () => {
   const gravitySessionStatsRef = useRef<{ columns: number; crystals: number }>({ columns: 0, crystals: 0 });
 
   // ── Play Mode & Tournament state ──
-  const [playMode, setPlayMode] = useState<PlayMode>('free');
+  const [playMode, setPlayModeRaw] = useState<PlayMode>('free');
+  // Auto-reset to free play when switching to text_quest
+  const setPlayMode = useCallback((m: PlayMode) => setPlayModeRaw(m), []);
+  useEffect(() => {
+    if (gameMode === 'text_quest' && playMode === 'tournament') setPlayModeRaw('free');
+  }, [gameMode, playMode]);
   const [tournamentTier, setTournamentTier] = useState<TournamentTierKey>('daily');
   const [tournaments, setTournaments] = useState<Record<TournamentTierKey, ActiveTournament | null>>({
     daily: null,
@@ -2689,6 +2694,12 @@ const PrismLeague = () => {
                                       TOURNAMENT_TIERS.find((t) => t.key === tournamentTier)?.shortLabel}{' '}
                                     Tournament
                                   </span>
+                                  {activeTournament.mode && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 uppercase">
+                                      {GAME_MODES.find((m) => m.id === activeTournament.mode)?.name ||
+                                        activeTournament.mode}
+                                    </span>
+                                  )}
                                   <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">
                                     LIVE
                                   </span>
@@ -2717,33 +2728,40 @@ const PrismLeague = () => {
                                   </div>
                                 </div>
                                 {/* Prize distribution */}
-                                <div className="px-4 py-2 border-b border-white/[0.05]">
-                                  <p className="text-[9px] text-white/30 uppercase tracking-wider font-bold mb-1">
-                                    Prize Distribution (15% burn)
+                                <div className="px-4 py-3 border-b border-white/[0.05]">
+                                  <p className="text-[10px] text-white/30 uppercase tracking-wider font-bold mb-2">
+                                    Prizes (15% burn)
                                   </p>
-                                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                                    {PRIZE_DIST[tournamentTier].map((r) => (
-                                      <div key={r.place} className="flex justify-between text-[10px] gap-1">
-                                        <span
-                                          className={
-                                            r.place === '1st'
-                                              ? 'text-yellow-400'
-                                              : r.place === '2nd'
-                                                ? 'text-gray-300'
-                                                : r.place === '3rd'
-                                                  ? 'text-amber-600'
-                                                  : 'text-white/40'
-                                          }
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {PRIZE_DIST[tournamentTier]
+                                      .slice(0, tournamentTier === 'daily' ? 3 : tournamentTier === 'weekly' ? 6 : 5)
+                                      .map((r) => (
+                                        <div
+                                          key={r.place}
+                                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs"
+                                          style={{
+                                            background:
+                                              r.place === '1st'
+                                                ? 'rgba(250,204,21,0.1)'
+                                                : r.place === '2nd'
+                                                  ? 'rgba(192,192,192,0.08)'
+                                                  : r.place === '3rd'
+                                                    ? 'rgba(205,127,50,0.08)'
+                                                    : 'rgba(255,255,255,0.03)',
+                                            border: `1px solid ${r.place === '1st' ? 'rgba(250,204,21,0.2)' : 'rgba(255,255,255,0.06)'}`,
+                                          }}
                                         >
-                                          {r.place}
-                                        </span>
-                                        <span className="text-white/50 font-mono text-[9px]">
-                                          {r.pct}
-                                          <span className="text-emerald-400/70"> +{(r.base / 1000).toFixed(1)}k</span>
-                                          <span className="text-cyan-400/50"> +{r.xp}xp</span>
-                                        </span>
-                                      </div>
-                                    ))}
+                                          <span
+                                            className={`font-bold ${r.place === '1st' ? 'text-yellow-400' : r.place === '2nd' ? 'text-gray-300' : r.place === '3rd' ? 'text-amber-600' : 'text-white/40'}`}
+                                          >
+                                            {r.place}
+                                          </span>
+                                          <span className="text-white/60 font-mono">{r.pct}</span>
+                                          <span className="text-emerald-400/80 font-bold">
+                                            +{r.base >= 1000 ? `${r.base / 1000}k` : r.base}
+                                          </span>
+                                        </div>
+                                      ))}
                                   </div>
                                 </div>
                                 {/* Standings (if joined) */}
@@ -2853,268 +2871,339 @@ const PrismLeague = () => {
                       </>
                     )}
 
-                    {/* Coin Balance + Stats Row */}
-                    <div className="w-full mb-4 grid grid-cols-2 gap-3">
-                      <div className="rounded-2xl bg-gradient-to-br from-yellow-500/10 to-orange-500/5 border border-yellow-500/20 px-4 py-4 text-center">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                          <Coins className="w-5 h-5 text-yellow-400" />
-                          <span className="text-[11px] text-yellow-400/70 uppercase tracking-[0.15em] font-bold">
-                            Coins
+                    {/* Coin Balance + Stats Row — hide for text_quest */}
+                    {gameMode !== 'text_quest' && (
+                      <div className="w-full mb-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl bg-gradient-to-br from-yellow-500/10 to-orange-500/5 border border-yellow-500/20 px-4 py-4 text-center">
+                          <div className="flex items-center justify-center gap-2 mb-2">
+                            <Coins className="w-5 h-5 text-yellow-400" />
+                            <span className="text-[11px] text-yellow-400/70 uppercase tracking-[0.15em] font-bold">
+                              Coins
+                            </span>
+                          </div>
+                          <div className="text-3xl font-black text-yellow-300 tabular-nums leading-none">
+                            {totalCoins}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-4 text-center">
+                          <div className="text-[11px] text-white/40 uppercase tracking-[0.15em] font-bold mb-2">
+                            {playMode === 'tournament' && activeTournament?.userJoined
+                              ? 'Tournament Score'
+                              : 'Best Score'}
+                          </div>
+                          <div className="text-2xl font-black text-cyan-400 tabular-nums leading-none">
+                            {playMode === 'tournament' && activeTournament?.userJoined
+                              ? (() => {
+                                  const myEntry = activeTournament.entries?.find((e: any) => e.address === address);
+                                  return myEntry?.score ? formatPoints(myEntry.score) : '0';
+                                })()
+                              : gameMode === 'destroyer'
+                                ? defenderStats.gamesPlayed > 0
+                                  ? formatPoints(defenderStats.bestScore)
+                                  : '0'
+                                : gameMode === 'gravity'
+                                  ? gravityLeaderboard.length > 0
+                                    ? String(
+                                        gravityLeaderboard.find((e) => e.address === (address || 'anonymous'))?.score ||
+                                          0,
+                                      )
+                                    : '0'
+                                  : playerStats.gamesPlayed > 0
+                                    ? formatTime(playerStats.bestScore)
+                                    : '--:--'}
+                          </div>
+                          <div className="text-[10px] text-white/30 mt-1.5">
+                            {playMode === 'tournament' && activeTournament?.userJoined
+                              ? (() => {
+                                  const sorted =
+                                    activeTournament.entries?.slice().sort((a: any, b: any) => b.score - a.score) || [];
+                                  const rank = sorted.findIndex((e: any) => e.address === address) + 1;
+                                  return rank > 0 ? `Rank #${rank} of ${sorted.length}` : 'Submit a score to rank';
+                                })()
+                              : gameMode === 'destroyer'
+                                ? defenderStats.gamesPlayed > 0
+                                  ? `${defenderStats.gamesPlayed} games played`
+                                  : 'No games yet'
+                                : gameMode === 'gravity'
+                                  ? gravityLeaderboard.length > 0
+                                    ? `${gravityLeaderboard.length} entries`
+                                    : 'No games yet'
+                                  : playerStats.gamesPlayed > 0
+                                    ? `${playerStats.gamesPlayed} games played`
+                                    : 'No games yet'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Coins info — hide for text_quest */}
+                    {gameMode !== 'text_quest' && (
+                      <div className="w-full mb-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/8 via-cyan-500/5 to-purple-500/8 border border-purple-500/15 text-center">
+                        <span className="text-[11px] text-purple-200/50 font-medium">
+                          Earn Coins by playing → spend in the{' '}
+                          <strong className="text-purple-300/80">Prism Shop</strong> or wager in Challenges
+                        </span>
+                      </div>
+                    )}
+
+                    {/* How to play — mode-aware */}
+                    {gameMode === 'text_quest' ? (
+                      <div className="w-full mb-3 p-4 rounded-xl bg-gradient-to-br from-amber-500/[0.06] to-purple-500/[0.04] border border-amber-500/15">
+                        <div className="text-sm text-amber-300 font-black mb-3 text-center">How It Works</div>
+                        <div className="flex flex-col gap-2.5 text-[13px] text-left">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-lg flex-shrink-0">📖</span>
+                            <span className="text-white/70 flex-1">
+                              Read branching stories — your choices shape the plot
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-lg flex-shrink-0">🎲</span>
+                            <span className="text-white/70 flex-1">
+                              Multiple endings — replay for different outcomes
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-lg flex-shrink-0">🪙</span>
+                            <span className="text-white/70 flex-1">Earn Coins & XP for completing chapters</span>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-lg flex-shrink-0">📅</span>
+                            <span className="text-white/70 flex-1">New chapters available daily — 16 quests total</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-full mb-3 p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                        <div className="text-sm text-cyan-400 uppercase tracking-[0.2em] font-black mb-3 text-center w-full">
+                          Controls & Power-ups
+                        </div>
+                        {gameMode === 'destroyer' ? (
+                          <div className="flex flex-col gap-2.5 text-[13px] text-left">
+                            <div className="flex items-center gap-2.5">
+                              <Target className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                              <span className="text-white/70 flex-1">
+                                {isMobile ? 'Drag' : 'WASD'} — move ship, auto-fire
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_shield.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Shield — blocks enemy hits</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_photon_burst.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Dual Shot — fires 2× bullets</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_quantum_core.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Rapid Fire — faster fire rate</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_nova_rockets.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Rockets — homing missiles</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_nebula_bomb.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Nuke — destroys all enemies</span>
+                            </div>
+                            {/* ID Holder Perks */}
+                            <div
+                              className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}
+                            >
+                              <div
+                                className={`text-[10px] uppercase tracking-[0.15em] font-bold mb-2 ${hasMintedId ? 'text-green-400' : 'text-white/30'}`}
+                              >
+                                {hasMintedId ? '✓ ID Holder Perks' : 'ID Holder Perks (mint to unlock)'}
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center gap-2.5">
+                                  <Coins
+                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
+                                  />
+                                  <span
+                                    className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
+                                  >
+                                    ×2 Coin Multiplier
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2.5">
+                                  <RotateCw
+                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-green-400' : 'text-white/25'}`}
+                                  />
+                                  <span
+                                    className={`text-[12px] flex-1 ${hasMintedId ? 'text-green-400/80' : 'text-white/30'}`}
+                                  >
+                                    3 Free Revives / day
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : gameMode === 'gravity' ? (
+                          <div className="flex flex-col gap-2.5 text-[13px] text-left">
+                            <div className="flex items-center gap-2.5">
+                              <Target className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                              <span className="text-white/70 flex-1">{isMobile ? 'Tap' : 'Click'} — thrust upward</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_shield.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Navigate — pass through asteroid columns</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img src="/textures/powerups/powerup_coin.png" className="w-5 h-5 flex-shrink-0" alt="" />
+                              <span className="text-white/70 flex-1">Crystals — collect for +5 coins</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <Coins className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                              <span className="text-white/70 flex-1">Columns — +3 coins per column passed</span>
+                            </div>
+                            {/* ID Holder Perks */}
+                            <div
+                              className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}
+                            >
+                              <div
+                                className={`text-[10px] uppercase tracking-[0.15em] font-bold mb-2 ${hasMintedId ? 'text-green-400' : 'text-white/30'}`}
+                              >
+                                {hasMintedId ? '✓ ID Holder Perks' : 'ID Holder Perks (mint to unlock)'}
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center gap-2.5">
+                                  <Coins
+                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
+                                  />
+                                  <span
+                                    className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
+                                  >
+                                    ×2 Coin Multiplier
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2.5">
+                                  <RotateCw
+                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-green-400' : 'text-white/25'}`}
+                                  />
+                                  <span
+                                    className={`text-[12px] flex-1 ${hasMintedId ? 'text-green-400/80' : 'text-white/30'}`}
+                                  >
+                                    3 Free Revives / day
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-2.5 text-[13px] text-left">
+                            <div className="flex items-center gap-2.5">
+                              <Target className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                              <span className="text-white/70 flex-1">
+                                {isMobile ? 'Tap' : 'Click'} — reverse orbit direction
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_shield.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Shield — blocks 1 hit</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_slowmo.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Slow-mo — slows down time</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src="/textures/powerups/powerup_phase.png"
+                                className="w-5 h-5 flex-shrink-0"
+                                alt=""
+                              />
+                              <span className="text-white/70 flex-1">Phase — pass through objects</span>
+                            </div>
+                            <div className="flex items-center gap-2.5">
+                              <img src="/textures/powerups/powerup_coin.png" className="w-5 h-5 flex-shrink-0" alt="" />
+                              <span className="text-white/70 flex-1">Coin — +{COIN_BONUS} bonus pts</span>
+                            </div>
+                            {/* ID Holder Perks */}
+                            <div
+                              className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}
+                            >
+                              <div
+                                className={`text-[10px] uppercase tracking-[0.15em] font-bold mb-2 ${hasMintedId ? 'text-green-400' : 'text-white/30'}`}
+                              >
+                                {hasMintedId ? '✓ ID Holder Perks' : 'ID Holder Perks (mint to unlock)'}
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center gap-2.5">
+                                  <Coins
+                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
+                                  />
+                                  <span
+                                    className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
+                                  >
+                                    ×2 Coin Multiplier
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2.5">
+                                  <RotateCw
+                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-green-400' : 'text-white/25'}`}
+                                  />
+                                  <span
+                                    className={`text-[12px] flex-1 ${hasMintedId ? 'text-green-400/80' : 'text-white/30'}`}
+                                  >
+                                    3 Free Revives / day
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* MagicBlock — separate frame, hide for text_quest */}
+                    {gameMode !== 'text_quest' && (
+                      <div className="w-full mb-3 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-purple-500/8 border border-purple-500/20">
+                        <span className="text-sm">⚡</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[11px] text-purple-300/70 font-medium">
+                            Provably Fair via MagicBlock
                           </span>
+                          <div className="text-[10px] text-purple-200/40 mt-0.5">
+                            On-chain randomness for every session
+                          </div>
                         </div>
-                        <div className="text-3xl font-black text-yellow-300 tabular-nums leading-none">
-                          {totalCoins}
-                        </div>
+                        <span
+                          className={`w-2 h-2 rounded-full flex-shrink-0 ${mbHealthy ? 'bg-green-400' : mbHealthy === false ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'}`}
+                        />
                       </div>
-                      <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-4 text-center">
-                        <div className="text-[11px] text-white/40 uppercase tracking-[0.15em] font-bold mb-2">
-                          Best Score
-                        </div>
-                        <div className="text-2xl font-black text-cyan-400 tabular-nums leading-none">
-                          {gameMode === 'destroyer'
-                            ? defenderStats.gamesPlayed > 0
-                              ? formatPoints(defenderStats.bestScore)
-                              : '0'
-                            : gameMode === 'gravity'
-                              ? gravityLeaderboard.length > 0
-                                ? String(
-                                    gravityLeaderboard.find((e) => e.address === (address || 'anonymous'))?.score || 0,
-                                  )
-                                : '0'
-                              : playerStats.gamesPlayed > 0
-                                ? formatTime(playerStats.bestScore)
-                                : '--:--'}
-                        </div>
-                        <div className="text-[10px] text-white/30 mt-1.5">
-                          {gameMode === 'destroyer'
-                            ? defenderStats.gamesPlayed > 0
-                              ? `${defenderStats.gamesPlayed} games played`
-                              : 'No games yet'
-                            : gameMode === 'gravity'
-                              ? gravityLeaderboard.length > 0
-                                ? `${gravityLeaderboard.length} entries`
-                                : 'No games yet'
-                              : playerStats.gamesPlayed > 0
-                                ? `${playerStats.gamesPlayed} games played`
-                                : 'No games yet'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Coins info */}
-                    <div className="w-full mb-3 px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/8 via-cyan-500/5 to-purple-500/8 border border-purple-500/15 text-center">
-                      <span className="text-[11px] text-purple-200/50 font-medium">
-                        Earn Coins by playing → spend in the <strong className="text-purple-300/80">Prism Shop</strong>{' '}
-                        or wager in Challenges
-                      </span>
-                    </div>
-
-                    {/* How to play + Power-ups — mode-aware */}
-                    <div className="w-full mb-3 p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-                      <div className="text-sm text-cyan-400 uppercase tracking-[0.2em] font-black mb-3 text-center w-full">
-                        Controls & Power-ups
-                      </div>
-                      {gameMode === 'destroyer' ? (
-                        <div className="flex flex-col gap-2.5 text-[13px] text-left">
-                          <div className="flex items-center gap-2.5">
-                            <Target className="w-5 h-5 text-cyan-400 flex-shrink-0" />
-                            <span className="text-white/70 flex-1">
-                              {isMobile ? 'Drag' : 'WASD'} — move ship, auto-fire
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img src="/textures/powerups/powerup_shield.png" className="w-5 h-5 flex-shrink-0" alt="" />
-                            <span className="text-white/70 flex-1">Shield — blocks enemy hits</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img
-                              src="/textures/powerups/powerup_photon_burst.png"
-                              className="w-5 h-5 flex-shrink-0"
-                              alt=""
-                            />
-                            <span className="text-white/70 flex-1">Dual Shot — fires 2× bullets</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img
-                              src="/textures/powerups/powerup_quantum_core.png"
-                              className="w-5 h-5 flex-shrink-0"
-                              alt=""
-                            />
-                            <span className="text-white/70 flex-1">Rapid Fire — faster fire rate</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img
-                              src="/textures/powerups/powerup_nova_rockets.png"
-                              className="w-5 h-5 flex-shrink-0"
-                              alt=""
-                            />
-                            <span className="text-white/70 flex-1">Rockets — homing missiles</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img
-                              src="/textures/powerups/powerup_nebula_bomb.png"
-                              className="w-5 h-5 flex-shrink-0"
-                              alt=""
-                            />
-                            <span className="text-white/70 flex-1">Nuke — destroys all enemies</span>
-                          </div>
-                          {/* ID Holder Perks */}
-                          <div
-                            className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}
-                          >
-                            <div
-                              className={`text-[10px] uppercase tracking-[0.15em] font-bold mb-2 ${hasMintedId ? 'text-green-400' : 'text-white/30'}`}
-                            >
-                              {hasMintedId ? '✓ ID Holder Perks' : 'ID Holder Perks (mint to unlock)'}
-                            </div>
-                            <div className="flex flex-col gap-1.5">
-                              <div className="flex items-center gap-2.5">
-                                <Coins
-                                  className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
-                                />
-                                <span
-                                  className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
-                                >
-                                  ×2 Coin Multiplier
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2.5">
-                                <RotateCw
-                                  className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-green-400' : 'text-white/25'}`}
-                                />
-                                <span
-                                  className={`text-[12px] flex-1 ${hasMintedId ? 'text-green-400/80' : 'text-white/30'}`}
-                                >
-                                  3 Free Revives / day
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : gameMode === 'gravity' ? (
-                        <div className="flex flex-col gap-2.5 text-[13px] text-left">
-                          <div className="flex items-center gap-2.5">
-                            <Target className="w-5 h-5 text-cyan-400 flex-shrink-0" />
-                            <span className="text-white/70 flex-1">{isMobile ? 'Tap' : 'Click'} — thrust upward</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img src="/textures/powerups/powerup_shield.png" className="w-5 h-5 flex-shrink-0" alt="" />
-                            <span className="text-white/70 flex-1">Navigate — pass through asteroid columns</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img src="/textures/powerups/powerup_coin.png" className="w-5 h-5 flex-shrink-0" alt="" />
-                            <span className="text-white/70 flex-1">Crystals — collect for +5 coins</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <Coins className="w-5 h-5 text-cyan-400 flex-shrink-0" />
-                            <span className="text-white/70 flex-1">Columns — +3 coins per column passed</span>
-                          </div>
-                          {/* ID Holder Perks */}
-                          <div
-                            className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}
-                          >
-                            <div
-                              className={`text-[10px] uppercase tracking-[0.15em] font-bold mb-2 ${hasMintedId ? 'text-green-400' : 'text-white/30'}`}
-                            >
-                              {hasMintedId ? '✓ ID Holder Perks' : 'ID Holder Perks (mint to unlock)'}
-                            </div>
-                            <div className="flex flex-col gap-1.5">
-                              <div className="flex items-center gap-2.5">
-                                <Coins
-                                  className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
-                                />
-                                <span
-                                  className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
-                                >
-                                  ×2 Coin Multiplier
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2.5">
-                                <RotateCw
-                                  className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-green-400' : 'text-white/25'}`}
-                                />
-                                <span
-                                  className={`text-[12px] flex-1 ${hasMintedId ? 'text-green-400/80' : 'text-white/30'}`}
-                                >
-                                  3 Free Revives / day
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-2.5 text-[13px] text-left">
-                          <div className="flex items-center gap-2.5">
-                            <Target className="w-5 h-5 text-cyan-400 flex-shrink-0" />
-                            <span className="text-white/70 flex-1">
-                              {isMobile ? 'Tap' : 'Click'} — reverse orbit direction
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img src="/textures/powerups/powerup_shield.png" className="w-5 h-5 flex-shrink-0" alt="" />
-                            <span className="text-white/70 flex-1">Shield — blocks 1 hit</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img src="/textures/powerups/powerup_slowmo.png" className="w-5 h-5 flex-shrink-0" alt="" />
-                            <span className="text-white/70 flex-1">Slow-mo — slows down time</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img src="/textures/powerups/powerup_phase.png" className="w-5 h-5 flex-shrink-0" alt="" />
-                            <span className="text-white/70 flex-1">Phase — pass through objects</span>
-                          </div>
-                          <div className="flex items-center gap-2.5">
-                            <img src="/textures/powerups/powerup_coin.png" className="w-5 h-5 flex-shrink-0" alt="" />
-                            <span className="text-white/70 flex-1">Coin — +{COIN_BONUS} bonus pts</span>
-                          </div>
-                          {/* ID Holder Perks */}
-                          <div
-                            className={`mt-1.5 pt-2 border-t ${hasMintedId ? 'border-green-500/20' : 'border-white/[0.06]'}`}
-                          >
-                            <div
-                              className={`text-[10px] uppercase tracking-[0.15em] font-bold mb-2 ${hasMintedId ? 'text-green-400' : 'text-white/30'}`}
-                            >
-                              {hasMintedId ? '✓ ID Holder Perks' : 'ID Holder Perks (mint to unlock)'}
-                            </div>
-                            <div className="flex flex-col gap-1.5">
-                              <div className="flex items-center gap-2.5">
-                                <Coins
-                                  className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
-                                />
-                                <span
-                                  className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
-                                >
-                                  ×2 Coin Multiplier
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2.5">
-                                <RotateCw
-                                  className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-green-400' : 'text-white/25'}`}
-                                />
-                                <span
-                                  className={`text-[12px] flex-1 ${hasMintedId ? 'text-green-400/80' : 'text-white/30'}`}
-                                >
-                                  3 Free Revives / day
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* MagicBlock — separate frame */}
-                    <div className="w-full mb-3 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-purple-500/8 border border-purple-500/20">
-                      <span className="text-sm">⚡</span>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-[11px] text-purple-300/70 font-medium">Provably Fair via MagicBlock</span>
-                        <div className="text-[10px] text-purple-200/40 mt-0.5">
-                          On-chain randomness for every session
-                        </div>
-                      </div>
-                      <span
-                        className={`w-2 h-2 rounded-full flex-shrink-0 ${mbHealthy ? 'bg-green-400' : mbHealthy === false ? 'bg-red-400' : 'bg-yellow-400 animate-pulse'}`}
-                      />
-                    </div>
+                    )}
 
                     {/* Challenge banner on start screen */}
                     {activeChallengeId && (
@@ -3131,75 +3220,77 @@ const PrismLeague = () => {
                       </div>
                     )}
 
-                    {/* ═══ SHIP STATS PANEL ═══ */}
-                    <div className="w-full mb-3 p-3 rounded-xl bg-white/[0.03] border border-white/10 backdrop-blur-sm">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-sm">🚀</span>
-                        <span className="text-xs font-bold text-white/80 uppercase tracking-wider">Ship Stats</span>
-                      </div>
-                      <div className="space-y-1.5">
-                        {(
-                          [
-                            { key: 'speed', label: 'Speed', icon: '⚡', color: '#22d3ee', value: shipStats.speed },
-                            { key: 'shield', label: 'Shield', icon: '🛡️', color: '#3b82f6', value: shipStats.shield },
-                            {
-                              key: 'firepower',
-                              label: 'Firepower',
-                              icon: '🔥',
-                              color: '#ef4444',
-                              value: shipStats.firepower,
-                            },
-                            { key: 'luck', label: 'Luck', icon: '🍀', color: '#22c55e', value: shipStats.luck },
-                          ] as const
-                        ).map((stat) => (
-                          <div key={stat.key} className="flex items-center gap-2">
-                            <span className="text-[10px] w-3 text-center">{stat.icon}</span>
-                            <span className="text-[10px] text-white/50 w-14">{stat.label}</span>
-                            <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all duration-500"
-                                style={{
-                                  width: `${stat.value}%`,
-                                  background: stat.color,
-                                  boxShadow: `0 0 6px ${stat.color}40`,
-                                }}
-                              />
-                            </div>
-                            <span className="text-[10px] text-white/40 w-6 text-right font-mono">{stat.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                      {(forgeLoadout?.equippedShipSkin ||
-                        forgeLoadout?.equippedFrame ||
-                        forgeLoadout?.equippedAura) && (
-                        <div className="mt-2 pt-2 border-t border-white/5 space-y-0.5">
-                          {forgeLoadout.equippedShipSkin && (
-                            <div className="text-[9px] text-cyan-300/50">
-                              Ship: {forgeLoadout.equippedShipSkin.replace('ship_', '')} (
-                              {getEquipmentBonusLabel(forgeLoadout.equippedShipSkin, 'skin')})
-                            </div>
-                          )}
-                          {forgeLoadout.equippedFrame && (
-                            <div className="text-[9px] text-blue-300/50">
-                              Frame: {forgeLoadout.equippedFrame.replace('frame_', '')} (
-                              {getEquipmentBonusLabel(forgeLoadout.equippedFrame, 'frame')})
-                            </div>
-                          )}
-                          {forgeLoadout.equippedAura && (
-                            <div className="text-[9px] text-purple-300/50">
-                              Aura: {forgeLoadout.equippedAura.replace('aura_', '')} (
-                              {getEquipmentBonusLabel(forgeLoadout.equippedAura, 'aura')})
-                            </div>
-                          )}
+                    {/* ═══ SHIP STATS PANEL — hide for text_quest ═══ */}
+                    {gameMode !== 'text_quest' && (
+                      <div className="w-full mb-3 p-3 rounded-xl bg-white/[0.03] border border-white/10 backdrop-blur-sm">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-sm">🚀</span>
+                          <span className="text-xs font-bold text-white/80 uppercase tracking-wider">Ship Stats</span>
                         </div>
-                      )}
-                      <button
-                        onClick={() => startFadeTransition(() => navigate('/forge'))}
-                        className="mt-2 w-full text-[10px] text-cyan-400/50 hover:text-cyan-300 transition-colors text-center"
-                      >
-                        Customize in Armory →
-                      </button>
-                    </div>
+                        <div className="space-y-1.5">
+                          {(
+                            [
+                              { key: 'speed', label: 'Speed', icon: '⚡', color: '#22d3ee', value: shipStats.speed },
+                              { key: 'shield', label: 'Shield', icon: '🛡️', color: '#3b82f6', value: shipStats.shield },
+                              {
+                                key: 'firepower',
+                                label: 'Firepower',
+                                icon: '🔥',
+                                color: '#ef4444',
+                                value: shipStats.firepower,
+                              },
+                              { key: 'luck', label: 'Luck', icon: '🍀', color: '#22c55e', value: shipStats.luck },
+                            ] as const
+                          ).map((stat) => (
+                            <div key={stat.key} className="flex items-center gap-2">
+                              <span className="text-[10px] w-3 text-center">{stat.icon}</span>
+                              <span className="text-[10px] text-white/50 w-14">{stat.label}</span>
+                              <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-500"
+                                  style={{
+                                    width: `${stat.value}%`,
+                                    background: stat.color,
+                                    boxShadow: `0 0 6px ${stat.color}40`,
+                                  }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-white/40 w-6 text-right font-mono">{stat.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                        {(forgeLoadout?.equippedShipSkin ||
+                          forgeLoadout?.equippedFrame ||
+                          forgeLoadout?.equippedAura) && (
+                          <div className="mt-2 pt-2 border-t border-white/5 space-y-0.5">
+                            {forgeLoadout.equippedShipSkin && (
+                              <div className="text-[9px] text-cyan-300/50">
+                                Ship: {forgeLoadout.equippedShipSkin.replace('ship_', '')} (
+                                {getEquipmentBonusLabel(forgeLoadout.equippedShipSkin, 'skin')})
+                              </div>
+                            )}
+                            {forgeLoadout.equippedFrame && (
+                              <div className="text-[9px] text-blue-300/50">
+                                Frame: {forgeLoadout.equippedFrame.replace('frame_', '')} (
+                                {getEquipmentBonusLabel(forgeLoadout.equippedFrame, 'frame')})
+                              </div>
+                            )}
+                            {forgeLoadout.equippedAura && (
+                              <div className="text-[9px] text-purple-300/50">
+                                Aura: {forgeLoadout.equippedAura.replace('aura_', '')} (
+                                {getEquipmentBonusLabel(forgeLoadout.equippedAura, 'aura')})
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <button
+                          onClick={() => startFadeTransition(() => navigate('/forge'))}
+                          className="mt-2 w-full text-[10px] text-cyan-400/50 hover:text-cyan-300 transition-colors text-center"
+                        >
+                          Customize in Armory →
+                        </button>
+                      </div>
+                    )}
 
                     {/* ═══ PLAY BUTTON — above achievements ═══ */}
                     <Button
@@ -3241,106 +3332,111 @@ const PrismLeague = () => {
                       </button>
                     )}
 
-                    {/* Achievements toggle — mode-aware */}
-                    {(() => {
-                      const isDefMode = gameMode === 'destroyer';
-                      const isGravMode = gameMode === 'gravity';
-                      const achList = isDefMode
-                        ? defenderAchievements
-                        : isGravMode
-                          ? gravityAchievements
-                          : achievements;
-                      const claimable = achList.filter((a) => a.unlocked && !a.claimed).length;
-                      const modeLabel = isDefMode ? 'Defender' : isGravMode ? 'Gravity' : 'Orbit';
-                      return (
-                        <>
-                          <button
-                            className="mt-4 flex items-center gap-1.5 text-xs text-yellow-400/60 hover:text-yellow-300 transition-colors"
-                            onClick={() => setShowAchievements(!showAchievements)}
-                          >
-                            <Award className="w-3.5 h-3.5" />
-                            {modeLabel} Achievements ({achList.filter((a) => a.unlocked).length}/{achList.length})
-                            {claimable > 0 && (
-                              <span className="px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300 text-[9px] font-bold animate-pulse">
-                                {claimable} to claim
-                              </span>
-                            )}
-                            {showAchievements ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                          </button>
-                          {showAchievements && (
-                            <div className="w-full mt-2 space-y-1.5">
-                              {achList.map((ach) => {
-                                const progress = isDefMode
-                                  ? getDefenderAchievementProgress(ach as DefenderAchievement)
-                                  : isGravMode
-                                    ? getGravityAchievementProgress(ach as GravityAchievement)
-                                    : getAchievementProgress(ach as Achievement);
-                                const reward = isDefMode
-                                  ? (DEFENDER_COIN_REWARDS[(ach as DefenderAchievement).tier] ?? 0)
-                                  : isGravMode
-                                    ? (GRAVITY_COIN_REWARDS[(ach as GravityAchievement).tier] ?? 0)
-                                    : (ACHIEVEMENT_COIN_REWARDS[(ach as Achievement).tier] ?? 0);
-                                const canClaim = ach.unlocked && !ach.claimed;
-                                return (
-                                  <div
-                                    key={ach.id}
-                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${
-                                      canClaim
-                                        ? 'bg-yellow-500/[0.06] border-yellow-500/25'
-                                        : ach.unlocked
-                                          ? 'bg-white/[0.04] border-white/[0.1]'
-                                          : 'bg-white/[0.01] border-white/[0.04] opacity-50'
-                                    }`}
-                                  >
-                                    <img
-                                      src={ach.image}
-                                      alt={ach.name}
-                                      className={`w-10 h-10 rounded-md object-cover ${ach.unlocked ? '' : 'grayscale opacity-60'}`}
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="font-bold text-white/80">{ach.name}</span>
-                                        <span
-                                          className="text-[9px] px-1 py-px rounded-full border uppercase font-bold"
-                                          style={{
-                                            color: ACH_TIER_COLORS[ach.tier],
-                                            borderColor: ACH_TIER_COLORS[ach.tier] + '60',
-                                          }}
-                                        >
-                                          {ach.tier}
-                                        </span>
-                                        {reward > 0 && (
-                                          <span className="text-[9px] text-yellow-400/60 ml-auto">+{reward}</span>
+                    {/* Achievements toggle — mode-aware, hidden for text_quest */}
+                    {gameMode !== 'text_quest' &&
+                      (() => {
+                        const isDefMode = gameMode === 'destroyer';
+                        const isGravMode = gameMode === 'gravity';
+                        const achList = isDefMode
+                          ? defenderAchievements
+                          : isGravMode
+                            ? gravityAchievements
+                            : achievements;
+                        const claimable = achList.filter((a) => a.unlocked && !a.claimed).length;
+                        const modeLabel = isDefMode ? 'Defender' : isGravMode ? 'Gravity' : 'Orbit';
+                        return (
+                          <>
+                            <button
+                              className="mt-4 flex items-center gap-1.5 text-xs text-yellow-400/60 hover:text-yellow-300 transition-colors"
+                              onClick={() => setShowAchievements(!showAchievements)}
+                            >
+                              <Award className="w-3.5 h-3.5" />
+                              {modeLabel} Achievements ({achList.filter((a) => a.unlocked).length}/{achList.length})
+                              {claimable > 0 && (
+                                <span className="px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300 text-[9px] font-bold animate-pulse">
+                                  {claimable} to claim
+                                </span>
+                              )}
+                              {showAchievements ? (
+                                <ChevronUp className="w-3 h-3" />
+                              ) : (
+                                <ChevronDown className="w-3 h-3" />
+                              )}
+                            </button>
+                            {showAchievements && (
+                              <div className="w-full mt-2 space-y-1.5">
+                                {achList.map((ach) => {
+                                  const progress = isDefMode
+                                    ? getDefenderAchievementProgress(ach as DefenderAchievement)
+                                    : isGravMode
+                                      ? getGravityAchievementProgress(ach as GravityAchievement)
+                                      : getAchievementProgress(ach as Achievement);
+                                  const reward = isDefMode
+                                    ? (DEFENDER_COIN_REWARDS[(ach as DefenderAchievement).tier] ?? 0)
+                                    : isGravMode
+                                      ? (GRAVITY_COIN_REWARDS[(ach as GravityAchievement).tier] ?? 0)
+                                      : (ACHIEVEMENT_COIN_REWARDS[(ach as Achievement).tier] ?? 0);
+                                  const canClaim = ach.unlocked && !ach.claimed;
+                                  return (
+                                    <div
+                                      key={ach.id}
+                                      className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${
+                                        canClaim
+                                          ? 'bg-yellow-500/[0.06] border-yellow-500/25'
+                                          : ach.unlocked
+                                            ? 'bg-white/[0.04] border-white/[0.1]'
+                                            : 'bg-white/[0.01] border-white/[0.04] opacity-50'
+                                      }`}
+                                    >
+                                      <img
+                                        src={ach.image}
+                                        alt={ach.name}
+                                        className={`w-10 h-10 rounded-md object-cover ${ach.unlocked ? '' : 'grayscale opacity-60'}`}
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="font-bold text-white/80">{ach.name}</span>
+                                          <span
+                                            className="text-[9px] px-1 py-px rounded-full border uppercase font-bold"
+                                            style={{
+                                              color: ACH_TIER_COLORS[ach.tier],
+                                              borderColor: ACH_TIER_COLORS[ach.tier] + '60',
+                                            }}
+                                          >
+                                            {ach.tier}
+                                          </span>
+                                          {reward > 0 && (
+                                            <span className="text-[9px] text-yellow-400/60 ml-auto">+{reward}</span>
+                                          )}
+                                        </div>
+                                        <div className="text-white/40">{ach.description}</div>
+                                        {!ach.unlocked && (
+                                          <div className="mt-1 h-1 rounded-full bg-white/10 overflow-hidden">
+                                            <div
+                                              className="h-full bg-cyan-500/60 rounded-full transition-all"
+                                              style={{ width: `${progress * 100}%` }}
+                                            />
+                                          </div>
                                         )}
                                       </div>
-                                      <div className="text-white/40">{ach.description}</div>
-                                      {!ach.unlocked && (
-                                        <div className="mt-1 h-1 rounded-full bg-white/10 overflow-hidden">
-                                          <div
-                                            className="h-full bg-cyan-500/60 rounded-full transition-all"
-                                            style={{ width: `${progress * 100}%` }}
-                                          />
-                                        </div>
-                                      )}
+                                      {canClaim ? (
+                                        <button
+                                          className="shrink-0 px-3 py-2 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors"
+                                          onClick={() => handleClaimAchievement(ach.id)}
+                                        >
+                                          Claim
+                                        </button>
+                                      ) : ach.claimed ? (
+                                        <span className="text-green-400 text-[10px] shrink-0">✓ Claimed</span>
+                                      ) : null}
                                     </div>
-                                    {canClaim ? (
-                                      <button
-                                        className="shrink-0 px-3 py-2 rounded-xl bg-yellow-500/20 border border-yellow-500/40 text-yellow-300 text-[10px] font-bold uppercase hover:bg-yellow-500/30 transition-colors"
-                                        onClick={() => handleClaimAchievement(ach.id)}
-                                      >
-                                        Claim
-                                      </button>
-                                    ) : ach.claimed ? (
-                                      <span className="text-green-400 text-[10px] shrink-0">✓ Claimed</span>
-                                    ) : null}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                   </div>
                 </div>
               </div>

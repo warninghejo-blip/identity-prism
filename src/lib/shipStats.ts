@@ -26,30 +26,33 @@ export interface ShipStats {
 
 // ── Skin Bonuses ──
 
+// Flat bonus to ALL stats based on rarity: common +3, rare +4, epic +6, legendary +8
+const SKIN_RARITY_BONUS: Record<string, number> = { common: 3, rare: 4, epic: 6, legendary: 8 };
+export { SKIN_RARITY_BONUS };
+
 export const SKIN_BONUSES: Record<string, Partial<ShipStats>> = {
-  // Common (budget 10)
-  cargo: { shield: 6, luck: 4 },
-  cargo_b: { speed: 2, shield: 5, luck: 3 },
-  // Rare (budget 16)
-  crystal: { speed: 5, shield: 6, luck: 5 },
-  crystal_b: { speed: 5, shield: 5, firepower: 2, luck: 4 },
-  fighter: { speed: 7, firepower: 6, luck: 3 },
-  fighter_b: { speed: 6, firepower: 7, luck: 3 },
-  // Rare (budget 16) — new ships
-  fortress: { speed: 2, shield: 9, firepower: 2, luck: 3 },
-  chrome: { speed: 2, shield: 9, firepower: 2, luck: 3 },
-  neon: { speed: 9, firepower: 5, luck: 2 },
-  // Epic (budget 22)
-  stealth_v2: { speed: 7, shield: 3, firepower: 7, luck: 5 },
-  stealth_v2_b: { speed: 6, shield: 4, firepower: 7, luck: 5 },
-  stealth: { speed: 7, shield: 3, firepower: 7, luck: 5 },
-  fortress_b: { speed: 3, shield: 9, firepower: 7, luck: 3 },
-  phantom: { speed: 5, firepower: 12, luck: 5 },
-  // Legendary (budget 32)
+  // Common (+3 all, total 12)
+  cargo: { speed: 3, shield: 3, firepower: 3, luck: 3 },
+  cargo_b: { speed: 3, shield: 3, firepower: 3, luck: 3 },
+  // Rare (+4 all, total 16)
+  crystal: { speed: 4, shield: 4, firepower: 4, luck: 4 },
+  crystal_b: { speed: 4, shield: 4, firepower: 4, luck: 4 },
+  fighter: { speed: 4, shield: 4, firepower: 4, luck: 4 },
+  fighter_b: { speed: 4, shield: 4, firepower: 4, luck: 4 },
+  fortress: { speed: 4, shield: 4, firepower: 4, luck: 4 },
+  chrome: { speed: 4, shield: 4, firepower: 4, luck: 4 },
+  neon: { speed: 4, shield: 4, firepower: 4, luck: 4 },
+  // Epic (+6 all, total 24)
+  stealth_v2: { speed: 6, shield: 6, firepower: 6, luck: 6 },
+  stealth_v2_b: { speed: 6, shield: 6, firepower: 6, luck: 6 },
+  stealth: { speed: 6, shield: 6, firepower: 6, luck: 6 },
+  fortress_b: { speed: 6, shield: 6, firepower: 6, luck: 6 },
+  phantom: { speed: 6, shield: 6, firepower: 6, luck: 6 },
+  // Legendary (+8 all, total 32)
   manta: { speed: 8, shield: 8, firepower: 8, luck: 8 },
-  trident: { speed: 10, shield: 5, firepower: 10, luck: 7 },
-  prism: { speed: 6, shield: 9, firepower: 7, luck: 10 },
-  golden: { speed: 5, shield: 6, firepower: 5, luck: 16 },
+  trident: { speed: 8, shield: 8, firepower: 8, luck: 8 },
+  prism: { speed: 8, shield: 8, firepower: 8, luck: 8 },
+  golden: { speed: 8, shield: 8, firepower: 8, luck: 8 },
 };
 
 // ── Frame Bonuses (composite breakdown points, not flat stats) ──
@@ -383,4 +386,36 @@ export function getEquipmentBonusLabel(
     if (bonus.luck) parts.push(`+${bonus.luck} lck`);
   }
   return parts.join(', ');
+}
+
+const STAT_LABELS: Record<string, string> = { speed: 'Speed', shield: 'Shield', firepower: 'Firepower', luck: 'Luck' };
+
+/** Get bonus lines as array for shop display: [{ label, value, pct? }] */
+export function getEquipmentBonusLines(
+  equipId: string,
+  type: 'skin' | 'frame' | 'aura' | 'title',
+): { label: string; value: string }[] {
+  const prefix = type === 'skin' ? 'ship_' : type === 'frame' ? 'frame_' : type === 'title' ? 'title_' : 'aura_';
+  const key = equipId.replace(prefix, '');
+
+  if (type === 'frame') {
+    const bonus = FRAME_BONUSES[key];
+    if (!bonus) return [];
+    return Object.entries(bonus)
+      .filter(([, v]) => v)
+      .map(([k, v]) => ({ label: COMPOSITE_SHORT_LABELS[k] || k, value: `+${v}` }));
+  }
+
+  const table = type === 'skin' ? SKIN_BONUSES : type === 'title' ? TITLE_BONUSES : AURA_BONUSES;
+  const bonus = table[key];
+  if (!bonus) return [];
+
+  if (type === 'aura') {
+    return Object.entries(bonus)
+      .filter(([, v]) => v)
+      .map(([k, v]) => ({ label: STAT_LABELS[k] || k, value: `+${Math.round((v as number) * 100)}%` }));
+  }
+  return Object.entries(bonus)
+    .filter(([, v]) => v)
+    .map(([k, v]) => ({ label: STAT_LABELS[k] || k, value: `+${v}` }));
 }
