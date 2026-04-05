@@ -8404,14 +8404,10 @@ const server = http.createServer(async (req, res) => {
       if (listing.seller === address) { marketplacePurchases.delete(purchaseKey); return respondJson(res, 400, { error: 'Cannot purchase your own listing' }); }
       const buyerBal = getCoinBalance(address);
       if (buyerBal < listing.price) { marketplacePurchases.delete(purchaseKey); return respondJson(res, 400, { error: 'Insufficient Coin balance' }); }
-      // Marketplace fee: 20% platform fee (fully deflationary — burned), 80% to seller
-      const platformFee = Math.max(1, Math.floor(listing.price * 0.20));
-      totalBurned += platformFee; // entire platform fee is burned (deflationary)
-      const sellerShare = listing.price - platformFee;
+      // Marketplace: platform is the seller — coins are spent (deflationary)
       setCoinBalance(address, buyerBal - listing.price);
       addCoinSpent(address, listing.price);
-      setCoinBalance(listing.seller, getCoinBalance(listing.seller) + sellerShare);
-      addCoinEarned(listing.seller, sellerShare);
+      totalBurned += listing.price;
       listing.purchaseCount = (listing.purchaseCount || 0) + 1;
       marketplaceListings.set(listingId, listing);
       debouncedSavePrism();
@@ -8729,10 +8725,10 @@ const server = http.createServer(async (req, res) => {
           challenge.creatorScore = creatorComposite.compositeScore ?? 0;
           challenge.opponentScore = acceptorComposite.compositeScore ?? 0;
 
-          // Determine winner — SOL bets use 10% fee, Coin bets use 5%
+          // Determine winner — 10% fee (burned), coins only
           const totalPot = challenge.stakeAmount * 2;
-          const feeRate = isSolBet ? 0.10 : 0.05;
-          const winnerPrize = isSolBet ? totalPot * (1 - feeRate) : Math.floor(totalPot * (1 - feeRate));
+          const feeRate = 0.10;
+          const winnerPrize = Math.floor(totalPot * (1 - feeRate));
           const fee = totalPot - winnerPrize;
 
           const resolveCoinWinner = (winnerAddr) => {
@@ -10706,9 +10702,9 @@ function calcUnclaimedYield(stake) {
 // ═══ Tournament System (Tiered: daily/weekly/monthly) ═══
 const TOURNAMENT_FILE = path.join(process.cwd(), 'tournament_data.json');
 const TOURNAMENT_TIERS = {
-  daily:   { entryFee: 1000,  durationMs: 24 * 3600000,      label: 'Daily',   burnRate: 0.15 },
-  weekly:  { entryFee: 5000,  durationMs: 7 * 24 * 3600000,  label: 'Weekly',  burnRate: 0.15 },
-  monthly: { entryFee: 25000, durationMs: 30 * 24 * 3600000, label: 'Monthly', burnRate: 0.15 },
+  daily:   { entryFee: 1000,  durationMs: 24 * 3600000,      label: 'Daily',   burnRate: 0.10 },
+  weekly:  { entryFee: 5000,  durationMs: 7 * 24 * 3600000,  label: 'Weekly',  burnRate: 0.10 },
+  monthly: { entryFee: 25000, durationMs: 30 * 24 * 3600000, label: 'Monthly', burnRate: 0.10 },
 };
 const TOURNAMENT_MODES = ['orbit', 'gravity', 'destroyer'];
 const PRIZE_SHARES = {

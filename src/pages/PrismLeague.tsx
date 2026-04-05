@@ -2727,42 +2727,46 @@ const PrismLeague = () => {
                                     </span>
                                   </div>
                                 </div>
-                                {/* Prize distribution */}
+                                {/* Prize distribution — podium */}
                                 <div className="px-4 py-3 border-b border-white/[0.05]">
-                                  <p className="text-[10px] text-white/30 uppercase tracking-wider font-bold mb-2">
-                                    Prizes (15% burn)
-                                  </p>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {PRIZE_DIST[tournamentTier]
-                                      .slice(0, tournamentTier === 'daily' ? 3 : tournamentTier === 'weekly' ? 6 : 5)
-                                      .map((r) => (
-                                        <div
-                                          key={r.place}
-                                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs"
-                                          style={{
-                                            background:
-                                              r.place === '1st'
-                                                ? 'rgba(250,204,21,0.1)'
-                                                : r.place === '2nd'
-                                                  ? 'rgba(192,192,192,0.08)'
-                                                  : r.place === '3rd'
-                                                    ? 'rgba(205,127,50,0.08)'
-                                                    : 'rgba(255,255,255,0.03)',
-                                            border: `1px solid ${r.place === '1st' ? 'rgba(250,204,21,0.2)' : 'rgba(255,255,255,0.06)'}`,
-                                          }}
-                                        >
-                                          <span
-                                            className={`font-bold ${r.place === '1st' ? 'text-yellow-400' : r.place === '2nd' ? 'text-gray-300' : r.place === '3rd' ? 'text-amber-600' : 'text-white/40'}`}
+                                  {/* Podium top-3 */}
+                                  <div className="flex items-end justify-center gap-2 mb-3">
+                                    {[1, 0, 2].map((idx) => {
+                                      const r = PRIZE_DIST[tournamentTier][idx];
+                                      if (!r) return null;
+                                      const isFirst = idx === 0;
+                                      const isSecond = idx === 1;
+                                      const medal = isFirst ? '🥇' : isSecond ? '🥈' : '🥉';
+                                      const color = isFirst ? '#fbbf24' : isSecond ? '#c0c0c0' : '#cd7f32';
+                                      const h = isFirst ? 'h-24' : isSecond ? 'h-20' : 'h-16';
+                                      return (
+                                        <div key={r.place} className="flex flex-col items-center flex-1 max-w-[90px]">
+                                          <span className="text-lg mb-1">{medal}</span>
+                                          <div
+                                            className={`w-full ${h} rounded-t-lg flex flex-col items-center justify-center`}
+                                            style={{ background: `${color}15`, border: `1px solid ${color}30`, borderBottom: 'none' }}
                                           >
-                                            {r.place}
-                                          </span>
-                                          <span className="text-white/60 font-mono">{r.pct}</span>
-                                          <span className="text-emerald-400/80 font-bold">
-                                            +{r.base >= 1000 ? `${r.base / 1000}k` : r.base}
-                                          </span>
+                                            <span className="text-white/70 font-bold text-xs">{r.pct}</span>
+                                            <span className="text-emerald-400 font-bold text-[11px]">+{r.base >= 1000 ? `${r.base / 1000}k` : r.base}</span>
+                                            <span className="text-cyan-400/50 text-[9px]">+{r.xp}xp</span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {/* 4th+ places */}
+                                  {PRIZE_DIST[tournamentTier].length > 3 && (
+                                    <div className="space-y-1">
+                                      {PRIZE_DIST[tournamentTier].slice(3).map((r) => (
+                                        <div key={r.place} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-white/[0.02] border border-white/[0.04] text-xs">
+                                          <span className="text-white/40 font-bold w-8">{r.place}</span>
+                                          <span className="text-white/50 font-mono">{r.pct}</span>
+                                          <span className="text-emerald-400/70 font-bold">+{r.base >= 1000 ? `${r.base / 1000}k` : r.base}</span>
+                                          <span className="text-cyan-400/40 text-[10px]">+{r.xp}xp</span>
                                         </div>
                                       ))}
-                                  </div>
+                                    </div>
+                                  )}
                                 </div>
                                 {/* Standings (if joined) */}
                                 {activeTournament.userJoined &&
