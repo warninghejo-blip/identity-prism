@@ -27,6 +27,8 @@ import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
 import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
 import { applyFrameToBreakdown, getBoostedCompositeScore } from '@/lib/shipStats';
+import { CosmicStarfield } from '@/components/CosmicStarfield';
+import { gatherXPSourcesMerged, computeRangerXP, getRangerRank, getRankProgress } from '@/lib/rangerRanks';
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
@@ -121,9 +123,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [forgeFrame, setForgeFrame] = useState<string | null>(null);
   const [forgeAura, setForgeAura] = useState<string | null>(null);
   const [forgeTitle, setForgeTitle] = useState<string | null>(null);
+  const [rangerXP, setRangerXP] = useState<number>(0);
+  const [rangerRank, setRangerRank] = useState<import('@/lib/rangerRanks').RangerRank | null>(null);
   const [forgeTitleRarity, setForgeTitleRarity] = useState<'common' | 'rare' | 'epic' | 'legendary'>('common');
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
+  const starfieldRotRef = useRef<number>(0);
+  const lastAzimuthRef = useRef<number | null>(null);
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : captureTab === 'intel' ? 'intel' : 'stats';
@@ -151,6 +157,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         }
       }
     } catch {}
+  }, [address]);
+
+  // Ranger XP + Rank
+  useEffect(() => {
+    if (!address) return;
+    let cancelled = false;
+    gatherXPSourcesMerged(address).then((sources) => {
+      if (cancelled) return;
+      const xp = computeRangerXP(sources);
+      const rank = getRangerRank(xp);
+      setRangerXP(xp);
+      setRangerRank(rank);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [address]);
 
   const refetchComposite = compositeData.refetch;
@@ -410,7 +432,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     return result;
   })();
 
-  const funFact = useMemo(() => getRandomFunnyFact(safeTraits), [safeTraits]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const funFact = useMemo(() => getRandomFunnyFact(safeTraits), [address]);
 
   return (
     <div
@@ -455,8 +478,10 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             {/* Card background — separate suckable piece */}
             <div
               data-suck="bg"
-              className={`absolute inset-0 bg-[#020408] pointer-events-none ${forgeFrame && FRAME_STYLES[forgeFrame] ? 'rounded-[35px]' : 'rounded-[38px]'}`}
+              className={`absolute inset-0 pointer-events-none ${forgeFrame && FRAME_STYLES[forgeFrame] ? 'rounded-[35px]' : 'rounded-[38px]'}`}
             />
+            {/* Starfield background */}
+            <CosmicStarfield mode="drift" rotationOffsetRef={starfieldRotRef} />
 
             {/* Header */}
             <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
@@ -587,6 +612,18 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   rotateSpeed={0.6}
                   enableDamping
                   dampingFactor={0.08}
+                  onChange={(e) => {
+                    if (!e) return;
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const controls = (e as any).target;
+                    const az = controls?.getAzimuthalAngle?.() as number | undefined;
+                    if (az !== undefined) {
+                      if (lastAzimuthRef.current !== null) {
+                        starfieldRotRef.current += az - lastAzimuthRef.current;
+                      }
+                      lastAzimuthRef.current = az;
+                    }
+                  }}
                 />
               </Canvas>
             </div>
@@ -660,6 +697,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             }}
             onClick={(event) => event.stopPropagation()}
           >
+            {/* Starfield background */}
+            <CosmicStarfield mode="drift" rotationOffsetRef={starfieldRotRef} />
             <div
               className="relative z-10 flex flex-col h-full"
               style={{ transformStyle: 'flat', transform: 'translateZ(0)', willChange: 'auto' }}
@@ -738,19 +777,19 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     <TabsList className="w-full grid grid-cols-3 bg-white/5 border border-white/5 rounded-xl p-0.5 pointer-events-auto">
                       <TabsTrigger
                         value="stats"
-                        className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
+                        className="data-[state=active]:!bg-cyan-500/20 data-[state=active]:!text-cyan-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
                       >
                         STATS
                       </TabsTrigger>
                       <TabsTrigger
                         value="intel"
-                        className="data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
+                        className="data-[state=active]:!bg-violet-500/20 data-[state=active]:!text-violet-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
                       >
-                        X-RAY
+                        DOSSIER
                       </TabsTrigger>
                       <TabsTrigger
                         value="badges"
-                        className="data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
+                        className="data-[state=active]:!bg-purple-500/20 data-[state=active]:!text-purple-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
                       >
                         BADGES
                       </TabsTrigger>
@@ -780,6 +819,47 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         details={compositeData.details}
                         compact={false}
                       />
+                    </div>
+
+                    {/* PROGRESSION */}
+                    <div className="mb-4 rounded-2xl border border-white/[0.06] bg-gradient-to-br from-white/[0.02] via-transparent to-white/[0.01] p-3.5">
+                      <div className="flex items-center gap-1.5 mb-2.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                        <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">
+                          Progression
+                        </span>
+                      </div>
+                      {rangerRank ? (
+                        <div>
+                          <div className="flex items-center gap-2 mb-2.5">
+                            <img
+                              src={`/textures/ranks/rank_${rangerRank.id}.png`}
+                              alt={rangerRank.name}
+                              className="w-7 h-7 object-contain drop-shadow-[0_0_6px_rgba(251,191,36,0.5)]"
+                            />
+                            <span className={`text-sm font-bold ${rangerRank.color}`}>{rangerRank.name}</span>
+                            <span className="ml-auto text-[9px] text-white/30 uppercase tracking-[0.1em]">
+                              {rangerXP.toLocaleString()} XP
+                            </span>
+                          </div>
+                          <div className="w-full bg-white/10 rounded-full h-1.5 mb-1.5">
+                            <div
+                              className="h-1.5 rounded-full bg-gradient-to-r from-amber-500 to-yellow-300 transition-all duration-500"
+                              style={{ width: `${Math.round(getRankProgress(rangerXP) * 100)}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between text-[9px] text-white/25">
+                            <span>{rangerRank.name}</span>
+                            {(() => {
+                              const idx = [0, 1500, 8000, 25000, 50000].indexOf(rangerRank.minXP);
+                              const nextNames = ['Pilot', 'Captain', 'Ace', 'Legend', 'Max'];
+                              return <span>{nextNames[idx] ?? 'Max'}</span>;
+                            })()}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-[9px] text-white/20 text-center py-1">Loading...</div>
+                      )}
                     </div>
 
                     <div className="bg-gradient-to-br from-cyan-900/10 to-blue-900/10 border border-cyan-500/15 rounded-2xl p-4 relative overflow-hidden text-center">

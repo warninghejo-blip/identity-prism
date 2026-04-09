@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, type RefObject } from 'react';
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 
@@ -37,6 +37,8 @@ export interface CosmicStarfieldProps {
   paused?: boolean;
   /** Drift direction: 'right' (default), 'left', 'up', 'down' */
   driftDirection?: 'right' | 'left' | 'up' | 'down';
+  /** External rotation offset in radians (mutable ref — no re-render) */
+  rotationOffsetRef?: RefObject<number>;
 }
 
 // Background comets — lightweight canvas streaks
@@ -52,7 +54,13 @@ interface BgComet {
   len: number;
 }
 
-export function CosmicStarfield({ mode, onVortexPeak, paused, driftDirection = 'right' }: CosmicStarfieldProps) {
+export function CosmicStarfield({
+  mode,
+  onVortexPeak,
+  paused,
+  driftDirection = 'right',
+  rotationOffsetRef,
+}: CosmicStarfieldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<Star[]>([]);
   const cometsRef = useRef<BgComet[]>(
@@ -66,12 +74,14 @@ export function CosmicStarfield({ mode, onVortexPeak, paused, driftDirection = '
   const onVortexPeakRef = useRef(onVortexPeak);
   const pausedRef = useRef(paused);
   const driftDirRef = useRef(driftDirection);
+  const rotationOffsetRefInternal = useRef(rotationOffsetRef);
   const sizeRef = useRef({ w: 0, h: 0 });
 
   modeRef.current = mode;
   onVortexPeakRef.current = onVortexPeak;
   pausedRef.current = paused;
   driftDirRef.current = driftDirection;
+  rotationOffsetRefInternal.current = rotationOffsetRef;
 
   // Reset vortex state when switching back to drift
   useEffect(() => {
@@ -211,6 +221,13 @@ export function CosmicStarfield({ mode, onVortexPeak, paused, driftDirection = '
         }
       } else {
         // Drift mode — gentle parallax + twinkle
+        const rotOffset = rotationOffsetRefInternal.current?.current ?? 0;
+        if (rotOffset !== 0) {
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(rotOffset);
+          ctx.translate(-cx, -cy);
+        }
         for (let i = 0; i < stars.length; i++) {
           const s = stars[i];
           if (!pausedRef.current) {
@@ -255,13 +272,14 @@ export function CosmicStarfield({ mode, onVortexPeak, paused, driftDirection = '
           ctx.fillStyle = `rgba(${s.color[0]},${s.color[1]},${s.color[2]},${alpha})`;
           ctx.fill();
         }
+        if (rotOffset !== 0) ctx.restore();
       }
 
       // ── Background comets ──
       if (!pausedRef.current) {
         const comets = cometsRef.current;
         cometTimer.current += dt;
-        if (cometTimer.current > (IS_MOBILE ? 4.0 : 2.5)) {
+        if (cometTimer.current > (IS_MOBILE ? 14.0 : 9.0)) {
           cometTimer.current = 0;
           for (const cm of comets) {
             if (cm.active) continue;

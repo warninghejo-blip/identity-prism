@@ -1589,7 +1589,18 @@ const PrismLeague = () => {
         if (proof?.id && finalCoins > 0 && !activeChallengeId) {
           const walletAddr = playerAddr;
           const prev = readWalletCoins(walletAddr);
-          syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id);
+          syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id)
+            .then(() => {
+              // Refresh prism_balance_v1 in localStorage so gatherXPSources sees updated totalEarned
+              if (walletAddr !== 'anonymous') {
+                import('@/lib/prismCoin')
+                  .then(({ getPrismBalance }) => {
+                    getPrismBalance(walletAddr).catch(() => {});
+                  })
+                  .catch(() => {});
+              }
+            })
+            .catch(() => {});
         }
 
         // Submit to server leaderboard with verified session proof (skip for challenges)
@@ -2744,10 +2755,16 @@ const PrismLeague = () => {
                                           <span className="text-lg mb-1">{medal}</span>
                                           <div
                                             className={`w-full ${h} rounded-t-lg flex flex-col items-center justify-center`}
-                                            style={{ background: `${color}15`, border: `1px solid ${color}30`, borderBottom: 'none' }}
+                                            style={{
+                                              background: `${color}15`,
+                                              border: `1px solid ${color}30`,
+                                              borderBottom: 'none',
+                                            }}
                                           >
                                             <span className="text-white/70 font-bold text-xs">{r.pct}</span>
-                                            <span className="text-emerald-400 font-bold text-[11px]">+{r.base >= 1000 ? `${r.base / 1000}k` : r.base}</span>
+                                            <span className="text-emerald-400 font-bold text-[11px]">
+                                              +{r.base >= 1000 ? `${r.base / 1000}k` : r.base}
+                                            </span>
                                             <span className="text-cyan-400/50 text-[9px]">+{r.xp}xp</span>
                                           </div>
                                         </div>
@@ -2758,10 +2775,15 @@ const PrismLeague = () => {
                                   {PRIZE_DIST[tournamentTier].length > 3 && (
                                     <div className="space-y-1">
                                       {PRIZE_DIST[tournamentTier].slice(3).map((r) => (
-                                        <div key={r.place} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-white/[0.02] border border-white/[0.04] text-xs">
+                                        <div
+                                          key={r.place}
+                                          className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-white/[0.02] border border-white/[0.04] text-xs"
+                                        >
                                           <span className="text-white/40 font-bold w-8">{r.place}</span>
                                           <span className="text-white/50 font-mono">{r.pct}</span>
-                                          <span className="text-emerald-400/70 font-bold">+{r.base >= 1000 ? `${r.base / 1000}k` : r.base}</span>
+                                          <span className="text-emerald-400/70 font-bold">
+                                            +{r.base >= 1000 ? `${r.base / 1000}k` : r.base}
+                                          </span>
                                           <span className="text-cyan-400/40 text-[10px]">+{r.xp}xp</span>
                                         </div>
                                       ))}

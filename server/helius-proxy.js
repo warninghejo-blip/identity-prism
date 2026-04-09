@@ -5878,6 +5878,108 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ═══ XP Sources (server-authoritative) ═══
+  if (pathname === '/api/xp' && req.method === 'GET') {
+    if (!ipRateLimit('xp', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const address = url.searchParams.get('address');
+    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address' });
+
+    const wEntry = walletDatabase.get(address) || {};
+    const coinStats_ = getCoinStats(address);
+
+    // gameBestScores: per-gameType best score from leaderboardEntries
+    const GAME_TYPE_TO_MODE = {
+      orbit: 'orbit_survival',
+      cosmic_defender: 'cosmic_defender',
+      gravity_rush: 'gravity_rush',
+      cosmic_mine: 'cosmic_mine',
+      cosmic_runner: 'cosmic_runner',
+    };
+    const gameBestScores = {};
+    for (const e of leaderboardEntries) {
+      if (e.address !== address) continue;
+      const gt = e.gameType || 'orbit';
+      const mode = GAME_TYPE_TO_MODE[gt] || gt;
+      if (!gameBestScores[mode] || e.score > gameBestScores[mode]) gameBestScores[mode] = e.score;
+    }
+
+    // challengeWins from authoritative challenges array
+    const challengeWins = challenges.filter(c => c.status === 'completed' && c.winner === address).length;
+
+    // achievementCount from achievementData
+    const achEntry = achievementData.get(address);
+    const achievementCount = achEntry ? achEntry.unlocked.size : 0;
+
+    // questXPEarned + textQuests from questProgress and userData
+    const qp = questProgress.get(address);
+    let questXPEarned = 0;
+    if (qp?.quests) {
+      for (const q of Object.values(qp.quests)) {
+        if (q && q.completed && typeof q.xpReward === 'number') questXPEarned += q.xpReward;
+      }
+      if (!questXPEarned && typeof qp.totalXPEarned === 'number') questXPEarned = qp.totalXPEarned;
+    }
+    const tqMap = (wEntry.userData || {}).textQuests || {};
+    const completedTextQuests = Object.values(tqMap).filter(tq => tq && tq.completed).length;
+
+    // tournamentXP from walletDatabase
+    const tournamentXP = wEntry.tournamentXP || 0;
+
+    // totalCoins: use totalEarned from coinStats
+    const totalCoins = coinStats_.totalEarned || 0;
+
+    const sources = {
+      gameBestScores: Object.keys(gameBestScores).length > 0 ? gameBestScores : undefined,
+      challengeWins: challengeWins || undefined,
+      achievementCount: achievementCount || undefined,
+      questXPEarned: questXPEarned || undefined,
+      completedTextQuests: completedTextQuests || undefined,
+      tournamentXP: tournamentXP || undefined,
+      totalCoins: totalCoins || undefined,
+    };
+
+    // Compute rank server-side (mirrors computeRangerXP logic)
+    const GAME_XP_CONFIG = {
+      orbit_survival:   { mult: 5,   cap: 2000 },
+      cosmic_defender:  { mult: 1.5, cap: 2000 },
+      gravity_rush:     { mult: 5,   cap: 2000 },
+      cosmic_mine:      { mult: 3,   cap: 1500 },
+      cosmic_runner:    { mult: 3,   cap: 1500 },
+    };
+    const RANGER_RANKS = [
+      { id: 'wanderer',    minXP: 0 },
+      { id: 'scout',       minXP: 500 },
+      { id: 'tracker',     minXP: 1500 },
+      { id: 'ranger',      minXP: 3500 },
+      { id: 'pathfinder',  minXP: 7000 },
+      { id: 'vanguard',    minXP: 12000 },
+      { id: 'guardian',    minXP: 20000 },
+      { id: 'warden',      minXP: 30000 },
+      { id: 'sentinel',    minXP: 45000 },
+      { id: 'commander',   minXP: 65000 },
+    ];
+    let xp = 0;
+    if (sources.gameBestScores) {
+      for (const [mode, score] of Object.entries(sources.gameBestScores)) {
+        const cfg = GAME_XP_CONFIG[mode] || { mult: 2, cap: 1000 };
+        xp += Math.min(Math.floor((score || 0) * cfg.mult), cfg.cap);
+      }
+    }
+    if (sources.achievementCount) xp += sources.achievementCount * 200;
+    if (sources.challengeWins) xp += Math.min(sources.challengeWins * 300, 5000);
+    if (sources.questXPEarned) xp += sources.questXPEarned;
+    if (sources.completedTextQuests) xp += sources.completedTextQuests * 500;
+    if (sources.tournamentXP) xp += sources.tournamentXP;
+    if (sources.totalCoins) xp += Math.min(Math.floor(sources.totalCoins / 200), 1000);
+    xp = Math.max(0, Math.floor(xp));
+
+    let computedRank = RANGER_RANKS[0];
+    for (const r of RANGER_RANKS) { if (xp >= r.minXP) computedRank = r; }
+
+    respondJson(res, 200, { sources, computedXP: xp, computedRank: computedRank.id });
+    return;
+  }
+
   // ═══ Daily Limits (public, no auth) ═══
   if (pathname === '/api/daily-limits' && req.method === 'GET') {
     if (!ipRateLimit('dailyLimits', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
@@ -8250,10 +8352,10 @@ const server = http.createServer(async (req, res) => {
       if (!quests || typeof quests !== 'object' || Array.isArray(quests)) return respondJson(res, 400, { error: 'quests object required' });
       // Validate quest data: only allow known quest IDs with numeric progress/claimed fields
       const VALID_QUEST_IDS = new Set([
-        'daily_game', 'daily_explore', 'daily_burn', 'daily_highscore',
-        'weekly_games5', 'weekly_forge', 'weekly_burn500',
-        'ot_first_game', 'ot_score1000', 'ot_mint_card', 'ot_first_challenge',
-        'ot_first_stake', 'ot_first_forge', 'ot_explore10',
+        'daily_scan', 'daily_game', 'daily_burn', 'daily_explore', 'daily_highscore',
+        'weekly_burn5', 'weekly_games5', 'weekly_arena', 'weekly_streak', 'weekly_forge',
+        'ot_first_scan', 'ot_first_mint', 'ot_first_burn', 'ot_first_game',
+        'ot_reach_sun', 'ot_burn100', 'ot_score1000', 'ot_forge5', 'ot_arena_wins', 'ot_text_quest',
       ]);
       const existingQuests = (questProgress.get(addr) || {}).quests || {};
       const sanitized = {};
@@ -8264,8 +8366,10 @@ const server = http.createServer(async (req, res) => {
         const progress = Math.max(0, Math.min(Number(val.progress) || 0, 100000));
         // Server-side: completed can only go false→true (never back), and only if progress > 0
         // claimed can only go false→true (once claimed, stays claimed)
-        const completed = prev.completed === true ? true : ((val.completed === true || val.claimed === true) && progress > 0);
-        const claimed = prev.claimed === true ? true : (val.claimed === true && completed);
+        // Support both `claimed` (boolean) and `claimedAt` (ISO string) from client
+        const isClaimed = val.claimed === true || !!val.claimedAt;
+        const completed = prev.completed === true ? true : ((val.completed === true || isClaimed) && progress > 0);
+        const claimed = prev.claimed === true ? true : (isClaimed && completed);
         sanitized[key] = { progress, claimed, completed };
       }
       const existing = questProgress.get(addr) || {};

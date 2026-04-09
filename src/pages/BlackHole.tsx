@@ -20,7 +20,8 @@ import {
 } from '@/constants';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
-import { earnPrism, calculateBurnPrism } from '@/lib/prismCoin';
+// burn coin earning disabled server-side (no on-chain verification)
+// import { earnPrism, calculateBurnPrism } from '@/lib/prismCoin';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -1033,18 +1034,9 @@ const BlackHole = () => {
         description: `Reclaimed ~${netReclaim.toFixed(4)} SOL (after ${(commissionRate * 100).toFixed(0)}% fee) in ${signatures.length} tx${signatures.length > 1 ? 's' : ''}`,
       });
 
-      // Award Coins for burning
+      // Quest auto-tracking + Coins (burn earning disabled server-side — no on-chain verification)
       if (publicKey) {
         const addr = publicKey.toBase58();
-        const nftsBurned = safeTargets.filter((t) => t.isNft).length;
-        const tokensBurned = safeTargets.length - nftsBurned;
-        const prismEarned = calculateBurnPrism(tokensBurned, nftsBurned);
-        if (prismEarned > 0) {
-          earnPrism(addr, 'burn_tokens', prismEarned, `Burned ${safeTargets.length} asset(s) in Black Hole`).catch(
-            () => {},
-          );
-          toast.success(`+${prismEarned} Coins earned!`, { duration: 3000 });
-        }
         // Quest auto-tracking
         import('@/lib/prismQuests')
           .then(({ getQuestState, incrementQuest }) => {

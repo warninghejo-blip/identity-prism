@@ -111,6 +111,7 @@ export interface RangerXPSources {
   challengeWins?: number;
   achievementCount?: number;
   tournamentXP?: number; // XP earned from tournament placements
+  arenaWeeklyXP?: number; // Weekly arena XP from server (socialStats.arenaWeeklyXP)
 }
 
 // Per-mode multipliers for best scores (different scoring scales)
@@ -172,6 +173,11 @@ export function computeRangerXP(sources: RangerXPSources): number {
     xp += sources.tournamentXP;
   }
 
+  // ── Arena Weekly XP: from server socialStats.arenaWeeklyXP (uncapped) ──
+  if (sources.arenaWeeklyXP) {
+    xp += sources.arenaWeeklyXP;
+  }
+
   // ── Total Coins Earned: /200 (minimal, bonus) ──
   if (sources.totalCoins) {
     xp += Math.min(Math.floor(sources.totalCoins / 200), 1000);
@@ -207,7 +213,58 @@ export function getRankProgress(xp: number): number {
 }
 
 /**
+ * Fetch XP sources from server (server-authoritative).
+ * Returns null on network failure.
+ */
+export async function fetchServerXP(address: string): Promise<RangerXPSources | null> {
+  try {
+    const res = await fetch(`/api/xp?address=${encodeURIComponent(address)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.sources as RangerXPSources) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Gather XP sources: merges server (authoritative) with localStorage (fallback/supplement).
+ * Server fields take max over local, ensuring server data can't be understated by either side.
+ */
+export async function gatherXPSourcesMerged(address: string): Promise<RangerXPSources> {
+  const local = gatherXPSources(address);
+  const server = await fetchServerXP(address);
+  if (!server) return local; // offline fallback
+
+  const merged: RangerXPSources = { ...local };
+
+  // gameBestScores: merge per-mode, take max
+  if (server.gameBestScores) {
+    const combined: Record<string, number> = { ...(local.gameBestScores || {}) };
+    for (const [mode, score] of Object.entries(server.gameBestScores)) {
+      combined[mode] = Math.max(combined[mode] || 0, score);
+    }
+    merged.gameBestScores = combined;
+  }
+
+  // Scalar fields: take max of server vs local
+  if (server.challengeWins !== undefined)
+    merged.challengeWins = Math.max(local.challengeWins || 0, server.challengeWins);
+  if (server.achievementCount !== undefined)
+    merged.achievementCount = Math.max(local.achievementCount || 0, server.achievementCount);
+  if (server.questXPEarned !== undefined)
+    merged.questXPEarned = Math.max(local.questXPEarned || 0, server.questXPEarned);
+  if (server.completedTextQuests !== undefined)
+    merged.completedTextQuests = Math.max(local.completedTextQuests || 0, server.completedTextQuests);
+  if (server.tournamentXP !== undefined) merged.tournamentXP = Math.max(local.tournamentXP || 0, server.tournamentXP);
+  if (server.totalCoins !== undefined) merged.totalCoins = Math.max(local.totalCoins || 0, server.totalCoins);
+
+  return merged;
+}
+
+/**
  * Gather XP sources from localStorage for a given wallet address.
+ * Use gatherXPSourcesMerged() for server-authoritative version.
  */
 export function gatherXPSources(address: string): RangerXPSources {
   const sources: RangerXPSources = {};
@@ -300,6 +357,12 @@ export function gatherXPSources(address: string): RangerXPSources {
     const tournamentXPRaw = localStorage.getItem(`prism_tournament_xp_${address}`);
     if (tournamentXPRaw) {
       sources.tournamentXP = parseInt(tournamentXPRaw, 10) || 0;
+    }
+
+    // Arena Weekly XP (server socialStats.arenaWeeklyXP, synced to localStorage by useCompositeScore)
+    const arenaWeeklyXPRaw = localStorage.getItem(`prism_arena_weekly_xp_${address}`);
+    if (arenaWeeklyXPRaw) {
+      sources.arenaWeeklyXP = parseInt(arenaWeeklyXPRaw, 10) || 0;
     }
 
     // Challenge wins

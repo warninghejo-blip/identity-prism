@@ -193,12 +193,19 @@ export async function getPrismBalance(address: string): Promise<PrismBalance> {
   try {
     const { getCachedBalance } = await import('@/lib/prefetch');
     const cached = getCachedBalance(address);
-    if (cached) return cached as PrismBalance;
+    if (cached) {
+      saveLocalBalance(cached as PrismBalance);
+      return cached as PrismBalance;
+    }
   } catch {
     /* ignore */
   }
   const serverBalance = await apiCall<PrismBalance>(`/api/prism/balance?address=${encodeURIComponent(address)}`);
-  if (serverBalance) return serverBalance;
+  if (serverBalance) {
+    // Persist to localStorage so gatherXPSources can read totalEarned without async calls
+    saveLocalBalance(serverBalance);
+    return serverBalance;
+  }
   return getLocalBalance(address);
 }
 
@@ -227,25 +234,9 @@ export async function earnPrism(
 
   if (serverResult) return serverResult;
 
-  // Fallback: local
-  const balance = getLocalBalance(address);
-  balance.balance += earned;
-  balance.totalEarned += earned;
-  balance.lastUpdated = new Date().toISOString();
-  saveLocalBalance(balance);
-
-  const tx: PrismTransaction = {
-    id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    address,
-    amount: earned,
-    type: 'earn',
-    source,
-    description: desc,
-    timestamp: new Date().toISOString(),
-  };
-  saveLocalTransaction(address, tx);
-
-  return { balance, earned };
+  // Server failed — return zero earned (no localStorage fallback to prevent fake balances)
+  const balance = await getPrismBalance(address);
+  return { balance, earned: 0 };
 }
 
 /**

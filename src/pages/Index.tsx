@@ -881,7 +881,9 @@ const Index = () => {
 
     if (!resolvedAddress) {
       // Don't flash landing screen while sub-page return is syncing wallet address
-      if (returningFromSubPage.current) return;
+      // BUT if wallet is stable (settled) and still no address — wallet not connected, show landing
+      if (returningFromSubPage.current && !walletStable) return;
+      if (returningFromSubPage.current) returningFromSubPage.current = false;
       setViewState('landing');
       return;
     }
@@ -962,7 +964,7 @@ const Index = () => {
         }
       }
     }
-  }, [resolvedAddress, isWarping, traits, fromBlackHole]);
+  }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable]);
 
   // Removed auto-warp effect
 
@@ -982,6 +984,10 @@ const Index = () => {
   const handleDisconnect = async () => {
     // Set flag BEFORE async disconnect so state machine doesn't override viewState
     isDisconnectingRef.current = true;
+    // Fallback: always clear flag after 3s to prevent state machine lockup
+    setTimeout(() => {
+      isDisconnectingRef.current = false;
+    }, 3000);
     // Clear returning refs so effects don't re-set activeAddress after disconnect
     returningFromSubPage.current = false;
     returningFromBH.current = false;

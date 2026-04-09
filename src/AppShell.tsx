@@ -193,7 +193,7 @@ const cluster =
 
 const appIdentity = {
   name: 'Identity Prism',
-  uri: 'https://identityprism.xyz',
+  uri: (import.meta.env.VITE_APP_BASE_URL || 'https://identityprism.xyz').replace(/\/+$/, ''),
 };
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
@@ -229,7 +229,7 @@ export default function AppShell() {
           <DebugConsole />
         </React.Suspense>
       )}
-      <CustomWalletProvider wallets={wallets} autoConnect={true} localStorageKey="walletAdapter">
+      <CustomWalletProvider wallets={wallets} autoConnect={false} localStorageKey="walletAdapter">
         <DebugWallet />
         <WalletModalProvider>
           <React.Suspense

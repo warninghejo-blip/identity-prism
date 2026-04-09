@@ -149,9 +149,16 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
         };
         setData({ ...result, isLoading: false });
         // Sync tournament XP from server to localStorage for ranger rank calculation
-        if (wallet.tournamentXP && address) {
+        // Always write (even 0) to clear stale values
+        if (address) {
           try {
-            localStorage.setItem(`prism_tournament_xp_${address}`, String(wallet.tournamentXP));
+            const txp = wallet.tournamentXP || 0;
+            localStorage.setItem(`prism_tournament_xp_${address}`, String(txp));
+          } catch {}
+          // Sync arenaWeeklyXP from socialStats (written by weekly arena settlement)
+          try {
+            const awxp = wallet.socialStats?.arenaWeeklyXP || 0;
+            localStorage.setItem(`prism_arena_weekly_xp_${address}`, String(awxp));
           } catch {}
         }
         try {
