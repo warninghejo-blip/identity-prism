@@ -36,6 +36,20 @@ android {
         debug {
             applicationIdSuffix ".staging"
             versionNameSuffix "-staging"
+            resValue "string", "app_name", "Identity Prism Staging"
+            resValue "string", "title_activity_main", "Identity Prism Staging"
+            resValue "string", "package_name", "com.identityprism.app.staging"
+            resValue "string", "custom_url_scheme", "com.identityprism.app.staging"
+        }
+        staging {
+            initWith debug
+            matchingFallbacks = ['debug']
+            debuggable false
+            if (keystorePropertiesFile.exists()) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
         }
         release {
             minifyEnabled false

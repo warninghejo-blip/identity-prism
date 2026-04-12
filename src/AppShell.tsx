@@ -207,7 +207,7 @@ const mobileWalletAdapter = new SolanaMobileWalletAdapter({
 const wallets = [mobileWalletAdapter, new PhantomWalletAdapter(), new SolflareWalletAdapter()];
 const heliusRpcUrl = getHeliusRpcUrl();
 if (!heliusRpcUrl) {
-  console.error('Helius API key missing. Wallet scan requires VITE_HELIUS_API_KEYS.');
+  console.warn('Helius proxy URL missing. Wallet RPC will fall back to the public Solana endpoint.');
 }
 const endpoint = heliusRpcUrl ?? 'https://api.mainnet-beta.solana.com';
 

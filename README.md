@@ -17,6 +17,8 @@ Identity Prism is an **on-chain reputation and identity scoring system** built o
 
 It's not just a wallet tracker. It's a full **gamified identity platform** — with text quests, arcade games, tournaments, a cosmetics shop, an XP progression system, and an AI-powered social agent that generates video content with Veo 3.1.
 
+> **Current code-backed reference:** see [`docs/PROJECT_REFERENCE.md`](docs/PROJECT_REFERENCE.md) for the live route map, feature ownership, PRISM economy, and Ranger XP formulas.
+
 ### The Problem
 
 - Wallets are anonymous — no way to quickly assess trust or reputation

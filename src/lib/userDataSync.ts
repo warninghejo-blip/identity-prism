@@ -75,12 +75,10 @@ export async function loadFromServer(address: string): Promise<void> {
     const { userData } = (await res.json()) as { userData: ServerUserData | null };
     if (!userData) return;
 
-    // Restore loadout if missing locally
+    // Restore loadout from server authoritatively
     if (userData.loadout) {
       const key = `prism_forge_loadout_v1_${address}`;
-      if (!localStorage.getItem(key)) {
-        localStorage.setItem(key, JSON.stringify(userData.loadout));
-      }
+      localStorage.setItem(key, JSON.stringify(userData.loadout));
     }
 
     // Restore game stats if missing locally

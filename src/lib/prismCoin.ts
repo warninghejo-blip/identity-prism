@@ -44,6 +44,7 @@ export type PrismEarnSource =
   | 'game_gravity'
   | 'burn_tokens'
   | 'burn_nfts'
+  | 'blackhole_cleanup'
   | 'scan_wallet'
   | 'achievement'
   | 'quest_daily'
@@ -64,6 +65,15 @@ export type PrismSpendSource =
   | 'forge_module'
   | 'challenge_entry';
 
+export interface PrismSpendMetadata {
+  itemId?: string;
+  moduleId?: string;
+}
+
+export interface PrismEarnMetadata {
+  scanTarget?: string;
+}
+
 // ── Earn rates ──
 
 export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
@@ -72,6 +82,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   game_gravity: 1, // per 80 points (gravity is harder)
   burn_tokens: 5, // per token burned
   burn_nfts: 10, // per NFT burned
+  blackhole_cleanup: 0, // server-calculated from verified net cleanup
   scan_wallet: 5, // per wallet scan in sybil hunt
   achievement: 25, // per achievement unlocked
   quest_daily: 15, // per daily quest completed
@@ -81,7 +92,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   first_mint: 100, // one-time bonus for first mint
   referral: 20, // per referred user who scans
   text_quest: 1, // text quest reward (custom amount)
-  sybil_hunt: 20, // bounty for catching a sybil (trustScore < 50)
+  sybil_hunt: 20, // server-validated bounty for high-confidence sybil catches
   quiz: 5, // per correct quiz answer
 };
 
@@ -219,6 +230,7 @@ export async function earnPrism(
   amount?: number,
   description?: string,
   questId?: string,
+  metadata?: PrismEarnMetadata,
 ): Promise<{ balance: PrismBalance; earned: number }> {
   const earned = Math.max(0, amount ?? PRISM_EARN_RATES[source] ?? 1);
   const desc = description ?? `Earned ${earned} Coins from ${source.replace(/_/g, ' ')}`;
@@ -230,6 +242,7 @@ export async function earnPrism(
     amount: earned,
     description: desc,
     ...(questId ? { questId } : {}),
+    ...(metadata?.scanTarget ? { scanTarget: metadata.scanTarget } : {}),
   });
 
   if (serverResult) return serverResult;
@@ -248,6 +261,7 @@ export async function spendPrism(
   source: PrismSpendSource,
   amount: number,
   description?: string,
+  metadata?: PrismSpendMetadata,
 ): Promise<{ balance: PrismBalance; spent: number } | null> {
   const desc = description ?? `Spent ${amount} Coins on ${source.replace(/_/g, ' ')}`;
 
@@ -257,6 +271,8 @@ export async function spendPrism(
     source,
     amount,
     description: desc,
+    ...(metadata?.itemId ? { itemId: metadata.itemId } : {}),
+    ...(metadata?.moduleId ? { moduleId: metadata.moduleId } : {}),
   });
 
   // Spending MUST be server-authoritative — no local fallback (prevents free purchases when server is down)

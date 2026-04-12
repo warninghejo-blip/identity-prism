@@ -35,7 +35,7 @@ import {
   X,
   LogOut,
 } from 'lucide-react';
-import { computeRangerXP, getRangerRank, getRankProgress, getNextRank, gatherXPSources } from '@/lib/rangerRanks';
+import { useRangerProgress } from '@/hooks/useRangerProgress';
 
 /* ── Tier color map ── */
 const TIER_COLORS: Record<string, { text: string; glow: string; bg: string }> = {
@@ -248,6 +248,7 @@ function MiniPassport({
 }) {
   const tierColor = TIER_COLORS[tier] ?? TIER_COLORS.mercury;
   const gradeColor = SYBIL_GRADE_COLORS[sybilGrade ?? 'N/A'] ?? '#64748b';
+  const rangerProgress = useRangerProgress(walletAddress);
   const tierLabel = tier === 'binary_sun' ? 'BINARY SUN' : tier.toUpperCase();
   const docNo = walletAddress.slice(0, 8).toUpperCase();
 
@@ -415,11 +416,7 @@ function MiniPassport({
 
         {/* Ranger progress */}
         {(() => {
-          const sources = gatherXPSources(walletAddress);
-          const xp = computeRangerXP(sources);
-          const rank = getRangerRank(xp);
-          const progress = getRankProgress(xp);
-          const next = getNextRank(xp);
+          const { xp, rank, progress, next } = rangerProgress;
           if (rank.id === 'cadet' && xp === 0) return null;
           return (
             <div className="mt-2 flex items-start gap-2">
@@ -556,11 +553,7 @@ function MiniPassport({
           <div className="text-[9px] text-white/20 mt-0.5 tracking-wider">COMPOSITE RANK</div>
           {/* Ranger Rank */}
           {(() => {
-            const sources = gatherXPSources(walletAddress);
-            const xp = computeRangerXP(sources);
-            const rank = getRangerRank(xp);
-            const progress = getRankProgress(xp);
-            const next = getNextRank(xp);
+            const { xp, rank, progress, next } = rangerProgress;
             if (rank.id === 'cadet' && xp === 0) return null;
             return (
               <div className="mt-2 flex items-center justify-center gap-2">
@@ -724,6 +717,25 @@ export default function CosmicHub({
     const result = getBoostedCompositeScore(compositeData.breakdown, frameLoadout);
     return result ?? { score: compositeData.score, breakdown: compositeData.breakdown };
   }, [compositeData.breakdown, compositeData.score, frameLoadout]);
+  const hasCompositePassport = compositeData.hasComposite;
+  const fallbackIdentityScore = typeof identityScore === 'number' ? Math.max(identityScore, 0) : 0;
+  const fallbackPassportBreakdown = useMemo(
+    () =>
+      fallbackIdentityScore > 0
+        ? {
+            onchain: Math.min(Math.round(fallbackIdentityScore), 400),
+            sybilTrust: 0,
+            humanProof: 0,
+            social: 0,
+            engagement: 0,
+          }
+        : null,
+    [fallbackIdentityScore],
+  );
+  const passportScore = hasCompositePassport ? boostedComposite.score : fallbackIdentityScore;
+  const passportTier = hasCompositePassport ? compositeData.tier : (planetTier ?? 'mercury');
+  const passportBreakdown = hasCompositePassport ? boostedComposite.breakdown : fallbackPassportBreakdown;
+  const passportMaxScore = hasCompositePassport ? 1000 : 400;
 
   // Fetch sybil grade (shared deduped — same promise as CelestialCard)
   useEffect(() => {
@@ -783,7 +795,10 @@ export default function CosmicHub({
       </div>
 
       {/* --- 2D UI Overlay --- */}
-      <div className="absolute inset-0 z-10 flex flex-col pointer-events-none overflow-y-auto">
+      <div
+        className="absolute inset-0 z-10 flex flex-col pointer-events-none overflow-y-auto"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
         {/* Header — compact single line */}
         <motion.header
           initial={{ opacity: 0, y: -20 }}
@@ -827,17 +842,17 @@ export default function CosmicHub({
             {hasIdentity ? (
               <MiniPassport
                 walletAddress={walletAddress}
-                score={boostedComposite.score > 0 ? boostedComposite.score : identityScore}
-                tier={boostedComposite.score > 0 ? compositeData.tier : planetTier}
+                score={passportScore}
+                tier={passportTier}
                 coins={prismBalance?.balance ?? 0}
                 sybilGrade={sybilGrade}
                 onClick={onNavigateToCard}
-                maxScore={1000}
+                maxScore={passportMaxScore}
                 onBuyCoins={() => {
                   startFadeTransition(() => navigate('/vault'));
                 }}
                 boostRate={boostRate}
-                breakdown={boostedComposite.breakdown}
+                breakdown={passportBreakdown}
               />
             ) : (
               <NoCardFallback onClick={onNavigateToCard} />

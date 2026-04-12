@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { URL } from 'node:url';
+import { URL, fileURLToPath } from 'node:url';
 import {
   Connection,
   Keypair,
@@ -32,8 +32,16 @@ import { create, fetchCollection, fetchAsset, mplCore, burnV1, updateV1 } from '
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
 import jwt from 'jsonwebtoken';
 import { createRequire } from 'node:module';
+import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
+import {
+  buildIdentityHolderPerks,
+  GAME_SESSION_ONCHAIN_BONUS_MULTIPLIER,
+  normalizeGameCoinDeltaForCap,
+  scaleAppliedGameCoinDelta,
+} from './services/identityPerks.js';
+import { getCompositeTrustProfile, getSybilQuickVerdict, getSybilRewardPath, getSybilVerdict } from './services/sybilVerdict.js';
 
 // Load tweetnacl at module level (used by verifyWalletSignature as fallback)
 let _naclInstance = null;
@@ -162,6 +170,465 @@ const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const TOKEN_2022_PROGRAM_KEY = TOKEN_2022_PROGRAM_ID;
+const TOKEN_PROGRAM_KEY_STRING = TOKEN_PROGRAM_ID.toBase58();
+const TOKEN_2022_PROGRAM_KEY_STRING = TOKEN_2022_PROGRAM_KEY.toBase58();
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const JUPITER_API_KEY = (process.env.JUPITER_API_KEY ?? '').trim();
+const JUPITER_SWAP_API_V2 = 'https://api.jup.ag/swap/v2';
+const JUPITER_LITE_QUOTE_API = 'https://lite-api.jup.ag/swap/v1/quote';
+const JUPITER_LITE_SWAP_API = 'https://lite-api.jup.ag/swap/v1/swap';
+const DAILY_BLACKHOLE_CLEANUP_CAP = 500;
+const BLACKHOLE_USED_SIG_FILE = path.join(METADATA_DIR, 'used-blackhole-signatures.json');
+const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const FORGE_CATALOG_FILE = path.join(CURRENT_DIR, 'forge-catalog.json');
+const FORGE_RANK_ORDER = ['cadet', 'pilot', 'captain', 'ace', 'legend'];
+const FORGE_EQUIP_FIELDS = [
+  ['equippedFrame', 'frame'],
+  ['equippedAura', 'aura'],
+  ['equippedShipSkin', 'ship_skin'],
+  ['equippedTitle', 'title'],
+];
+const FORGE_UNLOCK_RULES = Object.freeze({
+  frame_event_horizon: { questId: 'ot_burn100', minProgress: 100 },
+  aura_binary_pulse: { questId: 'ot_reach_sun', minProgress: 1 },
+  title_destroyer: { questId: 'ot_burn100', minProgress: 50 },
+  title_sovereign: { minOwnedItems: 4 },
+  title_ascended: { questId: 'ot_score1000', minProgress: 1000 },
+});
+const SERVER_RANGER_RANKS = [
+  { id: 'cadet', minXP: 0 },
+  { id: 'pilot', minXP: 1500 },
+  { id: 'captain', minXP: 8000 },
+  { id: 'ace', minXP: 25000 },
+  { id: 'legend', minXP: 50000 },
+];
+const SERVER_GAME_XP_CONFIG = {
+  orbit_survival: { mult: 5, cap: 2000 },
+  cosmic_defender: { mult: 1.5, cap: 2000 },
+  gravity_rush: { mult: 5, cap: 2000 },
+  cosmic_mine: { mult: 3, cap: 1500 },
+  cosmic_runner: { mult: 3, cap: 1500 },
+};
+const IDENTITY_OWNERSHIP_CACHE_TTL_MS = 5 * 60 * 1000;
+const identityOwnershipCache = new Map();
+
+const loadForgeCatalog = () => {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(FORGE_CATALOG_FILE, 'utf8'));
+    return {
+      items: Array.isArray(parsed?.items) ? parsed.items : [],
+      modules: Array.isArray(parsed?.modules) ? parsed.modules : [],
+    };
+  } catch (error) {
+    console.warn('[forge] Failed to load forge catalog:', error?.message || error);
+    return { items: [], modules: [] };
+  }
+};
+
+const FORGE_CATALOG = loadForgeCatalog();
+const FORGE_ITEM_MAP = new Map(
+  FORGE_CATALOG.items.map((item) => [item.id, item]),
+);
+const FORGE_ITEM_NAME_MAP = new Map(
+  FORGE_CATALOG.items.map((item) => [String(item.name || '').toLowerCase(), item]),
+);
+const FORGE_MODULE_MAP = new Map(
+  FORGE_CATALOG.modules.map((moduleDef) => [moduleDef.id, moduleDef]),
+);
+const FORGE_MODULE_NAME_MAP = new Map(
+  FORGE_CATALOG.modules.map((moduleDef) => [String(moduleDef.name || '').toLowerCase(), moduleDef]),
+);
+
+const createEmptyForgeLoadout = (address = '') => ({
+  address,
+  equippedFrame: null,
+  equippedAura: null,
+  equippedShipSkin: null,
+  equippedTitle: null,
+  ownedItems: [],
+  installedModules: {},
+  ownedModules: [],
+});
+
+const normalizeForgeEntries = (entries, keyField) => {
+  const unique = new Map();
+  if (!Array.isArray(entries)) return [];
+  for (const entry of entries) {
+    const id = typeof entry?.[keyField] === 'string' ? entry[keyField].trim() : '';
+    if (!id || unique.has(id)) continue;
+    const purchasedAt = typeof entry?.purchasedAt === 'string' && entry.purchasedAt.trim()
+      ? entry.purchasedAt.trim()
+      : new Date().toISOString();
+    unique.set(id, { [keyField]: id, purchasedAt });
+  }
+  return [...unique.values()].sort((a, b) => a.purchasedAt.localeCompare(b.purchasedAt));
+};
+
+const normalizeForgeState = (raw) => ({
+  version: 1,
+  items: normalizeForgeEntries(raw?.items, 'itemId'),
+  modules: normalizeForgeEntries(raw?.modules, 'moduleId'),
+});
+
+const mergeForgeEntries = (existingEntries, derivedEntries, keyField) => {
+  const merged = new Map();
+  for (const entry of [...existingEntries, ...derivedEntries]) {
+    const id = typeof entry?.[keyField] === 'string' ? entry[keyField].trim() : '';
+    if (!id || merged.has(id)) continue;
+    const purchasedAt = typeof entry?.purchasedAt === 'string' && entry.purchasedAt.trim()
+      ? entry.purchasedAt.trim()
+      : new Date().toISOString();
+    merged.set(id, { [keyField]: id, purchasedAt });
+  }
+  return [...merged.values()].sort((a, b) => a.purchasedAt.localeCompare(b.purchasedAt));
+};
+
+const getWalletUserData = (walletEntry) => (
+  walletEntry?.userData && typeof walletEntry.userData === 'object' ? walletEntry.userData : {}
+);
+
+const meetsForgeRequiredRank = (userRank, requiredRank) => {
+  if (!requiredRank) return true;
+  if (!userRank) return false;
+  const currentIndex = FORGE_RANK_ORDER.indexOf(String(userRank).trim());
+  const requiredIndex = FORGE_RANK_ORDER.indexOf(String(requiredRank).trim());
+  if (currentIndex < 0 || requiredIndex < 0) return false;
+  return currentIndex >= requiredIndex;
+};
+
+const deriveForgeStateFromTransactions = (address, currentState) => {
+  const txs = Array.isArray(prismTransactions.get(address)) ? [...prismTransactions.get(address)].reverse() : [];
+  const derivedItems = [];
+  const derivedModules = [];
+  for (const tx of txs) {
+    if (tx?.type !== 'spend') continue;
+    const description = typeof tx?.description === 'string' ? tx.description.trim() : '';
+    const purchasedAt = typeof tx?.timestamp === 'string' && tx.timestamp.trim() ? tx.timestamp.trim() : new Date().toISOString();
+    if (tx.source === 'forge_module') {
+      const moduleName = description.replace(/^Module:\s*/i, '').trim().toLowerCase();
+      const moduleDef = FORGE_MODULE_NAME_MAP.get(moduleName);
+      if (moduleDef && Number(tx.amount) === Number(moduleDef.price)) {
+        derivedModules.push({ moduleId: moduleDef.id, purchasedAt });
+      }
+      continue;
+    }
+    if (typeof tx.source === 'string' && tx.source.startsWith('forge_')) {
+      const itemName = description.replace(/^Purchased\s+/i, '').trim().toLowerCase();
+      const itemDef = FORGE_ITEM_NAME_MAP.get(itemName);
+      if (itemDef && tx.source === `forge_${itemDef.category}` && Number(tx.amount) === Number(itemDef.price)) {
+        derivedItems.push({ itemId: itemDef.id, purchasedAt });
+      }
+    }
+  }
+  return {
+    version: 1,
+    items: mergeForgeEntries(currentState.items, derivedItems, 'itemId'),
+    modules: mergeForgeEntries(currentState.modules, derivedModules, 'moduleId'),
+  };
+};
+
+const getOrCreateForgeState = (address, walletEntry = walletDatabase.get(address) || { address }) => {
+  const existingState = normalizeForgeState(walletEntry?.forgeState);
+  const derivedState = deriveForgeStateFromTransactions(address, existingState);
+  const changed = JSON.stringify(existingState) !== JSON.stringify(derivedState);
+  return { forgeState: derivedState, changed };
+};
+
+const getStoredQuestProgressValue = (walletEntry, address, questId) => {
+  const userData = getWalletUserData(walletEntry);
+  const rangerState = userData?.rangerXP;
+  if (rangerState && Array.isArray(rangerState.progress)) {
+    const quest = rangerState.progress.find((entry) => entry && entry.questId === questId);
+    if (quest) {
+      return Math.max(
+        Number(quest.current ?? quest.progress) || 0,
+        quest.completed ? 1 : 0,
+      );
+    }
+  }
+  const serverQuest = questProgress.get(address)?.quests?.[questId];
+  return Math.max(
+    Number(serverQuest?.progress ?? serverQuest?.current) || 0,
+    serverQuest?.completed ? 1 : 0,
+  );
+};
+
+const isForgeUnlockSatisfied = (address, itemId, walletEntry, forgeState) => {
+  const rule = FORGE_UNLOCK_RULES[itemId];
+  if (!rule) return true;
+  if (Number.isFinite(rule.minOwnedItems)) {
+    return forgeState.items.length >= rule.minOwnedItems;
+  }
+  if (rule.questId) {
+    return getStoredQuestProgressValue(walletEntry, address, rule.questId) >= (rule.minProgress || 1);
+  }
+  return true;
+};
+
+const sanitizeForgeLoadout = (address, candidateLoadout, forgeState) => {
+  const raw = candidateLoadout && typeof candidateLoadout === 'object' ? candidateLoadout : {};
+  const sanitized = createEmptyForgeLoadout(address);
+  const ownedItems = forgeState.items
+    .filter((entry) => FORGE_ITEM_MAP.has(entry.itemId))
+    .map((entry) => ({ itemId: entry.itemId, purchasedAt: entry.purchasedAt, equipped: false }));
+  const ownedItemIds = new Set(ownedItems.map((entry) => entry.itemId));
+  const allModuleIds = forgeState.modules
+    .map((entry) => entry.moduleId)
+    .filter((moduleId) => FORGE_MODULE_MAP.has(moduleId));
+
+  const installedModules = {};
+  const usedModules = new Set();
+  if (raw.installedModules && typeof raw.installedModules === 'object' && !Array.isArray(raw.installedModules)) {
+    for (const [itemId, moduleIds] of Object.entries(raw.installedModules)) {
+      const itemDef = FORGE_ITEM_MAP.get(itemId);
+      if (!itemDef || !ownedItemIds.has(itemId) || !Array.isArray(moduleIds)) continue;
+      const maxSlots = Number.isFinite(itemDef.maxModuleSlots) ? itemDef.maxModuleSlots : 3;
+      const accepted = [];
+      for (const moduleId of moduleIds) {
+        if (accepted.length >= maxSlots) break;
+        if (typeof moduleId !== 'string' || usedModules.has(moduleId) || !allModuleIds.includes(moduleId)) continue;
+        const moduleDef = FORGE_MODULE_MAP.get(moduleId);
+        if (!moduleDef || !Array.isArray(moduleDef.compatibleCategories) || !moduleDef.compatibleCategories.includes(itemDef.category)) continue;
+        accepted.push(moduleId);
+        usedModules.add(moduleId);
+      }
+      if (accepted.length > 0) installedModules[itemId] = accepted;
+    }
+  }
+
+  sanitized.installedModules = installedModules;
+  sanitized.ownedModules = allModuleIds.filter((moduleId) => !usedModules.has(moduleId));
+  sanitized.ownedItems = ownedItems;
+
+  for (const [field, category] of FORGE_EQUIP_FIELDS) {
+    const itemId = typeof raw?.[field] === 'string' ? raw[field].trim() : '';
+    const itemDef = FORGE_ITEM_MAP.get(itemId);
+    if (itemDef && itemDef.category === category && ownedItemIds.has(itemId)) {
+      sanitized[field] = itemId;
+    }
+  }
+
+  const equippedIds = new Set(
+    FORGE_EQUIP_FIELDS.map(([field]) => sanitized[field]).filter(Boolean),
+  );
+  sanitized.ownedItems = sanitized.ownedItems.map((entry) => ({
+    ...entry,
+    equipped: equippedIds.has(entry.itemId),
+  }));
+
+  return sanitized;
+};
+
+const getServerGameStats = (walletEntry) => {
+  const gameStatsRaw = getWalletUserData(walletEntry)?.gameStats;
+  if (!gameStatsRaw || typeof gameStatsRaw !== 'object') return undefined;
+  const gameStats = {};
+
+  const orbitStats = gameStatsRaw.orbit_survival_stats_v1;
+  if (orbitStats && typeof orbitStats === 'object') {
+    gameStats.orbit = {
+      gamesPlayed: Number(orbitStats.gamesPlayed) || 0,
+      totalSurvivalTime: Number(orbitStats.totalSurvivalTime) || 0,
+    };
+  }
+
+  const defenderStats = gameStatsRaw.cosmic_defender_stats_v1;
+  if (defenderStats && typeof defenderStats === 'object') {
+    gameStats.defender = {
+      gamesPlayed: Number(defenderStats.gamesPlayed) || 0,
+      totalKills: Number(defenderStats.totalKills) || 0,
+    };
+  }
+
+  const gravityStats = gameStatsRaw.gravity_rush_stats_v1;
+  if (gravityStats && typeof gravityStats === 'object') {
+    gameStats.gravity = {
+      gamesPlayed: Number(gravityStats.gamesPlayed) || 0,
+      totalTime: Number(gravityStats.totalPlayTime ?? gravityStats.totalSurvivalTime ?? gravityStats.totalTime) || 0,
+    };
+  }
+
+  return Object.keys(gameStats).length > 0 ? gameStats : undefined;
+};
+
+const buildServerRangerSources = (address, walletEntry = walletDatabase.get(address) || {}) => {
+  const coinStats = getCoinStats(address);
+  const userData = getWalletUserData(walletEntry);
+
+  const gameBestScores = {};
+  const GAME_TYPE_TO_MODE = {
+    orbit: 'orbit_survival',
+    cosmic_defender: 'cosmic_defender',
+    gravity_rush: 'gravity_rush',
+    cosmic_mine: 'cosmic_mine',
+    cosmic_runner: 'cosmic_runner',
+  };
+  for (const entry of leaderboardEntries) {
+    if (entry.address !== address) continue;
+    const mode = GAME_TYPE_TO_MODE[entry.gameType || 'orbit'] || entry.gameType || 'orbit';
+    if (!gameBestScores[mode] || entry.score > gameBestScores[mode]) {
+      gameBestScores[mode] = entry.score;
+    }
+  }
+
+  const challengeWins = challenges.filter((challenge) => challenge.status === 'completed' && challenge.winner === address).length;
+  const achievementCount = achievementData.get(address)?.unlocked?.size || 0;
+  const completedTextQuests = Object.values(userData.textQuests || {}).filter((quest) => quest && quest.completed).length;
+  const questXPEarned = Number(userData?.rangerXP?.totalXPEarned) || 0;
+  const tournamentXP = Number(walletEntry?.tournamentXP) || 0;
+  const arenaWeeklyXP = Number(walletEntry?.socialStats?.arenaWeeklyXP) || 0;
+  const totalCoins = Number(coinStats?.totalEarned) || 0;
+
+  return {
+    gameBestScores: Object.keys(gameBestScores).length > 0 ? gameBestScores : undefined,
+    gameStats: getServerGameStats(walletEntry),
+    challengeWins: challengeWins || undefined,
+    achievementCount: achievementCount || undefined,
+    questXPEarned: questXPEarned || undefined,
+    completedTextQuests: completedTextQuests || undefined,
+    tournamentXP: tournamentXP || undefined,
+    arenaWeeklyXP: arenaWeeklyXP || undefined,
+    totalCoins: totalCoins || undefined,
+  };
+};
+
+const computeServerRangerXP = (sources) => {
+  let xp = 0;
+  if (sources.gameBestScores) {
+    for (const [mode, score] of Object.entries(sources.gameBestScores)) {
+      const cfg = SERVER_GAME_XP_CONFIG[mode] || { mult: 2, cap: 1000 };
+      xp += Math.min(Math.floor((score || 0) * cfg.mult), cfg.cap);
+    }
+  }
+  if (sources.gameStats) {
+    const stats = sources.gameStats;
+    if (stats.orbit) xp += Math.min((Number(stats.orbit.gamesPlayed) || 0) * 5, 1000);
+    if (stats.defender) xp += Math.min((Number(stats.defender.gamesPlayed) || 0) * 5, 1000);
+    if (stats.gravity) xp += Math.min((Number(stats.gravity.gamesPlayed) || 0) * 5, 1000);
+    if (stats.orbit) xp += Math.min(Math.floor((Number(stats.orbit.totalSurvivalTime) || 0) / 10), 500);
+    if (stats.gravity) xp += Math.min(Math.floor((Number(stats.gravity.totalTime) || 0) / 10), 500);
+    if (stats.defender) xp += Math.min(Math.floor((Number(stats.defender.totalKills) || 0) / 5), 500);
+  }
+  if (sources.achievementCount) xp += sources.achievementCount * 200;
+  if (sources.challengeWins) xp += Math.min(sources.challengeWins * 300, 5000);
+  if (sources.questXPEarned) xp += sources.questXPEarned;
+  if (sources.completedTextQuests) xp += sources.completedTextQuests * 500;
+  if (sources.tournamentXP) xp += sources.tournamentXP;
+  if (sources.arenaWeeklyXP) xp += sources.arenaWeeklyXP;
+  if (sources.totalCoins) xp += Math.min(Math.floor(sources.totalCoins / 200), 1000);
+  return Math.max(0, Math.floor(xp));
+};
+
+const getServerRangerSnapshot = (address, walletEntry = walletDatabase.get(address) || {}) => {
+  const sources = buildServerRangerSources(address, walletEntry);
+  const xp = computeServerRangerXP(sources);
+  let rank = SERVER_RANGER_RANKS[0];
+  for (const entry of SERVER_RANGER_RANKS) {
+    if (xp >= entry.minXP) rank = entry;
+  }
+  return { sources, xp, rank: rank.id };
+};
+
+const hasCoreCollectionAsset = async (address, options = {}) => {
+  const { allowStale = true, throwOnLookupFailure = false } = options;
+  if (!address || !CORE_COLLECTION) return false;
+  const cached = identityOwnershipCache.get(address);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+  const rpcUrl = getRpcUrl(address);
+  if (!rpcUrl) return false;
+  try {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: `revive-entitlement-${address}`,
+        method: 'searchAssets',
+        params: { ownerAddress: address, grouping: ['collection', CORE_COLLECTION], page: 1, limit: 1 },
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Identity ownership lookup failed with status ${response.status}`);
+    }
+    const payload = await response.json();
+    const total = Number(payload?.result?.total ?? payload?.result?.grand_total ?? 0);
+    const value = total > 0;
+    identityOwnershipCache.set(address, { value, expiresAt: Date.now() + IDENTITY_OWNERSHIP_CACHE_TTL_MS });
+    return value;
+  } catch (error) {
+    if (allowStale && cached) {
+      return cached.value;
+    }
+    if (throwOnLookupFailure) {
+      const lookupError = new Error('Identity ownership lookup unavailable');
+      lookupError.cause = error;
+      throw lookupError;
+    }
+    return false;
+  }
+};
+
+const getIdentityHolderPerks = async (address, options = {}) =>
+  buildIdentityHolderPerks(await hasCoreCollectionAsset(address, options), FREE_REVIVES_PER_DAY);
+
+const SCAN_ANALYSIS_TTL_MS = 60 * 60 * 1000;
+const CLEAN_SCAN_REWARD_COOLDOWN_MS = 60 * 60 * 1000;
+const SCAN_WALLET_REWARD = 5;
+const SYBIL_HUNT_BASE_REWARD = 20;
+
+const normalizeScanRewardClaims = (rawClaims) => {
+  const claims = {};
+  if (!rawClaims || typeof rawClaims !== 'object' || Array.isArray(rawClaims)) return claims;
+  for (const [target, rawTimestamp] of Object.entries(rawClaims)) {
+    const normalizedTarget = normalizePubkey(target);
+    const timestamp = Number(rawTimestamp);
+    if (!normalizedTarget || !Number.isFinite(timestamp) || timestamp <= 0) continue;
+    claims[normalizedTarget] = timestamp;
+  }
+  return claims;
+};
+
+const normalizeScanRewardState = (rawState) => ({
+  cleanClaims: normalizeScanRewardClaims(rawState?.cleanClaims),
+  sybilClaims: normalizeScanRewardClaims(rawState?.sybilClaims),
+});
+
+const getScanRewardState = (address, walletEntry = walletDatabase.get(address) || { address }) => (
+  normalizeScanRewardState(walletEntry?._scanRewardState)
+);
+
+const getUniqueScanTargetCount = (state) => (
+  new Set([...Object.keys(state.cleanClaims), ...Object.keys(state.sybilClaims)]).size
+);
+
+const computeSybilHuntReward = (nextCatchCount) => {
+  const rankBonus = nextCatchCount >= 50 ? 50
+    : nextCatchCount >= 20 ? 30
+    : nextCatchCount >= 10 ? 20
+    : nextCatchCount >= 3 ? 10
+    : 0;
+  return SYBIL_HUNT_BASE_REWARD + rankBonus;
+};
+
+const getRecentSybilAnalysis = (targetAddress) => {
+  if (!targetAddress) return null;
+  const now = Date.now();
+  const cached = sybilCache.get(targetAddress);
+  if (cached?.analysis && now - cached.cachedAt < SCAN_ANALYSIS_TTL_MS) {
+    return cached.analysis;
+  }
+  const walletEntry = walletDatabase.get(targetAddress);
+  const sybil = walletEntry?.sybil;
+  const updatedAt = Date.parse(String(sybil?.updatedAt || ''));
+  if (sybil && Number.isFinite(updatedAt) && now - updatedAt < SCAN_ANALYSIS_TTL_MS) {
+    return sybil;
+  }
+  return null;
+};
 
 // ── JWT Auth ──────────────────────────────────────────────────────────────────
 const JWT_SECRET_FILE = path.join(process.cwd(), '.jwt_secret');
@@ -326,6 +793,193 @@ function optionalJwt(req, res) {
     // Token present but invalid — reject to prevent spoofing
     return { ok: false, address: null };
   }
+}
+
+const blackHoleUsedSignatures = globalThis._usedBlackHoleSigMap || (() => {
+  const map = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(BLACKHOLE_USED_SIG_FILE, 'utf8'));
+    for (const [signature, ts] of Object.entries(raw)) map.set(signature, Number(ts) || Date.now());
+  } catch {}
+  return (globalThis._usedBlackHoleSigMap = map);
+})();
+
+function persistBlackHoleUsedSignatures() {
+  const tmp = `${BLACKHOLE_USED_SIG_FILE}.tmp`;
+  const payload = {};
+  for (const [signature, ts] of blackHoleUsedSignatures) payload[signature] = ts;
+  fs.promises
+    .writeFile(tmp, JSON.stringify(payload), 'utf8')
+    .then(() => fs.promises.rename(tmp, BLACKHOLE_USED_SIG_FILE))
+    .catch(() => {});
+}
+
+function cleanupBlackHoleUsedSignatures() {
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  for (const [signature, ts] of blackHoleUsedSignatures) {
+    if (ts < cutoff) blackHoleUsedSignatures.delete(signature);
+  }
+}
+
+function normalizePubkey(value) {
+  try {
+    return new PublicKey(String(value)).toBase58();
+  } catch {
+    return null;
+  }
+}
+
+function getParsedAccountKeyString(key) {
+  if (!key) return null;
+  if (typeof key === 'string') return normalizePubkey(key) || key;
+  if (typeof key?.pubkey === 'string') return normalizePubkey(key.pubkey) || key.pubkey;
+  if (key?.pubkey && typeof key.pubkey.toBase58 === 'function') return key.pubkey.toBase58();
+  if (typeof key.toBase58 === 'function') return key.toBase58();
+  return null;
+}
+
+function getInstructionProgramId(ix) {
+  return getParsedAccountKeyString(ix?.programId) || null;
+}
+
+function getParsedTxKeys(tx) {
+  return Array.isArray(tx?.transaction?.message?.accountKeys) ? tx.transaction.message.accountKeys : [];
+}
+
+function findTokenBalanceEntry(tx, account, mint) {
+  const accountKeys = getParsedTxKeys(tx);
+  const allBalances = [...(tx?.meta?.preTokenBalances || []), ...(tx?.meta?.postTokenBalances || [])];
+  return (
+    allBalances.find((entry) => {
+      const key = accountKeys[entry.accountIndex];
+      return getParsedAccountKeyString(key) === account && (!mint || entry.mint === mint);
+    }) || null
+  );
+}
+
+function getTokenAmountRaw(entry) {
+  if (!entry?.uiTokenAmount) return null;
+  const raw = entry.uiTokenAmount.amount;
+  return raw == null ? null : BigInt(raw);
+}
+
+function inferBlackHoleAssetKind(tx, account, mint) {
+  const entry = findTokenBalanceEntry(tx, account, mint);
+  if (!entry?.uiTokenAmount) return 'fungible';
+  const decimals = Number(entry.uiTokenAmount.decimals || 0);
+  const amountRaw = getTokenAmountRaw(entry);
+  return decimals === 0 && amountRaw === 1n ? 'nft' : 'fungible';
+}
+
+function getWalletLamportDelta(tx, address) {
+  const accountKeys = getParsedTxKeys(tx);
+  const index = accountKeys.findIndex((key) => getParsedAccountKeyString(key) === address);
+  if (index < 0) return 0;
+  const pre = tx?.meta?.preBalances?.[index] || 0;
+  const post = tx?.meta?.postBalances?.[index] || 0;
+  return post - pre;
+}
+
+function getParsedInstructionProgramId(ix) {
+  if (!ix?.programId) return '';
+  return typeof ix.programId === 'string'
+    ? ix.programId
+    : ix.programId?.toBase58?.() || ix.programId?.toString?.() || '';
+}
+
+function getParsedTxInstructions(tx) {
+  const outer = Array.isArray(tx?.transaction?.message?.instructions)
+    ? tx.transaction.message.instructions
+    : [];
+  const inner = Array.isArray(tx?.meta?.innerInstructions)
+    ? tx.meta.innerInstructions.flatMap((entry) => Array.isArray(entry?.instructions) ? entry.instructions : [])
+    : [];
+  return [...outer, ...inner];
+}
+
+function isParsedTokenInstruction(ix, types) {
+  if (!ix?.parsed || !types.includes(ix.parsed.type)) return false;
+  const programId = getParsedInstructionProgramId(ix);
+  return programId === TOKEN_PROGRAM_KEY_STRING || programId === TOKEN_2022_PROGRAM_KEY_STRING;
+}
+
+function verifyCloseOperationTx(tx, address, account) {
+  if (!tx?.meta || tx.meta.err) return false;
+  const keys = getParsedTxKeys(tx);
+  if (!keys.some((key) => getParsedAccountKeyString(key) === address)) return false;
+  return getParsedTxInstructions(tx).some((ix) => {
+    if (!isParsedTokenInstruction(ix, ['closeAccount'])) return false;
+    const info = ix.parsed.info || {};
+    return (
+      normalizePubkey(info.account) === account &&
+      normalizePubkey(info.destination) === address &&
+      normalizePubkey(info.owner) === address
+    );
+  });
+}
+
+function verifyBurnOperationTx(tx, address, account, mint) {
+  if (!verifyCloseOperationTx(tx, address, account)) return false;
+  return getParsedTxInstructions(tx).some((ix) => {
+    if (!isParsedTokenInstruction(ix, ['burn', 'burnChecked'])) return false;
+    const info = ix.parsed.info || {};
+    return normalizePubkey(info.account) === account && normalizePubkey(info.authority) === address && info.mint === mint;
+  });
+}
+
+function verifySwapOperationTx(tx, address, account, mint) {
+  if (!tx?.meta || tx.meta.err) return false;
+  const accountKeys = getParsedTxKeys(tx);
+  if (!accountKeys.some((key) => getParsedAccountKeyString(key) === address)) return false;
+  // Verify Jupiter aggregator was involved in the transaction
+  const JUPITER_PROGRAM_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
+  const hasJupiter = accountKeys.some((key) => getParsedAccountKeyString(key) === JUPITER_PROGRAM_ID);
+  if (!hasJupiter) return false;
+  const entry = findTokenBalanceEntry(tx, account, mint);
+  const postEntry = (tx?.meta?.postTokenBalances || []).find((balance) => {
+    const key = accountKeys[balance.accountIndex];
+    return getParsedAccountKeyString(key) === account && balance.mint === mint;
+  });
+  const preAmount = getTokenAmountRaw(entry);
+  const postAmount = getTokenAmountRaw(postEntry);
+  return preAmount !== null && preAmount > 0n && (!postEntry || postAmount === 0n);
+}
+
+function getClosedAccountLamports(tx, address) {
+  if (!tx?.meta) return 0;
+  const keys = getParsedTxKeys(tx);
+  const preBalances = Array.isArray(tx.meta.preBalances) ? tx.meta.preBalances : [];
+  let total = 0;
+  for (const ix of getParsedTxInstructions(tx)) {
+    if (!isParsedTokenInstruction(ix, ['closeAccount'])) continue;
+    const info = ix.parsed.info || {};
+    if (normalizePubkey(info.destination) !== address || normalizePubkey(info.owner) !== address) continue;
+    const account = normalizePubkey(info.account);
+    const accountIndex = keys.findIndex((key) => getParsedAccountKeyString(key) === account);
+    if (accountIndex >= 0) total += Number(preBalances[accountIndex] || 0);
+  }
+  return total;
+}
+
+function verifyBlackHoleCommissionTx(tx, address, commissionRate) {
+  if (!tx?.meta || tx.meta.err) return false;
+  const normalizedAddress = normalizePubkey(address);
+  const treasuryAddress = normalizePubkey(TREASURY_ADDRESS);
+  if (!normalizedAddress || !treasuryAddress) return false;
+  if (normalizedAddress === treasuryAddress) return true;
+  const chunkLamports = getClosedAccountLamports(tx, normalizedAddress);
+  if (chunkLamports <= 0) return true;
+  const requiredCommissionLamports = Math.round(chunkLamports * commissionRate);
+  if (requiredCommissionLamports <= 0) return true;
+
+  let transferredLamports = 0;
+  for (const ix of tx.transaction?.message?.instructions || []) {
+    if (!ix?.parsed || ix.parsed.type !== 'transfer') continue;
+    const info = ix.parsed.info || {};
+    if (normalizePubkey(info.source) !== normalizedAddress || normalizePubkey(info.destination) !== treasuryAddress) continue;
+    transferredLamports += Number(info.lamports) || 0;
+  }
+  return transferredLamports >= requiredCommissionLamports;
 }
 
 /**
@@ -498,6 +1152,10 @@ const normalizeStoredGameSessionEntry = (raw) => {
     lastVerifiedAt,
     createdAtMs,
     gameMode: typeof raw.gameMode === 'string' ? raw.gameMode : undefined,
+    coinsCredited: Number.isFinite(Number(raw.coinsCredited)) ? Math.max(0, Math.floor(Number(raw.coinsCredited))) : 0,
+    identityGameCoinMultiplier: Number.isFinite(Number(raw.identityGameCoinMultiplier))
+      ? Math.max(1, Math.floor(Number(raw.identityGameCoinMultiplier)))
+      : null,
     // Preserve reuse-prevention flags across restarts
     usedForTournament: raw.usedForTournament || null,
     usedForChallenge: raw.usedForChallenge || null,
@@ -1173,7 +1831,70 @@ const getWalletAchievements = (address) => {
   return achievementData.get(address) || { unlocked: new Set(), claimed: new Set() };
 };
 
-const VALID_ACHIEVEMENT_IDS = new Set(['score_10', 'score_50', 'score_100', 'score_200', 'survived_15s', 'survived_30s', 'survived_60s', 'survived_120s', 'survived_180s', 'survived_300s', 'near_miss_1', 'near_miss_5', 'near_miss_25', 'near_miss_50', 'near_miss_100', 'total_games_1', 'total_games_10', 'total_games_50', 'total_games_100', 'first_blood', 'kill_streak_5', 'kill_streak_10', 'boss_slayer', 'boss_rush', 'perfect_wave', 'destroyer_500', 'destroyer_1000', 'destroyer_2000', 'grav_ace', 'grav_columns_50', 'grav_columns_100', 'grav_crystals_100', 'grav_crystals_500', 'grav_survived_120', 'grav_survived_300']);
+const ACHIEVEMENT_REWARDS_BY_ID = Object.freeze({
+  score_10: 25,
+  score_50: 50,
+  score_100: 100,
+  score_200: 200,
+  survived_15s: 25,
+  survived_30s: 50,
+  survived_60s: 100,
+  survived_120s: 150,
+  survived_180s: 200,
+  survived_300s: 300,
+  near_miss_1: 15,
+  near_miss_5: 30,
+  near_miss_25: 75,
+  near_miss_50: 100,
+  near_miss_100: 150,
+  total_games_1: 10,
+  total_games_10: 50,
+  total_games_50: 100,
+  total_games_100: 150,
+  first_blood: 25,
+  kill_streak_5: 50,
+  kill_streak_10: 100,
+  boss_slayer: 100,
+  boss_rush: 200,
+  perfect_wave: 150,
+  destroyer_500: 100,
+  destroyer_1000: 200,
+  destroyer_2000: 300,
+  grav_columns_50: 75,
+  grav_columns_100: 150,
+  grav_crystals_100: 100,
+  grav_crystals_500: 200,
+  grav_survived_120: 150,
+  grav_survived_300: 300,
+  first_orbit: 50,
+  space_cadet: 50,
+  orbit_walker: 150,
+  cosmic_veteran: 150,
+  asteroid_dancer: 400,
+  orbit_legend: 1000,
+  persistent_pilot: 50,
+  dedicated_captain: 150,
+  marathon_runner: 400,
+  def_outer_rim: 50,
+  def_nebula_front: 150,
+  def_dark_sector: 400,
+  def_final_stand: 1000,
+  def_recruit: 50,
+  def_veteran: 150,
+  def_exterminator: 400,
+  achive_trophy: 400,
+  achive_diamond_ship: 1000,
+  grav_first_flight: 50,
+  grav_smooth_pilot: 50,
+  grav_gravity_walker: 150,
+  grav_crystal_hunter: 150,
+  grav_gravity_veteran: 400,
+  grav_column_king: 400,
+  grav_marathon: 400,
+  grav_gravity_legend: 1000,
+  grav_ace: 1000,
+});
+const VALID_ACHIEVEMENT_IDS = new Set(Object.keys(ACHIEVEMENT_REWARDS_BY_ID));
 
 const markAchievementsUnlocked = (address, achievementIds) => {
   let entry = achievementData.get(address);
@@ -1201,7 +1922,7 @@ loadAchievementData();
 // ── Server-side Free Revive tracking (3 per day per game mode, requires minted ID) ──
 const REVIVES_STORE_FILE = path.join(METADATA_DIR, 'revive-usage.json');
 const FREE_REVIVES_PER_DAY = 3;
-// address -> { orbit: { date: 'YYYY-MM-DD', used: number }, destroyer: { ... } }
+// address -> { orbit: { date: 'YYYY-MM-DD', used: number }, destroyer: { ... }, gravity: { ... } }
 const reviveData = new Map();
 
 const loadReviveData = () => {
@@ -1305,18 +2026,33 @@ function calculateCompositeScore(input) {
     gameScores = [], gameTypes = new Set(), achievementCount = 0,
     challengesWon = 0, constellationExplored = 0, compareCount = 0,
     questsCompleted = 0, streakDays = 0, scanCount = 0,
-    hasSeeker = false, hasPreorder = false, hasCombo = false, scoreBreakdown = null,
+    hasSeeker = false, hasPreorder = false, hasCombo = false, sybilVerdict = null, scoreBreakdown = null,
   } = input;
 
   // ── Badge evaluation (same conditions as client-side getBadgeItems) ──
   // On-chain badges (5) — on-chain score already includes badge pts from scoring.js
   // No extra bonus here to avoid double-counting
 
+  const safeTrust = Number.isFinite(trustScore) ? Math.max(0, Math.min(100, trustScore)) : 0;
+  const recovery = input.trustRecovery || {};
+  const requestedRecoveryBonus = Math.min(25,
+    (recovery.twitterBonus || 0) +    // max 12
+    (recovery.activityBonus || 0) +   // max 8
+    (recovery.crossVerifBonus || 0),  // max 5
+  );
+  const compositeTrust = getCompositeTrustProfile({
+    verdict: sybilVerdict,
+    trustScore: safeTrust,
+    recoveryBonus: requestedRecoveryBonus,
+  });
+  const adjustedTrust = compositeTrust.effectiveTrust;
+
   // Sybil Trust badges (3) — bonus 10 pts each (require full sybil analysis)
   const sybilAnalyzed = input.sybilAnalyzed === true;
-  const badge_verifiedHuman = sybilAnalyzed && trustScore >= 80;
-  const badge_cleanRecord = sybilAnalyzed && trustScore >= 50 && riskScore < 10;
-  const badge_trustPillar = sybilAnalyzed && trustScore >= 95;
+  const sybilBadgeEligible = sybilAnalyzed && compositeTrust.allowBadges;
+  const badge_verifiedHuman = sybilBadgeEligible && safeTrust >= 80;
+  const badge_cleanRecord = sybilBadgeEligible && safeTrust >= 50 && riskScore < 10;
+  const badge_trustPillar = sybilBadgeEligible && safeTrust >= 95;
   const sybilBadgeBonus = (badge_verifiedHuman ? 10 : 0) + (badge_cleanRecord ? 10 : 0) + (badge_trustPillar ? 10 : 0);
 
   // Human Proof badges (3) — bonus 10 pts each
@@ -1347,15 +2083,8 @@ function calculateCompositeScore(input) {
   const onchain = Math.min(400, onchainScore);
   const basePts = onchain;
 
-  // Sybil Trust (25%, max 250) — with trust recovery bonus
-  const safeTrust = Number.isFinite(trustScore) ? Math.max(0, Math.min(100, trustScore)) : 0;
-  const recovery = input.trustRecovery || {};
-  const recoveryBonus = Math.min(25,
-    (recovery.twitterBonus || 0) +    // max 12
-    (recovery.activityBonus || 0) +   // max 8
-    (recovery.crossVerifBonus || 0)   // max 5
-  );
-  const adjustedTrust = Math.min(100, safeTrust + recoveryBonus);
+  // Sybil Trust (25%, max 250) — verdict-aware trust floor/ceiling for composite only
+  const recoveryBonus = compositeTrust.recoveryBonus;
   const sybilBase = Math.round((adjustedTrust / 100) * 250);
   const sybilTrust = Math.min(250, Math.max(0, sybilBase + sybilBadgeBonus));
 
@@ -1385,7 +2114,21 @@ function calculateCompositeScore(input) {
     breakdown: { onchain, sybilTrust, humanProof, social, engagement },
     details: {
       onchain: { identityScore: onchainScore, identityMax: 400, basePts, badgeBonus: 0, hasSeeker, hasPreorder, hasCombo, scoreBreakdown },
-      sybilTrust: { trustScore, adjustedTrust, trustMax: 100, badgeBonus: sybilBadgeBonus, recoveryBonus, recoveryBreakdown: recovery },
+      sybilTrust: {
+        trustScore: safeTrust,
+        rawTrustScore: compositeTrust.rawTrustScore,
+        baseCompositeTrust: compositeTrust.baseCompositeTrust,
+        adjustedTrust,
+        effectiveTrust: compositeTrust.effectiveTrust,
+        verdictKey: compositeTrust.verdictKey,
+        verdictLabel: compositeTrust.verdictLabel,
+        verdictAdjustment: compositeTrust.verdictAdjustment,
+        trustMax: 100,
+        badgeBonus: sybilBadgeBonus,
+        recoveryBonus,
+        recoveryCap: compositeTrust.recoveryCap,
+        recoveryBreakdown: recovery,
+      },
       humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount, badgeBonus: humanBadgeBonus },
       social: { challengesWon, challengePts, constellationExplored, constellationPts, compareCount, comparePts, badgeBonus: socialBadgeBonus },
       engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
@@ -1489,11 +2232,13 @@ function buildCompositeInput(address) {
   const traits = walletEntry.traits || {};
   const stats = walletEntry.stats || {};
   const sybil = walletEntry.sybil || {};
+  const sybilVerdict = sybil.verdict || (sybil.verdictKey ? getSybilQuickVerdict(sybil) : null);
   return {
     onchainScore,
     trustScore,
     riskScore: sybil.riskScore || 0,
     sybilAnalyzed: Boolean(sybil.updatedAt),
+    sybilVerdict,
     walletAgeDays: stats.walletAgeDays || (traits.walletAgeDays ?? 0),
     txCount: stats.transactions || (traits.txCount ?? 0),
     nftCount: stats.nfts || (traits.nftCount ?? 0),
@@ -2897,6 +3642,7 @@ const server = http.createServer(async (req, res) => {
       let trustGrade = null;
       let trustScore = null;
       let riskLevel = null;
+      let sybilVerdict = null;
       let topPrograms = [];
       try {
         const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
@@ -2908,6 +3654,7 @@ const server = http.createServer(async (req, res) => {
           trustGrade = cachedSybil.analysis.trustGrade;
           trustScore = cachedSybil.analysis.trustScore;
           riskLevel = cachedSybil.analysis.riskLevel;
+          sybilVerdict = cachedSybil.analysis.verdict || getSybilVerdict(cachedSybil.analysis);
           topPrograms = cachedSybil.analysis.metrics?.topPrograms || [];
         } else {
           // Lightweight trust estimation — capped at 70 until full sybil analysis
@@ -3009,6 +3756,7 @@ const server = http.createServer(async (req, res) => {
         trustGrade,
         trustScore,
         riskLevel,
+        sybilVerdict,
         topPrograms,
         stats: {
           walletAgeDays,
@@ -3346,6 +4094,194 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (pathname === '/api/market/swap-quote' && req.method === 'GET') {
+    if (!ipRateLimit('mkt_swap_quote', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const inputMint = normalizePubkey(url.searchParams.get('inputMint'));
+    const amountRaw = String(url.searchParams.get('amount') || '').trim();
+    const taker = normalizePubkey(url.searchParams.get('taker'));
+    if (!inputMint || !amountRaw) {
+      respondJson(res, 400, { error: 'inputMint and amount are required' });
+      return;
+    }
+    let amount;
+    try {
+      amount = BigInt(amountRaw);
+    } catch {
+      respondJson(res, 400, { error: 'Invalid amount' });
+      return;
+    }
+    if (amount <= 0n) {
+      respondJson(res, 400, { error: 'Amount must be positive' });
+      return;
+    }
+    try {
+      if (JUPITER_API_KEY && taker) {
+        const orderUrl = new URL(`${JUPITER_SWAP_API_V2}/order`);
+        orderUrl.searchParams.set('inputMint', inputMint);
+        orderUrl.searchParams.set('outputMint', SOL_MINT);
+        orderUrl.searchParams.set('amount', amount.toString());
+        orderUrl.searchParams.set('taker', taker);
+        orderUrl.searchParams.set('slippageBps', '100');
+        orderUrl.searchParams.set('restrictIntermediateTokens', 'true');
+        const orderResp = await fetch(orderUrl.toString(), {
+          headers: { 'x-api-key': JUPITER_API_KEY },
+        });
+        const orderData = await orderResp.json().catch(() => ({}));
+        if (orderResp.ok && orderData?.outAmount) {
+          respondJson(res, 200, {
+            inputMint,
+            outputMint: SOL_MINT,
+            outAmount: orderData.outAmount,
+            priceImpactPct: orderData.priceImpactPct ?? '0',
+            transport: 'order_execute',
+            quoteResponse: {
+              mode: 'order_execute',
+              inputMint,
+              outputMint: SOL_MINT,
+              amount: amount.toString(),
+            },
+          });
+          return;
+        }
+        console.warn('[market] Jupiter /order quote failed, falling back to lite quote', orderData?.error || orderResp.status);
+      }
+
+      const quoteUrl = new URL(JUPITER_LITE_QUOTE_API);
+      quoteUrl.searchParams.set('inputMint', inputMint);
+      quoteUrl.searchParams.set('outputMint', SOL_MINT);
+      quoteUrl.searchParams.set('amount', amount.toString());
+      quoteUrl.searchParams.set('swapMode', 'ExactIn');
+      quoteUrl.searchParams.set('slippageBps', '100');
+      quoteUrl.searchParams.set('restrictIntermediateTokens', 'true');
+      const quoteResp = await fetch(quoteUrl.toString());
+      const quoteData = await quoteResp.json().catch(() => ({}));
+      if (!quoteResp.ok || !quoteData?.outAmount) {
+        respondJson(res, quoteResp.status || 502, { error: quoteData?.error || 'Swap quote unavailable' });
+        return;
+      }
+      respondJson(res, 200, {
+        inputMint,
+        outputMint: SOL_MINT,
+        outAmount: quoteData.outAmount,
+        priceImpactPct: quoteData.priceImpactPct ?? '0',
+        transport: 'legacy_raw',
+        quoteResponse: quoteData,
+      });
+      return;
+    } catch (error) {
+      respondJson(res, 502, { error: error instanceof Error ? error.message : 'Swap quote fetch failed' });
+      return;
+    }
+  }
+
+  if (pathname === '/api/market/build-swap' && req.method === 'POST') {
+    if (!ipRateLimit('mkt_build_swap', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const parsed = JSON.parse(await readBody(req));
+      const userPublicKey = normalizePubkey(parsed?.userPublicKey);
+      const quoteResponse = parsed?.quoteResponse;
+      if (!userPublicKey || userPublicKey !== jwtAuth.address) {
+        respondJson(res, 403, { error: 'Wallet address mismatch' });
+        return;
+      }
+      if (!quoteResponse || quoteResponse.outputMint !== SOL_MINT || !normalizePubkey(quoteResponse.inputMint)) {
+        respondJson(res, 400, { error: 'Invalid swap quote' });
+        return;
+      }
+
+      if (JUPITER_API_KEY && quoteResponse.mode === 'order_execute' && String(quoteResponse.amount || '').trim()) {
+        const orderUrl = new URL(`${JUPITER_SWAP_API_V2}/order`);
+        orderUrl.searchParams.set('inputMint', normalizePubkey(quoteResponse.inputMint));
+        orderUrl.searchParams.set('outputMint', SOL_MINT);
+        orderUrl.searchParams.set('amount', String(quoteResponse.amount));
+        orderUrl.searchParams.set('taker', userPublicKey);
+        orderUrl.searchParams.set('slippageBps', '100');
+        orderUrl.searchParams.set('restrictIntermediateTokens', 'true');
+        const orderResp = await fetch(orderUrl.toString(), {
+          headers: { 'x-api-key': JUPITER_API_KEY },
+        });
+        const orderData = await orderResp.json().catch(() => ({}));
+        if (orderResp.ok && orderData?.transaction && orderData?.requestId) {
+          respondJson(res, 200, {
+            swapTransaction: orderData.transaction,
+            requestId: orderData.requestId,
+            transport: 'order_execute',
+          });
+          return;
+        }
+        console.warn('[market] Jupiter /order build failed, falling back to lite swap', orderData?.error || orderResp.status);
+      }
+
+      const swapResp = await fetch(JUPITER_LITE_SWAP_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quoteResponse,
+          userPublicKey,
+          wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+        }),
+      });
+      const swapData = await swapResp.json().catch(() => ({}));
+      if (!swapResp.ok || !swapData?.swapTransaction) {
+        respondJson(res, swapResp.status || 502, { error: swapData?.error || 'Failed to build swap transaction' });
+        return;
+      }
+      respondJson(res, 200, {
+        swapTransaction: swapData.swapTransaction,
+        lastValidBlockHeight: swapData.lastValidBlockHeight ?? null,
+        prioritizationFeeLamports: swapData.prioritizationFeeLamports ?? null,
+        transport: 'legacy_raw',
+      });
+      return;
+    } catch (error) {
+      respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
+      return;
+    }
+  }
+
+  if (pathname === '/api/market/execute-swap' && req.method === 'POST') {
+    if (!ipRateLimit('mkt_execute_swap', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    if (!JUPITER_API_KEY) {
+      respondJson(res, 503, { error: 'Jupiter API key is not configured on the server' });
+      return;
+    }
+    try {
+      const parsed = JSON.parse(await readBody(req));
+      const signedTransaction = String(parsed?.signedTransaction || '').trim();
+      const requestId = String(parsed?.requestId || '').trim();
+      if (!signedTransaction || !requestId) {
+        respondJson(res, 400, { error: 'signedTransaction and requestId are required' });
+        return;
+      }
+      const executeResp = await fetch(`${JUPITER_SWAP_API_V2}/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': JUPITER_API_KEY,
+        },
+        body: JSON.stringify({
+          signedTransaction,
+          requestId,
+        }),
+      });
+      const executeData = await executeResp.json().catch(() => ({}));
+      if (!executeResp.ok || !executeData?.signature) {
+        respondJson(res, executeResp.status || 502, { error: executeData?.error || 'Failed to execute swap' });
+        return;
+      }
+      respondJson(res, 200, executeData);
+      return;
+    } catch (error) {
+      respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
+      return;
+    }
+  }
+
   // ── MagicBlock game-session proof API ──
   if (pathname === '/api/game/session' && req.method === 'POST') {
     if (!ipRateLimit('game_session', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many session registrations' });
@@ -3424,10 +4360,10 @@ const server = http.createServer(async (req, res) => {
         return respondJson(res, 409, { error: 'Session already registered and used competitively' });
       }
 
-      const entry = {
-        id,
-        hash,
-        walletAddress: payload.walletAddress,
+        const entry = {
+          id,
+          hash,
+          walletAddress: payload.walletAddress,
         score: payload.score,
         survivalTime: payload.survivalTime,
         seed: payload.seed,
@@ -3445,12 +4381,16 @@ const server = http.createServer(async (req, res) => {
         },
         createdAt: nowIso,
         lastVerifiedAt: nowIso,
-        createdAtMs: Date.now(),
-        // Carry over any existing reuse flags
-        usedForTournament: existingSession?.usedForTournament ?? null,
-        usedForChallenge: existingSession?.usedForChallenge ?? null,
-        usedForLeaderboard: existingSession?.usedForLeaderboard ?? null,
-      };
+          createdAtMs: Date.now(),
+          coinsCredited: existingSession?.coinsCredited ?? 0,
+          identityGameCoinMultiplier: Number.isFinite(Number(existingSession?.identityGameCoinMultiplier))
+            ? Math.max(1, Math.floor(Number(existingSession.identityGameCoinMultiplier)))
+            : null,
+          // Carry over any existing reuse flags
+          usedForTournament: existingSession?.usedForTournament ?? null,
+          usedForChallenge: existingSession?.usedForChallenge ?? null,
+          usedForLeaderboard: existingSession?.usedForLeaderboard ?? null,
+        };
 
       // Evict oldest unprotected session if at capacity
       if (gameSessionProofs.size >= MAX_GAME_SESSION_PROOFS) {
@@ -3643,7 +4583,7 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 400, { error: 'delta (non-zero integer) required' });
         return;
       }
-      // Delta validation per game mode (1.5x buffer for coinMult + on-chain bonus)
+      // Delta validation per game mode.
       if (delta > 0) {
         // Require verified game session proof (prevents earning coins without playing)
         const gameSessionId = parsed.gameSessionId;
@@ -3655,29 +4595,58 @@ const server = http.createServer(async (req, res) => {
         if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
         const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
         const gameMode = VALID_GAME_MODES.has(mode) ? mode : 'orbit';
-        const maxDelta = (MAX_DELTA_PER_GAME[gameMode] || 500) * 1.5;
-        if (delta > maxDelta) {
+        if (session.gameMode && session.gameMode !== gameMode) {
+          return respondJson(res, 400, { error: 'Session mode mismatch' });
+        }
+        let pinnedIdentityGameCoinMultiplier = Number.isFinite(Number(session.identityGameCoinMultiplier))
+          ? Math.max(1, Math.floor(Number(session.identityGameCoinMultiplier)))
+          : null;
+        if (!pinnedIdentityGameCoinMultiplier) {
+          const holderPerks = await getIdentityHolderPerks(addr);
+          pinnedIdentityGameCoinMultiplier = Math.max(1, Math.floor(Number(holderPerks.gameCoinMultiplier) || 1));
+          session.identityGameCoinMultiplier = pinnedIdentityGameCoinMultiplier;
+        }
+        const normalizedRequestedDelta = normalizeGameCoinDeltaForCap(delta, pinnedIdentityGameCoinMultiplier);
+        const maxDelta = Math.round((MAX_DELTA_PER_GAME[gameMode] || 500) * GAME_SESSION_ONCHAIN_BONUS_MULTIPLIER);
+        if (normalizedRequestedDelta > maxDelta) {
           return respondJson(res, 400, { error: 'Delta exceeds maximum for game mode' });
         }
-        // Daily game coin cap (tracks PRE-BOOST amounts so staking doesn't penalize)
+        const alreadyCredited = Number(session.coinsCredited) || 0;
+        const remainingSessionAllowance = Math.max(0, Math.floor(maxDelta - alreadyCredited));
+        if (remainingSessionAllowance <= 0) {
+          return respondJson(res, 400, { error: 'Session coin allowance exhausted' });
+        }
+        // Daily cap and session allowance track normalized pre-holder earnings so holder perks and staking sit on top.
         const todayCoins = getGameCoinsToday(addr);
         if (todayCoins >= DAILY_GAME_COIN_CAP) {
           return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
         }
-        let baseDelta = delta;
-        if (todayCoins + delta > DAILY_GAME_COIN_CAP) {
+        const requestedDelta = Math.min(normalizedRequestedDelta, remainingSessionAllowance);
+        let baseDelta = requestedDelta;
+        if (todayCoins + requestedDelta > DAILY_GAME_COIN_CAP) {
           baseDelta = DAILY_GAME_COIN_CAP - todayCoins;
         }
-        // Track pre-boost amount in daily counter
+        // Track normalized pre-holder amount in the daily counter
         addGameCoinsToday(addr, baseDelta);
-        // Apply staking boost ON TOP of capped amount (bonus coins don't count towards cap)
+        session.coinsCredited = alreadyCredited + baseDelta;
+        gameSessionProofs.set(gameSessionId, session);
+        persistGameSessionProofs();
+        const appliedGameDelta = scaleAppliedGameCoinDelta(delta, normalizedRequestedDelta, baseDelta);
+        // Apply staking boost ON TOP of the holder-adjusted amount (bonus coins don't count towards cap)
         const boost = getStakingBoost(addr);
-        const effectiveDelta = boost > 0 ? Math.floor(baseDelta * (1 + boost)) : baseDelta;
+        const effectiveDelta = boost > 0 ? Math.floor(appliedGameDelta * (1 + boost)) : appliedGameDelta;
         const current = getCoinBalance(addr);
         const newBalance = current + effectiveDelta;
         setCoinBalance(addr, newBalance);
         addCoinEarned(addr, effectiveDelta);
-        respondJson(res, 200, { address: addr, coins: newBalance, earned: effectiveDelta, dailyRemaining: Math.max(0, DAILY_GAME_COIN_CAP - getGameCoinsToday(addr)), boost: boost > 0 ? boost : undefined });
+        respondJson(res, 200, {
+          address: addr,
+          coins: newBalance,
+          earned: effectiveDelta,
+          dailyRemaining: Math.max(0, DAILY_GAME_COIN_CAP - getGameCoinsToday(addr)),
+          boost: boost > 0 ? boost : undefined,
+          idMultiplier: pinnedIdentityGameCoinMultiplier > 1 ? pinnedIdentityGameCoinMultiplier : undefined,
+        });
       } else {
         // Negative delta (spending) — deduct from balance (no separate burn; burn is only on /api/prism/spend)
         const absDelta = Math.abs(delta);
@@ -3726,20 +4695,19 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       // Server-side achievement reward lookup (ignore client-supplied reward)
-      const ACHIEVEMENT_REWARDS = { 'score_10': 25, 'score_50': 50, 'score_100': 100, 'score_200': 200, 'survived_15s': 25, 'survived_30s': 50, 'survived_60s': 100, 'survived_120s': 150, 'survived_180s': 200, 'survived_300s': 300, 'near_miss_1': 15, 'near_miss_5': 30, 'near_miss_25': 75, 'near_miss_50': 100, 'near_miss_100': 150, 'total_games_1': 10, 'total_games_10': 50, 'total_games_50': 100, 'total_games_100': 150, 'first_blood': 25, 'kill_streak_5': 50, 'kill_streak_10': 100, 'boss_slayer': 100, 'boss_rush': 200, 'perfect_wave': 150, 'destroyer_500': 100, 'destroyer_1000': 200, 'destroyer_2000': 300, 'grav_ace': 150, 'grav_columns_50': 75, 'grav_columns_100': 150, 'grav_crystals_100': 100, 'grav_crystals_500': 200, 'grav_survived_120': 150, 'grav_survived_300': 300 };
-      const serverReward = ACHIEVEMENT_REWARDS[achievementId] || 0;
+      const serverReward = ACHIEVEMENT_REWARDS_BY_ID[achievementId] || 0;
       if (serverReward > 0) {
         // Apply NON_GAME_DAILY_EARN_CAP to achievement rewards
         const ngKey = `nongame_daily:${addr}`;
         const ngToday = new Date().toISOString().slice(0, 10);
         const ngEntry = prismEarnRateLimit.get(ngKey);
-        let ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === ngToday) ? ngEntry.earned : 0;
+        let ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === ngToday) ? (ngEntry.total || 0) : 0;
         const remaining = Math.max(0, NON_GAME_DAILY_EARN_CAP - ngEarned);
         const capped = Math.min(serverReward, remaining);
         if (capped > 0) {
           setCoinBalance(addr, getCoinBalance(addr) + capped);
           addCoinEarned(addr, capped);
-          prismEarnRateLimit.set(ngKey, { date: ngToday, earned: ngEarned + capped });
+          prismEarnRateLimit.set(ngKey, { date: ngToday, total: ngEarned + capped });
         }
       }
       const entry = getWalletAchievements(addr);
@@ -3783,12 +4751,29 @@ const server = http.createServer(async (req, res) => {
       respondJson(res, 400, { error: 'address query param required' });
       return;
     }
-    if (mode !== 'orbit' && mode !== 'destroyer') {
-      respondJson(res, 400, { error: 'mode must be orbit or destroyer' });
+    if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
+      respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
+      return;
+    }
+    const eligible = await hasCoreCollectionAsset(addr);
+    if (!eligible) {
+      respondJson(res, 200, { address: addr, mode, left: 0, max: FREE_REVIVES_PER_DAY, eligible: false });
       return;
     }
     const left = getRevivesLeft(addr, mode);
-    respondJson(res, 200, { address: addr, mode, left, max: FREE_REVIVES_PER_DAY });
+    respondJson(res, 200, { address: addr, mode, left, max: FREE_REVIVES_PER_DAY, eligible: true });
+    return;
+  }
+
+  if (pathname === '/api/identity/perks' && req.method === 'GET') {
+    if (!ipRateLimit('identity_perks_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const addr = url.searchParams.get('address') || '';
+    if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
+      respondJson(res, 400, { error: 'valid address required' });
+      return;
+    }
+    const perks = await getIdentityHolderPerks(addr);
+    respondJson(res, 200, { address: addr, ...perks });
     return;
   }
 
@@ -3805,8 +4790,13 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 400, { error: 'address (string) required' });
         return;
       }
-      if (mode !== 'orbit' && mode !== 'destroyer') {
-        respondJson(res, 400, { error: 'mode must be orbit or destroyer' });
+      if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
+        respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
+        return;
+      }
+      const eligible = await hasCoreCollectionAsset(addr);
+      if (!eligible) {
+        respondJson(res, 403, { error: 'Identity Prism holder perk required for free revives', left: 0, max: FREE_REVIVES_PER_DAY });
         return;
       }
       const success = useRevive(addr, mode);
@@ -3844,12 +4834,13 @@ const server = http.createServer(async (req, res) => {
       const entriesArr = Object.entries(t.entries)
         .map(([addr, data]) => ({ address: addr, score: data.score, submittedAt: data.submittedAt }))
         .sort((a, b) => b.score - a.score);
+      const participantCount = entriesArr.length;
       tournaments[tier] = {
         id: t.id, tier, mode: t.mode, entryFee: t.entryFee, label: t.label || TOURNAMENT_TIERS[tier].label,
         prizePool: t.prizePool,
-        basePrizes: TOURNAMENT_BASE_PRIZES[tier] || [],
+        basePrizes: getTournamentBasePrizes(tier, participantCount),
         startTime: t.startTime, endTime: t.endTime, status: t.status,
-        entriesCount: entriesArr.length, endsAt: t.endTime, entryCount: entriesArr.length,
+        entriesCount: participantCount, endsAt: t.endTime, entryCount: participantCount,
         isEnded: t.status === 'ended', userJoined,
         xpRewards: TOURNAMENT_XP_REWARDS[tier] || [],
         // Gated: only show entries if user joined
@@ -5883,100 +6874,8 @@ const server = http.createServer(async (req, res) => {
     if (!ipRateLimit('xp', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address' });
-
-    const wEntry = walletDatabase.get(address) || {};
-    const coinStats_ = getCoinStats(address);
-
-    // gameBestScores: per-gameType best score from leaderboardEntries
-    const GAME_TYPE_TO_MODE = {
-      orbit: 'orbit_survival',
-      cosmic_defender: 'cosmic_defender',
-      gravity_rush: 'gravity_rush',
-      cosmic_mine: 'cosmic_mine',
-      cosmic_runner: 'cosmic_runner',
-    };
-    const gameBestScores = {};
-    for (const e of leaderboardEntries) {
-      if (e.address !== address) continue;
-      const gt = e.gameType || 'orbit';
-      const mode = GAME_TYPE_TO_MODE[gt] || gt;
-      if (!gameBestScores[mode] || e.score > gameBestScores[mode]) gameBestScores[mode] = e.score;
-    }
-
-    // challengeWins from authoritative challenges array
-    const challengeWins = challenges.filter(c => c.status === 'completed' && c.winner === address).length;
-
-    // achievementCount from achievementData
-    const achEntry = achievementData.get(address);
-    const achievementCount = achEntry ? achEntry.unlocked.size : 0;
-
-    // questXPEarned + textQuests from questProgress and userData
-    const qp = questProgress.get(address);
-    let questXPEarned = 0;
-    if (qp?.quests) {
-      for (const q of Object.values(qp.quests)) {
-        if (q && q.completed && typeof q.xpReward === 'number') questXPEarned += q.xpReward;
-      }
-      if (!questXPEarned && typeof qp.totalXPEarned === 'number') questXPEarned = qp.totalXPEarned;
-    }
-    const tqMap = (wEntry.userData || {}).textQuests || {};
-    const completedTextQuests = Object.values(tqMap).filter(tq => tq && tq.completed).length;
-
-    // tournamentXP from walletDatabase
-    const tournamentXP = wEntry.tournamentXP || 0;
-
-    // totalCoins: use totalEarned from coinStats
-    const totalCoins = coinStats_.totalEarned || 0;
-
-    const sources = {
-      gameBestScores: Object.keys(gameBestScores).length > 0 ? gameBestScores : undefined,
-      challengeWins: challengeWins || undefined,
-      achievementCount: achievementCount || undefined,
-      questXPEarned: questXPEarned || undefined,
-      completedTextQuests: completedTextQuests || undefined,
-      tournamentXP: tournamentXP || undefined,
-      totalCoins: totalCoins || undefined,
-    };
-
-    // Compute rank server-side (mirrors computeRangerXP logic)
-    const GAME_XP_CONFIG = {
-      orbit_survival:   { mult: 5,   cap: 2000 },
-      cosmic_defender:  { mult: 1.5, cap: 2000 },
-      gravity_rush:     { mult: 5,   cap: 2000 },
-      cosmic_mine:      { mult: 3,   cap: 1500 },
-      cosmic_runner:    { mult: 3,   cap: 1500 },
-    };
-    const RANGER_RANKS = [
-      { id: 'wanderer',    minXP: 0 },
-      { id: 'scout',       minXP: 500 },
-      { id: 'tracker',     minXP: 1500 },
-      { id: 'ranger',      minXP: 3500 },
-      { id: 'pathfinder',  minXP: 7000 },
-      { id: 'vanguard',    minXP: 12000 },
-      { id: 'guardian',    minXP: 20000 },
-      { id: 'warden',      minXP: 30000 },
-      { id: 'sentinel',    minXP: 45000 },
-      { id: 'commander',   minXP: 65000 },
-    ];
-    let xp = 0;
-    if (sources.gameBestScores) {
-      for (const [mode, score] of Object.entries(sources.gameBestScores)) {
-        const cfg = GAME_XP_CONFIG[mode] || { mult: 2, cap: 1000 };
-        xp += Math.min(Math.floor((score || 0) * cfg.mult), cfg.cap);
-      }
-    }
-    if (sources.achievementCount) xp += sources.achievementCount * 200;
-    if (sources.challengeWins) xp += Math.min(sources.challengeWins * 300, 5000);
-    if (sources.questXPEarned) xp += sources.questXPEarned;
-    if (sources.completedTextQuests) xp += sources.completedTextQuests * 500;
-    if (sources.tournamentXP) xp += sources.tournamentXP;
-    if (sources.totalCoins) xp += Math.min(Math.floor(sources.totalCoins / 200), 1000);
-    xp = Math.max(0, Math.floor(xp));
-
-    let computedRank = RANGER_RANKS[0];
-    for (const r of RANGER_RANKS) { if (xp >= r.minXP) computedRank = r; }
-
-    respondJson(res, 200, { sources, computedXP: xp, computedRank: computedRank.id });
+    const snapshot = getServerRangerSnapshot(address);
+    respondJson(res, 200, { sources: snapshot.sources, computedXP: snapshot.xp, computedRank: snapshot.rank });
     return;
   }
 
@@ -6012,7 +6911,14 @@ const server = http.createServer(async (req, res) => {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
-      const { address: bodyAddress, source, amount, description, questId } = JSON.parse(await readBody(req));
+      const {
+        address: bodyAddress,
+        source,
+        amount,
+        description,
+        questId,
+        scanTarget: scanTargetRaw,
+      } = JSON.parse(await readBody(req));
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
@@ -6093,6 +6999,45 @@ const server = http.createServer(async (req, res) => {
             await fs.promises.rename(_tmp, CHALLENGES_FILE);
           } catch { /* saveChallenges debounced will retry */ }
         }
+        let scanRewardState = null;
+        let scanRewardTarget = null;
+        if (source === 'scan_wallet' || source === 'sybil_hunt') {
+          const normalizedTarget = normalizePubkey(scanTargetRaw || (source === 'scan_wallet' ? address : ''));
+          if (!normalizedTarget) return respondJson(res, 400, { error: 'scanTarget required' });
+          if (source === 'sybil_hunt' && normalizedTarget === address) {
+            return respondJson(res, 400, { error: 'Cannot claim sybil bounty for your own wallet' });
+          }
+          const analysis = getRecentSybilAnalysis(normalizedTarget);
+          if (!analysis || !Number.isFinite(Number(analysis.trustScore))) {
+            return respondJson(res, 400, { error: 'Scan target must be analyzed before claiming reward' });
+          }
+          const verdict = getSybilVerdict(analysis);
+          const rewardPath = verdict?.rewardPath || getSybilRewardPath(analysis);
+          const isSybilTarget = rewardPath === 'sybil_hunt';
+          if (source === 'sybil_hunt' && !isSybilTarget) {
+            return respondJson(res, 400, { error: 'Target does not qualify for sybil bounty' });
+          }
+          if (source === 'scan_wallet' && isSybilTarget) {
+            return respondJson(res, 400, { error: 'Flagged target must use sybil_hunt reward path' });
+          }
+
+          scanRewardState = getScanRewardState(address);
+          scanRewardTarget = normalizedTarget;
+          if (source === 'scan_wallet') {
+            const lastClaimedAt = Number(scanRewardState.cleanClaims[normalizedTarget]) || 0;
+            const cooldownRemaining = CLEAN_SCAN_REWARD_COOLDOWN_MS - (Date.now() - lastClaimedAt);
+            if (lastClaimedAt && cooldownRemaining > 0) {
+              return respondJson(res, 429, { error: 'Scan reward already claimed recently for this wallet', cooldownMs: cooldownRemaining });
+            }
+            earned = SCAN_WALLET_REWARD;
+          } else {
+            if (scanRewardState.sybilClaims[normalizedTarget]) {
+              return respondJson(res, 400, { error: 'Sybil bounty already claimed for this wallet' });
+            }
+            earned = computeSybilHuntReward(Object.keys(scanRewardState.sybilClaims).length + 1);
+          }
+        }
+
         // Per-activity daily sub-caps
         const today = new Date().toISOString().slice(0, 10);
         const SUB_CAPS = { sybil_hunt: DAILY_HUNT_CAP, scan_wallet: DAILY_SCAN_CAP };
@@ -6100,7 +7045,13 @@ const server = http.createServer(async (req, res) => {
           const subKey = `subcap:${address}:${source}:${today}`;
           const subEntry = prismEarnRateLimit.get(subKey) || 0;
           if (subEntry >= SUB_CAPS[source]) return respondJson(res, 429, { error: `Daily ${source.replace('_', ' ')} cap reached (${SUB_CAPS[source]} coins/day)`, dailyRemaining: 0 });
-          earned = Math.min(earned, SUB_CAPS[source] - subEntry);
+          if (scanRewardState && subEntry + earned > SUB_CAPS[source]) {
+            return respondJson(res, 429, {
+              error: `Verified ${source.replace('_', ' ')} reward would exceed daily cap`,
+              dailyRemaining: Math.max(0, SUB_CAPS[source] - subEntry),
+            });
+          }
+          if (!scanRewardState) earned = Math.min(earned, SUB_CAPS[source] - subEntry);
           prismEarnRateLimit.set(subKey, subEntry + earned);
         }
         // Global non-game daily cap
@@ -6111,11 +7062,23 @@ const server = http.createServer(async (req, res) => {
           ngEarned = ngEntry.total || 0;
         }
         if (ngEarned >= NON_GAME_DAILY_EARN_CAP) return respondJson(res, 429, { error: 'Daily earn cap reached', dailyRemaining: 0 });
-        earned = Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned);
+        if (scanRewardState && ngEarned + earned > NON_GAME_DAILY_EARN_CAP) {
+          return respondJson(res, 429, {
+            error: 'Not enough daily earn cap remaining for verified reward',
+            dailyRemaining: Math.max(0, NON_GAME_DAILY_EARN_CAP - ngEarned),
+          });
+        }
+        if (!scanRewardState) earned = Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned);
         prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
         // Apply staking boost AFTER cap (bonus coins don't count towards cap)
         const earnBoost = getStakingBoost(address);
         if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
+        if (scanRewardState && scanRewardTarget) {
+          const nextScanRewardState = normalizeScanRewardState(scanRewardState);
+          if (source === 'scan_wallet') nextScanRewardState.cleanClaims[scanRewardTarget] = Date.now();
+          if (source === 'sybil_hunt') nextScanRewardState.sybilClaims[scanRewardTarget] = Date.now();
+          updateWalletEntry(address, { _scanRewardState: nextScanRewardState });
+        }
       }
       const prevBal = getCoinBalance(address);
       const newBal = prevBal + earned;
@@ -6154,19 +7117,266 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (pathname === '/api/blackhole/claim' && req.method === 'POST') {
+    if (!ipRateLimit('blackhole_claim', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      cleanupBlackHoleUsedSignatures();
+      const parsed = JSON.parse(await readBody(req));
+      const opsRaw = Array.isArray(parsed?.operations) ? parsed.operations : [];
+      if (opsRaw.length === 0 || opsRaw.length > 64) {
+        respondJson(res, 400, { error: 'operations array is required' });
+        return;
+      }
+
+      const operations = opsRaw.map((op) => {
+        const account = normalizePubkey(op?.account);
+        const mint = normalizePubkey(op?.mint);
+        const action = String(op?.action || '').trim();
+        const closeSignature = String(op?.closeSignature || '').trim();
+        const swapSignature = op?.swapSignature ? String(op.swapSignature).trim() : null;
+        if (!account || !mint || !closeSignature) {
+          throw new Error('Invalid Black Hole operation payload');
+        }
+        if (!['swap', 'burn', 'close'].includes(action)) {
+          throw new Error('Invalid Black Hole action');
+        }
+        if (action === 'swap' && !swapSignature) {
+          throw new Error('swapSignature required for swap operations');
+        }
+        return { account, mint, action, closeSignature, swapSignature };
+      });
+
+      const uniqueSignatures = [...new Set(operations.flatMap((op) => [op.closeSignature, op.swapSignature].filter(Boolean)))];
+      for (const signature of uniqueSignatures) {
+        if (blackHoleUsedSignatures.has(signature)) {
+          respondJson(res, 400, { error: 'One or more signatures were already claimed' });
+          return;
+        }
+      }
+
+      // Optimistic lock: reserve signatures BEFORE async work to prevent race conditions
+      for (const signature of uniqueSignatures) blackHoleUsedSignatures.set(signature, Date.now());
+      let lockAcquired = true;
+
+      const connection = new Connection(getRpcUrl(jwtAuth.address), 'confirmed');
+      const txMap = new Map();
+      try {
+        for (const signature of uniqueSignatures) {
+          const tx = await connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0 });
+          if (!tx) {
+            respondJson(res, 400, { error: `Transaction ${signature} not found or not confirmed yet` });
+            return;
+          }
+          txMap.set(signature, tx);
+        }
+      } catch (rpcError) {
+        // Release lock on RPC failure
+        for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
+        lockAcquired = false;
+        throw rpcError;
+      }
+
+      const releaseLock = () => { for (const sig of uniqueSignatures) blackHoleUsedSignatures.delete(sig); };
+
+      let holderPerks;
+      try {
+        holderPerks = await getIdentityHolderPerks(jwtAuth.address, { allowStale: true, throwOnLookupFailure: true });
+      } catch {
+        releaseLock();
+        respondJson(res, 503, { error: 'Identity holder verification temporarily unavailable' });
+        return;
+      }
+
+      const uniqueOperations = [];
+      const seenOperations = new Set();
+      for (const operation of operations) {
+        const key = `${operation.action}:${operation.account}:${operation.mint}:${operation.closeSignature}:${operation.swapSignature || ''}`;
+        if (seenOperations.has(key)) continue;
+        seenOperations.add(key);
+        uniqueOperations.push(operation);
+      }
+
+      let fungibleResolved = 0;
+      let nftResolved = 0;
+      const verifiedCommissionBySignature = new Map();
+      for (const operation of uniqueOperations) {
+        const closeTx = txMap.get(operation.closeSignature);
+        if (!verifiedCommissionBySignature.has(operation.closeSignature)) {
+          verifiedCommissionBySignature.set(
+            operation.closeSignature,
+            verifyBlackHoleCommissionTx(closeTx, jwtAuth.address, holderPerks.blackHoleCommissionRate),
+          );
+        }
+        if (!verifiedCommissionBySignature.get(operation.closeSignature)) {
+          releaseLock();
+          respondJson(res, 400, { error: 'Black Hole commission verification failed' });
+          return;
+        }
+        if (!verifyCloseOperationTx(closeTx, jwtAuth.address, operation.account)) {
+          releaseLock();
+          respondJson(res, 400, { error: 'Close transaction verification failed' });
+          return;
+        }
+        if (operation.action === 'burn' && !verifyBurnOperationTx(closeTx, jwtAuth.address, operation.account, operation.mint)) {
+          releaseLock();
+          respondJson(res, 400, { error: 'Burn transaction verification failed' });
+          return;
+        }
+        if (operation.action === 'swap') {
+          const swapTx = txMap.get(operation.swapSignature);
+          if (!verifySwapOperationTx(swapTx, jwtAuth.address, operation.account, operation.mint)) {
+            releaseLock();
+            respondJson(res, 400, { error: 'Swap transaction verification failed' });
+            return;
+          }
+        }
+        if (inferBlackHoleAssetKind(closeTx, operation.account, operation.mint) === 'nft') {
+          nftResolved += 1;
+        } else {
+          fungibleResolved += 1;
+        }
+      }
+
+      const netResolvedLamports = uniqueSignatures.reduce(
+        (sum, signature) => sum + getWalletLamportDelta(txMap.get(signature), jwtAuth.address),
+        0,
+      );
+      const netResolvedSol = netResolvedLamports / LAMPORTS_PER_SOL;
+      let earned = calculateBlackHoleReward(fungibleResolved, nftResolved, netResolvedSol);
+
+      const today = new Date().toISOString().slice(0, 10);
+      const bhKey = `blackhole_cleanup:${jwtAuth.address}:${today}`;
+      const bhToday = prismEarnRateLimit.get(bhKey) || 0;
+      earned = Math.max(0, Math.min(earned, DAILY_BLACKHOLE_CLEANUP_CAP - bhToday));
+
+      const ngKey = `nongame_daily:${jwtAuth.address}`;
+      const ngEntry = prismEarnRateLimit.get(ngKey);
+      let ngEarned = 0;
+      if (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) {
+        ngEarned = ngEntry.total || 0;
+      }
+      earned = Math.max(0, Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned));
+
+      if (earned > 0) {
+        prismEarnRateLimit.set(bhKey, bhToday + earned);
+        prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
+      }
+
+      let credited = earned;
+      const earnBoost = getStakingBoost(jwtAuth.address);
+      if (credited > 0 && earnBoost > 0) credited = Math.floor(credited * (1 + earnBoost));
+
+      if (credited > 0) {
+        const prevBal = getCoinBalance(jwtAuth.address);
+        const newBal = prevBal + credited;
+        setCoinBalance(jwtAuth.address, newBal);
+        addCoinEarned(jwtAuth.address, credited);
+        const walletEntry = walletDatabase.get(jwtAuth.address);
+        if (walletEntry) {
+          walletEntry.coins = newBal;
+          saveWalletDatabaseDebounced();
+        }
+        const tx = {
+          id: `bh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          address: jwtAuth.address,
+          amount: credited,
+          type: 'earn',
+          source: 'blackhole_cleanup',
+          description: `Black Hole cleanup verified (${fungibleResolved + nftResolved} resolved)`,
+          timestamp: new Date().toISOString(),
+        };
+        const txs = prismTransactions.get(jwtAuth.address) || [];
+        txs.unshift(tx);
+        if (txs.length > 500) txs.length = 500;
+        prismTransactions.set(jwtAuth.address, txs);
+        debouncedSavePrism();
+        feedItems.unshift({
+          id: tx.id,
+          type: 'scan',
+          address: jwtAuth.address,
+          description: `Earned ${credited} PRISM from Black Hole cleanup`,
+          timestamp: tx.timestamp,
+        });
+        if (feedItems.length > 200) feedItems.length = 200;
+      }
+
+      // Signatures already reserved via optimistic lock — just persist
+      persistBlackHoleUsedSignatures();
+
+      respondJson(res, 200, {
+        earned: credited,
+        balance: getPrismBalance(jwtAuth.address),
+        netResolvedSol,
+        fungibleResolved,
+        nftResolved,
+      });
+    } catch (error) {
+      // Release optimistic lock on any unhandled error
+      if (typeof releaseLock === 'function') {
+        releaseLock();
+      } else if (typeof uniqueSignatures !== 'undefined') {
+        for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
+      }
+      respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
+    }
+    return;
+  }
+
   // ═══ PRISM Spend ═══
   if (pathname === '/api/prism/spend' && req.method === 'POST') {
     if (!ipRateLimit('prism_spend', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
-      const { address: bodyAddress, source, amount, description } = JSON.parse(await readBody(req));
+      const {
+        address: bodyAddress,
+        source,
+        amount,
+        description,
+        itemId: rawItemId,
+        moduleId: rawModuleId,
+      } = JSON.parse(await readBody(req));
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
       if (!Number.isFinite(Number(amount))) return respondJson(res, 400, { error: 'invalid amount' });
       const spent = Math.max(0, Math.floor(Number(amount)));
       if (spent <= 0 || spent > 1_000_000) return respondJson(res, 400, { error: 'amount out of range' });
+      const sanitizedSource = typeof source === 'string' ? source.slice(0, 50) : 'unknown';
+      const itemId = typeof rawItemId === 'string' ? rawItemId.trim() : '';
+      const moduleId = typeof rawModuleId === 'string' ? rawModuleId.trim() : '';
+      const walletEntry = walletDatabase.get(address) || { address };
+      const { forgeState, changed: forgeStateChanged } = getOrCreateForgeState(address, walletEntry);
+      const purchaseTimestamp = new Date().toISOString();
+
+      if (sanitizedSource === 'forge_module') {
+        const moduleDef = FORGE_MODULE_MAP.get(moduleId);
+        if (!moduleDef) return respondJson(res, 400, { error: 'Valid moduleId required for forge module purchase' });
+        if (spent !== Number(moduleDef.price)) return respondJson(res, 400, { error: 'Forge module price mismatch' });
+        if (forgeState.modules.some((entry) => entry.moduleId === moduleId)) {
+          return respondJson(res, 400, { error: 'Forge module already owned' });
+        }
+        forgeState.modules = mergeForgeEntries(forgeState.modules, [{ moduleId, purchasedAt: purchaseTimestamp }], 'moduleId');
+      } else if (sanitizedSource.startsWith('forge_')) {
+        const itemDef = FORGE_ITEM_MAP.get(itemId);
+        if (!itemDef) return respondJson(res, 400, { error: 'Valid itemId required for forge purchase' });
+        if (sanitizedSource !== `forge_${itemDef.category}`) return respondJson(res, 400, { error: 'Forge item source mismatch' });
+        if (spent !== Number(itemDef.price)) return respondJson(res, 400, { error: 'Forge item price mismatch' });
+        if (forgeState.items.some((entry) => entry.itemId === itemId)) {
+          return respondJson(res, 400, { error: 'Forge item already owned' });
+        }
+        const rangerSnapshot = getServerRangerSnapshot(address, walletEntry);
+        if (!meetsForgeRequiredRank(rangerSnapshot.rank, itemDef.requiredRank)) {
+          return respondJson(res, 400, { error: `Requires ${itemDef.requiredRank} rank` });
+        }
+        if (!isForgeUnlockSatisfied(address, itemId, walletEntry, forgeState)) {
+          return respondJson(res, 400, { error: 'Forge unlock condition not met' });
+        }
+        forgeState.items = mergeForgeEntries(forgeState.items, [{ itemId, purchasedAt: purchaseTimestamp }], 'itemId');
+      }
+
       const currentBal = getCoinBalance(address);
       if (currentBal < spent) return respondJson(res, 400, { error: 'insufficient balance' });
       // Apply 2% burn fee
@@ -6174,15 +7384,16 @@ const server = http.createServer(async (req, res) => {
       const newBal = currentBal - spent;
       setCoinBalance(address, newBal);
       addCoinSpent(address, spent);
-      // ── Sync coins to wallet database ──
-      const wSpend = walletDatabase.get(address);
-      if (wSpend) { wSpend.coins = newBal; saveWalletDatabaseDebounced(); }
+      updateWalletEntry(address, {
+        coins: newBal,
+        ...(forgeStateChanged || sanitizedSource.startsWith('forge_') ? { forgeState } : {}),
+      });
       const tx = {
         id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         address, amount: spent, type: 'spend',
-        source: (typeof source === 'string' ? source.slice(0, 50) : 'unknown'),
+        source: sanitizedSource,
         description: (typeof description === 'string' ? description.slice(0, 200) : `Spent ${spent} Coins (${burned} burned)`),
-        timestamp: new Date().toISOString(),
+        timestamp: purchaseTimestamp,
       };
       const txs = prismTransactions.get(address) || [];
       txs.unshift(tx);
@@ -6385,26 +7596,46 @@ const server = http.createServer(async (req, res) => {
         const tx = await conn.getParsedTransaction(txSignature, { maxSupportedTransactionVersion: 0 });
         if (!tx) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' }); }
         const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+        const treasuryKey = parsePublicKey(treasuryAddr, 'TREASURY_ADDRESS');
+        const skrMintKey = parsePublicKey(SKR_MINT, 'SKR_MINT');
+        if (!treasuryKey || !skrMintKey) {
+          usedBuyTxSignatures.delete(txSignature);
+          return respondJson(res, 500, { error: 'SKR treasury configuration invalid' });
+        }
+        const mintInfo = await getMint(conn, skrMintKey, undefined, TOKEN_PROGRAM_ID)
+          .then((info) => ({ info, programId: TOKEN_PROGRAM_ID }))
+          .catch(async () => {
+            const info = await getMint(conn, skrMintKey, undefined, TOKEN_2022_PROGRAM_ID);
+            return { info, programId: TOKEN_2022_PROGRAM_ID };
+          });
+        const treasuryAta = await getAssociatedTokenAddress(
+          skrMintKey,
+          treasuryKey,
+          false,
+          mintInfo.programId,
+        );
+        const treasuryAtaStr = treasuryAta.toBase58();
         const instructions = tx.transaction?.message?.instructions || [];
-        const skrMintAddr = SKR_MINT;
+        const skrMintAddr = skrMintKey.toBase58();
         const validTransfer = instructions.some(ix => {
           const parsed = ix.parsed;
           if (!parsed) return false;
           if (parsed.type === 'transferChecked' || parsed.type === 'transfer') {
             const info = parsed.info;
-            const isSender = info.authority === address || info.source === address;
-            const mint = info.mint || '';
-            const isSkr = mint === skrMintAddr;
-            // For transferChecked, amount is in tokenAmount.amount (string of base units)
-            const amount = Number(info.tokenAmount?.uiAmount ?? info.amount ?? 0);
+            const authority = String(info.authority || info.multisigAuthority || '');
+            const destination = String(info.destination || '');
+            if (authority !== address || destination !== treasuryAtaStr) return false;
+            const mint = String(info.mint || '');
+            const amount = parsed.type === 'transferChecked'
+              ? Number(info.tokenAmount?.uiAmount ?? info.tokenAmount?.uiAmountString ?? 0)
+              : Number(info.amount || 0) / 10 ** (mintInfo.info.decimals || 0);
             // Accept if at least 95% of expected amount (rounding tolerance)
             const minAmount = expectedSkrAmount * 0.95;
-            if ((parsed.type === 'transferChecked' && isSkr) || parsed.type === 'transfer') {
-              // Verify destination is treasury's ATA — check parsed info
-              const dest = info.destination || '';
-              // We can't easily verify the ATA address here, but we verify authority and amount
-              return isSender && amount >= minAmount;
+            if (parsed.type === 'transferChecked') {
+              if (mint !== skrMintAddr) return false;
+              return Number.isFinite(amount) && amount >= minAmount;
             }
+            return Number.isFinite(amount) && amount >= minAmount;
           }
           return false;
         });
@@ -7444,23 +8675,6 @@ const server = http.createServer(async (req, res) => {
       }
       const trustGrade = trustScore >= 90 ? 'A+' : trustScore >= 80 ? 'A' : trustScore >= 70 ? 'B' : trustScore >= 60 ? 'C' : trustScore >= 50 ? 'D' : 'F';
 
-      // ── Wallet Classification ──
-      const walletType = (() => {
-        if (trustScore <= 20) return 'sybil';
-        if (trustScore <= 40 && allSiblings.size >= 5) return 'sybil_cluster';
-        if (isRobotic && farmingRatio > 0.5) return 'bot';
-        if (balance > 100 && totalSigCount > 500) return 'whale';
-        if (defiDepth >= 3 && totalSolTxCount > 100) return 'defi_power_user';
-        if (defiDepth >= 1 && totalSolTxCount > 30) return 'defi_user';
-        if (nftCount >= 10) return 'nft_collector';
-        if (farmingRatio > 0.6 && shallowProtocols >= 5) return 'airdrop_farmer';
-        if (totalSigCount > 200 && activeDaysRatio > 0.15) return 'active_user';
-        if (totalSigCount > 50) return 'regular_user';
-        if (totalSigCount > 10) return 'light_user';
-        if (totalSigCount <= 2) return 'empty';
-        return 'new_user';
-      })();
-
       // ── Top Programs from parsed txs ──
       const topProgramsList = [...programInteractionCounts.entries()]
         .sort((a, b) => b[1] - a[1])
@@ -7471,7 +8685,7 @@ const server = http.createServer(async (req, res) => {
         });
 
       const analysis = {
-        address, riskScore, riskLevel, trustScore, trustGrade, walletType, signals,
+        address, riskScore, riskLevel, trustScore, trustGrade, signals,
         metrics: {
           walletAgeDays,
           activeDaysCount, activeDaysRatio,
@@ -7492,6 +8706,7 @@ const server = http.createServer(async (req, res) => {
           counterpartyRatio: Math.round(counterpartyRatio * 100),
           burstRatio: Math.round(burstRatio * 100),
           trustBonus,
+          cexTrustBonus,
           fundingChainDepth,
           topFunderTxCount,
           topFunderPct: Math.round(topFunderPctExport * 100),
@@ -7524,6 +8739,22 @@ const server = http.createServer(async (req, res) => {
         },
         timestamp: new Date().toISOString(),
       };
+      analysis.verdict = getSybilVerdict(analysis);
+      analysis.walletType = (() => {
+        if (analysis.verdict?.key === 'confirmed_sybil' || analysis.verdict?.key === 'probable_sybil') return 'sybil';
+        if (analysis.verdict?.key === 'cluster_linked') return 'sybil_cluster';
+        if (isRobotic && farmingRatio > 0.5) return 'bot';
+        if (balance > 100 && totalSigCount > 500) return 'whale';
+        if (defiDepth >= 3 && totalSolTxCount > 100) return 'defi_power_user';
+        if (defiDepth >= 1 && totalSolTxCount > 30) return 'defi_user';
+        if (nftCount >= 10) return 'nft_collector';
+        if (farmingRatio > 0.6 && shallowProtocols >= 5) return 'airdrop_farmer';
+        if (totalSigCount > 200 && activeDaysRatio > 0.15) return 'active_user';
+        if (totalSigCount > 50) return 'regular_user';
+        if (totalSigCount > 10) return 'light_user';
+        if (totalSigCount <= 2) return 'empty';
+        return 'new_user';
+      })();
       // Build funding sources from the already-computed incoming data
       let cachedFundingSources = [];
       if (resolvedIncoming && resolvedIncoming.size > 0) {
@@ -7555,6 +8786,12 @@ const server = http.createServer(async (req, res) => {
           trustScore: analysis.trustScore,
           trustGrade: analysis.trustGrade,
           walletType: analysis.walletType,
+          verdict: analysis.verdict || null,
+          verdictKey: analysis.verdict?.key || null,
+          bountyEligible: Boolean(analysis.verdict?.bountyEligible),
+          confidence: analysis.verdict?.confidence || null,
+          dataQuality: analysis.verdict?.dataQuality || null,
+          networkConfirmed: Boolean(analysis.verdict?.networkConfirmed),
           updatedAt: new Date().toISOString(),
           detectedSignals,
           signalCount: detectedSignals.length,
@@ -7635,6 +8872,10 @@ const server = http.createServer(async (req, res) => {
         defiDepth,
         hasSolDomain,
         walletAgeDays,
+        verdictKey: analysis.verdict?.key || null,
+        bountyEligible: Boolean(analysis.verdict?.bountyEligible),
+        confidence: analysis.verdict?.confidence || null,
+        networkConfirmed: Boolean(analysis.verdict?.networkConfirmed),
       });
       // Record ALL siblings in graph — both new and existing (update riskScore if higher)
       for (const sib of allSiblings) {
@@ -7646,6 +8887,9 @@ const server = http.createServer(async (req, res) => {
             riskScore: inferredRisk,
             fundedBy: resolvedTopFunder ? [resolvedTopFunder] : [],
             siblings: [address, ...[...allSiblings].filter(s => s !== sib).slice(0, 10)],
+            verdictKey: existingNode?.verdictKey || 'cluster_linked',
+            bountyEligible: Boolean(existingNode?.bountyEligible),
+            confidence: existingNode?.confidence || 'low',
           });
         }
       }
@@ -7712,12 +8956,24 @@ const server = http.createServer(async (req, res) => {
       for (const addr of addresses) {
         const cached = sybilCache.get(addr);
         if (cached && Date.now() - cached.cachedAt < 3600_000) {
-          results[addr] = { trustGrade: cached.analysis.trustGrade, riskScore: cached.analysis.riskScore, riskLevel: cached.analysis.riskLevel, trustScore: cached.analysis.trustScore };
+          results[addr] = {
+            trustGrade: cached.analysis.trustGrade,
+            riskScore: cached.analysis.riskScore,
+            riskLevel: cached.analysis.riskLevel,
+            trustScore: cached.analysis.trustScore,
+            verdict: cached.analysis.verdict || getSybilVerdict(cached.analysis),
+          };
         } else {
           // Check graph for quick estimate
           const node = sybilGraph.nodes[addr];
           if (node && node.riskScore !== undefined) {
-            results[addr] = { trustGrade: node.trustGrade || '?', riskScore: node.riskScore, riskLevel: node.riskScore >= 75 ? 'critical' : node.riskScore >= 50 ? 'high' : node.riskScore >= 30 ? 'medium' : node.riskScore >= 10 ? 'low' : 'clean', source: 'graph' };
+            results[addr] = {
+              trustGrade: node.trustGrade || '?',
+              riskScore: node.riskScore,
+              riskLevel: node.riskScore >= 75 ? 'critical' : node.riskScore >= 50 ? 'high' : node.riskScore >= 30 ? 'medium' : node.riskScore >= 10 ? 'low' : 'clean',
+              source: 'graph',
+              verdict: getSybilQuickVerdict(node),
+            };
           } else {
             results[addr] = { trustGrade: '?', riskScore: -1, riskLevel: 'unknown', source: 'not_analyzed' };
           }
@@ -7737,8 +8993,10 @@ const server = http.createServer(async (req, res) => {
     const nodes = Object.values(sybilGraph.nodes);
     const analyzed = nodes.filter(n => n.riskScore !== undefined);
     const grades = { 'A+': 0, A: 0, B: 0, C: 0, D: 0, F: 0 };
+    const verdicts = { unknown: 0, clean: 0, suspicious: 0, cluster_linked: 0, probable_sybil: 0, confirmed_sybil: 0 };
     for (const n of analyzed) {
       if (n.trustGrade && grades[n.trustGrade] !== undefined) grades[n.trustGrade]++;
+      if (n.verdictKey && verdicts[n.verdictKey] !== undefined) verdicts[n.verdictKey]++;
     }
     const avgRisk = analyzed.length > 0 ? Math.round(analyzed.reduce((s, n) => s + n.riskScore, 0) / analyzed.length) : 0;
     const highRisk = analyzed.filter(n => n.riskScore >= 50).length;
@@ -7749,6 +9007,7 @@ const server = http.createServer(async (req, res) => {
       averageRiskScore: avgRisk,
       highRiskCount: highRisk,
       gradeDistribution: grades,
+      verdictDistribution: verdicts,
       cacheSize: sybilCache.size,
     });
     return;
@@ -7772,6 +9031,7 @@ const server = http.createServer(async (req, res) => {
       address: addr,
       riskScore: node.riskScore ?? -1,
       trustGrade: node.trustGrade ?? '?',
+      verdict: getSybilQuickVerdict(node),
       walletAgeDays: node.walletAgeDays,
       defiDepth: node.defiDepth,
       hasSolDomain: node.hasSolDomain,
@@ -8106,7 +9366,7 @@ const server = http.createServer(async (req, res) => {
     const gameTypesCount = new Set(playerEntries.map(e => e.gameType || 'orbit')).size;
     const gamesPlayedCount = playerEntries.length;
     const realChallengeWins = challenges.filter(c => c.status === 'completed' && c.winner === address).length;
-    const realScanCount = [...sybilCache.entries()].filter(([, v]) => v.scannedBy === address).length;
+    const realScanCount = getUniqueScanTargetCount(getScanRewardState(address, entry));
     const achievementCount = achEntry ? achEntry.unlocked.size : 0;
     // Text quests completed count — stored in userData.textQuests (object keyed by questId with completed flag)
     const userData = entry.userData || {};
@@ -8326,7 +9586,15 @@ const server = http.createServer(async (req, res) => {
         scoreDetails: compositeData.details || null,
         identity: { score: identity.score, maxScore: 1000, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
         stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
-        sybilAnalysis: sybil ? { trustScore: sybil.trustScore, trustGrade: sybil.trustGrade, riskScore: sybil.riskScore, riskLevel: sybil.riskLevel, signalsDetected: sybil.signals?.filter(s => s.detected).length || 0, totalSignals: sybil.signals?.length || 0 } : null,
+        sybilAnalysis: sybil ? {
+          trustScore: sybil.trustScore,
+          trustGrade: sybil.trustGrade,
+          riskScore: sybil.riskScore,
+          riskLevel: sybil.riskLevel,
+          verdict: sybil.verdict || getSybilVerdict(sybil),
+          signalsDetected: sybil.signals?.filter(s => s.detected).length || 0,
+          totalSignals: sybil.signals?.length || 0,
+        } : null,
         achievements: { unlocked: achEntry ? achEntry.unlocked.size : 0, claimed: achEntry ? achEntry.claimed.size : 0 },
         prism: coinBal > 0 ? { balance: coinBal, totalEarned: coinBal } : null,
         scoreHistory: latestScores,
@@ -8363,7 +9631,7 @@ const server = http.createServer(async (req, res) => {
         if (!VALID_QUEST_IDS.has(key)) continue;
         if (!val || typeof val !== 'object') continue;
         const prev = existingQuests[key] || {};
-        const progress = Math.max(0, Math.min(Number(val.progress) || 0, 100000));
+        const progress = Math.max(0, Math.min(Number(val.progress ?? val.current) || 0, 100000));
         // Server-side: completed can only go false→true (never back), and only if progress > 0
         // claimed can only go false→true (once claimed, stays claimed)
         // Support both `claimed` (boolean) and `claimedAt` (ISO string) from client
@@ -9564,8 +10832,18 @@ const server = http.createServer(async (req, res) => {
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     const address = jwtAuth.address;
-    const w = walletDatabase.get(address);
-    respondJson(res, 200, { address, userData: w?.userData || null });
+    const walletEntry = walletDatabase.get(address) || { address };
+    const { forgeState, changed: forgeStateChanged } = getOrCreateForgeState(address, walletEntry);
+    const existingUserData = getWalletUserData(walletEntry);
+    const sanitizedLoadout = sanitizeForgeLoadout(address, existingUserData.loadout, forgeState);
+    const userData = {
+      ...existingUserData,
+      loadout: sanitizedLoadout,
+    };
+    if (forgeStateChanged || JSON.stringify(existingUserData.loadout || null) !== JSON.stringify(sanitizedLoadout)) {
+      updateWalletEntry(address, { forgeState, userData });
+    }
+    respondJson(res, 200, { address, userData });
     return;
   }
 
@@ -9582,15 +10860,24 @@ const server = http.createServer(async (req, res) => {
     if (!body || typeof body !== 'object') return respondJson(res, 400, { error: 'Body must be a JSON object' });
 
     // Merge incoming fields into existing userData (don't overwrite unrelated fields)
-    const w = walletDatabase.get(address) || { address };
-    const existing = w.userData || {};
+    const walletEntry = walletDatabase.get(address) || { address };
+    const { forgeState, changed: forgeStateChanged } = getOrCreateForgeState(address, walletEntry);
+    const existing = getWalletUserData(walletEntry);
     const ALLOWED_KEYS = ['loadout', 'gameStats', 'bestScores', 'textQuests', 'rangerXP', 'achievements'];
     const updates = {};
     for (const key of ALLOWED_KEYS) {
       if (body[key] !== undefined) updates[key] = body[key];
     }
-    const merged = { ...existing, ...updates, lastSyncAt: new Date().toISOString() };
-    updateWalletEntry(address, { userData: merged });
+    const merged = {
+      ...existing,
+      ...updates,
+      loadout: sanitizeForgeLoadout(address, updates.loadout ?? existing.loadout, forgeState),
+      lastSyncAt: new Date().toISOString(),
+    };
+    updateWalletEntry(address, {
+      userData: merged,
+      ...(forgeStateChanged ? { forgeState } : {}),
+    });
     respondJson(res, 200, { ok: true, address, userData: merged });
     return;
   }
@@ -10730,21 +12017,21 @@ function addGameCoinsToday(address, amount) {
 }
 
 // ═══ Delta Validation per Game Mode ═══
-const MAX_DELTA_PER_GAME = { orbit: 800, destroyer: 1500, gravity: 800, wars: 800, territory: 800 };
+const MAX_DELTA_PER_GAME = { orbit: 1000, destroyer: 1800, gravity: 1200, wars: 800, territory: 800 };
 
 // ═══ Staking (Prism Vault) ═══
 const STAKING_TIERS = {
-  bronze: { minStake: 10000, lockDays: 7, rateMultiplier: 1.0, boostRate: 0.10 },
-  silver: { minStake: 30000, lockDays: 30, rateMultiplier: 1.4, boostRate: 0.20 },
-  gold:   { minStake: 75000, lockDays: 90, rateMultiplier: 2.0, boostRate: 0.35 },
+  bronze: { minStake: 10000, lockDays: 7, rateMultiplier: 0.75, boostRate: 0.05 },
+  silver: { minStake: 30000, lockDays: 30, rateMultiplier: 1.0, boostRate: 0.10 },
+  gold:   { minStake: 75000, lockDays: 90, rateMultiplier: 1.25, boostRate: 0.15 },
 };
 
 const YIELD_BRACKETS = [
-  { upTo: 5000,     baseDailyRate: 0.010 },  // 1.0%
-  { upTo: 20000,    baseDailyRate: 0.007 },  // 0.7%
-  { upTo: 50000,    baseDailyRate: 0.005 },  // 0.5%
-  { upTo: 100000,   baseDailyRate: 0.0035 }, // 0.35%
-  { upTo: Infinity, baseDailyRate: 0.002 },  // 0.2%
+  { upTo: 5000,     baseDailyRate: 0.0050 }, // 0.5%
+  { upTo: 20000,    baseDailyRate: 0.0035 }, // 0.35%
+  { upTo: 50000,    baseDailyRate: 0.0020 }, // 0.2%
+  { upTo: 100000,   baseDailyRate: 0.0012 }, // 0.12%
+  { upTo: Infinity, baseDailyRate: 0.0008 }, // 0.08%
 ];
 
 // Stakes created before this timestamp use old flat rate; after use brackets
@@ -10794,8 +12081,8 @@ function calcUnclaimedYield(stake) {
   // Old stakes (before bracket deploy) use legacy flat rate for backward compat
   if (stake.startTime < BRACKETS_DEPLOY_TS) {
     // Legacy rates
-    const legacyRates = { bronze: 0.005, silver: 0.008, gold: 0.012 };
-    const legacyRate = legacyRates[stake.tier] || 0.005;
+    const legacyRates = { bronze: 0.00375, silver: 0.005, gold: 0.00625 };
+    const legacyRate = legacyRates[stake.tier] || 0.00375;
     return Math.floor(daysSinceClaim * legacyRate * stake.amount);
   }
   // New bracket-based yield
@@ -10822,6 +12109,11 @@ const TOURNAMENT_BASE_PRIZES = {
   daily:   [500, 250, 100],                                                     // total 850
   weekly:  [2000, 1500, 1000, 500, 250, 100],                                  // total 5,350
   monthly: [10000, 5000, 3000, 2000, 1500, 1000, 750, 500, 250, 100],         // total 24,100
+};
+const TOURNAMENT_BASE_PRIZE_SCALING = {
+  daily: { targetParticipants: 8, minScale: 0.35 },
+  weekly: { targetParticipants: 16, minScale: 0.25 },
+  monthly: { targetParticipants: 30, minScale: 0.2 },
 };
 // XP rewards per place — equal step of 100 XP across all tiers
 const TOURNAMENT_XP_REWARDS = {
@@ -10861,6 +12153,19 @@ function saveTournament() {
     .catch(e => console.warn('[tournament] save error', e.message));
 }
 
+function getTournamentBasePrizes(tier, participantCount = 0) {
+  const basePrizes = TOURNAMENT_BASE_PRIZES[tier] || [];
+  const scaling = TOURNAMENT_BASE_PRIZE_SCALING[tier] || { targetParticipants: basePrizes.length || 1, minScale: 0.25 };
+  const joined = Math.max(0, Math.floor(Number(participantCount) || 0));
+  const eligiblePlaces = Math.min(basePrizes.length, joined);
+  if (eligiblePlaces <= 0) return basePrizes.map(() => 0);
+  const normalized = Math.sqrt(Math.min(1, joined / Math.max(1, scaling.targetParticipants)));
+  const scale = Math.max(scaling.minScale, normalized);
+  return basePrizes.map((amount, index) => (
+    index < eligiblePlaces ? Math.max(0, Math.floor(amount * scale)) : 0
+  ));
+}
+
 function createTournamentForTier(tier) {
   const cfg = TOURNAMENT_TIERS[tier];
   if (!cfg) return;
@@ -10895,7 +12200,7 @@ function finalizeTournamentTier(tier) {
   const shares = PRIZE_SHARES[tier] || PRIZE_SHARES.daily;
   const maxWinners = Math.min(shares.length, sorted.length);
   let totalPaid = 0;
-  const basePrizes = TOURNAMENT_BASE_PRIZES[tier] || [];
+  const basePrizes = getTournamentBasePrizes(tier, Object.keys(t.entries || {}).length);
   for (let i = 0; i < maxWinners; i++) {
     // Pool share: 1st gets remainder to avoid rounding loss
     const poolPrize = i === 0
@@ -10924,6 +12229,7 @@ function finalizeTournamentTier(tier) {
   }
   // Any remaining pool dust (fewer participants than prize slots) is burned
   if (totalPaid < pool) totalBurned += (pool - totalPaid);
+  t.basePrizes = basePrizes.slice(0, maxWinners);
   t.winners = winners;
   tournamentHistory.unshift({ ...t });
   if (tournamentHistory.length > 50) tournamentHistory.length = 50;

@@ -58,6 +58,7 @@ export interface WalletPreview {
   trustGrade: string | null;
   trustScore: number | null;
   riskLevel: string | null;
+  sybilVerdict?: SybilVerdictSummary | null;
   topPrograms: TopProgram[];
   compositeScore: number;
   compositeTier: string;
@@ -84,6 +85,31 @@ export function getApiBase(): string {
 }
 
 // ── Shared sybil analysis fetch (deduped + cached) ──
+export interface SybilVerdictEvidence {
+  flaggedSignals: number;
+  strongNetworkCount: number;
+  supportingNetworkCount: number;
+  strongBehaviorCount: number;
+  supportingBehaviorCount: number;
+  positiveIdentityCount: number;
+}
+
+export interface SybilVerdictSummary {
+  key: 'unknown' | 'clean' | 'suspicious' | 'cluster_linked' | 'probable_sybil' | 'confirmed_sybil';
+  label: string;
+  summary: string;
+  confidence: 'low' | 'medium' | 'high' | 'very_high';
+  confidenceScore: number;
+  basis: 'insufficient_data' | 'organic' | 'network' | 'hybrid' | 'behavioral';
+  dataQuality: 'none' | 'thin' | 'sampled' | 'rich';
+  networkConfirmed: boolean;
+  legacySybilFlag: boolean;
+  bountyEligible: boolean;
+  rewardPath: 'scan_wallet' | 'sybil_hunt';
+  reasons: string[];
+  evidence: SybilVerdictEvidence;
+}
+
 export interface SybilResult {
   riskScore: number;
   riskLevel: string;
@@ -91,6 +117,7 @@ export interface SybilResult {
   trustGrade: string;
   signals?: unknown[];
   metrics?: unknown;
+  verdict?: SybilVerdictSummary | null;
   [key: string]: unknown;
 }
 const _sybilCache = new Map<string, { data: SybilResult; ts: number }>();
@@ -185,6 +212,7 @@ async function _fetchWalletPreviewImpl(address: string): Promise<WalletPreview |
       trustGrade: data.trustGrade ?? null,
       trustScore: data.trustScore ?? null,
       riskLevel: data.riskLevel ?? null,
+      sybilVerdict: data.sybilVerdict ?? null,
       topPrograms: data.topPrograms ?? [],
       compositeScore,
       compositeTier,
@@ -217,6 +245,7 @@ export function getCachedWalletPreview(address: string): WalletPreview | null {
       trustGrade: null,
       trustScore: null,
       riskLevel: null,
+      sybilVerdict: null,
       topPrograms: [],
       compositeScore: data.score ?? 0,
       compositeTier: data.tier ?? 'mercury',

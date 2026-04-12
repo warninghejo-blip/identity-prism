@@ -79,8 +79,8 @@ export const RANGER_RANKS: RangerRank[] = [
  *
  * Achievements:   27 × 200 = 5,400
  * Arena wins:     ×300 each (uncapped — primary Legend grind)
- * Quests (XP):    daily 135/day + weekly 650/week + one-time 1,725
- *   Monthly:      ~135×30 + 650×4 + 1,725 ≈ 8,375 first month, ~6,650/month after
+ * Quests (XP):    daily 135/day + weekly 670/week + one-time 1,875
+ *   Monthly:      ~135×30 + 670×4 + 1,875 ≈ 8,605 first month, ~6,730/month after
  * Text quests:    16 × 500 = 8,000 (coins reward is separate)
  * Coins earned:   totalEarned / 200, cap 1,000
  *
@@ -247,6 +247,44 @@ export async function gatherXPSourcesMerged(address: string): Promise<RangerXPSo
     merged.gameBestScores = combined;
   }
 
+  if (server.gameStats) {
+    merged.gameStats = {
+      orbit:
+        server.gameStats.orbit || local.gameStats?.orbit
+          ? {
+              gamesPlayed: Math.max(local.gameStats?.orbit?.gamesPlayed || 0, server.gameStats.orbit?.gamesPlayed || 0),
+              totalSurvivalTime: Math.max(
+                local.gameStats?.orbit?.totalSurvivalTime || 0,
+                server.gameStats.orbit?.totalSurvivalTime || 0,
+              ),
+            }
+          : undefined,
+      defender:
+        server.gameStats.defender || local.gameStats?.defender
+          ? {
+              gamesPlayed: Math.max(
+                local.gameStats?.defender?.gamesPlayed || 0,
+                server.gameStats.defender?.gamesPlayed || 0,
+              ),
+              totalKills: Math.max(
+                local.gameStats?.defender?.totalKills || 0,
+                server.gameStats.defender?.totalKills || 0,
+              ),
+            }
+          : undefined,
+      gravity:
+        server.gameStats.gravity || local.gameStats?.gravity
+          ? {
+              gamesPlayed: Math.max(
+                local.gameStats?.gravity?.gamesPlayed || 0,
+                server.gameStats.gravity?.gamesPlayed || 0,
+              ),
+              totalTime: Math.max(local.gameStats?.gravity?.totalTime || 0, server.gameStats.gravity?.totalTime || 0),
+            }
+          : undefined,
+    };
+  }
+
   // Scalar fields: take max of server vs local
   if (server.challengeWins !== undefined)
     merged.challengeWins = Math.max(local.challengeWins || 0, server.challengeWins);
@@ -257,6 +295,8 @@ export async function gatherXPSourcesMerged(address: string): Promise<RangerXPSo
   if (server.completedTextQuests !== undefined)
     merged.completedTextQuests = Math.max(local.completedTextQuests || 0, server.completedTextQuests);
   if (server.tournamentXP !== undefined) merged.tournamentXP = Math.max(local.tournamentXP || 0, server.tournamentXP);
+  if (server.arenaWeeklyXP !== undefined)
+    merged.arenaWeeklyXP = Math.max(local.arenaWeeklyXP || 0, server.arenaWeeklyXP);
   if (server.totalCoins !== undefined) merged.totalCoins = Math.max(local.totalCoins || 0, server.totalCoins);
 
   return merged;

@@ -308,11 +308,11 @@ interface VaultStatus {
 }
 
 const YIELD_BRACKETS = [
-  { upTo: 5000, baseDailyRate: 0.01 },
-  { upTo: 20000, baseDailyRate: 0.007 },
-  { upTo: 50000, baseDailyRate: 0.005 },
-  { upTo: 100000, baseDailyRate: 0.0035 },
-  { upTo: Infinity, baseDailyRate: 0.002 },
+  { upTo: 5000, baseDailyRate: 0.005 },
+  { upTo: 20000, baseDailyRate: 0.0035 },
+  { upTo: 50000, baseDailyRate: 0.002 },
+  { upTo: 100000, baseDailyRate: 0.0012 },
+  { upTo: Infinity, baseDailyRate: 0.0008 },
 ];
 
 function calcClientDailyYield(amount: number, tierMultiplier: number): number {
@@ -342,8 +342,8 @@ const VAULT_TIERS = [
     label: 'Bronze',
     min: 10000,
     lock: 7,
-    rateMultiplier: 1.0,
-    boost: 10,
+    rateMultiplier: 0.75,
+    boost: 5,
     color: '#cd7f32',
     glow: 'rgba(205,127,50,0.25)',
     icon: '🥉',
@@ -353,8 +353,8 @@ const VAULT_TIERS = [
     label: 'Silver',
     min: 30000,
     lock: 30,
-    rateMultiplier: 1.4,
-    boost: 20,
+    rateMultiplier: 1.0,
+    boost: 10,
     color: '#c0c0c0',
     glow: 'rgba(192,192,192,0.2)',
     icon: '🥈',
@@ -364,8 +364,8 @@ const VAULT_TIERS = [
     label: 'Gold',
     min: 75000,
     lock: 90,
-    rateMultiplier: 2.0,
-    boost: 35,
+    rateMultiplier: 1.25,
+    boost: 15,
     color: '#ffd700',
     glow: 'rgba(255,215,0,0.25)',
     icon: '🥇',

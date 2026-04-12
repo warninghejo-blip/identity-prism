@@ -9,6 +9,7 @@
     "dev:all": "concurrently -n \"server,vite\" -c \"cyan,green\" \"node server/helius-proxy.js\" \"vite\"",
     "build": "vite build && node scripts/copy-well-known.mjs",
     "build:dev": "vite build --mode development",
+    "build:staging": "vite build --mode staging && node scripts/copy-well-known.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -11,12 +11,15 @@ const COLORS = [
   [34, 211, 238], // cyan
   [255, 225, 180], // warm
 ] as const;
+const RAD_TO_DEG = 180 / Math.PI;
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 interface Star {
   x: number;
   y: number;
   baseX: number;
   baseY: number;
+  depth: number;
   r: number;
   color: readonly [number, number, number];
   alpha: number;
@@ -31,6 +34,7 @@ interface Star {
 
 export interface CosmicStarfieldProps {
   mode: 'drift' | 'vortex';
+  variant?: 'default' | 'card';
   /** Called once when vortex spin reaches peak speed */
   onVortexPeak?: () => void;
   /** Pause star movement (stars stay in place) */
@@ -39,6 +43,8 @@ export interface CosmicStarfieldProps {
   driftDirection?: 'right' | 'left' | 'up' | 'down';
   /** External rotation offset in radians (mutable ref — no re-render) */
   rotationOffsetRef?: RefObject<number>;
+  /** Optional OrbitControls camera angles so the background can react to both axes. */
+  cameraAnglesRef?: RefObject<{ azimuth: number; polar: number }>;
 }
 
 // Background comets — lightweight canvas streaks
@@ -56,10 +62,12 @@ interface BgComet {
 
 export function CosmicStarfield({
   mode,
+  variant = 'default',
   onVortexPeak,
   paused,
   driftDirection = 'right',
   rotationOffsetRef,
+  cameraAnglesRef,
 }: CosmicStarfieldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const starsRef = useRef<Star[]>([]);
@@ -74,14 +82,18 @@ export function CosmicStarfield({
   const onVortexPeakRef = useRef(onVortexPeak);
   const pausedRef = useRef(paused);
   const driftDirRef = useRef(driftDirection);
+  const variantRef = useRef(variant);
   const rotationOffsetRefInternal = useRef(rotationOffsetRef);
+  const cameraAnglesRefInternal = useRef(cameraAnglesRef);
   const sizeRef = useRef({ w: 0, h: 0 });
 
   modeRef.current = mode;
   onVortexPeakRef.current = onVortexPeak;
   pausedRef.current = paused;
   driftDirRef.current = driftDirection;
+  variantRef.current = variant;
   rotationOffsetRefInternal.current = rotationOffsetRef;
+  cameraAnglesRefInternal.current = cameraAnglesRef;
 
   // Reset vortex state when switching back to drift
   useEffect(() => {
@@ -96,21 +108,25 @@ export function CosmicStarfield({
     const cx = w / 2;
     const cy = h / 2;
     const maxR = Math.sqrt(cx * cx + cy * cy);
-    for (let i = 0; i < STAR_COUNT; i++) {
+    const isCardVariant = variantRef.current === 'card';
+    const starCount = isCardVariant ? (IS_MOBILE ? 110 : 170) : STAR_COUNT;
+    for (let i = 0; i < starCount; i++) {
       const x = Math.random() * w;
       const y = Math.random() * h;
       const color = COLORS[Math.floor(Math.random() * COLORS.length)];
       const dx = x - cx;
       const dy = y - cy;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      const depth = 0.2 + Math.random() * 0.8;
       stars.push({
         x,
         y,
         baseX: x,
         baseY: y,
-        r: 0.4 + Math.random() * 1.2,
+        depth,
+        r: isCardVariant ? 0.25 + depth * 0.9 : 0.4 + Math.random() * 1.2,
         color,
-        alpha: 0.3 + Math.random() * 0.7,
+        alpha: isCardVariant ? 0.18 + depth * 0.42 : 0.3 + Math.random() * 0.7,
         twinkleSpeed: 0.5 + Math.random() * 1.5,
         twinklePhase: Math.random() * Math.PI * 2,
         angle: Math.atan2(dy, dx),
@@ -163,6 +179,25 @@ export function CosmicStarfield({
       const cx = w / 2;
       const cy = h / 2;
       const maxR = Math.sqrt(cx * cx + cy * cy);
+      const rotOffset = rotationOffsetRefInternal.current?.current ?? 0;
+      const cameraAngles = cameraAnglesRefInternal.current?.current;
+      const isCardVariant = variantRef.current === 'card';
+
+      if (cameraAngles && !isCardVariant) {
+        const yawDeg = clamp(-cameraAngles.azimuth * RAD_TO_DEG * 0.34, -18, 18);
+        const pitchDeg = clamp((cameraAngles.polar - Math.PI / 2) * RAD_TO_DEG * 0.42, -14, 14);
+        const rollDeg = clamp(-rotOffset * RAD_TO_DEG * 0.12, -6, 6);
+        const shiftX = clamp(yawDeg * -1.1, -18, 18);
+        const shiftY = clamp(pitchDeg * 1.15, -14, 14);
+        canvas.style.transformOrigin = '50% 50%';
+        canvas.style.willChange = 'transform';
+        canvas.style.transform =
+          `perspective(1200px) translate3d(${shiftX}px, ${shiftY}px, 0) ` +
+          `rotateX(${pitchDeg}deg) rotateY(${yawDeg}deg) rotateZ(${rollDeg}deg) scale(1.08)`;
+      } else {
+        canvas.style.transform = '';
+        canvas.style.willChange = 'auto';
+      }
 
       if (curMode === 'vortex') {
         // Advance vortex progress: 0→1 over 2.5s
@@ -221,11 +256,11 @@ export function CosmicStarfield({
         }
       } else {
         // Drift mode — gentle parallax + twinkle
-        const rotOffset = rotationOffsetRefInternal.current?.current ?? 0;
-        if (rotOffset !== 0) {
+        const drawRotation = cameraAngles || isCardVariant ? 0 : rotOffset;
+        if (drawRotation !== 0) {
           ctx.save();
           ctx.translate(cx, cy);
-          ctx.rotate(rotOffset);
+          ctx.rotate(drawRotation);
           ctx.translate(-cx, -cy);
         }
         for (let i = 0; i < stars.length; i++) {
@@ -253,8 +288,19 @@ export function CosmicStarfield({
           if (s.baseY < -5) s.baseY = h + 5;
           if (s.baseY > h + 5) s.baseY = -5;
 
-          s.x = s.baseX;
-          s.y = s.baseY;
+          if (isCardVariant) {
+            const yawShift = cameraAngles ? clamp(-cameraAngles.azimuth * (4 + s.depth * 14), -14, 14) : 0;
+            const pitchShift = cameraAngles
+              ? clamp((cameraAngles.polar - Math.PI / 2) * (6 + s.depth * 16), -12, 12)
+              : 0;
+            const rollShiftX = Math.sin(rotOffset + s.twinklePhase) * (0.8 + s.depth * 2.2);
+            const rollShiftY = Math.cos(rotOffset * 0.85 + s.twinklePhase) * (0.6 + s.depth * 1.6);
+            s.x = s.baseX + yawShift + rollShiftX;
+            s.y = s.baseY + pitchShift + rollShiftY;
+          } else {
+            s.x = s.baseX;
+            s.y = s.baseY;
+          }
 
           // Keep vortex geometry synced for smooth transition
           const dx = s.x - cx;
@@ -272,11 +318,11 @@ export function CosmicStarfield({
           ctx.fillStyle = `rgba(${s.color[0]},${s.color[1]},${s.color[2]},${alpha})`;
           ctx.fill();
         }
-        if (rotOffset !== 0) ctx.restore();
+        if (drawRotation !== 0) ctx.restore();
       }
 
       // ── Background comets ──
-      if (!pausedRef.current) {
+      if (!pausedRef.current && !isCardVariant) {
         const comets = cometsRef.current;
         cometTimer.current += dt;
         if (cometTimer.current > (IS_MOBILE ? 14.0 : 9.0)) {
@@ -347,6 +393,8 @@ export function CosmicStarfield({
 
     return () => {
       cancelAnimationFrame(rafRef.current);
+      canvas.style.transform = '';
+      canvas.style.willChange = 'auto';
       window.removeEventListener('resize', resize);
       document.removeEventListener('visibilitychange', onVis);
     };

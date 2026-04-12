@@ -55,10 +55,11 @@ import {
   type Micromodule,
 } from '@/lib/forgeItems';
 import { computeShipStats, getEquipmentBonusLines, SKIN_RARITY_BONUS, type ShipStats } from '@/lib/shipStats';
-import { gatherXPSources, computeRangerXP, getRangerRank } from '@/lib/rangerRanks';
+import { gatherXPSourcesMerged, computeRangerXP, getRangerRank } from '@/lib/rangerRanks';
 import { fetchWalletPreview, getCachedWalletPreview, type WalletPreview } from '@/components/prism/shared';
 import { getPrismBalance, spendPrism, type PrismBalance } from '@/lib/prismCoin';
 import { getApiBase } from '@/components/prism/shared';
+import { getQuestProgress, getQuestState } from '@/lib/prismQuests';
 
 type TopTab = 'shop' | 'inventory';
 type ShopFilter = ForgeCategory | 'all' | 'module';
@@ -267,6 +268,7 @@ function ItemCard({
   equipped,
   canAfford,
   userRank,
+  unlockMet,
   onPurchase,
   onEquip,
 }: {
@@ -275,16 +277,19 @@ function ItemCard({
   equipped: boolean;
   canAfford: boolean;
   userRank: string | undefined;
+  unlockMet: boolean;
   onPurchase: () => void;
   onEquip: () => void;
 }) {
   const rarityColor = RARITY_COLORS[item.rarity];
   const rankMet = meetsRequiredRank(userRank, item.requiredRank);
-  const locked = (Boolean(item.unlockCondition) || !rankMet) && !owned;
+  const locked = (!unlockMet || !rankMet) && !owned;
   const lockLabel =
     !rankMet && item.requiredRank
       ? `Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`
-      : item.unlockCondition;
+      : !unlockMet
+        ? item.unlockCondition
+        : undefined;
   return (
     <div
       className="relative rounded-2xl p-[1px] transition-all duration-500 hover:scale-[1.03] group"
@@ -487,34 +492,83 @@ export default function StellarForge() {
   const [confirmModule, setConfirmModule] = useState<{ itemId: string; mod: Micromodule } | null>(null);
   const [installingModule, setInstallingModule] = useState(false);
   const [hasIdentityCard, setHasIdentityCard] = useState(false);
+  const [rangerRank, setRangerRank] = useState<string>('cadet');
 
-  // Compute Ranger Rank for shop gating
-  const rangerRank = useMemo(() => {
-    if (!walletAddress) return 'cadet';
-    const sources = gatherXPSources(walletAddress);
-    const xp = computeRangerXP(sources);
-    return getRangerRank(xp).id;
+  const questState = useMemo(
+    () => (walletAddress ? getQuestState(walletAddress) : null),
+    [walletAddress, loadout?.ownedItems.length],
+  );
+
+  const isUnlockRequirementMet = useCallback(
+    (item: ForgeItem) => {
+      if (!item.unlockCondition) return true;
+      if (!walletAddress || !questState) return false;
+      switch (item.id) {
+        case 'frame_event_horizon':
+          return getQuestProgress(questState, 'ot_burn100').current >= 100;
+        case 'aura_binary_pulse':
+          return getQuestProgress(questState, 'ot_reach_sun').completed;
+        case 'title_destroyer':
+          return getQuestProgress(questState, 'ot_burn100').current >= 50;
+        case 'title_sovereign':
+          return (loadout?.ownedItems.length ?? 0) >= 4;
+        case 'title_ascended':
+          return getQuestProgress(questState, 'ot_score1000').current >= 1000;
+        default:
+          return false;
+      }
+    },
+    [walletAddress, questState, loadout?.ownedItems.length],
+  );
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setRangerRank('cadet');
+      return;
+    }
+    let cancelled = false;
+    gatherXPSourcesMerged(walletAddress)
+      .then((sources) => {
+        if (cancelled) return;
+        setRangerRank(getRangerRank(computeRangerXP(sources)).id);
+      })
+      .catch(() => {
+        if (!cancelled) setRangerRank('cadet');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [walletAddress]);
 
   // Load data
   useEffect(() => {
     if (!walletAddress) return;
     const base = getApiBase();
+    let cancelled = false;
     if (base)
       fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          if (d) setBalance(d);
+          if (d && !cancelled) setBalance(d);
         })
         .catch(() => {});
     setLoadout(getLocalLoadout(walletAddress));
+    import('@/lib/userDataSync')
+      .then(async ({ loadFromServer }) => {
+        await loadFromServer(walletAddress);
+        if (!cancelled) setLoadout(getLocalLoadout(walletAddress));
+      })
+      .catch(() => {});
     // Check identity card status via wallet-database
     fetch(`${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.mint?.minted) setHasIdentityCard(true);
+        if (d?.mint?.minted && !cancelled) setHasIdentityCard(true);
       })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [walletAddress]);
 
   // Shop logic
@@ -535,8 +589,8 @@ export default function StellarForge() {
         toast.error(`Requires ${RANK_LABELS[item.requiredRank] || item.requiredRank} rank`);
         return;
       }
-      if (item.unlockCondition) {
-        toast.error('This item is still locked');
+      if (!isUnlockRequirementMet(item)) {
+        toast.error(item.unlockCondition || 'This item is still locked');
         return;
       }
       if (balance.balance < item.price) {
@@ -556,6 +610,7 @@ export default function StellarForge() {
           `forge_${item.category}` as any,
           item.price,
           `Purchased ${item.name}`,
+          { itemId: item.id },
         );
         if (!result) {
           toast.error('Purchase failed');
@@ -581,7 +636,7 @@ export default function StellarForge() {
         setPurchasing(null);
       }
     },
-    [walletAddress, loadout, balance, purchasing],
+    [walletAddress, loadout, balance, purchasing, rangerRank, isUnlockRequirementMet],
   );
 
   const handleEquip = useCallback(
@@ -630,7 +685,9 @@ export default function StellarForge() {
       }
       setInstallingModule(true);
       try {
-        const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`);
+        const result = await spendPrism(walletAddress, 'forge_module', mod.price, `Module: ${mod.name}`, {
+          moduleId: mod.id,
+        });
         if (!result) {
           toast.error('Purchase failed');
           return;
@@ -909,6 +966,7 @@ export default function StellarForge() {
                               equipped={isEquipped(item.id)}
                               canAfford={(balance?.balance ?? 0) >= item.price}
                               userRank={rangerRank}
+                              unlockMet={isUnlockRequirementMet(item)}
                               onPurchase={() => handlePurchase(item)}
                               onEquip={() => handleEquip(item)}
                             />
@@ -1073,6 +1131,7 @@ export default function StellarForge() {
                       equipped={isEquipped(item.id)}
                       canAfford={(balance?.balance ?? 0) >= item.price}
                       userRank={rangerRank}
+                      unlockMet={isUnlockRequirementMet(item)}
                       onPurchase={() => handlePurchase(item)}
                       onEquip={() => handleEquip(item)}
                     />

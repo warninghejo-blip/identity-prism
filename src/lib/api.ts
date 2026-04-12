@@ -7,6 +7,16 @@ import { getSessionJwt } from '@/components/prism/shared';
 
 const BASE = import.meta.env.VITE_HELIUS_PROXY_URL || '';
 
+export interface IdentityPerkSnapshot {
+  address?: string;
+  hasIdentityPrism: boolean;
+  gameCoinMultiplier: number;
+  freeRevivesPerDay: number;
+  blackHoleCommissionRate: number;
+  standardBlackHoleCommissionRate: number;
+  holderBlackHoleCommissionRate: number;
+}
+
 function getAuthHeaders(): Record<string, string> {
   const jwt = getSessionJwt();
   return jwt ? { Authorization: `Bearer ${jwt}` } : {};
@@ -29,17 +39,17 @@ async function apiFetch<T = unknown>(path: string, options?: RequestInit): Promi
 }
 
 export const api = {
-  getWalletData: (addr: string) =>
-    apiFetch<Record<string, unknown>>(`/api/wallet-database?address=${addr}`),
+  getWalletData: (addr: string) => apiFetch<Record<string, unknown>>(`/api/wallet-database?address=${addr}`),
 
-  getSybil: (addr: string) =>
-    apiFetch<Record<string, unknown>>(`/api/sybil/analysis?address=${addr}`),
+  getSybil: (addr: string) => apiFetch<Record<string, unknown>>(`/api/sybil/analysis?address=${addr}`),
 
   getLeaderboard: (gameType?: string) =>
     apiFetch<{ entries: unknown[] }>(`/api/game/leaderboard${gameType ? `?gameType=${gameType}` : ''}`),
 
-  getReputation: (addr: string) =>
-    apiFetch<Record<string, unknown>>(`/api/v2/reputation?address=${addr}`),
+  getReputation: (addr: string) => apiFetch<Record<string, unknown>>(`/api/v2/reputation?address=${addr}`),
+
+  getIdentityPerks: (addr: string) =>
+    apiFetch<IdentityPerkSnapshot>(`/api/identity/perks?address=${encodeURIComponent(addr)}`),
 
   postCoins: (delta: number) =>
     apiFetch<{ address: string; coins: number }>('/api/game/coins', {
@@ -65,6 +75,5 @@ export const api = {
       body: JSON.stringify({ address, quests }),
     }),
 
-  getQuestProgress: (addr: string) =>
-    apiFetch<Record<string, unknown>>(`/api/quest/progress?address=${addr}`),
+  getQuestProgress: (addr: string) => apiFetch<Record<string, unknown>>(`/api/quest/progress?address=${addr}`),
 };

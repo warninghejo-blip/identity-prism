@@ -54,18 +54,22 @@ Copy the following folders to your target project:
    - *Note:* Ensure the path `/textures/...` remains accessible from the root.
 
 ### C. Environment Variables
-You must set the Helius API key in your destination project's `.env` file:
+The current app expects a public app/proxy base URL in the client, not a direct Helius key in the browser:
 
 **Vite:**
 ```env
-VITE_HELIUS_API_KEY=your_api_key_here
+VITE_HELIUS_PROXY_URL=https://identityprism.xyz
+VITE_APP_BASE_URL=https://identityprism.xyz
+VITE_METADATA_BASE_URL=https://identityprism.xyz
 ```
 
 **Next.js:**
 ```env
-NEXT_PUBLIC_HELIUS_API_KEY=your_api_key_here
+NEXT_PUBLIC_HELIUS_PROXY_URL=https://identityprism.xyz
+NEXT_PUBLIC_APP_BASE_URL=https://identityprism.xyz
+NEXT_PUBLIC_METADATA_BASE_URL=https://identityprism.xyz
 ```
-*Note: If using Next.js, update `src/constants.ts` to use `process.env.NEXT_PUBLIC_HELIUS_API_KEY` instead of `import.meta.env`.*
+*Note: If using Next.js, update `src/constants.ts` and `src/lib/api.ts` to read `process.env.NEXT_PUBLIC_*` instead of `import.meta.env`.*
 
 ---
 
@@ -76,7 +80,7 @@ NEXT_PUBLIC_HELIUS_API_KEY=your_api_key_here
 2. Import project into Vercel/Netlify.
 3. Set the **Build Command**: `npm run build`
 4. Set the **Output Directory**: `dist`
-5. **Important:** Add `VITE_HELIUS_API_KEY` in the project settings (Environment Variables).
+5. **Important:** Add `VITE_HELIUS_PROXY_URL`, `VITE_APP_BASE_URL`, and `VITE_METADATA_BASE_URL` in the project settings.
 
 ### Solana Hosting (Shdw Drive / IPFS)
 For decentralized hosting:

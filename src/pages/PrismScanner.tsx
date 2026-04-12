@@ -39,7 +39,12 @@ import { Button } from '@/components/ui/button';
 import PageShell from '@/components/PageShell';
 import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
-import { fetchWalletPreview, formatWalletAge, type WalletPreview } from '@/components/prism/shared';
+import {
+  fetchWalletPreview,
+  formatWalletAge,
+  type SybilVerdictSummary,
+  type WalletPreview,
+} from '@/components/prism/shared';
 import { earnPrism } from '@/lib/prismCoin';
 
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
@@ -108,6 +113,7 @@ interface SybilAnalysis {
   signals: SybilSignal[];
   metrics: Record<string, unknown> & { siblingAddresses?: string[]; siblingCount?: number };
   behaviorProfile: Record<string, unknown>;
+  verdict?: SybilVerdictSummary | null;
 }
 interface FundingSource {
   address: string;
@@ -124,6 +130,155 @@ interface TopProgram {
 }
 
 const sybilClientCache = new Map<string, { data: SybilAnalysis; ts: number }>();
+
+const VERDICT_DATA_QUALITY_LABELS: Record<SybilVerdictSummary['dataQuality'], string> = {
+  none: 'no data',
+  thin: 'thin data',
+  sampled: 'sampled',
+  rich: 'rich history',
+};
+
+function resolveAnalysisVerdict(data: SybilAnalysis): SybilVerdictSummary {
+  if (data.verdict) return data.verdict;
+
+  const flaggedSignals = data.signals.filter((signal) => signal.detected).length;
+  const txCount = Number(data.metrics?.txCount) || 0;
+  const dataQuality: SybilVerdictSummary['dataQuality'] =
+    txCount === 0 ? 'none' : txCount < 10 ? 'thin' : txCount < 50 ? 'sampled' : 'rich';
+  const baseEvidence = {
+    flaggedSignals,
+    strongNetworkCount: 0,
+    supportingNetworkCount: 0,
+    strongBehaviorCount: 0,
+    supportingBehaviorCount: 0,
+    positiveIdentityCount: 0,
+  };
+
+  if (txCount < 10) {
+    return {
+      key: 'unknown',
+      label: 'Unknown / Thin Data',
+      summary:
+        'This cached scan predates the new verdict model, so low-history wallets stay inconclusive until they are rescanned.',
+      confidence: 'low',
+      confidenceScore: 35,
+      basis: 'insufficient_data',
+      dataQuality,
+      networkConfirmed: false,
+      legacySybilFlag: data.trustScore < 50,
+      bountyEligible: false,
+      rewardPath: 'scan_wallet',
+      reasons: ['Very little transaction history is available for a hard verdict'],
+      evidence: baseEvidence,
+    };
+  }
+
+  if (data.trustScore < 50) {
+    return {
+      key: 'probable_sybil',
+      label: 'Probable Sybil',
+      summary:
+        'This scan uses the legacy high-risk threshold, so it still takes the bounty path until a fresh verdict is available.',
+      confidence: 'medium',
+      confidenceScore: 60,
+      basis: 'behavioral',
+      dataQuality,
+      networkConfirmed: false,
+      legacySybilFlag: true,
+      bountyEligible: true,
+      rewardPath: 'sybil_hunt',
+      reasons: ['Legacy trust threshold marked this wallet as high risk'],
+      evidence: baseEvidence,
+    };
+  }
+
+  if (data.riskScore >= 30) {
+    return {
+      key: 'suspicious',
+      label: 'Suspicious',
+      summary: 'Risk is elevated, but this cached scan predates the richer verdict model.',
+      confidence: 'medium',
+      confidenceScore: 55,
+      basis: 'behavioral',
+      dataQuality,
+      networkConfirmed: false,
+      legacySybilFlag: false,
+      bountyEligible: false,
+      rewardPath: 'scan_wallet',
+      reasons: ['A fresh scan is needed to separate watchlist risk from a confirmed sybil call'],
+      evidence: baseEvidence,
+    };
+  }
+
+  return {
+    key: 'clean',
+    label: 'Clean',
+    summary: 'No strong sybil evidence is visible in this cached scan.',
+    confidence: 'medium',
+    confidenceScore: 60,
+    basis: 'organic',
+    dataQuality,
+    networkConfirmed: false,
+    legacySybilFlag: false,
+    bountyEligible: false,
+    rewardPath: 'scan_wallet',
+    reasons: ['No strong sybil signals were preserved in this cached scan'],
+    evidence: baseEvidence,
+  };
+}
+
+function getVerdictTheme(key: SybilVerdictSummary['key']) {
+  switch (key) {
+    case 'confirmed_sybil':
+      return {
+        panelClass: 'bg-gradient-to-r from-red-500/10 to-amber-500/10 border-red-500/20',
+        badgeClass: 'bg-red-500/15 border border-red-500/20 text-red-300',
+        chipClass: 'bg-red-500/10 border border-red-500/15 text-red-200/80',
+        titleClass: 'text-red-400',
+        summaryClass: 'text-red-300/70',
+        rewardClass: 'bg-amber-500/15 border border-amber-500/20 text-amber-300',
+      };
+    case 'probable_sybil':
+      return {
+        panelClass: 'bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-orange-500/20',
+        badgeClass: 'bg-orange-500/15 border border-orange-500/20 text-orange-300',
+        chipClass: 'bg-orange-500/10 border border-orange-500/15 text-orange-200/80',
+        titleClass: 'text-orange-300',
+        summaryClass: 'text-orange-200/70',
+        rewardClass: 'bg-amber-500/15 border border-amber-500/20 text-amber-300',
+      };
+    case 'cluster_linked':
+    case 'suspicious':
+      return {
+        panelClass: 'bg-gradient-to-r from-amber-500/10 to-yellow-500/10 border-amber-500/20',
+        badgeClass: 'bg-amber-500/15 border border-amber-500/20 text-amber-200',
+        chipClass: 'bg-amber-500/10 border border-amber-500/15 text-amber-100/80',
+        titleClass: 'text-amber-300',
+        summaryClass: 'text-amber-100/70',
+        rewardClass: 'bg-white/[0.04] border border-white/[0.06] text-white/60',
+      };
+    case 'unknown':
+      return {
+        panelClass: 'bg-gradient-to-r from-slate-500/10 to-cyan-500/10 border-slate-500/20',
+        badgeClass: 'bg-slate-500/15 border border-slate-500/20 text-slate-200',
+        chipClass: 'bg-slate-500/10 border border-slate-500/15 text-slate-100/80',
+        titleClass: 'text-slate-200',
+        summaryClass: 'text-slate-200/70',
+        rewardClass: 'bg-white/[0.04] border border-white/[0.06] text-white/60',
+      };
+    default:
+      return {
+        panelClass: 'bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border-emerald-500/20',
+        badgeClass: 'bg-emerald-500/15 border border-emerald-500/20 text-emerald-200',
+        chipClass: 'bg-emerald-500/10 border border-emerald-500/15 text-emerald-100/80',
+        titleClass: 'text-emerald-300',
+        summaryClass: 'text-emerald-200/70',
+        rewardClass: 'bg-white/[0.04] border border-white/[0.06] text-white/60',
+      };
+  }
+}
+
+const formatConfidence = (confidence: SybilVerdictSummary['confidence']) => confidence.replace('_', ' ');
 
 /* ── Copy button helper ── */
 function CopyButton({ text }: { text: string }) {
@@ -368,7 +523,7 @@ export default function PrismScanner() {
 
   // Hunt states
   const [huntStats, setHuntStats] = useState<HuntStats>(getHuntStats);
-  const [huntVerdict, setHuntVerdict] = useState<'sybil' | 'clean' | null>(null);
+  const [huntVerdict, setHuntVerdict] = useState<SybilVerdictSummary | null>(null);
   const [huntCoinsEarned, setHuntCoinsEarned] = useState(0);
   const [showVerdictAnim, setShowVerdictAnim] = useState(false);
 
@@ -418,32 +573,38 @@ export default function PrismScanner() {
   const processHuntVerdict = useCallback(
     (data: SybilAnalysis, addr: string) => {
       if (!data || !myAddress || addr === myAddress) return; // don't reward self-scan
-      const isSybil = data.trustScore < 50;
-      setHuntVerdict(isSybil ? 'sybil' : 'clean');
+      const verdict = resolveAnalysisVerdict(data);
+      const rewardPath = verdict.rewardPath;
+      setHuntVerdict(verdict);
       setShowVerdictAnim(true);
       setTimeout(() => setShowVerdictAnim(false), 3000);
 
-      // Rank-based rewards: higher rank = more coins per sybil catch
-      const caught = huntStats.sybilsCaught + (isSybil ? 1 : 0);
-      const rankBonus = caught >= 50 ? 50 : caught >= 20 ? 30 : caught >= 10 ? 20 : caught >= 3 ? 10 : 0;
-      const coins = isSybil ? 20 + rankBonus : 5;
-      setHuntCoinsEarned(coins);
-      const newStats = updateHuntStats({
-        totalHunts: 1,
-        sybilsCaught: isSybil ? 1 : 0,
-        coinsEarned: coins,
-      });
-      setHuntStats(newStats);
-
-      // Award coins
-      earnPrism(
+      setHuntCoinsEarned(0);
+      void earnPrism(
         myAddress,
-        isSybil ? 'sybil_hunt' : 'scan_wallet',
-        coins,
-        isSybil ? `Sybil bounty: ${addr.slice(0, 8)}...` : `Scanned: ${addr.slice(0, 8)}...`,
-      ).catch(() => {});
+        rewardPath,
+        undefined,
+        rewardPath === 'sybil_hunt'
+          ? `Sybil bounty: ${addr.slice(0, 8)}...`
+          : verdict.key === 'clean'
+            ? `Cleared wallet: ${addr.slice(0, 8)}...`
+            : `Intel scan: ${addr.slice(0, 8)}...`,
+        undefined,
+        { scanTarget: addr },
+      )
+        .then((reward) => {
+          if (!reward || reward.earned <= 0) return;
+          setHuntCoinsEarned(reward.earned);
+          const newStats = updateHuntStats({
+            totalHunts: 1,
+            sybilsCaught: rewardPath === 'sybil_hunt' ? 1 : 0,
+            coinsEarned: reward.earned,
+          });
+          setHuntStats(newStats);
+        })
+        .catch(() => {});
     },
-    [myAddress, huntStats.sybilsCaught],
+    [myAddress],
   );
 
   const fetchFunding = useCallback(async (addr: string) => {
@@ -669,54 +830,79 @@ export default function PrismScanner() {
         {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
         {/* Hunt Verdict Banner */}
-        {huntVerdict && result && result.address !== myAddress && (
-          <div
-            className={`rounded-xl border p-4 text-center transition-all duration-500 ${
-              showVerdictAnim ? 'animate-in fade-in zoom-in-95 duration-500' : ''
-            } ${
-              huntVerdict === 'sybil'
-                ? 'bg-gradient-to-r from-red-500/10 to-amber-500/10 border-red-500/20'
-                : 'bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border-emerald-500/20'
-            }`}
-          >
-            {huntVerdict === 'sybil' ? (
-              <>
+        {huntVerdict &&
+          result &&
+          result.address !== myAddress &&
+          (() => {
+            const verdictTheme = getVerdictTheme(huntVerdict.key);
+            const isBounty = huntVerdict.rewardPath === 'sybil_hunt';
+            const isClean = huntVerdict.key === 'clean';
+            const isUnknown = huntVerdict.key === 'unknown';
+
+            return (
+              <div
+                className={`rounded-xl border p-4 text-center transition-all duration-500 ${
+                  showVerdictAnim ? 'animate-in fade-in zoom-in-95 duration-500' : ''
+                } ${verdictTheme.panelClass}`}
+              >
                 <div className="flex items-center justify-center gap-2 mb-1">
-                  <AlertTriangle className="w-5 h-5 text-red-400" />
-                  <span className="text-lg font-black text-red-400 tracking-wide">SYBIL DETECTED</span>
-                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                  {isBounty ? (
+                    <AlertTriangle className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                  ) : isClean ? (
+                    <Shield className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                  ) : isUnknown ? (
+                    <Clock className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                  ) : (
+                    <Target className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                  )}
+                  <span className={`text-lg font-black tracking-wide ${verdictTheme.titleClass}`}>
+                    {huntVerdict.label.toUpperCase()}
+                  </span>
+                  {isBounty && <AlertTriangle className={`w-5 h-5 ${verdictTheme.titleClass}`} />}
                 </div>
-                <p className="text-xs text-red-300/60 mb-2">
-                  Trust Score: {sybilData?.trustScore ?? '?'}/100 — {sybilData?.trustGrade ?? '?'}
+                <p className={`text-xs mb-2 ${verdictTheme.summaryClass}`}>
+                  Trust {sybilData?.trustScore ?? '?'}/100 · {huntVerdict.summary}
                 </p>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/20">
-                  <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="text-sm font-bold text-amber-300">+{huntCoinsEarned} Coins Bounty</span>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <span
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
+                  >
+                    {huntVerdict.label}
+                  </span>
+                  <span
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                  >
+                    {formatConfidence(huntVerdict.confidence)}
+                  </span>
+                  <span
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                  >
+                    {VERDICT_DATA_QUALITY_LABELS[huntVerdict.dataQuality]}
+                  </span>
                 </div>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center justify-center gap-2 mb-1">
-                  <Shield className="w-5 h-5 text-emerald-400" />
-                  <span className="text-lg font-black text-emerald-400 tracking-wide">WALLET CLEAR</span>
+                <div
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg mt-3 ${verdictTheme.rewardClass}`}
+                >
+                  {isBounty ? (
+                    <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                  ) : (
+                    <Coins className="w-3.5 h-3.5 text-white/50" />
+                  )}
+                  <span className="text-sm font-bold">
+                    +{huntCoinsEarned} Coins {isBounty ? 'Bounty' : isClean ? '(clear scan)' : '(intel scan)'}
+                  </span>
                 </div>
-                <p className="text-xs text-emerald-300/60 mb-2">
-                  Trust Score: {sybilData?.trustScore ?? '?'}/100 — No sybil activity detected
-                </p>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
-                  <Coins className="w-3.5 h-3.5 text-white/40" />
-                  <span className="text-sm font-bold text-white/40">+{huntCoinsEarned} Coins (scan)</span>
-                </div>
-              </>
-            )}
-          </div>
-        )}
+              </div>
+            );
+          })()}
 
         {/* Result — only show after sybilData loaded (prevents score jumping) */}
         {result && sybilData && (
           <div className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Target Dossier */}
             {(() => {
+              const verdict = resolveAnalysisVerdict(sybilData);
+              const verdictTheme = getVerdictTheme(verdict.key);
               const trustScore = sybilData.trustScore;
               const trustGrade = sybilData.trustGrade;
               const riskScore = sybilData.riskScore;
@@ -780,6 +966,12 @@ export default function PrismScanner() {
                               Risk {riskScore}
                             </span>
                           )}
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${verdictTheme.badgeClass}`}>
+                            {verdict.label}
+                          </span>
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${verdictTheme.chipClass}`}>
+                            {formatConfidence(verdict.confidence)}
+                          </span>
                           {sybilData && (
                             <span className="text-[10px] text-white/25 font-mono">
                               {flaggedCount}/{totalSignals} flags
@@ -1110,6 +1302,8 @@ function SybilReportPanel({
         : data.trustScore >= 40
           ? '#eab308'
           : '#ef4444';
+  const verdict = resolveAnalysisVerdict(data);
+  const verdictTheme = getVerdictTheme(verdict.key);
   const metrics = data.metrics as Record<string, unknown>;
   const profile = data.behaviorProfile as Record<string, number>;
 
@@ -1288,6 +1482,45 @@ function SybilReportPanel({
               <span className="px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 bg-emerald-400/5">
                 bonus -{String(metrics.trustBonus)}
               </span>
+            )}
+          </div>
+          <div className={`mt-3 rounded-xl border p-3 ${verdictTheme.panelClass}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
+              >
+                {verdict.label}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+              >
+                {formatConfidence(verdict.confidence)}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+              >
+                {VERDICT_DATA_QUALITY_LABELS[verdict.dataQuality]}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+              >
+                {verdict.rewardPath === 'sybil_hunt'
+                  ? 'bounty path'
+                  : verdict.key === 'clean'
+                    ? 'clear scan'
+                    : 'watchlist'}
+              </span>
+            </div>
+            <p className={`text-xs mt-2 ${verdictTheme.summaryClass}`}>{verdict.summary}</p>
+            {verdict.reasons.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {verdict.reasons.slice(0, 3).map((reason) => (
+                  <div key={reason} className="flex items-start gap-2 text-[11px] text-white/55">
+                    <span className="mt-0.5 text-white/20">•</span>
+                    <span>{reason}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

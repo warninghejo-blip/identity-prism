@@ -40,7 +40,20 @@ export interface ScoreDetails {
       collection: OnchainBreakdownItem;
     } | null;
   };
-  sybilTrust: { trustScore: number; trustMax: number; badgeBonus?: number };
+  sybilTrust: {
+    trustScore: number;
+    rawTrustScore?: number;
+    baseCompositeTrust?: number;
+    adjustedTrust?: number;
+    effectiveTrust?: number;
+    trustMax: number;
+    verdictKey?: string | null;
+    verdictLabel?: string | null;
+    verdictAdjustment?: number;
+    badgeBonus?: number;
+    recoveryBonus?: number;
+    recoveryCap?: number;
+  };
   humanProof: {
     gameScoreTotal: number;
     gameDiversity: number;
@@ -75,10 +88,41 @@ interface CompositeData {
   breakdown: CompositeBreakdown;
   details: ScoreDetails | null;
   isLoading: boolean;
+  hasComposite: boolean;
 }
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 min
 const CACHE_KEY_PREFIX = 'ip_composite_v2_';
+const EMPTY_BREAKDOWN: CompositeBreakdown = {
+  onchain: 0,
+  sybilTrust: 0,
+  humanProof: 0,
+  social: 0,
+  engagement: 0,
+};
+
+const buildOnchainFallbackBreakdown = (score: number): CompositeBreakdown => ({
+  ...EMPTY_BREAKDOWN,
+  onchain: Math.max(0, Math.min(Math.round(score), 400)),
+});
+
+const normalizeCachedData = (cachedData: Partial<CompositeData>): CompositeData => ({
+  score: typeof cachedData.score === 'number' ? cachedData.score : 0,
+  tier: typeof cachedData.tier === 'string' && cachedData.tier ? cachedData.tier : 'mercury',
+  breakdown: cachedData.breakdown ?? EMPTY_BREAKDOWN,
+  details: cachedData.details ?? null,
+  isLoading: false,
+  hasComposite: cachedData.hasComposite === true,
+});
+
+const INITIAL_COMPOSITE_DATA: CompositeData = {
+  score: 0,
+  tier: 'mercury',
+  breakdown: EMPTY_BREAKDOWN,
+  details: null,
+  isLoading: true,
+  hasComposite: false,
+};
 
 export function invalidateCompositeCache(address: string) {
   try {
@@ -87,13 +131,7 @@ export function invalidateCompositeCache(address: string) {
 }
 
 export function useCompositeScore(address: string | null): CompositeData & { refetch: () => void } {
-  const [data, setData] = useState<CompositeData>({
-    score: 0,
-    tier: 'mercury',
-    breakdown: { onchain: 0, sybilTrust: 0, humanProof: 0, social: 0, engagement: 0 },
-    details: null,
-    isLoading: true,
-  });
+  const [data, setData] = useState<CompositeData>(INITIAL_COMPOSITE_DATA);
   const [fetchTick, setFetchTick] = useState(0);
 
   const refetch = useCallback(() => {
@@ -103,20 +141,24 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
 
   useEffect(() => {
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
-      setData((d) => ({ ...d, isLoading: false }));
+      setData({ ...INITIAL_COMPOSITE_DATA, isLoading: false });
       return;
     }
 
     // Check sessionStorage cache
     const cacheKey = `${CACHE_KEY_PREFIX}${address}`;
+    let staleCachedData: CompositeData | null = null;
     try {
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
-        const { data: cachedData, ts } = JSON.parse(cached);
+        const { data: rawCachedData, ts } = JSON.parse(cached);
+        const cachedData = normalizeCachedData(rawCachedData);
         if (Date.now() - ts < CACHE_TTL) {
-          setData({ ...cachedData, isLoading: false });
+          setData(cachedData);
           return;
         }
+        staleCachedData = cachedData;
+        setData({ ...cachedData, isLoading: true });
       }
     } catch {}
 
@@ -127,14 +169,34 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
       .then((wallet) => {
         if (cancelled) return;
         if (!wallet) {
-          setData((d) => ({ ...d, isLoading: false }));
+          setData(
+            staleCachedData
+              ? { ...staleCachedData, isLoading: false }
+              : { ...INITIAL_COMPOSITE_DATA, isLoading: false },
+          );
           return;
         }
-        const composite = wallet.composite || {
-          compositeScore: 0,
-          compositeTier: wallet.tier || 'mercury',
-          breakdown: { onchain: 0, sybilTrust: 0, humanProof: 0, social: 0, engagement: 0 },
-        };
+        const fallbackScore = typeof wallet.score === 'number' ? wallet.score : 0;
+        const fallbackTier = typeof wallet.tier === 'string' && wallet.tier ? wallet.tier : 'mercury';
+        const hasComposite = Boolean(wallet.composite);
+        const fallbackBreakdown = buildOnchainFallbackBreakdown(fallbackScore);
+        const composite = wallet.composite
+          ? {
+              compositeScore:
+                typeof wallet.composite.compositeScore === 'number' ? wallet.composite.compositeScore : fallbackScore,
+              compositeTier:
+                typeof wallet.composite.compositeTier === 'string' && wallet.composite.compositeTier
+                  ? wallet.composite.compositeTier
+                  : fallbackTier,
+              breakdown: wallet.composite.breakdown ?? fallbackBreakdown,
+              details: wallet.composite.details ?? null,
+            }
+          : {
+              compositeScore: fallbackScore,
+              compositeTier: fallbackTier,
+              breakdown: fallbackBreakdown,
+              details: null,
+            };
         const details: ScoreDetails | null = wallet.scoreDetails || composite.details || null;
         // Merge top-level scoreBreakdown into composite details if missing
         // (composite may have been computed before wallet was fully scanned)
@@ -146,6 +208,7 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
           tier: composite.compositeTier,
           breakdown: composite.breakdown,
           details,
+          hasComposite,
         };
         setData({ ...result, isLoading: false });
         // Sync tournament XP from server to localStorage for ranger rank calculation
@@ -166,7 +229,13 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
         } catch {}
       })
       .catch(() => {
-        if (!cancelled) setData((d) => ({ ...d, isLoading: false }));
+        if (!cancelled) {
+          setData(
+            staleCachedData
+              ? { ...staleCachedData, isLoading: false }
+              : { ...INITIAL_COMPOSITE_DATA, isLoading: false },
+          );
+        }
       });
     return () => {
       cancelled = true;

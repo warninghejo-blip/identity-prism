@@ -951,14 +951,22 @@ const Index = () => {
           }
         }
         if (canEarnFromScan(resolvedAddress)) {
-          markScanEarned(resolvedAddress);
-          earnPrism(resolvedAddress, 'scan_wallet').catch(() => {});
-          // Quest auto-tracking
-          import('@/lib/prismQuests')
-            .then(({ getQuestState, incrementQuest }) => {
-              const qs = getQuestState(resolvedAddress);
-              incrementQuest(qs, 'daily_scan');
-              incrementQuest(qs, 'ot_first_scan');
+          import('@/components/prism/shared')
+            .then(({ fetchSybilAnalysis }) => fetchSybilAnalysis(resolvedAddress))
+            .then((analysis) => {
+              if (!analysis) return null;
+              return earnPrism(resolvedAddress, 'scan_wallet', undefined, undefined, undefined, {
+                scanTarget: resolvedAddress,
+              });
+            })
+            .then((reward) => {
+              if (!reward || reward.earned <= 0) return;
+              markScanEarned(resolvedAddress);
+              return import('@/lib/prismQuests').then(({ getQuestState, incrementQuest }) => {
+                const qs = getQuestState(resolvedAddress);
+                incrementQuest(qs, 'daily_scan');
+                incrementQuest(qs, 'ot_first_scan');
+              });
             })
             .catch(() => {});
         }

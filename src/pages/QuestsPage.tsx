@@ -29,7 +29,7 @@ import type { PrismBalance } from '@/lib/prismCoin';
 import PageShell from '@/components/PageShell';
 import { getApiBase } from '@/components/prism/shared';
 import { getHeliusRpcUrl, getCollectionMint } from '@/constants';
-import { computeRangerXP, getRangerRank, getRankProgress, getNextRank, gatherXPSources } from '@/lib/rangerRanks';
+import { useRangerProgress } from '@/hooks/useRangerProgress';
 import { getCompletedQuests } from '@/lib/textQuests';
 
 type QuestTab = 'daily' | 'weekly' | 'milestones';
@@ -123,6 +123,7 @@ export default function QuestsPage() {
   const navigate = useNavigate();
   const { publicKey } = useWallet();
   const walletAddress = publicKey?.toBase58() || '';
+  const rangerProgress = useRangerProgress(walletAddress || null);
 
   const [activeTab, setActiveTab] = useState<QuestTab>('daily');
   const [questState, setQuestState] = useState<QuestState | null>(null);
@@ -289,11 +290,7 @@ export default function QuestsPage() {
         {/* Ranger Rank */}
         {walletAddress &&
           (() => {
-            const sources = gatherXPSources(walletAddress);
-            const xp = computeRangerXP(sources);
-            const rank = getRangerRank(xp);
-            const progress = getRankProgress(xp);
-            const next = getNextRank(xp);
+            const { xp, rank, progress, next } = rangerProgress;
             return (
               <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <div className="flex items-center justify-between">

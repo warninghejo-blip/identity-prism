@@ -18,7 +18,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Planet3D } from './Planet3D';
-import { StarField } from './StarField';
 import type { WalletData, WalletTraits, PlanetTier } from '@/hooks/useWalletData';
 
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
@@ -26,7 +25,7 @@ import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
 import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
-import { applyFrameToBreakdown, getBoostedCompositeScore } from '@/lib/shipStats';
+import { getBoostedCompositeScore } from '@/lib/shipStats';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { gatherXPSourcesMerged, computeRangerXP, getRangerRank, getRankProgress } from '@/lib/rangerRanks';
 
@@ -53,6 +52,67 @@ function FrameDetector({ onReady, texturesReady }: { onReady?: () => void; textu
   return null;
 }
 
+interface SybilSignal {
+  id: string;
+  name: string;
+  detected: boolean;
+  weight: number;
+  severity: string;
+  category?: string;
+  value?: string;
+  description?: string;
+}
+
+interface SybilMetrics {
+  walletAgeDays: number;
+  activeDaysCount: number;
+  activeDaysRatio: number;
+  tokenDiversityCount: number;
+  nftCount: number;
+  incomingVolume: number;
+  outgoingVolume: number;
+  flowRatio: number;
+  dustRatio: number;
+  uniquePrograms: number;
+  balance: number;
+  historicalMaxBalance: number;
+  txCount: number;
+  clusterSimilarity: number;
+}
+
+interface SybilCardRisk {
+  riskScore: number;
+  riskLevel: string;
+  trustScore: number;
+  trustGrade: string;
+  signals?: SybilSignal[];
+  metrics?: SybilMetrics;
+}
+
+const deriveTrustGrade = (trustScore: number) =>
+  trustScore >= 90
+    ? 'A+'
+    : trustScore >= 80
+      ? 'A'
+      : trustScore >= 70
+        ? 'B'
+        : trustScore >= 60
+          ? 'C'
+          : trustScore >= 50
+            ? 'D'
+            : 'F';
+
+const deriveRiskLevel = (riskScore: number) =>
+  riskScore >= 75
+    ? 'critical'
+    : riskScore >= 50
+      ? 'high'
+      : riskScore >= 30
+        ? 'medium'
+        : riskScore >= 10
+          ? 'low'
+          : 'clean';
+
 interface CelestialCardProps {
   data: WalletData;
   captureMode?: boolean;
@@ -78,38 +138,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [consuming, setConsuming] = useState(false);
   const [unsucking, setUnsucking] = useState(false);
 
-  const [sybilRisk, setSybilRisk] = useState<{
-    riskScore: number;
-    riskLevel: string;
-    trustScore: number;
-    trustGrade: string;
-    signals?: {
-      id: string;
-      name: string;
-      detected: boolean;
-      weight: number;
-      severity: string;
-      category?: string;
-      value?: string;
-      description?: string;
-    }[];
-    metrics?: {
-      walletAgeDays: number;
-      activeDaysCount: number;
-      activeDaysRatio: number;
-      tokenDiversityCount: number;
-      nftCount: number;
-      incomingVolume: number;
-      outgoingVolume: number;
-      flowRatio: number;
-      dustRatio: number;
-      uniquePrograms: number;
-      balance: number;
-      historicalMaxBalance: number;
-      txCount: number;
-      clusterSimilarity: number;
-    };
-  } | null>(null);
+  const [sybilRisk, setSybilRisk] = useState<SybilCardRisk | null>(null);
   const [fundingSources, setFundingSources] = useState<
     {
       address: string;
@@ -120,6 +149,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
       percentage: number;
     }[]
   >([]);
+  const [isDeepSybilLoading, setIsDeepSybilLoading] = useState(false);
+  const [hasFullSybilAnalysis, setHasFullSybilAnalysis] = useState(false);
+  const [isFundingLoading, setIsFundingLoading] = useState(false);
   const [forgeFrame, setForgeFrame] = useState<string | null>(null);
   const [forgeAura, setForgeAura] = useState<string | null>(null);
   const [forgeTitle, setForgeTitle] = useState<string | null>(null);
@@ -129,6 +161,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const shellRef = useRef<HTMLDivElement | null>(null);
   const transitionTimersRef = useRef<number[]>([]);
   const starfieldRotRef = useRef<number>(0);
+  const starfieldCameraRef = useRef({ azimuth: 0, polar: Math.PI / 2 });
   const lastAzimuthRef = useRef<number | null>(null);
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
@@ -177,44 +210,53 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
   const refetchComposite = compositeData.refetch;
 
-  // Fetch sybil risk THEN funding sources — sequential to avoid rate limits
+  // Hydrate the dossier from already-prefetched trust data, then enrich it with the deep scan.
   useEffect(() => {
     if (!address || isCapture) return;
     const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
     let cancelled = false;
 
+    setIsDeepSybilLoading(true);
+    setHasFullSybilAnalysis(false);
+    setIsFundingLoading(true);
+
     (async () => {
-      // Step 1: sybil analysis (shared deduped fetch — no duplicate requests)
-      try {
-        const d = await fetchSybilAnalysis(address);
-        if (cancelled) return;
-        if (d) {
+      const sybilTask = (async () => {
+        try {
+          const d = await fetchSybilAnalysis(address);
+          if (cancelled || !d) return;
           setSybilRisk({
             riskScore: d.riskScore,
             riskLevel: d.riskLevel,
             trustScore: d.trustScore ?? 100 - d.riskScore,
             trustGrade: d.trustGrade ?? 'N/A',
-            signals: d.signals as typeof sybilRisk.signals,
+            signals: d.signals as SybilSignal[] | undefined,
             metrics: d.metrics,
           });
+          setHasFullSybilAnalysis(true);
           setTimeout(() => refetchComposite(), 500);
+        } catch {
+          /* ignore */
+        } finally {
+          if (!cancelled) setIsDeepSybilLoading(false);
         }
-      } catch {
-        /* ignore */
-      }
+      })();
 
-      if (cancelled) return;
-
-      // Step 2: funding sources (server returns from sybilCache — no extra RPC calls)
-      try {
-        const r2 = await fetch(`${base}/api/sybil/funding-sources?address=${address}`);
-        if (!cancelled && r2.ok) {
-          const d2 = await r2.json();
-          if (d2?.sources) setFundingSources(d2.sources);
+      const fundingTask = (async () => {
+        try {
+          const r2 = await fetch(`${base}/api/sybil/funding-sources?address=${address}`);
+          if (!cancelled && r2.ok) {
+            const d2 = await r2.json();
+            if (d2?.sources) setFundingSources(d2.sources);
+          }
+        } catch {
+          /* ignore */
+        } finally {
+          if (!cancelled) setIsFundingLoading(false);
         }
-      } catch {
-        /* ignore */
-      }
+      })();
+
+      await Promise.allSettled([sybilTask, fundingTask]);
     })();
 
     return () => {
@@ -386,12 +428,37 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     const result = getBoostedCompositeScore(compositeData.breakdown, frameLoadout);
     return result ?? { score: compositeData.score, breakdown: compositeData.breakdown };
   }, [compositeData.breakdown, compositeData.score, frameLoadout]);
-  const displayScore = boostedComposite.score;
-  const maxDisplayScore = 1000;
-  const effectiveTier = (displayScore > 0 ? compositeData.tier : safeTraits.planetTier) as PlanetTier;
+  const hasCompositeDisplay = compositeData.hasComposite;
+  const fallbackIdentityScore = Math.max(score, 0);
+  const fallbackBreakdown = {
+    onchain: Math.min(Math.round(fallbackIdentityScore), 400),
+    sybilTrust: 0,
+    humanProof: 0,
+    social: 0,
+    engagement: 0,
+  };
+  const displayScore = hasCompositeDisplay ? boostedComposite.score : fallbackIdentityScore;
+  const displayBreakdown = hasCompositeDisplay ? boostedComposite.breakdown : fallbackBreakdown;
+  const maxDisplayScore = hasCompositeDisplay ? 1000 : 400;
+  const effectiveTier = (hasCompositeDisplay ? compositeData.tier : safeTraits.planetTier) as PlanetTier;
   const shortAddress = address ? `${address.slice(0, 4)}...${address.slice(-4)}` : 'UNKNOWN';
   const tierLabel = TIER_LABELS[effectiveTier] || effectiveTier.toUpperCase();
   const tierColorClass = TIER_COLORS[effectiveTier] || 'text-white';
+  const prefetchedTrust = compositeData.details?.sybilTrust ?? null;
+  const dossierRisk = useMemo<SybilCardRisk | null>(() => {
+    if (sybilRisk) return sybilRisk;
+    if (!prefetchedTrust) return null;
+    const trustScore = Math.max(0, Math.min(100, Math.round(prefetchedTrust.trustScore ?? 0)));
+    const riskScore = Math.max(0, 100 - trustScore);
+    return {
+      riskScore,
+      riskLevel: deriveRiskLevel(riskScore),
+      trustScore,
+      trustGrade: deriveTrustGrade(trustScore),
+      signals: [],
+      metrics: undefined,
+    };
+  }, [prefetchedTrust, sybilRisk]);
 
   const TIER_THRESHOLDS = [
     { min: 0, max: 99, tier: 'mercury', next: 'mars' },
@@ -407,12 +474,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   ];
   const currentThreshold = TIER_THRESHOLDS.find((t) => t.tier === effectiveTier) || TIER_THRESHOLDS[0];
   const tierProgress =
-    currentThreshold.max > currentThreshold.min
-      ? Math.min(1, (displayScore - currentThreshold.min) / (currentThreshold.max - currentThreshold.min))
-      : 1;
-  const nextTierLabel = currentThreshold.next ? TIER_LABELS[currentThreshold.next] || '' : null;
-  const ptsToNext = currentThreshold.next ? Math.max(0, currentThreshold.max + 1 - displayScore) : 0;
-  const badgeItems = getBadgeItems(safeTraits, sybilRisk, compositeData.details);
+    hasCompositeDisplay && currentThreshold.max > currentThreshold.min
+      ? Math.max(0, Math.min(1, (displayScore - currentThreshold.min) / (currentThreshold.max - currentThreshold.min)))
+      : Math.max(0, Math.min(1, displayScore / maxDisplayScore));
+  const nextTierLabel = hasCompositeDisplay && currentThreshold.next ? TIER_LABELS[currentThreshold.next] || '' : null;
+  const ptsToNext =
+    hasCompositeDisplay && currentThreshold.next ? Math.max(0, currentThreshold.max + 1 - displayScore) : 0;
+  const badgeItems = getBadgeItems(safeTraits, dossierRisk, compositeData.details);
   const activeBadges = badgeItems.filter((badge) => badge.isActive);
   const inactiveBadges = badgeItems.filter((badge) => !badge.isActive);
   const orderedBadges = [...activeBadges, ...inactiveBadges];
@@ -481,16 +549,21 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               className={`absolute inset-0 pointer-events-none ${forgeFrame && FRAME_STYLES[forgeFrame] ? 'rounded-[35px]' : 'rounded-[38px]'}`}
             />
             {/* Starfield background */}
-            <CosmicStarfield mode="drift" rotationOffsetRef={starfieldRotRef} />
+            <CosmicStarfield
+              mode="drift"
+              variant="card"
+              rotationOffsetRef={starfieldRotRef}
+              cameraAnglesRef={starfieldCameraRef}
+            />
 
             {/* Header */}
             <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
               {/* Sybil risk pill badge */}
-              {sybilRisk &&
+              {dossierRisk &&
                 !isCapture &&
                 (() => {
-                  const ts = sybilRisk.trustScore;
-                  const grade = sybilRisk.trustGrade;
+                  const ts = dossierRisk.trustScore;
+                  const grade = dossierRisk.trustGrade;
                   const color =
                     ts >= 80
                       ? '#22c55e'
@@ -582,15 +655,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 <pointLight position={[-8, -5, -5]} intensity={IS_MOBILE ? 1.2 : 0.5} color="#4cc9f0" />
                 <pointLight position={[0, 8, 3]} intensity={IS_MOBILE ? 1.5 : 0} color="#ffe8b0" />
 
-                <StarField
-                  count={IS_MOBILE ? 300 : 560}
-                  radius={[9, 18]}
-                  sizeRange={[0.45, 1.35]}
-                  intensityRange={[0.4, 0.85]}
-                  hemisphere="full"
-                  colors={['#fff5e6', '#ffffff', '#ffe2b0']}
-                />
-
                 <Float
                   speed={isCapture ? 0 : 1.5}
                   rotationIntensity={isCapture ? 0 : 0.2}
@@ -617,11 +681,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const controls = (e as any).target;
                     const az = controls?.getAzimuthalAngle?.() as number | undefined;
+                    const polar = controls?.getPolarAngle?.() as number | undefined;
                     if (az !== undefined) {
                       if (lastAzimuthRef.current !== null) {
                         starfieldRotRef.current += az - lastAzimuthRef.current;
                       }
                       lastAzimuthRef.current = az;
+                      starfieldCameraRef.current.azimuth = az;
+                    }
+                    if (polar !== undefined) {
+                      starfieldCameraRef.current.polar = polar;
                     }
                   }}
                 />
@@ -698,7 +767,12 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             onClick={(event) => event.stopPropagation()}
           >
             {/* Starfield background */}
-            <CosmicStarfield mode="drift" rotationOffsetRef={starfieldRotRef} />
+            <CosmicStarfield
+              mode="drift"
+              variant="card"
+              rotationOffsetRef={starfieldRotRef}
+              cameraAnglesRef={starfieldCameraRef}
+            />
             <div
               className="relative z-10 flex flex-col h-full"
               style={{ transformStyle: 'flat', transform: 'translateZ(0)', willChange: 'auto' }}
@@ -747,7 +821,9 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       {displayScore}
                     </span>
                   </div>
-                  <span className="text-white/20 text-[8px] uppercase tracking-[0.3em]">Composite Score</span>
+                  <span className="text-white/20 text-[8px] uppercase tracking-[0.3em]">
+                    {hasCompositeDisplay ? 'Composite Score' : 'Identity Score'}
+                  </span>
                   {nextTierLabel && ptsToNext > 0 && (
                     <span className="text-white/15 text-[8px] mt-0.5">
                       <span className="text-white/25">{ptsToNext}</span> pts to {nextTierLabel}
@@ -774,22 +850,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 </div>
                 <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
                   <div className="px-6 pt-4">
-                    <TabsList className="w-full grid grid-cols-3 bg-white/5 border border-white/5 rounded-xl p-0.5 pointer-events-auto">
+                    <TabsList className="grid h-12 w-full grid-cols-3 rounded-2xl border border-white/8 bg-white/5 p-1 pointer-events-auto">
                       <TabsTrigger
                         value="stats"
-                        className="data-[state=active]:!bg-cyan-500/20 data-[state=active]:!text-cyan-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
+                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/20 data-[state=active]:!text-cyan-200 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         STATS
                       </TabsTrigger>
                       <TabsTrigger
                         value="intel"
-                        className="data-[state=active]:!bg-violet-500/20 data-[state=active]:!text-violet-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
+                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-violet-500/20 data-[state=active]:!text-violet-200 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         DOSSIER
                       </TabsTrigger>
                       <TabsTrigger
                         value="badges"
-                        className="data-[state=active]:!bg-purple-500/20 data-[state=active]:!text-purple-200 data-[state=active]:shadow-none rounded-xl cursor-pointer pointer-events-auto text-[11px]"
+                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-purple-500/20 data-[state=active]:!text-purple-200 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         BADGES
                       </TabsTrigger>
@@ -807,15 +883,15 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       <div className="flex items-center gap-1.5 mb-2.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
                         <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">
-                          Composite Score
+                          {hasCompositeDisplay ? 'Composite Score' : 'Identity Score'}
                         </span>
                         <span className="ml-auto text-sm font-bold text-purple-300">
                           {displayScore}
-                          <span className="text-[9px] text-white/20">/1000</span>
+                          <span className="text-[9px] text-white/20">/{maxDisplayScore}</span>
                         </span>
                       </div>
                       <CompositeScoreBreakdown
-                        breakdown={boostedComposite.breakdown}
+                        breakdown={displayBreakdown}
                         details={compositeData.details}
                         compact={false}
                       />
@@ -973,18 +1049,31 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     forceMount
                     className="flex-1 overflow-y-auto no-scrollbar px-5 pt-3 pb-4 relative z-20 pointer-events-auto data-[state=inactive]:hidden"
                   >
-                    {!sybilRisk ? (
+                    {!dossierRisk ? (
                       <div className="text-center py-10 opacity-50">
-                        <p className="text-xs text-white/40">Analyzing wallet...</p>
-                        <p className="text-[10px] text-white/20 mt-1">Sybil intelligence loading</p>
+                        <p className="text-xs text-white/40">
+                          {isDeepSybilLoading ? 'Analyzing wallet...' : 'Trust snapshot unavailable'}
+                        </p>
+                        <p className="text-[10px] text-white/20 mt-1">
+                          {isDeepSybilLoading
+                            ? 'Sybil intelligence loading'
+                            : 'Reconnect wallet to refresh dossier data'}
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-3 pb-2">
+                        {(!hasFullSybilAnalysis || isFundingLoading) && (
+                          <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.05] px-3 py-2 text-[10px] text-cyan-100/70">
+                            {hasFullSybilAnalysis
+                              ? 'Funding sources are still syncing in the background.'
+                              : 'Showing the preloaded trust snapshot while the deep scan finishes.'}
+                          </div>
+                        )}
                         {/* Trust Overview */}
                         <div className="rounded-xl border border-amber-500/15 bg-gradient-to-br from-amber-900/10 to-orange-900/10 p-3">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-[9px] uppercase tracking-[0.15em] text-amber-300/50 font-bold flex items-center gap-1">
-                              {sybilRisk.trustScore >= 60 ? (
+                              {dossierRisk.trustScore >= 60 ? (
                                 <ShieldCheck className="w-3 h-3" />
                               ) : (
                                 <ShieldAlert className="w-3 h-3" />
@@ -995,24 +1084,24 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               className="text-xs font-bold px-2 py-0.5 rounded-full"
                               style={{
                                 background:
-                                  sybilRisk.trustScore >= 80
+                                  dossierRisk.trustScore >= 80
                                     ? 'rgba(34,197,94,0.2)'
-                                    : sybilRisk.trustScore >= 60
+                                    : dossierRisk.trustScore >= 60
                                       ? 'rgba(59,130,246,0.2)'
-                                      : sybilRisk.trustScore >= 40
+                                      : dossierRisk.trustScore >= 40
                                         ? 'rgba(234,179,8,0.2)'
                                         : 'rgba(239,68,68,0.2)',
                                 color:
-                                  sybilRisk.trustScore >= 80
+                                  dossierRisk.trustScore >= 80
                                     ? '#4ade80'
-                                    : sybilRisk.trustScore >= 60
+                                    : dossierRisk.trustScore >= 60
                                       ? '#60a5fa'
-                                      : sybilRisk.trustScore >= 40
+                                      : dossierRisk.trustScore >= 40
                                         ? '#facc15'
                                         : '#f87171',
                               }}
                             >
-                              {sybilRisk.trustGrade} · {sybilRisk.trustScore}
+                              {dossierRisk.trustGrade} · {dossierRisk.trustScore}
                             </span>
                           </div>
                           <div className="flex gap-3">
@@ -1022,11 +1111,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                                 <div
                                   className="h-full rounded-full transition-all"
                                   style={{
-                                    width: `${sybilRisk.riskScore}%`,
+                                    width: `${dossierRisk.riskScore}%`,
                                     background:
-                                      sybilRisk.riskScore < 30
+                                      dossierRisk.riskScore < 30
                                         ? '#4ade80'
-                                        : sybilRisk.riskScore < 60
+                                        : dossierRisk.riskScore < 60
                                           ? '#facc15'
                                           : '#f87171',
                                   }}
@@ -1034,14 +1123,14 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               </div>
                             </div>
                             <div className="text-right">
-                              <span className="text-lg font-bold text-white/80">{sybilRisk.riskScore}</span>
+                              <span className="text-lg font-bold text-white/80">{dossierRisk.riskScore}</span>
                               <span className="text-[9px] text-white/20">/100</span>
                             </div>
                           </div>
                         </div>
 
                         {/* Trust Recovery link */}
-                        {sybilRisk.trustScore < 80 && (
+                        {dossierRisk.trustScore < 80 && (
                           <Link
                             to="/recovery"
                             className="block w-full py-2 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/[0.12] text-cyan-300/70 text-xs font-bold hover:bg-cyan-500/[0.12] transition-colors text-center"
@@ -1051,8 +1140,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         )}
 
                         {/* Signals by category */}
-                        {sybilRisk.signals &&
-                          sybilRisk.signals.length > 0 &&
+                        {dossierRisk.signals &&
+                          dossierRisk.signals.length > 0 &&
                           (() => {
                             const catOrder = ['behavioral', 'financial', 'network'] as const;
                             const catMeta: Record<string, { label: string; color: string }> = {
@@ -1063,7 +1152,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                             const grouped = catOrder
                               .map((cat) => ({
                                 cat,
-                                signals: sybilRisk.signals!.filter((s) => s.category === cat),
+                                signals: dossierRisk.signals!.filter((s) => s.category === cat),
                               }))
                               .filter((g) => g.signals.length > 0);
 
@@ -1129,31 +1218,34 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                           })()}
 
                         {/* Key Metrics */}
-                        {sybilRisk.metrics && (
+                        {dossierRisk.metrics && (
                           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
                             <div className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold mb-2">
                               Key Metrics
                             </div>
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
                               {[
-                                { label: 'Wallet Age', value: `${sybilRisk.metrics.walletAgeDays}d` },
-                                { label: 'Transactions', value: sybilRisk.metrics.txCount.toLocaleString() },
+                                { label: 'Wallet Age', value: `${dossierRisk.metrics.walletAgeDays}d` },
+                                { label: 'Transactions', value: dossierRisk.metrics.txCount.toLocaleString() },
                                 {
                                   label: 'Active Days',
-                                  value: `${sybilRisk.metrics.activeDaysCount} (${(sybilRisk.metrics.activeDaysRatio * 100).toFixed(0)}%)`,
+                                  value: `${dossierRisk.metrics.activeDaysCount} (${(dossierRisk.metrics.activeDaysRatio * 100).toFixed(0)}%)`,
                                 },
-                                { label: 'Programs Used', value: String(sybilRisk.metrics.uniquePrograms) },
-                                { label: 'Token Types', value: String(sybilRisk.metrics.tokenDiversityCount) },
-                                { label: 'NFTs Held', value: String(sybilRisk.metrics.nftCount) },
-                                { label: 'Balance', value: `${sybilRisk.metrics.balance.toFixed(2)} SOL` },
+                                { label: 'Programs Used', value: String(dossierRisk.metrics.uniquePrograms) },
+                                { label: 'Token Types', value: String(dossierRisk.metrics.tokenDiversityCount) },
+                                { label: 'NFTs Held', value: String(dossierRisk.metrics.nftCount) },
+                                { label: 'Balance', value: `${dossierRisk.metrics.balance.toFixed(2)} SOL` },
                                 {
                                   label: 'Peak Balance',
-                                  value: `${sybilRisk.metrics.historicalMaxBalance.toFixed(2)} SOL`,
+                                  value: `${dossierRisk.metrics.historicalMaxBalance.toFixed(2)} SOL`,
                                 },
-                                { label: 'In Volume', value: `${sybilRisk.metrics.incomingVolume.toFixed(1)} SOL` },
-                                { label: 'Out Volume', value: `${sybilRisk.metrics.outgoingVolume.toFixed(1)} SOL` },
-                                { label: 'Dust Ratio', value: `${sybilRisk.metrics.dustRatio.toFixed(0)}%` },
-                                { label: 'Cluster Sim.', value: `${sybilRisk.metrics.clusterSimilarity.toFixed(0)}%` },
+                                { label: 'In Volume', value: `${dossierRisk.metrics.incomingVolume.toFixed(1)} SOL` },
+                                { label: 'Out Volume', value: `${dossierRisk.metrics.outgoingVolume.toFixed(1)} SOL` },
+                                { label: 'Dust Ratio', value: `${dossierRisk.metrics.dustRatio.toFixed(0)}%` },
+                                {
+                                  label: 'Cluster Sim.',
+                                  value: `${dossierRisk.metrics.clusterSimilarity.toFixed(0)}%`,
+                                },
                               ].map(({ label, value }) => (
                                 <div key={label} className="flex justify-between">
                                   <span className="text-[10px] text-white/25">{label}</span>
@@ -1165,7 +1257,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         )}
 
                         {/* Funding Sources */}
-                        {fundingSources.length > 0 && (
+                        {(fundingSources.length > 0 || isFundingLoading) && (
                           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
                             <div className="flex items-center gap-1.5 mb-2">
                               <ArrowDownLeft className="w-3 h-3 text-blue-400/50" />
@@ -1174,36 +1266,48 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               </span>
                             </div>
                             <div className="space-y-1.5">
-                              {fundingSources.slice(0, 8).map((src, i) => (
-                                <div key={i} className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.01]">
-                                  <div
-                                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                                    style={{
-                                      background:
-                                        src.type === 'cex' ? '#4ade80' : src.type === 'bridge' ? '#60a5fa' : '#94a3b8',
-                                    }}
-                                  />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center justify-between">
-                                      <span className="text-[10px] font-semibold text-white/60 truncate">
-                                        {src.label || `${src.address.slice(0, 4)}...${src.address.slice(-4)}`}
-                                      </span>
-                                      <span className="text-[9px] text-white/40 font-mono shrink-0 ml-1">
-                                        {src.totalSolReceived.toFixed(1)} SOL
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center justify-between mt-0.5">
-                                      <span className="text-[9px] text-white/20">
-                                        {src.type === 'cex' ? 'Exchange' : src.type === 'bridge' ? 'Bridge' : 'Wallet'}{' '}
-                                        · {src.transactionCount} txs
-                                      </span>
-                                      <span className="text-[9px] text-white/20 font-mono">
-                                        {src.percentage.toFixed(0)}%
-                                      </span>
+                              {fundingSources.length === 0 ? (
+                                <div className="text-[10px] text-white/30">Tracing inbound funding paths...</div>
+                              ) : (
+                                fundingSources.slice(0, 8).map((src, i) => (
+                                  <div key={i} className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.01]">
+                                    <div
+                                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                                      style={{
+                                        background:
+                                          src.type === 'cex'
+                                            ? '#4ade80'
+                                            : src.type === 'bridge'
+                                              ? '#60a5fa'
+                                              : '#94a3b8',
+                                      }}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-semibold text-white/60 truncate">
+                                          {src.label || `${src.address.slice(0, 4)}...${src.address.slice(-4)}`}
+                                        </span>
+                                        <span className="text-[9px] text-white/40 font-mono shrink-0 ml-1">
+                                          {src.totalSolReceived.toFixed(1)} SOL
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between mt-0.5">
+                                        <span className="text-[9px] text-white/20">
+                                          {src.type === 'cex'
+                                            ? 'Exchange'
+                                            : src.type === 'bridge'
+                                              ? 'Bridge'
+                                              : 'Wallet'}{' '}
+                                          · {src.transactionCount} txs
+                                        </span>
+                                        <span className="text-[9px] text-white/20 font-mono">
+                                          {src.percentage.toFixed(0)}%
+                                        </span>
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              ))}
+                                ))
+                              )}
                             </div>
                           </div>
                         )}

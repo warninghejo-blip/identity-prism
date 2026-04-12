@@ -63,7 +63,7 @@ export const DAILY_QUESTS: Quest[] = [
   {
     id: 'daily_burn',
     name: 'Dust Collector',
-    description: 'Burn 1 token',
+    description: 'Resolve 1 Black Hole asset',
     category: 'burn',
     frequency: 'daily',
     reward: 25,
@@ -96,7 +96,7 @@ export const WEEKLY_QUESTS: Quest[] = [
   {
     id: 'weekly_burn5',
     name: 'Purge Week',
-    description: 'Burn 5 tokens',
+    description: 'Resolve 5 Black Hole assets',
     category: 'burn',
     frequency: 'weekly',
     reward: 150,
@@ -169,7 +169,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_first_burn',
     name: 'Into the Void',
-    description: 'First token burn',
+    description: 'First Black Hole cleanup',
     category: 'burn',
     frequency: 'one_time',
     reward: 50,
@@ -199,7 +199,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
   {
     id: 'ot_burn100',
     name: 'Black Hole Master',
-    description: 'Burn 100 tokens',
+    description: 'Resolve 100 Black Hole assets',
     category: 'burn',
     frequency: 'one_time',
     reward: 300,
@@ -345,6 +345,8 @@ export function saveQuestState(state: QuestState): void {
       syncToServer({ rangerXP: state });
     })
     .catch(() => {});
+  const questMap = Object.fromEntries(state.progress.map((progress) => [progress.questId, progress]));
+  syncQuestsToServer(state.address, questMap);
 }
 
 export function getQuestProgress(state: QuestState, questId: string): QuestProgress {
@@ -363,6 +365,17 @@ export function getQuestProgress(state: QuestState, questId: string): QuestProgr
  * Sync quest progress to server (fire-and-forget).
  */
 export function syncQuestsToServer(address: string, quests: Record<string, QuestProgress>): void {
+  const payload = Object.fromEntries(
+    Object.entries(quests).map(([questId, progress]) => [
+      questId,
+      {
+        progress: progress.current,
+        completed: progress.completed,
+        completedAt: progress.completedAt,
+        claimedAt: progress.claimedAt,
+      },
+    ]),
+  );
   import('@/components/prism/shared')
     .then(({ getApiBase, ensureJwt }) => {
       const base = getApiBase();
@@ -383,7 +396,7 @@ export function syncQuestsToServer(address: string, quests: Record<string, Quest
           'Content-Type': 'application/json',
           ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
-        body: JSON.stringify({ address, quests }),
+        body: JSON.stringify({ address, quests: payload }),
       }).catch(() => {});
     })
     .catch(() => {});

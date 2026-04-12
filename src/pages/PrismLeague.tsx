@@ -43,8 +43,18 @@ import GravityRunnerScene from '@/components/game/GravityRunnerScene';
 import { FpsOverlay } from '@/components/game/GameShared';
 import { computeShipStats, getEquipmentBonusLabel } from '@/lib/shipStats';
 import type { ForgeLoadout } from '@/lib/forgeItems';
+import { api } from '@/lib/api';
 
 type GameMode = 'orbit' | 'destroyer' | 'gravity' | 'text_quest';
+type ArcadeGameMode = Exclude<GameMode, 'text_quest'>;
+
+const isArcadeGameMode = (mode: string): mode is ArcadeGameMode =>
+  mode === 'orbit' || mode === 'destroyer' || mode === 'gravity';
+
+const getArcadeGameMode = (mode: GameMode): ArcadeGameMode => {
+  if (mode === 'destroyer' || mode === 'gravity') return mode;
+  return 'orbit';
+};
 
 const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; controls: string; cover?: string }[] = [
   {
@@ -104,7 +114,7 @@ import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { goBack } from '@/lib/safeNavigate';
 import { trackGameStart, trackGameOver } from '@/lib/analytics';
 // earnPrism removed — unified economy uses coins directly
-import { getHeliusProxyUrl, getHeliusRpcUrl, getCollectionMint, getAppBaseUrl } from '@/constants';
+import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import {
   checkDefenderAchievements,
   updateDefenderStats,
@@ -243,20 +253,22 @@ async function syncCoinsToServer(
   delta: number,
   mode?: GameMode,
   gameSessionId?: string,
-): Promise<void> {
+): Promise<{ address: string; coins: number; earned?: number; idMultiplier?: number; boost?: number } | null> {
   try {
     const base = getServerBase();
-    if (!base) return;
+    if (!base) return null;
     const jwt = getChallengeJwt();
-    if (!jwt) return; // Require JWT to sync coins
+    if (!jwt) return null; // Require JWT to sync coins
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
-    await fetch(`${base}/api/game/coins`, {
+    const response = await fetch(`${base}/api/game/coins`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ address: walletAddress, coins, delta, mode, gameSessionId }),
     });
+    if (!response.ok) return null;
+    return await response.json();
   } catch {
-    /* silent */
+    return null;
   }
 }
 
@@ -333,7 +345,7 @@ async function fetchServerAchievements(walletAddress: string): Promise<{ unlocke
 
 async function fetchServerRevives(
   walletAddress: string,
-  mode: 'orbit' | 'destroyer',
+  mode: ArcadeGameMode,
 ): Promise<{ left: number; max: number } | null> {
   try {
     const base = getServerBase();
@@ -347,10 +359,7 @@ async function fetchServerRevives(
   }
 }
 
-async function serverRevive(
-  walletAddress: string,
-  mode: 'orbit' | 'destroyer',
-): Promise<{ success: boolean; left: number }> {
+async function serverRevive(walletAddress: string, mode: ArcadeGameMode): Promise<{ success: boolean; left: number }> {
   try {
     const base = getServerBase();
     if (!base) return { success: false, left: 0 };
@@ -989,6 +998,47 @@ const PrismLeague = () => {
 
   // Derived: currently selected tournament & backward-compat alias
   const activeTournament = tournaments[tournamentTier];
+  const activeTournamentMode = useMemo<GameMode | null>(() => {
+    const mode = activeTournament?.mode;
+    return typeof mode === 'string' && isArcadeGameMode(mode) ? mode : null;
+  }, [activeTournament?.mode]);
+  const activeTournamentModeLabel = useMemo(
+    () =>
+      activeTournamentMode
+        ? GAME_MODES.find((mode) => mode.id === activeTournamentMode)?.name || activeTournamentMode
+        : null,
+    [activeTournamentMode],
+  );
+  const tournamentPrizeRows = useMemo(
+    () =>
+      PRIZE_DIST[tournamentTier].map((row, index) => ({
+        ...row,
+        base: activeTournament?.basePrizes?.[index] ?? row.base,
+        xp: activeTournament?.xpRewards?.[index] ?? row.xp,
+      })),
+    [tournamentTier, activeTournament?.basePrizes, activeTournament?.xpRewards],
+  );
+  const tournamentModeLocked = playMode === 'tournament' && activeTournamentMode !== null;
+
+  const handleModeSelect = useCallback(
+    (nextMode: GameMode) => {
+      if (tournamentModeLocked && activeTournamentMode && nextMode !== activeTournamentMode) {
+        const tierLabel = TOURNAMENT_TIERS.find((tier) => tier.key === tournamentTier)?.shortLabel || 'Current';
+        const modeLabel = activeTournamentModeLabel || activeTournamentMode;
+        setJoinMessage(`${tierLabel} tournament is locked to ${modeLabel}.`);
+        return;
+      }
+      setGameMode(nextMode);
+    },
+    [tournamentModeLocked, activeTournamentMode, activeTournamentModeLabel, tournamentTier],
+  );
+
+  useEffect(() => {
+    if (!tournamentModeLocked || !activeTournamentMode) return;
+    if (gameMode !== activeTournamentMode) {
+      setGameMode(activeTournamentMode);
+    }
+  }, [tournamentModeLocked, activeTournamentMode, gameMode]);
 
   const fetchTournaments = useCallback(async () => {
     const base = getServerBase();
@@ -1116,29 +1166,43 @@ const PrismLeague = () => {
   const [isVictory, setIsVictory] = useState(false);
   const pendingGameOver = useRef<{ score: number; coins: number; isVictory?: boolean } | null>(null);
 
-  // Helper: read/write daily free revives from localStorage
-  const getDailyRevivesUsed = useCallback(() => {
-    try {
-      const raw = localStorage.getItem('free_revives_daily');
-      if (!raw) return 0;
-      const data = JSON.parse(raw);
-      const today = new Date().toISOString().slice(0, 10);
-      return data.date === today ? (data.used ?? 0) : 0;
-    } catch {
-      return 0;
-    }
-  }, []);
-  const setDailyReviveUsed = useCallback(() => {
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const used = getDailyRevivesUsed() + 1;
-      localStorage.setItem('free_revives_daily', JSON.stringify({ date: today, used }));
-    } catch {
-      /* ignore */
-    }
-  }, [getDailyRevivesUsed]);
+  // Helper: read/write daily free revives from localStorage per arcade mode.
+  const getDailyRevivesUsed = useCallback(
+    (mode: ArcadeGameMode = getArcadeGameMode(gameMode)) => {
+      try {
+        const raw = localStorage.getItem('free_revives_daily');
+        if (!raw) return 0;
+        const data = JSON.parse(raw);
+        const today = new Date().toISOString().slice(0, 10);
+        if (data && typeof data === 'object' && !Array.isArray(data) && 'date' in data) {
+          return mode === 'orbit' && data.date === today ? (data.used ?? 0) : 0;
+        }
+        const modeEntry = data?.[mode];
+        return modeEntry?.date === today ? (modeEntry.used ?? 0) : 0;
+      } catch {
+        return 0;
+      }
+    },
+    [gameMode],
+  );
+  const setDailyReviveUsed = useCallback(
+    (mode: ArcadeGameMode = getArcadeGameMode(gameMode)) => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const raw = localStorage.getItem('free_revives_daily');
+        const parsed = raw ? JSON.parse(raw) : {};
+        const nextData =
+          parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('date' in parsed) ? parsed : {};
+        nextData[mode] = { date: today, used: getDailyRevivesUsed(mode) + 1 };
+        localStorage.setItem('free_revives_daily', JSON.stringify(nextData));
+      } catch {
+        /* ignore */
+      }
+    },
+    [gameMode, getDailyRevivesUsed],
+  );
 
-  // Minted ID check → 2x score multiplier
+  // Minted ID check → 2x coin multiplier
   // Active bonuses display (Defender) — DOM-driven, no re-render
   const _bonusesDomRef = useRef<HTMLDivElement>(null);
   const _pwrImgMap: Record<string, string> = {
@@ -1213,27 +1277,17 @@ const PrismLeague = () => {
 
   const [hasMintedId, setHasMintedId] = useState(false);
   useEffect(() => {
-    if (!address) return;
-    const heliusUrl = getHeliusRpcUrl();
-    const collectionMint = getCollectionMint();
-    if (!heliusUrl || !collectionMint) return;
+    if (!address) {
+      setHasMintedId(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(heliusUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'mint-check',
-            method: 'searchAssets',
-            params: { ownerAddress: address, grouping: ['collection', collectionMint], page: 1, limit: 1 },
-          }),
-        });
-        const data = await res.json();
-        if (!cancelled) setHasMintedId((data?.result?.total ?? 0) > 0);
+        const perks = await api.getIdentityPerks(address);
+        if (!cancelled) setHasMintedId(Boolean(perks?.hasIdentityPrism));
       } catch {
-        /* silent */
+        if (!cancelled) setHasMintedId(false);
       }
     })();
     return () => {
@@ -1243,10 +1297,11 @@ const PrismLeague = () => {
 
   // Update freeRevivesLeft when hasMintedId resolves late (e.g. challenge auto-start)
   useEffect(() => {
+    if (gameMode === 'text_quest') return;
     if (hasMintedId && freeRevivesLeft.current === 0) {
       freeRevivesLeft.current = Math.max(0, FREE_REVIVES_PER_DAY - getDailyRevivesUsed());
       if (address) {
-        const mode = gameMode === 'destroyer' ? 'destroyer' : 'orbit';
+        const mode = getArcadeGameMode(gameMode);
         fetchServerRevives(address, mode)
           .then((result) => {
             if (result) freeRevivesLeft.current = result.left;
@@ -1373,10 +1428,19 @@ const PrismLeague = () => {
       startFadeTransition(() => navigate('/text-quest'));
       return;
     }
-    // Tournament mode: must join first
-    if (playMode === 'tournament' && !activeTournament?.userJoined) {
-      toast.error('Join the tournament first!');
-      return;
+    // Tournament mode: must join first and use the configured tournament mode.
+    if (playMode === 'tournament') {
+      if (!activeTournament?.userJoined) {
+        toast.error('Join the tournament first!');
+        return;
+      }
+      if (activeTournamentMode && gameMode !== activeTournamentMode) {
+        const tierLabel = TOURNAMENT_TIERS.find((tier) => tier.key === tournamentTier)?.shortLabel || 'This';
+        const modeLabel = activeTournamentModeLabel || activeTournamentMode;
+        setGameMode(activeTournamentMode);
+        toast.error(`${tierLabel} tournament is currently ${modeLabel}.`);
+        return;
+      }
     }
     initAudio();
     // Start music after a short delay so AudioContext is definitely running
@@ -1402,7 +1466,7 @@ const PrismLeague = () => {
     setChallengeSubmitting(false);
     // Then fetch authoritative count from server (async, overrides local)
     if (hasMintedId && address) {
-      const mode = gameMode === 'destroyer' ? 'destroyer' : 'orbit';
+      const mode = getArcadeGameMode(gameMode);
       fetchServerRevives(address, mode)
         .then((result) => {
           if (result) freeRevivesLeft.current = result.left;
@@ -1590,7 +1654,11 @@ const PrismLeague = () => {
           const walletAddr = playerAddr;
           const prev = readWalletCoins(walletAddr);
           syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id)
-            .then(() => {
+            .then((serverResult) => {
+              if (serverResult && typeof serverResult.coins === 'number') {
+                writeWalletCoins(walletAddr, serverResult.coins);
+                setTotalCoins(serverResult.coins);
+              }
               // Refresh prism_balance_v1 in localStorage so gatherXPSources sees updated totalEarned
               if (walletAddr !== 'anonymous') {
                 import('@/lib/prismCoin')
@@ -1614,8 +1682,12 @@ const PrismLeague = () => {
           });
         }
 
-        // Submit to tournament only when in tournament mode and joined
-        if (playMode === 'tournament' && activeTournament?.userJoined) {
+        // Submit to tournament only when in tournament mode, joined, and on the configured mode.
+        if (
+          playMode === 'tournament' &&
+          activeTournament?.userJoined &&
+          (!activeTournamentMode || activeTournamentMode === gameMode)
+        ) {
           submitToTournament(finalScore, proof?.id ?? undefined);
         }
 
@@ -1686,6 +1758,9 @@ const PrismLeague = () => {
           defNew.forEach((a) => {
             toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
           });
+          const walletAddr = address || 'anonymous';
+          const allUnlockedIds = defAll.filter((a) => a.unlocked).map((a) => a.id);
+          syncUnlockedToServer(walletAddr, allUnlockedIds);
         }
         defenderKills.current = 0;
         defenderLevel.current = 0;
@@ -1708,6 +1783,9 @@ const PrismLeague = () => {
           gravNew.forEach((a) => {
             toast.success(`Achievement Unlocked: ${a.icon} ${a.name}!`);
           });
+          const walletAddr = address || 'anonymous';
+          const allUnlockedIds = gravAll.filter((a) => a.unlocked).map((a) => a.id);
+          syncUnlockedToServer(walletAddr, allUnlockedIds);
         }
         // Reset session stats ref for next run
         gravitySessionStatsRef.current = { columns: 0, crystals: 0 };
@@ -1769,7 +1847,16 @@ const PrismLeague = () => {
         setIsNewBest(false);
       }
     },
-    [address, gameMode, highScore, activeChallengeId, activeTournament, submitToTournament, playMode],
+    [
+      address,
+      gameMode,
+      highScore,
+      activeChallengeId,
+      activeTournament,
+      activeTournamentMode,
+      submitToTournament,
+      playMode,
+    ],
   );
 
   const handleGameOver = useCallback(
@@ -1777,11 +1864,6 @@ const PrismLeague = () => {
       // Victory — no revive, go straight to game over
       if (victory) {
         finalizeDeath(finalScore, finalCoins, true);
-        return;
-      }
-      // Gravity mode does not support revive — go straight to game over
-      if (gameMode === 'gravity') {
-        finalizeDeath(finalScore, finalCoins, false);
         return;
       }
       // Show continue if: has free revives OR (hasn't used paid continue yet AND connected)
@@ -1794,7 +1876,7 @@ const PrismLeague = () => {
       }
       finalizeDeath(finalScore, finalCoins, false);
     },
-    [finalizeDeath, connected, gameMode],
+    [finalizeDeath, connected],
   );
 
   // Gravity-specific game over handler — captures extra session stats then calls shared handler
@@ -1811,9 +1893,9 @@ const PrismLeague = () => {
   const handleContinue = useCallback(async () => {
     if (!pendingGameOver.current || revivePaying) return;
 
-    // Free revive for ID holders (3 per day per game, server-authoritative)
+    // Free revive for ID holders (3 per day per arcade mode, server-authoritative)
     if (freeRevivesLeft.current > 0) {
-      const mode = gameMode === 'destroyer' ? 'destroyer' : 'orbit';
+      const mode = getArcadeGameMode(gameMode);
       if (address) {
         // Confirm with server first
         const serverResult = await serverRevive(address, mode);
@@ -1917,13 +1999,19 @@ const PrismLeague = () => {
 
         // Apply on-chain bonus to coins and persist (use current state, not stale localStorage)
         const bonusCoins = Math.round(coins * (ONCHAIN_BONUS_MULTIPLIER - 1));
-        if (bonusCoins > 0 && address) {
-          setTotalCoins((prev) => {
-            const next = prev + bonusCoins;
-            writeWalletCoins(address, next);
-            syncCoinsToServer(address, next, bonusCoins);
-            return next;
-          });
+        if (bonusCoins > 0 && address && sessionProof?.id) {
+          const optimisticPrev = readWalletCoins(address);
+          const optimisticNext = optimisticPrev + bonusCoins;
+          writeWalletCoins(address, optimisticNext);
+          setTotalCoins(optimisticNext);
+          syncCoinsToServer(address, optimisticNext, bonusCoins, gameMode, sessionProof.id)
+            .then((serverResult) => {
+              if (serverResult && typeof serverResult.coins === 'number') {
+                writeWalletCoins(address, serverResult.coins);
+                setTotalCoins(serverResult.coins);
+              }
+            })
+            .catch(() => {});
         }
 
         toast.success(`Score on-chain! +${bonusCoins} bonus coins (×${ONCHAIN_BONUS_MULTIPLIER})`);
@@ -2530,21 +2618,23 @@ const PrismLeague = () => {
               <div className="absolute inset-0 pointer-events-auto flex flex-col items-center pt-2 pb-4">
                 {/* Floating carousel arrows — outside card, on screen edges */}
                 <button
-                  className="fixed left-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg"
+                  className="fixed left-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-black/50 disabled:hover:text-white/60"
+                  disabled={tournamentModeLocked}
                   onClick={() => {
                     const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
                     const prev = (idx - 1 + GAME_MODES.length) % GAME_MODES.length;
-                    setGameMode(GAME_MODES[prev].id);
+                    handleModeSelect(GAME_MODES[prev].id);
                   }}
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
                 <button
-                  className="fixed right-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg"
+                  className="fixed right-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-black/50 disabled:hover:text-white/60"
+                  disabled={tournamentModeLocked}
                   onClick={() => {
                     const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
                     const next = (idx + 1) % GAME_MODES.length;
-                    setGameMode(GAME_MODES[next].id);
+                    handleModeSelect(GAME_MODES[next].id);
                   }}
                 >
                   <ChevronRight className="w-5 h-5" />
@@ -2578,6 +2668,7 @@ const PrismLeague = () => {
                         (e.currentTarget as unknown as Record<string, number>)._swipeStartY = touch.clientY;
                       }}
                       onTouchEnd={(e) => {
+                        if (tournamentModeLocked) return;
                         const startX = (e.currentTarget as unknown as Record<string, number>)._swipeStartX;
                         const startY = (e.currentTarget as unknown as Record<string, number>)._swipeStartY;
                         if (startX == null) return;
@@ -2587,9 +2678,9 @@ const PrismLeague = () => {
                         if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) {
                           const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
                           if (dx < 0) {
-                            setGameMode(GAME_MODES[(idx + 1) % GAME_MODES.length].id);
+                            handleModeSelect(GAME_MODES[(idx + 1) % GAME_MODES.length].id);
                           } else {
-                            setGameMode(GAME_MODES[(idx - 1 + GAME_MODES.length) % GAME_MODES.length].id);
+                            handleModeSelect(GAME_MODES[(idx - 1 + GAME_MODES.length) % GAME_MODES.length].id);
                           }
                         }
                       }}
@@ -2614,6 +2705,11 @@ const PrismLeague = () => {
                               <div className="text-sm font-black text-cyan-200 tracking-wide mb-1">{mode.name}</div>
                               <div className="text-[11px] text-white/40 leading-relaxed">{mode.desc}</div>
                               <div className="mt-2 text-[10px] text-cyan-400/50 font-medium">{mode.controls}</div>
+                              {tournamentModeLocked && activeTournamentModeLabel && (
+                                <div className="mt-2 inline-flex items-center rounded-full border border-purple-500/25 bg-purple-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-purple-300">
+                                  Tournament locked to {activeTournamentModeLabel}
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
@@ -2625,7 +2721,8 @@ const PrismLeague = () => {
                           <button
                             key={mode.id}
                             className="p-2 -m-2 flex items-center justify-center"
-                            onClick={() => setGameMode(mode.id)}
+                            onClick={() => handleModeSelect(mode.id)}
+                            disabled={tournamentModeLocked && mode.id !== activeTournamentMode}
                           >
                             <span
                               className={`w-2 h-2 rounded-full transition-all duration-300 block ${
@@ -2743,7 +2840,7 @@ const PrismLeague = () => {
                                   {/* Podium top-3 */}
                                   <div className="flex items-end justify-center gap-2 mb-3">
                                     {[1, 0, 2].map((idx) => {
-                                      const r = PRIZE_DIST[tournamentTier][idx];
+                                      const r = tournamentPrizeRows[idx];
                                       if (!r) return null;
                                       const isFirst = idx === 0;
                                       const isSecond = idx === 1;
@@ -2772,9 +2869,9 @@ const PrismLeague = () => {
                                     })}
                                   </div>
                                   {/* 4th+ places */}
-                                  {PRIZE_DIST[tournamentTier].length > 3 && (
+                                  {tournamentPrizeRows.length > 3 && (
                                     <div className="space-y-1">
-                                      {PRIZE_DIST[tournamentTier].slice(3).map((r) => (
+                                      {tournamentPrizeRows.slice(3).map((r) => (
                                         <div
                                           key={r.place}
                                           className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-white/[0.02] border border-white/[0.04] text-xs"
@@ -2833,9 +2930,17 @@ const PrismLeague = () => {
                                   )}
                                 {/* Join / Joined */}
                                 <div className="px-4 py-3 flex flex-col gap-2">
+                                  {activeTournamentModeLabel && (
+                                    <p className="text-center text-[10px] text-white/40">
+                                      This tier is running in{' '}
+                                      <span className="font-semibold text-cyan-300">{activeTournamentModeLabel}</span>.
+                                      Joining only unlocks verified runs in that mode.
+                                    </p>
+                                  )}
                                   {activeTournament.userJoined ? (
                                     <div className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-center bg-purple-500/15 text-purple-300">
-                                      Joined — good luck!
+                                      Joined{activeTournamentModeLabel ? ` for ${activeTournamentModeLabel}` : ''} —
+                                      good luck!
                                     </div>
                                   ) : (
                                     <button
@@ -2888,8 +2993,9 @@ const PrismLeague = () => {
                             <div className="px-3 py-2 rounded-xl bg-purple-500/[0.06] border border-purple-500/15 flex items-start gap-2">
                               <Zap className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
                               <p className="text-[10px] text-white/40 leading-relaxed">
-                                Scores are submitted automatically when your game ends. Your best run during the
-                                tournament window counts.
+                                Scores are submitted automatically when your game ends. Only verified{' '}
+                                {activeTournamentModeLabel || 'tournament'} runs count for this window, and your best
+                                one is kept.
                               </p>
                             </div>
                           </div>
@@ -3878,12 +3984,13 @@ const PrismLeague = () => {
                               border: '1px solid rgba(6,182,212,0.2)',
                               color: 'rgba(34,211,238,0.7)',
                             }}
+                            disabled={tournamentModeLocked}
                             onClick={() => {
                               stopAllAudio();
                               const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
                               let ni = (idx + 1) % GAME_MODES.length;
                               if (GAME_MODES[ni].id === 'text_quest') ni = (ni + 1) % GAME_MODES.length;
-                              setGameMode(GAME_MODES[ni].id);
+                              handleModeSelect(GAME_MODES[ni].id);
                               setGameState('start');
                             }}
                           >
