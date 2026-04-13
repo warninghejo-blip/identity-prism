@@ -630,6 +630,23 @@ const getRecentSybilAnalysis = (targetAddress) => {
   return null;
 };
 
+// === API VERSION DISPATCH ===
+const GAME_MODE_ALIASES = {
+  orbit: 'orbit', orbit_survival: 'orbit',
+  defender: 'destroyer', cosmic_defender: 'destroyer', destroyer: 'destroyer',
+  gravity: 'gravity', gravity_rush: 'gravity',
+  mine: 'mine', cosmic_mine: 'mine',
+  runner: 'runner', cosmic_runner: 'runner',
+};
+const toCanonGameMode = (raw) => GAME_MODE_ALIASES[String(raw || '').trim()] || null;
+
+function getApiMeta(req, pathname) {
+  return {
+    apiVersion: pathname.startsWith('/api/v2/') ? 'v2' : 'v1',
+    clientVersion: String(req.headers['x-client-version'] || '').trim() || 'unknown',
+  };
+}
+
 // ── JWT Auth ──────────────────────────────────────────────────────────────────
 const JWT_SECRET_FILE = path.join(process.cwd(), '.jwt_secret');
 const JWT_SECRET = (() => {
@@ -2613,9 +2630,9 @@ const applyCors = (req, res) => {
 
   res.setHeader('Access-Control-Allow-Origin', resolveCorsOrigin(req));
   res.setHeader('Vary', 'Origin');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,x-wallet-address,solana-client,x-action-version,x-blockchain-ids,x-admin-key,x-api-key');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type,authorization,x-wallet-address,solana-client,x-action-version,x-blockchain-ids,x-admin-key,x-api-key,x-client-version');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
-  res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version,X-Blockchain-Ids');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version,X-Blockchain-Ids,X-API-Version');
   res.setHeader('X-Action-Version', '2.1.3');
   res.setHeader('X-Blockchain-Ids', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
   // Security headers
@@ -3424,17 +3441,275 @@ const fetchIdentitySnapshot = async (address) => {
   };
 };
 
+// ═══ V1 COMPAT HANDLERS (old APK ≤1.0.32) ═══════════════════════════════════
+// These are simplified versions of the current (v2) handlers.
+// They write to the SAME data stores — no separate state.
+
+// a) GET /api/game/leaderboard — v1 shim: map legacy gameType aliases → canonical names
+async function handleGameLeaderboardGetV1(req, res, url) {
+  if (!ipRateLimit('lb_get', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+  const rawFilter = url.searchParams.get('gameType') || '';
+  const canonFilter = toCanonGameMode(rawFilter) || rawFilter;
+  const cacheKey = `lb:${canonFilter}`;
+  if (leaderboardCache && leaderboardCache.key === cacheKey && Date.now() - leaderboardCacheTime < 10_000) {
+    return respondJson(res, 200, leaderboardCache.data);
+  }
+  const filtered = canonFilter
+    ? leaderboardEntries.filter(e => (toCanonGameMode(e.gameType) || e.gameType || 'orbit') === canonFilter)
+    : leaderboardEntries;
+  const data = { entries: filtered.slice(0, 50) };
+  leaderboardCache = { key: cacheKey, data };
+  leaderboardCacheTime = Date.now();
+  respondJson(res, 200, data);
+}
+
+// b) POST /api/game/leaderboard — v1: accepts body.address, no JWT/session required
+async function handleGameLeaderboardV1(req, res, url) {
+  if (!ipRateLimit('lb_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+  try {
+    const raw = await readBody(req);
+    const parsed = JSON.parse(raw);
+    const { address, score, txSignature, gameType } = parsed;
+    if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
+      return respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
+    }
+    const playedAt = new Date().toISOString();
+    const canonMode = toCanonGameMode(gameType) || 'orbit';
+    const result = submitLeaderboardEntry({ address, score, playedAt, txSignature, gameType: canonMode });
+    triggerCompositeUpdate(address);
+    const filtered = leaderboardEntries.filter(e => (toCanonGameMode(e.gameType) || e.gameType || 'orbit') === canonMode);
+    respondJson(res, 200, { entry: result, leaderboard: filtered.slice(0, 50) });
+  } catch {
+    respondJson(res, 400, { error: 'Invalid JSON body' });
+  }
+}
+
+// c) POST /api/game/coins — v1: accept body.address OR JWT, no session proof
+async function handleGameCoinsV1(req, res, url) {
+  if (!ipRateLimit('game_coins_post', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+  try {
+    const raw = await readBody(req);
+    const parsed = JSON.parse(raw);
+    const { address: bodyAddr, delta, mode } = parsed;
+    // Accept JWT if provided, else fall back to body.address (old APK may not send JWT)
+    // Use optionalJwt so an invalid/missing token never auto-sends a 401
+    let addr = bodyAddr;
+    const _jwtV1 = optionalJwt(req, null);
+    if (_jwtV1.ok && _jwtV1.address) {
+      addr = _jwtV1.address;
+      if (bodyAddr && bodyAddr !== addr) return respondJson(res, 403, { error: 'Address mismatch' });
+    }
+    if (!addr || typeof addr !== 'string') return respondJson(res, 400, { error: 'address required' });
+    if (typeof delta !== 'number' || !Number.isFinite(delta) || delta === 0 || !Number.isInteger(delta)) {
+      return respondJson(res, 400, { error: 'delta (non-zero integer) required' });
+    }
+    if (delta > 0) {
+      const gameMode = mode || 'orbit';
+      const todayCoins = getGameCoinsToday(addr);
+      if (todayCoins >= DAILY_GAME_COIN_CAP) {
+        return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
+      }
+      let baseDelta = Math.min(delta, DAILY_GAME_COIN_CAP - todayCoins);
+      addGameCoinsToday(addr, baseDelta);
+      const boost = getStakingBoost(addr);
+      const effectiveDelta = boost > 0 ? Math.floor(baseDelta * (1 + boost)) : baseDelta;
+      const newBalance = getCoinBalance(addr) + effectiveDelta;
+      setCoinBalance(addr, newBalance);
+      addCoinEarned(addr, effectiveDelta);
+      return respondJson(res, 200, {
+        address: addr,
+        coins: newBalance,
+        earned: effectiveDelta,
+        dailyRemaining: Math.max(0, DAILY_GAME_COIN_CAP - getGameCoinsToday(addr)),
+      });
+    } else {
+      const absDelta = Math.abs(delta);
+      const current = getCoinBalance(addr);
+      if (current < absDelta) return respondJson(res, 400, { error: 'Insufficient balance' });
+      setCoinBalance(addr, current - absDelta);
+      addCoinSpent(addr, absDelta);
+      return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr) });
+    }
+  } catch {
+    respondJson(res, 400, { error: 'Invalid JSON body' });
+  }
+}
+
+// d) GET /api/game/revives — v1: no holder gate, always eligible=true
+async function handleRevivesGetV1(req, res, url) {
+  if (!ipRateLimit('game_rev', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+  const addr = url.searchParams.get('address') || '';
+  const mode = url.searchParams.get('mode') || 'orbit';
+  if (!addr) return respondJson(res, 400, { error: 'address query param required' });
+  if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
+    return respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
+  }
+  const left = getRevivesLeft(addr, mode);
+  respondJson(res, 200, { address: addr, mode, left, max: FREE_REVIVES_PER_DAY, eligible: true });
+}
+
+// e) POST /api/game/revives — v1: allow for everyone, no holder check
+async function handleRevivesPostV1(req, res, url) {
+  if (!ipRateLimit('revive_post', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+  try {
+    const raw = await readBody(req);
+    const parsed = JSON.parse(raw);
+    const { address: addr, mode } = parsed;
+    if (!addr || typeof addr !== 'string') return respondJson(res, 400, { error: 'address (string) required' });
+    if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
+      return respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
+    }
+    const success = useRevive(addr, mode);
+    if (!success) {
+      const left = getRevivesLeft(addr, mode);
+      return respondJson(res, 429, { error: 'No free revives left today', left, max: FREE_REVIVES_PER_DAY });
+    }
+    const left = getRevivesLeft(addr, mode);
+    respondJson(res, 200, { address: addr, mode, success: true, left, max: FREE_REVIVES_PER_DAY });
+  } catch {
+    respondJson(res, 400, { error: 'Invalid JSON body' });
+  }
+}
+
+// f) POST /api/prism/earn — v1: simplified, no cooldowns for scan_wallet, accept client amount
+async function handlePrismEarnV1(req, res, url) {
+  if (!ipRateLimit('prism_earn', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+  try {
+    const {
+      address,
+      source,
+      amount,
+      description,
+    } = JSON.parse(await readBody(req));
+    if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
+    const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 5, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 100, referral: 20, text_quest: 1200, sybil_hunt: 70 };
+    if (!source || !MAX_EARN_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
+    const maxAllowed = MAX_EARN_PER_CALL[source];
+    if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source}` });
+    let earned = Math.max(0, Math.floor(Number(amount)));
+    if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
+    // Apply daily caps (same caps as v2)
+    const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
+    if (GAME_EARN_SOURCES.has(source)) {
+      const todayCoins = getGameCoinsToday(address);
+      if (todayCoins >= DAILY_GAME_COIN_CAP) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
+      let baseDelta = Math.min(earned, DAILY_GAME_COIN_CAP - todayCoins);
+      addGameCoinsToday(address, baseDelta);
+      const gameBoost = getStakingBoost(address);
+      earned = gameBoost > 0 ? Math.floor(baseDelta * (1 + gameBoost)) : baseDelta;
+    } else {
+      const today = new Date().toISOString().slice(0, 10);
+      const ngKey = `nongame_daily:${address}`;
+      const ngEntry = prismEarnRateLimit.get(ngKey);
+      let ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
+      if (ngEarned >= NON_GAME_DAILY_EARN_CAP) return respondJson(res, 429, { error: 'Daily earn cap reached', dailyRemaining: 0 });
+      earned = Math.min(earned, NON_GAME_DAILY_EARN_CAP - ngEarned);
+      prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
+      const earnBoost = getStakingBoost(address);
+      if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
+    }
+    const prevBal = getCoinBalance(address);
+    const newBal = prevBal + earned;
+    setCoinBalance(address, newBal);
+    addCoinEarned(address, earned);
+    const wEarn = walletDatabase.get(address);
+    if (wEarn) { wEarn.coins = newBal; saveWalletDatabaseDebounced(); }
+    const bal = getPrismBalance(address);
+    const tx = {
+      id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      address, amount: earned, type: 'earn', source: source || 'unknown',
+      description: description || `Earned ${earned} Coins`,
+      timestamp: new Date().toISOString(),
+    };
+    const txs = prismTransactions.get(address) || [];
+    txs.unshift(tx);
+    if (txs.length > 500) txs.length = 500;
+    prismTransactions.set(address, txs);
+    debouncedSavePrism();
+    respondJson(res, 200, { balance: bal, earned });
+  } catch { respondJson(res, 400, { error: 'Invalid request body' }); }
+}
+
+// ═══ V2 MIGRATION: lazy account state seeding on first v2 request ════════════
+const V2_MIGRATION_REV = 1;
+
+function ensureV2AccountState(address) {
+  const wallet = walletDatabase.get(address);
+  if (!wallet) return;
+  if (wallet._migrations?.apiV2 === V2_MIGRATION_REV) return wallet;
+
+  const ranger = getServerRangerSnapshot(address, wallet);
+
+  const playerEntries = (leaderboardEntries || []).filter(e => e.address === address);
+  const bestScore = Math.max(0, ...playerEntries.map(e => Number(e.score) || 0), 0);
+  const hasMint = mintedAddresses.has(address);
+  const scans = Number(wallet.scanCount) || 0;
+
+  const seedQuest = (existing, progress, completed) =>
+    existing || { progress, completed: completed ?? progress > 0, claimed: false };
+
+  const qp = questProgress.get(address) || { quests: {}, streakDays: 0 };
+  qp.quests = {
+    ...qp.quests,
+    ot_first_scan: seedQuest(qp.quests?.ot_first_scan, Math.min(1, scans)),
+    ot_first_mint: seedQuest(qp.quests?.ot_first_mint, hasMint ? 1 : 0),
+    ot_first_game: seedQuest(qp.quests?.ot_first_game, playerEntries.length > 0 ? 1 : 0),
+    ot_score1000: seedQuest(qp.quests?.ot_score1000, bestScore, bestScore >= 1000),
+  };
+  questProgress.set(address, { ...qp, updatedAt: new Date().toISOString() });
+
+  wallet.rangerSnapshot = { xp: ranger.xp, rank: ranger.rank, sources: ranger.sources, updatedAt: new Date().toISOString() };
+  wallet.forgeState = wallet.forgeState || createEmptyForgeLoadout(address);
+  wallet._migrations = { ...(wallet._migrations || {}), apiV2: V2_MIGRATION_REV, migratedAt: new Date().toISOString() };
+  walletDatabase.set(address, wallet);
+  saveWalletDatabaseDebounced();
+
+  return wallet;
+}
+
 const server = http.createServer(async (req, res) => {
   applyCors(req, res);
-
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  const pathname = url.pathname;
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
+
+  // ── API Version Dispatch ──────────────────────────────────────────────────
+  // Detect version BEFORE parsing url/pathname so we can rewrite for v2
+  const _rawUrl = req.url ?? '/';
+  const _apiMeta = getApiMeta(req, new URL(_rawUrl, 'http://localhost').pathname);
+  res.setHeader('X-API-Version', _apiMeta.apiVersion);
+
+  if (_apiMeta.apiVersion === 'v2') {
+    // Rewrite /api/v2/* → /api/* before parsing, so existing router works unchanged
+    req.url = _rawUrl.replace('/api/v2/', '/api/');
+    // Run lazy migration for authenticated requests (optionalJwt never sends a response)
+    try {
+      const _jwtCheck = optionalJwt(req, null);
+      if (_jwtCheck && _jwtCheck.ok && _jwtCheck.address) ensureV2AccountState(_jwtCheck.address);
+    } catch { /* skip migration on error */ }
+    // Fall through to existing router (url/pathname parsed below with rewritten URL)
+  }
+
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const pathname = url.pathname;
+
+  if (_apiMeta.apiVersion === 'v1') {
+    // V1: intercept only the 6 breaking routes — everything else falls through
+    const V1_HANDLERS = {
+      'GET /api/game/leaderboard': handleGameLeaderboardGetV1,
+      'POST /api/game/leaderboard': handleGameLeaderboardV1,
+      'POST /api/game/coins': handleGameCoinsV1,
+      'GET /api/game/revives': handleRevivesGetV1,
+      'POST /api/game/revives': handleRevivesPostV1,
+      'POST /api/prism/earn': handlePrismEarnV1,
+    };
+    const v1Key = `${req.method} ${pathname}`;
+    if (V1_HANDLERS[v1Key]) return V1_HANDLERS[v1Key](req, res, url);
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   if (pathname === '/api/market/collection-stats' && req.method === 'GET') {
     if (!ipRateLimit('mkt_colstats', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });

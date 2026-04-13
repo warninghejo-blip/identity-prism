@@ -236,7 +236,7 @@ export async function earnPrism(
   const desc = description ?? `Earned ${earned} Coins from ${source.replace(/_/g, ' ')}`;
 
   // Try server first
-  const serverResult = await apiCall<{ balance: PrismBalance; earned: number }>('/api/prism/earn', {
+  const serverResult = await apiCall<{ balance: PrismBalance; earned: number }>('/api/v2/prism/earn', {
     address,
     source,
     amount: earned,

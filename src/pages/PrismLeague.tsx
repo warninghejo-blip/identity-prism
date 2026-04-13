@@ -157,7 +157,7 @@ async function fetchServerLeaderboard(gameType?: string): Promise<LeaderboardEnt
     const base = getServerBase();
     if (!base) return [];
     const params = gameType ? `?gameType=${gameType}` : '';
-    const res = await fetch(`${base}/api/game/leaderboard${params}`);
+    const res = await fetch(`${base}/api/v2/game/leaderboard${params}`);
     if (!res.ok) return [];
     const data = await res.json();
     return (data?.entries || []).map(
@@ -197,7 +197,7 @@ async function submitToServerLeaderboard(entry: {
       /* ignore */
     }
     if (!jwt) return; // no token — server will 401 anyway
-    await fetch(`${base}/api/game/leaderboard`, {
+    await fetch(`${base}/api/v2/game/leaderboard`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -260,7 +260,7 @@ async function syncCoinsToServer(
     const jwt = getChallengeJwt();
     if (!jwt) return null; // Require JWT to sync coins
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
-    const response = await fetch(`${base}/api/game/coins`, {
+    const response = await fetch(`${base}/api/v2/game/coins`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ address: walletAddress, coins, delta, mode, gameSessionId }),
@@ -350,7 +350,7 @@ async function fetchServerRevives(
   try {
     const base = getServerBase();
     if (!base) return null;
-    const res = await fetch(`${base}/api/game/revives?address=${encodeURIComponent(walletAddress)}&mode=${mode}`);
+    const res = await fetch(`${base}/api/v2/game/revives?address=${encodeURIComponent(walletAddress)}&mode=${mode}`);
     if (!res.ok) return null; // server unavailable — keep localStorage fallback
     const data = await res.json();
     return { left: data?.left ?? 0, max: data?.max ?? 3 };
@@ -366,7 +366,7 @@ async function serverRevive(walletAddress: string, mode: ArcadeGameMode): Promis
     const jwt = getChallengeJwt();
     if (!jwt) return { success: false, left: 0 }; // Require JWT
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
-    const res = await fetch(`${base}/api/game/revives`, {
+    const res = await fetch(`${base}/api/v2/game/revives`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ address: walletAddress, mode }),

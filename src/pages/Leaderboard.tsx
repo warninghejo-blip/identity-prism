@@ -177,7 +177,7 @@ export default function Leaderboard() {
             }
           }
         } else if (currentTab !== 'tournament') {
-          const res = await fetch(`${base}/api/game/leaderboard?gameType=${currentTab}`);
+          const res = await fetch(`${base}/api/v2/game/leaderboard?gameType=${currentTab}`);
           if (res.ok) {
             const data = await res.json();
             setGameEntries((prev) => ({
