@@ -32,6 +32,7 @@ const CosmicHub = React.lazy(() => import('@/components/CosmicHubV3'));
 import { getPrismBalance, earnPrism, canEarnFromScan, markScanEarned, type PrismBalance } from '@/lib/prismCoin';
 import { trackWalletConnect, trackWalletDisconnect, trackMint } from '@/lib/analytics';
 const OnboardingModal = React.lazy(() => import('@/components/OnboardingModal'));
+const WelcomeBackModal = React.lazy(() => import('@/components/WelcomeBackModal'));
 
 type ViewState = 'landing' | 'scanning' | 'ready' | 'hub';
 type PaymentToken = 'SOL' | 'SKR' | 'COINS';
@@ -136,6 +137,10 @@ const Index = () => {
     }
   });
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [welcomeBackData, setWelcomeBackData] = useState<import('@/components/WelcomeBackModal').MigrationData | null>(
+    null,
+  );
+  const [showWelcomeBack, setShowWelcomeBack] = useState(false);
   const [viewState, _setViewState] = useState<ViewState>(
     shouldOpenCard && urlAddress
       ? 'ready'
@@ -911,6 +916,21 @@ const Index = () => {
       // Show onboarding for first-time users
       if (!localStorage.getItem('ip_onboarding_v1')) {
         setShowOnboarding(true);
+      }
+      // Show Welcome Back modal for v1→v2 migrated users (once per address)
+      if (resolvedAddress && !localStorage.getItem(`prism_welcome_shown_${resolvedAddress}`)) {
+        const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
+        if (base) {
+          fetch(`${base}/api/v2/migration-status?address=${encodeURIComponent(resolvedAddress)}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data?.migrated && data.migrationData) {
+                setWelcomeBackData(data.migrationData);
+                setShowWelcomeBack(true);
+              }
+            })
+            .catch(() => {});
+        }
       }
       // Load Coin balance + earn scan reward (rate-limited: 1/hour)
       if (resolvedAddress) {
@@ -1814,6 +1834,26 @@ const Index = () => {
             </div>
           )}
         </>
+      )}
+
+      {/* Welcome Back modal for v1→v2 migrated users */}
+      {showWelcomeBack && welcomeBackData && (
+        <React.Suspense fallback={null}>
+          <WelcomeBackModal
+            open={showWelcomeBack}
+            migrationData={welcomeBackData}
+            onClose={() => {
+              setShowWelcomeBack(false);
+              if (resolvedAddress) {
+                try {
+                  localStorage.setItem(`prism_welcome_shown_${resolvedAddress}`, '1');
+                } catch {
+                  /* ignore */
+                }
+              }
+            }}
+          />
+        </React.Suspense>
       )}
     </div>
   );

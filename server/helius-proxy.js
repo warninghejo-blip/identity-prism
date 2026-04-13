@@ -3661,6 +3661,22 @@ function ensureV2AccountState(address) {
   wallet.rangerSnapshot = { xp: ranger.xp, rank: ranger.rank, sources: ranger.sources, updatedAt: new Date().toISOString() };
   wallet.forgeState = wallet.forgeState || createEmptyForgeLoadout(address);
   wallet._migrations = { ...(wallet._migrations || {}), apiV2: V2_MIGRATION_REV, migratedAt: new Date().toISOString() };
+
+  // Store migration result so the welcome-back modal can display past achievements
+  wallet._v2MigrationResult = {
+    rangerRank: ranger.rank,
+    totalXP: ranger.xp,
+    xpBreakdown: {
+      gameBestScores: ranger.sources?.gameBestScores || 0,
+      gamesPlayed: ranger.sources?.gamesPlayed || 0,
+      achievements: ranger.sources?.achievements || 0,
+      coinsEarned: ranger.sources?.coinsEarned || 0,
+    },
+    coinBalance: getCoinBalance(address),
+    gamesPlayed: playerEntries.length,
+    achievementCount: Object.keys((walletDatabase.get(address)?._achievements?.unlocked) || {}).length,
+  };
+
   walletDatabase.set(address, wallet);
   saveWalletDatabaseDebounced();
 
@@ -3710,6 +3726,23 @@ const server = http.createServer(async (req, res) => {
     if (V1_HANDLERS[v1Key]) return V1_HANDLERS[v1Key](req, res, url);
   }
   // ─────────────────────────────────────────────────────────────────────────
+
+  // GET /api/migration-status?address=X  (accessed via /api/v2/migration-status)
+  // Returns _v2MigrationResult for the address if it was just migrated, else { migrated: false }
+  if (pathname === '/api/migration-status' && req.method === 'GET') {
+    const addr = String(url.searchParams.get('address') ?? '').trim();
+    if (!addr) return respondJson(res, 400, { error: 'address required' });
+    const walletEntry = walletDatabase.get(addr);
+    if (!walletEntry || !walletEntry._v2MigrationResult) {
+      return respondJson(res, 200, { migrated: false });
+    }
+    const result = walletEntry._v2MigrationResult;
+    // Clear after reading so it only shows once
+    delete walletEntry._v2MigrationResult;
+    walletDatabase.set(addr, walletEntry);
+    saveWalletDatabaseDebounced();
+    return respondJson(res, 200, { migrated: true, migrationData: result });
+  }
 
   if (pathname === '/api/market/collection-stats' && req.method === 'GET') {
     if (!ipRateLimit('mkt_colstats', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
