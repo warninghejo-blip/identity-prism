@@ -1,0 +1,62 @@
+# Standalone Prism submission template.
+# Replace placeholders and host the referenced pages publicly before submission.
+
+publisher:
+  name: Prism Publisher Name
+  website: https://prism.example
+  email: support@prism.example
+  support_email: support@prism.example
+
+app:
+  name: Prism App Name
+  address:
+  android_package: com.prism.app
+  urls:
+    license_url: https://prism.example/legal/terms.html
+    copyright_url: https://prism.example/legal/copyright.html
+    privacy_policy_url: https://prism.example/legal/privacy.html
+    website: https://prism.example
+  media:
+    - purpose: icon
+      uri: ../dapp-store/media/app_icon.png
+
+release:
+  address:
+  media:
+    - purpose: icon
+      uri: ../dapp-store/media/release_icon.png
+    - purpose: banner
+      uri: ../dapp-store/media/banner.png
+    - purpose: screenshot
+      uri: ../dapp-store/media/screenshot_1.png
+    - purpose: screenshot
+      uri: ../dapp-store/media/screenshot_2.png
+    - purpose: screenshot
+      uri: ../dapp-store/media/screenshot_3.png
+  files:
+    - purpose: install
+      uri: ../dapp-store/app-release.apk
+  catalog:
+    en-US:
+      name: Prism App Name
+      short_description: Replace with a clear one-line value proposition
+      long_description: |-
+        Replace with a real product description.
+        Keep wallet permissions, PRISM utility flows, Vault/staking language, NFT functionality,
+        and core redemption flows explicit.
+      new_in_version: Replace with actual release notes
+      saga_features: Replace with wallet adapter / mobile-specific notes
+  android_details:
+    cert_fingerprint:
+    min_sdk: 24
+    version:
+    version_code:
+    locales:
+      - en-US
+
+solana_mobile_dapp_publisher_portal:
+  google_store_package: ""
+  testing_instructions: |-
+    1. Describe the exact wallet flow reviewers should test.
+    2. Provide a safe public or disposable test wallet if relevant.
+    3. Explain any PRISM purchase, vault, mint, payment, or subscription redemption flow.
