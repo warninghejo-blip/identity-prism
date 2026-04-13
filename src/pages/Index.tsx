@@ -156,6 +156,7 @@ const Index = () => {
   }, []);
   const [scanningMessageIndex, setScanningMessageIndex] = useState(0);
   const [jwtSigning, setJwtSigning] = useState(false);
+  const [jwtDeclined, setJwtDeclined] = useState(false);
   const cardCaptureRef = useRef<HTMLDivElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mwaErrorRef = useRef<string | null>(null);
@@ -753,7 +754,7 @@ const Index = () => {
         try {
           await obtainJwt(wallet);
         } catch {
-          /* empty */
+          setJwtDeclined(true);
         }
         setJwtSigning(false);
       }
@@ -1595,6 +1596,21 @@ const Index = () => {
             onDisconnect={handleDisconnect}
             identityScore={walletData.score}
             planetTier={walletData.traits?.planetTier}
+            jwtDeclined={jwtDeclined}
+            onRequestSign={() => {
+              setJwtDeclined(false);
+              if (!wallet.publicKey || !wallet.signMessage) return;
+              import('@/components/prism/shared').then(async ({ obtainJwt, setAuthWallet }) => {
+                setAuthWallet(wallet);
+                setJwtSigning(true);
+                try {
+                  await obtainJwt(wallet);
+                } catch {
+                  setJwtDeclined(true);
+                }
+                setJwtSigning(false);
+              });
+            }}
           />
         </React.Suspense>
       ) : isNftMode ? (

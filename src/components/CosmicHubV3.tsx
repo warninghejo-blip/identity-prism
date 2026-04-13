@@ -74,6 +74,8 @@ export interface CosmicHubProps {
   onDisconnect?: () => void;
   identityScore?: number;
   planetTier?: PlanetTier;
+  jwtDeclined?: boolean;
+  onRequestSign?: () => void;
 }
 
 /* ── Navigation module definitions ── */
@@ -690,6 +692,8 @@ export default function CosmicHub({
   onDisconnect,
   identityScore,
   planetTier,
+  jwtDeclined,
+  onRequestSign,
 }: CosmicHubProps) {
   const navigate = useNavigate();
   const [sybilGrade, setSybilGrade] = useState<string | null>(null);
@@ -807,12 +811,11 @@ export default function CosmicHub({
           className="w-full px-4 py-2 lg:px-5 lg:pt-5 lg:pb-3 flex justify-between items-center pointer-events-auto"
         >
           <div className="flex items-center gap-2 lg:gap-3">
-            <div className="w-7 h-7 lg:w-8 lg:h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-500 flex items-center justify-center flex-shrink-0">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-                <path d="M12 2L2 9L12 16L22 9L12 2Z" />
-                <path d="M2 15L12 22L22 15" fill="none" stroke="white" strokeWidth="2" />
-              </svg>
-            </div>
+            <img
+              src="/phav.png"
+              alt="Identity Prism"
+              className="w-7 h-7 lg:w-8 lg:h-8 rounded-lg flex-shrink-0 object-contain"
+            />
             <span className="text-xs lg:text-sm font-bold tracking-wider text-white/90">IDENTITY PRISM</span>
           </div>
           <div className="flex items-center gap-2">
@@ -829,6 +832,20 @@ export default function CosmicHub({
             )}
           </div>
         </motion.header>
+
+        {jwtDeclined && (
+          <div className="mx-4 mt-2 p-2.5 rounded-xl bg-amber-500/[0.08] border border-amber-500/20 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-amber-400/80 font-medium">
+              Sign wallet to earn coins and save progress
+            </span>
+            <button
+              onClick={onRequestSign}
+              className="px-3 py-1 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors flex-shrink-0"
+            >
+              Sign Now
+            </button>
+          </div>
+        )}
 
         {/* Main Content — mobile: vertical stack, desktop: side-by-side */}
         <div className="flex-1 w-full max-w-5xl mx-auto px-4 lg:px-5 pt-2 pb-6 lg:pb-8 flex flex-col lg:flex-row gap-2 lg:gap-6 items-start lg:justify-center">

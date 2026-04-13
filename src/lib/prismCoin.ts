@@ -8,6 +8,7 @@
  */
 
 import { getApiBase, ensureJwt } from '@/components/prism/shared';
+import { toast } from 'sonner';
 
 // ── Types ──
 
@@ -234,6 +235,14 @@ export async function earnPrism(
 ): Promise<{ balance: PrismBalance; earned: number }> {
   const earned = Math.max(0, amount ?? PRISM_EARN_RATES[source] ?? 1);
   const desc = description ?? `Earned ${earned} Coins from ${source.replace(/_/g, ' ')}`;
+
+  // Check JWT — show toast if not signed
+  const jwt = await ensureJwt();
+  if (!jwt) {
+    toast.error('Sign your wallet to earn coins', { id: 'jwt-required' });
+    const balance = await getPrismBalance(address);
+    return { balance, earned: 0 };
+  }
 
   // Try server first
   const serverResult = await apiCall<{ balance: PrismBalance; earned: number }>('/api/v2/prism/earn', {
