@@ -46,6 +46,7 @@ import {
   type WalletPreview,
 } from '@/components/prism/shared';
 import { earnPrism } from '@/lib/prismCoin';
+import { RANGER_RANKS } from '@/lib/rangerRanks';
 
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
 const MAX_RECENT = 6;
@@ -692,7 +693,16 @@ export default function PrismScanner() {
         {(huntStats.totalHunts > 0 || myAddress) && (
           <div className="rounded-2xl bg-gradient-to-r from-amber-500/[0.06] to-red-500/[0.04] border border-amber-500/[0.1] p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div className="text-2xl">{huntRankData.icon}</div>
+              <div className="relative">
+                <div className="text-2xl">{huntRankData.icon}</div>
+                {RANGER_RANKS[currentRankIdx] && (
+                  <img
+                    src={RANGER_RANKS[currentRankIdx].image}
+                    alt={RANGER_RANKS[currentRankIdx].name}
+                    className="w-6 h-6 object-contain absolute -bottom-1 -right-1"
+                  />
+                )}
+              </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className={`text-sm font-black ${huntRankData.color}`}>{huntRankData.name}</span>
@@ -1204,7 +1214,16 @@ export default function PrismScanner() {
                         key={rank.name}
                         className={`flex items-center gap-2.5 px-3 py-2 rounded-xl transition-colors ${isCurrent ? 'bg-amber-400/[0.08] border border-amber-400/20' : unlocked ? 'bg-white/[0.02]' : 'opacity-40'}`}
                       >
-                        <span className="text-lg">{rank.icon}</span>
+                        <div className="relative shrink-0">
+                          <span className="text-lg">{rank.icon}</span>
+                          {RANGER_RANKS[i] && (
+                            <img
+                              src={RANGER_RANKS[i].image}
+                              alt={RANGER_RANKS[i].name}
+                              className="w-4 h-4 object-contain absolute -bottom-0.5 -right-1 opacity-70"
+                            />
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <span className={`text-[11px] font-bold ${unlocked ? rank.color : 'text-white/20'}`}>
                             {rank.name}

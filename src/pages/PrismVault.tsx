@@ -197,17 +197,31 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
           Buy Coins
         </h3>
         <div className="flex items-center gap-3">
-          <div className="flex rounded-lg border border-white/10 overflow-hidden">
+          <div className="flex items-center bg-white/[0.03] border border-white/10 rounded-full p-1">
             <button
               onClick={() => setPayWith('sol')}
-              className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${payWith === 'sol' ? 'bg-purple-500/20 text-purple-300' : 'text-white/30 hover:text-white/50'}`}
+              className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                payWith === 'sol'
+                  ? 'bg-gradient-to-r from-purple-600 to-cyan-500 text-white shadow-lg shadow-purple-500/20'
+                  : 'text-white/40 hover:text-white/60'
+              }`}
             >
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${payWith === 'sol' ? 'bg-white/60' : 'bg-purple-500/50'}`}
+              />
               SOL
             </button>
             <button
               onClick={() => setPayWith('skr')}
-              className={`px-2.5 py-1 text-[10px] font-bold transition-colors ${payWith === 'skr' ? 'bg-cyan-500/20 text-cyan-300' : 'text-white/30 hover:text-white/50'}`}
+              className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
+                payWith === 'skr'
+                  ? 'bg-gradient-to-r from-amber-600 to-yellow-500 text-white shadow-lg shadow-amber-500/20'
+                  : 'text-white/40 hover:text-white/60'
+              }`}
             >
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${payWith === 'skr' ? 'bg-white/60' : 'bg-amber-500/50'}`}
+              />
               SKR
             </button>
           </div>
