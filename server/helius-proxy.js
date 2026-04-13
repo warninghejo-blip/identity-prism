@@ -4803,8 +4803,9 @@ const server = http.createServer(async (req, res) => {
       respondJson(res, 200, leaderboardCache.data);
       return;
     }
-    const filtered = gameTypeFilter
-      ? leaderboardEntries.filter(e => (e.gameType || 'orbit') === gameTypeFilter)
+    const canonFilter = toCanonGameMode(gameTypeFilter) || gameTypeFilter;
+    const filtered = canonFilter
+      ? leaderboardEntries.filter(e => (toCanonGameMode(e.gameType) || e.gameType || 'orbit') === canonFilter)
       : leaderboardEntries;
     const data = { entries: filtered.slice(0, 50) };
     leaderboardCache = { key: cacheKey, data };

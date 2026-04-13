@@ -64,7 +64,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
         Transaction: SolTx,
       } = await import('@solana/web3.js');
       const base = getApiBase();
-      const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
+      const conn = new SolConn(base.replace(/\/api(\/.*)?$/, '') + '/rpc', 'confirmed');
       const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
 
       let sig: string;
@@ -400,6 +400,7 @@ function PrismVaultSection({
   const [claiming, setClaiming] = useState(false);
   const [unstaking, setUnstaking] = useState(false);
   const [showUnstakeWarning, setShowUnstakeWarning] = useState(false);
+  const [showStakeConfirm, setShowStakeConfirm] = useState(false);
 
   const tier = VAULT_TIERS.find((t) => t.id === selectedTier)!;
 
@@ -518,7 +519,11 @@ function PrismVaultSection({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unstake failed');
-      toast.success(data.message || 'Unstaked successfully');
+      toast.success(
+        data.penalty > 0
+          ? `Unstaked: received ${data.returned?.toLocaleString()} coins (${data.penalty?.toLocaleString()} burned as penalty)`
+          : data.message || 'Unstaked successfully',
+      );
       setVaultStatus({ staked: false });
       onBalanceChange();
     } catch (e) {
@@ -634,10 +639,7 @@ function PrismVaultSection({
             <Button
               variant="outline"
               className="h-11 px-5 text-xs font-bold border-red-500/20 text-red-400/70 hover:bg-red-500/10"
-              onClick={() => {
-                if (isLocked) setShowUnstakeWarning(true);
-                else handleUnstake();
-              }}
+              onClick={() => setShowUnstakeWarning(true)}
               disabled={unstaking}
             >
               {unstaking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Unstake'}
@@ -646,10 +648,14 @@ function PrismVaultSection({
 
           {showUnstakeWarning && (
             <div className="mt-3 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/20">
-              <div className="flex items-center gap-2 text-red-400 text-xs font-bold mb-2">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                25% penalty will be burned on early unstake
-              </div>
+              {isLocked ? (
+                <div className="flex items-center gap-2 text-red-400 text-xs font-bold mb-2">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                  25% penalty will be burned on early unstake
+                </div>
+              ) : (
+                <div className="text-white/50 text-xs mb-2">Are you sure you want to unstake all coins?</div>
+              )}
               <div className="flex gap-2">
                 <Button
                   size="sm"
@@ -753,7 +759,18 @@ function PrismVaultSection({
                   }
                 : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.25)' }
             }
-            onClick={handleStake}
+            onClick={() => {
+              const amount = Number(stakeAmount);
+              if (!amount || amount < tier.min) {
+                toast.error(`Minimum stake is ${tier.min.toLocaleString()} coins for ${tier.label}`);
+                return;
+              }
+              if (amount > balance) {
+                toast.error('Insufficient balance');
+                return;
+              }
+              setShowStakeConfirm(true);
+            }}
             disabled={!canStake || staking}
           >
             {staking ? (
@@ -771,6 +788,36 @@ function PrismVaultSection({
             <p className="text-red-400/60 text-[10px] mt-2 text-center">
               Minimum for {tier.label} is {tier.min.toLocaleString()} coins
             </p>
+          )}
+          {showStakeConfirm && (
+            <div className="mt-3 p-3 rounded-xl bg-purple-500/[0.06] border border-purple-500/20">
+              <div className="text-white/70 text-xs mb-2">
+                Stake <span className="font-bold text-white">{Number(stakeAmount).toLocaleString()}</span> coins in{' '}
+                {tier.label} tier?
+              </div>
+              <div className="text-[10px] text-amber-400/60 mb-2">Early unstake penalty: 25% burned</div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 h-8 text-[10px] border-white/10 text-white/40"
+                  onClick={() => setShowStakeConfirm(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="flex-1 h-8 text-[10px] bg-purple-600 hover:bg-purple-500 text-white"
+                  onClick={() => {
+                    setShowStakeConfirm(false);
+                    handleStake();
+                  }}
+                  disabled={staking}
+                >
+                  {staking ? 'Staking...' : 'Confirm Stake'}
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       )}
