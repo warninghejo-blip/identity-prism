@@ -893,6 +893,36 @@ export default function CosmicHub({
           </div>
         </div>
 
+        {/* How to Earn Coins */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.6 }}
+          className="w-full max-w-xs mx-auto px-4 mb-2 pointer-events-auto"
+        >
+          <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-2">How to Earn Coins</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {[
+              { label: 'Games', limit: 'per session', icon: '🎮' },
+              { label: 'Sybil Hunt', limit: '500/day', icon: '🎯' },
+              { label: 'Quiz', limit: '500/day', icon: '🧠' },
+              { label: 'Arena', limit: 'no cap', icon: '⚔️' },
+              { label: 'Quests', limit: 'daily+weekly', icon: '📋' },
+              { label: 'Vault', limit: 'passive', icon: '💰' },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/[0.02] border border-white/[0.04]"
+              >
+                <span className="text-[10px] text-white/40 font-bold">
+                  {item.icon} {item.label}
+                </span>
+                <span className="text-[9px] text-amber-300/30 font-bold shrink-0 ml-2">{item.limit}</span>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+
         {/* Daily Earnings Progress */}
         {walletAddress && <DailyEarnings address={walletAddress} />}
 

@@ -1254,7 +1254,10 @@ const BlackHole = () => {
         : sendTransaction(tx, connection, { skipPreflight: true, preflightCommitment: 'confirmed' });
 
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Wallet signing timed out — please try again')), 120_000),
+        setTimeout(
+          () => reject(new Error('Wallet signing timed out — please approve or reject in your wallet')),
+          30_000,
+        ),
       );
       const signature = await Promise.race([signPromise, timeoutPromise]);
       await waitForSignatureConfirmation(signature, label);
@@ -1288,7 +1291,10 @@ const BlackHole = () => {
         : sendTransaction(tx, connection, { skipPreflight: true, preflightCommitment: 'confirmed' });
 
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Wallet signing timed out — please try again')), 120_000),
+        setTimeout(
+          () => reject(new Error('Wallet signing timed out — please approve or reject in your wallet')),
+          30_000,
+        ),
       );
       const signature = await Promise.race([signPromise, timeoutPromise]);
       await waitForSignatureConfirmation(signature, label);
@@ -1320,7 +1326,10 @@ const BlackHole = () => {
         executeSwapTransaction(encodeVersionedTransaction(signed as VersionedTransaction), requestId),
       );
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Wallet signing timed out — please try again')), 120_000),
+        setTimeout(
+          () => reject(new Error('Wallet signing timed out — please approve or reject in your wallet')),
+          30_000,
+        ),
       );
       const result = await Promise.race([signPromise, timeoutPromise]);
       await waitForSignatureConfirmation(result.signature, label);
@@ -1556,6 +1565,10 @@ const BlackHole = () => {
     } catch (error) {
       if (isWalletRejectError(error)) {
         toast.info('Cleanup cancelled');
+      } else if (error instanceof Error && error.message.includes('timed out')) {
+        toast.error('Wallet did not respond — please try again', {
+          description: 'The signature request timed out after 30 seconds.',
+        });
       } else {
         toast.error('Resolution failed', {
           description: error instanceof Error ? error.message : 'Unknown error',
@@ -2215,7 +2228,7 @@ const BlackHole = () => {
               </div>
 
               {visibleTokens.length === 0 ? (
-                <div className="py-10 text-center text-zinc-600 text-sm">
+                <div className="py-4 text-center text-zinc-600 text-sm">
                   {isLoading
                     ? 'Scanning for threats...'
                     : 'No threats detected. Toggle "Show all" to review all assets.'}
@@ -2234,7 +2247,7 @@ const BlackHole = () => {
                     return (
                       <div
                         key={key}
-                        className={`grid items-center py-1 min-h-[44px] rounded-xl border transition-colors ${
+                        className={`grid items-center py-1.5 px-1 rounded-xl border transition-colors ${
                           selectedTokens.has(key)
                             ? 'bg-cyan-950/15 border-cyan-900/30'
                             : selectable

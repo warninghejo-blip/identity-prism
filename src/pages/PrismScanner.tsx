@@ -49,8 +49,32 @@ import { earnPrism } from '@/lib/prismCoin';
 import { RANGER_RANKS } from '@/lib/rangerRanks';
 
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
-const MAX_RECENT = 6;
+const SCAN_HISTORY_KEY = 'prism_scan_history_v1';
 const BASE = () => (typeof window !== 'undefined' ? window.location.origin : '');
+
+/* ── Scan History (with verdict) ── */
+interface ScanHistoryEntry {
+  address: string;
+  verdict: string;
+  verdictKey: string;
+  score: number;
+  timestamp: number;
+}
+function getScanHistory(): ScanHistoryEntry[] {
+  try {
+    return JSON.parse(localStorage.getItem(SCAN_HISTORY_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+function saveToScanHistory(address: string, verdictKey: string, verdict: string, score: number) {
+  try {
+    const history = getScanHistory().filter((h) => h.address !== address);
+    history.unshift({ address, verdict, verdictKey, score, timestamp: Date.now() });
+    if (history.length > 20) history.length = 20;
+    localStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(history));
+  } catch {}
+}
 
 /* ── Hunt stats (localStorage) ── */
 const HUNT_STATS_KEY = 'sybil_hunt_stats_v1';
@@ -516,7 +540,7 @@ export default function PrismScanner() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<WalletPreview | null>(null);
   const [error, setError] = useState('');
-  const [recentWallets, setRecentWallets] = useState<string[]>(getRecentWallets);
+  const [scanHistory, setScanHistory] = useState<ScanHistoryEntry[]>(getScanHistory);
 
   // Data states
   const [sybilData, setSybilData] = useState<SybilAnalysis | null>(null);
@@ -577,8 +601,13 @@ export default function PrismScanner() {
 
   const processHuntVerdict = useCallback(
     (data: SybilAnalysis, addr: string) => {
-      if (!data || !myAddress || addr === myAddress) return; // don't reward self-scan
+      if (!data) return;
       const verdict = resolveAnalysisVerdict(data);
+      // Save to history regardless of self-scan
+      saveToScanHistory(addr, verdict.key, verdict.label, data.trustScore ?? 0);
+      setScanHistory(getScanHistory());
+
+      if (!myAddress || addr === myAddress) return; // don't reward self-scan
       const rewardPath = verdict.rewardPath;
       setHuntVerdict(verdict);
       setShowVerdictAnim(true);
@@ -645,7 +674,6 @@ export default function PrismScanner() {
       }
       setResult(data);
       addRecentWallet(addr);
-      setRecentWallets(getRecentWallets());
 
       // Sequential: sybil first (caches funding on server), then funding from cache
       await fetchSybil(addr);
@@ -785,23 +813,37 @@ export default function PrismScanner() {
         {/* Scanning — Interactive Hunt Sequence */}
         {loading && <ScanningSequence targetAddress={query} walletAddress={myAddress} />}
 
-        {/* Recent targets — show last 6 as quick access */}
-        {!loading && recentWallets.length > 0 && !result && (
+        {/* Scan History — show last 8 with verdict */}
+        {!loading && !result && scanHistory.length > 0 && (
           <div>
-            <p className="text-[10px] text-white/20 uppercase tracking-wider mb-2 font-bold">
-              Scanned ({recentWallets.length})
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {recentWallets.slice(0, 6).map((addr) => (
+            <p className="text-[10px] text-white/20 uppercase tracking-wider mb-2 font-bold">Recent Scans</p>
+            <div className="space-y-1.5">
+              {scanHistory.slice(0, 8).map((h) => (
                 <button
-                  key={addr}
+                  key={h.address}
                   onClick={() => {
-                    setQuery(addr);
-                    handleSearch(addr);
+                    setQuery(h.address);
+                    handleSearch(h.address);
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/[0.04] border border-amber-500/[0.08] text-amber-300/40 text-xs font-mono hover:bg-amber-500/[0.1] hover:text-amber-300/70 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.06] transition-colors text-left border border-white/[0.04]"
                 >
-                  <Crosshair className="w-3 h-3" /> {addr.slice(0, 4)}...{addr.slice(-4)}
+                  <Crosshair className="w-3 h-3 text-amber-500/30 shrink-0" />
+                  <span className="text-[10px] text-white/50 font-mono flex-1 truncate">
+                    {h.address.slice(0, 6)}...{h.address.slice(-4)}
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold shrink-0 ${
+                      h.verdictKey === 'clean'
+                        ? 'text-green-400'
+                        : h.verdictKey === 'confirmed_sybil' || h.verdictKey === 'probable_sybil'
+                          ? 'text-red-400'
+                          : h.verdictKey === 'suspicious'
+                            ? 'text-amber-400'
+                            : 'text-white/30'
+                    }`}
+                  >
+                    {h.verdict}
+                  </span>
                 </button>
               ))}
             </div>
@@ -1251,33 +1293,6 @@ export default function PrismScanner() {
                 </div>
               </div>
             )}
-
-            {/* How to Earn */}
-            <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-4">
-              <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-2">How to Earn Coins</p>
-              <div className="space-y-1.5 text-[10px]">
-                {[
-                  { label: '🎮 Games', limit: 'per session', sub: 'Orbit, Defender, Gravity — coins from gameplay' },
-                  { label: '🎯 Sybil Hunt', limit: '500/day', sub: '20-70 per sybil (rank bonus), 2 min cooldown' },
-                  { label: '🧠 Quiz', limit: '500/day', sub: '5 coins per correct answer during scan' },
-                  { label: '⚔️ Arena', limit: 'no cap', sub: 'Win P2P challenges — earn opponent stake' },
-                  { label: '📋 Quests', limit: 'daily+weekly', sub: 'Complete tasks for coins + XP' },
-                  { label: '📖 Text Quests', limit: 'one-time', sub: 'Story adventures — up to 1200 coins each' },
-                  { label: '💰 Vault', limit: 'passive', sub: 'Stake coins — earn interest over time' },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-white/[0.02]"
-                  >
-                    <div className="min-w-0">
-                      <span className="text-white/50 font-bold">{item.label}</span>
-                      <p className="text-white/15 mt-0.5">{item.sub}</p>
-                    </div>
-                    <span className="text-amber-300/40 font-bold shrink-0 ml-3 text-[9px]">{item.limit}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
       </div>
