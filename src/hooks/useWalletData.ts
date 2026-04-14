@@ -364,23 +364,42 @@ export function useWalletData(address?: string) {
           throw dasError ?? new Error('All DAS endpoints failed');
         };
 
-        // Run RPC batch and DAS concurrently
-        const [rpcResult, assets] = await Promise.all([
-          withHeliusRpc(async (conn) => {
-            const [balance, firstPageSigs, tokenAccountsResponse] = await Promise.all([
-              conn.getBalance(publicKey),
-              conn.getSignaturesForAddress(publicKey, { limit: 1000 }),
-              conn.getParsedTokenAccountsByOwner(publicKey, {
-                programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
-              }),
-            ]);
-            return { balance, firstPageSigs, tokenAccountsResponse, conn };
-          }),
-          fetchDasAssets(),
-        ]);
+        // Run RPC batch and DAS concurrently, emitting progress as each resolves
+        emitScan('connecting', 5);
+
+        const rpcResultPromise = withHeliusRpc(async (conn) => {
+          const balancePromise = conn.getBalance(publicKey).then((b) => {
+            emitScan('balance', 12);
+            return b;
+          });
+          const sigsPromise = conn.getSignaturesForAddress(publicKey, { limit: 1000 }).then((s) => {
+            emitScan('transactions', 22);
+            return s;
+          });
+          const tokenAccountsPromise = conn
+            .getParsedTokenAccountsByOwner(publicKey, {
+              programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+            })
+            .then((t) => {
+              emitScan('analyzing', 30);
+              return t;
+            });
+          const [balance, firstPageSigs, tokenAccountsResponse] = await Promise.all([
+            balancePromise,
+            sigsPromise,
+            tokenAccountsPromise,
+          ]);
+          return { balance, firstPageSigs, tokenAccountsResponse, conn };
+        });
+
+        const assetsPromise = fetchDasAssets().then((a) => {
+          emitScan('assets', 40);
+          return a;
+        });
+
+        const [rpcResult, assets] = await Promise.all([rpcResultPromise, assetsPromise]);
 
         const { balance, firstPageSigs, tokenAccountsResponse, conn: usedConn } = rpcResult;
-        emitScan('transactions', 35);
 
         // Use first page for initial render
         const signatures = firstPageSigs;
@@ -396,7 +415,7 @@ export function useWalletData(address?: string) {
         const walletAgeDays = Math.floor((Date.now() - firstTxDate.getTime()) / (1000 * 60 * 60 * 24));
         const avgTxPerDay30d = txCount / Math.max(1, Math.min(30, walletAgeDays));
 
-        emitScan('assets', 55);
+        emitScan('assets', 60);
         const totalAssetsCount = assets.length;
 
         if (isDev) {

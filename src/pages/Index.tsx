@@ -1848,7 +1848,7 @@ const Index = () => {
           {/* Scanning overlay — stays mounted until curtainDone but hidden instantly behind curtains */}
           {showOverlay && (
             <LandingOverlay
-              isScanning={Boolean(resolvedAddress) || viewState !== 'landing'}
+              isScanning={viewState === 'scanning'}
               fadeOut={curtainOpen}
               passthrough={curtainOpen}
               isConnected={walletStable && isConnected}
