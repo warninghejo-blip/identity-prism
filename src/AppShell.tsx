@@ -95,6 +95,7 @@ const WalletRequired = React.lazy(() => import('./components/WalletRequired'));
 const Leaderboard = React.lazy(() => import('./pages/Leaderboard'));
 const TrustRecovery = React.lazy(() => import('./pages/TrustRecovery'));
 const TextQuestPage = React.lazy(() => import('./pages/TextQuestPage'));
+const InboxPage = React.lazy(() => import('./pages/InboxPage'));
 
 const isCapacitorNative = Boolean(
   (
@@ -177,6 +178,7 @@ const router = createBrowserRouter(
           ),
         },
 
+        { path: 'inbox', element: lazyRoute(<InboxPage />) },
         { path: '*', element: <NotFound /> },
       ],
     },

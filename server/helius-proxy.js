@@ -7439,6 +7439,11 @@ const server = http.createServer(async (req, res) => {
         ssCh.challengesWon = (ssCh.challengesWon || 0) + 1;
         updateWalletEntry(address, { socialStats: ssCh });
       }
+      // Quest milestone notification
+      if (source === 'quest_milestone') {
+        const questName = description || 'Quest';
+        pushNotification(address, 'quest_milestone', `Quest completed: ${questName}`, { questId: questId || null });
+      }
       respondJson(res, 200, { balance: bal, earned });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
@@ -10474,10 +10479,14 @@ const server = http.createServer(async (req, res) => {
             challenge.winner = challenge.creator;
             if (isSolBet) await resolveSolWinner(challenge.creator);
             else resolveCoinWinner(challenge.creator);
+            pushNotification(challenge.creator, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId, payout: winnerPrize });
+            pushNotification(acceptor, 'challenge_loss', `Challenge lost against ${challenge.creator.slice(0, 6)}...`, { challengeId });
           } else if (challenge.opponentScore > challenge.creatorScore) {
             challenge.winner = acceptor;
             if (isSolBet) await resolveSolWinner(acceptor);
             else resolveCoinWinner(acceptor);
+            pushNotification(acceptor, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId, payout: winnerPrize });
+            pushNotification(challenge.creator, 'challenge_loss', `Challenge lost against ${acceptor.slice(0, 6)}...`, { challengeId });
           } else {
             // Tie — refund both (no fee)
             challenge.winner = null;
@@ -10871,6 +10880,68 @@ const server = http.createServer(async (req, res) => {
       console.log(`[challenges] Abandoned ${challengeId} by ${abandoner.slice(0, 8)}... — stakes refunded`);
       respondJson(res, 200, { ok: true });
     } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  // ── Notifications API ──
+  if (pathname === '/api/notifications' && req.method === 'GET') {
+    if (!ipRateLimit('notifs_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    const address = jwtAuth.address;
+    const notifs = notificationsDb.get(address) || [];
+    const unreadCount = notifs.filter(n => !n.read).length;
+    respondJson(res, 200, { notifications: notifs, unreadCount });
+    return;
+  }
+
+  if (pathname === '/api/notifications/read' && req.method === 'POST') {
+    if (!ipRateLimit('notifs_post', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const address = jwtAuth.address;
+      const { ids, all } = JSON.parse(await readBody(req));
+      const notifs = notificationsDb.get(address) || [];
+      if (all) {
+        notifs.forEach(n => { n.read = true; });
+      } else if (Array.isArray(ids)) {
+        const idSet = new Set(ids);
+        notifs.forEach(n => { if (idSet.has(n.id)) n.read = true; });
+      }
+      notificationsDb.set(address, notifs);
+      saveNotificationsDebounced();
+      respondJson(res, 200, { ok: true });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  if (pathname === '/api/notifications/delete' && req.method === 'POST') {
+    if (!ipRateLimit('notifs_post', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
+    try {
+      const address = jwtAuth.address;
+      const { ids, all } = JSON.parse(await readBody(req));
+      if (all) {
+        notificationsDb.set(address, []);
+      } else if (Array.isArray(ids)) {
+        const idSet = new Set(ids);
+        const notifs = (notificationsDb.get(address) || []).filter(n => !idSet.has(n.id));
+        notificationsDb.set(address, notifs);
+      }
+      saveNotificationsDebounced();
+      respondJson(res, 200, { ok: true });
+    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+    return;
+  }
+
+  if (pathname === '/api/notifications/unread-count' && req.method === 'GET') {
+    const address = normalizePubkey(url.searchParams.get('address'));
+    if (!address) return respondJson(res, 400, { error: 'address required' });
+    const notifs = notificationsDb.get(address) || [];
+    const count = notifs.filter(n => !n.read).length;
+    respondJson(res, 200, { count });
     return;
   }
 
@@ -12576,6 +12647,9 @@ function finalizeTournamentTier(tier) {
       }
     }
     winners.push({ address: sorted[i].address, score: sorted[i].score, prize: totalPrize, poolPrize, basePrize, place: i + 1, xp: xpAmount });
+    if (totalPrize > 0) {
+      pushNotification(sorted[i].address, 'tournament_result', `${tier} tournament ended — #${i + 1}, +${totalPrize} coins`, { tier, placement: i + 1, prize: totalPrize });
+    }
   }
   // Any remaining pool dust (fewer participants than prize slots) is burned
   if (totalPaid < pool) totalBurned += (pool - totalPaid);
@@ -12622,6 +12696,50 @@ function saveMarketplace() {
 
 const constellationCache = new Map();
 const enhancedTxCache = new Map(); // address → { data, ts } — 10min TTL, max 200
+
+// ═══ Notification System ═══
+const notificationsDb = new Map(); // address → notification[]
+const NOTIFICATIONS_FILE = path.join(METADATA_DIR, 'notifications.json');
+const MAX_NOTIFICATIONS_PER_USER = 100;
+
+function loadNotifications() {
+  try {
+    if (fs.existsSync(NOTIFICATIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(NOTIFICATIONS_FILE, 'utf8'));
+      for (const [addr, notifs] of Object.entries(data)) {
+        notificationsDb.set(addr, notifs);
+      }
+      console.log(`[notifications] Loaded for ${notificationsDb.size} wallets`);
+    }
+  } catch (e) { console.warn('[notifications] Load failed:', e.message); }
+}
+
+function saveNotifications() {
+  try {
+    const data = {};
+    for (const [addr, notifs] of notificationsDb) data[addr] = notifs;
+    fs.writeFileSync(NOTIFICATIONS_FILE, JSON.stringify(data), 'utf8');
+  } catch (e) { console.warn('[notifications] Save failed:', e.message); }
+}
+const saveNotificationsDebounced = (() => { let t; return () => { clearTimeout(t); t = setTimeout(saveNotifications, 5000); }; })();
+
+function pushNotification(address, type, message, meta = {}) {
+  if (!address) return;
+  const notifs = notificationsDb.get(address) || [];
+  notifs.unshift({
+    id: `n_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    type, // 'challenge_win' | 'challenge_loss' | 'challenge_expired' | 'tournament_result' | 'quest_milestone' | 'yield_available' | 'weekly_payout' | 'system'
+    message,
+    meta,
+    timestamp: new Date().toISOString(),
+    read: false,
+  });
+  if (notifs.length > MAX_NOTIFICATIONS_PER_USER) notifs.length = MAX_NOTIFICATIONS_PER_USER;
+  notificationsDb.set(address, notifs);
+  saveNotificationsDebounced();
+}
+
+loadNotifications();
 
 // ═══ P2P Challenge System ═══
 const CHALLENGES_FILE = path.join(METADATA_DIR, 'challenges.json');
@@ -12690,6 +12808,7 @@ setInterval(() => {
           walletDatabase.set(p.address, wdb);
         }
       }
+      pushNotification(p.address, 'weekly_payout', `Weekly arena ranking: #${i + 1}, +${reward} coins`, { rank: i + 1, reward });
       winners.push({ address: p.address, rank: i + 1, reward, xp: xpReward, wins: p.wins, earned: p.earned });
     }
   });
@@ -12717,6 +12836,7 @@ setInterval(() => {
         setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
         refundCoinSpent(c.creator, c.stakeAmount);
       }
+      pushNotification(c.creator, 'challenge_expired', `Your challenge expired — ${c.stakeAmount} coins refunded`, { challengeId: c.id, refunded: c.stakeAmount });
       console.log(`[challenges] Expired ${c.id} (open/score, no opponent, ${Math.round((now - c.createdAt) / 60000)}m)`);
       continue;
     }
@@ -12731,6 +12851,7 @@ setInterval(() => {
         setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
         refundCoinSpent(c.creator, c.stakeAmount);
       }
+      pushNotification(c.creator, 'challenge_expired', `Your challenge expired — ${c.stakeAmount} coins refunded`, { challengeId: c.id, refunded: c.stakeAmount });
       console.log(`[challenges] Expired ${c.id} (playing/game, no opponent joined, ${Math.round((now - c.createdAt) / 60000)}m)`);
       continue;
     }
@@ -12767,10 +12888,14 @@ setInterval(() => {
           ch.winner = ch.creator;
           setCoinBalance(ch.creator, getCoinBalance(ch.creator) + winnerPrize);
           addCoinEarned(ch.creator, winnerPrize);
+          pushNotification(ch.creator, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId: ch.id, payout: winnerPrize });
+          if (ch.opponent) pushNotification(ch.opponent, 'challenge_loss', `Challenge lost against ${ch.creator.slice(0, 6)}...`, { challengeId: ch.id });
         } else if (ch.opponentScore > ch.creatorScore) {
           ch.winner = ch.opponent;
           setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + winnerPrize);
           addCoinEarned(ch.opponent, winnerPrize);
+          pushNotification(ch.opponent, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId: ch.id, payout: winnerPrize });
+          pushNotification(ch.creator, 'challenge_loss', `Challenge lost against ${ch.opponent.slice(0, 6)}...`, { challengeId: ch.id });
         } else {
           ch.winner = null;
           setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);

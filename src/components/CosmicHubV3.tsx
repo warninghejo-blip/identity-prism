@@ -34,7 +34,9 @@ import {
   Copy,
   X,
   LogOut,
+  Bell,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useRangerProgress } from '@/hooks/useRangerProgress';
 
 /* ── Tier color map ── */
@@ -698,6 +700,7 @@ export default function CosmicHub({
   const navigate = useNavigate();
   const [sybilGrade, setSybilGrade] = useState<string | null>(null);
   const [boostRate, setBoostRate] = useState<number>(0);
+  const [unreadCount, setUnreadCount] = useState(0);
   const compositeData = useCompositeScore(walletAddress || null);
   const refetchComposite = compositeData.refetch;
 
@@ -740,6 +743,21 @@ export default function CosmicHub({
   const passportTier = hasCompositePassport ? compositeData.tier : (planetTier ?? 'mercury');
   const passportBreakdown = hasCompositePassport ? boostedComposite.breakdown : fallbackPassportBreakdown;
   const passportMaxScore = hasCompositePassport ? 1000 : 400;
+
+  // Poll unread notification count
+  useEffect(() => {
+    if (!walletAddress) return;
+    const base = getHeliusProxyUrl() || '';
+    const fetchCount = () => {
+      fetch(`${base}/api/notifications/unread-count?address=${walletAddress}`)
+        .then((r) => r.json())
+        .then((d) => setUnreadCount(d.count || 0))
+        .catch(() => {});
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 60000);
+    return () => clearInterval(interval);
+  }, [walletAddress]);
 
   // Fetch sybil grade (shared deduped — same promise as CelestialCard)
   useEffect(() => {
@@ -821,6 +839,14 @@ export default function CosmicHub({
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-[9px] lg:text-[10px] text-white/40 font-medium tracking-wide">ONLINE</span>
+            <Link to="/inbox" className="relative p-2 flex items-center justify-center">
+              <Bell className="w-5 h-5 text-white/40 hover:text-white/60 transition-colors" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </Link>
             {onDisconnect && (
               <button
                 onClick={onDisconnect}
