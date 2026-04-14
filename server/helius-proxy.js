@@ -10302,8 +10302,11 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/challenge/list' && req.method === 'GET') {
     if (!ipRateLimit('ch_list', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
     try {
+      const now = Date.now();
       const open = (challenges || [])
         .filter(c => c && (c.status === 'open' || (c.status === 'playing' && !c.opponent)))
+        // Hide expired challenges (timer ran out, expiry cron may not have fired yet)
+        .filter(c => !c.expiresAt || c.expiresAt > now)
         // Hide game challenges where creator hasn't played yet (not ready for opponents)
         .filter(c => c.type !== 'game' || c.creatorScore !== null)
         .slice(0, 50);
@@ -12697,25 +12700,40 @@ setInterval(() => {
 }, 60 * 60 * 1000); // check every hour
 
 // Auto-expire challenges — runs every 60 seconds
-// Only OPEN challenges expire by timer. Accepted/playing = both committed.
+// 'open' (score type, waiting for opponent) and 'playing' without opponent (game type, opponent never joined)
 setInterval(() => {
   const now = Date.now();
   let changed = false;
   for (const c of challenges) {
     if (!c.expiresAt || c.status === 'completed' || c.status === 'cancelled' || c.status === 'expired') continue;
     if (now < c.expiresAt) continue;
-    // Only expire 'open' challenges (waiting for opponent)
-    // 'playing'/'accepted' = opponent committed, timer no longer applies
-    if (c.status !== 'open') continue;
-    c.status = 'expired';
-    c.completedAt = now;
-    changed = true;
-    // Refund creator (only one who staked in open challenge)
-    if (c.stakeAmount > 0) {
-      setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
-      refundCoinSpent(c.creator, c.stakeAmount);
+    // Expire 'open' challenges (score type, waiting for opponent)
+    if (c.status === 'open') {
+      c.status = 'expired';
+      c.completedAt = now;
+      changed = true;
+      // Refund creator (only one who staked in open challenge)
+      if (c.stakeAmount > 0) {
+        setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
+        refundCoinSpent(c.creator, c.stakeAmount);
+      }
+      console.log(`[challenges] Expired ${c.id} (open/score, no opponent, ${Math.round((now - c.createdAt) / 60000)}m)`);
+      continue;
     }
-    console.log(`[challenges] Expired ${c.id} (open, no opponent, ${Math.round((now - c.createdAt) / 60000)}m)`);
+    // Expire 'playing' game challenges where opponent never joined (no c.opponent set)
+    // If opponent joined (c.opponent is set), both committed — safety-net handles stuck games
+    if (c.status === 'playing' && !c.opponent) {
+      c.status = 'expired';
+      c.completedAt = now;
+      changed = true;
+      // Refund creator (only one who staked, opponent never joined)
+      if (c.stakeAmount > 0) {
+        setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
+        refundCoinSpent(c.creator, c.stakeAmount);
+      }
+      console.log(`[challenges] Expired ${c.id} (playing/game, no opponent joined, ${Math.round((now - c.createdAt) / 60000)}m)`);
+      continue;
+    }
   }
   if (changed) { debouncedSavePrism(); saveChallenges(); }
 }, 60_000);

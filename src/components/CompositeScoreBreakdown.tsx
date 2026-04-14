@@ -287,9 +287,9 @@ function ExpandedDetails({ barKey, details, color }: { barKey: BarKey; details: 
               color={color}
             />
             <DetailRow
-              label="Constellation"
-              raw={`${d.constellationExplored ?? 0} explored`}
-              pts={d.constellationPts ?? 0}
+              label="Scans Done"
+              raw={`${details?.engagement?.scanCount ?? 0}`}
+              pts={details?.engagement?.scanPts ?? 0}
               max={28}
               color={color}
             />

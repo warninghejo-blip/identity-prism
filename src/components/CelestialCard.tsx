@@ -1361,8 +1361,8 @@ type BadgeKey =
   | 'visionary'
   | 'binary'
   | 'arena_champion'
-  | 'star_navigator'
-  | 'debate_king'
+  | 'top_hunter'
+  | 'quest_master'
   | 'quest_hunter'
   | 'streak_lord'
   | 'explorer';
@@ -1394,8 +1394,8 @@ const BADGE_TEXTURES: Record<BadgeKey, string> = {
   visionary: '/badges/visionary.png',
   binary: '/badges/binary.png',
   arena_champion: '/badges/arena_champion.png',
-  star_navigator: '/badges/star_navigator.png',
-  debate_king: '/badges/debate_king.png',
+  top_hunter: '/badges/top_hunter.png',
+  quest_master: '/badges/quest_master.png',
   quest_hunter: '/badges/quest_hunter.png',
   streak_lord: '/badges/streak_lord.png',
   explorer: '/badges/explorer.png',
@@ -1542,19 +1542,19 @@ function getBadgeItems(
       category: 'social',
     },
     {
-      key: 'star_navigator',
-      label: 'Star Navigator',
-      isActive: (details?.social.constellationExplored ?? 0) >= 10,
-      texture: BADGE_TEXTURES.star_navigator,
-      description: 'Maps the invisible threads between wallets.',
+      key: 'top_hunter',
+      label: 'Top Hunter',
+      isActive: (details?.engagement.scanCount ?? 0) >= 20,
+      texture: BADGE_TEXTURES.top_hunter,
+      description: '20+ wallet scans completed.',
       category: 'social',
     },
     {
-      key: 'debate_king',
-      label: 'Debate King',
-      isActive: (details?.social.compareCount ?? 0) >= 10,
-      texture: BADGE_TEXTURES.debate_king,
-      description: 'Weighs identities on scales of pure data.',
+      key: 'quest_master',
+      label: 'Quest Master',
+      isActive: (details?.engagement.questsCompleted ?? 0) >= 15,
+      texture: BADGE_TEXTURES.quest_master,
+      description: 'Complete 15+ quests.',
       category: 'social',
     },
     // ENGAGEMENT (3)
