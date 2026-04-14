@@ -48,142 +48,152 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
     const pkg = COIN_PACKAGES[selectedIdx];
     setBuyingIdx(selectedIdx);
 
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Request timed out — server may be unavailable')), 30_000),
+    );
+
     try {
-      const { ensureJwt } = await import('@/components/prism/shared');
-      const jwt = await ensureJwt();
-      if (!jwt) {
-        toast.error('Authentication required');
-        setBuyingIdx(null);
-        return;
-      }
+      await Promise.race([
+        timeout,
+        (async () => {
+          const { ensureJwt } = await import('@/components/prism/shared');
+          const jwt = await ensureJwt();
+          if (!jwt) {
+            toast.error('Authentication required');
+            setBuyingIdx(null);
+            return;
+          }
 
-      const {
-        Connection: SolConn,
-        PublicKey: SolPK,
-        SystemProgram: SolSP,
-        Transaction: SolTx,
-      } = await import('@solana/web3.js');
-      const base = getApiBase();
-      const conn = new SolConn(base.replace(/\/api(\/.*)?$/, '') + '/rpc', 'confirmed');
-      const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          const {
+            Connection: SolConn,
+            PublicKey: SolPK,
+            SystemProgram: SolSP,
+            Transaction: SolTx,
+          } = await import('@solana/web3.js');
+          const base = getApiBase();
+          const conn = new SolConn(base.replace(/\/api(\/.*)?$/, '') + '/rpc', 'confirmed');
+          const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
 
-      let sig: string;
+          let sig: string;
 
-      if (payWith === 'skr') {
-        const skrQuote = skrQuotes?.[selectedIdx];
-        if (!skrQuote) {
-          toast.error('SKR price unavailable');
-          setBuyingIdx(null);
-          return;
-        }
-        const {
-          getAssociatedTokenAddress,
-          createTransferCheckedInstruction,
-          createAssociatedTokenAccountInstruction,
-          TOKEN_PROGRAM_ID,
-        } = await import('@solana/spl-token');
-        const skrMint = new SolPK('SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3');
-        const ownerKey = new SolPK(walletAddress);
-        const treasuryKey = new SolPK(treasuryAddr);
-        const mintInfo = await conn.getParsedAccountInfo(skrMint);
-        const decimals = (mintInfo.value?.data as any)?.parsed?.info?.decimals ?? 6;
-        const amountBaseUnits = BigInt(skrQuote.skrPrice) * 10n ** BigInt(decimals);
-        const ownerAta = await getAssociatedTokenAddress(skrMint, ownerKey, false, TOKEN_PROGRAM_ID);
-        const treasuryAta = await getAssociatedTokenAddress(skrMint, treasuryKey, false, TOKEN_PROGRAM_ID);
-        const tx = new SolTx();
-        const treasuryAtaInfo = await conn.getAccountInfo(treasuryAta);
-        if (!treasuryAtaInfo) {
-          tx.add(
-            createAssociatedTokenAccountInstruction(ownerKey, treasuryAta, treasuryKey, skrMint, TOKEN_PROGRAM_ID),
-          );
-        }
-        tx.add(
-          createTransferCheckedInstruction(
-            ownerAta,
-            skrMint,
-            treasuryAta,
-            ownerKey,
-            amountBaseUnits,
-            decimals,
-            [],
-            TOKEN_PROGRAM_ID,
-          ),
-        );
-        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-        tx.feePayer = ownerKey;
-        const signed = await wallet.signTransaction(tx);
-        sig = await conn.sendRawTransaction(signed.serialize());
-        toast.info('Confirming SKR transaction...');
-        await conn.confirmTransaction(sig, 'confirmed');
+          if (payWith === 'skr') {
+            const skrQuote = skrQuotes?.[selectedIdx];
+            if (!skrQuote) {
+              toast.error('SKR price unavailable');
+              setBuyingIdx(null);
+              return;
+            }
+            const {
+              getAssociatedTokenAddress,
+              createTransferCheckedInstruction,
+              createAssociatedTokenAccountInstruction,
+              TOKEN_PROGRAM_ID,
+            } = await import('@solana/spl-token');
+            const skrMint = new SolPK('SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3');
+            const ownerKey = new SolPK(walletAddress);
+            const treasuryKey = new SolPK(treasuryAddr);
+            const mintInfo = await conn.getParsedAccountInfo(skrMint);
+            const decimals = (mintInfo.value?.data as any)?.parsed?.info?.decimals ?? 6;
+            const amountBaseUnits = BigInt(skrQuote.skrPrice) * 10n ** BigInt(decimals);
+            const ownerAta = await getAssociatedTokenAddress(skrMint, ownerKey, false, TOKEN_PROGRAM_ID);
+            const treasuryAta = await getAssociatedTokenAddress(skrMint, treasuryKey, false, TOKEN_PROGRAM_ID);
+            const tx = new SolTx();
+            const treasuryAtaInfo = await conn.getAccountInfo(treasuryAta);
+            if (!treasuryAtaInfo) {
+              tx.add(
+                createAssociatedTokenAccountInstruction(ownerKey, treasuryAta, treasuryKey, skrMint, TOKEN_PROGRAM_ID),
+              );
+            }
+            tx.add(
+              createTransferCheckedInstruction(
+                ownerAta,
+                skrMint,
+                treasuryAta,
+                ownerKey,
+                amountBaseUnits,
+                decimals,
+                [],
+                TOKEN_PROGRAM_ID,
+              ),
+            );
+            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx.feePayer = ownerKey;
+            const signed = await wallet.signTransaction(tx);
+            sig = await conn.sendRawTransaction(signed.serialize());
+            toast.info('Confirming SKR transaction...');
+            await conn.confirmTransaction(sig, 'confirmed');
 
-        const res = await fetch(`${base}/api/prism/buy/skr`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
-        });
-        if (res.ok) {
-          toast.success(`Purchased ${pkg.coins} Coins for ${skrQuote.skrPrice} SKR!`);
-          if (status)
-            setStatus({
-              ...status,
-              purchasedToday: status.purchasedToday + pkg.coins,
-              remainingToday: status.remainingToday - pkg.coins,
+            const res = await fetch(`${base}/api/prism/buy/skr`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+              body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
             });
-          onPurchased();
-        } else {
-          const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
-          toast.error(err.error || 'Purchase failed');
-        }
-      } else {
-        const tx = new SolTx().add(
-          SolSP.transfer({
-            fromPubkey: new SolPK(walletAddress),
-            toPubkey: new SolPK(treasuryAddr),
-            lamports: Math.floor(pkg.solPrice * 1e9),
-          }),
-        );
-        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-        tx.feePayer = new SolPK(walletAddress);
-        const simulation = await conn.simulateTransaction(tx, undefined, {
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-        } as any);
-        if (simulation.value.err)
-          throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-        tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-        const signed = await wallet.signTransaction(tx);
-        sig = await conn.sendRawTransaction(signed.serialize());
-        toast.info('Confirming transaction...');
-        await conn.confirmTransaction(sig, 'confirmed');
+            if (res.ok) {
+              toast.success(`Purchased ${pkg.coins} Coins for ${skrQuote.skrPrice} SKR!`);
+              if (status)
+                setStatus({
+                  ...status,
+                  purchasedToday: status.purchasedToday + pkg.coins,
+                  remainingToday: status.remainingToday - pkg.coins,
+                });
+              onPurchased();
+            } else {
+              const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
+              toast.error(err.error || 'Purchase failed');
+            }
+          } else {
+            const tx = new SolTx().add(
+              SolSP.transfer({
+                fromPubkey: new SolPK(walletAddress),
+                toPubkey: new SolPK(treasuryAddr),
+                lamports: Math.floor(pkg.solPrice * 1e9),
+              }),
+            );
+            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx.feePayer = new SolPK(walletAddress);
+            const simulation = await conn.simulateTransaction(tx, undefined, {
+              sigVerify: false,
+              replaceRecentBlockhash: true,
+            } as any);
+            if (simulation.value.err)
+              throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
+            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            const signed = await wallet.signTransaction(tx);
+            sig = await conn.sendRawTransaction(signed.serialize());
+            toast.info('Confirming transaction...');
+            await conn.confirmTransaction(sig, 'confirmed');
 
-        const res = await fetch(`${base}/api/prism/buy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
-        });
-        if (res.ok) {
-          toast.success(`Purchased ${pkg.coins} Coins!`);
-          if (status)
-            setStatus({
-              ...status,
-              purchasedToday: status.purchasedToday + pkg.coins,
-              remainingToday: status.remainingToday - pkg.coins,
+            const res = await fetch(`${base}/api/prism/buy`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+              body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
             });
-          onPurchased();
-        } else {
-          const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
-          toast.error(err.error || 'Purchase failed');
-        }
-      }
-      setSelectedIdx(null);
+            if (res.ok) {
+              toast.success(`Purchased ${pkg.coins} Coins!`);
+              if (status)
+                setStatus({
+                  ...status,
+                  purchasedToday: status.purchasedToday + pkg.coins,
+                  remainingToday: status.remainingToday - pkg.coins,
+                });
+              onPurchased();
+            } else {
+              const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
+              toast.error(err.error || 'Purchase failed');
+            }
+          }
+          setSelectedIdx(null);
+        })(),
+      ]);
     } catch (e: any) {
       if (e?.message?.includes('User rejected')) {
         toast.info('Transaction cancelled');
       } else {
         toast.error(e?.message || 'Purchase failed');
       }
+    } finally {
+      setBuyingIdx(null);
     }
-    setBuyingIdx(null);
   }, [walletAddress, wallet, buyingIdx, selectedIdx, status, onPurchased, payWith, skrQuotes]);
 
   const selectedPkg = selectedIdx !== null ? COIN_PACKAGES[selectedIdx] : null;

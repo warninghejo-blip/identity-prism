@@ -850,22 +850,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 </div>
                 <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
                   <div className="px-6 pt-4">
-                    <TabsList className="grid h-12 w-full grid-cols-3 rounded-2xl border border-white/8 bg-white/5 p-1 pointer-events-auto">
+                    <TabsList className="grid h-12 w-full grid-cols-3 rounded-2xl border-0 bg-white/5 p-1 pointer-events-auto">
                       <TabsTrigger
                         value="stats"
-                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/20 data-[state=active]:!text-cyan-200 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
+                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/15 data-[state=active]:!text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         STATS
                       </TabsTrigger>
                       <TabsTrigger
                         value="intel"
-                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-violet-500/20 data-[state=active]:!text-violet-200 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
+                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/15 data-[state=active]:!text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         DOSSIER
                       </TabsTrigger>
                       <TabsTrigger
                         value="badges"
-                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-purple-500/20 data-[state=active]:!text-purple-200 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
+                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/15 data-[state=active]:!text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         BADGES
                       </TabsTrigger>
