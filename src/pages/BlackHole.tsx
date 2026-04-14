@@ -695,6 +695,7 @@ const BlackHole = () => {
 
       fetchStep = 'getAssetBatch';
       const heliusUrl = getHeliusRpcUrl(targetOwner.toBase58());
+      let resolvedCommissionRate = COMMISSION_RATE_DEFAULT;
       if (heliusUrl && parsedTokens.length > 0) {
         const mints = [...new Set(parsedTokens.map((t) => t.mint))];
         const BATCH_SIZE = 100;
@@ -784,7 +785,7 @@ const BlackHole = () => {
 
         // Resolve holder perks from the backend first so fee UX matches server verification.
         let ownsCard = false;
-        let resolvedCommissionRate = COMMISSION_RATE_DEFAULT;
+        resolvedCommissionRate = COMMISSION_RATE_DEFAULT;
         let resolvedHolderCommissionRate = COMMISSION_RATE_MINTED;
         let resolvedStandardCommissionRate = COMMISSION_RATE_DEFAULT;
         let perksFetched = false;
@@ -1967,7 +1968,7 @@ const BlackHole = () => {
                     </div>
 
                     {/* Stats grid */}
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-2.5 text-center">
                         <div className="text-lg font-bold text-zinc-100">{tokens.length}</div>
                         <div className="text-[9px] text-zinc-500 mt-0.5 uppercase tracking-wider">Scanned</div>
@@ -2000,7 +2001,7 @@ const BlackHole = () => {
 
             {/* Resolution Manifest */}
             {selectedTokens.size > 0 && (
-              <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-5">
+              <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-3 sm:p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <Flame className="w-3.5 h-3.5 text-red-400/60" />
                   <span className="text-[10px] uppercase tracking-[0.12em] text-red-400/50 font-bold">
@@ -2008,7 +2009,7 @@ const BlackHole = () => {
                   </span>
                 </div>
                 <div className="flex flex-col gap-4">
-                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-center">
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-2 sm:gap-4 text-center">
                     <div>
                       <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Resolved</div>
                       <div className="text-lg font-bold text-red-400 mt-1">{summary.totalAccounts}</div>
