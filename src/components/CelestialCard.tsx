@@ -849,7 +849,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   <img src="/textures/Solana.png" alt="" className="w-[55%] opacity-[0.07]" draggable={false} />
                 </div>
                 <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
-                  <div className="px-6 pt-4">
+                  <div className="px-5 pt-4">
                     <TabsList className="grid h-12 w-full grid-cols-3 rounded-2xl border-0 bg-white/5 p-1 pointer-events-auto">
                       <TabsTrigger
                         value="stats"

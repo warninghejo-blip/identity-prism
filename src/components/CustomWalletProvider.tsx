@@ -195,8 +195,18 @@ export const CustomWalletProvider = ({
   const select = useCallback(
     (name: WalletName | null) => {
       if (name === walletName) return;
+      // Reset connection state before switching so stale state can't block autoConnect
+      setConnecting(false);
+      setConnected(false);
+      setPublicKey(null);
       if (adapter) {
         adapter.disconnect().catch(() => {});
+      }
+      // Clear localStorage wallet name so there's no stale name if user closes tab mid-switch
+      try {
+        localStorage.removeItem(localStorageKey);
+      } catch {
+        /* ignore */
       }
       // Clear stale JWT so the new wallet gets a fresh auth flow
       try {
@@ -211,7 +221,7 @@ export const CustomWalletProvider = ({
         .catch(() => {});
       setWalletName(name);
     },
-    [walletName, adapter, setWalletName],
+    [walletName, adapter, localStorageKey, setWalletName],
   );
 
   // Connect
@@ -227,12 +237,18 @@ export const CustomWalletProvider = ({
     }
 
     setConnecting(true);
+    // Timeout guard: if adapter.connect() hangs (e.g. user dismissed the popup), unblock after 15s
+    let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const connectTimeout = new Promise<never>((_, reject) => {
+      connectTimeoutId = setTimeout(() => reject(new Error('Connection timed out')), 15_000);
+    });
     try {
-      await adapter.connect();
+      await Promise.race([adapter.connect(), connectTimeout]);
     } catch (error: unknown) {
       setWalletName(null);
       throw handleError(error as WalletError, adapter);
     } finally {
+      if (connectTimeoutId !== null) clearTimeout(connectTimeoutId);
       setConnecting(false);
     }
   }, [adapter, connecting, disconnecting, connected, handleError, setWalletName]);
@@ -246,10 +262,16 @@ export const CustomWalletProvider = ({
     try {
       await adapter.disconnect();
     } finally {
+      // Clear localStorage explicitly on explicit disconnect so autoConnect never reconnects to old wallet
+      try {
+        localStorage.removeItem(localStorageKey);
+      } catch {
+        /* ignore */
+      }
       setWalletName(null);
       setDisconnecting(false);
     }
-  }, [adapter, disconnecting, setWalletName]);
+  }, [adapter, disconnecting, localStorageKey, setWalletName]);
 
   // AutoConnect
   const hasAttemptedAutoConnect = useRef(false);

@@ -9080,6 +9080,9 @@ const server = http.createServer(async (req, res) => {
             };
           });
       }
+      // Embed top funding source directly in analysis response so client doesn't need a 2nd rate-limited call
+      const topFundingSource = cachedFundingSources.length > 0 ? cachedFundingSources[0] : null;
+      if (topFundingSource) analysis.primaryFundingSource = topFundingSource;
       sybilCache.set(address, { analysis, fundingSources: cachedFundingSources, cachedAt: Date.now() });
 
       // ── Update wallet database — FULL intelligence profile ──

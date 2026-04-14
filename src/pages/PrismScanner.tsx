@@ -115,6 +115,7 @@ interface SybilAnalysis {
   metrics: Record<string, unknown> & { siblingAddresses?: string[]; siblingCount?: number };
   behaviorProfile: Record<string, unknown>;
   verdict?: SybilVerdictSummary | null;
+  primaryFundingSource?: FundingSource | null;
 }
 interface FundingSource {
   address: string;
@@ -1045,43 +1046,48 @@ export default function PrismScanner() {
                     </div>
 
                     {/* Funding Source (from sybil data) */}
-                    {fundingSources.length > 0 && (
-                      <div className="mt-3 pt-3 border-t border-white/[0.05]">
-                        <p className="text-[9px] text-white/20 uppercase tracking-wider mb-1.5 font-bold">
-                          Primary Funding
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{
-                              background:
-                                fundingSources[0].type === 'cex'
-                                  ? '#22c55e'
-                                  : fundingSources[0].type === 'bridge'
-                                    ? '#3b82f6'
-                                    : '#ef4444',
-                            }}
-                          />
-                          <span className="text-xs text-white/50 font-mono">
-                            {fundingSources[0].label ||
-                              `${fundingSources[0].address.slice(0, 6)}...${fundingSources[0].address.slice(-4)}`}
-                          </span>
-                          <span className="text-[10px] text-white/25 font-mono ml-auto">
-                            {fundingSources[0].totalSolReceived.toFixed(2)}◎ ({fundingSources[0].percentage.toFixed(0)}
-                            %)
-                          </span>
-                          <span
-                            className={`text-[9px] font-bold ${fundingSources[0].type === 'cex' ? 'text-emerald-400/60' : 'text-red-400/50'}`}
-                          >
-                            {fundingSources[0].type === 'cex'
-                              ? 'EXCHANGE'
-                              : fundingSources[0].type === 'bridge'
-                                ? 'BRIDGE'
-                                : 'WALLET'}
-                          </span>
+                    {(() => {
+                      // Prefer live funding sources list; fall back to primaryFundingSource embedded in sybil analysis
+                      const primarySrc =
+                        fundingSources.length > 0 ? fundingSources[0] : (sybilData.primaryFundingSource ?? null);
+                      if (!primarySrc) return null;
+                      return (
+                        <div className="mt-3 pt-3 border-t border-white/[0.05]">
+                          <p className="text-[9px] text-white/20 uppercase tracking-wider mb-1.5 font-bold">
+                            Primary Funding
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{
+                                background:
+                                  primarySrc.type === 'cex'
+                                    ? '#22c55e'
+                                    : primarySrc.type === 'bridge'
+                                      ? '#3b82f6'
+                                      : '#ef4444',
+                              }}
+                            />
+                            <span className="text-xs text-white/50 font-mono">
+                              {primarySrc.label ||
+                                `${primarySrc.address.slice(0, 6)}...${primarySrc.address.slice(-4)}`}
+                            </span>
+                            <span className="text-[10px] text-white/25 font-mono ml-auto">
+                              {primarySrc.totalSolReceived.toFixed(2)}◎ ({primarySrc.percentage.toFixed(0)}%)
+                            </span>
+                            <span
+                              className={`text-[9px] font-bold ${primarySrc.type === 'cex' ? 'text-emerald-400/60' : 'text-red-400/50'}`}
+                            >
+                              {primarySrc.type === 'cex'
+                                ? 'EXCHANGE'
+                                : primarySrc.type === 'bridge'
+                                  ? 'BRIDGE'
+                                  : 'WALLET'}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
 
                   {/* Actions */}
