@@ -505,6 +505,7 @@ const Index = () => {
 
     try {
       mwaErrorRef.current = null;
+      hasReachedHub.current = false;
       if (isConnected && connectedAddress) {
         setActiveAddress(connectedAddress.toBase58());
         setViewState('scanning');
@@ -672,6 +673,7 @@ const Index = () => {
 
     try {
       isDisconnectingRef.current = false; // Clear disconnect flag on new connect
+      hasReachedHub.current = false;
       if (isConnected && connectedAddress) {
         setActiveAddress(connectedAddress.toBase58());
         setViewState('scanning');
@@ -773,6 +775,11 @@ const Index = () => {
     // Restore server-backed user data (loadout, scores, quests) into localStorage
     import('@/lib/userDataSync').then(({ loadFromServer }) => loadFromServer(resolvedAddress));
   }, [resolvedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset hasReachedHub when address changes (new wallet / reconnect)
+  useEffect(() => {
+    hasReachedHub.current = false;
+  }, [resolvedAddress]);
 
   // Phase 0: Return from Prism League via wormhole jump
   const gameJumpTunnelFaded = useRef(false);
@@ -930,7 +937,11 @@ const Index = () => {
       setViewState('scanning');
     } else {
       // After scan → go to Hub. But only once — don't re-trigger on background trait updates.
-      if (!hasReachedHub.current) {
+      if (viewStateRef.current === 'scanning') {
+        // Traits loaded (from cache or fresh) while still in scanning — go to hub
+        hasReachedHub.current = true;
+        setViewState('hub');
+      } else if (!hasReachedHub.current) {
         hasReachedHub.current = true;
         if (viewStateRef.current !== 'ready' && viewStateRef.current !== 'hub') {
           setViewState('hub');
@@ -1038,10 +1049,10 @@ const Index = () => {
   const handleDisconnect = async () => {
     // Set flag BEFORE async disconnect so state machine doesn't override viewState
     isDisconnectingRef.current = true;
-    // Fallback: always clear flag after 3s to prevent state machine lockup
+    // Fallback: always clear flag after 500ms to prevent state machine lockup on fast reconnect
     setTimeout(() => {
       isDisconnectingRef.current = false;
-    }, 3000);
+    }, 500);
     // Clear returning refs so effects don't re-set activeAddress after disconnect
     returningFromSubPage.current = false;
     returningFromBH.current = false;
