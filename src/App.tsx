@@ -41,13 +41,7 @@ const App = () => {
         <div className="min-h-screen bg-[#050505] text-white selection:bg-cyan-500/30">
           <Outlet />
           <Toaster />
-          <Sonner
-            position="bottom-center"
-            expand={false}
-            closeButton
-            offset={{ bottom: 16 }}
-            mobileOffset={{ bottom: 12, left: 16, right: 16 }}
-          />
+          <Sonner position="top-center" expand={false} closeButton richColors offset={64} />
         </div>
       </TooltipProvider>
     </QueryClientProvider>

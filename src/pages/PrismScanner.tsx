@@ -557,7 +557,9 @@ export default function PrismScanner() {
         return;
       }
       if (!r.ok) {
+        const data = await r.json().catch(() => null);
         setSybilData(null);
+        setError('Sybil analysis failed: ' + (data?.error || 'unknown error'));
         return;
       }
       const data = await r.json();
@@ -566,6 +568,7 @@ export default function PrismScanner() {
       processHuntVerdict(data, addr);
     } catch {
       setSybilData(null);
+      setError('Network error during analysis');
     } finally {
       setSybilLoading(false);
     }
@@ -693,13 +696,12 @@ export default function PrismScanner() {
         {(huntStats.totalHunts > 0 || myAddress) && (
           <div className="rounded-2xl bg-gradient-to-r from-amber-500/[0.06] to-red-500/[0.04] border border-amber-500/[0.1] p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div className="relative">
-                <div className="text-2xl">{huntRankData.icon}</div>
+              <div>
                 {RANGER_RANKS[currentRankIdx] && (
                   <img
                     src={RANGER_RANKS[currentRankIdx].image}
                     alt={RANGER_RANKS[currentRankIdx].name}
-                    className="w-6 h-6 object-contain absolute -bottom-1 -right-1"
+                    className="w-10 h-10 object-contain"
                   />
                 )}
               </div>
@@ -806,6 +808,13 @@ export default function PrismScanner() {
         )}
 
         {/* Suggested Targets from sybil graph — hide already scanned */}
+        {!loading && !result && suggestedTargets.length === 0 && (
+          <div className="text-center py-8">
+            <p className="text-white/40 text-sm">Enter a Solana wallet address above to start hunting</p>
+            <p className="text-white/20 text-xs mt-1">Scan wallets to detect sybil activity and earn rewards</p>
+          </div>
+        )}
+
         {!loading && !result && suggestedTargets.filter((t) => !isAlreadyScanned(t.address)).length > 0 && (
           <div>
             <p className="text-[10px] text-red-400/30 uppercase tracking-wider mb-2 font-bold flex items-center gap-1.5">
@@ -1214,13 +1223,12 @@ export default function PrismScanner() {
                         key={rank.name}
                         className={`flex items-center gap-2.5 px-3 py-2 rounded-xl transition-colors ${isCurrent ? 'bg-amber-400/[0.08] border border-amber-400/20' : unlocked ? 'bg-white/[0.02]' : 'opacity-40'}`}
                       >
-                        <div className="relative shrink-0">
-                          <span className="text-lg">{rank.icon}</span>
+                        <div className="shrink-0">
                           {RANGER_RANKS[i] && (
                             <img
                               src={RANGER_RANKS[i].image}
                               alt={RANGER_RANKS[i].name}
-                              className="w-4 h-4 object-contain absolute -bottom-0.5 -right-1 opacity-70"
+                              className="w-7 h-7 object-contain"
                             />
                           )}
                         </div>

@@ -733,6 +733,14 @@ const Index = () => {
   useEffect(() => {
     if (!resolvedAddress || !wallet.publicKey || !wallet.signMessage) return;
     if (jwtPrewarmedRef.current === resolvedAddress) return;
+    // Address changed — clear stale JWT from previous wallet before issuing a new one
+    if (jwtPrewarmedRef.current !== null) {
+      try {
+        sessionStorage.removeItem('ip_auth_jwt');
+      } catch {
+        /* ignore */
+      }
+    }
     jwtPrewarmedRef.current = resolvedAddress;
     import('@/components/prism/shared').then(async ({ getCachedJwt, obtainJwt, setAuthWallet }) => {
       setAuthWallet(wallet);

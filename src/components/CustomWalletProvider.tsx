@@ -198,6 +198,17 @@ export const CustomWalletProvider = ({
       if (adapter) {
         adapter.disconnect().catch(() => {});
       }
+      // Clear stale JWT so the new wallet gets a fresh auth flow
+      try {
+        sessionStorage.removeItem('ip_auth_jwt');
+      } catch {
+        /* ignore */
+      }
+      import('@/components/prism/shared')
+        .then(({ setAuthWallet }) => {
+          setAuthWallet(null);
+        })
+        .catch(() => {});
       setWalletName(name);
     },
     [walletName, adapter, setWalletName],

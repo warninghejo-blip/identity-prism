@@ -663,9 +663,14 @@ function PrismVaultSection({
           {showUnstakeWarning && (
             <div className="mt-3 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/20">
               {isLocked ? (
-                <div className="flex items-center gap-2 text-red-400 text-xs font-bold mb-2">
-                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                  25% penalty will be burned on early unstake
+                <div className="flex items-center gap-2 text-red-400 text-sm font-bold mb-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>
+                    ⚠️ 25% early unstake penalty —{' '}
+                    {vaultStatus?.staked
+                      ? `${Math.floor(vaultStatus.staked * 0.25).toLocaleString()} coins will be burned`
+                      : 'coins will be burned'}
+                  </span>
                 </div>
               ) : (
                 <div className="text-white/50 text-xs mb-2">Are you sure you want to unstake all coins?</div>

@@ -397,9 +397,13 @@ export function syncQuestsToServer(address: string, quests: Record<string, Quest
           ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
         body: JSON.stringify({ address, quests: payload }),
-      }).catch(() => {});
+      }).catch((error) => {
+        console.warn('[quests] Sync failed:', error);
+      });
     })
-    .catch(() => {});
+    .catch((error) => {
+      console.warn('[quests] Sync failed:', error);
+    });
 }
 
 /**

@@ -902,31 +902,79 @@ const PrismLeague = () => {
     // Sync unlocked + claimed achievements from server
     fetchServerAchievements(address).then(({ unlocked: srvUnlocked, claimed: srvClaimed }) => {
       if (cancelled || (!srvUnlocked.length && !srvClaimed.length)) return;
-      const current = getAchievements();
-      let changed = false;
       const now = new Date().toISOString();
-      for (const id of srvUnlocked) {
-        const ach = current.find((a) => a.id === id);
-        if (ach && !ach.unlocked) {
+
+      // Orbit achievements
+      const orbitList = getAchievements();
+      let orbitChanged = false;
+      // Defender achievements
+      const defList = getDefenderAchievements();
+      let defChanged = false;
+      // Gravity achievements
+      const gravList = getGravityAchievements();
+      let gravChanged = false;
+
+      const applyToList = <
+        T extends {
+          id: string;
+          unlocked: boolean;
+          unlockedAt?: string | null;
+          claimed: boolean;
+          claimedAt?: string | null;
+        },
+      >(
+        list: T[],
+        id: string,
+        mode: 'unlock' | 'claim',
+      ): boolean => {
+        const ach = list.find((a) => a.id === id);
+        if (!ach) return false;
+        let dirty = false;
+        if (mode === 'unlock' && !ach.unlocked) {
           ach.unlocked = true;
           ach.unlockedAt = ach.unlockedAt || now;
-          changed = true;
+          dirty = true;
         }
-      }
-      for (const id of srvClaimed) {
-        const ach = current.find((a) => a.id === id);
-        if (ach && !ach.claimed) {
+        if (mode === 'claim' && !ach.claimed) {
           ach.unlocked = true;
           ach.unlockedAt = ach.unlockedAt || now;
           ach.claimed = true;
           ach.claimedAt = ach.claimedAt || now;
-          changed = true;
+          dirty = true;
+        }
+        return dirty;
+      };
+
+      for (const id of srvUnlocked) {
+        if (id.startsWith('def_')) {
+          if (applyToList(defList, id, 'unlock')) defChanged = true;
+        } else if (id.startsWith('grav_')) {
+          if (applyToList(gravList, id, 'unlock')) gravChanged = true;
+        } else {
+          if (applyToList(orbitList, id, 'unlock')) orbitChanged = true;
         }
       }
-      if (changed) {
-        const key = 'orbit_survival_achievements_v1';
-        localStorage.setItem(key, JSON.stringify(current));
-        setAchievements([...current]);
+      for (const id of srvClaimed) {
+        if (id.startsWith('def_')) {
+          if (applyToList(defList, id, 'claim')) defChanged = true;
+        } else if (id.startsWith('grav_')) {
+          if (applyToList(gravList, id, 'claim')) gravChanged = true;
+        } else {
+          if (applyToList(orbitList, id, 'claim')) orbitChanged = true;
+        }
+      }
+
+      if (orbitChanged) {
+        localStorage.setItem('orbit_survival_achievements_v1', JSON.stringify(orbitList));
+        setAchievements([...orbitList]);
+      }
+      if (defChanged) {
+        localStorage.setItem('cosmic_defender_achievements_v1', JSON.stringify(defList));
+        setDefenderAchievements([...defList]);
+      }
+      if (gravChanged) {
+        localStorage.setItem('gravity_rush_achievements_v1', JSON.stringify(gravList));
+        setGravityAchievements([...gravList]);
       }
     });
     return () => {
