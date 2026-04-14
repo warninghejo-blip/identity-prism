@@ -201,9 +201,9 @@ function NavCard({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.4, delay }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.25, delay }}
       onClick={onClick}
       className="group flex flex-col items-center gap-1.5 cursor-pointer pointer-events-auto active:scale-90 transition-transform overflow-visible"
     >
@@ -879,7 +879,7 @@ export default function CosmicHub({
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
+            transition={{ duration: 0.25, delay: 0.05 }}
             className="w-full lg:w-72 flex-shrink-0"
           >
             {hasIdentity ? (
@@ -912,7 +912,7 @@ export default function CosmicHub({
                 icon={m.icon}
                 iconName={m.iconName}
                 colorClass={m.colorClass}
-                delay={0.3 + i * 0.08}
+                delay={0.1 + i * 0.03}
                 onClick={() => goTo(m.route)}
               />
             ))}
@@ -923,7 +923,7 @@ export default function CosmicHub({
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.6 }}
+          transition={{ duration: 0.25, delay: 0.35 }}
           className="w-full max-w-xs mx-auto px-4 mb-2 pointer-events-auto"
         >
           <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-2">How to Earn Coins</p>

@@ -911,6 +911,22 @@ const Index = () => {
     if (!traits) {
       // When returning from sub-page, suppress scanning flash — stay on hub
       if (returningFromSubPage.current || returningFromGameJump.current) return;
+      // Skip scan animation if we have fresh cached data for this address
+      // (handles browser back button which bypasses safeNavigate flags)
+      if (resolvedAddress) {
+        try {
+          const cached = sessionStorage.getItem(`walletData_${resolvedAddress}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.traits && parsed.address === resolvedAddress) {
+              // Data is in cache — useWalletData will restore it momentarily; don't flash scan
+              return;
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      }
       setViewState('scanning');
     } else {
       // After scan → go to Hub. But only once — don't re-trigger on background trait updates.

@@ -30,8 +30,8 @@ const LORE_MESSAGES = [
 
 export default function ScanProgress({ active }: { active: boolean }) {
   const [phase, setPhase] = useState<ScanPhase>('connecting');
-  const [pct, setPct] = useState(0);
-  const [smoothPct, setSmoothPct] = useState(0);
+  const [pct, setPct] = useState(5);
+  const [smoothPct, setSmoothPct] = useState(5);
   const [loreIdx, setLoreIdx] = useState(() => Math.floor(Math.random() * LORE_MESSAGES.length));
   const [completedPhases, setCompletedPhases] = useState<Set<ScanPhase>>(new Set());
   const frameRef = useRef(0);
@@ -40,8 +40,8 @@ export default function ScanProgress({ active }: { active: boolean }) {
   useEffect(() => {
     if (!active) return;
     setPhase('connecting');
-    setPct(0);
-    setSmoothPct(0);
+    setPct(5);
+    setSmoothPct(5);
     setCompletedPhases(new Set());
 
     return onScanProgress((newPhase, newPct) => {
