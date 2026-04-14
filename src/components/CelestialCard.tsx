@@ -132,7 +132,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [isInteracting, setIsInteracting] = useState(false);
   const [texturesReady, setTexturesReady] = useState(false);
   const handleTexturesReady = useCallback(() => setTexturesReady(true), []);
-  const [planetVisible, setPlanetVisible] = useState(isCapture);
+  const [planetVisible, setPlanetVisible] = useState(Boolean(captureMode));
   const handleSceneReady = useCallback(() => {
     setPlanetVisible(true);
     onSceneReady?.();
