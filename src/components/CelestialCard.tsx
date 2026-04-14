@@ -163,6 +163,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const starfieldRotRef = useRef<number>(0);
   const starfieldCameraRef = useRef({ azimuth: 0, polar: Math.PI / 2 });
   const lastAzimuthRef = useRef<number | null>(null);
+  const glowRef = useRef<HTMLDivElement>(null);
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : captureTab === 'intel' ? 'intel' : 'stats';
@@ -444,6 +445,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const shortAddress = address ? `${address.slice(0, 4)}...${address.slice(-4)}` : 'UNKNOWN';
   const tierLabel = TIER_LABELS[effectiveTier] || effectiveTier.toUpperCase();
   const tierColorClass = TIER_COLORS[effectiveTier] || 'text-white';
+  const tierGlowColor = TIER_HEX[effectiveTier] || '#06B6D4';
   const prefetchedTrust = compositeData.details?.sybilTrust ?? null;
   const dossierRisk = useMemo<SybilCardRisk | null>(() => {
     if (sybilRisk) return sybilRisk;
@@ -635,6 +637,14 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               onClick={(event) => event.stopPropagation()}
               onWheel={(event) => event.stopPropagation()}
             >
+              <div
+                ref={glowRef}
+                className="absolute inset-0 pointer-events-none transition-opacity duration-300"
+                style={{
+                  background: `radial-gradient(ellipse at 50% 45%, ${tierGlowColor}15 0%, transparent 55%)`,
+                  zIndex: 1,
+                }}
+              />
               <Canvas
                 camera={{ position: [0, 0, 8.5], fov: 35 }}
                 gl={{ antialias: !IS_MOBILE, alpha: true, preserveDrawingBuffer: isCapture }}
@@ -691,6 +701,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     }
                     if (polar !== undefined) {
                       starfieldCameraRef.current.polar = polar;
+                    }
+                    if (glowRef.current && az !== undefined && polar !== undefined) {
+                      const xPct = 50 + az * 8;
+                      const yPct = 45 - (polar - Math.PI / 2) * 8;
+                      glowRef.current.style.background = `radial-gradient(ellipse at ${xPct}% ${yPct}%, ${tierGlowColor}15 0%, transparent 55%)`;
                     }
                   }}
                 />

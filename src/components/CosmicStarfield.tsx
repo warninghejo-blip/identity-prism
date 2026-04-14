@@ -277,7 +277,7 @@ export function CosmicStarfield({
         }
         for (let i = 0; i < stars.length; i++) {
           const s = stars[i];
-          if (!pausedRef.current) {
+          if (!pausedRef.current && !isCardVariant) {
             const spd = dt * 3 * (0.5 + s.r * 0.3);
             const dir = driftDirRef.current;
             // Direction = where STARS drift visually
@@ -301,12 +301,12 @@ export function CosmicStarfield({
           if (s.baseY > h + 5) s.baseY = -5;
 
           if (isCardVariant) {
-            const yawShift = cameraAngles ? clamp(-cameraAngles.azimuth * (4 + s.depth * 14), -14, 14) : 0;
+            const yawShift = cameraAngles ? clamp(-cameraAngles.azimuth * (0.8 + s.depth * 2.8), -3, 3) : 0;
             const pitchShift = cameraAngles
-              ? clamp((cameraAngles.polar - Math.PI / 2) * (6 + s.depth * 16), -12, 12)
+              ? clamp((cameraAngles.polar - Math.PI / 2) * (1.2 + s.depth * 3.2), -2.5, 2.5)
               : 0;
-            const rollShiftX = Math.sin(rotOffset + s.twinklePhase) * (0.8 + s.depth * 2.2);
-            const rollShiftY = Math.cos(rotOffset * 0.85 + s.twinklePhase) * (0.6 + s.depth * 1.6);
+            const rollShiftX = 0;
+            const rollShiftY = 0;
             s.x = s.baseX + yawShift + rollShiftX;
             s.y = s.baseY + pitchShift + rollShiftY;
           } else {
