@@ -468,6 +468,7 @@
       "name": "Thruster Boost",
       "tier": "blue",
       "price": 4000,
+      "requiredRank": null,
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -477,6 +478,7 @@
       "name": "Warp Coils",
       "tier": "yellow",
       "price": 16000,
+      "requiredRank": "pilot",
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -486,6 +488,7 @@
       "name": "Quantum Engine",
       "tier": "red",
       "price": 50000,
+      "requiredRank": "captain",
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -495,6 +498,7 @@
       "name": "Plating Mk.I",
       "tier": "blue",
       "price": 4000,
+      "requiredRank": null,
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -504,6 +508,7 @@
       "name": "Deflector Array",
       "tier": "yellow",
       "price": 16000,
+      "requiredRank": "pilot",
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -513,6 +518,7 @@
       "name": "Fortress Core",
       "tier": "red",
       "price": 50000,
+      "requiredRank": "captain",
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -522,6 +528,7 @@
       "name": "Targeting Chip",
       "tier": "blue",
       "price": 4000,
+      "requiredRank": null,
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -531,6 +538,7 @@
       "name": "Arsenal Pack",
       "tier": "yellow",
       "price": 16000,
+      "requiredRank": "pilot",
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -540,6 +548,7 @@
       "name": "Devastator Core",
       "tier": "red",
       "price": 50000,
+      "requiredRank": "captain",
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -549,6 +558,7 @@
       "name": "Scanner Lens",
       "tier": "blue",
       "price": 4000,
+      "requiredRank": null,
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -558,6 +568,7 @@
       "name": "Probability Matrix",
       "tier": "yellow",
       "price": 16000,
+      "requiredRank": "pilot",
       "compatibleCategories": [
         "ship_skin"
       ]
@@ -567,6 +578,7 @@
       "name": "Quantum Oracle",
       "tier": "red",
       "price": 50000,
+      "requiredRank": "captain",
       "compatibleCategories": [
         "ship_skin"
       ]

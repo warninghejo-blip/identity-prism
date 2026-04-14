@@ -15,6 +15,7 @@ export interface Micromodule {
   description: string;
   tier: 'blue' | 'yellow' | 'red';
   price: number;
+  requiredRank?: string; // minimum Ranger Rank to purchase (pilot/captain/ace/legend)
   statBonus: { stat: 'speed' | 'shield' | 'firepower' | 'luck'; value: number };
   tradeoff?: { stat: 'speed' | 'shield' | 'firepower' | 'luck'; value: number };
   icon: string;
@@ -861,6 +862,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Advanced warp drive components',
     tier: 'yellow',
     price: 16000,
+    requiredRank: 'pilot',
     statBonus: { stat: 'speed', value: 12 },
     tradeoff: { stat: 'shield', value: 3 },
     icon: '⚡',
@@ -873,6 +875,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Experimental quantum propulsion',
     tier: 'red',
     price: 50000,
+    requiredRank: 'captain',
     statBonus: { stat: 'speed', value: 25 },
     tradeoff: { stat: 'shield', value: 8 },
     icon: '🌀',
@@ -897,6 +900,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Energy deflection system',
     tier: 'yellow',
     price: 16000,
+    requiredRank: 'pilot',
     statBonus: { stat: 'shield', value: 12 },
     tradeoff: { stat: 'speed', value: 3 },
     icon: '🔷',
@@ -909,6 +913,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Impenetrable defense matrix',
     tier: 'red',
     price: 50000,
+    requiredRank: 'captain',
     statBonus: { stat: 'shield', value: 25 },
     tradeoff: { stat: 'speed', value: 8 },
     icon: '🏰',
@@ -933,6 +938,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Expanded weapons array',
     tier: 'yellow',
     price: 16000,
+    requiredRank: 'pilot',
     statBonus: { stat: 'firepower', value: 12 },
     tradeoff: { stat: 'luck', value: 3 },
     icon: '💥',
@@ -945,6 +951,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Planet-cracking weapon system',
     tier: 'red',
     price: 50000,
+    requiredRank: 'captain',
     statBonus: { stat: 'firepower', value: 25 },
     tradeoff: { stat: 'luck', value: 8 },
     icon: '☢️',
@@ -969,6 +976,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Quantum probability manipulation',
     tier: 'yellow',
     price: 16000,
+    requiredRank: 'pilot',
     statBonus: { stat: 'luck', value: 12 },
     tradeoff: { stat: 'firepower', value: 3 },
     icon: '🎲',
@@ -981,6 +989,7 @@ export const MICROMODULE_DEFS: Micromodule[] = [
     description: 'Prescient decision engine',
     tier: 'red',
     price: 50000,
+    requiredRank: 'captain',
     statBonus: { stat: 'luck', value: 25 },
     tradeoff: { stat: 'firepower', value: 8 },
     icon: '🔮',

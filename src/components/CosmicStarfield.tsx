@@ -145,15 +145,27 @@ export function CosmicStarfield({
     if (!ctx) return;
 
     const resize = () => {
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
+      const parent = canvas.parentElement;
+      const w = parent ? parent.clientWidth : canvas.clientWidth;
+      const h = parent ? parent.clientHeight : canvas.clientHeight;
+      if (w === 0 || h === 0) return;
+      const prev = sizeRef.current;
       sizeRef.current = { w, h };
       canvas.width = w * DPR;
       canvas.height = h * DPR;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      if (starsRef.current.length === 0) initStars(w, h);
+      // Always reinit stars when size actually changes (or first init)
+      if (starsRef.current.length === 0 || prev.w !== w || prev.h !== h) {
+        initStars(w, h);
+      }
     };
     resize();
+
+    const observer = new ResizeObserver(resize);
+    const parent = canvas.parentElement;
+    if (parent) observer.observe(parent);
     window.addEventListener('resize', resize);
 
     let lastTime = 0;
@@ -395,6 +407,7 @@ export function CosmicStarfield({
       cancelAnimationFrame(rafRef.current);
       canvas.style.transform = '';
       canvas.style.willChange = 'auto';
+      observer.disconnect();
       window.removeEventListener('resize', resize);
       document.removeEventListener('visibilitychange', onVis);
     };

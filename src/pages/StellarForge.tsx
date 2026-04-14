@@ -645,11 +645,9 @@ export default function StellarForge() {
       const newLoadout = equipItem(loadout, item.id);
       saveLocalLoadout(newLoadout);
       setLoadout(newLoadout);
-      toast.success(`Equipped ${item.name}`, {
-        action: { label: 'View Card', onClick: () => startFadeTransition(() => goBack(navigate)) },
-      });
+      toast.success(`Equipped ${item.name}`);
     },
-    [loadout, navigate],
+    [loadout],
   );
 
   const handleUnequip = useCallback(
@@ -674,6 +672,10 @@ export default function StellarForge() {
       if (!loadout || !balance || !walletAddress) return;
       const mod = getModuleById(moduleId);
       if (!mod) return;
+      if (mod.requiredRank && !meetsRequiredRank(rangerRank, mod.requiredRank)) {
+        toast.error(`Requires ${RANK_LABELS[mod.requiredRank] || mod.requiredRank} rank`);
+        return;
+      }
       if (balance.balance < mod.price) {
         toast.error('Not enough Coins');
         return;
@@ -989,6 +991,8 @@ export default function StellarForge() {
                           loadout?.ownedModules.includes(mod.id) ||
                           Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
                         const canAfford = (balance?.balance ?? 0) >= mod.price;
+                        const rankMet = meetsRequiredRank(rangerRank, mod.requiredRank);
+                        const modLocked = !rankMet && !isModOwned;
                         return (
                           <div
                             key={mod.id}
@@ -1029,19 +1033,33 @@ export default function StellarForge() {
                                 </div>
                               )}
                             </div>
+                            {modLocked && !isModOwned && (
+                              <div className="flex items-center justify-center gap-1 text-amber-400/50 text-[10px] px-2 py-1 rounded-xl bg-amber-500/[0.04] border border-amber-500/10 mb-2">
+                                <Lock className="w-3 h-3" /> {RANK_LABELS[mod.requiredRank!] || mod.requiredRank} rank
+                              </div>
+                            )}
                             {!isModOwned && (
                               <button
-                                onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
-                                disabled={!canAfford || installingModule}
+                                onClick={() => (canAfford && !modLocked ? handlePurchaseModule(mod.id) : undefined)}
+                                disabled={!canAfford || installingModule || modLocked}
                                 className="w-full py-1.5 rounded-xl text-[10px] font-bold transition-all"
                                 style={{
-                                  background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
-                                  color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
-                                  border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
+                                  background: canAfford && !modLocked ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
+                                  color: canAfford && !modLocked ? tierColor : 'rgba(255,255,255,0.2)',
+                                  border: `1px solid ${canAfford && !modLocked ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
                                 }}
                               >
-                                <Coins className="w-3 h-3 inline mr-1" />
-                                {mod.price.toLocaleString()}
+                                {modLocked ? (
+                                  <>
+                                    <Lock className="w-3 h-3 inline mr-1" />
+                                    Locked
+                                  </>
+                                ) : (
+                                  <>
+                                    <Coins className="w-3 h-3 inline mr-1" />
+                                    {mod.price.toLocaleString()}
+                                  </>
+                                )}
                               </button>
                             )}
                           </div>
@@ -1058,6 +1076,8 @@ export default function StellarForge() {
                       loadout?.ownedModules.includes(mod.id) ||
                       Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
                     const canAfford = (balance?.balance ?? 0) >= mod.price;
+                    const rankMet = meetsRequiredRank(rangerRank, mod.requiredRank);
+                    const modLocked = !rankMet && !isModOwned;
                     return (
                       <div
                         key={mod.id}
@@ -1102,19 +1122,33 @@ export default function StellarForge() {
                             </div>
                           )}
                         </div>
+                        {modLocked && !isModOwned && (
+                          <div className="flex items-center justify-center gap-1 text-amber-400/50 text-[10px] px-2 py-1 rounded-xl bg-amber-500/[0.04] border border-amber-500/10 mb-2">
+                            <Lock className="w-3 h-3" /> {RANK_LABELS[mod.requiredRank!] || mod.requiredRank} rank
+                          </div>
+                        )}
                         {!isModOwned && (
                           <button
-                            onClick={() => (canAfford ? handlePurchaseModule(mod.id) : undefined)}
-                            disabled={!canAfford || installingModule}
+                            onClick={() => (canAfford && !modLocked ? handlePurchaseModule(mod.id) : undefined)}
+                            disabled={!canAfford || installingModule || modLocked}
                             className="w-full py-1.5 rounded-xl text-[10px] font-bold transition-all"
                             style={{
-                              background: canAfford ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
-                              color: canAfford ? tierColor : 'rgba(255,255,255,0.2)',
-                              border: `1px solid ${canAfford ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
+                              background: canAfford && !modLocked ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
+                              color: canAfford && !modLocked ? tierColor : 'rgba(255,255,255,0.2)',
+                              border: `1px solid ${canAfford && !modLocked ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
                             }}
                           >
-                            <Coins className="w-3 h-3 inline mr-1" />
-                            {mod.price.toLocaleString()}
+                            {modLocked ? (
+                              <>
+                                <Lock className="w-3 h-3 inline mr-1" />
+                                Locked
+                              </>
+                            ) : (
+                              <>
+                                <Coins className="w-3 h-3 inline mr-1" />
+                                {mod.price.toLocaleString()}
+                              </>
+                            )}
                           </button>
                         )}
                       </div>
