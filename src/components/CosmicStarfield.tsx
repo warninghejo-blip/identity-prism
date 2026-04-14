@@ -301,10 +301,8 @@ export function CosmicStarfield({
           if (s.baseY > h + 5) s.baseY = -5;
 
           if (isCardVariant) {
-            const yawShift = cameraAngles ? clamp(-cameraAngles.azimuth * (0.8 + s.depth * 2.8), -3, 3) : 0;
-            const pitchShift = cameraAngles
-              ? clamp((cameraAngles.polar - Math.PI / 2) * (1.2 + s.depth * 3.2), -2.5, 2.5)
-              : 0;
+            const yawShift = cameraAngles ? clamp(-cameraAngles.azimuth * (2.5 + s.depth * 8), -10, 10) : 0;
+            const pitchShift = cameraAngles ? clamp((cameraAngles.polar - Math.PI / 2) * (3 + s.depth * 9), -8, 8) : 0;
             const rollShiftX = 0;
             const rollShiftY = 0;
             s.x = s.baseX + yawShift + rollShiftX;
