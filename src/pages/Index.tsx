@@ -1083,7 +1083,7 @@ const Index = () => {
   const [hasExistingId, setHasExistingId] = useState<boolean | null>(null);
   const [isMintPanelOpen, setIsMintPanelOpen] = useState(true);
   const [paymentToken, setPaymentToken] = useState<PaymentToken>('SOL');
-  const [skrQuote, setSkrQuote] = useState<{ skrAmount: number; discount: number } | null>(null);
+  const [skrQuote, setSkrQuote] = useState<{ skrAmount: number } | null>(null);
   const [skrQuoteError, setSkrQuoteError] = useState<string | null>(null);
   const [skrQuoteLoading, setSkrQuoteLoading] = useState(false);
   const proxyBase = getHeliusProxyUrl();
@@ -1145,11 +1145,10 @@ const Index = () => {
         }
         const data = await response.json();
         const skrAmount = Number(data?.skrAmount);
-        const discount = Number(data?.discount ?? SEEKER_TOKEN.DISCOUNT);
         if (!Number.isFinite(skrAmount)) {
           throw new Error('Invalid SKR quote');
         }
-        setSkrQuote({ skrAmount, discount: Number.isFinite(discount) ? discount : SEEKER_TOKEN.DISCOUNT });
+        setSkrQuote({ skrAmount });
         setSkrQuoteError(null);
         setSkrQuoteLoading(false);
         return;
@@ -1731,7 +1730,7 @@ const Index = () => {
                           </div>
                           {paymentToken === 'SKR' && (
                             <span className={`mint-payment-note ${skrQuoteError ? 'is-error' : ''}`}>
-                              {skrQuoteError ? skrQuoteError : `50% discount with ${SEEKER_TOKEN.SYMBOL}`}
+                              {skrQuoteError ? skrQuoteError : `Pay with ${SEEKER_TOKEN.SYMBOL}`}
                             </span>
                           )}
                           {paymentToken === 'COINS' && (
@@ -1784,26 +1783,15 @@ const Index = () => {
                             <Button
                               onClick={handleRemint}
                               disabled={
-                                remintState === 'updating' ||
-                                mintState === 'minting' ||
-                                isLoading ||
-                                !isConnected ||
-                                hasExistingId !== true
+                                remintState === 'updating' || mintState === 'minting' || isLoading || !isConnected
                               }
                               variant="outline"
                               className="mint-primary-btn"
                               style={{
                                 background: 'rgba(168,85,247,0.08)',
                                 borderColor: 'rgba(168,85,247,0.25)',
-                                opacity: hasExistingId !== true ? 0.4 : 1,
                               }}
-                              title={
-                                hasExistingId === false
-                                  ? 'Mint your Identity first'
-                                  : hasExistingId === null
-                                    ? 'Checking wallet...'
-                                    : 'Updates metadata on existing NFT'
-                              }
+                              title="Updates metadata on existing NFT"
                             >
                               {remintState === 'idle' && <span>♻ UPDATE CARD · 0.0005 SOL</span>}
                               {remintState === 'updating' && (

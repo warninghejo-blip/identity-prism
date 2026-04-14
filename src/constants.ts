@@ -70,7 +70,6 @@ export const MINT_CONFIG = {
 export const SEEKER_TOKEN = {
   MINT: 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3',
   SYMBOL: 'SKR',
-  DISCOUNT: 0.5,
 } as const;
 
 export const BLACKHOLE_ENABLED = true;

@@ -3070,8 +3070,7 @@ const fetchSkrPriceUsd = async () => {
 const computeSkrQuote = (solUsd, skrUsd) => {
   if (!Number.isFinite(solUsd) || !Number.isFinite(skrUsd) || skrUsd <= 0) return null;
   const baseUsd = MINT_PRICE_SOL * solUsd;
-  const discountedUsd = baseUsd * (1 - SKR_DISCOUNT_RATE);
-  const rawAmount = discountedUsd / skrUsd;
+  const rawAmount = baseUsd / skrUsd;
   const amount = Math.max(1, Math.ceil(rawAmount));
   return {
     amount,
@@ -3079,7 +3078,6 @@ const computeSkrQuote = (solUsd, skrUsd) => {
     solUsd,
     skrUsd,
     baseUsd,
-    discountedUsd,
   };
 };
 
@@ -4391,7 +4389,6 @@ const server = http.createServer(async (req, res) => {
         solUsd: quote.solUsd,
         skrUsd: quote.skrUsd,
         baseSol: MINT_PRICE_SOL,
-        discount: SKR_DISCOUNT_RATE,
         skrAmount: quote.amount,
         skrAmountRaw: quote.rawAmount,
       });
