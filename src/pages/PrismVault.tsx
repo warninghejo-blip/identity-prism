@@ -329,7 +329,17 @@ interface VaultStatus {
   unclaimedYield?: number;
   dailyYield?: number;
   effectiveRate?: number;
+  lockDays?: number;
+  yieldMultiplier?: number;
+  earlyPenalty?: number;
 }
+
+const LOCK_OPTIONS = [
+  { days: 7, label: '1 Week', mult: '1x', penalty: '10%' },
+  { days: 30, label: '1 Month', mult: '1.5x', penalty: '15%' },
+  { days: 90, label: '3 Months', mult: '2.5x', penalty: '20%' },
+  { days: 180, label: '6 Months', mult: '4x', penalty: '25%' },
+];
 
 const YIELD_BRACKETS = [
   { upTo: 5000, baseDailyRate: 0.005 },
@@ -419,6 +429,7 @@ function PrismVaultSection({
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [selectedTier, setSelectedTier] = useState<VaultTierId>('bronze');
+  const [lockDays, setLockDays] = useState(7);
   const [stakeAmount, setStakeAmount] = useState('');
   const [staking, setStaking] = useState(false);
   const [claiming, setClaiming] = useState(false);
@@ -444,6 +455,9 @@ function PrismVaultSection({
             unclaimedYield: d.unclaimedYield ?? 0,
             dailyYield: d.dailyYield ?? 0,
             effectiveRate: d.effectiveRate ?? 0,
+            lockDays: d.staking.lockDays ?? 7,
+            yieldMultiplier: d.staking.yieldMultiplier ?? 1.0,
+            earlyPenalty: d.staking.earlyPenalty ?? 0.25,
           });
         } else {
           setVaultStatus({ staked: false });
@@ -483,7 +497,7 @@ function PrismVaultSection({
       const res = await fetch(`${base}/api/prism/vault/stake`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ amount, tier: selectedTier }),
+        body: JSON.stringify({ amount, tier: selectedTier, lockDays }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Stake failed');
@@ -496,7 +510,7 @@ function PrismVaultSection({
     } finally {
       setStaking(false);
     }
-  }, [stakeAmount, tier, balance, walletAddress, selectedTier, onBalanceChange, wallet]);
+  }, [stakeAmount, tier, balance, walletAddress, selectedTier, lockDays, onBalanceChange, wallet]);
 
   const handleClaim = useCallback(async () => {
     if (!walletAddress) return;
@@ -601,7 +615,21 @@ function PrismVaultSection({
               </div>
               <div>
                 <p className="text-white font-bold text-sm">{stakedTierInfo?.label ?? vaultStatus.tier} Vault</p>
-                <p className="text-white/30 text-[10px]">{vaultStatus.amount?.toLocaleString()} coins staked</p>
+                <p className="text-white/30 text-[10px]">
+                  {vaultStatus.amount?.toLocaleString()} coins ·{' '}
+                  {LOCK_OPTIONS.find((o) => o.days === vaultStatus.lockDays)?.label ?? `${vaultStatus.lockDays ?? 7}d`}{' '}
+                  lock · {LOCK_OPTIONS.find((o) => o.days === vaultStatus.lockDays)?.mult ?? '1x'} yield
+                </p>
+                {vaultStatus.unlocksAt && (
+                  <p className="text-white/20 text-[9px]">
+                    Unlocks{' '}
+                    {new Date(vaultStatus.unlocksAt).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </p>
+                )}
               </div>
             </div>
             <div
@@ -676,9 +704,9 @@ function PrismVaultSection({
                 <div className="flex items-center gap-2 text-red-400 text-sm font-bold mb-2">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                   <span>
-                    ⚠️ 25% early unstake penalty —{' '}
-                    {vaultStatus?.staked
-                      ? `${Math.floor(vaultStatus.staked * 0.25).toLocaleString()} coins will be burned`
+                    ⚠️ {Math.round((vaultStatus?.earlyPenalty ?? 0.25) * 100)}% early unstake penalty —{' '}
+                    {vaultStatus?.amount
+                      ? `${Math.floor(vaultStatus.amount * (vaultStatus?.earlyPenalty ?? 0.25)).toLocaleString()} coins will be burned`
                       : 'coins will be burned'}
                   </span>
                 </div>
@@ -743,6 +771,49 @@ function PrismVaultSection({
                 </button>
               );
             })}
+          </div>
+
+          {/* Lock duration selector */}
+          <div className="mb-4">
+            <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">Lock Duration</p>
+            <div className="grid grid-cols-4 gap-2">
+              {LOCK_OPTIONS.map((opt) => {
+                const active = lockDays === opt.days;
+                return (
+                  <button
+                    key={opt.days}
+                    onClick={() => setLockDays(opt.days)}
+                    className="rounded-xl p-2.5 text-center transition-all duration-200"
+                    style={{
+                      background: active
+                        ? 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(168,85,247,0.08))'
+                        : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${active ? 'rgba(168,85,247,0.45)' : 'rgba(255,255,255,0.06)'}`,
+                      boxShadow: active ? '0 0 14px rgba(168,85,247,0.2)' : 'none',
+                    }}
+                  >
+                    <p
+                      className="text-[10px] font-bold mb-1"
+                      style={{ color: active ? '#c084fc' : 'rgba(255,255,255,0.5)' }}
+                    >
+                      {opt.label}
+                    </p>
+                    <p
+                      className="text-[9px] font-black"
+                      style={{ color: active ? '#e879f9' : 'rgba(255,255,255,0.25)' }}
+                    >
+                      {opt.mult} yield
+                    </p>
+                    <p
+                      className="text-[8px] mt-0.5"
+                      style={{ color: active ? 'rgba(248,113,113,0.8)' : 'rgba(255,255,255,0.18)' }}
+                    >
+                      {opt.penalty} penalty
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Amount input */}
@@ -820,11 +891,23 @@ function PrismVaultSection({
           )}
           {showStakeConfirm && (
             <div className="mt-3 p-3 rounded-xl bg-purple-500/[0.06] border border-purple-500/20">
-              <div className="text-white/70 text-xs mb-2">
+              <div className="text-white/70 text-xs mb-1">
                 Stake <span className="font-bold text-white">{Number(stakeAmount).toLocaleString()}</span> coins in{' '}
                 {tier.label} tier?
               </div>
-              <div className="text-[10px] text-amber-400/60 mb-2">Early unstake penalty: 25% burned</div>
+              <div className="text-[10px] text-purple-300/70 mb-1">
+                Lock duration:{' '}
+                <span className="font-bold">
+                  {LOCK_OPTIONS.find((o) => o.days === lockDays)?.label ?? `${lockDays}d`}
+                </span>
+                {' · '}Yield:{' '}
+                <span className="font-bold">{LOCK_OPTIONS.find((o) => o.days === lockDays)?.mult ?? '1x'}</span>
+              </div>
+              <div className="text-[10px] text-amber-400/60 mb-2">
+                Early unstake penalty:{' '}
+                <span className="font-bold">{LOCK_OPTIONS.find((o) => o.days === lockDays)?.penalty ?? '25%'}</span>{' '}
+                burned
+              </div>
               <div className="flex gap-2">
                 <Button
                   size="sm"

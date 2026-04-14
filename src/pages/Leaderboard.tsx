@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
-import { ArrowLeft, Trophy, RefreshCw, Loader2, Coins, Crosshair, Orbit, Rocket } from 'lucide-react';
+import { ArrowLeft, Trophy, RefreshCw, Coins, Crosshair, Orbit, Rocket, Shield } from 'lucide-react';
 import { TIER_HEX } from '@/lib/constants/tierColors';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { getTierIcon } from '@/lib/constants/tierColors';
@@ -30,7 +30,12 @@ interface GameEntry {
   playedAt: string;
   txSignature?: string;
   gameType: string;
+  rangerRank?: string;
+  isHolder?: boolean;
 }
+
+const CACHE_KEY = 'lb_cache';
+const CACHE_TTL = 30000;
 
 // ── Tab config ──
 
@@ -177,13 +182,29 @@ export default function Leaderboard() {
             }
           }
         } else if (currentTab !== 'tournament') {
+          // Check sessionStorage cache
+          const cacheRaw = sessionStorage.getItem(`${CACHE_KEY}:${currentTab}`);
+          if (cacheRaw) {
+            try {
+              const { data: cachedData, ts } = JSON.parse(cacheRaw);
+              if (Date.now() - ts < CACHE_TTL) {
+                setGameEntries((prev) => ({ ...prev, [currentTab]: cachedData }));
+                setLoading(false);
+                return;
+              }
+            } catch {
+              /* ignore */
+            }
+          }
           const res = await fetch(`${base}/api/v2/game/leaderboard?gameType=${currentTab}`);
           if (res.ok) {
             const data = await res.json();
+            const entries = data?.entries || [];
             setGameEntries((prev) => ({
               ...prev,
-              [currentTab]: data?.entries || [],
+              [currentTab]: entries,
             }));
+            sessionStorage.setItem(`${CACHE_KEY}:${currentTab}`, JSON.stringify({ data: entries, ts: Date.now() }));
           } else {
             setError('Failed to load leaderboard');
           }
@@ -284,9 +305,14 @@ export default function Leaderboard() {
       {/* Content */}
       <main className="flex-1 overflow-y-auto max-w-3xl mx-auto w-full px-4 py-4 pb-24">
         {loading && isEmpty ? (
-          <div className="flex items-center justify-center py-20 text-white/30">
-            <Loader2 className="w-6 h-6 animate-spin mr-2" />
-            Loading...
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-3 animate-pulse border-b border-white/[0.03]">
+                <div className="w-6 h-6 rounded-full bg-white/5" />
+                <div className="flex-1 h-4 rounded bg-white/5" />
+                <div className="w-16 h-4 rounded bg-white/5" />
+              </div>
+            ))}
           </div>
         ) : error ? (
           <div className="text-center py-20 text-red-400/60">
@@ -455,17 +481,25 @@ function GameTable({
 
             {/* Address */}
             <div className="flex flex-col sm:flex-row sm:items-center min-w-0">
-              <span
-                className={`text-xs font-mono truncate ${isMine ? 'font-bold' : 'text-white/60'}`}
-                style={isMine ? { color: accentColor } : undefined}
-              >
-                {formatAddr(entry.address)}
-                {isMine && (
-                  <span className="ml-1 text-[9px] opacity-60" style={{ color: accentColor }}>
-                    (you)
-                  </span>
-                )}
-              </span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <img
+                  src={`/textures/ranks/rank_${entry.rangerRank || 'cadet'}.png`}
+                  className="w-4 h-4 shrink-0"
+                  alt={entry.rangerRank || 'cadet'}
+                />
+                {entry.isHolder && <Shield className="w-3.5 h-3.5 shrink-0 text-cyan-400" title="Identity Holder" />}
+                <span
+                  className={`text-xs font-mono truncate ${isMine ? 'font-bold' : 'text-white/60'}`}
+                  style={isMine ? { color: accentColor } : undefined}
+                >
+                  {formatAddr(entry.address)}
+                  {isMine && (
+                    <span className="ml-1 text-[9px] opacity-60" style={{ color: accentColor }}>
+                      (you)
+                    </span>
+                  )}
+                </span>
+              </div>
 
               {/* Mobile-only: score + date inline */}
               <div className="flex items-center gap-3 mt-0.5 sm:hidden text-[10px]">

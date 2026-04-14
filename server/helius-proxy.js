@@ -3455,7 +3455,13 @@ async function handleGameLeaderboardGetV1(req, res, url) {
   const filtered = canonFilter
     ? leaderboardEntries.filter(e => (toCanonGameMode(e.gameType) || e.gameType || 'orbit') === canonFilter)
     : leaderboardEntries;
-  const data = { entries: filtered.slice(0, 50) };
+  const enriched = filtered.slice(0, 50).map(entry => {
+    const wallet = walletDatabase.get(entry.address);
+    const rangerRank = wallet?.rangerSnapshot?.rank || getServerRangerSnapshot(entry.address, wallet || {}).rank || 'cadet';
+    const isHolder = !!wallet?.isIdentityHolder;
+    return { ...entry, rangerRank, isHolder };
+  });
+  const data = { entries: enriched };
   leaderboardCache = { key: cacheKey, data };
   leaderboardCacheTime = Date.now();
   respondJson(res, 200, data);
@@ -5377,7 +5383,9 @@ const server = http.createServer(async (req, res) => {
     if (_pendingStakingOps.has(addr)) return respondJson(res, 429, { error: 'Staking operation in progress' });
     _pendingStakingOps.add(addr);
     try {
-      const { amount, tier } = JSON.parse(await readBody(req));
+      const body = JSON.parse(await readBody(req));
+      const { amount, tier } = body;
+      const lockDays = Number.isInteger(body.lockDays) && body.lockDays > 0 ? body.lockDays : 7;
       const tierConfig = STAKING_TIERS[tier];
       if (!tierConfig) return respondJson(res, 400, { error: 'Invalid tier. Use: bronze, silver, gold' });
       if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < tierConfig.minStake) {
@@ -5393,9 +5401,17 @@ const server = http.createServer(async (req, res) => {
       if (w.staking && w.staking.amount > 0) {
         return respondJson(res, 400, { error: 'Already staking. Unstake first to change tier.' });
       }
+      const lockTier = getLockTier(lockDays);
       setCoinBalance(addr, bal - amount);
       addCoinSpent(addr, amount);
-      w.staking = { amount, tier, startTime: Date.now(), lastClaimTime: Date.now(), lockEnd: Date.now() + tierConfig.lockDays * 24 * 60 * 60 * 1000 };
+      w.staking = {
+        amount, tier,
+        startTime: Date.now(), lastClaimTime: Date.now(),
+        lockEnd: Date.now() + lockTier.days * 24 * 60 * 60 * 1000,
+        lockDays: lockTier.days,
+        yieldMultiplier: lockTier.yieldMultiplier,
+        earlyPenalty: lockTier.earlyPenalty,
+      };
       w.coins = bal - amount;
       walletDatabase.set(addr, w);
       saveWalletDatabaseDebounced();
@@ -5447,7 +5463,11 @@ const server = http.createServer(async (req, res) => {
       // Claim any unclaimed yield first
       const yieldAmount = calcUnclaimedYield(stake);
       if (isEarly) {
-        penalty = Math.floor(stake.amount * 0.25);
+        // Use stored earlyPenalty if available, otherwise look up from lockDays, fallback 0.25
+        const penaltyRate = stake.earlyPenalty != null
+          ? stake.earlyPenalty
+          : getLockTier(stake.lockDays || 7).earlyPenalty;
+        penalty = Math.floor(stake.amount * penaltyRate);
         burned = penalty; // early unstake penalty is fully burned
         totalBurned += burned;
         returnAmount = stake.amount - penalty;
@@ -5475,12 +5495,13 @@ const server = http.createServer(async (req, res) => {
     const tierConfig = STAKING_TIERS[stake.tier] || {};
     const unclaimedYield = calcUnclaimedYield(stake);
     const timeLeft = Math.max(0, (stake.lockEnd || 0) - Date.now());
+    const lockMult = stake.yieldMultiplier != null ? stake.yieldMultiplier : 1.0;
     const dailyYield = stake.startTime < BRACKETS_DEPLOY_TS
       ? Math.floor((tierConfig.rateMultiplier ? calcDailyYieldForAmount(stake.amount, tierConfig.rateMultiplier) : 0))
-      : Math.floor(calcDailyYieldForAmount(stake.amount, tierConfig.rateMultiplier || 1));
-    const effectiveRate = getEffectiveRate(stake.amount, tierConfig.rateMultiplier || 1);
+      : Math.floor(calcDailyYieldForAmount(stake.amount, (tierConfig.rateMultiplier || 1) * lockMult));
+    const effectiveRate = getEffectiveRate(stake.amount, (tierConfig.rateMultiplier || 1) * lockMult);
     respondJson(res, 200, {
-      staking: { amount: stake.amount, tier: stake.tier, startTime: stake.startTime, lockEnd: stake.lockEnd, lastClaimTime: stake.lastClaimTime },
+      staking: { amount: stake.amount, tier: stake.tier, startTime: stake.startTime, lockEnd: stake.lockEnd, lastClaimTime: stake.lastClaimTime, lockDays: stake.lockDays || 7, yieldMultiplier: stake.yieldMultiplier || 1.0, earlyPenalty: stake.earlyPenalty != null ? stake.earlyPenalty : 0.25 },
       unclaimedYield, timeLeft, boostRate: tierConfig.boostRate || 0,
       dailyYield,
       effectiveRate: +(effectiveRate * 100).toFixed(3),
@@ -12335,6 +12356,22 @@ const STAKING_TIERS = {
   gold:   { minStake: 75000, lockDays: 90, rateMultiplier: 1.25, boostRate: 0.15 },
 };
 
+const LOCK_TIERS = [
+  { days: 7,   label: '1 Week',    yieldMultiplier: 1.0, earlyPenalty: 0.10 },
+  { days: 30,  label: '1 Month',   yieldMultiplier: 1.5, earlyPenalty: 0.15 },
+  { days: 90,  label: '3 Months',  yieldMultiplier: 2.5, earlyPenalty: 0.20 },
+  { days: 180, label: '6 Months',  yieldMultiplier: 4.0, earlyPenalty: 0.25 },
+];
+function getLockTier(lockDays) {
+  // Find exact match or nearest valid tier
+  const exact = LOCK_TIERS.find(t => t.days === lockDays);
+  if (exact) return exact;
+  // Fallback: pick tier with closest days
+  return LOCK_TIERS.reduce((prev, curr) =>
+    Math.abs(curr.days - lockDays) < Math.abs(prev.days - lockDays) ? curr : prev
+  );
+}
+
 const YIELD_BRACKETS = [
   { upTo: 5000,     baseDailyRate: 0.0050 }, // 0.5%
   { upTo: 20000,    baseDailyRate: 0.0035 }, // 0.35%
@@ -12394,8 +12431,9 @@ function calcUnclaimedYield(stake) {
     const legacyRate = legacyRates[stake.tier] || 0.00375;
     return Math.floor(daysSinceClaim * legacyRate * stake.amount);
   }
-  // New bracket-based yield
-  const dailyYield = calcDailyYieldForAmount(stake.amount, tier.rateMultiplier);
+  // New bracket-based yield — apply lock duration yieldMultiplier if present
+  const lockMult = stake.yieldMultiplier != null ? stake.yieldMultiplier : 1.0;
+  const dailyYield = calcDailyYieldForAmount(stake.amount, tier.rateMultiplier * lockMult);
   return Math.floor(daysSinceClaim * dailyYield);
 }
 

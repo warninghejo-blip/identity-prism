@@ -485,6 +485,7 @@ export default function StellarForge() {
 
   const [topTab, setTopTab] = useState<TopTab>('shop');
   const [shopFilter, setShopFilter] = useState<ShopFilter>('all');
+  const [showOnlyAvailable, setShowOnlyAvailable] = useState(false);
   const [balance, setBalance] = useState<PrismBalance | null>(null);
   const [loadout, setLoadout] = useState<ForgeLoadout | null>(null);
   const [purchasing, setPurchasing] = useState<string | null>(null);
@@ -580,6 +581,29 @@ export default function StellarForge() {
         : ALL_FORGE_ITEMS.filter((i) => i.category === shopFilter);
     return [...items].sort((a, b) => (RARITY_ORDER[a.rarity] ?? 0) - (RARITY_ORDER[b.rarity] ?? 0));
   }, [shopFilter]);
+
+  const isItemAvailable = useCallback(
+    (item: ForgeItem) => {
+      const rankMet = meetsRequiredRank(rangerRank, item.requiredRank);
+      const affordable = item.price <= (balance?.balance ?? 0);
+      const notOwned = !(loadout?.ownedItems.some((o) => o.itemId === item.id) ?? false);
+      return rankMet && affordable && notOwned;
+    },
+    [rangerRank, balance, loadout],
+  );
+
+  const isModuleAvailable = useCallback(
+    (mod: Micromodule) => {
+      const rankMet = meetsRequiredRank(rangerRank, mod.requiredRank);
+      const affordable = mod.price <= (balance?.balance ?? 0);
+      const notOwned = !(
+        loadout?.ownedModules.includes(mod.id) ||
+        Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id))
+      );
+      return rankMet && affordable && notOwned;
+    },
+    [rangerRank, balance, loadout],
+  );
 
   const handlePurchase = useCallback(
     async (item: ForgeItem) => {
@@ -907,7 +931,7 @@ export default function StellarForge() {
               {/* Buy Coins & Staking → moved to /vault page */}
 
               {/* Category filters — glass pills */}
-              <div className="flex gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
+              <div className="flex items-center gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
                 {SHOP_FILTERS.map((f) => (
                   <button
                     key={f.id}
@@ -931,6 +955,18 @@ export default function StellarForge() {
                     <span>{f.icon}</span> {f.label}
                   </button>
                 ))}
+                <div className="ml-auto shrink-0">
+                  <button
+                    onClick={() => setShowOnlyAvailable((prev) => !prev)}
+                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all whitespace-nowrap ${
+                      showOnlyAvailable
+                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                        : 'bg-white/[0.03] text-white/30 border border-white/5'
+                    }`}
+                  >
+                    ✓ Available
+                  </button>
+                </div>
               </div>
 
               {/* Hint: how to earn coins */}
@@ -948,7 +984,8 @@ export default function StellarForge() {
               {shopFilter === 'all' ? (
                 <>
                   {(['ship_skin', 'frame', 'aura', 'title'] as ForgeCategory[]).map((cat) => {
-                    const catItems = ALL_FORGE_ITEMS.filter((i) => i.category === cat);
+                    const allCatItems = ALL_FORGE_ITEMS.filter((i) => i.category === cat);
+                    const catItems = showOnlyAvailable ? allCatItems.filter(isItemAvailable) : allCatItems;
                     if (catItems.length === 0) return null;
                     return (
                       <div key={cat} className="mb-6">
@@ -978,99 +1015,112 @@ export default function StellarForge() {
                     );
                   })}
                   {/* Modules section in All tab */}
-                  <div className="mb-6">
-                    <div className="flex items-center gap-2 mb-3 px-1">
-                      <span className="text-sm">🔧</span>
-                      <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">Modules</span>
-                      <div className="flex-1 h-px bg-white/[0.06]" />
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {SORTED_MODULES.map((mod) => {
-                        const tierColor = MODULE_TIER_COLORS[mod.tier];
-                        const isModOwned =
-                          loadout?.ownedModules.includes(mod.id) ||
-                          Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
-                        const canAfford = (balance?.balance ?? 0) >= mod.price;
-                        const rankMet = meetsRequiredRank(rangerRank, mod.requiredRank);
-                        const modLocked = !rankMet && !isModOwned;
-                        return (
-                          <div
-                            key={mod.id}
-                            className="relative rounded-xl p-3 transition-all duration-300"
-                            style={{
-                              background: isModOwned ? `${tierColor}08` : 'rgba(255,255,255,0.02)',
-                              border: `1px solid ${isModOwned ? `${tierColor}35` : `${tierColor}25`}`,
-                            }}
-                          >
-                            {isModOwned && (
+                  {(() => {
+                    const visibleModules = showOnlyAvailable
+                      ? SORTED_MODULES.filter(isModuleAvailable)
+                      : SORTED_MODULES;
+                    if (visibleModules.length === 0) return null;
+                    return (
+                      <div className="mb-6">
+                        <div className="flex items-center gap-2 mb-3 px-1">
+                          <span className="text-sm">🔧</span>
+                          <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">Modules</span>
+                          <div className="flex-1 h-px bg-white/[0.06]" />
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {visibleModules.map((mod) => {
+                            const tierColor = MODULE_TIER_COLORS[mod.tier];
+                            const isModOwned =
+                              loadout?.ownedModules.includes(mod.id) ||
+                              Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
+                            const canAfford = (balance?.balance ?? 0) >= mod.price;
+                            const rankMet = meetsRequiredRank(rangerRank, mod.requiredRank);
+                            const modLocked = !rankMet && !isModOwned;
+                            return (
                               <div
-                                className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-                                style={{ background: `${tierColor}25` }}
-                              >
-                                <Check className="w-3 h-3" style={{ color: tierColor }} />
-                              </div>
-                            )}
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
-                                </div>
-                              </div>
-                            </div>
-                            <p className="text-white/30 text-[10px] mb-2 line-clamp-2 min-h-[28px]">
-                              {mod.description}
-                            </p>
-                            <div className="space-y-0.5 mb-2">
-                              <div className="flex items-center text-[10px]">
-                                <span className="text-green-400 font-bold w-7 text-right">+{mod.statBonus.value}</span>
-                                <span className="text-white/50 ml-1.5">{mod.statBonus.stat}</span>
-                              </div>
-                              {mod.tradeoff && (
-                                <div className="flex items-center text-[10px]">
-                                  <span className="text-red-400 font-bold w-7 text-right">-{mod.tradeoff.value}</span>
-                                  <span className="text-white/50 ml-1.5">{mod.tradeoff.stat}</span>
-                                </div>
-                              )}
-                            </div>
-                            {modLocked && !isModOwned && (
-                              <div className="flex items-center justify-center gap-1 text-amber-400/50 text-[10px] px-2 py-1 rounded-xl bg-amber-500/[0.04] border border-amber-500/10 mb-2">
-                                <Lock className="w-3 h-3" /> {RANK_LABELS[mod.requiredRank!] || mod.requiredRank} rank
-                              </div>
-                            )}
-                            {!isModOwned && (
-                              <button
-                                onClick={() => (canAfford && !modLocked ? handlePurchaseModule(mod.id) : undefined)}
-                                disabled={!canAfford || installingModule || modLocked}
-                                className="w-full py-1.5 rounded-xl text-[10px] font-bold transition-all"
+                                key={mod.id}
+                                className="relative rounded-xl p-3 transition-all duration-300"
                                 style={{
-                                  background: canAfford && !modLocked ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
-                                  color: canAfford && !modLocked ? tierColor : 'rgba(255,255,255,0.2)',
-                                  border: `1px solid ${canAfford && !modLocked ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
+                                  background: isModOwned ? `${tierColor}08` : 'rgba(255,255,255,0.02)',
+                                  border: `1px solid ${isModOwned ? `${tierColor}35` : `${tierColor}25`}`,
                                 }}
                               >
-                                {modLocked ? (
-                                  <>
-                                    <Lock className="w-3 h-3 inline mr-1" />
-                                    Locked
-                                  </>
-                                ) : (
-                                  <>
-                                    <Coins className="w-3 h-3 inline mr-1" />
-                                    {mod.price.toLocaleString()}
-                                  </>
+                                {isModOwned && (
+                                  <div
+                                    className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+                                    style={{ background: `${tierColor}25` }}
+                                  >
+                                    <Check className="w-3 h-3" style={{ color: tierColor }} />
+                                  </div>
                                 )}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                                <div className="flex items-center gap-2 mb-1.5">
+                                  <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <p className="text-white/30 text-[10px] mb-2 line-clamp-2 min-h-[28px]">
+                                  {mod.description}
+                                </p>
+                                <div className="space-y-0.5 mb-2">
+                                  <div className="flex items-center text-[10px]">
+                                    <span className="text-green-400 font-bold w-7 text-right">
+                                      +{mod.statBonus.value}
+                                    </span>
+                                    <span className="text-white/50 ml-1.5">{mod.statBonus.stat}</span>
+                                  </div>
+                                  {mod.tradeoff && (
+                                    <div className="flex items-center text-[10px]">
+                                      <span className="text-red-400 font-bold w-7 text-right">
+                                        -{mod.tradeoff.value}
+                                      </span>
+                                      <span className="text-white/50 ml-1.5">{mod.tradeoff.stat}</span>
+                                    </div>
+                                  )}
+                                </div>
+                                {modLocked && !isModOwned && (
+                                  <div className="flex items-center justify-center gap-1 text-amber-400/50 text-[10px] px-2 py-1 rounded-xl bg-amber-500/[0.04] border border-amber-500/10 mb-2">
+                                    <Lock className="w-3 h-3" /> {RANK_LABELS[mod.requiredRank!] || mod.requiredRank}{' '}
+                                    rank
+                                  </div>
+                                )}
+                                {!isModOwned && (
+                                  <button
+                                    onClick={() => (canAfford && !modLocked ? handlePurchaseModule(mod.id) : undefined)}
+                                    disabled={!canAfford || installingModule || modLocked}
+                                    className="w-full py-1.5 rounded-xl text-[10px] font-bold transition-all"
+                                    style={{
+                                      background: canAfford && !modLocked ? `${tierColor}20` : 'rgba(255,255,255,0.03)',
+                                      color: canAfford && !modLocked ? tierColor : 'rgba(255,255,255,0.2)',
+                                      border: `1px solid ${canAfford && !modLocked ? `${tierColor}30` : 'rgba(255,255,255,0.06)'}`,
+                                    }}
+                                  >
+                                    {modLocked ? (
+                                      <>
+                                        <Lock className="w-3 h-3 inline mr-1" />
+                                        Locked
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Coins className="w-3 h-3 inline mr-1" />
+                                        {mod.price.toLocaleString()}
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </>
               ) : shopFilter === 'module' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {SORTED_MODULES.map((mod) => {
+                  {(showOnlyAvailable ? SORTED_MODULES.filter(isModuleAvailable) : SORTED_MODULES).map((mod) => {
                     const tierColor = MODULE_TIER_COLORS[mod.tier];
                     const isModOwned =
                       loadout?.ownedModules.includes(mod.id) ||
@@ -1157,7 +1207,7 @@ export default function StellarForge() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {filteredItems.map((item) => (
+                  {(showOnlyAvailable ? filteredItems.filter(isItemAvailable) : filteredItems).map((item) => (
                     <ItemCard
                       key={item.id}
                       item={item}
