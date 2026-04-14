@@ -1029,8 +1029,11 @@ const PrismLeague = () => {
   // Auto-reset to free play when switching to text_quest
   const setPlayMode = useCallback((m: PlayMode) => setPlayModeRaw(m), []);
   useEffect(() => {
+    // Reset tournament mode when switching game modes, unless user has actively joined a tournament
+    if (playMode === 'tournament' && !activeTournament?.userJoined) setPlayModeRaw('free');
+    // Also reset for text_quest which never supports tournament
     if (gameMode === 'text_quest' && playMode === 'tournament') setPlayModeRaw('free');
-  }, [gameMode, playMode]);
+  }, [gameMode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [tournamentTier, setTournamentTier] = useState<TournamentTierKey>('daily');
   const [tournaments, setTournaments] = useState<Record<TournamentTierKey, ActiveTournament | null>>({
     daily: null,

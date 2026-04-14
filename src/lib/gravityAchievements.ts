@@ -51,7 +51,7 @@ export const GRAVITY_ACHIEVEMENT_DEFS: Omit<GravityAchievement, 'unlocked' | 'un
     {
       id: 'grav_first_flight',
       name: 'First Flight',
-      description: 'Survive for 15 seconds',
+      description: 'Pass 15 columns in a single run',
       icon: '🕊️',
       image: '/achievements/grav_first_flight.png',
       threshold: 15,
@@ -71,7 +71,7 @@ export const GRAVITY_ACHIEVEMENT_DEFS: Omit<GravityAchievement, 'unlocked' | 'un
     {
       id: 'grav_gravity_walker',
       name: 'Gravity Walker',
-      description: 'Survive for 60 seconds',
+      description: 'Pass 60 columns in a single run',
       icon: '🌊',
       image: '/achievements/grav_gravity_walker.png',
       threshold: 60,
@@ -91,7 +91,7 @@ export const GRAVITY_ACHIEVEMENT_DEFS: Omit<GravityAchievement, 'unlocked' | 'un
     {
       id: 'grav_gravity_veteran',
       name: 'Gravity Veteran',
-      description: 'Survive for 120 seconds',
+      description: 'Pass 120 columns in a single run',
       icon: '⚡',
       image: '/achievements/grav_gravity_veteran.png',
       threshold: 120,
@@ -121,7 +121,7 @@ export const GRAVITY_ACHIEVEMENT_DEFS: Omit<GravityAchievement, 'unlocked' | 'un
     {
       id: 'grav_gravity_legend',
       name: 'Gravity Legend',
-      description: 'Survive for 300 seconds',
+      description: 'Pass 300 columns in a single run',
       icon: '🌌',
       image: '/achievements/grav_gravity_legend.png',
       threshold: 300,
@@ -131,7 +131,7 @@ export const GRAVITY_ACHIEVEMENT_DEFS: Omit<GravityAchievement, 'unlocked' | 'un
     {
       id: 'grav_ace',
       name: 'Gravity Ace',
-      description: 'Survive 180+ seconds in a single run',
+      description: 'Pass 180+ columns in a single run',
       icon: '💎',
       image: '/achievements/grav_ace.png',
       threshold: 180,

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { useSearchParams, useLocation } from 'react-router-dom';
 const CelestialCard = React.lazy(() =>
   import('@/components/CelestialCard').then((m) => ({ default: m.CelestialCard })),
@@ -1675,9 +1676,18 @@ const Index = () => {
                   className={`card-stage relative z-20 ${isMintPanelOpen ? 'controls-open' : 'controls-closed'}${!showReadyView ? ' hidden' : ''}`}
                 >
                   {/* Transition handled by wormhole tunnel — no black overlays */}
-                  <React.Suspense fallback={<div style={{ position: 'absolute', inset: 0, background: '#05070a' }} />}>
-                    <CelestialCard data={walletData} fromBlackHole={fromBlackHole} onSceneReady={handleSceneReady} />
-                  </React.Suspense>
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: everythingReady ? 1 : 0, scale: everythingReady ? 1 : 0.95 }}
+                    transition={{ duration: 0.6, ease: 'easeOut' }}
+                    style={{ width: '100%', height: '100%' }}
+                  >
+                    <React.Suspense
+                      fallback={<div style={{ position: 'absolute', inset: 0, background: '#05070a' }} />}
+                    >
+                      <CelestialCard data={walletData} fromBlackHole={fromBlackHole} onSceneReady={handleSceneReady} />
+                    </React.Suspense>
+                  </motion.div>
                   {!previewMode && (
                     <div className={`mint-panel ${isMintPanelOpen ? 'open' : 'closed'}`}>
                       <button type="button" className="mint-toggle" onClick={() => setIsMintPanelOpen((prev) => !prev)}>

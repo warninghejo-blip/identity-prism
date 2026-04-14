@@ -132,6 +132,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [isInteracting, setIsInteracting] = useState(false);
   const [texturesReady, setTexturesReady] = useState(false);
   const handleTexturesReady = useCallback(() => setTexturesReady(true), []);
+  const [planetVisible, setPlanetVisible] = useState(isCapture);
+  const handleSceneReady = useCallback(() => {
+    setPlanetVisible(true);
+    onSceneReady?.();
+  }, [onSceneReady]);
   const [shakeWarning, setShakeWarning] = useState(false);
   const [jumpingToGame, setJumpingToGame] = useState(false);
   const [suckingIn, setSuckingIn] = useState(false);
@@ -628,6 +633,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             <div
               data-suck="scene"
               className="absolute inset-0 z-10"
+              style={{ opacity: planetVisible ? 1 : 0, transition: 'opacity 0.4s ease-in' }}
               onPointerDown={(event) => {
                 event.stopPropagation();
                 setIsInteracting(true);
@@ -659,7 +665,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   });
                 }}
               >
-                {!isCapture && <FrameDetector onReady={onSceneReady} texturesReady={texturesReady} />}
+                {!isCapture && <FrameDetector onReady={handleSceneReady} texturesReady={texturesReady} />}
                 <ambientLight intensity={IS_MOBILE ? 1.4 : 0.6} />
                 <pointLight position={[10, 5, 5]} intensity={IS_MOBILE ? 3.0 : 1.5} color="#fff" />
                 <pointLight position={[-8, -5, -5]} intensity={IS_MOBILE ? 1.2 : 0.5} color="#4cc9f0" />
@@ -865,22 +871,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                 </div>
                 <Tabs defaultValue={defaultTab} className="w-full h-full flex flex-col pointer-events-auto">
                   <div className="px-5 pt-4">
-                    <TabsList className="grid h-12 w-full grid-cols-3 rounded-2xl border-0 bg-white/5 p-1 pointer-events-auto">
+                    <TabsList className="flex w-full rounded-lg bg-white/[0.03] p-0.5 border-0 pointer-events-auto">
                       <TabsTrigger
                         value="stats"
-                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/15 data-[state=active]:!text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
+                        className="flex-1 rounded-md text-[10px] font-semibold py-1.5 text-white/30 transition-all data-[state=active]:bg-white/[0.08] data-[state=active]:text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         STATS
                       </TabsTrigger>
                       <TabsTrigger
                         value="intel"
-                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/15 data-[state=active]:!text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
+                        className="flex-1 rounded-md text-[10px] font-semibold py-1.5 text-white/30 transition-all data-[state=active]:bg-white/[0.08] data-[state=active]:text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         DOSSIER
                       </TabsTrigger>
                       <TabsTrigger
                         value="badges"
-                        className="h-10 rounded-xl px-0 text-[11px] font-semibold leading-none data-[state=active]:!bg-cyan-500/15 data-[state=active]:!text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
+                        className="flex-1 rounded-md text-[10px] font-semibold py-1.5 text-white/30 transition-all data-[state=active]:bg-white/[0.08] data-[state=active]:text-cyan-400 data-[state=active]:shadow-none cursor-pointer pointer-events-auto"
                       >
                         BADGES
                       </TabsTrigger>
