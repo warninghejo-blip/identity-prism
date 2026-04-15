@@ -296,7 +296,7 @@ function ExpandedDetails({ barKey, details, color }: { barKey: BarKey; details: 
             <DetailRow
               label="Quests Done"
               raw={`${d.questsCompleted ?? details?.engagement?.questsCompleted ?? 0}`}
-              pts={d.comparePts ?? 0}
+              pts={d.questPts ?? 0}
               max={16}
               color={color}
             />

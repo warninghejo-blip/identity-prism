@@ -2085,9 +2085,9 @@ function calculateCompositeScore(input) {
 
   // Social badges (3) — bonus 8 pts each
   const badge_arenaChampion = challengesWon >= 5;
-  const badge_starNavigator = constellationExplored >= 10;
-  const badge_debateKing = compareCount >= 10;
-  const socialBadgeBonus = (badge_arenaChampion ? 8 : 0) + (badge_starNavigator ? 8 : 0) + (badge_debateKing ? 8 : 0);
+  const badge_topHunter = (scanCount || 0) >= 20;
+  const badge_questMaster = (questsCompleted || 0) >= 15;
+  const socialBadgeBonus = (badge_arenaChampion ? 8 : 0) + (badge_topHunter ? 8 : 0) + (badge_questMaster ? 8 : 0);
 
   // Engagement badges (3) — bonus 8 pts each
   const badge_questHunter = questsCompleted >= 10;
@@ -2148,7 +2148,7 @@ function calculateCompositeScore(input) {
         recoveryBreakdown: recovery,
       },
       humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount, badgeBonus: humanBadgeBonus },
-      social: { challengesWon, challengePts, constellationExplored, constellationPts, scanCount, scanPts: socialScanPts, compareCount, comparePts, badgeBonus: socialBadgeBonus },
+      social: { challengesWon, challengePts, scanCount, scanPts: socialScanPts, questsCompleted, questPts: Math.min(16, Math.floor((questsCompleted || 0) * 1.1)), badgeBonus: socialBadgeBonus },
       engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
     },
   };
@@ -4929,25 +4929,26 @@ const server = http.createServer(async (req, res) => {
         if (remainingSessionAllowance <= 0) {
           return respondJson(res, 400, { error: 'Session coin allowance exhausted' });
         }
-        // Daily cap and session allowance track normalized pre-holder earnings so holder perks and staking sit on top.
+        // Daily cap tracks REAL coins earned (holder multiplier included, staking excluded).
+        // Holder perk = faster farming (2x per game), but same daily ceiling as everyone.
         const todayCoins = getGameCoinsToday(addr);
         if (todayCoins >= DAILY_GAME_COIN_CAP) {
           return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
         }
-        const requestedDelta = Math.min(normalizedRequestedDelta, remainingSessionAllowance);
-        let baseDelta = requestedDelta;
+        // delta is already the full amount (with holder multiplier applied client-side)
+        const requestedDelta = Math.min(delta, remainingSessionAllowance * pinnedIdentityGameCoinMultiplier);
+        let appliedDelta = requestedDelta;
         if (todayCoins + requestedDelta > DAILY_GAME_COIN_CAP) {
-          baseDelta = DAILY_GAME_COIN_CAP - todayCoins;
+          appliedDelta = DAILY_GAME_COIN_CAP - todayCoins;
         }
-        // Track normalized pre-holder amount in the daily counter
-        addGameCoinsToday(addr, baseDelta);
-        session.coinsCredited = alreadyCredited + baseDelta;
+        // Track real coins in daily counter (not normalized)
+        addGameCoinsToday(addr, appliedDelta);
+        session.coinsCredited = alreadyCredited + Math.ceil(appliedDelta / pinnedIdentityGameCoinMultiplier);
         gameSessionProofs.set(gameSessionId, session);
         persistGameSessionProofs();
-        const appliedGameDelta = scaleAppliedGameCoinDelta(delta, normalizedRequestedDelta, baseDelta);
-        // Apply staking boost ON TOP of the holder-adjusted amount (bonus coins don't count towards cap)
+        // Apply staking boost ON TOP — bonus coins don't count towards cap
         const boost = getStakingBoost(addr);
-        const effectiveDelta = boost > 0 ? Math.floor(appliedGameDelta * (1 + boost)) : appliedGameDelta;
+        const effectiveDelta = boost > 0 ? Math.floor(appliedDelta * (1 + boost)) : appliedDelta;
         const current = getCoinBalance(addr);
         const newBalance = current + effectiveDelta;
         setCoinBalance(addr, newBalance);
