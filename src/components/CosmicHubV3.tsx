@@ -919,41 +919,88 @@ export default function CosmicHub({
           </div>
         </div>
 
-        {/* How to Earn Coins */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25, delay: 0.35 }}
-          className="w-full max-w-xs mx-auto px-4 mb-2 pointer-events-auto"
-        >
-          <p className="text-[10px] uppercase tracking-[0.12em] text-white/20 font-bold mb-2">How to Earn Coins</p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {[
-              { label: 'Games', limit: 'per session', icon: '🎮' },
-              { label: 'Sybil Hunt', limit: '500/day', icon: '🎯' },
-              { label: 'Quiz', limit: '500/day', icon: '🧠' },
-              { label: 'Arena', limit: 'no cap', icon: '⚔️' },
-              { label: 'Quests', limit: 'daily+weekly', icon: '📋' },
-              { label: 'Vault', limit: 'passive', icon: '💰' },
-            ].map((item) => (
-              <div
-                key={item.label}
-                className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/[0.02] border border-white/[0.04]"
-              >
-                <span className="text-[10px] text-white/40 font-bold">
-                  {item.icon} {item.label}
-                </span>
-                <span className="text-[9px] text-amber-300/30 font-bold shrink-0 ml-2">{item.limit}</span>
-              </div>
-            ))}
-          </div>
-        </motion.div>
+        {/* Daily Limits Table */}
+        {walletAddress && <DailyLimitsTable address={walletAddress} />}
 
         {/* Daily Earnings Progress */}
         {walletAddress && <DailyEarnings address={walletAddress} />}
 
         {/* Invite Button — bottom */}
         {walletAddress && <ReferralInviteButton walletAddress={walletAddress} />}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ── Daily Limits Table ── */
+function DailyLimitsTable({ address }: { address: string }) {
+  const [data, setData] = useState<{
+    game: { earned: number; cap: number };
+    hunt: { earned: number; cap: number };
+    scan: { earned: number; cap: number };
+    quiz: { earned: number; cap: number };
+    nonGame: { earned: number; cap: number };
+  } | null>(null);
+
+  useEffect(() => {
+    const base = getHeliusProxyUrl() || '';
+    if (!base || !address) return;
+    fetch(`${base}/api/daily-limits?address=${encodeURIComponent(address)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setData(d);
+      })
+      .catch(() => {});
+  }, [address]);
+
+  const fmt = (n: number) => n.toLocaleString();
+
+  // Static caps as fallback
+  const game = data?.game ?? { earned: 0, cap: 2000 };
+  const scan = data?.scan ?? { earned: 0, cap: 100 };
+  const hunt = data?.hunt ?? { earned: 0, cap: 500 };
+  const quiz = data?.quiz ?? { earned: 0, cap: 500 };
+  const nonGame = data?.nonGame ?? { earned: 0, cap: 1500 };
+
+  // Black Hole cap is not tracked by the endpoint — static
+  const bhCap = 500;
+
+  const rows: { label: string; earned: number; cap: number }[] = [
+    { label: 'Games', earned: game.earned, cap: game.cap },
+    { label: 'Scans', earned: scan.earned, cap: scan.cap },
+    { label: 'Sybil Hunt', earned: hunt.earned, cap: hunt.cap },
+    { label: 'Quiz', earned: quiz.earned, cap: quiz.cap },
+    { label: 'Black Hole', earned: 0, cap: bhCap },
+    { label: 'Non-game total', earned: nonGame.earned, cap: nonGame.cap },
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay: 0.35 }}
+      className="bg-white/[0.02] rounded-xl p-3 mx-4 mt-3 mb-2 pointer-events-auto"
+    >
+      <p className="text-[10px] font-bold text-white/30 mb-2 uppercase tracking-[0.12em]">Daily Limits</p>
+      <div className="space-y-0.5">
+        {rows.map(({ label, earned, cap }, i) => {
+          const atLimit = earned >= cap && cap > 0;
+          const nearLimit = !atLimit && cap > 0 && earned / cap >= 0.8;
+          const earnColor = atLimit ? 'text-red-400' : nearLimit ? 'text-amber-400' : 'text-white';
+          const isSeparator = label === 'Non-game total';
+          return (
+            <div
+              key={label}
+              className={`flex justify-between items-center text-[10px]${isSeparator ? ' mt-1.5 pt-1.5 border-t border-white/[0.06]' : ''}`}
+            >
+              <span className={isSeparator ? 'text-white/20' : 'text-white/40'}>{label}</span>
+              <span className="font-mono">
+                <span className={earnColor}>{fmt(earned)}</span>
+                <span className="text-white/20"> / {fmt(cap)}</span>
+              </span>
+            </div>
+          );
+        })}
       </div>
     </motion.div>
   );

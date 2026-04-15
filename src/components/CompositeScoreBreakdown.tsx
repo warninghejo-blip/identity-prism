@@ -288,8 +288,8 @@ function ExpandedDetails({ barKey, details, color }: { barKey: BarKey; details: 
             />
             <DetailRow
               label="Scans Done"
-              raw={`${details?.engagement?.scanCount ?? 0}`}
-              pts={details?.engagement?.scanPts ?? 0}
+              raw={`${details?.social?.scanCount ?? details?.engagement?.scanCount ?? 0}`}
+              pts={details?.social?.scanPts ?? details?.engagement?.scanPts ?? 0}
               max={28}
               color={color}
             />

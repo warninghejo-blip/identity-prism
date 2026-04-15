@@ -2113,8 +2113,9 @@ function calculateCompositeScore(input) {
   // Social (10%, max 100) — base activities capped at 76 so badge bonuses (up to 24) always matter
   const challengePts = Math.min(32, challengesWon * 4);
   const constellationPts = Math.min(28, constellationExplored * 2);
+  const socialScanPts = Math.min(28, scanCount > 0 ? Math.round(Math.log2(1 + scanCount) * 4) : 0);
   const comparePts = Math.min(16, compareCount * 2);
-  const social = Math.min(100, challengePts + constellationPts + comparePts + socialBadgeBonus);
+  const social = Math.min(100, challengePts + Math.max(constellationPts, socialScanPts) + comparePts + socialBadgeBonus);
 
   // Engagement (10%, max 100) — base activities capped at 76 so badge bonuses (up to 24) always matter
   const questPts = Math.min(40, questsCompleted * 2);
@@ -2147,7 +2148,7 @@ function calculateCompositeScore(input) {
         recoveryBreakdown: recovery,
       },
       humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount, badgeBonus: humanBadgeBonus },
-      social: { challengesWon, challengePts, constellationExplored, constellationPts, compareCount, comparePts, badgeBonus: socialBadgeBonus },
+      social: { challengesWon, challengePts, constellationExplored, constellationPts, scanCount, scanPts: socialScanPts, compareCount, comparePts, badgeBonus: socialBadgeBonus },
       engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
     },
   };
