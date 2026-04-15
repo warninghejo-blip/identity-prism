@@ -1521,7 +1521,7 @@ function getBadgeItems(
       label: 'Visionary',
       isActive: traits.hasPreorder,
       texture: BADGE_TEXTURES.visionary,
-      description: 'Saw the constellation before it was drawn.',
+      description: 'Early believer — secured a spot before launch.',
       category: 'identityPrism',
     },
     {

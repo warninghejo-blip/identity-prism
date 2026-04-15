@@ -50,7 +50,7 @@ const BARS: { key: BarKey; label: string; max: number; color: string; icon: stri
     max: 100,
     color: '#fb923c',
     icon: '\u{1F465}',
-    tooltip: 'Win challenges, explore constellations, compare wallets.',
+    tooltip: 'Win challenges, scan wallets, complete quests.',
   },
   {
     key: 'engagement',
@@ -293,7 +293,13 @@ function ExpandedDetails({ barKey, details, color }: { barKey: BarKey; details: 
               max={28}
               color={color}
             />
-            <DetailRow label="Compares" raw={`${d.compareCount ?? 0}`} pts={d.comparePts ?? 0} max={16} color={color} />
+            <DetailRow
+              label="Quests Done"
+              raw={`${d.questsCompleted ?? details?.engagement?.questsCompleted ?? 0}`}
+              pts={d.comparePts ?? 0}
+              max={16}
+              color={color}
+            />
             {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={24} color={color} />}
           </div>
         );
