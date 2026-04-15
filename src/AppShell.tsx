@@ -1,4 +1,4 @@
-import React, { Component, type ReactNode } from 'react';
+import React, { Component, type ReactNode, useEffect } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { ConnectionProvider } from '@solana/wallet-adapter-react';
 import { CustomWalletProvider } from './components/CustomWalletProvider';
@@ -224,6 +224,34 @@ const debugEnabled =
 const DebugConsole: React.ComponentType | null = null;
 
 export default function AppShell() {
+  // Android hardware back button: prevent going to landing page, minimize instead
+  useEffect(() => {
+    if (!isCapacitorNative) return;
+
+    // Push a sentinel entry so there's always something to pop back to
+    window.history.pushState({ __appHub: true }, '', window.location.href);
+
+    const handler = () => {
+      const path = window.location.pathname.replace(/\/+$/, '') || '/';
+      const isHub = path === '/' || path === '/app' || path === '';
+      if (isHub) {
+        // Re-push sentinel so next back also minimizes
+        window.history.pushState({ __appHub: true }, '', window.location.href);
+        // Minimize app via Capacitor if available
+        const cap = (
+          globalThis as typeof globalThis & { Capacitor?: { Plugins?: { App?: { minimizeApp?: () => void } } } }
+        ).Capacitor;
+        cap?.Plugins?.App?.minimizeApp?.();
+      } else {
+        // Go to hub instead of browser history back
+        router.navigate('/app', { replace: false });
+      }
+    };
+
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, []);
+
   return (
     <ConnectionProvider endpoint={endpoint}>
       {DebugConsole && (
