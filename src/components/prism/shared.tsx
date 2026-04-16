@@ -482,6 +482,7 @@ export async function obtainJwt(wallet: {
       const cached = getCachedJwt(address);
       if (cached) return cached;
 
+      setAuthState('signing');
       const base = getApiBase();
       _lastChallengeTs = Date.now();
       const challengeRes = await fetch(`${base}/api/auth/challenge`, {
@@ -493,7 +494,10 @@ export async function obtainJwt(wallet: {
       const { nonce, message } = (await challengeRes.json()) as { nonce: string; message: string };
 
       const msgBytes = new TextEncoder().encode(message);
-      const signatureBytes = await wallet.signMessage!(msgBytes);
+      const signTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('SIGN_TIMEOUT')), 30_000),
+      );
+      const signatureBytes = await Promise.race([wallet.signMessage!(msgBytes), signTimeout]);
       const sigArr =
         signatureBytes instanceof Uint8Array ? signatureBytes : new Uint8Array(signatureBytes as ArrayLike<number>);
       const signatureHex = Array.from(sigArr, (b: number) => b.toString(16).padStart(2, '0')).join('');
@@ -512,8 +516,10 @@ export async function obtainJwt(wallet: {
       } catch {
         /* ignore */
       }
+      setAuthState('signed');
       return token;
     } catch {
+      setAuthState('declined');
       return null;
     } finally {
       _jwtInFlight = null;
@@ -521,6 +527,31 @@ export async function obtainJwt(wallet: {
   })();
 
   return _jwtInFlight;
+}
+
+// ── Auth state listeners ──
+type AuthState = 'idle' | 'signing' | 'signed' | 'declined';
+let _authState: AuthState = 'idle';
+const _authListeners = new Set<(s: AuthState) => void>();
+
+export function getAuthState(): AuthState {
+  return _authState;
+}
+
+export function subscribeAuthState(cb: (s: AuthState) => void): () => void {
+  _authListeners.add(cb);
+  return () => _authListeners.delete(cb);
+}
+
+function setAuthState(s: AuthState): void {
+  _authState = s;
+  for (const cb of _authListeners) {
+    try {
+      cb(s);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // ── Global wallet ref for auto-JWT in apiCall ──

@@ -90,7 +90,7 @@ export const PRISM_EARN_RATES: Record<PrismEarnSource, number> = {
   quest_weekly: 50, // per weekly quest completed
   quest_milestone: 100, // per milestone quest completed
   challenge_win: 30, // per challenge won
-  first_mint: 100, // one-time bonus for first mint
+  first_mint: 1000, // one-time bonus for first mint
   referral: 20, // per referred user who scans
   text_quest: 1, // text quest reward (custom amount)
   sybil_hunt: 20, // server-validated bounty for high-confidence sybil catches

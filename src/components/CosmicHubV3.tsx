@@ -11,7 +11,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { startFadeTransition } from '@/lib/fadeTransition';
-import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
+import { getHeliusProxyUrl } from '@/constants';
 import { getTierIcon } from '@/lib/constants/tierColors';
 import { toast } from 'sonner';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
@@ -30,9 +30,6 @@ import {
   Eye,
   Search,
   Zap,
-  Share2,
-  Copy,
-  X,
   LogOut,
   Bell,
 } from 'lucide-react';
@@ -454,31 +451,6 @@ function MiniPassport({
           );
         })()}
 
-        {/* Boost badge */}
-        {boostRate != null && boostRate > 0 && (
-          <div className="mt-2 flex justify-center">
-            <div
-              className="flex items-center gap-1 px-2 py-0.5 rounded-xl"
-              style={{
-                background: 'linear-gradient(135deg, rgba(168,85,247,0.1), rgba(251,146,60,0.1))',
-                border: '1px solid rgba(168,85,247,0.2)',
-              }}
-            >
-              <Zap size={8} style={{ color: '#fb923c' }} />
-              <span
-                className="text-[8px] font-black"
-                style={{
-                  background: 'linear-gradient(90deg, #a855f7, #fb923c)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                }}
-              >
-                +{boostRate}% Staking Boost
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* MRZ */}
         <div className="mt-2 pt-1 border-t border-white/[0.04]">
           <div className="text-[7px] font-mono text-white/[0.06] tracking-[0.08em] truncate select-none">{mrz}</div>
@@ -636,7 +608,7 @@ function MiniPassport({
                 border: '1px solid rgba(168,85,247,0.3)',
                 boxShadow: '0 0 8px rgba(168,85,247,0.2)',
               }}
-              title={`Staking boost: +${boostRate}%`}
+              title={`Staking boost: +${Math.round(boostRate * 100)}% to earn rate`}
             >
               <Zap size={10} style={{ color: '#fb923c', filter: 'drop-shadow(0 0 4px rgba(251,146,60,0.8))' }} />
               <span
@@ -647,7 +619,7 @@ function MiniPassport({
                   WebkitTextFillColor: 'transparent',
                 }}
               >
-                +{boostRate}%
+                +{Math.round(boostRate * 100)}%
               </span>
             </div>
           )}
@@ -924,9 +896,6 @@ export default function CosmicHub({
 
         {/* Daily Earnings Progress */}
         {walletAddress && <DailyEarnings address={walletAddress} />}
-
-        {/* Invite Button — bottom */}
-        {walletAddress && <ReferralInviteButton walletAddress={walletAddress} />}
       </div>
     </motion.div>
   );
@@ -965,14 +934,31 @@ function DailyLimitsTable({ address }: { address: string }) {
   // Black Hole cap is not tracked by the endpoint — static
   const bhCap = 500;
 
-  const rows: { label: string; earned: number; cap: number }[] = [
-    { label: 'Games', earned: game.earned, cap: game.cap },
+  const gameRow = { label: 'Games', earned: game.earned, cap: game.cap };
+  const nonGameRow = { label: 'Non-game total', earned: nonGame.earned, cap: nonGame.cap };
+  const subRows: { label: string; earned: number; cap: number }[] = [
     { label: 'Scans', earned: scan.earned, cap: scan.cap },
     { label: 'Sybil Hunt', earned: hunt.earned, cap: hunt.cap },
     { label: 'Quiz', earned: quiz.earned, cap: quiz.cap },
     { label: 'Black Hole', earned: 0, cap: bhCap },
-    { label: 'Non-game total', earned: nonGame.earned, cap: nonGame.cap },
   ];
+
+  const renderRow = (r: { label: string; earned: number; cap: number }, variant: 'main' | 'header' | 'sub') => {
+    const atLimit = r.earned >= r.cap && r.cap > 0;
+    const nearLimit = !atLimit && r.cap > 0 && r.earned / r.cap >= 0.8;
+    const earnColor = atLimit ? 'text-red-400' : nearLimit ? 'text-amber-400' : 'text-white';
+    const labelClass =
+      variant === 'header' ? 'text-white/80 font-semibold' : variant === 'sub' ? 'text-white/55 pl-3' : 'text-white/70';
+    return (
+      <div key={r.label} className="flex justify-between items-center text-[10px]">
+        <span className={labelClass}>{r.label}</span>
+        <span className="font-mono">
+          <span className={earnColor}>{fmt(r.earned)}</span>
+          <span className="text-white/40"> / {fmt(r.cap)}</span>
+        </span>
+      </div>
+    );
+  };
 
   return (
     <motion.div
@@ -981,26 +967,12 @@ function DailyLimitsTable({ address }: { address: string }) {
       transition={{ duration: 0.25, delay: 0.35 }}
       className="bg-white/[0.02] rounded-xl p-3 mx-4 mt-3 mb-2 pointer-events-auto"
     >
-      <p className="text-[10px] font-bold text-white/30 mb-2 uppercase tracking-[0.12em]">Daily Limits</p>
+      <p className="text-[10px] font-bold text-white/50 mb-2 uppercase tracking-[0.12em]">Daily Limits</p>
       <div className="space-y-0.5">
-        {rows.map(({ label, earned, cap }, i) => {
-          const atLimit = earned >= cap && cap > 0;
-          const nearLimit = !atLimit && cap > 0 && earned / cap >= 0.8;
-          const earnColor = atLimit ? 'text-red-400' : nearLimit ? 'text-amber-400' : 'text-white';
-          const isSeparator = label === 'Non-game total';
-          return (
-            <div
-              key={label}
-              className={`flex justify-between items-center text-[10px]${isSeparator ? ' mt-1.5 pt-1.5 border-t border-white/[0.06]' : ''}`}
-            >
-              <span className={isSeparator ? 'text-white/20' : 'text-white/40'}>{label}</span>
-              <span className="font-mono">
-                <span className={earnColor}>{fmt(earned)}</span>
-                <span className="text-white/20"> / {fmt(cap)}</span>
-              </span>
-            </div>
-          );
-        })}
+        {renderRow(gameRow, 'main')}
+        <div className="mt-1.5 pt-1.5 border-t border-white/[0.08]" />
+        {renderRow(nonGameRow, 'header')}
+        {subRows.map((r) => renderRow(r, 'sub'))}
       </div>
     </motion.div>
   );
@@ -1081,191 +1053,5 @@ function DailyEarnings({ address }: { address: string }) {
         })}
       </div>
     </motion.div>
-  );
-}
-
-/* ── Referral Invite Button & Modal ── */
-function ReferralInviteButton({ walletAddress }: { walletAddress: string }) {
-  const wallet = useWallet();
-  const [showModal, setShowModal] = useState(false);
-  const [code, setCode] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState<{ totalReferred: number; totalEarned: number } | null>(null);
-
-  const fetchCode = useCallback(async () => {
-    setLoading(true);
-    try {
-      const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-      const { ensureJwt } = await import('@/components/prism/shared');
-      const jwt = await ensureJwt();
-      if (!base || !jwt) {
-        setLoading(false);
-        return;
-      }
-      const res = await fetch(`${base}/api/referral/code`, {
-        headers: { Authorization: `Bearer ${jwt}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCode(data.code);
-      }
-      // Fetch stats too
-      const sRes = await fetch(`${base}/api/referral/stats`, {
-        headers: { Authorization: `Bearer ${jwt}` },
-      });
-      if (sRes.ok) {
-        const sData = await sRes.json();
-        setStats({ totalReferred: sData.totalReferred, totalEarned: sData.totalEarned });
-        if (sData.code && !code) setCode(sData.code);
-      }
-    } catch {
-      /* silent */
-    }
-    setLoading(false);
-  }, [walletAddress, wallet]);
-
-  const handleOpen = () => {
-    setShowModal(true);
-    if (!code) fetchCode();
-  };
-
-  const appBase = getAppBaseUrl();
-  const refLink = code ? `${appBase}/?ref=${code}` : '';
-
-  const copyLink = () => {
-    if (refLink) {
-      navigator.clipboard.writeText(refLink).then(() => toast.success('Link copied!'));
-    }
-  };
-
-  const shareOnX = () => {
-    const text = encodeURIComponent(
-      'Check out Identity Prism - scan your Solana wallet and discover your cosmic identity! Use my referral link:',
-    );
-    const url = encodeURIComponent(refLink);
-    window.open(`https://x.com/intent/tweet?text=${text}&url=${url}`, '_blank');
-  };
-
-  const webShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: 'Identity Prism', text: 'Scan your Solana wallet!', url: refLink });
-      } catch {
-        /* user cancelled */
-      }
-    }
-  };
-
-  return (
-    <>
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.8, duration: 0.4 }}
-        className="w-full max-w-5xl mx-auto px-4 pb-6 pointer-events-auto"
-      >
-        <button
-          onClick={handleOpen}
-          className="w-full py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all duration-300"
-          style={{
-            background: 'linear-gradient(135deg, rgba(34,211,238,0.1), rgba(168,85,247,0.1))',
-            border: '1px solid rgba(34,211,238,0.2)',
-            color: 'rgba(34,211,238,0.9)',
-          }}
-        >
-          <Share2 className="w-4 h-4" />
-          Invite Friends — Earn Coins
-        </button>
-      </motion.div>
-
-      {/* Referral Modal */}
-      {showModal && (
-        <div
-          className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-auto"
-          onClick={() => setShowModal(false)}
-          style={{ cursor: 'pointer' }}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            className="w-[90%] max-w-sm rounded-2xl p-6"
-            style={{
-              background: 'linear-gradient(135deg, #0a0e1a, #0d1020)',
-              border: '1px solid rgba(255,255,255,0.08)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-white font-bold text-lg">Invite Friends</h2>
-              <button
-                onClick={() => setShowModal(false)}
-                className="text-white/30 hover:text-white/60 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {loading ? (
-              <div className="text-center py-8 text-white/30 text-sm">Loading...</div>
-            ) : code ? (
-              <div className="space-y-4">
-                <div className="text-center">
-                  <p className="text-white/40 text-xs mb-2">Your referral code</p>
-                  <div className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white/[0.05] border border-white/[0.1]">
-                    <span className="text-2xl font-mono font-bold text-cyan-400 tracking-widest">{code}</span>
-                    <button onClick={copyLink} className="text-white/30 hover:text-cyan-400 transition-colors">
-                      <Copy className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {stats && (
-                  <div className="flex justify-center gap-6 text-center">
-                    <div>
-                      <p className="text-xl font-bold text-white">{stats.totalReferred}</p>
-                      <p className="text-[10px] text-white/30">Referred</p>
-                    </div>
-                    <div>
-                      <p className="text-xl font-bold text-cyan-400">{stats.totalEarned}</p>
-                      <p className="text-[10px] text-white/30">Coins Earned</p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2">
-                  <button
-                    onClick={copyLink}
-                    className="w-full py-3 rounded-xl text-sm font-bold bg-white/[0.06] hover:bg-white/[0.1] text-white/80 border border-white/[0.08] flex items-center justify-center gap-2 transition-all"
-                  >
-                    <Copy className="w-4 h-4" /> Copy Link
-                  </button>
-                  <button
-                    onClick={shareOnX}
-                    className="w-full py-3 rounded-xl text-sm font-bold bg-white/[0.06] hover:bg-white/[0.1] text-white/80 border border-white/[0.08] flex items-center justify-center gap-2 transition-all"
-                  >
-                    Share on X
-                  </button>
-                  {typeof navigator !== 'undefined' && navigator.share && (
-                    <button
-                      onClick={webShare}
-                      className="w-full py-3 rounded-xl text-sm font-bold bg-white/[0.06] hover:bg-white/[0.1] text-white/80 border border-white/[0.08] flex items-center justify-center gap-2 transition-all"
-                    >
-                      <Share2 className="w-4 h-4" /> Share
-                    </button>
-                  )}
-                </div>
-
-                <p className="text-[10px] text-white/20 text-center">
-                  You earn 20 coins per referral + 100 coins when they mint their ID
-                </p>
-              </div>
-            ) : (
-              <div className="text-center py-8 text-white/30 text-sm">Connect wallet to get your code</div>
-            )}
-          </motion.div>
-        </div>
-      )}
-    </>
   );
 }

@@ -14,7 +14,7 @@ import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapt
 import { extractMwaAddress, mwaAuthorizationCache } from '@/lib/mwaAuthorizationCache';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Loader2, Share2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ChevronDown, ChevronUp, Coins, Loader2, Share2 } from 'lucide-react';
 import LandingOverlay from '@/components/LandingOverlay';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
 import {
@@ -26,7 +26,7 @@ import {
   MINT_CONFIG,
   SEEKER_TOKEN,
 } from '@/constants';
-import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { Connection, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
 // html2canvas loaded dynamically in renderCardImage()
 const CosmicHub = React.lazy(() => import('@/components/CosmicHubV3'));
@@ -129,6 +129,8 @@ const Index = () => {
   }, []);
 
   const [isWarping, setIsWarping] = useState(false);
+  const [solBalance, setSolBalance] = useState<number | null>(null);
+  const [skrBalance, setSkrBalance] = useState<number | null>(null);
   const [prismBalance, setPrismBalance] = useState<PrismBalance | null>(() => {
     try {
       const cached = sessionStorage.getItem('ip_prism_balance');
@@ -260,6 +262,35 @@ const Index = () => {
       setSearchParams(next, { replace: true });
     }
   }, [isConnected, connectedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch SOL and SKR balances when wallet connects
+  useEffect(() => {
+    if (!isConnected || !wallet.publicKey) {
+      setSolBalance(null);
+      setSkrBalance(null);
+      return;
+    }
+    const conn = new Connection(
+      getHeliusRpcUrl(wallet.publicKey.toBase58()) || 'https://api.mainnet-beta.solana.com',
+      'confirmed',
+    );
+    conn
+      .getBalance(wallet.publicKey)
+      .then((lamports) => setSolBalance(lamports / 1e9))
+      .catch(() => setSolBalance(null));
+    try {
+      const skrMint = new PublicKey(SEEKER_TOKEN.MINT);
+      conn
+        .getParsedTokenAccountsByOwner(wallet.publicKey, { mint: skrMint })
+        .then((res) => {
+          const amount = res.value[0]?.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+          setSkrBalance(amount);
+        })
+        .catch(() => setSkrBalance(null));
+    } catch {
+      setSkrBalance(null);
+    }
+  }, [isConnected, wallet.publicKey]);
 
   // Refresh coin balance when returning to hub (e.g. after challenge/game)
   // Direct server fetch — bypasses prefetch cache to always show real balance
@@ -763,9 +794,14 @@ const Index = () => {
       if (!cached) {
         setJwtSigning(true);
         try {
-          await obtainJwt(wallet);
+          const jwt = await obtainJwt(wallet);
+          if (!jwt) {
+            setJwtDeclined(true);
+            toast.error('Sign-in needed — tap wallet icon to retry', { duration: 5000 });
+          }
         } catch {
           setJwtDeclined(true);
+          toast.error('Sign-in failed — try reconnecting wallet', { duration: 5000 });
         }
         setJwtSigning(false);
       }
@@ -1728,36 +1764,58 @@ const Index = () => {
                               type="button"
                               className={`mint-payment-option ${paymentToken === 'SOL' ? 'is-active' : ''}`}
                               onClick={() => setPaymentToken('SOL')}
+                              aria-label="Pay with SOL"
+                              title="SOL"
                             >
-                              SOL
+                              <img
+                                src="/textures/Solana.png"
+                                alt="SOL"
+                                style={{ width: 22, height: 22, objectFit: 'contain' }}
+                              />
                             </button>
                             <button
                               type="button"
                               className={`mint-payment-option ${paymentToken === 'SKR' ? 'is-active' : ''}`}
                               onClick={() => setPaymentToken('SKR')}
                               disabled={!skrQuote && !skrQuoteLoading}
+                              aria-label={`Pay with ${SEEKER_TOKEN.SYMBOL}`}
+                              title={SEEKER_TOKEN.SYMBOL}
                             >
-                              {SEEKER_TOKEN.SYMBOL} −50%
+                              <img
+                                src="/badges/seeker.png"
+                                alt={SEEKER_TOKEN.SYMBOL}
+                                style={{ width: 22, height: 22, objectFit: 'contain' }}
+                              />
                             </button>
                             {isConnected && (
                               <button
                                 type="button"
                                 className={`mint-payment-option ${paymentToken === 'COINS' ? 'is-active' : ''}`}
                                 onClick={() => setPaymentToken('COINS')}
-                                disabled={false}
+                                aria-label="Pay with Coins"
+                                title="COINS"
                                 style={
                                   paymentToken === 'COINS'
                                     ? { borderColor: 'rgba(234,179,8,0.5)', color: 'rgba(234,179,8,0.9)' }
                                     : {}
                                 }
                               >
-                                COINS
+                                <Coins style={{ width: 22, height: 22 }} />
                               </button>
                             )}
                           </div>
+                          {paymentToken === 'SOL' && (
+                            <span className="mint-payment-note">
+                              {solBalance !== null ? `Balance: ${solBalance.toFixed(4)} SOL` : 'Loading balance…'}
+                            </span>
+                          )}
                           {paymentToken === 'SKR' && (
                             <span className={`mint-payment-note ${skrQuoteError ? 'is-error' : ''}`}>
-                              {skrQuoteError ? skrQuoteError : `Pay with ${SEEKER_TOKEN.SYMBOL}`}
+                              {skrQuoteError
+                                ? skrQuoteError
+                                : skrBalance !== null
+                                  ? `Balance: ${skrBalance.toLocaleString()} ${SEEKER_TOKEN.SYMBOL}`
+                                  : 'Loading balance…'}
                             </span>
                           )}
                           {paymentToken === 'COINS' && (

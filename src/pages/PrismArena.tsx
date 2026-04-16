@@ -489,8 +489,13 @@ export default function PrismArena() {
           if (simulation.value.err)
             throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
           tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+          const origSerializeCreate = tx.serialize.bind(tx);
+          tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+            origSerializeCreate({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
           const signed = await wallet.signTransaction(tx);
-          const sig = await conn.sendRawTransaction(signed.serialize());
+          const sig = await conn.sendRawTransaction(
+            signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+          );
           await conn.confirmTransaction(sig, 'confirmed');
           solTxSignature = sig;
           toast.info('SOL transfer confirmed, creating challenge...');
@@ -634,8 +639,13 @@ export default function PrismArena() {
             if (simulation.value.err)
               throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
             tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            const origSerializeAccept = tx.serialize.bind(tx);
+            tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+              origSerializeAccept({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
             const signed = await wallet.signTransaction(tx);
-            const sig = await conn.sendRawTransaction(signed.serialize());
+            const sig = await conn.sendRawTransaction(
+              signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+            );
             await conn.confirmTransaction(sig, 'confirmed');
             solTxSignature = sig;
             toast.info('SOL transfer confirmed, accepting challenge...');

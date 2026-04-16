@@ -118,8 +118,13 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             );
             tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
             tx.feePayer = ownerKey;
+            const origSerializeSKR = tx.serialize.bind(tx);
+            tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+              origSerializeSKR({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
             const signed = await wallet.signTransaction(tx);
-            sig = await conn.sendRawTransaction(signed.serialize());
+            sig = await conn.sendRawTransaction(
+              signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+            );
             toast.info('Confirming SKR transaction...');
             await conn.confirmTransaction(sig, 'confirmed');
 
@@ -158,8 +163,13 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             if (simulation.value.err)
               throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
             tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            const origSerializeSOL = tx.serialize.bind(tx);
+            tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+              origSerializeSOL({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
             const signed = await wallet.signTransaction(tx);
-            sig = await conn.sendRawTransaction(signed.serialize());
+            sig = await conn.sendRawTransaction(
+              signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+            );
             toast.info('Confirming transaction...');
             await conn.confirmTransaction(sig, 'confirmed');
 
