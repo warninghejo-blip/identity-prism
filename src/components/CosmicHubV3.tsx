@@ -969,7 +969,7 @@ function DailyLimitsTable({ address }: { address: string }) {
     >
       <p className="text-[10px] font-bold text-white/50 mb-2 uppercase tracking-[0.12em]">Daily Limits</p>
       <div className="space-y-0.5">
-        {renderRow(gameRow, 'main')}
+        {renderRow(gameRow, 'header')}
         <div className="mt-1.5 pt-1.5 border-t border-white/[0.08]" />
         {renderRow(nonGameRow, 'header')}
         {subRows.map((r) => renderRow(r, 'sub'))}
