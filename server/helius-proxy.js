@@ -1934,6 +1934,53 @@ const claimAchievement = (address, achievementId) => {
   return true;
 };
 
+const getStoredGameAchievementMetrics = (address) => {
+  const walletEntry = walletDatabase.get(address) || {};
+  const raw = getWalletUserData(walletEntry)?.gameStats || {};
+  return {
+    orbit: raw.orbit_survival_stats_v1 || {},
+    defender: raw.cosmic_defender_stats_v1 || {},
+    gravity: raw.gravity_rush_stats_v1 || {},
+  };
+};
+
+const isAchievementUnlockVerified = (address, achievementId) => {
+  const { orbit, defender, gravity } = getStoredGameAchievementMetrics(address);
+  switch (achievementId) {
+    case 'first_orbit': return (Number(orbit.bestScore) || 0) >= 15;
+    case 'space_cadet': return (Number(orbit.bestScore) || 0) >= 30;
+    case 'orbit_walker': return (Number(orbit.bestScore) || 0) >= 60;
+    case 'cosmic_veteran': return (Number(orbit.bestScore) || 0) >= 120;
+    case 'asteroid_dancer': return (Number(orbit.bestScore) || 0) >= 180;
+    case 'orbit_legend': return (Number(orbit.bestScore) || 0) >= 300;
+    case 'persistent_pilot': return (Number(orbit.gamesPlayed) || 0) >= 10;
+    case 'dedicated_captain': return (Number(orbit.gamesPlayed) || 0) >= 50;
+    case 'marathon_runner': return (Number(orbit.totalSurvivalTime) || 0) >= 1800;
+
+    case 'def_outer_rim': return (Number(defender.bestLevel) || 0) >= 1;
+    case 'def_nebula_front': return (Number(defender.bestLevel) || 0) >= 2;
+    case 'def_dark_sector': return (Number(defender.bestLevel) || 0) >= 3;
+    case 'def_final_stand': return (Number(defender.bestLevel) || 0) >= 4;
+    case 'def_recruit': return (Number(defender.gamesPlayed) || 0) >= 10;
+    case 'def_veteran': return (Number(defender.gamesPlayed) || 0) >= 50;
+    case 'def_exterminator': return (Number(defender.totalKills) || 0) >= 500;
+    case 'achive_trophy': return (Number(defender.bestScore) || 0) >= 500;
+    case 'achive_diamond_ship': return (Number(defender.bestScore) || 0) >= 1500;
+
+    case 'grav_first_flight': return (Number(gravity.bestSurvivalTime) || 0) >= 15;
+    case 'grav_smooth_pilot': return (Number(gravity.bestColumns) || 0) >= 30;
+    case 'grav_gravity_walker': return (Number(gravity.bestSurvivalTime) || 0) >= 60;
+    case 'grav_crystal_hunter': return (Number(gravity.totalCrystals) || 0) >= 100;
+    case 'grav_gravity_veteran': return (Number(gravity.bestSurvivalTime) || 0) >= 120;
+    case 'grav_column_king': return (Number(gravity.totalColumns) || 0) >= 200;
+    case 'grav_marathon': return (Number(gravity.totalPlayTime ?? gravity.totalSurvivalTime ?? gravity.totalTime) || 0) >= 1800;
+    case 'grav_gravity_legend': return (Number(gravity.bestSurvivalTime) || 0) >= 300;
+    case 'grav_ace': return (Number(gravity.bestSurvivalTime) || 0) >= 180;
+    default:
+      return false;
+  }
+};
+
 loadAchievementData();
 
 // ── Server-side Free Revive tracking (3 per day per game mode, requires minted ID) ──
@@ -2017,6 +2064,142 @@ const persistQuestProgress = () => {
   fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2), 'utf8')
     .then(() => fs.promises.rename(tmp, QUEST_PROGRESS_FILE))
     .catch(err => console.warn('[quests] Failed to persist', err));
+};
+
+const QUEST_SOURCE_IDS = Object.freeze({
+  quest_daily: new Set(['daily_scan', 'daily_game', 'daily_burn', 'daily_explore', 'daily_highscore']),
+  quest_weekly: new Set(['weekly_burn5', 'weekly_games5', 'weekly_arena', 'weekly_streak', 'weekly_forge']),
+  quest_milestone: new Set(['ot_first_scan', 'ot_first_mint', 'ot_first_burn', 'ot_first_game', 'ot_reach_sun', 'ot_burn100', 'ot_score1000', 'ot_forge5', 'ot_arena_wins', 'ot_text_quest']),
+});
+
+const GAME_SOURCE_TO_MODE = Object.freeze({
+  game_orbit: 'orbit',
+  game_defender: 'destroyer',
+  game_gravity: 'gravity',
+});
+
+const getUtcDayStartMs = (dateStr = getToday()) => new Date(`${dateStr}T00:00:00.000Z`).getTime();
+
+const getUtcWeekStartMs = (inputMs = Date.now()) => {
+  const d = new Date(inputMs);
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.getTime();
+};
+
+const getQuestPeriodKey = (questId, nowMs = Date.now()) => {
+  if (QUEST_SOURCE_IDS.quest_daily.has(questId)) return getToday();
+  if (QUEST_SOURCE_IDS.quest_weekly.has(questId)) return new Date(getUtcWeekStartMs(nowMs)).toISOString().slice(0, 10);
+  return 'all_time';
+};
+
+const getBlackHoleResolvedCountFromTx = (tx) => {
+  const match = String(tx?.description || '').match(/\((\d+)\s+resolved\)/i);
+  return match ? (Number(match[1]) || 0) : 0;
+};
+
+const getQuestProgressSnapshot = (address, nowMs = Date.now()) => {
+  const walletEntry = walletDatabase.get(address) || {};
+  const userData = getWalletUserData(walletEntry);
+  const forgeState = getOrCreateForgeState(address, walletEntry).forgeState;
+  const txs = prismTransactions.get(address) || [];
+  const dayStart = getUtcDayStartMs();
+  const weekStart = getUtcWeekStartMs(nowMs);
+  const parseTs = (value) => {
+    const ts = new Date(value || 0).getTime();
+    return Number.isFinite(ts) ? ts : 0;
+  };
+
+  const scoreEntries = leaderboardEntries.filter((entry) => entry.address === address);
+  const todayScoreEntries = scoreEntries.filter((entry) => parseTs(entry.playedAt || entry.timestamp) >= dayStart);
+  const weekScoreEntries = scoreEntries.filter((entry) => parseTs(entry.playedAt || entry.timestamp) >= weekStart);
+  const priorScoreEntries = scoreEntries.filter((entry) => parseTs(entry.playedAt || entry.timestamp) < dayStart);
+
+  const scanDailyEntry = prismEarnRateLimit.get(`scan_daily:${address}`);
+  const scansToday = (scanDailyEntry && typeof scanDailyEntry === 'object' && scanDailyEntry.date === getToday())
+    ? (Number(scanDailyEntry.count) || 0)
+    : 0;
+
+  const burnsAllTime = txs
+    .filter((tx) => tx?.source === 'blackhole_cleanup')
+    .reduce((sum, tx) => sum + getBlackHoleResolvedCountFromTx(tx), 0);
+  const burnsToday = txs
+    .filter((tx) => tx?.source === 'blackhole_cleanup' && parseTs(tx.timestamp) >= dayStart)
+    .reduce((sum, tx) => sum + getBlackHoleResolvedCountFromTx(tx), 0);
+  const burnsWeek = txs
+    .filter((tx) => tx?.source === 'blackhole_cleanup' && parseTs(tx.timestamp) >= weekStart)
+    .reduce((sum, tx) => sum + getBlackHoleResolvedCountFromTx(tx), 0);
+
+  const sybilToday = txs.filter((tx) => tx?.source === 'sybil_hunt' && parseTs(tx.timestamp) >= dayStart).length;
+
+  const weeklyForgePurchases = txs.filter((tx) => {
+    if (tx?.type !== 'spend') return false;
+    if (parseTs(tx.timestamp) < weekStart) return false;
+    return typeof tx?.source === 'string' && tx.source.startsWith('forge_') && tx.source !== 'forge_module';
+  }).length;
+
+  const weeklyArenaBattles = challenges.filter((challenge) => {
+    if (challenge.status !== 'completed') return false;
+    if (challenge.creator !== address && challenge.opponent !== address) return false;
+    return parseTs(challenge.completedAt || challenge.createdAt) >= weekStart;
+  }).length;
+
+  const totalArenaWins = challenges.filter((challenge) => challenge.status === 'completed' && challenge.winner === address).length;
+  const bestScoreEver = Math.max(0, ...scoreEntries.map((entry) => Number(entry.score) || 0), 0);
+  const bestScoreBeforeToday = Math.max(0, ...priorScoreEntries.map((entry) => Number(entry.score) || 0), 0);
+  const bestScoreToday = Math.max(0, ...todayScoreEntries.map((entry) => Number(entry.score) || 0), 0);
+  const completedTextQuests = Object.values(userData?.textQuests || {}).filter((quest) => quest && quest.completed).length;
+  const compositeTier = calculateCompositeScore(buildCompositeInput(address)).compositeTier;
+  const existing = questProgress.get(address) || { streakDays: 0 };
+  const forgeItemsOwned = Array.isArray(forgeState.items) ? forgeState.items.length : 0;
+
+  return {
+    daily_scan: { progress: Math.min(1, scansToday), completed: scansToday >= 1, periodKey: getQuestPeriodKey('daily_scan', nowMs) },
+    daily_game: { progress: Math.min(1, todayScoreEntries.length), completed: todayScoreEntries.length >= 1, periodKey: getQuestPeriodKey('daily_game', nowMs) },
+    daily_burn: { progress: Math.min(1, burnsToday), completed: burnsToday >= 1, periodKey: getQuestPeriodKey('daily_burn', nowMs) },
+    daily_explore: { progress: Math.min(1, sybilToday), completed: sybilToday >= 1, periodKey: getQuestPeriodKey('daily_explore', nowMs) },
+    daily_highscore: { progress: bestScoreToday > bestScoreBeforeToday ? 1 : 0, completed: bestScoreToday > bestScoreBeforeToday, periodKey: getQuestPeriodKey('daily_highscore', nowMs) },
+
+    weekly_burn5: { progress: Math.min(5, burnsWeek), completed: burnsWeek >= 5, periodKey: getQuestPeriodKey('weekly_burn5', nowMs) },
+    weekly_games5: { progress: Math.min(5, weekScoreEntries.length), completed: weekScoreEntries.length >= 5, periodKey: getQuestPeriodKey('weekly_games5', nowMs) },
+    weekly_arena: { progress: Math.min(3, weeklyArenaBattles), completed: weeklyArenaBattles >= 3, periodKey: getQuestPeriodKey('weekly_arena', nowMs) },
+    weekly_streak: { progress: Math.min(5, Number(existing.streakDays) || 0), completed: (Number(existing.streakDays) || 0) >= 5, periodKey: getQuestPeriodKey('weekly_streak', nowMs) },
+    weekly_forge: { progress: Math.min(1, weeklyForgePurchases), completed: weeklyForgePurchases >= 1, periodKey: getQuestPeriodKey('weekly_forge', nowMs) },
+
+    ot_first_scan: { progress: Math.min(1, Number(walletEntry.scanCount) || 0), completed: (Number(walletEntry.scanCount) || 0) >= 1, periodKey: 'all_time' },
+    ot_first_mint: { progress: mintedAddresses.has(address) ? 1 : 0, completed: mintedAddresses.has(address), periodKey: 'all_time' },
+    ot_first_burn: { progress: Math.min(1, burnsAllTime), completed: burnsAllTime >= 1, periodKey: 'all_time' },
+    ot_first_game: { progress: Math.min(1, scoreEntries.length), completed: scoreEntries.length >= 1, periodKey: 'all_time' },
+    ot_reach_sun: { progress: ['sun', 'binary_sun'].includes(compositeTier) ? 1 : 0, completed: ['sun', 'binary_sun'].includes(compositeTier), periodKey: 'all_time' },
+    ot_burn100: { progress: Math.min(100, burnsAllTime), completed: burnsAllTime >= 100, periodKey: 'all_time' },
+    ot_score1000: { progress: Math.min(1000, bestScoreEver), completed: bestScoreEver >= 1000, periodKey: 'all_time' },
+    ot_forge5: { progress: Math.min(5, forgeItemsOwned), completed: forgeItemsOwned >= 5, periodKey: 'all_time' },
+    ot_arena_wins: { progress: Math.min(10, totalArenaWins), completed: totalArenaWins >= 10, periodKey: 'all_time' },
+    ot_text_quest: { progress: Math.min(1, completedTextQuests), completed: completedTextQuests >= 1, periodKey: 'all_time' },
+  };
+};
+
+const verifyGameEarnClaim = (address, source, gameSessionId) => {
+  if (!gameSessionId) return { ok: false, error: 'gameSessionId required' };
+  const session = gameSessionProofs.get(gameSessionId);
+  if (!session || !session.verified) return { ok: false, error: 'Invalid or unverified game session' };
+  if (session.walletAddress !== address) return { ok: false, error: 'Session wallet mismatch' };
+  if (session.usedForChallenge) return { ok: false, error: 'Challenge game — coins earned from challenge result' };
+  const expectedMode = GAME_SOURCE_TO_MODE[source];
+  if (expectedMode && session.gameMode && session.gameMode !== expectedMode) return { ok: false, error: 'Session gameMode mismatch' };
+  if (session.prismEarnClaims?.[source]) return { ok: false, error: 'Reward already claimed for this session' };
+  return { ok: true, session };
+};
+
+const markGameEarnClaimed = (gameSessionId, source, earned) => {
+  const session = gameSessionProofs.get(gameSessionId);
+  if (!session) return;
+  session.prismEarnClaims = {
+    ...(session.prismEarnClaims || {}),
+    [source]: { at: Date.now(), earned },
+  };
+  gameSessionProofs.set(gameSessionId, session);
+  persistGameSessionProofs();
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -5047,7 +5230,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      markAchievementsUnlocked(addr, ids);
+      const verifiedIds = ids.filter((id) => typeof id === 'string' && isAchievementUnlockVerified(addr, id));
+      if (verifiedIds.length > 0) {
+        markAchievementsUnlocked(addr, verifiedIds);
+      }
       const entry = getWalletAchievements(addr);
       respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
     } catch {
@@ -7223,13 +7409,16 @@ const server = http.createServer(async (req, res) => {
     // Sub-caps
     const huntToday = prismEarnRateLimit.get(`subcap:${address}:sybil_hunt:${today}`) || 0;
     const scanToday = prismEarnRateLimit.get(`subcap:${address}:scan_wallet:${today}`) || 0;
-    const quizToday = (prismEarnRateLimit.get(`quiz:${address}:${today}`) || 0) * 5; // answers × 5 coins
+    const quizToday = (prismEarnRateLimit.get(`quiz:${address}:${today}`) || 0) * QUIZ_CORRECT_REWARD;
+    const blackHoleToday = prismEarnRateLimit.get(`blackhole_cleanup:${address}:${today}`) || 0;
     respondJson(res, 200, {
-      game:    { earned: gameToday, cap: typeof DAILY_GAME_COIN_CAP !== 'undefined' ? DAILY_GAME_COIN_CAP : 500 },
-      hunt:    { earned: huntToday, cap: DAILY_HUNT_CAP },
-      scan:    { earned: scanToday, cap: DAILY_SCAN_CAP },
-      quiz:    { earned: quizToday, cap: DAILY_QUIZ_CAP },
-      nonGame: { earned: nonGameToday, cap: NON_GAME_DAILY_EARN_CAP },
+      game:         { earned: gameToday, cap: typeof DAILY_GAME_COIN_CAP !== 'undefined' ? DAILY_GAME_COIN_CAP : 500 },
+      hunt:         { earned: huntToday, cap: DAILY_HUNT_CAP },
+      scan:         { earned: scanToday, cap: DAILY_SCAN_CAP },
+      quiz:         { earned: quizToday, cap: DAILY_QUIZ_CAP },
+      nonGame:      { earned: nonGameToday, cap: NON_GAME_DAILY_EARN_CAP },
+      blackHole:    { earned: blackHoleToday, cap: DAILY_BLACKHOLE_CLEANUP_CAP },
+      blackHoleCap: DAILY_BLACKHOLE_CLEANUP_CAP,
     });
     return;
   }
@@ -7247,6 +7436,7 @@ const server = http.createServer(async (req, res) => {
         description,
         questId,
         scanTarget: scanTargetRaw,
+        gameSessionId,
       } = JSON.parse(await readBody(req));
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
@@ -7287,18 +7477,67 @@ const server = http.createServer(async (req, res) => {
       if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
       // Enforce daily game coin cap for game sources via /api/prism/earn (prevents bypass of /api/game/coins cap)
       const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
+
+      if (source === 'achievement') {
+        return respondJson(res, 400, { error: 'Use POST /api/game/achievements for achievement rewards' });
+      }
+      if (source === 'referral') {
+        return respondJson(res, 400, { error: 'Use POST /api/referral/claim for referral rewards' });
+      }
+
       if (GAME_EARN_SOURCES.has(source)) {
-        // Track pre-boost amount in daily cap (consistent with /api/game/coins)
+        const verifiedGame = verifyGameEarnClaim(address, source, gameSessionId);
+        if (!verifiedGame.ok) return respondJson(res, 400, { error: verifiedGame.error });
+
         const todayCoins = getGameCoinsToday(address);
         if (todayCoins >= DAILY_GAME_COIN_CAP) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
+
         let baseDelta = Math.min(earned, DAILY_GAME_COIN_CAP - todayCoins);
         addGameCoinsToday(address, baseDelta);
-        // Apply staking boost ON TOP of capped amount (bonus coins don't count towards cap)
+        markGameEarnClaimed(gameSessionId, source, baseDelta);
+
         const gameBoost = getStakingBoost(address);
         earned = gameBoost > 0 ? Math.floor(baseDelta * (1 + gameBoost)) : baseDelta;
       } else {
         // Non-game sources: enforce global daily cap to prevent coin inflation
         // Server-side verification for one-time/conditional sources BEFORE cap consumption
+        if (source === 'quest_daily' || source === 'quest_weekly' || source === 'quest_milestone') {
+          const allowedQuestIds = QUEST_SOURCE_IDS[source];
+          if (!questId || !allowedQuestIds?.has(questId)) {
+            return respondJson(res, 400, { error: `Invalid questId for ${source}` });
+          }
+
+          const snapshot = getQuestProgressSnapshot(address);
+          const questState = snapshot[questId];
+          if (!questState?.completed) {
+            return respondJson(res, 400, { error: 'Quest is not completed on server' });
+          }
+
+          const existingQuestState = questProgress.get(address) || { quests: {}, streakDays: 0 };
+          const prevQuest = existingQuestState.quests?.[questId] || {};
+          if (prevQuest.claimed === true && (prevQuest.periodKey || 'all_time') === questState.periodKey) {
+            return respondJson(res, 400, { error: 'Quest reward already claimed' });
+          }
+
+          questProgress.set(address, {
+            ...existingQuestState,
+            quests: {
+              ...(existingQuestState.quests || {}),
+              [questId]: {
+                ...prevQuest,
+                progress: questState.progress,
+                completed: true,
+                claimed: true,
+                periodKey: questState.periodKey,
+                completedAt: prevQuest.completedAt || new Date().toISOString(),
+                claimedAt: new Date().toISOString(),
+              },
+            },
+            updatedAt: new Date().toISOString(),
+          });
+          persistQuestProgress();
+        }
+
         if (source === 'first_mint') {
           if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
           if (globalThis._firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
@@ -9766,27 +10005,51 @@ const server = http.createServer(async (req, res) => {
   }
   if (pathname === '/api/quiz/answer' && req.method === 'POST') {
     if (!ipRateLimit('quiz_ans', getClientIp(req), 10, 3000)) return respondJson(res, 429, { error: 'Rate limited' });
+    const jwtAuth = requireJwt(req, res);
+    if (!jwtAuth.ok) return;
     try {
       const body = JSON.parse(await readBody(req));
-      const { id, answer, address } = body;
+      const { id, answer, address: bodyAddress } = body;
+      const address = jwtAuth.address;
+      if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
       if (!id || !answer) return respondJson(res, 400, { error: 'id and answer required' });
+
       const stored = quizAnswers.get(id);
       if (!stored) return respondJson(res, 400, { error: 'Question expired or invalid' });
       quizAnswers.delete(id);
       if (Date.now() > stored.expiresAt) return respondJson(res, 400, { error: 'Time expired' });
+
       const isCorrect = answer === stored.correct;
       let earned = 0;
-      if (isCorrect && address) {
-        // Earn 5 coins per correct answer (max 100/day via quiz = 500 coins)
-        const dailyKey = `quiz:${address}:${new Date().toISOString().slice(0, 10)}`;
-        const dailyCount = (prismEarnRateLimit.get(dailyKey) || 0);
-        if (dailyCount < 100) {
+
+      if (isCorrect) {
+        const today = getToday();
+        const dailyKey = `quiz:${address}:${today}`;
+        const dailyCount = prismEarnRateLimit.get(dailyKey) || 0;
+        const maxDailyAnswers = Math.floor(DAILY_QUIZ_CAP / QUIZ_CORRECT_REWARD);
+
+        const ngKey = `nongame_daily:${address}`;
+        const ngEntry = prismEarnRateLimit.get(ngKey);
+        const ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
+
+        if (dailyCount < maxDailyAnswers && ngEarned + QUIZ_CORRECT_REWARD <= NON_GAME_DAILY_EARN_CAP) {
           prismEarnRateLimit.set(dailyKey, dailyCount + 1);
-          earned = 5;
+          prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + QUIZ_CORRECT_REWARD });
+          earned = QUIZ_CORRECT_REWARD;
+
           const prevBal = getCoinBalance(address);
           setCoinBalance(address, prevBal + earned);
           addCoinEarned(address, earned);
-          const txRecord = { id: `quiz_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, address, amount: earned, type: 'earn', source: 'quiz', description: 'Quiz correct answer', timestamp: new Date().toISOString() };
+
+          const txRecord = {
+            id: `quiz_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            address,
+            amount: earned,
+            type: 'earn',
+            source: 'quiz',
+            description: 'Quiz correct answer',
+            timestamp: new Date().toISOString(),
+          };
           const txs = prismTransactions.get(address) || [];
           txs.unshift(txRecord);
           if (txs.length > 500) txs.length = 500;
@@ -9794,6 +10057,7 @@ const server = http.createServer(async (req, res) => {
           debouncedSavePrism();
         }
       }
+
       respondJson(res, 200, { correct: isCorrect, correctAnswer: stored.correct, earned });
     } catch {
       respondJson(res, 400, { error: 'Invalid request body' });
@@ -9955,50 +10219,73 @@ const server = http.createServer(async (req, res) => {
       if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
       const addr = jwtAuth.address;
       if (!quests || typeof quests !== 'object' || Array.isArray(quests)) return respondJson(res, 400, { error: 'quests object required' });
-      // Validate quest data: only allow known quest IDs with numeric progress/claimed fields
+
       const VALID_QUEST_IDS = new Set([
         'daily_scan', 'daily_game', 'daily_burn', 'daily_explore', 'daily_highscore',
         'weekly_burn5', 'weekly_games5', 'weekly_arena', 'weekly_streak', 'weekly_forge',
         'ot_first_scan', 'ot_first_mint', 'ot_first_burn', 'ot_first_game',
         'ot_reach_sun', 'ot_burn100', 'ot_score1000', 'ot_forge5', 'ot_arena_wins', 'ot_text_quest',
       ]);
-      const existingQuests = (questProgress.get(addr) || {}).quests || {};
+
+      const existing = questProgress.get(addr) || { quests: {}, streakDays: 0, lastStreakDate: '' };
+      const existingQuests = existing.quests || {};
+      const serverSnapshot = getQuestProgressSnapshot(addr);
       const sanitized = {};
-      for (const [key, val] of Object.entries(quests)) {
-        if (!VALID_QUEST_IDS.has(key)) continue;
-        if (!val || typeof val !== 'object') continue;
+
+      for (const key of VALID_QUEST_IDS) {
         const prev = existingQuests[key] || {};
-        const progress = Math.max(0, Math.min(Number(val.progress ?? val.current) || 0, 100000));
-        // Server-side: completed can only go false→true (never back), and only if progress > 0
-        // claimed can only go false→true (once claimed, stays claimed)
-        // Support both `claimed` (boolean) and `claimedAt` (ISO string) from client
-        const isClaimed = val.claimed === true || !!val.claimedAt;
-        const completed = prev.completed === true ? true : ((val.completed === true || isClaimed) && progress > 0);
-        const claimed = prev.claimed === true ? true : (isClaimed && completed);
-        sanitized[key] = { progress, claimed, completed };
+        const serverQuest = serverSnapshot[key] || { progress: 0, completed: false, periodKey: getQuestPeriodKey(key) };
+        const periodChanged = (prev.periodKey || 'all_time') !== serverQuest.periodKey;
+        const stickyClaim = (QUEST_SOURCE_IDS.quest_daily.has(key) || QUEST_SOURCE_IDS.quest_weekly.has(key))
+          ? (!periodChanged && prev.claimed === true)
+          : (prev.claimed === true);
+
+        sanitized[key] = {
+          progress: serverQuest.progress,
+          completed: serverQuest.completed,
+          claimed: stickyClaim,
+          periodKey: serverQuest.periodKey,
+          completedAt: serverQuest.completed ? (prev.completedAt || new Date().toISOString()) : null,
+          claimedAt: stickyClaim ? (prev.claimedAt || new Date().toISOString()) : null,
+        };
       }
-      const existing = questProgress.get(addr) || {};
-      // Streak only increments if at least one quest was completed today
-      const hasCompletedQuest = Object.values(sanitized).some(q => q.completed);
-      const today = new Date().toISOString().slice(0, 10);
-      const lastDate = existing.lastStreakDate || '';
+
+      const today = getToday();
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const hasCompletedDailyQuest = ['daily_scan', 'daily_game', 'daily_burn', 'daily_explore', 'daily_highscore']
+        .some((questId) => sanitized[questId]?.completed);
+
       let streakDays = existing.streakDays || 0;
-      if (lastDate === today) {
-        // Same day — no change
-      } else if (!hasCompletedQuest) {
-        // No quest completed today — reset streak if day was skipped
-        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-        if (lastDate && lastDate !== yesterday) streakDays = 0;
+      if (existing.lastStreakDate === today) {
+        // same day — keep streak as-is
+      } else if (!hasCompletedDailyQuest) {
+        if (existing.lastStreakDate && existing.lastStreakDate !== yesterday) streakDays = 0;
       } else {
-        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-        streakDays = lastDate === yesterday ? streakDays + 1 : 1;
+        streakDays = existing.lastStreakDate === yesterday ? streakDays + 1 : 1;
       }
-      const streakDate = hasCompletedQuest ? today : (existing.lastStreakDate || today);
-      questProgress.set(addr, { ...existing, quests: sanitized, streakDays, lastStreakDate: streakDate, updatedAt: new Date().toISOString() });
+
+      sanitized.weekly_streak = {
+        ...sanitized.weekly_streak,
+        progress: Math.min(5, streakDays),
+        completed: streakDays >= 5,
+      };
+
+      const streakDate = hasCompletedDailyQuest ? today : (existing.lastStreakDate || today);
+
+      questProgress.set(addr, {
+        ...existing,
+        quests: sanitized,
+        streakDays,
+        lastStreakDate: streakDate,
+        updatedAt: new Date().toISOString(),
+      });
+
       persistQuestProgress();
       triggerCompositeUpdate(addr);
       respondJson(res, 200, { ok: true });
-    } catch { respondJson(res, 400, { error: 'Invalid JSON body' }); }
+    } catch {
+      respondJson(res, 400, { error: 'Invalid JSON body' });
+    }
     return;
   }
 
@@ -11920,7 +12207,8 @@ const NON_GAME_DAILY_EARN_CAP = 1500;
 // Sub-caps per activity type (within the global cap)
 const DAILY_HUNT_CAP = 500;    // max 500 coins/day from sybil hunts
 const DAILY_SCAN_CAP = 100;    // max 100 coins/day from clean scans
-const DAILY_QUIZ_CAP = 500;    // max 500 coins/day from quiz (100 answers × 5)
+const DAILY_QUIZ_CAP = 500;    // max 500 coins/day from quiz
+const QUIZ_CORRECT_REWARD = 5;
 // Valid text quest IDs (must match src/lib/textQuests.ts)
 const VALID_TEXT_QUEST_IDS = new Set(['abandoned_station', 'pirate_ambush', 'dark_matter_anomaly', 'prison_break', 'dominator_factory', 'election_day', 'alien_zoo', 'smugglers_run', 'wormhole_gambit', 'living_city', 'galactic_jackpot', 'jungle_survey', 'plague_ship', 'fortress_heist', 'merc_contract', 'alien_embassy']);
 const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;
