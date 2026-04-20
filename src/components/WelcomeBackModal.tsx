@@ -126,6 +126,9 @@ export default function WelcomeBackModal({ open, onClose, migrationData }: Welco
           animate="visible"
           exit="exit"
           transition={{ duration: 0.2 }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Welcome Back"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
           onClick={onClose}
         >
@@ -285,7 +288,8 @@ export default function WelcomeBackModal({ open, onClose, migrationData }: Welco
                 whileHover={motionDisabled ? {} : { scale: 1.04 }}
                 whileTap={motionDisabled ? {} : { scale: 0.97 }}
                 onClick={onClose}
-                className="w-full py-3.5 rounded-full font-bold text-sm tracking-wider text-white transition-all"
+                autoFocus
+                className="w-full py-3.5 rounded-full font-bold text-sm tracking-wider text-white transition-all focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
                 style={{
                   background: 'linear-gradient(90deg, #7C3AED, #06B6D4)',
                   boxShadow: '0 0 24px rgba(124,58,237,0.4)',

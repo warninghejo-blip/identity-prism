@@ -28,15 +28,19 @@ export default function OnboardingModal({ onClose }: OnboardingModalProps) {
 
   const handleNext = () => {
     if (step < STEPS.length - 1) {
-      setStep(s => s + 1);
+      setStep((s) => s + 1);
     } else {
-      try { localStorage.setItem('ip_onboarding_v1', '1'); } catch {}
+      try {
+        localStorage.setItem('ip_onboarding_v1', '1');
+      } catch {}
       onClose();
     }
   };
 
   const handleSkip = () => {
-    try { localStorage.setItem('ip_onboarding_v1', '1'); } catch {}
+    try {
+      localStorage.setItem('ip_onboarding_v1', '1');
+    } catch {}
     onClose();
   };
 
@@ -47,6 +51,9 @@ export default function OnboardingModal({ onClose }: OnboardingModalProps) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Onboarding"
       className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
       onClick={handleSkip}
     >
@@ -55,7 +62,7 @@ export default function OnboardingModal({ onClose }: OnboardingModalProps) {
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
         transition={{ type: 'spring', damping: 25 }}
-        onClick={e => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         className="relative w-full max-w-sm bg-[#0a0c12] border border-white/10 rounded-2xl overflow-hidden"
       >
         {/* Top gradient */}
@@ -88,15 +95,13 @@ export default function OnboardingModal({ onClose }: OnboardingModalProps) {
 
           {/* Actions */}
           <div className="flex items-center justify-between">
-            <button
-              onClick={handleSkip}
-              className="text-xs text-white/30 hover:text-white/60 transition"
-            >
+            <button onClick={handleSkip} className="text-xs text-white/30 hover:text-white/60 transition">
               Skip
             </button>
             <button
               onClick={handleNext}
-              className="px-6 py-2 rounded-lg bg-cyan-500/20 text-cyan-400 text-sm font-semibold hover:bg-cyan-500/30 transition"
+              autoFocus
+              className="px-6 py-2 rounded-lg bg-cyan-500/20 text-cyan-400 text-sm font-semibold hover:bg-cyan-500/30 transition focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
             >
               {step < STEPS.length - 1 ? 'Next' : 'Get Started'}
             </button>

@@ -254,7 +254,7 @@ export default function Leaderboard() {
             <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-amber-300 leading-tight">
               Leaderboard
             </h1>
-            <span className="text-[10px] text-white/30 leading-none">Top explorers across the Prism universe</span>
+            <span className="text-[10px] text-white/50 leading-none">Top explorers across the Prism universe</span>
           </div>
           <div className="flex-1" />
           <button
@@ -328,7 +328,7 @@ export default function Leaderboard() {
             </button>
           </div>
         ) : isEmpty ? (
-          <div className="text-center py-20 text-white/20">
+          <div className="text-center py-20 text-white/50">
             <Trophy className="w-12 h-12 mx-auto mb-4 opacity-20" />
             <p className="text-sm">
               No entries yet
@@ -357,7 +357,7 @@ function OverallTable({ entries, myAddress }: { entries: OverallEntry[]; myAddre
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
       {/* Table header */}
-      <div className="hidden sm:grid grid-cols-[48px_1fr_100px_80px_90px] px-4 py-2 border-b border-white/[0.05] text-[10px] uppercase tracking-wider font-bold text-white/30">
+      <div className="hidden sm:grid grid-cols-[48px_1fr_100px_80px_90px] px-4 py-2 border-b border-white/[0.05] text-[10px] uppercase tracking-wider font-bold text-white/50">
         <span>#</span>
         <span>Address</span>
         <span className="text-right">Coins</span>
@@ -454,7 +454,7 @@ function GameTable({
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
       {/* Table header */}
-      <div className="hidden sm:grid grid-cols-[48px_1fr_120px_100px] px-4 py-2 border-b border-white/[0.05] text-[10px] uppercase tracking-wider font-bold text-white/30">
+      <div className="hidden sm:grid grid-cols-[48px_1fr_120px_100px] px-4 py-2 border-b border-white/[0.05] text-[10px] uppercase tracking-wider font-bold text-white/50">
         <span>#</span>
         <span>Address</span>
         <span className="text-right">{gameType === 'destroyer' ? 'Score' : 'Time'}</span>
@@ -508,7 +508,7 @@ function GameTable({
                 <span className="font-bold" style={{ color: accentColor }}>
                   {formatGameScore(entry.score, gameType)}
                 </span>
-                {entry.playedAt && <span className="text-white/30">{formatDate(entry.playedAt)}</span>}
+                {entry.playedAt && <span className="text-white/50">{formatDate(entry.playedAt)}</span>}
               </div>
             </div>
 
@@ -518,7 +518,7 @@ function GameTable({
             </span>
 
             {/* Date — desktop */}
-            <span className="hidden sm:block text-xs text-right text-white/30">
+            <span className="hidden sm:block text-xs text-right text-white/50">
               {entry.playedAt ? formatDate(entry.playedAt) : '\u2014'}
             </span>
           </div>
@@ -540,7 +540,7 @@ function RankBadge({ rank, color }: { rank: number; color?: string }) {
 
   return (
     <span
-      className={`text-sm font-bold ${rank > 3 ? 'text-white/30' : ''}`}
+      className={`text-sm font-bold ${rank > 3 ? 'text-white/50' : ''}`}
       style={c ? { color: c } : color ? undefined : undefined}
     >
       {rank <= 3 ? (

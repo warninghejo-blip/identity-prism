@@ -86,7 +86,7 @@ function QuestCard({
                   }}
                 />
               </div>
-              <span className="text-white/30 text-[10px] font-mono whitespace-nowrap">
+              <span className="text-white/50 text-[10px] font-mono whitespace-nowrap">
                 {progress.current}/{quest.target}
               </span>
             </div>
@@ -110,7 +110,7 @@ function QuestCard({
           ) : (
             <div className="text-right">
               <p className="text-cyan-300 font-bold text-sm font-mono">+{quest.reward}</p>
-              <p className="text-white/20 text-[9px]">XP</p>
+              <p className="text-white/50 text-[9px]">XP</p>
             </div>
           )}
         </div>
@@ -307,11 +307,11 @@ export default function QuestsPage() {
                     />
                     <div>
                       <span className={`text-sm font-bold ${rank.color}`}>{rank.name}</span>
-                      <span className="text-white/20 text-[10px] ml-2">{xp} XP</span>
+                      <span className="text-white/50 text-[10px] ml-2">{xp} XP</span>
                     </div>
                   </div>
                   {next && (
-                    <span className="text-white/20 text-[10px]">
+                    <span className="text-white/50 text-[10px]">
                       {next.xpNeeded} XP to {next.rank.name}
                     </span>
                   )}
@@ -339,14 +339,14 @@ export default function QuestsPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-xl font-black">🎯 Daily Quests</h1>
-            <p className="text-white/30 text-xs mt-1">Complete challenges, earn Coins</p>
+            <p className="text-white/50 text-xs mt-1">Complete challenges, earn Coins</p>
           </div>
           <div className="text-right">
             <div className="flex items-center gap-1 text-amber-400">
               <Flame className="w-4 h-4" />
               <span className="font-bold text-sm">{questState?.currentStreak ?? 0}</span>
             </div>
-            <p className="text-white/20 text-[9px]">day streak</p>
+            <p className="text-white/50 text-[9px]">day streak</p>
           </div>
         </div>
 
@@ -369,13 +369,13 @@ export default function QuestsPage() {
         {/* Timer — fixed height to prevent jumping */}
         <div className="h-5 mb-4 flex items-center">
           {activeTab === 'daily' && timeLeft && (
-            <div className="flex items-center gap-2 text-white/20 text-xs">
+            <div className="flex items-center gap-2 text-white/50 text-xs">
               <Clock className="w-3 h-3" />
               <span>Resets in {timeLeft}</span>
             </div>
           )}
           {activeTab === 'weekly' && questState?.weeklyResetAt && (
-            <div className="flex items-center gap-2 text-white/20 text-xs">
+            <div className="flex items-center gap-2 text-white/50 text-xs">
               <Clock className="w-3 h-3" />
               <span>
                 Resets{' '}
@@ -413,15 +413,15 @@ export default function QuestsPage() {
           <div className="grid grid-cols-3 gap-4 text-center">
             <div>
               <p className="text-white font-bold text-lg">{questState?.totalCompleted ?? 0}</p>
-              <p className="text-white/20 text-[10px] uppercase tracking-wider">Completed</p>
+              <p className="text-white/50 text-[10px] uppercase tracking-wider">Completed</p>
             </div>
             <div>
               <p className="text-cyan-300 font-bold text-lg">{questState?.totalXPEarned ?? 0}</p>
-              <p className="text-white/20 text-[10px] uppercase tracking-wider">XP Earned</p>
+              <p className="text-white/50 text-[10px] uppercase tracking-wider">XP Earned</p>
             </div>
             <div>
               <p className="text-amber-400 font-bold text-lg">{questState?.currentStreak ?? 0}d</p>
-              <p className="text-white/20 text-[10px] uppercase tracking-wider">Day Streak</p>
+              <p className="text-white/50 text-[10px] uppercase tracking-wider">Day Streak</p>
             </div>
           </div>
         </div>

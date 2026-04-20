@@ -34,8 +34,28 @@ import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
 import { JWT_TTL, createAuthServices, createJwt, verifyJwt } from './services/auth.js';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
+import {
+  loadAchievementData,
+  loadChallenges,
+  loadGameSessionProofs,
+  loadNotifications,
+  loadQuestProgress,
+  loadReviveData,
+  loadTournaments,
+} from './services/loaders.js';
 import { createPersistenceServices } from './services/persistence.js';
 import { createReputationBuilderService } from './services/reputationBuilder.js';
+import { startSchedulers } from './services/scheduler.js';
+import { createSybilClusterService } from './services/sybilCluster.js';
+import { backfillWalletDatabaseAsync, backfillWalletDatabaseSync } from './services/walletBackfill.js';
+import {
+  STAKING_TIERS,
+  getLockTier,
+  calcDailyYieldForAmount,
+  getEffectiveRate,
+  getRateSchedule,
+  calcUnclaimedYield as rawCalcUnclaimedYield,
+} from './services/yieldMath.js';
 import {
   buildIdentityHolderPerks,
   GAME_SESSION_ONCHAIN_BONUS_MULTIPLIER,
@@ -81,6 +101,7 @@ import { registerReputationRoute } from './routes/reputation.js';
 import { registerTournamentRoute } from './routes/tournament.js';
 import { registerVaultRoute } from './routes/vault.js';
 import { registerWalletRoute } from './routes/wallet.js';
+import { formatActionAddress, isFungibleAsset } from './utils/formatters.js';
 import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
 import { readBody } from './utils/readBody.js';
@@ -688,14 +709,6 @@ const _referralSalt = process.env.REFERRAL_SALT || (() => {
   return fallback;
 })();
 
-// Clean up expired challenges every minute
-setInterval(() => {
-  const now = Date.now();
-  for (const [nonce, entry] of authChallenges) {
-    if (entry.expiresAt < now) authChallenges.delete(nonce);
-  }
-}, 60_000);
-
 /**
  * Verify a Solana wallet signature (Ed25519) using node:crypto.
  * Returns true if signature of `message` is valid for `address`.
@@ -1168,33 +1181,6 @@ const persistGameSessionProofs = () => {
   }, 2000);
 };
 
-const loadGameSessionProofs = () => {
-  try {
-    if (!fs.existsSync(GAME_SESSION_STORE_FILE)) return;
-    const raw = fs.readFileSync(GAME_SESSION_STORE_FILE, 'utf8');
-    if (!raw.trim()) return;
-
-    const parsed = JSON.parse(raw);
-    const sessions = Array.isArray(parsed)
-      ? parsed
-      : (Array.isArray(parsed?.sessions) ? parsed.sessions : []);
-
-    let loaded = 0;
-    for (const item of sessions) {
-      const normalized = normalizeStoredGameSessionEntry(item);
-      if (!normalized) continue;
-      gameSessionProofs.set(normalized.id, normalized);
-      loaded += 1;
-    }
-
-    if (loaded > 0) {
-      console.log(`[game-session] Loaded ${loaded} persisted proof(s)`);
-    }
-  } catch (error) {
-    console.warn('[game-session] Failed to load persisted proofs', error);
-  }
-};
-
 const pruneGameSessionProofs = () => {
   const cutoff = Date.now() - GAME_SESSION_TTL_MS;
   let removed = 0;
@@ -1221,8 +1207,6 @@ const gameSessionStoreDir = path.dirname(GAME_SESSION_STORE_FILE);
 if (!fs.existsSync(gameSessionStoreDir)) {
   fs.mkdirSync(gameSessionStoreDir, { recursive: true });
 }
-loadGameSessionProofs();
-pruneGameSessionProofs();
 
 let leaderboardCache = null;
 let leaderboardCacheTime = 0;
@@ -1474,52 +1458,38 @@ const updateWalletEntry = (address, updates) => {
 
 // walletDatabase loaded async in initData()
 
-// ── Backfill wallet database from existing data (sync: scoreHistory + coinBalances) ──
-const backfillWalletDatabaseSync = () => {
-  if (walletDatabase.size > 0) return; // already has data
-  let count = 0;
-  for (const [address, hist] of scoreHistory) {
-    const scores = hist.scores || [];
-    walletDatabase.set(address, {
-      address,
-      firstSeenAt: scores.length > 0 ? scores[scores.length - 1]?.date : new Date().toISOString(),
-      lastSeenAt: hist.lastUpdated || new Date().toISOString(),
-      scanCount: scores.length,
-      score: scores[0]?.score || 0,
-      tier: scores[0]?.tier || 'unknown',
-      coins: getCoinBalance(address),
-      source: 'backfill-local',
-    });
-    count++;
-  }
-  for (const [address] of coinBalances) {
-    if (!walletDatabase.has(address) && address !== 'anonymous') {
-      walletDatabase.set(address, {
-        address,
-        coins: getCoinBalance(address),
-        source: 'backfill-local',
-      });
-      count++;
-    }
-  }
-  for (const address of mintedAddresses) {
-    const w = walletDatabase.get(address) || { address, source: 'backfill-local' };
-    if (!w.mint) w.mint = { minted: true, mintedAt: null, assetId: null, txSignature: null, metadataUri: '', remints: 0, lastRemintAt: null };
-    walletDatabase.set(address, w);
-  }
-  if (count > 0) {
-    persistWalletDatabase();
-    console.log(`[wallet-db] Backfilled ${count} wallets from local data`);
-  }
-};
-// backfillWalletDatabaseSync called from initData()
-
 // ── Async init: load data from Firestore (fallback JSON) ──
 const initData = async () => {
+  const replaceMap = (target, source) => {
+    target.clear();
+    for (const [key, value] of source) target.set(key, value);
+  };
+
   await loadCoinBalances();
   loadMintedAddresses();
   await loadScoreHistory();
   await loadWalletDatabase();
+  replaceMap(gameSessionProofs, loadGameSessionProofs({
+    fs,
+    gameSessionStoreFile: GAME_SESSION_STORE_FILE,
+    normalizeStoredGameSessionEntry,
+  }));
+  pruneGameSessionProofs();
+  replaceMap(achievementData, loadAchievementData({ fs, achievementsStoreFile: ACHIEVEMENTS_STORE_FILE }));
+  replaceMap(reviveData, loadReviveData({ fs, revivesStoreFile: REVIVES_STORE_FILE }));
+  replaceMap(questProgress, loadQuestProgress({ fs, questProgressFile: QUEST_PROGRESS_FILE }));
+  replaceMap(notificationsDb, loadNotifications({ fs, notificationsFile: NOTIFICATIONS_FILE }));
+  challenges.splice(0, challenges.length, ...loadChallenges({ fs, challengesFile: CHALLENGES_FILE }));
+  const tournamentState = loadTournaments({
+    fs,
+    tournamentFile: TOURNAMENT_FILE,
+    tournamentTiers: TOURNAMENT_TIERS,
+  });
+  for (const tier of Object.keys(activeTournaments)) {
+    activeTournaments[tier] = tournamentState.activeTournaments[tier];
+  }
+  tournamentHistory.splice(0, tournamentHistory.length, ...tournamentState.tournamentHistory);
+  tournamentModeIndex = tournamentState.tournamentModeIndex;
   // Backfill mintedAddresses from walletDatabase .mint field
   // (legacy mints before minted-addresses.json file was introduced)
   let backfilled = 0;
@@ -1533,99 +1503,7 @@ const initData = async () => {
     console.log(`[minted] Backfilled ${backfilled} addresses from walletDatabase, total: ${mintedAddresses.size}`);
     saveMintedAddresses();
   }
-  backfillWalletDatabaseSync();
-};
-
-// ── Async backfill: DAS API + sybil batch (runs after server start) ──
-const backfillWalletDatabaseAsync = async () => {
-  // 8b: Fetch all NFTs from collection via DAS API getAssetsByGroup
-  if (!CORE_COLLECTION) {
-    console.log('[wallet-db] Skipping DAS backfill: CORE_COLLECTION not set');
-    return;
-  }
-  const rpcUrl = getRpcUrl('backfill');
-  if (!rpcUrl) return;
-
-  console.log('[wallet-db] Starting async DAS backfill...');
-  let dasCount = 0;
-  try {
-    let page = 1;
-    let hasMore = true;
-    while (hasMore) {
-      const dasRes = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0', id: `backfill-${page}`,
-          method: 'getAssetsByGroup',
-          params: { groupKey: 'collection', groupValue: CORE_COLLECTION, page, limit: 1000 },
-        }),
-      });
-      const dasJson = await dasRes.json();
-      const items = dasJson?.result?.items || [];
-      if (items.length === 0) { hasMore = false; break; }
-
-      for (const item of items) {
-        const owner = item.ownership?.owner;
-        if (!owner) continue;
-        const assetId = item.id;
-        const attrs = item.content?.metadata?.attributes || [];
-        const attrMap = {};
-        for (const a of attrs) attrMap[a.trait_type] = a.value;
-
-        const w = walletDatabase.get(owner) || { address: owner, source: 'backfill-das' };
-        w.mint = {
-          minted: true,
-          assetId,
-          mintedAt: w.mint?.mintedAt || null,
-          txSignature: w.mint?.txSignature || null,
-          metadataUri: item.content?.json_uri || w.mint?.metadataUri || '',
-          remints: w.mint?.remints || 0,
-          lastRemintAt: w.mint?.lastRemintAt || null,
-        };
-        if (attrMap['Score'] != null) w.score = parseInt(attrMap['Score'], 10) || w.score;
-        if (attrMap['Tier']) w.tier = attrMap['Tier'];
-        if (!w.stats) {
-          w.stats = {
-            nfts: parseInt(attrMap['NFTs'], 10) || 0,
-            tokens: parseInt(attrMap['Tokens'], 10) || 0,
-            transactions: parseInt(attrMap['Transactions'], 10) || 0,
-            walletAgeYears: Math.floor((parseInt(attrMap['Wallet Age (days)'], 10) || 0) / 365),
-          };
-        }
-        walletDatabase.set(owner, w);
-        dasCount++;
-      }
-      if (items.length < 1000) hasMore = false;
-      else page++;
-    }
-    if (dasCount > 0) {
-      persistWalletDatabase();
-      console.log(`[wallet-db] DAS backfill: enriched ${dasCount} wallet entries`);
-    }
-  } catch (err) {
-    console.warn('[wallet-db] DAS backfill failed', err.message || err);
-  }
-
-  // 8c: Batch sybil analysis for wallets without sybil data (throttled 2 req/sec)
-  const walletsNeedingSybil = [];
-  for (const [addr, w] of walletDatabase) {
-    if (!w.sybil && addr.length >= 32) walletsNeedingSybil.push(addr);
-  }
-  if (walletsNeedingSybil.length > 0) {
-    console.log(`[wallet-db] Sybil backfill: ${walletsNeedingSybil.length} wallets need analysis`);
-    let sybilCount = 0;
-    for (const addr of walletsNeedingSybil) {
-      try {
-        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) continue;
-        const sybilRes = await fetch(`http://127.0.0.1:${PORT}/api/sybil/analysis?address=${encodeURIComponent(addr)}`);
-        if (sybilRes.ok) sybilCount++;
-      } catch { /* ignore individual failures */ }
-      // Throttle: 500ms between requests (2 req/sec)
-      await new Promise(r => setTimeout(r, 500));
-    }
-    console.log(`[wallet-db] Sybil backfill complete: ${sybilCount}/${walletsNeedingSybil.length} analyzed`);
-  }
+  backfillWalletDatabaseSync(ctx);
 };
 
 
@@ -1633,34 +1511,6 @@ const backfillWalletDatabaseAsync = async () => {
 const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
 // address -> { unlocked: Set<string>, claimed: Set<string> }
 const achievementData = new Map();
-
-const loadAchievementData = () => {
-  try {
-    if (!fs.existsSync(ACHIEVEMENTS_STORE_FILE)) return;
-    const raw = fs.readFileSync(ACHIEVEMENTS_STORE_FILE, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    // Support both old format (claims only) and new format
-    const data = parsed?.data || {};
-    const legacyClaims = parsed?.claims || {};
-    // Load new format
-    for (const [addr, entry] of Object.entries(data)) {
-      achievementData.set(addr, {
-        unlocked: new Set(Array.isArray(entry.unlocked) ? entry.unlocked : []),
-        claimed: new Set(Array.isArray(entry.claimed) ? entry.claimed : []),
-      });
-    }
-    // Migrate old claims-only format
-    for (const [addr, ids] of Object.entries(legacyClaims)) {
-      if (!achievementData.has(addr) && Array.isArray(ids)) {
-        achievementData.set(addr, { unlocked: new Set(ids), claimed: new Set(ids) });
-      }
-    }
-    console.log(`[achievements] Loaded data for ${achievementData.size} wallets`);
-  } catch (err) {
-    console.warn('[achievements] Failed to load', err);
-  }
-};
 
 const persistAchievementData = () => {
   const obj = {};
@@ -1810,29 +1660,11 @@ const isAchievementUnlockVerified = (address, achievementId) => {
   }
 };
 
-loadAchievementData();
-
 // ── Server-side Free Revive tracking (3 per day per game mode, requires minted ID) ──
 const REVIVES_STORE_FILE = path.join(METADATA_DIR, 'revive-usage.json');
 const FREE_REVIVES_PER_DAY = 3;
 // address -> { orbit: { date: 'YYYY-MM-DD', used: number }, destroyer: { ... }, gravity: { ... } }
 const reviveData = new Map();
-
-const loadReviveData = () => {
-  try {
-    if (!fs.existsSync(REVIVES_STORE_FILE)) return;
-    const raw = fs.readFileSync(REVIVES_STORE_FILE, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    const data = parsed?.data || {};
-    for (const [addr, entry] of Object.entries(data)) {
-      reviveData.set(addr, entry);
-    }
-    console.log(`[revives] Loaded data for ${reviveData.size} wallets`);
-  } catch (err) {
-    console.warn('[revives] Failed to load', err);
-  }
-};
 
 const persistReviveData = () => {
   const obj = {};
@@ -1872,20 +1704,11 @@ const useRevive = (address, gameMode) => {
   return true;
 };
 
-loadReviveData();
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Quest Progress Store
 // ═══════════════════════════════════════════════════════════════════════════
 const QUEST_PROGRESS_FILE = path.join(METADATA_DIR, 'quest-progress.json');
 const questProgress = new Map();
-try {
-  if (fs.existsSync(QUEST_PROGRESS_FILE)) {
-    const raw = JSON.parse(fs.readFileSync(QUEST_PROGRESS_FILE, 'utf8'));
-    if (raw.data) for (const [k, v] of Object.entries(raw.data)) questProgress.set(k, v);
-    console.log(`[quests] Loaded ${questProgress.size} quest records`);
-  }
-} catch {}
 const persistQuestProgress = () => {
   const obj = {};
   for (const [k, v] of questProgress) obj[k] = v;
@@ -2698,20 +2521,6 @@ const computeSkrQuote = (solUsd, skrUsd) => {
 const getSkrQuote = async () => {
   const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
   return computeSkrQuote(solUsd, skrUsd);
-};
-
-const formatActionAddress = (address) => {
-  if (!address) return '';
-  if (address.length <= 12) return address;
-  return `${address.slice(0, 4)}...${address.slice(-4)}`;
-};
-
-const isFungibleAsset = (asset) => {
-  const iface = (asset?.interface ?? '').toUpperCase();
-  if (iface === 'FUNGIBLETOKEN' || iface === 'FUNGIBLEASSET') return true;
-  const supply = asset?.token_info?.supply || 0;
-  const decimals = asset?.token_info?.decimals ?? 0;
-  return decimals > 0 || supply > 1;
 };
 
 const fetchAssetsByOwner = async (rpcUrls, owner) => {
@@ -8435,87 +8244,15 @@ async function findFirstTxTime(conn, pubkey, firstPageSigs, cachedFirstTx, rpcUr
 // Stores relationships between wallets for cross-session intelligence
 // Format: { nodes: { address: { riskScore, trustGrade, fundedBy, fundedWallets, lastSeen } }, edges: [...] }
 const SYBIL_GRAPH_FILE = path.join(process.cwd(), 'sybil_graph.json');
-const sybilGraph = { nodes: {}, flaggedClusters: [] };
-try {
-  if (fs.existsSync(SYBIL_GRAPH_FILE)) {
-    const raw = JSON.parse(fs.readFileSync(SYBIL_GRAPH_FILE, 'utf8'));
-    if (raw.nodes) Object.assign(sybilGraph.nodes, raw.nodes);
-    if (raw.flaggedClusters) sybilGraph.flaggedClusters = raw.flaggedClusters;
-    console.log(`[sybil-graph] Loaded ${Object.keys(sybilGraph.nodes).length} nodes, ${sybilGraph.flaggedClusters.length} clusters`);
-  }
-} catch (e) { console.warn('[sybil-graph] Failed to load:', e.message); }
-
-const MAX_SYBIL_GRAPH_NODES = 10_000;
-
-function pruneSybilGraph() {
-  const nodeAddrs = Object.keys(sybilGraph.nodes);
-  if (nodeAddrs.length > MAX_SYBIL_GRAPH_NODES) {
-    const sorted = nodeAddrs.sort((a, b) => (sybilGraph.nodes[a].lastSeen || 0) - (sybilGraph.nodes[b].lastSeen || 0));
-    const toRemove = sorted.slice(0, nodeAddrs.length - MAX_SYBIL_GRAPH_NODES);
-    for (const addr of toRemove) delete sybilGraph.nodes[addr];
-  }
-  // Prune clusters by TTL (90 days) then by count (max 1000)
-  const clusterTtl = 90 * 24 * 3600_000;
-  const nowPrune = Date.now();
-  sybilGraph.flaggedClusters = sybilGraph.flaggedClusters.filter(c =>
-    c.lastSeen && (nowPrune - c.lastSeen) < clusterTtl
-  );
-  if (sybilGraph.flaggedClusters.length > 1000) {
-    sybilGraph.flaggedClusters = sybilGraph.flaggedClusters.slice(-1000);
-  }
-}
-
-async function saveSybilGraph() {
-  pruneSybilGraph();
-  try {
-    const tmp = SYBIL_GRAPH_FILE + '.tmp';
-    await fs.promises.writeFile(tmp, JSON.stringify(sybilGraph), 'utf8');
-    await fs.promises.rename(tmp, SYBIL_GRAPH_FILE);
-  } catch (e) { console.warn('[sybil-graph] Save failed:', e.message); }
-}
-
-function updateSybilGraphNode(address, data) {
-  const existing = sybilGraph.nodes[address] || {};
-  sybilGraph.nodes[address] = {
-    ...existing,
-    ...data,
-    lastSeen: Date.now(),
-  };
-}
-
-const GRAPH_NODE_TTL_MS = 90 * 24 * 3600_000; // 90 days
-function checkGraphForKnownSybils(address, fundingSources, siblings) {
-  let graphRisk = 0;
-  let graphDetails = [];
-  const now = Date.now();
-  // Check if any funding source is a known sybil (with TTL)
-  for (const funder of fundingSources) {
-    const node = sybilGraph.nodes[funder];
-    if (node && node.riskScore >= 50 && (now - (node.lastSeen || 0)) < GRAPH_NODE_TTL_MS) {
-      graphRisk += 15;
-      graphDetails.push(`Funded by flagged wallet ${funder.slice(0, 8)}... (risk ${node.riskScore})`);
-    }
-  }
-  // Check if siblings are known sybils (with TTL)
-  let flaggedSiblings = 0;
-  for (const sib of siblings) {
-    const node = sybilGraph.nodes[sib];
-    if (node && node.riskScore >= 50 && (now - (node.lastSeen || 0)) < GRAPH_NODE_TTL_MS) flaggedSiblings++;
-  }
-  if (flaggedSiblings >= 2) {
-    graphRisk += 10;
-    graphDetails.push(`${flaggedSiblings} sibling wallets previously flagged as sybil`);
-  }
-  // Check if address is part of a known flagged cluster
-  for (const cluster of sybilGraph.flaggedClusters) {
-    if (cluster.members.includes(address)) {
-      graphRisk += 20;
-      graphDetails.push(`Part of flagged cluster "${cluster.label}" (${cluster.members.length} members)`);
-      break;
-    }
-  }
-  return { graphRisk: Math.min(40, graphRisk), graphDetails };
-}
+const {
+  sybilGraph,
+  saveSybilGraph,
+  updateSybilGraphNode,
+  checkGraphForKnownSybils,
+} = createSybilClusterService({
+  fs,
+  sybilGraphFile: SYBIL_GRAPH_FILE,
+});
 
 // Migrate any old prism_data.json balances into coinBalances on first run
 const PRISM_DATA_FILE = path.join(process.cwd(), 'prism_data.json');
@@ -8630,10 +8367,7 @@ const setPrismEarnRateLimit = (key, value, ttlSeconds = getPrismEarnRateLimitTtl
   rateLimitStore.set(key, value, ttlSeconds);
 };
 
-// ── Quiz System: Blockchain Trivia ──
 const quizAnswers = new Map(); // qId → { correct, expiresAt }
-// Cleanup expired quiz answers every 5 minutes
-setInterval(() => { const now = Date.now(); for (const [k, v] of quizAnswers) { if (now > v.expiresAt) quizAnswers.delete(k); } }, 300_000);
 
 // q=question, a=correct answer, options=all 4 options, cat=category, diff=difficulty
 const QUIZ_BANK = [
@@ -9254,91 +8988,16 @@ function addGameCoinsToday(address, amount) {
 const MAX_DELTA_PER_GAME = { orbit: 1000, destroyer: 1800, gravity: 1200, wars: 800, territory: 800 };
 
 // ═══ Staking (Prism Vault) ═══
-const STAKING_TIERS = {
-  bronze: { minStake: 10000, lockDays: 7, rateMultiplier: 0.75, boostRate: 0.05 },
-  silver: { minStake: 30000, lockDays: 30, rateMultiplier: 1.0, boostRate: 0.10 },
-  gold:   { minStake: 75000, lockDays: 90, rateMultiplier: 1.25, boostRate: 0.15 },
-};
-
-const LOCK_TIERS = [
-  { days: 7,   label: '1 Week',    yieldMultiplier: 1.0, earlyPenalty: 0.10 },
-  { days: 30,  label: '1 Month',   yieldMultiplier: 1.5, earlyPenalty: 0.15 },
-  { days: 90,  label: '3 Months',  yieldMultiplier: 2.5, earlyPenalty: 0.20 },
-  { days: 180, label: '6 Months',  yieldMultiplier: 4.0, earlyPenalty: 0.25 },
-];
-function getLockTier(lockDays) {
-  // Find exact match or nearest valid tier
-  const exact = LOCK_TIERS.find(t => t.days === lockDays);
-  if (exact) return exact;
-  // Fallback: pick tier with closest days
-  return LOCK_TIERS.reduce((prev, curr) =>
-    Math.abs(curr.days - lockDays) < Math.abs(prev.days - lockDays) ? curr : prev
-  );
-}
-
-const YIELD_BRACKETS = [
-  { upTo: 5000,     baseDailyRate: 0.0050 }, // 0.5%
-  { upTo: 20000,    baseDailyRate: 0.0035 }, // 0.35%
-  { upTo: 50000,    baseDailyRate: 0.0020 }, // 0.2%
-  { upTo: 100000,   baseDailyRate: 0.0012 }, // 0.12%
-  { upTo: Infinity, baseDailyRate: 0.0008 }, // 0.08%
-];
-
 // Stakes created before this timestamp use old flat rate; after use brackets
 // All stakes use bracket system by default (fallback 0 = epoch start = all stakes are "new")
 const BRACKETS_DEPLOY_TS = parseInt(process.env.BRACKETS_DEPLOY_TS || '0', 10) || 0;
-
-function calcDailyYieldForAmount(amount, tierMultiplier) {
-  let remaining = amount;
-  let dailyYield = 0;
-  let prevUpTo = 0;
-  for (const bracket of YIELD_BRACKETS) {
-    const sliceMax = bracket.upTo - prevUpTo;
-    const slice = Math.min(remaining, sliceMax);
-    if (slice <= 0) break;
-    dailyYield += slice * bracket.baseDailyRate * tierMultiplier;
-    remaining -= slice;
-    prevUpTo = bracket.upTo;
-  }
-  return dailyYield;
-}
-
-function getEffectiveRate(amount, tierMultiplier) {
-  if (amount <= 0) return 0;
-  return calcDailyYieldForAmount(amount, tierMultiplier) / amount;
-}
-
-function getRateSchedule(tierMultiplier) {
-  return YIELD_BRACKETS.map(b => ({
-    upTo: b.upTo === Infinity ? null : b.upTo,
-    rate: +(b.baseDailyRate * tierMultiplier * 100).toFixed(3),
-  }));
-}
+const calcUnclaimedYield = (stake) => rawCalcUnclaimedYield(stake, { bracketsDeployTs: BRACKETS_DEPLOY_TS });
 
 function getStakingBoost(address) {
   const w = walletDatabase.get(address);
   const stake = w?.staking;
   if (!stake || !stake.tier) return 0;
   return STAKING_TIERS[stake.tier]?.boostRate || 0;
-}
-function calcUnclaimedYield(stake) {
-  if (!stake || !stake.startTime) return 0;
-  const now = Date.now();
-  const lastClaim = stake.lastClaimTime || stake.startTime;
-  const daysSinceClaim = Math.min(90, Math.max(0, (now - lastClaim) / (1000 * 60 * 60 * 24)));
-  const tier = STAKING_TIERS[stake.tier];
-  if (!tier) return 0;
-  // Old stakes (before bracket deploy) use legacy flat rate for backward compat
-  if (stake.startTime < BRACKETS_DEPLOY_TS) {
-    // Legacy rates
-    const legacyRates = { bronze: 0.00375, silver: 0.005, gold: 0.00625 };
-    const legacyRate = legacyRates[stake.tier] || 0.00375;
-    return Math.floor(daysSinceClaim * legacyRate * stake.amount);
-  }
-  // New bracket-based yield — apply lock duration yieldMultiplier if present
-  const lockMult = stake.yieldMultiplier != null ? stake.yieldMultiplier : 1.0;
-  const dailyYield = calcDailyYieldForAmount(stake.amount, tier.rateMultiplier * lockMult);
-  return Math.floor(daysSinceClaim * dailyYield);
 }
 
 // ═══ Tournament System (Tiered: daily/weekly/monthly) ═══
@@ -9375,26 +9034,6 @@ const TOURNAMENT_XP_REWARDS = {
 const activeTournaments = { daily: null, weekly: null, monthly: null };
 const tournamentHistory = [];
 let tournamentModeIndex = 0;
-
-// Load persisted tournaments
-try {
-  if (fs.existsSync(TOURNAMENT_FILE)) {
-    const raw = JSON.parse(fs.readFileSync(TOURNAMENT_FILE, 'utf8'));
-    if (raw.active) {
-      for (const tier of Object.keys(TOURNAMENT_TIERS)) {
-        if (raw.active[tier]) activeTournaments[tier] = raw.active[tier];
-      }
-    }
-    // Backward compat: old single-tournament format
-    if (raw.active && raw.active.id && !raw.active.daily) {
-      activeTournaments.daily = raw.active;
-      activeTournaments.daily.tier = 'daily';
-    }
-    if (Array.isArray(raw.history)) tournamentHistory.push(...raw.history.slice(0, 50));
-    if (typeof raw.modeIndex === 'number') tournamentModeIndex = raw.modeIndex;
-    console.log(`[tournament] Loaded from disk, active=${Object.keys(activeTournaments).filter(k => activeTournaments[k]).join(',')}, history=${tournamentHistory.length}`);
-  }
-} catch (e) { console.warn('[tournament] Load error:', e.message); }
 
 function saveTournament() {
   const tmp = TOURNAMENT_FILE + '.tmp';
@@ -9502,8 +9141,6 @@ function checkTournaments() {
 }
 // Backward compat alias
 function checkTournament() { checkTournaments(); }
-// Auto-finalize tournaments every 60 seconds (not just on HTTP request)
-setInterval(checkTournaments, 60_000);
 
 // ═══ Prism Marketplace ═══
 const MARKETPLACE_FILE = path.join(process.cwd(), 'marketplace_data.json');
@@ -9532,18 +9169,6 @@ const notificationsDb = new Map(); // address → notification[]
 const NOTIFICATIONS_FILE = path.join(METADATA_DIR, 'notifications.json');
 const MAX_NOTIFICATIONS_PER_USER = 100;
 
-function loadNotifications() {
-  try {
-    if (fs.existsSync(NOTIFICATIONS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(NOTIFICATIONS_FILE, 'utf8'));
-      for (const [addr, notifs] of Object.entries(data)) {
-        notificationsDb.set(addr, notifs);
-      }
-      console.log(`[notifications] Loaded for ${notificationsDb.size} wallets`);
-    }
-  } catch (e) { console.warn('[notifications] Load failed:', e.message); }
-}
-
 function pushNotification(address, type, message, meta = {}) {
   if (!address) return;
   const notifs = notificationsDb.get(address) || [];
@@ -9560,21 +9185,9 @@ function pushNotification(address, type, message, meta = {}) {
   saveNotificationsDebounced();
 }
 
-loadNotifications();
-
 // ═══ P2P Challenge System ═══
 const CHALLENGES_FILE = path.join(METADATA_DIR, 'challenges.json');
 const challenges = [];
-
-// Load persisted challenges
-try {
-  if (fs.existsSync(CHALLENGES_FILE)) {
-    const raw = JSON.parse(fs.readFileSync(CHALLENGES_FILE, 'utf8'));
-    const arr = Array.isArray(raw?.challenges) ? raw.challenges : (Array.isArray(raw) ? raw : []);
-    challenges.push(...arr);
-    console.log(`[challenges] Loaded ${challenges.length} challenges`);
-  }
-} catch { /* first run */ }
 
 // ── Weekly Challenge Rewards — checks every hour, distributes Monday 00:00 UTC ──
 globalThis._challengeWeeklyHistory = globalThis._challengeWeeklyHistory || [];
@@ -9584,101 +9197,6 @@ globalThis._lastWeeklyRewardAt = globalThis._lastWeeklyRewardAt || 0;
 // XP: top-3 get meaningful XP toward Ranger ranks
 const WEEKLY_REWARDS =    [2000, 1200, 600, 200, 200, 100, 100, 100, 100, 100]; // total: ~4,700/week
 const WEEKLY_XP_REWARDS = [ 500,  300, 200,   0,   0,   0,   0,   0,   0,   0]; // top-3 only
-const WEEKLY_MIN_GAMES = 3;
-setInterval(() => {
-  const now = Date.now();
-  const d = new Date(now);
-  // Check if it's Monday and we haven't distributed this week yet
-  if (d.getUTCDay() !== 1) return; // only on Mondays
-  const mondayStart = new Date(now); mondayStart.setUTCHours(0, 0, 0, 0);
-  if (globalThis._lastWeeklyRewardAt >= mondayStart.getTime()) return; // already done this week
-  // Calculate last week's range
-  const lastWeekEnd = mondayStart.getTime();
-  const lastWeekStart = lastWeekEnd - 7 * 24 * 60 * 60 * 1000;
-  const stats = new Map();
-  for (const c of challenges) {
-    if (c.status !== 'completed' || !c.winner) continue;
-    const t = c.completedAt || c.createdAt;
-    if (t < lastWeekStart || t >= lastWeekEnd) continue;
-    const s = stats.get(c.winner) || { address: c.winner, wins: 0, earned: 0, played: 0 };
-    s.wins++; s.earned += Math.floor(c.stakeAmount * 2 * 0.95); s.played++;
-    stats.set(c.winner, s);
-    const loser = c.winner === c.creator ? c.opponent : c.creator;
-    if (loser) { const l = stats.get(loser) || { address: loser, wins: 0, earned: 0, played: 0 }; l.played++; stats.set(loser, l); }
-  }
-  const ranked = [...stats.values()].filter(p => p.played >= WEEKLY_MIN_GAMES).sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 10);
-  if (ranked.length === 0) { globalThis._lastWeeklyRewardAt = mondayStart.getTime(); return; }
-  const winners = [];
-  ranked.forEach((p, i) => {
-    const reward = WEEKLY_REWARDS[i] || 0;
-    const xpReward = WEEKLY_XP_REWARDS[i] || 0;
-    if (reward > 0) {
-      setCoinBalance(p.address, getCoinBalance(p.address) + reward);
-      addCoinEarned(p.address, reward);
-      // Record transaction
-      const txs = prismTransactions.get(p.address) || [];
-      txs.unshift({ id: `ch_weekly_${Date.now()}_${i}`, address: p.address, amount: reward, type: 'earn', source: 'challenge_win', description: `Weekly Arena #${i + 1}: +${reward} Coins${xpReward ? ` +${xpReward} XP` : ''}`, timestamp: new Date().toISOString() });
-      if (txs.length > 200) txs.length = 200;
-      prismTransactions.set(p.address, txs);
-      // Store XP reward in socialStats for client-side rangerRanks computation
-      if (xpReward > 0) {
-        const wdb = walletDatabase.get(p.address);
-        if (wdb) {
-          if (!wdb.socialStats) wdb.socialStats = {};
-          wdb.socialStats.arenaWeeklyXP = (wdb.socialStats.arenaWeeklyXP || 0) + xpReward;
-          walletDatabase.set(p.address, wdb);
-        }
-      }
-      pushNotification(p.address, 'weekly_payout', `Weekly arena ranking: #${i + 1}, +${reward} coins`, { rank: i + 1, reward });
-      winners.push({ address: p.address, rank: i + 1, reward, xp: xpReward, wins: p.wins, earned: p.earned });
-    }
-  });
-  globalThis._challengeWeeklyHistory = winners;
-  globalThis._lastWeeklyRewardAt = mondayStart.getTime();
-  debouncedSavePrism();
-  console.log(`[challenges] Weekly rewards distributed to ${winners.length} challengers: ${winners.map(w => `#${w.rank} ${w.address.slice(0,8)}.. +${w.reward}`).join(', ')}`);
-}, 60 * 60 * 1000); // check every hour
-
-// Auto-expire challenges — runs every 60 seconds
-// 'open' (score type, waiting for opponent) and 'playing' without opponent (game type, opponent never joined)
-setInterval(() => {
-  const now = Date.now();
-  let changed = false;
-  for (const c of challenges) {
-    if (!c.expiresAt || c.status === 'completed' || c.status === 'cancelled' || c.status === 'expired') continue;
-    if (now < c.expiresAt) continue;
-    // Expire 'open' challenges (score type, waiting for opponent)
-    if (c.status === 'open') {
-      c.status = 'expired';
-      c.completedAt = now;
-      changed = true;
-      // Refund creator (only one who staked in open challenge)
-      if (c.stakeAmount > 0) {
-        setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
-        refundCoinSpent(c.creator, c.stakeAmount);
-      }
-      pushNotification(c.creator, 'challenge_expired', `Your challenge expired — ${c.stakeAmount} coins refunded`, { challengeId: c.id, refunded: c.stakeAmount });
-      console.log(`[challenges] Expired ${c.id} (open/score, no opponent, ${Math.round((now - c.createdAt) / 60000)}m)`);
-      continue;
-    }
-    // Expire 'playing' game challenges where opponent never joined (no c.opponent set)
-    // If opponent joined (c.opponent is set), both committed — safety-net handles stuck games
-    if (c.status === 'playing' && !c.opponent) {
-      c.status = 'expired';
-      c.completedAt = now;
-      changed = true;
-      // Refund creator (only one who staked, opponent never joined)
-      if (c.stakeAmount > 0) {
-        setCoinBalance(c.creator, getCoinBalance(c.creator) + c.stakeAmount);
-        refundCoinSpent(c.creator, c.stakeAmount);
-      }
-      pushNotification(c.creator, 'challenge_expired', `Your challenge expired — ${c.stakeAmount} coins refunded`, { challengeId: c.id, refunded: c.stakeAmount });
-      console.log(`[challenges] Expired ${c.id} (playing/game, no opponent joined, ${Math.round((now - c.createdAt) / 60000)}m)`);
-      continue;
-    }
-  }
-  if (changed) { debouncedSavePrism(); saveChallenges(); }
-}, 60_000);
 
 const leaderboards = leaderboardEntries;
 const activeChallenges = challenges;
@@ -9819,6 +9337,7 @@ const ctx = createContext({
   firstMintLocks,
   usedChallengeSolTx,
   challengeWeeklyHistory,
+  port: PORT,
   respondJson,
   readBody,
   getClientIp,
@@ -9828,6 +9347,7 @@ const ctx = createContext({
   verifyJwt,
   requireJwt,
   optionalJwt,
+  persistWalletDatabase,
   saveWalletDatabaseDebounced,
   saveCoinBalancesDebounced,
   saveMintedAddressesDebounced,
@@ -9945,6 +9465,7 @@ const ctx = createContext({
   computeSybilHuntReward,
   cleanScanRewardCooldownMs: CLEAN_SCAN_REWARD_COOLDOWN_MS,
   scanWalletReward: SCAN_WALLET_REWARD,
+  coreCollection: CORE_COLLECTION,
   stakingTiers: STAKING_TIERS,
   getLockTier,
   calcUnclaimedYield,
@@ -9974,6 +9495,9 @@ const ctx = createContext({
   leaderboardCacheTimeRef,
   weeklyRewards: WEEKLY_REWARDS,
   weeklyXpRewards: WEEKLY_XP_REWARDS,
+  checkTournaments,
+  refundCoinSpent,
+  backfillCompositeScores,
 });
 const authHandler = registerAuthRoute(ctx);
 const arenaHandler = registerArenaRoute(ctx);
@@ -9991,120 +9515,6 @@ const tournamentHandler = registerTournamentRoute(ctx);
 const vaultHandler = registerVaultRoute(ctx);
 const walletHandler = registerWalletRoute(ctx);
 
-// Cleanup: remove old challenges + cancel stale ones (every 30 minutes)
-setInterval(() => {
-  const now = Date.now();
-  const cutoff = now - 7 * 24 * 60 * 60 * 1000; // 7 days
-  const stalePlayingCutoff = now - 2 * 60 * 60 * 1000; // 2 hours
-  let removed = 0;
-  let staleCancelled = 0;
-
-  // Safety net: expire playing/accepted challenges stuck >24h
-  // CRITICAL: only refund players who haven't had coins awarded via win resolution
-  const stuckCutoff = now - 24 * 60 * 60 * 1000;
-  challenges.forEach(ch => {
-    if ((ch.status === 'playing' || ch.status === 'accepted') && (ch.acceptedAt || ch.createdAt) < stuckCutoff) {
-      // If both scored, try to resolve instead of refunding
-      if (ch.creatorScore !== null && ch.opponentScore !== null) {
-        // Attempt resolution — winner gets prize, no double-payout
-        const totalPot = ch.stakeAmount * 2;
-        const winnerPrize = Math.floor(totalPot * 0.95);
-        if (ch.creatorScore > ch.opponentScore) {
-          ch.winner = ch.creator;
-          setCoinBalance(ch.creator, getCoinBalance(ch.creator) + winnerPrize);
-          addCoinEarned(ch.creator, winnerPrize);
-          pushNotification(ch.creator, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId: ch.id, payout: winnerPrize });
-          if (ch.opponent) pushNotification(ch.opponent, 'challenge_loss', `Challenge lost against ${ch.creator.slice(0, 6)}...`, { challengeId: ch.id });
-        } else if (ch.opponentScore > ch.creatorScore) {
-          ch.winner = ch.opponent;
-          setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + winnerPrize);
-          addCoinEarned(ch.opponent, winnerPrize);
-          pushNotification(ch.opponent, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId: ch.id, payout: winnerPrize });
-          pushNotification(ch.creator, 'challenge_loss', `Challenge lost against ${ch.opponent.slice(0, 6)}...`, { challengeId: ch.id });
-        } else {
-          ch.winner = null;
-          setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
-          if (ch.opponent) setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
-        }
-        ch.status = 'completed';
-      } else if (ch.winner) {
-        // Winner already resolved but status stuck — just mark completed, NO refund
-        ch.status = 'completed';
-      } else {
-        // No winner, no both-scores — safe to refund only players who staked
-        // Only refund if no score was submitted (no partial resolution happened)
-        if (ch.stakeAmount > 0 && ch.creatorScore === null && ch.opponentScore === null) {
-          setCoinBalance(ch.creator, getCoinBalance(ch.creator) + ch.stakeAmount);
-          refundCoinSpent(ch.creator, ch.stakeAmount);
-          if (ch.opponent) {
-            setCoinBalance(ch.opponent, getCoinBalance(ch.opponent) + ch.stakeAmount);
-            refundCoinSpent(ch.opponent, ch.stakeAmount);
-          }
-        }
-        ch.status = 'expired';
-      }
-      ch.completedAt = Date.now();
-      staleCancelled++;
-      console.log(`[challenges] Safety-resolved stuck ${ch.id} → ${ch.status} (>24h)`);
-    }
-  });
-
-  if (staleCancelled > 0) {
-    console.log(`[challenges] Auto-cancelled ${staleCancelled} stale challenges (playing >2h or open >7d)`);
-    debouncedSavePrism();
-  }
-
-  // Remove completed/cancelled challenges older than 7 days
-  for (let i = challenges.length - 1; i >= 0; i--) {
-    const c = challenges[i];
-    if ((c.status === 'completed' || c.status === 'cancelled' || c.status === 'expired') && c.createdAt < cutoff) {
-      challenges.splice(i, 1);
-      removed++;
-    }
-  }
-  if (removed > 0 || staleCancelled > 0) {
-    if (removed > 0) console.log(`[challenges] Cleaned up ${removed} old challenges`);
-    saveChallenges();
-  }
-}, 30 * 60 * 1000);
-
-// Periodic cache cleanup to prevent unbounded memory growth (every 5 minutes)
-setInterval(() => {
-  const now = Date.now();
-  // sybilCache: 1h TTL
-  for (const [k, v] of sybilCache) {
-    if (now - v.cachedAt > 3600_000) sybilCache.delete(k);
-  }
-  // clusterCache: 30min TTL
-  for (const [k, v] of clusterCache) {
-    if (now - v.ts > 1800_000) clusterCache.delete(k);
-  }
-  // constellationCache: 10min TTL
-  for (const [k, v] of constellationCache) {
-    if (now - v.ts > 600_000) constellationCache.delete(k);
-  }
-  // enhancedTxCache: 10min TTL
-  for (const [k, v] of enhancedTxCache) {
-    if (now - v.ts > 600_000) enhancedTxCache.delete(k);
-  }
-  // reputationV2RateLimit: 2min TTL
-  for (const [k, v] of reputationV2RateLimit) {
-    if (now > v.resetAt + 120_000) reputationV2RateLimit.delete(k);
-  }
-  // reputationRateLimit (v1): 20s TTL
-  for (const [k, v] of reputationRateLimit) {
-    if (now - v > 20_000) reputationRateLimit.delete(k);
-  }
-  // Hard cap: evict oldest if still too large
-  if (sybilCache.size > 500) { const it = sybilCache.keys(); for (let i = sybilCache.size - 500; i > 0; i--) sybilCache.delete(it.next().value); }
-  if (clusterCache.size > 300) { const it = clusterCache.keys(); for (let i = clusterCache.size - 300; i > 0; i--) clusterCache.delete(it.next().value); }
-  if (constellationCache.size > 300) { const it = constellationCache.keys(); for (let i = constellationCache.size - 300; i > 0; i--) constellationCache.delete(it.next().value); }
-  if (enhancedTxCache.size > 200) { const it = enhancedTxCache.keys(); for (let i = enhancedTxCache.size - 200; i > 0; i--) enhancedTxCache.delete(it.next().value); }
-  if (reputationV2RateLimit.size > 1000) { const it = reputationV2RateLimit.keys(); for (let i = reputationV2RateLimit.size - 1000; i > 0; i--) reputationV2RateLimit.delete(it.next().value); }
-  if (reputationRateLimit.size > 1000) { const it = reputationRateLimit.keys(); for (let i = reputationRateLimit.size - 1000; i > 0; i--) reputationRateLimit.delete(it.next().value); }
-  rateLimitStore.cleanup();
-}, 300_000);
-
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 
@@ -10117,10 +9527,9 @@ initData().then(() => {
     else if (HELIUS_RPC_BASE) providers.push('helius(no-key)');
     if (FALLBACK_RPC_URL) providers.push('solana-public');
     console.log(`[helius-proxy] listening on ${HOST}:${PORT} | RPC chain: ${providers.join(' → ') || 'none'} (gzip, keep-alive 65s)`);
+    startSchedulers(ctx);
     // Start async wallet database backfill (non-blocking)
-    backfillWalletDatabaseAsync().catch(err => console.warn('[wallet-db] Async backfill error', err.message || err));
-    // Backfill composite scores for existing wallets (non-blocking)
-    setTimeout(backfillCompositeScores, 3000);
+    backfillWalletDatabaseAsync(ctx).catch(err => console.warn('[wallet-db] Async backfill error', err.message || err));
   });
 }).catch(err => {
   console.error('[init] Failed to load data:', err);

@@ -274,7 +274,7 @@ function MiniPassport({
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      className="passport-holo-shimmer relative w-full rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-white/[0.01] backdrop-blur-xl border border-white/[0.1] cursor-pointer hover:bg-white/[0.08] transition-all duration-500 hover:border-white/[0.2] text-left pointer-events-auto group"
+      className="passport-holo-shimmer relative w-full rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-white/[0.01] backdrop-blur-xl border border-white/[0.1] cursor-pointer hover:bg-white/[0.08] transition-all duration-500 hover:border-white/[0.2] text-left pointer-events-auto group focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
     >
       <div
         className="absolute -top-12 -right-12 w-32 h-32 rounded-full blur-3xl opacity-20 transition-opacity duration-700 group-hover:opacity-40"
@@ -526,7 +526,7 @@ function MiniPassport({
             />
             {tierLabel}
           </div>
-          <div className="text-[9px] text-white/20 mt-0.5 tracking-wider">COMPOSITE RANK</div>
+          <div className="text-[9px] text-white/50 mt-0.5 tracking-wider">COMPOSITE RANK</div>
           {/* Ranger Rank */}
           {(() => {
             const { xp, rank, progress, next } = rangerProgress;
@@ -641,7 +641,7 @@ function NoCardFallback({ onClick }: { onClick: () => void }) {
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      className="relative w-full rounded-2xl overflow-hidden bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6 cursor-pointer hover:bg-white/[0.07] transition-all duration-500 hover:border-cyan-500/20 text-left pointer-events-auto"
+      className="relative w-full rounded-2xl overflow-hidden bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6 cursor-pointer hover:bg-white/[0.07] transition-all duration-500 hover:border-cyan-500/20 text-left pointer-events-auto focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
     >
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-slate-500 via-slate-400 to-slate-500 opacity-50" />
       <div className="flex items-center gap-4">
@@ -650,7 +650,7 @@ function NoCardFallback({ onClick }: { onClick: () => void }) {
         </div>
         <div>
           <h3 className="text-sm font-bold text-white/70 mb-1">Identity Not Scanned</h3>
-          <p className="text-[11px] text-white/30">Tap to scan your wallet and reveal your cosmic identity</p>
+          <p className="text-[11px] text-white/50">Tap to scan your wallet and reveal your cosmic identity</p>
         </div>
       </div>
       <ArrowRight size={16} className="absolute top-1/2 right-5 -translate-y-1/2 text-white/15" />
@@ -822,7 +822,7 @@ export default function CosmicHub({
             {onDisconnect && (
               <button
                 onClick={onDisconnect}
-                className="ml-1 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] hover:bg-red-500/20 border border-white/[0.08] hover:border-red-500/30 transition-colors group"
+                className="ml-1 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] hover:bg-red-500/20 border border-white/[0.08] hover:border-red-500/30 transition-colors group focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
                 title="Disconnect wallet"
                 aria-label="Disconnect wallet"
               >
@@ -839,7 +839,7 @@ export default function CosmicHub({
             </span>
             <button
               onClick={onRequestSign}
-              className="px-3 py-1 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors flex-shrink-0"
+              className="px-3 py-1 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors flex-shrink-0 focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
             >
               Sign Now
             </button>
@@ -1026,9 +1026,9 @@ function DailyEarnings({ address }: { address: string }) {
       }}
     >
       <div className="flex items-center justify-between mb-2.5">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-white/30">Today's Earnings</span>
+        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Today's Earnings</span>
         <span className="text-[11px] font-black text-amber-300">
-          {totalEarned} <span className="text-[9px] text-white/20 font-normal">coins today</span>
+          {totalEarned} <span className="text-[9px] text-white/50 font-normal">coins today</span>
         </span>
       </div>
       <div className="space-y-2">
@@ -1047,7 +1047,7 @@ function DailyEarnings({ address }: { address: string }) {
               </div>
               <span className="text-[9px] w-16 font-mono text-right">
                 <span className="text-white/50 font-bold">{b.earned}</span>
-                <span className="text-white/20">/{b.cap}</span>
+                <span className="text-white/50">/{b.cap}</span>
               </span>
             </div>
           );

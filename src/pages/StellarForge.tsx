@@ -346,7 +346,7 @@ function ItemCard({
 
         {/* Info */}
         <h3 className="text-white font-bold text-[13px] mb-0.5 leading-tight text-center">{item.name}</h3>
-        <p className="text-white/25 text-[10px] mb-2 leading-relaxed line-clamp-2 text-center min-h-[28px]">
+        <p className="text-white/50 text-[10px] mb-2 leading-relaxed line-clamp-2 text-center min-h-[28px]">
           {item.description}
         </p>
 
@@ -856,7 +856,7 @@ export default function StellarForge() {
               >
                 Prism Shop
               </h1>
-              <p className="text-[9px] text-white/20 font-medium tracking-widest uppercase">Customize Your Identity</p>
+              <p className="text-[9px] text-white/50 font-medium tracking-widest uppercase">Customize Your Identity</p>
             </div>
             <div
               className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-amber-500/15"
@@ -1061,7 +1061,7 @@ export default function StellarForge() {
                                     </div>
                                   </div>
                                 </div>
-                                <p className="text-white/30 text-[10px] mb-2 line-clamp-2 min-h-[28px]">
+                                <p className="text-white/50 text-[10px] mb-2 line-clamp-2 min-h-[28px]">
                                   {mod.description}
                                 </p>
                                 <div className="space-y-0.5 mb-2">
@@ -1233,7 +1233,7 @@ export default function StellarForge() {
                   >
                     <ShoppingBag className="w-7 h-7 text-purple-400/30" />
                   </div>
-                  <p className="text-white/20 text-sm font-medium">No items in this category</p>
+                  <p className="text-white/50 text-sm font-medium">No items in this category</p>
                 </div>
               )}
             </>
@@ -1426,7 +1426,7 @@ export default function StellarForge() {
                           alt="Standard Shuttle"
                           className="w-16 h-16 object-contain mx-auto mb-2 opacity-30"
                         />
-                        <p className="text-white/30 text-xs font-bold">Standard Shuttle</p>
+                        <p className="text-white/50 text-xs font-bold">Standard Shuttle</p>
                         <p className="text-white/15 text-[10px] mt-1">
                           <span className="text-purple-400/50 cursor-pointer" onClick={() => setTopTab('shop')}>
                             Buy ships in Armory
@@ -1457,7 +1457,7 @@ export default function StellarForge() {
                         >
                           {displayShip.rarity}
                         </span>
-                        <p className="text-white/30 text-xs mt-2">
+                        <p className="text-white/50 text-xs mt-2">
                           Slots:{' '}
                           {Array(maxSlots)
                             .fill(null)
@@ -1653,7 +1653,7 @@ export default function StellarForge() {
                 ) : (
                   <>
                     <h3 className="text-white font-bold text-base mb-1">Install Module</h3>
-                    <p className="text-white/30 text-xs mb-4">Select a module for {moduleModal.item.name}</p>
+                    <p className="text-white/50 text-xs mb-4">Select a module for {moduleModal.item.name}</p>
                     <div className="space-y-2">
                       {MICROMODULE_DEFS.filter((m) => m.compatibleCategories.includes(moduleModal.item.category))
                         .filter((m) => loadout?.ownedModules.includes(m.id))
@@ -1678,7 +1678,7 @@ export default function StellarForge() {
                                       {mod.tier.toUpperCase()}
                                     </span>
                                   </div>
-                                  <p className="text-white/25 text-[10px] mt-0.5">{mod.description}</p>
+                                  <p className="text-white/50 text-[10px] mt-0.5">{mod.description}</p>
                                   <div className="flex items-center gap-3 mt-1">
                                     <span className="text-green-400 text-[10px] font-bold">
                                       +{mod.statBonus.value} {mod.statBonus.stat}
@@ -1698,7 +1698,7 @@ export default function StellarForge() {
                         const m = getModuleById(id);
                         return m && m.compatibleCategories.includes(moduleModal.item.category);
                       }).length ?? 0) === 0 && (
-                        <p className="text-white/20 text-[10px] text-center py-4">
+                        <p className="text-white/50 text-[10px] text-center py-4">
                           No compatible modules in inventory. Buy modules from the shop first.
                         </p>
                       )}

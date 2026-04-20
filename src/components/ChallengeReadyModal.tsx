@@ -57,6 +57,9 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCa
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.4 }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Arena Challenge Ready"
           className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm"
         >
           <motion.div
@@ -98,6 +101,7 @@ export default function ChallengeReadyModal({ isOpen, challenge, onConfirm, onCa
             <div className="space-y-3">
               <motion.button
                 onClick={onConfirm}
+                autoFocus
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-sm tracking-wider hover:from-amber-400 hover:to-orange-400 transition-all"
                 animate={{
                   boxShadow: [

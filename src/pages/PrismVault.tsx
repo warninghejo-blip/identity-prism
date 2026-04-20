@@ -248,7 +248,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             </button>
           </div>
           {status && (
-            <span className="text-[10px] text-white/20">{status.remainingToday.toLocaleString()} left today</span>
+            <span className="text-[10px] text-white/50">{status.remainingToday.toLocaleString()} left today</span>
           )}
         </div>
       </div>
@@ -596,7 +596,7 @@ function PrismVaultSection({
           <Shield className="w-3.5 h-3.5 text-amber-400" />
           Prism Vault — Staking
         </h3>
-        <span className="text-[10px] text-white/20">Earn yield on your coins</span>
+        <span className="text-[10px] text-white/50">Earn yield on your coins</span>
       </div>
 
       {loadingStatus ? (
@@ -627,13 +627,13 @@ function PrismVaultSection({
               </div>
               <div>
                 <p className="text-white font-bold text-sm">{stakedTierInfo?.label ?? vaultStatus.tier} Vault</p>
-                <p className="text-white/30 text-[10px]">
+                <p className="text-white/50 text-[10px]">
                   {vaultStatus.amount?.toLocaleString()} coins ·{' '}
                   {LOCK_OPTIONS.find((o) => o.days === vaultStatus.lockDays)?.label ?? `${vaultStatus.lockDays ?? 7}d`}{' '}
                   lock · {LOCK_OPTIONS.find((o) => o.days === vaultStatus.lockDays)?.mult ?? '1x'} yield
                 </p>
                 {vaultStatus.unlocksAt && (
-                  <p className="text-white/20 text-[9px]">
+                  <p className="text-white/50 text-[9px]">
                     Unlocks{' '}
                     {new Date(vaultStatus.unlocksAt).toLocaleDateString(undefined, {
                       month: 'short',
@@ -680,7 +680,7 @@ function PrismVaultSection({
               <div key={i} className="rounded-xl p-3 text-center bg-white/[0.03] border border-white/[0.05]">
                 <div className="flex justify-center mb-1.5">{s.icon}</div>
                 <p className="text-white font-black text-base">{s.value}</p>
-                <p className="text-white/25 text-[9px] mt-0.5">{s.label}</p>
+                <p className="text-white/50 text-[9px] mt-0.5">{s.label}</p>
               </div>
             ))}
           </div>
@@ -787,7 +787,7 @@ function PrismVaultSection({
 
           {/* Lock duration selector */}
           <div className="mb-4">
-            <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">Lock Duration</p>
+            <p className="text-[10px] text-white/50 uppercase tracking-wider mb-2">Lock Duration</p>
             <div className="grid grid-cols-4 gap-2">
               {LOCK_OPTIONS.map((opt) => {
                 const active = lockDays === opt.days;
@@ -852,7 +852,7 @@ function PrismVaultSection({
           {/* Projected yield */}
           {stakeAmountNum >= tier.min && (
             <div className="mb-4 px-4 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-between">
-              <span className="text-[10px] text-white/30">Est. daily yield</span>
+              <span className="text-[10px] text-white/50">Est. daily yield</span>
               <span className="text-[10px] font-bold" style={{ color: tier.color }}>
                 +{calcClientDailyYield(stakeAmountNum, tier.rateMultiplier).toFixed(1)} coins/day
               </span>
@@ -993,7 +993,7 @@ export default function PrismVault() {
             <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-300 leading-tight">
               Prism Vault
             </h1>
-            <span className="text-[10px] text-white/30 leading-none">Buy coins & earn staking yield</span>
+            <span className="text-[10px] text-white/50 leading-none">Buy coins & earn staking yield</span>
           </div>
           <div className="flex-1" />
           {balance && (
@@ -1007,7 +1007,7 @@ export default function PrismVault() {
 
       <main className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full px-4 py-6 pb-24">
         {!walletAddress ? (
-          <div className="text-center py-20 text-white/20">
+          <div className="text-center py-20 text-white/50">
             <Shield className="w-12 h-12 mx-auto mb-4 opacity-20" />
             <p className="text-sm">Connect your wallet to access the Vault</p>
           </div>
