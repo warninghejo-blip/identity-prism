@@ -824,6 +824,7 @@ export default function CosmicHub({
                 onClick={onDisconnect}
                 className="ml-1 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] hover:bg-red-500/20 border border-white/[0.08] hover:border-red-500/30 transition-colors group"
                 title="Disconnect wallet"
+                aria-label="Disconnect wallet"
               >
                 <LogOut className="w-3.5 h-3.5 text-white/40 group-hover:text-red-400 transition-colors" />
               </button>

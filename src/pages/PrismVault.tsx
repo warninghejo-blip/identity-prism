@@ -220,6 +220,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
           <div className="flex items-center bg-white/[0.03] border border-white/10 rounded-full p-1">
             <button
               onClick={() => setPayWith('sol')}
+              aria-label="Pay with SOL"
               className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
                 payWith === 'sol'
                   ? 'bg-gradient-to-r from-purple-600 to-cyan-500 text-white shadow-lg shadow-purple-500/20'
@@ -233,6 +234,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             </button>
             <button
               onClick={() => setPayWith('skr')}
+              aria-label="Pay with SKR"
               className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-bold transition-all ${
                 payWith === 'skr'
                   ? 'bg-gradient-to-r from-amber-600 to-yellow-500 text-white shadow-lg shadow-amber-500/20'
@@ -982,6 +984,7 @@ export default function PrismVault() {
           <button
             onClick={() => startFadeTransition(() => goBack(navigate))}
             className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-4 h-4 text-white/60" />
           </button>

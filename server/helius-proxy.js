@@ -34,6 +34,8 @@ import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
 import { JWT_TTL, createAuthServices, createJwt, verifyJwt } from './services/auth.js';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
+import { createPersistenceServices } from './services/persistence.js';
+import { createReputationBuilderService } from './services/reputationBuilder.js';
 import {
   buildIdentityHolderPerks,
   GAME_SESSION_ONCHAIN_BONUS_MULTIPLIER,
@@ -46,6 +48,7 @@ import {
   canAwardQuizReward,
   getHolderAdjustedCap,
 } from './services/economyRules.js';
+import { calculateCompositeScore } from './services/compositeScore.js';
 import { rateLimitCache, rateLimitStore } from './services/rateLimitStore.js';
 import { getCompositeTrustProfile, getSybilQuickVerdict, getSybilRewardPath, getSybilVerdict } from './services/sybilVerdict.js';
 
@@ -65,6 +68,7 @@ import { createLeaderboardStoreFromContext } from './data/leaderboards.js';
 import { createMintedAddressesStoreFromContext } from './data/mintedAddresses.js';
 import { createScoreHistoryStoreFromContext } from './data/scoreHistory.js';
 import { registerAuthRoute } from './routes/auth.js';
+import { registerArenaRoute } from './routes/arena.js';
 import { registerBuyRoute } from './routes/buy.js';
 import { registerBlackholeRoute } from './routes/blackhole.js';
 import { registerEarnRoute } from './routes/earn.js';
@@ -1458,37 +1462,6 @@ const loadWalletDatabase = async () => {
   }
 };
 
-const persistWalletDatabase = () => {
-  // JSON (synchronous fallback)
-  try {
-    const obj = {};
-    for (const [k, v] of walletDatabase) obj[k] = v;
-    const tmp = WALLET_DB_FILE + '.tmp';
-    const data = JSON.stringify({
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      totalWallets: walletDatabase.size,
-      wallets: obj,
-    }, null, 2);
-    fs.promises.writeFile(tmp, data, 'utf8')
-      .then(() => fs.promises.rename(tmp, WALLET_DB_FILE))
-      .catch(err => { console.warn('[wallet-db] Write error:', err.message); });
-  } catch (err) {
-    console.warn('[wallet-db] Failed to persist', err);
-  }
-  // Firestore (async, fire-and-forget)
-  if (fbAvailable()) {
-    fbBatchSet('wallets', [...walletDatabase.entries()]).catch(err =>
-      console.warn('[wallet-db] Firestore batch write failed:', err.message));
-  }
-};
-
-let walletDbSaveTimer = null;
-const saveWalletDatabaseDebounced = () => {
-  if (walletDbSaveTimer) clearTimeout(walletDbSaveTimer);
-  walletDbSaveTimer = setTimeout(persistWalletDatabase, 500);
-};
-
 const updateWalletEntry = (address, updates) => {
   const existing = walletDatabase.get(address) || { address };
   const merged = { ...existing, ...updates, address };
@@ -1654,6 +1627,7 @@ const backfillWalletDatabaseAsync = async () => {
     console.log(`[wallet-db] Sybil backfill complete: ${sybilCount}/${walletsNeedingSybil.length} analyzed`);
   }
 };
+
 
 // ── Server-side Achievement tracking (unlocked + claimed per wallet) ──
 const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
@@ -2057,442 +2031,7 @@ const markGameEarnClaimed = (gameSessionId, source, earned) => {
   persistGameSessionProofs();
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Composite Score Engine (0-1000)
-// ═══════════════════════════════════════════════════════════════════════════
-const COMPOSITE_TIER_MAP = [
-  [99, 'mercury'], [219, 'mars'], [349, 'venus'], [479, 'earth'],
-  [599, 'neptune'], [699, 'uranus'], [799, 'saturn'], [879, 'jupiter'],
-  [949, 'sun'], [Infinity, 'binary_sun'],
-];
-
-function getCompositeTier(score) {
-  if (!Number.isFinite(score) || score < 0) return 'mercury';
-  for (const [threshold, tier] of COMPOSITE_TIER_MAP) {
-    if (score <= threshold) return tier;
-  }
-  return 'binary_sun';
-}
-
-function calculateCompositeScore(input) {
-  const {
-    onchainScore = 0, trustScore = 0, riskScore = 0,
-    walletAgeDays = 0, txCount = 0, nftCount = 0, solBalance = 0, defiProtoCount = 0,
-    gameScores = [], gameTypes = new Set(), achievementCount = 0,
-    challengesWon = 0, constellationExplored = 0, compareCount = 0,
-    questsCompleted = 0, streakDays = 0, scanCount = 0,
-    hasSeeker = false, hasPreorder = false, hasCombo = false, sybilVerdict = null, scoreBreakdown = null,
-  } = input;
-
-  // ── Badge evaluation (same conditions as client-side getBadgeItems) ──
-  // On-chain badges (5) — on-chain score already includes badge pts from scoring.js
-  // No extra bonus here to avoid double-counting
-
-  const safeTrust = Number.isFinite(trustScore) ? Math.max(0, Math.min(100, trustScore)) : 0;
-  const recovery = input.trustRecovery || {};
-  const requestedRecoveryBonus = Math.min(25,
-    (recovery.twitterBonus || 0) +    // max 12
-    (recovery.activityBonus || 0) +   // max 8
-    (recovery.crossVerifBonus || 0),  // max 5
-  );
-  const compositeTrust = getCompositeTrustProfile({
-    verdict: sybilVerdict,
-    trustScore: safeTrust,
-    recoveryBonus: requestedRecoveryBonus,
-  });
-  const adjustedTrust = compositeTrust.effectiveTrust;
-
-  // Sybil Trust badges (3) — bonus 10 pts each (require full sybil analysis)
-  const sybilAnalyzed = input.sybilAnalyzed === true;
-  const sybilBadgeEligible = sybilAnalyzed && compositeTrust.allowBadges;
-  const badge_verifiedHuman = sybilBadgeEligible && safeTrust >= 80;
-  const badge_cleanRecord = sybilBadgeEligible && safeTrust >= 50 && riskScore < 10;
-  const badge_trustPillar = sybilBadgeEligible && safeTrust >= 95;
-  const sybilBadgeBonus = (badge_verifiedHuman ? 10 : 0) + (badge_cleanRecord ? 10 : 0) + (badge_trustPillar ? 10 : 0);
-
-  // Human Proof badges (3) — bonus 10 pts each
-  const validGameScores = gameScores.filter(Number.isFinite);
-  const gameScoreTotal = validGameScores.length > 0
-    ? Math.min(80, Math.round(Math.log2(1 + validGameScores.reduce((a, b) => a + b, 0)) * 8))
-    : 0;
-  const gameTypesCount = gameTypes.size;
-  const badge_gameMaster = gameTypesCount >= 3;
-  const badge_achievementHunter = achievementCount >= 10;
-  const badge_highScorer = gameScoreTotal >= 40;
-  const humanBadgeBonus = (badge_gameMaster ? 10 : 0) + (badge_achievementHunter ? 10 : 0) + (badge_highScorer ? 10 : 0);
-
-  // Social badges (3) — bonus 8 pts each
-  const badge_arenaChampion = challengesWon >= 5;
-  const badge_topHunter = (scanCount || 0) >= 20;
-  const badge_questMaster = (questsCompleted || 0) >= 15;
-  const socialBadgeBonus = (badge_arenaChampion ? 8 : 0) + (badge_topHunter ? 8 : 0) + (badge_questMaster ? 8 : 0);
-
-  // Engagement badges (3) — bonus 8 pts each
-  const badge_questHunter = questsCompleted >= 10;
-  const badge_streakLord = streakDays >= 7;
-  const badge_explorer = scanCount >= 20;
-  const engagementBadgeBonus = (badge_questHunter ? 8 : 0) + (badge_streakLord ? 8 : 0) + (badge_explorer ? 8 : 0);
-
-  // ── Category scores ──
-  // On-chain (40%, max 400) — scoring.js already outputs 0-400 directly
-  const onchain = Math.min(400, onchainScore);
-  const basePts = onchain;
-
-  // Sybil Trust (25%, max 250) — verdict-aware trust floor/ceiling for composite only
-  const recoveryBonus = compositeTrust.recoveryBonus;
-  const sybilBase = Math.round((adjustedTrust / 100) * 250);
-  const sybilTrust = Math.min(250, Math.max(0, sybilBase + sybilBadgeBonus));
-
-  // Human Proof (15%, max 150)
-  const gameDiversity = Math.min(30, gameTypesCount * 5);
-  const achievementPts = Math.min(40, achievementCount * 5);
-  const humanProof = Math.min(150, gameScoreTotal + gameDiversity + achievementPts + humanBadgeBonus);
-
-  // Social (10%, max 100) — base activities capped at 76 so badge bonuses (up to 24) always matter
-  const challengePts = Math.min(32, challengesWon * 4);
-  const constellationPts = Math.min(28, constellationExplored * 2);
-  const socialScanPts = Math.min(28, scanCount > 0 ? Math.round(Math.log2(1 + scanCount) * 4) : 0);
-  const comparePts = Math.min(16, compareCount * 2);
-  const social = Math.min(100, challengePts + Math.max(constellationPts, socialScanPts) + comparePts + socialBadgeBonus);
-
-  // Engagement (10%, max 100) — base activities capped at 76 so badge bonuses (up to 24) always matter
-  const questPts = Math.min(40, questsCompleted * 2);
-  const streakPts = Math.min(22, streakDays * 2);
-  const scanPts = Math.min(14, scanCount > 0 ? Math.round(Math.log2(1 + scanCount) * 4) : 0);
-  const engagement = Math.min(100, questPts + streakPts + scanPts + engagementBadgeBonus);
-
-  const total = Math.min(1000, onchain + sybilTrust + humanProof + social + engagement);
-  const tier = getCompositeTier(total);
-
-  return {
-    compositeScore: total,
-    compositeTier: tier,
-    breakdown: { onchain, sybilTrust, humanProof, social, engagement },
-    details: {
-      onchain: { identityScore: onchainScore, identityMax: 400, basePts, badgeBonus: 0, hasSeeker, hasPreorder, hasCombo, scoreBreakdown },
-      sybilTrust: {
-        trustScore: safeTrust,
-        rawTrustScore: compositeTrust.rawTrustScore,
-        baseCompositeTrust: compositeTrust.baseCompositeTrust,
-        adjustedTrust,
-        effectiveTrust: compositeTrust.effectiveTrust,
-        verdictKey: compositeTrust.verdictKey,
-        verdictLabel: compositeTrust.verdictLabel,
-        verdictAdjustment: compositeTrust.verdictAdjustment,
-        trustMax: 100,
-        badgeBonus: sybilBadgeBonus,
-        recoveryBonus,
-        recoveryCap: compositeTrust.recoveryCap,
-        recoveryBreakdown: recovery,
-      },
-      humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount, badgeBonus: humanBadgeBonus },
-      social: { challengesWon, challengePts, scanCount, scanPts: socialScanPts, questsCompleted, questPts: Math.min(16, Math.floor((questsCompleted || 0) * 1.1)), badgeBonus: socialBadgeBonus },
-      engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
-    },
-  };
-}
-
 const PUBLIC_REPUTATION_TTL_SECONDS = 300;
-
-function getQuestCompletionSummary(address) {
-  const qp = questProgress.get(address);
-  if (!qp?.quests) return { questsCompleted: 0, updatedAt: null };
-  let questsCompleted = 0;
-  for (const quest of Object.values(qp.quests)) {
-    if (quest?.completed) questsCompleted += 1;
-  }
-  return { questsCompleted, updatedAt: qp.updatedAt || null };
-}
-
-function getTournamentParticipationCount(address) {
-  const seen = new Set();
-  const allTournaments = [
-    ...Object.values(activeTournaments || {}).filter(Boolean),
-    ...(Array.isArray(tournamentHistory) ? tournamentHistory : []),
-  ];
-  for (const tournament of allTournaments) {
-    if (!tournament?.id) continue;
-    if (tournament.entries && Object.prototype.hasOwnProperty.call(tournament.entries, address)) {
-      seen.add(tournament.id);
-    }
-  }
-  return seen.size;
-}
-
-function formatRangerRankLabel(rankId) {
-  const normalized = String(rankId || 'cadet').trim().toLowerCase();
-  return normalized ? `${normalized[0].toUpperCase()}${normalized.slice(1)}` : 'Cadet';
-}
-
-function mapPublicSybilRisk(verdictKey) {
-  if (verdictKey === 'confirmed_sybil' || verdictKey === 'probable_sybil') return 'high';
-  if (verdictKey === 'cluster_linked' || verdictKey === 'suspicious') return 'medium';
-  return 'low';
-}
-
-function buildPublicReputationResponse(address) {
-  const walletEntry = walletDatabase.get(address);
-  if (!walletEntry) return null;
-
-  const compositeData = calculateCompositeScore(buildCompositeInput(address));
-  const sybilAnalysis = getRecentSybilAnalysis(address) || walletEntry.sybil || null;
-  const sybilVerdict = sybilAnalysis ? getSybilVerdict(sybilAnalysis) : null;
-  const rangerSnapshot = getServerRangerSnapshot(address, walletEntry);
-  const { questsCompleted, updatedAt: questUpdatedAt } = getQuestCompletionSummary(address);
-  const gamesPlayed = leaderboardEntries.filter((entry) => entry.address === address).length;
-  const tournamentsPlayed = getTournamentParticipationCount(address);
-  const updatedCandidates = [
-    walletEntry.lastSeenAt,
-    walletEntry.updatedAt,
-    walletEntry.composite?.updatedAt,
-    walletEntry.sybil?.updatedAt,
-    questUpdatedAt,
-  ]
-    .map((value) => Date.parse(String(value || '')))
-    .filter((value) => Number.isFinite(value));
-  const updatedAt = new Date(updatedCandidates.length > 0 ? Math.max(...updatedCandidates) : Date.now()).toISOString();
-
-  return {
-    address,
-    score: compositeData.compositeScore,
-    tier: compositeData.compositeTier,
-    sybilRisk: mapPublicSybilRisk(sybilVerdict?.key),
-    sybilConfidence: Math.max(0, Math.min(1, Number(sybilVerdict?.confidenceScore || 35) / 100)),
-    breakdown: compositeData.breakdown,
-    behavioralProof: {
-      rank: formatRangerRankLabel(rangerSnapshot.rank),
-      gamesPlayed,
-      questsCompleted,
-      tournamentsPlayed,
-    },
-    updatedAt,
-    ttl: PUBLIC_REPUTATION_TTL_SECONDS,
-  };
-}
-
-// ── Trust Recovery: compute bonus from Twitter verification + in-app activity ──
-const twitterWalletMap = new Map(); // twitterUserId → walletAddress (1:1 dedup)
-
-// Rebuild twitterWalletMap from walletDatabase on startup
-function rebuildTwitterWalletMap() {
-  twitterWalletMap.clear();
-  for (const [addr, entry] of walletDatabase) {
-    const tw = entry.trustRecovery?.twitter;
-    if (tw?.verified && tw.userId) twitterWalletMap.set(tw.userId, addr);
-  }
-}
-
-function computeTrustRecovery(address, activityData) {
-  const entry = walletDatabase.get(address) || {};
-  const rd = entry.trustRecovery || {};
-
-  // 1. Twitter bonus (max 12)
-  let twitterBonus = 0;
-  const tw = rd.twitter;
-  if (tw?.verified && !tw.suspended) {
-    twitterBonus = 3; // base link bonus
-    const ageYears = (tw.accountAgeDays || 0) / 365;
-    if (ageYears >= 3) twitterBonus += 4;
-    else if (ageYears >= 1) twitterBonus += 2;
-    if ((tw.followers || 0) >= 500) twitterBonus += 3;
-    else if ((tw.followers || 0) >= 50) twitterBonus += 1;
-    if ((tw.tweets || 0) >= 1000) twitterBonus += 2;
-    else if ((tw.tweets || 0) >= 100) twitterBonus += 1;
-    twitterBonus = Math.min(12, twitterBonus);
-  }
-
-  // 2. Activity bonus (max 8) — computed from existing data
-  let activityBonus = 0;
-  const a = activityData || {};
-  if ((a.gameTypesCount || 0) >= 3) activityBonus += 1;
-  if ((a.achievementCount || 0) >= 15) activityBonus += 2;
-  else if ((a.achievementCount || 0) >= 5) activityBonus += 1;
-  if ((a.questsCompleted || 0) >= 5) activityBonus += 1;
-  if ((a.streakDays || 0) >= 7) activityBonus += 1;
-  if ((a.scanCount || 0) >= 10) activityBonus += 1;
-  if ((a.challengesWon || 0) >= 3) activityBonus += 1;
-  if ((a.totalCoinsEarned || 0) >= 500) activityBonus += 1;
-  activityBonus = Math.min(8, activityBonus);
-
-  // 3. Cross-verification bonus (max 5) — requires multiple methods
-  let crossVerifBonus = 0;
-  if (twitterBonus >= 3 && activityBonus >= 5) crossVerifBonus = 3;
-  else if (twitterBonus >= 3 && activityBonus >= 3) crossVerifBonus = 2;
-  else if (twitterBonus >= 3 && activityBonus >= 1) crossVerifBonus = 1;
-  // Extra for really strong Twitter + full activity
-  if (twitterBonus >= 8 && activityBonus >= 6) crossVerifBonus = 5;
-
-  return { twitterBonus, activityBonus, crossVerifBonus };
-}
-
-function buildCompositeInput(address) {
-  const walletEntry = walletDatabase.get(address) || {};
-  const scoreBreakdown = walletEntry.scoreBreakdown || null;
-  // Prefer sum from current scoreBreakdown (max 400) over legacy entry.score (may be from old 1000-scale system)
-  let onchainScore = walletEntry.score || 0;
-  if (scoreBreakdown && scoreBreakdown.solBalance && scoreBreakdown.solBalance.max === 40) {
-    // Current scoring system — sum pts from breakdown for accurate on-chain score
-    let sbSum = 0;
-    for (const v of Object.values(scoreBreakdown)) {
-      if (v && typeof v === 'object' && typeof v.pts === 'number') sbSum += v.pts;
-    }
-    onchainScore = Math.min(400, sbSum);
-  } else if (onchainScore > 400) {
-    onchainScore = 400; // legacy score, just cap
-  }
-  const trustScore = walletEntry.sybil?.trustScore || 0;
-  const socialStats = walletEntry.socialStats || {};
-
-  // Game scores from leaderboard
-  const playerEntries = leaderboardEntries.filter(e => e.address === address);
-  const gameScores = playerEntries.map(e => e.score || 0);
-  const gameTypes = new Set(playerEntries.map(e => e.gameType || 'orbit'));
-
-  // Achievements
-  const achEntry = achievementData.get(address);
-  const achievementCount = achEntry ? achEntry.unlocked.size : 0;
-
-  // Quest progress
-  const qp = questProgress.get(address);
-  let questsCompleted = 0;
-  let streakDays = 0;
-  if (qp && qp.quests) {
-    for (const q of Object.values(qp.quests)) {
-      if (q.completed) questsCompleted++;
-    }
-    streakDays = qp.streakDays || 0;
-  }
-
-  const traits = walletEntry.traits || {};
-  const stats = walletEntry.stats || {};
-  const sybil = walletEntry.sybil || {};
-  const sybilVerdict = sybil.verdict || (sybil.verdictKey ? getSybilQuickVerdict(sybil) : null);
-  return {
-    onchainScore,
-    trustScore,
-    riskScore: sybil.riskScore || 0,
-    sybilAnalyzed: Boolean(sybil.updatedAt),
-    sybilVerdict,
-    walletAgeDays: stats.walletAgeDays || (traits.walletAgeDays ?? 0),
-    txCount: stats.transactions || (traits.txCount ?? 0),
-    nftCount: stats.nfts || (traits.nftCount ?? 0),
-    solBalance: stats.solBalance || (traits.solBalance ?? 0),
-    defiProtoCount: Array.isArray(traits.defiProtocols) ? traits.defiProtocols.length : 0,
-    gameScores,
-    gameTypes,
-    achievementCount,
-    // challengesWon: use authoritative challenges array (socialStats can be stale)
-    // constellationExplored, compareCount, scanCount: only source is socialStats/walletEntry
-    challengesWon: challenges.filter(c => c.status === 'completed' && c.winner === address).length,
-    constellationExplored: socialStats.constellationExplored || 0,
-    compareCount: socialStats.compareCount || 0,
-    questsCompleted,
-    streakDays,
-    scanCount: walletEntry.scanCount || 0,
-    hasSeeker: Boolean(traits.hasSeeker),
-    hasPreorder: Boolean(traits.hasPreorder),
-    hasCombo: Boolean(traits.hasCombo),
-    scoreBreakdown,
-    trustRecovery: computeTrustRecovery(address, {
-      gameTypesCount: gameTypes.size,
-      achievementCount,
-      questsCompleted,
-      streakDays,
-      scanCount: walletEntry.scanCount || 0,
-      challengesWon: challenges.filter(c => c.status === 'completed' && c.winner === address).length,
-      totalCoinsEarned: getCoinBalance(address),
-    }),
-  };
-}
-
-function triggerCompositeUpdate(address) {
-  try {
-    const input = buildCompositeInput(address);
-    const result = calculateCompositeScore(input);
-    const existing = walletDatabase.get(address) || {};
-    existing.composite = result;
-    walletDatabase.set(address, existing);
-    saveWalletDatabaseDebounced();
-    if (fbAvailable()) {
-      fbSet('wallets', address, existing).catch(() => {});
-    }
-  } catch (err) {
-    console.warn('[composite] Failed to update for', address, err.message);
-  }
-}
-
-async function backfillCompositeScores() {
-  let count = 0;
-  let recalculated = 0;
-  for (const [address, entry] of walletDatabase) {
-    // If wallet has a score but no/stale scoreBreakdown, generate approximate breakdown from stats
-    // ONLY sets scoreBreakdown — does NOT overwrite score/tier/badges (those need a full scan)
-    // Detect old scoring system: current system has solBalance.max=40, old had 100+
-    const sbStale = entry.scoreBreakdown && (
-      (entry.scoreBreakdown.solBalance?.max || 0) !== 40
-      || entry.scoreBreakdown.behavioral
-    );
-    // Also recalculate if score exceeds current max (400) — legacy data
-    const scoreLegacy = entry.score > 400;
-    if (entry.score > 0 && (!entry.scoreBreakdown || sbStale || scoreLegacy) && entry.stats) {
-      try {
-        const s = entry.stats;
-        const firstTxTime = entry.firstTxTimestamp || (s.walletAgeYears > 0 ? Date.now() - s.walletAgeYears * 365 * 86400000 : 0);
-        const badges = entry.badges || [];
-        const extraTraits = {
-          hasSeeker: badges.includes('seeker'),
-          hasPreorder: badges.includes('visionary'),
-          swapCount: 0, nftTradeCount: 0, stakingCount: 0, defiProtocols: [],
-          ...(entry.traits || {}),
-        };
-        const identity = calculateIdentity(
-          s.transactions || 0,
-          firstTxTime,
-          s.solBalance || 0,
-          s.tokens || 0,
-          s.nfts || 0,
-          extraTraits,
-        );
-        // Set scoreBreakdown + sync score/tier/badges to current scoring system
-        entry.scoreBreakdown = identity.scoreBreakdown;
-        entry.score = identity.score;
-        entry.tier = identity.tier;
-        entry.badges = identity.badges;
-        walletDatabase.set(address, entry);
-        recalculated++;
-      } catch (err) {
-        console.warn(`[composite] Failed to recalculate identity for ${address.slice(0, 8)}:`, err.message);
-      }
-    }
-    triggerCompositeUpdate(address);
-    count++;
-    // Yield to event loop every 50 wallets to avoid blocking + Firestore write storm
-    if (count % 50 === 0) await new Promise(r => setTimeout(r, 100));
-  }
-  console.log(`[composite] Backfilled ${count} wallets (recalculated ${recalculated} identities)`);
-  // One-time cleanup: validate socialStats against authoritative sources
-  let cleaned = 0;
-  for (const [addr, entry] of walletDatabase) {
-    const ss = entry.socialStats;
-    if (!ss) continue;
-    const realChallengeWins = challenges.filter(c => c.status === 'completed' && c.winner === addr).length;
-    if ((ss.challengesWon || 0) > realChallengeWins) {
-      ss.challengesWon = realChallengeWins;
-      cleaned++;
-    }
-    // constellation and compare: cap at reasonable max (no user can do 50+ compares organically in early stage)
-    if ((ss.constellationExplored || 0) > 20) { ss.constellationExplored = 0; cleaned++; }
-    if ((ss.compareCount || 0) > 20) { ss.compareCount = 0; cleaned++; }
-  }
-  if (cleaned > 0) {
-    console.log(`[cleanup] Fixed ${cleaned} suspicious socialStats entries`);
-    saveWalletDatabaseDebounced();
-    // Recalculate composite for affected wallets
-    for (const [addr] of walletDatabase) { try { triggerCompositeUpdate(addr); } catch {} }
-  }
-  rebuildTwitterWalletMap();
-  if (twitterWalletMap.size > 0) console.log(`[recovery] ${twitterWalletMap.size} Twitter-linked wallets`);
-}
 
 const getHeliusKeyIndex = (seed = '') => {
   if (!HELIUS_KEYS.length) return -1;
@@ -8246,762 +7785,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // P2P Challenge System
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // ── Challenge: Create ──
-  if (pathname === '/api/challenge/create' && req.method === 'POST') {
-    if (!ipRateLimit('ch_create', getClientIp(req), 5, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const body = JSON.parse(await readBody(req));
-      const { type, gameMode, stakeAmount, opponent, betType, expiresMinutes } = body;
-      const creator = jwtAuth.address;
-      // SOL stakes disabled — security risk without escrow smart contract
-      if (betType === 'sol') return respondJson(res, 400, { error: 'SOL stakes are temporarily disabled. Use Coins.' });
-      const isSolBet = false;
-
-      // Validate type
-      if (!type || !['score', 'game'].includes(type)) {
-        return respondJson(res, 400, { error: 'type must be "score" or "game"' });
-      }
-      // Validate gameMode for game type
-      if (type === 'game') {
-        if (!gameMode || !['orbit', 'destroyer', 'gravity'].includes(gameMode)) {
-          return respondJson(res, 400, { error: 'gameMode must be "orbit", "destroyer", or "gravity" for game challenges' });
-        }
-      }
-      // Validate stakeAmount
-      const stake = isSolBet ? Number(stakeAmount) : Math.floor(Number(stakeAmount));
-      if (!Number.isFinite(stake) || stake < 5) {
-        return respondJson(res, 400, { error: 'Minimum stake is 5 Coins' });
-      }
-      if (!isSolBet && stake > 1000) {
-        return respondJson(res, 400, { error: 'stakeAmount cannot exceed 1000 Coins' });
-      }
-      if (isSolBet && stake > 10) {
-        return respondJson(res, 400, { error: 'SOL stake cannot exceed 10 SOL' });
-      }
-      // Validate opponent if provided
-      if (opponent) {
-        if (opponent === creator) {
-          return respondJson(res, 400, { error: 'Cannot challenge yourself' });
-        }
-        try { new PublicKey(opponent); } catch { return respondJson(res, 400, { error: 'Invalid opponent address' }); }
-      }
-
-      if (isSolBet) {
-        // Verify SOL transfer to treasury
-        if (!solTxSignature) return respondJson(res, 400, { error: 'solTxSignature required for SOL bets' });
-        // Dedup: prevent reusing same tx for multiple challenges (Map with TTL + file persist)
-        const USED_CHALLENGE_TX_FILE = path.join(METADATA_DIR, 'used-challenge-tx.json');
-        if (!globalThis._usedChallengeSolTx) {
-          const m = new Map();
-          try { const d = JSON.parse(fs.readFileSync(USED_CHALLENGE_TX_FILE, 'utf8')); for (const [k, v] of Object.entries(d)) m.set(k, v); } catch {}
-          globalThis._usedChallengeSolTx = m;
-        }
-        // Periodic cleanup (every 500 requests)
-        if (!globalThis._challengeTxCleanupCounter) globalThis._challengeTxCleanupCounter = 0;
-        if (++globalThis._challengeTxCleanupCounter % 500 === 0) {
-          const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-          for (const [sig, ts] of globalThis._usedChallengeSolTx) { if (ts < cutoff) globalThis._usedChallengeSolTx.delete(sig); }
-          const _ctTmp = USED_CHALLENGE_TX_FILE + '.tmp'; const _ctObj = {}; for (const [k, v] of globalThis._usedChallengeSolTx) _ctObj[k] = v;
-          fs.promises.writeFile(_ctTmp, JSON.stringify(_ctObj), 'utf8').then(() => fs.promises.rename(_ctTmp, USED_CHALLENGE_TX_FILE)).catch(() => {});
-        }
-        if (globalThis._usedChallengeSolTx.has(solTxSignature)) return respondJson(res, 400, { error: 'This SOL transaction has already been used' });
-        globalThis._usedChallengeSolTx.set(solTxSignature, Date.now());
-        try {
-          const conn = new Connection(getRpcUrl(creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-          const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
-          if (!tx) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' }); }
-          // Verify transfer to treasury from creator
-          const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-          if (!treasuryAddr) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 500, { error: 'Treasury not configured' }); }
-          const instructions = tx.transaction?.message?.instructions || [];
-          const validTransfer = instructions.some(ix => {
-            if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
-              const info = ix.parsed.info;
-              return info.source === creator && info.destination === treasuryAddr && info.lamports >= Math.floor(stake * 1e9 * 0.99);
-            }
-            return false;
-          });
-          if (!validTransfer) { globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
-        } catch (e) { console.error('[challenge] SOL verify failed:', e.message); globalThis._usedChallengeSolTx.delete(solTxSignature); return respondJson(res, 400, { error: 'SOL transfer verification failed' }); }
-      } else {
-        // Check creator Coin balance
-        const creatorBal = getPrismBalance(creator);
-        if (creatorBal.balance < stake) {
-          return respondJson(res, 400, { error: `Insufficient balance. Have ${creatorBal.balance} Coins, need ${stake}` });
-        }
-        // Lock Coins from creator
-        setCoinBalance(creator, creatorBal.balance - stake);
-        addCoinSpent(creator, stake);
-        const _txs = prismTransactions.get(creator) || [];
-        _txs.unshift({ id: `ch_stake_${Date.now()}`, address: creator, amount: stake, type: 'spend', source: 'challenge_entry', description: `Challenge stake: -${stake} Coins`, timestamp: new Date().toISOString() });
-        if (_txs.length > 200) _txs.length = 200;
-        prismTransactions.set(creator, _txs);
-        debouncedSavePrism();
-      }
-
-      const challenge = {
-        id: `ch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        creator,
-        opponent: opponent || null,
-        type,
-        gameMode: type === 'game' ? gameMode : null,
-        stakeType: isSolBet ? 'sol' : 'coins',
-        stakeAmount: stake,
-        status: type === 'game' ? 'playing' : 'open',
-        creatorScore: null,
-        opponentScore: null,
-        winner: null,
-        createdAt: Date.now(),
-        expiresAt: expiresMinutes && [15, 30, 60, 180, 360, 720, 1440].includes(Number(expiresMinutes))
-          ? Date.now() + Number(expiresMinutes) * 60_000
-          : Date.now() + 60 * 60_000, // default 1 hour
-        acceptedAt: null,
-        completedAt: null,
-        solTxCreator: isSolBet ? solTxSignature : null,
-        solTxAcceptor: null,
-      };
-      // Cap: prevent unbounded growth (evict completed/expired before adding)
-      if (challenges.length >= 10000) {
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-        for (let i = challenges.length - 1; i >= 0; i--) {
-          if ((challenges[i].status === 'completed' || challenges[i].status === 'expired' || challenges[i].status === 'cancelled') && challenges[i].createdAt < cutoff) challenges.splice(i, 1);
-        }
-        if (challenges.length >= 10000) return respondJson(res, 429, { error: 'Too many active challenges' });
-      }
-      challenges.push(challenge);
-      saveChallenges();
-      console.log(`[challenges] Created ${challenge.id} by ${creator.slice(0, 8)}... (${type}, ${stake} ${isSolBet ? 'SOL' : 'Coins'})`);
-      respondJson(res, 200, { ok: true, challenge });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
-    return;
-  }
-
-  // ── Challenge: List open (public — no auth required) ──
-  // ── Challenge Leaderboard (weekly + all-time) ──
-  if (pathname === '/api/challenge/leaderboard' && req.method === 'GET') {
-    if (!ipRateLimit('ch_lb', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    try {
-      const now = Date.now();
-      // Monday 00:00 UTC of current week
-      const d = new Date(now);
-      d.setUTCHours(0, 0, 0, 0);
-      d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-      const weekStart = d.getTime();
-      const weeklyStats = new Map();
-      const allTimeStats = new Map();
-      const buildEntry = (addr) => ({ address: addr, wins: 0, losses: 0, earned: 0, played: 0 });
-      for (const c of challenges) {
-        if (c.status !== 'completed' || !c.winner) continue;
-        const loser = c.winner === c.creator ? c.opponent : c.creator;
-        const prize = Math.floor(c.stakeAmount * 2 * 0.95);
-        const isThisWeek = (c.completedAt || c.createdAt) >= weekStart;
-        // All-time
-        const aw = allTimeStats.get(c.winner) || buildEntry(c.winner); aw.wins++; aw.earned += prize; aw.played++; allTimeStats.set(c.winner, aw);
-        if (loser) { const al = allTimeStats.get(loser) || buildEntry(loser); al.losses++; al.played++; allTimeStats.set(loser, al); }
-        // Weekly
-        if (isThisWeek) {
-          const ww = weeklyStats.get(c.winner) || buildEntry(c.winner); ww.wins++; ww.earned += prize; ww.played++; weeklyStats.set(c.winner, ww);
-          if (loser) { const wl = weeklyStats.get(loser) || buildEntry(loser); wl.losses++; wl.played++; weeklyStats.set(loser, wl); }
-        }
-      }
-      const MIN_GAMES = 3;
-      const weekly = [...weeklyStats.values()].filter(p => p.played >= MIN_GAMES).sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 20);
-      const allTime = [...allTimeStats.values()].sort((a, b) => b.earned - a.earned || b.wins - a.wins).slice(0, 20);
-      // Weekly rewards info (matches cron distribution)
-      const weeklyWithRewards = weekly.map((p, i) => ({ ...p, reward: WEEKLY_REWARDS[i] || 0, xpReward: WEEKLY_XP_REWARDS[i] || 0 }));
-      // Next reset (next Monday 00:00 UTC)
-      const nextReset = weekStart + 7 * 24 * 60 * 60 * 1000;
-      // Last week's winners (from challengeWeeklyHistory)
-      const lastWeek = globalThis._challengeWeeklyHistory || [];
-      respondJson(res, 200, { ok: true, weekly: weeklyWithRewards, allTime, nextReset, lastWeekWinners: lastWeek, minGames: MIN_GAMES });
-    } catch (e) {
-      respondJson(res, 200, { ok: true, weekly: [], allTime: [], nextReset: 0, lastWeekWinners: [], minGames: 3 });
-    }
-    return;
-  }
-
-  if (pathname === '/api/challenge/list' && req.method === 'GET') {
-    if (!ipRateLimit('ch_list', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    try {
-      const now = Date.now();
-      const open = (challenges || [])
-        .filter(c => c && (c.status === 'open' || (c.status === 'playing' && !c.opponent)))
-        // Hide expired challenges (timer ran out, expiry cron may not have fired yet)
-        .filter(c => !c.expiresAt || c.expiresAt > now)
-        // Hide game challenges where creator hasn't played yet (not ready for opponents)
-        .filter(c => c.type !== 'game' || c.creatorScore !== null)
-        .slice(0, 50);
-      respondJson(res, 200, { ok: true, challenges: open });
-    } catch (e) {
-      console.warn('[challenges] list error', e?.message);
-      respondJson(res, 200, { ok: true, challenges: [] });
-    }
-    return;
-  }
-
-  // ── Challenge: My challenges (JWT required) ──
-  if (pathname === '/api/challenge/my' && req.method === 'GET') {
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const address = jwtAuth.address;
-    if (!address) return respondJson(res, 400, { error: 'Authentication required' });
-    try {
-      const my = (challenges || [])
-        .filter(c => c && (c.creator === address || c.opponent === address))
-        .slice(0, 50);
-      respondJson(res, 200, { ok: true, challenges: my });
-    } catch (e) {
-      console.warn('[challenges] my error', e?.message);
-      respondJson(res, 200, { ok: true, challenges: [] });
-    }
-    return;
-  }
-
-  // ── Challenge: Accept ──
-  if (pathname === '/api/challenge/accept' && req.method === 'POST') {
-    if (!ipRateLimit('ch_accept', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    let _acceptSolTxSig = null;
-    try {
-      const { challengeId, solTxSignature } = JSON.parse(await readBody(req));
-      _acceptSolTxSig = solTxSignature || null;
-      const acceptor = jwtAuth.address;
-      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
-
-      const challenge = challenges.find(c => c.id === challengeId);
-      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
-      // Block expired challenges (cron may not have fired yet)
-      if (challenge.expiresAt && Date.now() > challenge.expiresAt) {
-        return respondJson(res, 409, { error: 'Challenge has expired' });
-      }
-      // Allow accept for 'open' (score challenges) and 'playing' without opponent (game challenges where creator already played)
-      if (challenge.status !== 'open' && !(challenge.status === 'playing' && !challenge.opponent)) {
-        return respondJson(res, 409, { error: 'Challenge no longer available' });
-      }
-      // Game challenges: creator must have played before opponent can accept
-      if (challenge.type === 'game' && challenge.creatorScore === null) {
-        return respondJson(res, 400, { error: 'Creator hasn\'t played yet — challenge not ready' });
-      }
-      if (challenge.creator === acceptor) return respondJson(res, 400, { error: 'Cannot accept your own challenge' });
-      if (challenge.opponent && challenge.opponent !== acceptor) {
-        return respondJson(res, 403, { error: 'This challenge is for a specific opponent' });
-      }
-
-      const isSolBet = challenge.stakeType === 'sol';
-
-      // Save original state for rollback (preserve private opponent)
-      const origOpponent = challenge.opponent;
-      const origStatus = challenge.status;
-      const origAcceptedAt = challenge.acceptedAt;
-      const rollback = () => { challenge.status = origStatus; challenge.opponent = origOpponent; challenge.acceptedAt = origAcceptedAt; saveChallenges(); };
-
-      // Lock challenge immediately to prevent race condition on double accept
-      challenge.status = 'accepted';
-      challenge.opponent = acceptor;
-      challenge.acceptedAt = Date.now();
-      saveChallenges();
-
-      if (isSolBet) {
-        // Verify SOL transfer from acceptor
-        if (!solTxSignature) {
-          rollback();
-          return respondJson(res, 400, { error: 'solTxSignature required for SOL challenges' });
-        }
-        // Dedup SOL tx (Map with TTL — initialized in create path above)
-        if (!globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx = new Map();
-        if (globalThis._usedChallengeSolTx.has(solTxSignature)) { rollback(); return respondJson(res, 400, { error: 'This SOL transaction has already been used' }); }
-        globalThis._usedChallengeSolTx.set(solTxSignature, Date.now());
-        try {
-          const conn = new Connection(getRpcUrl(acceptor) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-          const tx = await conn.getParsedTransaction(solTxSignature, { maxSupportedTransactionVersion: 0 });
-          if (!tx) { rollback(); return respondJson(res, 400, { error: 'Transaction not found' }); }
-          const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-          const instructions = tx.transaction?.message?.instructions || [];
-          const validTransfer = instructions.some(ix => {
-            if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
-              return ix.parsed.info.source === acceptor && ix.parsed.info.destination === treasuryAddr && ix.parsed.info.lamports >= Math.floor(challenge.stakeAmount * 1e9 * 0.99);
-            }
-            return false;
-          });
-          if (!validTransfer) { globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
-          challenge.solTxAcceptor = solTxSignature;
-        } catch (e) { console.error('[challenge] SOL verify failed:', e.message); globalThis._usedChallengeSolTx.delete(solTxSignature); rollback(); return respondJson(res, 400, { error: 'Transfer verification failed' }); }
-      } else {
-        // Check acceptor Coin balance
-        const accBal = getCoinBalance(acceptor);
-        if (accBal < challenge.stakeAmount) {
-          rollback();
-          return respondJson(res, 400, { error: `Insufficient balance. Have ${accBal} Coins, need ${challenge.stakeAmount}` });
-        }
-        // Lock Coins from acceptor
-        setCoinBalance(acceptor, accBal - challenge.stakeAmount);
-        addCoinSpent(acceptor, challenge.stakeAmount);
-        debouncedSavePrism();
-      }
-
-      if (challenge.type === 'score') {
-        // Score challenge: resolve using composite scores (matches card display)
-        try {
-          // Ensure composite scores are up-to-date
-          triggerCompositeUpdate(challenge.creator);
-          triggerCompositeUpdate(acceptor);
-          const creatorComposite = (walletDatabase.get(challenge.creator) || {}).composite || calculateCompositeScore(buildCompositeInput(challenge.creator));
-          const acceptorComposite = (walletDatabase.get(acceptor) || {}).composite || calculateCompositeScore(buildCompositeInput(acceptor));
-          challenge.creatorScore = creatorComposite.compositeScore ?? 0;
-          challenge.opponentScore = acceptorComposite.compositeScore ?? 0;
-
-          // Determine winner — 10% fee (burned), coins only
-          const totalPot = challenge.stakeAmount * 2;
-          const feeRate = 0.10;
-          const winnerPrize = Math.floor(totalPot * (1 - feeRate));
-          const fee = totalPot - winnerPrize;
-
-          const resolveCoinWinner = (winnerAddr) => {
-            setCoinBalance(winnerAddr, getCoinBalance(winnerAddr) + winnerPrize);
-            addCoinEarned(winnerAddr, winnerPrize);
-            // Record transaction
-            const txs = prismTransactions.get(winnerAddr) || [];
-            txs.unshift({ id: `ch_win_${Date.now()}`, address: winnerAddr, amount: winnerPrize, type: 'earn', source: 'challenge_win', description: `Challenge won: +${winnerPrize} Coins`, timestamp: new Date().toISOString() });
-            if (txs.length > 200) txs.length = 200;
-            prismTransactions.set(winnerAddr, txs);
-          };
-
-          const resolveSolWinner = async (winnerAddr) => {
-            challenge.solPayoutAddress = winnerAddr;
-            challenge.solPayoutAmount = winnerPrize;
-            challenge.solPayoutStatus = 'pending';
-            // Attempt payout from treasury
-            try {
-              const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
-              if (treasurySecret) {
-                const conn = new Connection(getRpcUrl(winnerAddr) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-                const treasuryKeypair = Keypair.fromSecretKey(treasurySecret);
-                const tx = new Transaction().add(
-                  SystemProgram.transfer({ fromPubkey: treasuryKeypair.publicKey, toPubkey: new PublicKey(winnerAddr), lamports: Math.floor(winnerPrize * 1e9) })
-                );
-                tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-                tx.feePayer = treasuryKeypair.publicKey;
-                tx.sign(treasuryKeypair);
-                const sig = await conn.sendRawTransaction(tx.serialize());
-                challenge.solPayoutTx = sig;
-                challenge.solPayoutStatus = 'sent';
-                console.log(`[challenges] SOL payout ${winnerPrize} SOL → ${winnerAddr.slice(0,8)}... tx: ${sig}`);
-              }
-            } catch (e) { console.warn('[challenges] SOL payout failed:', e.message); challenge.solPayoutStatus = 'failed'; }
-          };
-
-          if (challenge.creatorScore > challenge.opponentScore) {
-            challenge.winner = challenge.creator;
-            if (isSolBet) await resolveSolWinner(challenge.creator);
-            else resolveCoinWinner(challenge.creator);
-            pushNotification(challenge.creator, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId, payout: winnerPrize });
-            pushNotification(acceptor, 'challenge_loss', `Challenge lost against ${challenge.creator.slice(0, 6)}...`, { challengeId });
-          } else if (challenge.opponentScore > challenge.creatorScore) {
-            challenge.winner = acceptor;
-            if (isSolBet) await resolveSolWinner(acceptor);
-            else resolveCoinWinner(acceptor);
-            pushNotification(acceptor, 'challenge_win', `You won the challenge! +${winnerPrize} coins`, { challengeId, payout: winnerPrize });
-            pushNotification(challenge.creator, 'challenge_loss', `Challenge lost against ${acceptor.slice(0, 6)}...`, { challengeId });
-          } else {
-            // Tie — refund both (no fee)
-            challenge.winner = null;
-            if (!isSolBet) {
-              // Tie — refund both
-              setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
-              refundCoinSpent(challenge.creator, challenge.stakeAmount);
-              setCoinBalance(acceptor, getCoinBalance(acceptor) + challenge.stakeAmount);
-              refundCoinSpent(acceptor, challenge.stakeAmount);
-            } else {
-              // SOL tie: refund both from treasury
-              challenge.solPayoutStatus = 'tie_refund_pending';
-            }
-          }
-          // Burn challenge fee (deflationary, consistent with game challenges)
-          if (!isSolBet && challenge.winner && fee > 0) {
-            totalBurned += fee;
-            debouncedSavePrism();
-          }
-          challenge.status = 'completed';
-          challenge.completedAt = Date.now();
-        } catch (scoreErr) {
-          // Score fetch failed — refund both and cancel
-          console.warn('[challenges] Score fetch failed for', challengeId, scoreErr.message);
-          if (!isSolBet) {
-            // Score fetch failed — refund both
-            setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
-            refundCoinSpent(challenge.creator, challenge.stakeAmount);
-            setCoinBalance(acceptor, getCoinBalance(acceptor) + challenge.stakeAmount);
-            refundCoinSpent(acceptor, challenge.stakeAmount);
-          }
-          challenge.status = 'cancelled';
-          challenge.completedAt = Date.now();
-          debouncedSavePrism();
-          saveChallenges();
-          return respondJson(res, 500, { ok: false, error: 'Failed to fetch identity scores. Stakes refunded.' });
-        }
-      } else {
-        // Game challenge: set to playing, wait for score submissions
-        challenge.status = 'playing';
-      }
-
-      debouncedSavePrism();
-      saveChallenges();
-      console.log(`[challenges] Accepted ${challengeId} by ${acceptor.slice(0, 8)}... → status: ${challenge.status}`);
-      respondJson(res, 200, { ok: true, challenge });
-    } catch (e) {
-      if (_acceptSolTxSig && globalThis._usedChallengeSolTx) globalThis._usedChallengeSolTx.delete(_acceptSolTxSig);
-      respondJson(res, 400, { error: 'Invalid request body' });
-    }
-    return;
-  }
-
-  // ── Challenge: Mark player as "started playing" (prevents cancel) ──
-  if (pathname === '/api/challenge/start' && req.method === 'POST') {
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const { challengeId } = JSON.parse(await readBody(req));
-      const player = jwtAuth.address;
-      const challenge = challenges.find(c => c.id === challengeId);
-      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
-      if (player === challenge.creator) {
-        challenge.creatorStartedAt = Date.now();
-      } else if (player === challenge.opponent) {
-        challenge.acceptorStartedAt = Date.now();
-      }
-      saveChallenges();
-      respondJson(res, 200, { ok: true });
-    } catch { respondJson(res, 400, { error: 'Invalid request' }); }
-    return;
-  }
-
-  // ── Challenge: Submit score (game type only) ──
-  if (pathname === '/api/challenge/submit' && req.method === 'POST') {
-    if (!ipRateLimit('ch_submit', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const { challengeId, score, gameSessionId } = JSON.parse(await readBody(req));
-      const submitter = jwtAuth.address;
-      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
-      if (typeof score !== 'number' || score < 0 || score > 100000) {
-        return respondJson(res, 400, { error: 'Invalid score' });
-      }
-      const scoreNum = Math.floor(Number(score));
-      if (!Number.isFinite(scoreNum) || scoreNum < 0) {
-        return respondJson(res, 400, { error: 'score must be a non-negative number' });
-      }
-
-      const challenge = challenges.find(c => c.id === challengeId);
-      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
-      if (challenge.type !== 'game') return respondJson(res, 400, { error: 'Score submission is for game challenges only' });
-      // Allow submit in 'playing' or 'open' (creator plays before anyone accepts)
-      if (challenge.status !== 'playing' && challenge.status !== 'open') return respondJson(res, 400, { error: 'Challenge is not in playing state' });
-
-      // Per-gameMode score validation
-      const CH_MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
-      const chMaxScore = CH_MAX_SCORES[challenge.gameMode] || 600;
-      if (scoreNum > chMaxScore) return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
-
-      // Validate game session proof
-      // Without proof (blur-kill): accept but cap at low score to prevent abuse
-      const NO_PROOF_MAX = 30; // blur-kill can only submit low scores
-      if (gameSessionId) {
-        const cSession = gameSessionProofs.get(gameSessionId);
-        if (!cSession || !cSession.verified) {
-          if (scoreNum > NO_PROOF_MAX) return respondJson(res, 400, { error: 'Unverified session — score too high' });
-        } else {
-          if (cSession.walletAddress !== submitter) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-          if (Math.abs(cSession.score - scoreNum) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
-          if (challenge.gameMode && cSession.gameMode !== challenge.gameMode) return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
-          // Block reuse of session across different challenges
-          if (cSession.usedForChallenge && cSession.usedForChallenge.challengeId !== challengeId) {
-            return respondJson(res, 400, { error: 'Game session already used for another challenge' });
-          }
-        }
-      } else {
-        // No session at all (blur-kill fallback) — hard cap
-        if (scoreNum > NO_PROOF_MAX) return respondJson(res, 400, { error: 'Game session required for this score' });
-      }
-
-      // Race condition guard: atomic check-and-set
-      const submitKey = `${challengeId}:${submitter}`;
-      if (!globalThis._pendingSubmits) globalThis._pendingSubmits = new Set();
-      if (globalThis._pendingSubmits.has(submitKey)) return respondJson(res, 409, { error: 'Submission in progress' });
-      globalThis._pendingSubmits.add(submitKey);
-
-      // Mark session used AFTER pendingSubmits guard (if session exists)
-      if (gameSessionId) {
-        const cSession = gameSessionProofs.get(gameSessionId);
-        if (cSession) {
-          cSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
-          persistGameSessionProofs();
-        }
-      }
-
-      if (submitter === challenge.creator) {
-        if (challenge.creatorScore !== null) { globalThis._pendingSubmits.delete(submitKey); return respondJson(res, 400, { error: 'Score already submitted' }); }
-        challenge.creatorScore = scoreNum;
-      } else if (submitter === challenge.opponent) {
-        if (challenge.opponentScore !== null) { globalThis._pendingSubmits.delete(submitKey); return respondJson(res, 400, { error: 'Score already submitted' }); }
-        challenge.opponentScore = scoreNum;
-      } else {
-        globalThis._pendingSubmits.delete(submitKey);
-        return respondJson(res, 403, { error: 'You are not a participant in this challenge' });
-      }
-
-      // If both scores submitted, resolve the challenge
-      if (challenge.creatorScore !== null && challenge.opponentScore !== null) {
-        const isSolBet = challenge.stakeType === 'sol';
-        const totalPot = challenge.stakeAmount * 2;
-        const feeRate = isSolBet ? 0.10 : 0.05;
-        const winnerPrize = isSolBet ? totalPot * (1 - feeRate) : Math.floor(totalPot * (1 - feeRate));
-        const fee = totalPot - winnerPrize;
-
-        const awardCoinWinner = (addr) => {
-          setCoinBalance(addr, getCoinBalance(addr) + winnerPrize);
-          addCoinEarned(addr, winnerPrize);
-          // Record transaction
-          const txs = prismTransactions.get(addr) || [];
-          txs.unshift({ id: `ch_win_${Date.now()}`, address: addr, amount: winnerPrize, type: 'earn', source: 'challenge_win', description: `Challenge won: +${winnerPrize} Coins`, timestamp: new Date().toISOString() });
-          if (txs.length > 200) txs.length = 200;
-          prismTransactions.set(addr, txs);
-        };
-
-        const awardSolWinner = async (addr) => {
-          challenge.solPayoutAddress = addr;
-          challenge.solPayoutAmount = winnerPrize;
-          challenge.solPayoutStatus = 'pending';
-          try {
-            const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
-            if (treasurySecret) {
-              const conn = new Connection(getRpcUrl(addr) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-              const kp = Keypair.fromSecretKey(treasurySecret);
-              const tx = new Transaction().add(
-                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(addr), lamports: Math.floor(winnerPrize * 1e9) })
-              );
-              tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-              tx.feePayer = kp.publicKey;
-              tx.sign(kp);
-              const sig = await conn.sendRawTransaction(tx.serialize());
-              challenge.solPayoutTx = sig;
-              challenge.solPayoutStatus = 'sent';
-            }
-          } catch (e) { console.warn('[challenges] SOL payout failed:', e.message); challenge.solPayoutStatus = 'failed'; }
-        };
-
-        if (challenge.creatorScore > challenge.opponentScore) {
-          challenge.winner = challenge.creator;
-          if (isSolBet) await awardSolWinner(challenge.creator);
-          else awardCoinWinner(challenge.creator);
-        } else if (challenge.opponentScore > challenge.creatorScore) {
-          challenge.winner = challenge.opponent;
-          if (isSolBet) await awardSolWinner(challenge.opponent);
-          else awardCoinWinner(challenge.opponent);
-        } else {
-          challenge.winner = null;
-          if (!isSolBet) {
-            // Tie — refund both
-            setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
-            refundCoinSpent(challenge.creator, challenge.stakeAmount);
-            setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
-            refundCoinSpent(challenge.opponent, challenge.stakeAmount);
-          }
-        }
-        if (!isSolBet && fee > 0 && challenge.winner) {
-          totalBurned += fee;
-        }
-        // Always persist coin changes (winner prize, tie refund, fee burn)
-        debouncedSavePrism();
-        challenge.status = 'completed';
-        challenge.completedAt = Date.now();
-        console.log(`[challenges] Completed ${challengeId}: creator=${challenge.creatorScore}, opponent=${challenge.opponentScore}, winner=${challenge.winner ? challenge.winner.slice(0, 8) + '...' : 'tie'}`);
-      }
-
-      debouncedSavePrism();
-      saveChallenges();
-      globalThis._pendingSubmits.delete(submitKey);
-      respondJson(res, 200, { ok: true, challenge });
-    } catch (e) { if (typeof submitKey !== 'undefined') globalThis._pendingSubmits?.delete(submitKey); respondJson(res, 400, { error: 'Invalid request body' }); }
-    return;
-  }
-
-  // ── Challenge: Cancel ──
-  if (pathname === '/api/challenge/cancel' && req.method === 'POST') {
-    if (!ipRateLimit('ch_cancel', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const { challengeId } = JSON.parse(await readBody(req));
-      const canceller = jwtAuth.address;
-      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
-
-      const challenge = challenges.find(c => c.id === challengeId);
-      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
-      if (challenge.creator !== canceller) return respondJson(res, 403, { error: 'Only the creator can cancel a challenge' });
-      // Terminal states
-      if (challenge.status === 'completed' || challenge.status === 'cancelled' || challenge.status === 'expired') {
-        return respondJson(res, 400, { error: 'Challenge already finished' });
-      }
-      // Once opponent accepted, creator cannot cancel — both committed
-      // But if status is 'playing' with no opponent, creator is still solo — allow cancel
-      if (challenge.status === 'accepted') {
-        return respondJson(res, 409, { error: 'Opponent has accepted — challenge cannot be cancelled' });
-      }
-      if (challenge.status === 'playing' && challenge.opponent) {
-        return respondJson(res, 409, { error: 'Opponent is playing — challenge cannot be cancelled' });
-      }
-      // Only 'open' challenges can be cancelled
-
-      // Lock status BEFORE refund to prevent double-cancel race condition
-      challenge.status = 'cancelled';
-      challenge.completedAt = Date.now();
-      saveChallenges();
-
-      // Early close penalty: 20% fee if creator already played, 10% if not
-      const feeRate = challenge.creatorScore !== null ? 0.2 : 0.1;
-      const fee = Math.ceil(challenge.stakeAmount * feeRate);
-      const refundAmount = challenge.stakeAmount - fee;
-
-      if (challenge.stakeType === 'sol') {
-        // SOL refund — send 90% from treasury back to creator (10% kept as fee)
-        challenge.solPayoutStatus = 'cancel_refund_pending';
-        try {
-          const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
-          if (treasurySecret) {
-            const conn = new Connection(getRpcUrl(challenge.creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-            const kp = Keypair.fromSecretKey(treasurySecret);
-            const tx = new Transaction().add(
-              SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.creator), lamports: Math.floor(refundAmount * 1e9) })
-            );
-            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-            tx.feePayer = kp.publicKey;
-            tx.sign(kp);
-            const sig = await conn.sendRawTransaction(tx.serialize());
-            challenge.solPayoutTx = sig;
-            challenge.solPayoutStatus = 'refunded';
-          }
-        } catch (e) { console.warn('[challenges] SOL refund failed:', e.message); }
-      } else {
-        // Coin bet cancel — refund minus fee, burn the fee
-        setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + refundAmount);
-        refundCoinSpent(challenge.creator, refundAmount);
-        totalBurned += fee; // burn cancellation fee
-        // If opponent had joined and staked, refund them fully
-        if (challenge.opponent) {
-          setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
-          refundCoinSpent(challenge.opponent, challenge.stakeAmount);
-        }
-        debouncedSavePrism();
-      }
-
-      saveChallenges(); // persist after refund
-      console.log(`[challenges] Cancelled ${challengeId} by ${canceller.slice(0, 8)}... — refunded ${refundAmount} (fee: ${fee})`);
-      respondJson(res, 200, { ok: true, refunded: refundAmount, fee });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
-    return;
-  }
-
-  // ── Challenge: Abandon (leave without playing) ──
-  if (pathname === '/api/challenge/abandon' && req.method === 'POST') {
-    if (!ipRateLimit('ch_abandon', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    // Support ?token= query param for sendBeacon (no custom headers)
-    const urlToken = url.searchParams.get('token');
-    let jwtAuth;
-    if (urlToken && typeof urlToken === 'string') {
-      try {
-        const payload = verifyJwt(urlToken);
-        jwtAuth = { ok: true, address: payload.address };
-      } catch {
-        respondJson(res, 401, { error: 'Invalid or expired auth token' });
-        return;
-      }
-    } else {
-      jwtAuth = requireJwt(req, res);
-    }
-    if (!jwtAuth.ok) return;
-    try {
-      const { challengeId } = JSON.parse(await readBody(req));
-      const abandoner = jwtAuth.address;
-      if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
-
-      const challenge = challenges.find(c => c.id === challengeId);
-      if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
-
-      // Must be a participant
-      if (challenge.creator !== abandoner && challenge.opponent !== abandoner) {
-        return respondJson(res, 403, { error: 'Not a participant of this challenge' });
-      }
-
-      if (challenge.status === 'open') {
-        // Open challenge — only creator can abandon (same as cancel)
-        if (challenge.creator !== abandoner) return respondJson(res, 403, { error: 'Only the creator can abandon an open challenge' });
-      } else if (challenge.status === 'playing') {
-        // Playing — only allow if neither player submitted a score
-        if (challenge.creatorScore !== null || challenge.opponentScore !== null) {
-          return respondJson(res, 400, { error: 'Cannot abandon — a score has already been submitted. Finish the game.' });
-        }
-      } else {
-        return respondJson(res, 400, { error: `Cannot abandon a ${challenge.status} challenge` });
-      }
-
-      // Lock status BEFORE refund
-      challenge.status = 'cancelled';
-      challenge.completedAt = Date.now();
-      saveChallenges();
-
-      // Refund all participants
-      if (challenge.stakeType === 'sol') {
-        challenge.solPayoutStatus = 'cancel_refund_pending';
-        try {
-          const treasurySecret = parseSecretKey(TREASURY_SECRET) ?? loadSecretKeyFromFile(TREASURY_SECRET_PATH);
-          if (treasurySecret) {
-            const conn = new Connection(getRpcUrl(challenge.creator) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-            const kp = Keypair.fromSecretKey(treasurySecret);
-            // Refund creator
-            const tx1 = new Transaction().add(
-              SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.creator), lamports: Math.floor(challenge.stakeAmount * 1e9) })
-            );
-            tx1.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-            tx1.feePayer = kp.publicKey;
-            tx1.sign(kp);
-            await conn.sendRawTransaction(tx1.serialize());
-            // Refund opponent if exists
-            if (challenge.opponent) {
-              const tx2 = new Transaction().add(
-                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: new PublicKey(challenge.opponent), lamports: Math.floor(challenge.stakeAmount * 1e9) })
-              );
-              tx2.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-              tx2.feePayer = kp.publicKey;
-              tx2.sign(kp);
-              await conn.sendRawTransaction(tx2.serialize());
-            }
-            challenge.solPayoutStatus = 'refunded';
-          }
-        } catch (e) { console.warn('[challenges] SOL abandon refund failed:', e.message); }
-      } else {
-        // Coin refund — creator always
-        setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
-        refundCoinSpent(challenge.creator, challenge.stakeAmount);
-        // Opponent if playing
-        if (challenge.opponent) {
-          setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
-          refundCoinSpent(challenge.opponent, challenge.stakeAmount);
-        }
-        debouncedSavePrism();
-      }
-
-      saveChallenges();
-      console.log(`[challenges] Abandoned ${challengeId} by ${abandoner.slice(0, 8)}... — stakes refunded`);
-      respondJson(res, 200, { ok: true });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+  if ((pathname.startsWith('/api/challenge/') || pathname.startsWith('/api/admin/challenge/') || pathname.startsWith('/api/arena/')) && await arenaHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -9064,29 +7848,6 @@ const server = http.createServer(async (req, res) => {
     const notifs = notificationsDb.get(address) || [];
     const count = notifs.filter(n => !n.read).length;
     respondJson(res, 200, { count });
-    return;
-  }
-
-  // ── Admin: List SOL stale/cancel refund pending challenges ──
-  if (pathname === '/api/admin/challenge/stale-sol-refunds' && req.method === 'GET') {
-    if (!requireAdminKey(req, res)) return;
-    const stale = (challenges || []).filter(c => c && (c.solPayoutStatus === 'stale_refund_pending' || c.solPayoutStatus === 'cancel_refund_pending'));
-    respondJson(res, 200, { ok: true, count: stale.length, challenges: stale.map(c => ({ id: c.id, creator: c.creator, opponent: c.opponent, stakeAmount: c.stakeAmount, createdAt: c.createdAt, solPayoutStatus: c.solPayoutStatus, status: c.status })) });
-    return;
-  }
-
-  // ── Admin: Mark SOL stale/cancel refund as processed ──
-  if (pathname === '/api/admin/challenge/stale-sol-refunds' && req.method === 'POST') {
-    if (!requireAdminKey(req, res)) return;
-    try {
-      const body = await readBody(req);
-      const { challengeId, action } = JSON.parse(body);
-      const ch = (challenges || []).find(c => c.id === challengeId);
-      if (!ch || (ch.solPayoutStatus !== 'stale_refund_pending' && ch.solPayoutStatus !== 'cancel_refund_pending')) return respondJson(res, 404, { error: 'Challenge not found or not pending refund' });
-      ch.solPayoutStatus = action === 'refunded' ? 'refunded' : 'rejected';
-      saveChallenges();
-      respondJson(res, 200, { ok: true, challengeId, status: ch.solPayoutStatus });
-    } catch { respondJson(res, 400, { error: 'Invalid request body' }); }
     return;
   }
 
@@ -10783,15 +9544,6 @@ function loadNotifications() {
   } catch (e) { console.warn('[notifications] Load failed:', e.message); }
 }
 
-function saveNotifications() {
-  try {
-    const data = {};
-    for (const [addr, notifs] of notificationsDb) data[addr] = notifs;
-    fs.writeFileSync(NOTIFICATIONS_FILE, JSON.stringify(data), 'utf8');
-  } catch (e) { console.warn('[notifications] Save failed:', e.message); }
-}
-const saveNotificationsDebounced = (() => { let t; return () => { clearTimeout(t); t = setTimeout(saveNotifications, 5000); }; })();
-
 function pushNotification(address, type, message, meta = {}) {
   if (!address) return;
   const notifs = notificationsDb.get(address) || [];
@@ -10928,13 +9680,6 @@ setInterval(() => {
   if (changed) { debouncedSavePrism(); saveChallenges(); }
 }, 60_000);
 
-function saveChallenges() {
-  const tmp = CHALLENGES_FILE + '.tmp';
-  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2))
-    .then(() => fs.promises.rename(tmp, CHALLENGES_FILE))
-    .catch(e => console.warn('[challenges] save error', e.message));
-}
-
 const leaderboards = leaderboardEntries;
 const activeChallenges = challenges;
 const notifications = notificationsDb;
@@ -10942,16 +9687,41 @@ const achievements = achievementData;
 const revives = reviveData;
 const quests = questProgress;
 const completedTournaments = tournamentHistory;
-const saveCoinBalancesDebounced = persistCoinBalances;
-const saveMintedAddressesDebounced = saveMintedAddresses;
-const saveScoreHistoryDebounced = persistScoreHistory;
-const saveLeaderboardDebounced = persistLeaderboard;
-const saveAchievementDataDebounced = persistAchievementData;
-const saveReviveDataDebounced = persistReviveData;
-const saveQuestProgressDebounced = persistQuestProgress;
-const saveTournamentsDebounced = saveTournament;
-const saveChallengesDebounced = saveChallenges;
-const savePrismDataDebounced = debouncedSavePrism;
+const {
+  persistWalletDatabase,
+  saveWalletDatabaseDebounced,
+  saveNotificationsDebounced,
+  saveChallenges,
+  saveCoinBalancesDebounced,
+  saveMintedAddressesDebounced,
+  saveScoreHistoryDebounced,
+  saveLeaderboardDebounced,
+  saveAchievementDataDebounced,
+  saveReviveDataDebounced,
+  saveQuestProgressDebounced,
+  saveTournamentsDebounced,
+  saveChallengesDebounced,
+  savePrismDataDebounced,
+} = createPersistenceServices({
+  fs,
+  walletDatabase,
+  walletDbFile: WALLET_DB_FILE,
+  fbAvailable,
+  fbBatchSet,
+  notificationsDb,
+  notificationsFile: NOTIFICATIONS_FILE,
+  challenges,
+  challengesFile: CHALLENGES_FILE,
+  persistCoinBalances,
+  saveMintedAddresses,
+  persistScoreHistory,
+  persistLeaderboard,
+  persistAchievementData,
+  persistReviveData,
+  persistQuestProgress,
+  saveTournament,
+  debouncedSavePrism,
+});
 const USED_TX_FILE = path.join(METADATA_DIR, 'used-tx-signatures.json');
 const usedBuyTxSignatures = globalThis._usedBuyTxMap || (() => {
   const map = new Map();
@@ -10985,6 +9755,30 @@ const mintBonusLocks = globalThis._mintBonusLocks || (globalThis._mintBonusLocks
 const firstMintLocks = globalThis._firstMintLocks || (globalThis._firstMintLocks = new Set());
 const usedChallengeSolTx = globalThis._usedChallengeSolTx || (globalThis._usedChallengeSolTx = new Map());
 const challengeWeeklyHistory = globalThis._challengeWeeklyHistory;
+const {
+  buildPublicReputationResponse,
+  buildCompositeInput,
+  triggerCompositeUpdate,
+  backfillCompositeScores,
+  rebuildTwitterWalletMap,
+} = createReputationBuilderService({
+  walletDatabase,
+  questProgress,
+  activeTournaments,
+  tournamentHistory,
+  leaderboardEntries,
+  achievementData,
+  challenges,
+  getRecentSybilAnalysis,
+  getSybilVerdict,
+  getSybilQuickVerdict,
+  getServerRangerSnapshot,
+  getCoinBalance,
+  saveWalletDatabaseDebounced,
+  fbAvailable,
+  fbSet,
+  publicReputationTtlSeconds: PUBLIC_REPUTATION_TTL_SECONDS,
+});
 
 const ctx = createContext({
   walletDatabase,
@@ -11134,6 +9928,9 @@ const ctx = createContext({
   lamportsPerSol: LAMPORTS_PER_SOL,
   dailyBlackHoleCleanupCap: DAILY_BLACKHOLE_CLEANUP_CAP,
   treasuryAddress: TREASURY_ADDRESS,
+  treasurySecret: TREASURY_SECRET,
+  treasurySecretPath: TREASURY_SECRET_PATH,
+  metadataDir: METADATA_DIR,
   skrMint: SKR_MINT,
   tokenProgramId: TOKEN_PROGRAM_ID,
   token2022ProgramId: TOKEN_2022_PROGRAM_ID,
@@ -11170,11 +9967,16 @@ const ctx = createContext({
   submitLeaderboardEntry,
   persistGameSessionProofs,
   triggerCompositeUpdate,
+  parseSecretKey,
+  loadSecretKeyFromFile,
   toCanonGameMode,
   leaderboardCacheRef,
   leaderboardCacheTimeRef,
+  weeklyRewards: WEEKLY_REWARDS,
+  weeklyXpRewards: WEEKLY_XP_REWARDS,
 });
 const authHandler = registerAuthRoute(ctx);
+const arenaHandler = registerArenaRoute(ctx);
 const blackholeHandler = registerBlackholeRoute(ctx);
 const earnHandler = registerEarnRoute(ctx);
 const gameHandler = registerGameRoute(ctx);

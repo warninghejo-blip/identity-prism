@@ -135,3 +135,4 @@ prism_data.json
 server/data/*.db
 server/data/*.db-shm
 server/data/*.db-wal
+coverage/

@@ -245,6 +245,7 @@ export default function Leaderboard() {
               startFadeTransition(() => goBack(navigate));
             }}
             className="text-white/50 hover:text-white transition-colors"
+            aria-label="Go back"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -260,6 +261,7 @@ export default function Leaderboard() {
             onClick={handleRefresh}
             disabled={loading}
             className="text-white/40 hover:text-white/70 transition-colors disabled:opacity-30"
+            aria-label="Refresh leaderboard"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>

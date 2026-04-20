@@ -2671,6 +2671,7 @@ const PrismLeague = () => {
                 <button
                   className="fixed left-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-black/50 disabled:hover:text-white/60"
                   disabled={tournamentModeLocked}
+                  aria-label="Previous game mode"
                   onClick={() => {
                     const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
                     const prev = (idx - 1 + GAME_MODES.length) % GAME_MODES.length;
@@ -2682,6 +2683,7 @@ const PrismLeague = () => {
                 <button
                   className="fixed right-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-black/50 disabled:hover:text-white/60"
                   disabled={tournamentModeLocked}
+                  aria-label="Next game mode"
                   onClick={() => {
                     const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
                     const next = (idx + 1) % GAME_MODES.length;

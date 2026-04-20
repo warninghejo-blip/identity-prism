@@ -39,7 +39,16 @@ const App = () => {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <div className="min-h-screen bg-[#050505] text-white selection:bg-cyan-500/30">
-          <Outlet />
+          {/* Skip-to-content link for keyboard users */}
+          <a
+            href="#root-content"
+            className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[9999] focus:px-4 focus:py-2 focus:rounded-lg focus:bg-cyan-500 focus:text-black focus:font-bold focus:text-sm"
+          >
+            Skip to content
+          </a>
+          <main id="root-content">
+            <Outlet />
+          </main>
           <Toaster />
           <Sonner position="top-center" expand={false} closeButton richColors offset={64} />
         </div>
