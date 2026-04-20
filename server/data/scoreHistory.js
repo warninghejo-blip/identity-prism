@@ -3,6 +3,7 @@ import fs from 'node:fs';
 function createScoreHistoryStore({
   storeFile,
   maxEntries,
+  datastore,
   fbAvailable,
   fbGetAll,
   fbSet,
@@ -11,24 +12,20 @@ function createScoreHistoryStore({
   const scoreHistory = new Map(); // address -> { scores: [{ score, tier, date }], lastUpdated }
 
   const loadScoreHistory = async () => {
-    // Try Firestore first
-    if (fbAvailable()) {
-      try {
-        const docs = await fbGetAll('scoreHistory');
-        if (docs.size > 0) {
-          for (const [addr, data] of docs) {
-            if (Array.isArray(data.scores)) {
-              scoreHistory.set(addr, { scores: data.scores.slice(0, maxEntries), lastUpdated: data.lastUpdated || null });
-            }
-          }
-          console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets from Firestore`);
-          return;
+    if (datastore) {
+      scoreHistory.clear();
+      for (const [addr, entry] of datastore.entries()) {
+        if (Array.isArray(entry?.scores)) {
+          scoreHistory.set(addr, {
+            scores: entry.scores.slice(0, maxEntries),
+            lastUpdated: entry.lastUpdated || entry.scores[0]?.date || null,
+          });
         }
-      } catch (err) {
-        console.warn('[score-history] Firestore load failed, falling back to JSON:', err.message);
       }
+      console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets from SQLite`);
+      return;
     }
-    // Fallback to JSON
+
     try {
       if (!fs.existsSync(storeFile)) return;
       const raw = fs.readFileSync(storeFile, 'utf8');
@@ -54,6 +51,11 @@ function createScoreHistoryStore({
   };
 
   const persistScoreHistory = async () => {
+    if (datastore) {
+      datastore.replaceAll(scoreHistory);
+      return;
+    }
+
     try {
       const obj = {};
       for (const [k, v] of scoreHistory) obj[k] = v;
@@ -97,6 +99,7 @@ function createScoreHistoryStoreFromContext(ctx) {
   return createScoreHistoryStore({
     storeFile: ctx.scoreHistoryFile,
     maxEntries: ctx.scoreHistoryMaxEntries,
+    datastore: ctx.datastore,
     fbAvailable: ctx.fbAvailable,
     fbGetAll: ctx.fbGetAll,
     fbSet: ctx.fbSet,

@@ -43,6 +43,8 @@ import {
   loadReviveData,
   loadTournaments,
 } from './services/loaders.js';
+import { appDb } from './services/appDb.js';
+import { DataStore } from './services/datastore.js';
 import { createPersistenceServices } from './services/persistence.js';
 import { createReputationBuilderService } from './services/reputationBuilder.js';
 import { startSchedulers } from './services/scheduler.js';
@@ -235,6 +237,281 @@ const LEADERBOARD_STORE_FILE = process.env.LEADERBOARD_STORE_FILE
   ? path.resolve(process.env.LEADERBOARD_STORE_FILE)
   : path.join(METADATA_DIR, 'leaderboard.json');
 const LEADERBOARD_MAX_ENTRIES = 100;
+const COIN_BALANCE_META_KEY = '__meta__:totalBurned';
+const TOURNAMENT_HISTORY_KEY = '__history__';
+const TOURNAMENT_META_KEY = '__meta__';
+const parseJsonText = (value, fallback = null) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+};
+const createJsonColumnStore = ({
+  jsonPath,
+  tableName,
+  keyColumn,
+  primaryKey = keyColumn,
+  readJson,
+  writeJson,
+  debounceMs = 500,
+  logLabel = tableName,
+  persistUpdatedAt = false,
+}) => {
+  const selectOne = appDb.prepare(`SELECT data FROM ${tableName} WHERE ${keyColumn} = ?`);
+  const selectAll = appDb.prepare(`SELECT ${keyColumn} AS entry_key, data FROM ${tableName}`);
+  const countRows = appDb.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`);
+  const clearRows = appDb.prepare(`DELETE FROM ${tableName}`);
+  const deleteRow = appDb.prepare(`DELETE FROM ${tableName} WHERE ${keyColumn} = ?`);
+  const upsertRow = persistUpdatedAt
+    ? appDb.prepare(`
+        INSERT INTO ${tableName} (${keyColumn}, data, updated_at)
+        VALUES (@entry_key, @data, @updated_at)
+        ON CONFLICT(${primaryKey}) DO UPDATE SET
+          data = excluded.data,
+          updated_at = excluded.updated_at
+      `)
+    : appDb.prepare(`
+        INSERT INTO ${tableName} (${keyColumn}, data)
+        VALUES (@entry_key, @data)
+        ON CONFLICT(${primaryKey}) DO UPDATE SET
+          data = excluded.data
+      `);
+
+  return new DataStore({
+    db: appDb,
+    jsonPath,
+    tableName,
+    primaryKey,
+    readJson,
+    writeJson,
+    listSqlEntries: () => selectAll.all().map((row) => [row.entry_key, parseJsonText(row.data)]),
+    getSqlValue: (key) => {
+      const row = selectOne.get(key);
+      return row ? parseJsonText(row.data) : undefined;
+    },
+    upsertSqlValue: (key, value) => {
+      const payload = {
+        entry_key: key,
+        data: JSON.stringify(value),
+      };
+      if (persistUpdatedAt) payload.updated_at = Date.now();
+      upsertRow.run(payload);
+    },
+    deleteSqlValue: (key) => deleteRow.run(key),
+    clearSql: () => clearRows.run(),
+    countSql: () => countRows.get().count,
+    debounceMs,
+    logLabel,
+  });
+};
+
+const createPresenceStore = ({
+  jsonPath,
+  tableName,
+  keyColumn,
+  readJson,
+  writeJson,
+  debounceMs = 500,
+  logLabel = tableName,
+}) => {
+  const selectOne = appDb.prepare(`SELECT ${keyColumn} AS entry_key FROM ${tableName} WHERE ${keyColumn} = ?`);
+  const selectAll = appDb.prepare(`SELECT ${keyColumn} AS entry_key FROM ${tableName}`);
+  const countRows = appDb.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`);
+  const clearRows = appDb.prepare(`DELETE FROM ${tableName}`);
+  const deleteRow = appDb.prepare(`DELETE FROM ${tableName} WHERE ${keyColumn} = ?`);
+  const upsertRow = appDb.prepare(`
+    INSERT INTO ${tableName} (${keyColumn})
+    VALUES (?)
+    ON CONFLICT(${keyColumn}) DO NOTHING
+  `);
+
+  return new DataStore({
+    db: appDb,
+    jsonPath,
+    tableName,
+    primaryKey: keyColumn,
+    readJson,
+    writeJson,
+    listSqlEntries: () => selectAll.all().map((row) => [row.entry_key, true]),
+    getSqlValue: (key) => (selectOne.get(key) ? true : undefined),
+    upsertSqlValue: (key) => upsertRow.run(key),
+    deleteSqlValue: (key) => deleteRow.run(key),
+    clearSql: () => clearRows.run(),
+    countSql: () => countRows.get().count,
+    debounceMs,
+    logLabel,
+  });
+};
+
+const createCoinBalanceDataStore = ({ jsonPath, getTotalBurned }) => {
+  const selectOne = appDb.prepare('SELECT balance, earned FROM coin_balances WHERE address = ?');
+  const selectAll = appDb.prepare('SELECT address, balance, earned FROM coin_balances');
+  const countRows = appDb.prepare('SELECT COUNT(*) AS count FROM coin_balances');
+  const clearRows = appDb.prepare('DELETE FROM coin_balances');
+  const deleteRow = appDb.prepare('DELETE FROM coin_balances WHERE address = ?');
+  const upsertRow = appDb.prepare(`
+    INSERT INTO coin_balances (address, balance, earned)
+    VALUES (@address, @balance, @earned)
+    ON CONFLICT(address) DO UPDATE SET
+      balance = excluded.balance,
+      earned = excluded.earned
+  `);
+
+  return new DataStore({
+    db: appDb,
+    jsonPath,
+    tableName: 'coin_balances',
+    primaryKey: 'address',
+    readJson: (parsed) => {
+      const entries = new Map();
+      const balances = parsed?.balances || parsed || {};
+      for (const [address, balance] of Object.entries(balances)) {
+        if (typeof balance === 'number') entries.set(address, { balance, earned: 0 });
+      }
+      entries.set(COIN_BALANCE_META_KEY, { totalBurned: Number(parsed?.totalBurned) || 0 });
+      return entries;
+    },
+    writeJson: (entries) => {
+      const balances = {};
+      let totalBurned = Number(getTotalBurned()) || 0;
+      for (const [address, entry] of entries) {
+        if (address === COIN_BALANCE_META_KEY) {
+          totalBurned = Number(entry?.totalBurned) || totalBurned;
+          continue;
+        }
+        if (typeof entry?.balance === 'number') balances[address] = Math.max(0, Math.round(entry.balance));
+      }
+      return {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        totalBurned,
+        balances,
+      };
+    },
+    listSqlEntries: () => selectAll.all().map((row) => [
+      row.address,
+      { balance: Number(row.balance) || 0, earned: Number(row.earned) || 0 },
+    ]),
+    getSqlValue: (address) => {
+      const row = selectOne.get(address);
+      return row ? { balance: Number(row.balance) || 0, earned: Number(row.earned) || 0 } : undefined;
+    },
+    upsertSqlValue: (address, value) => {
+      if (address === COIN_BALANCE_META_KEY) return;
+      upsertRow.run({
+        address,
+        balance: Math.max(0, Math.round(Number(value?.balance) || 0)),
+        earned: Math.max(0, Math.round(Number(value?.earned) || 0)),
+      });
+    },
+    deleteSqlValue: (address) => {
+      if (address === COIN_BALANCE_META_KEY) return;
+      deleteRow.run(address);
+    },
+    clearSql: () => clearRows.run(),
+    countSql: () => countRows.get().count,
+    debounceMs: 1000,
+    logLabel: 'coins',
+  });
+};
+
+const createScoreHistoryDataStore = ({ jsonPath, maxEntries }) => {
+  const selectAddress = appDb.prepare(`
+    SELECT score, tier, date
+    FROM score_history
+    WHERE address = ?
+    ORDER BY entry_idx ASC
+  `);
+  const selectAll = appDb.prepare(`
+    SELECT address, entry_idx, score, tier, date
+    FROM score_history
+    ORDER BY address ASC, entry_idx ASC
+  `);
+  const countRows = appDb.prepare('SELECT COUNT(*) AS count FROM score_history');
+  const clearRows = appDb.prepare('DELETE FROM score_history');
+  const deleteAddress = appDb.prepare('DELETE FROM score_history WHERE address = ?');
+  const insertEntry = appDb.prepare(`
+    INSERT INTO score_history (address, entry_idx, score, tier, date)
+    VALUES (@address, @entry_idx, @score, @tier, @date)
+  `);
+
+  const buildEntry = (rows) => {
+    const scores = rows.map((row) => ({
+      score: Number(row.score) || 0,
+      tier: row.tier || null,
+      date: row.date || null,
+    }));
+    return {
+      scores,
+      lastUpdated: scores[0]?.date || null,
+    };
+  };
+
+  return new DataStore({
+    db: appDb,
+    jsonPath,
+    tableName: 'score_history',
+    primaryKey: 'address',
+    readJson: (parsed) => {
+      const entries = new Map();
+      const data = parsed?.data || {};
+      for (const [address, entry] of Object.entries(data)) {
+        if (Array.isArray(entry?.scores)) {
+          entries.set(address, {
+            scores: entry.scores.slice(0, maxEntries),
+            lastUpdated: entry.lastUpdated || entry.scores[0]?.date || null,
+          });
+        }
+      }
+      return entries;
+    },
+    writeJson: (entries) => {
+      const data = {};
+      for (const [address, entry] of entries) {
+        data[address] = {
+          scores: Array.isArray(entry?.scores) ? entry.scores.slice(0, maxEntries) : [],
+          lastUpdated: entry?.lastUpdated || entry?.scores?.[0]?.date || null,
+        };
+      }
+      return {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        data,
+      };
+    },
+    listSqlEntries: () => {
+      const grouped = new Map();
+      for (const row of selectAll.all()) {
+        if (!grouped.has(row.address)) grouped.set(row.address, []);
+        grouped.get(row.address).push(row);
+      }
+      return Array.from(grouped.entries()).map(([address, rows]) => [address, buildEntry(rows)]);
+    },
+    getSqlValue: (address) => {
+      const rows = selectAddress.all(address);
+      return rows.length > 0 ? buildEntry(rows) : undefined;
+    },
+    upsertSqlValue: (address, value) => {
+      deleteAddress.run(address);
+      const scores = Array.isArray(value?.scores) ? value.scores.slice(0, maxEntries) : [];
+      scores.forEach((entry, index) => {
+        insertEntry.run({
+          address,
+          entry_idx: index,
+          score: Math.max(0, Math.round(Number(entry?.score) || 0)),
+          tier: entry?.tier || null,
+          date: entry?.date || null,
+        });
+      });
+    },
+    deleteSqlValue: (address) => deleteAddress.run(address),
+    clearSql: () => clearRows.run(),
+    countSql: () => countRows.get().count,
+    debounceMs: 1000,
+    logLabel: 'score-history',
+  });
+};
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey(
   'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
 );
@@ -1054,6 +1331,26 @@ const PENDING_MINT_TTL_MS = 10 * 60 * 1000;
 const MAX_GAME_SESSION_PROOFS = 50_000;
 const pendingMintSigners = new Map();
 const gameSessionProofs = new Map();
+const gameSessionProofStore = createJsonColumnStore({
+  jsonPath: GAME_SESSION_STORE_FILE,
+  tableName: 'game_session_proofs',
+  keyColumn: 'session_id',
+  readJson: (parsed) => {
+    const sessions = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.sessions) ? parsed.sessions : []);
+    return sessions
+      .filter((entry) => typeof entry?.id === 'string' && entry.id)
+      .map((entry) => [entry.id, entry]);
+  },
+  writeJson: (entries) => ({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    sessions: Array.from(entries.values()),
+  }),
+  debounceMs: 2000,
+  logLabel: 'game-session',
+});
 
 const prunePendingMints = () => {
   const now = Date.now();
@@ -1174,28 +1471,12 @@ const normalizeStoredGameSessionEntry = (raw) => {
   };
 };
 
-let _sessionPersistTimer = null;
-let _sessionPersistInFlight = false;
 const persistGameSessionProofs = () => {
-  if (_sessionPersistTimer) clearTimeout(_sessionPersistTimer);
-  _sessionPersistTimer = setTimeout(async () => {
-    if (_sessionPersistInFlight) { persistGameSessionProofs(); return; }
-    _sessionPersistInFlight = true;
-    try {
-      const payload = {
-        version: 1,
-        updatedAt: new Date().toISOString(),
-        sessions: Array.from(gameSessionProofs.values()),
-      };
-      const tmp = GAME_SESSION_STORE_FILE + '.tmp';
-      await fs.promises.writeFile(tmp, JSON.stringify(payload, null, 2));
-      await fs.promises.rename(tmp, GAME_SESSION_STORE_FILE);
-    } catch (error) {
-      console.warn('[game-session] Failed to persist proofs', error);
-    } finally {
-      _sessionPersistInFlight = false;
-    }
-  }, 2000);
+  try {
+    gameSessionProofStore.replaceAll(gameSessionProofs);
+  } catch (error) {
+    console.warn('[game-session] Failed to persist proofs', error);
+  }
 };
 
 const pruneGameSessionProofs = () => {
@@ -1266,53 +1547,31 @@ const COINS_STORE_FILE = process.env.COINS_STORE_FILE
   : path.join(METADATA_DIR, 'coin-balances.json');
 
 const coinBalances = new Map();
+const coinBalanceStore = createCoinBalanceDataStore({
+  jsonPath: COINS_STORE_FILE,
+  getTotalBurned: () => totalBurnedRef.value,
+});
 
 const loadCoinBalances = async () => {
-  // Try Firestore first
-  if (fbAvailable()) {
-    try {
-      const docs = await fbGetAll('coinBalances');
-      if (docs.size > 0) {
-        for (const [addr, data] of docs) {
-          const bal = typeof data.balance === 'number' ? data.balance : data;
-          if (typeof bal === 'number') coinBalances.set(addr, bal);
-        }
-        console.log(`[coins] Loaded ${coinBalances.size} balances from Firestore`);
-        // totalBurned is stored in JSON file, load it even with Firestore
-        try {
-          if (fs.existsSync(COINS_STORE_FILE)) {
-            const raw = fs.readFileSync(COINS_STORE_FILE, 'utf8');
-            if (raw.trim()) {
-              const parsed = JSON.parse(raw);
-              if (typeof parsed?.totalBurned === 'number') { totalBurned = parsed.totalBurned; globalThis._totalBurned = totalBurned; }
-            }
-          }
-        } catch { /* ignore */ }
-        console.log(`[coins] totalBurned restored: ${totalBurned}`);
-        return;
-      }
-    } catch (err) {
-      console.warn('[coins] Firestore load failed, falling back to JSON:', err.message);
-    }
-  }
-  // Fallback to JSON
   try {
-    if (!fs.existsSync(COINS_STORE_FILE)) return;
-    const raw = fs.readFileSync(COINS_STORE_FILE, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    const entries = parsed?.balances || parsed || {};
-    for (const [addr, bal] of Object.entries(entries)) {
-      if (typeof bal === 'number') coinBalances.set(addr, bal);
+    coinBalances.clear();
+    const entries = coinBalanceStore.entries();
+    for (const [addr, entry] of entries) {
+      if (addr === COIN_BALANCE_META_KEY) {
+        if (typeof entry?.totalBurned === 'number') {
+          totalBurnedRef.value = entry.totalBurned;
+        }
+        continue;
+      }
+      if (typeof entry?.balance === 'number') {
+        coinBalances.set(addr, entry.balance);
+      }
     }
-    if (typeof parsed?.totalBurned === 'number') { totalBurned = parsed.totalBurned; globalThis._totalBurned = totalBurned; }
-    console.log(`[coins] Loaded ${coinBalances.size} balances from JSON (totalBurned: ${totalBurned})`);
-    // Auto-migrate to Firestore
+
+    console.log(`[coins] Loaded ${coinBalances.size} balances from SQLite/JSON (totalBurned: ${totalBurnedRef.value})`);
     if (coinBalances.size > 0 && fbAvailable()) {
-      console.log('[coins] Migrating JSON data to Firestore...');
       const entries = [...coinBalances.entries()].map(([addr, bal]) => [addr, { balance: bal, updatedAt: new Date().toISOString() }]);
       fbBatchSet('coinBalances', entries)
-        .then(() => console.log('[coins] Migration complete'))
         .catch(err => console.warn('[coins] Migration failed:', err.message));
     }
   } catch (err) {
@@ -1320,20 +1579,14 @@ const loadCoinBalances = async () => {
   }
 };
 
-let _coinPersistTimer = null;
 const persistCoinBalances = () => {
-  if (_coinPersistTimer) clearTimeout(_coinPersistTimer);
-  _coinPersistTimer = setTimeout(async () => {
-    try {
-      const obj = {};
-      for (const [k, v] of coinBalances) obj[k] = v;
-      const tmp = COINS_STORE_FILE + '.tmp';
-      await fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), totalBurned, balances: obj }, null, 2));
-      await fs.promises.rename(tmp, COINS_STORE_FILE);
-    } catch (err) {
-      console.warn('[coins] Failed to persist', err);
-    }
-  }, 1000);
+  try {
+    const snapshot = new Map([...coinBalances.entries()].map(([address, balance]) => [address, { balance, earned: 0 }]));
+    snapshot.set(COIN_BALANCE_META_KEY, { totalBurned: totalBurnedRef.value });
+    coinBalanceStore.replaceAll(snapshot);
+  } catch (err) {
+    console.warn('[coins] Failed to persist', err);
+  }
 };
 
 const getCoinBalance = (address) => coinBalances.get(address) || 0;
@@ -1341,10 +1594,11 @@ const getCoinBalance = (address) => coinBalances.get(address) || 0;
 const setCoinBalance = (address, coins) => {
   const safe = Math.max(0, Math.round(coins));
   coinBalances.set(address, safe);
+  coinBalanceStore.set(address, { balance: safe, earned: 0 });
   // Keep walletDatabase in sync (walletDatabase is a Map)
   const wEntry = walletDatabase.get(address);
   if (wEntry) { wEntry.coins = safe; walletDatabase.set(address, wEntry); }
-  persistCoinBalances();
+  coinBalanceStore.set(COIN_BALANCE_META_KEY, { totalBurned: totalBurnedRef.value });
   if (fbAvailable()) {
     fbSet('coinBalances', address, { balance: safe, updatedAt: new Date().toISOString() })
       .catch(() => {});
@@ -1355,12 +1609,31 @@ const setCoinBalance = (address, coins) => {
 
 // ── Server-side Minted address tracking ──
 const MINTED_ADDRESSES_FILE = path.join(METADATA_DIR, 'minted-addresses.json');
+const mintedAddressesStore = createPresenceStore({
+  jsonPath: MINTED_ADDRESSES_FILE,
+  tableName: 'minted_addresses',
+  keyColumn: 'address',
+  readJson: (parsed) => {
+    const addresses = Array.isArray(parsed?.addresses) ? parsed.addresses : (Array.isArray(parsed) ? parsed : []);
+    return addresses
+      .filter((address) => typeof address === 'string' && address.trim())
+      .map((address) => [address.trim(), true]);
+  },
+  writeJson: (entries) => ({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    addresses: Array.from(entries.keys()),
+  }),
+  debounceMs: 500,
+  logLabel: 'minted',
+});
 const {
   mintedAddresses,
   loadMintedAddresses,
   saveMintedAddresses,
 } = createMintedAddressesStoreFromContext({
   mintedAddressesFile: MINTED_ADDRESSES_FILE,
+  datastore: mintedAddressesStore,
 });
 
 // mintedAddresses loaded in initData()
@@ -1368,6 +1641,10 @@ const {
 // ── Server-side Score History (per wallet, last 20 scores) ──
 const SCORE_HISTORY_FILE = path.join(METADATA_DIR, 'score-history.json');
 const SCORE_HISTORY_MAX = 20;
+const scoreHistoryStore = createScoreHistoryDataStore({
+  jsonPath: SCORE_HISTORY_FILE,
+  maxEntries: SCORE_HISTORY_MAX,
+});
 const {
   scoreHistory,
   loadScoreHistory,
@@ -1377,6 +1654,7 @@ const {
 } = createScoreHistoryStoreFromContext({
   scoreHistoryFile: SCORE_HISTORY_FILE,
   scoreHistoryMaxEntries: SCORE_HISTORY_MAX,
+  datastore: scoreHistoryStore,
   fbAvailable,
   fbGetAll,
   fbSet,
@@ -1388,78 +1666,36 @@ const {
 // ── Server-side Wallet Database (comprehensive wallet data) ──
 const WALLET_DB_FILE = path.join(METADATA_DIR, 'wallet-database.json');
 const walletDatabase = new Map(); // address -> wallet data object
+const walletStore = createJsonColumnStore({
+  jsonPath: WALLET_DB_FILE,
+  tableName: 'wallets',
+  keyColumn: 'address',
+  readJson: (parsed) => Object.entries(parsed?.wallets || {}),
+  writeJson: (entries) => ({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    totalWallets: entries.size,
+    wallets: Object.fromEntries(entries),
+  }),
+  debounceMs: 500,
+  logLabel: 'wallet-db',
+  persistUpdatedAt: true,
+});
 
 const loadWalletDatabase = async () => {
-  let loadedFromFirestore = false;
-  // Try Firestore first
-  if (fbAvailable()) {
-    try {
-      const docs = await fbGetAll('wallets');
-      if (docs.size > 0) {
-        for (const [addr, data] of docs) {
-          if (addr && typeof data === 'object') walletDatabase.set(addr, data);
-        }
-        console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from Firestore`);
-        loadedFromFirestore = true;
-      }
-    } catch (err) {
-      console.warn('[wallet-db] Firestore load failed, falling back to JSON:', err.message);
-    }
-  }
-  // Load JSON (primary if no Firestore, or merge source if Firestore loaded)
   try {
-    if (!fs.existsSync(WALLET_DB_FILE)) return;
-    const raw = fs.readFileSync(WALLET_DB_FILE, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    const wallets = parsed?.wallets || {};
-    if (!loadedFromFirestore) {
-      for (const [addr, entry] of Object.entries(wallets)) {
-        if (addr && typeof entry === 'object') walletDatabase.set(addr, entry);
-      }
-      console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from JSON`);
-      // Auto-migrate to Firestore
-      if (walletDatabase.size > 0 && fbAvailable()) {
-        console.log('[wallet-db] Migrating JSON data to Firestore...');
-        fbBatchSet('wallets', [...walletDatabase.entries()])
-          .then(() => console.log('[wallet-db] Migration complete'))
-          .catch(err => console.warn('[wallet-db] Migration failed:', err.message));
-      }
-    } else {
-      // Merge missing fields from JSON into Firestore-loaded entries
-      let mergeCount = 0;
-      for (const [addr, jsonEntry] of Object.entries(wallets)) {
-        const existing = walletDatabase.get(addr);
-        if (!existing || typeof jsonEntry !== 'object') continue;
-        let merged = false;
-        // Merge scoreBreakdown if Firestore is missing it
-        if (!existing.scoreBreakdown && jsonEntry.scoreBreakdown) {
-          existing.scoreBreakdown = jsonEntry.scoreBreakdown;
-          merged = true;
-        }
-        // Merge composite if Firestore is missing it
-        if (!existing.composite && jsonEntry.composite) {
-          existing.composite = jsonEntry.composite;
-          merged = true;
-        }
-        // Merge traits if Firestore is missing them
-        if (!existing.traits && jsonEntry.traits) {
-          existing.traits = jsonEntry.traits;
-          merged = true;
-        }
-        if (merged) {
-          walletDatabase.set(addr, existing);
-          mergeCount++;
-        }
-      }
-      if (mergeCount > 0) {
-        console.log(`[wallet-db] Merged ${mergeCount} wallets with JSON data`);
-      } else {
-        console.log(`[wallet-db] No wallets needed merging (JSON had ${Object.keys(wallets).length} entries)`);
-      }
+    walletDatabase.clear();
+    for (const [addr, entry] of walletStore.entries()) {
+      if (addr && entry && typeof entry === 'object') walletDatabase.set(addr, entry);
+    }
+    console.log(`[wallet-db] Loaded ${walletDatabase.size} wallets from SQLite/JSON`);
+
+    if (walletDatabase.size > 0 && fbAvailable()) {
+      fbBatchSet('wallets', [...walletDatabase.entries()])
+        .catch(err => console.warn('[wallet-db] Migration failed:', err.message));
     }
   } catch (err) {
-    console.warn('[wallet-db] Failed to load JSON', err);
+    console.warn('[wallet-db] Failed to load', err);
   }
 };
 
@@ -1467,6 +1703,7 @@ const updateWalletEntry = (address, updates) => {
   const existing = walletDatabase.get(address) || { address };
   const merged = { ...existing, ...updates, address };
   walletDatabase.set(address, merged);
+  walletStore.set(address, merged);
   saveWalletDatabaseDebounced();
   if (fbAvailable()) {
     fbSet('wallets', address, merged).catch(() => {});
@@ -1481,23 +1718,45 @@ const initData = async () => {
     target.clear();
     for (const [key, value] of source) target.set(key, value);
   };
+  const migrations = [
+    ['coins', coinBalanceStore],
+    ['minted', mintedAddressesStore],
+    ['score-history', scoreHistoryStore],
+    ['wallet-db', walletStore],
+    ['game-session', gameSessionProofStore],
+    ['achievements', achievementStore],
+    ['revives', reviveStore],
+    ['quests', questProgressStore],
+    ['notifications', notificationsStore],
+    ['challenges', challengesStore],
+    ['tournament', tournamentStore],
+  ];
+
+  for (const [label, store] of migrations) {
+    const result = store.migrateFromJson();
+    if (result.migrated && result.count > 0) {
+      console.log(`[sqlite] Seeded ${label} with ${result.count} record(s) from JSON`);
+    }
+  }
 
   await loadCoinBalances();
   loadMintedAddresses();
   await loadScoreHistory();
   await loadWalletDatabase();
   replaceMap(gameSessionProofs, loadGameSessionProofs({
+    datastore: gameSessionProofStore,
     fs,
     gameSessionStoreFile: GAME_SESSION_STORE_FILE,
     normalizeStoredGameSessionEntry,
   }));
   pruneGameSessionProofs();
-  replaceMap(achievementData, loadAchievementData({ fs, achievementsStoreFile: ACHIEVEMENTS_STORE_FILE }));
-  replaceMap(reviveData, loadReviveData({ fs, revivesStoreFile: REVIVES_STORE_FILE }));
-  replaceMap(questProgress, loadQuestProgress({ fs, questProgressFile: QUEST_PROGRESS_FILE }));
-  replaceMap(notificationsDb, loadNotifications({ fs, notificationsFile: NOTIFICATIONS_FILE }));
-  challenges.splice(0, challenges.length, ...loadChallenges({ fs, challengesFile: CHALLENGES_FILE }));
+  replaceMap(achievementData, loadAchievementData({ datastore: achievementStore, fs, achievementsStoreFile: ACHIEVEMENTS_STORE_FILE }));
+  replaceMap(reviveData, loadReviveData({ datastore: reviveStore, fs, revivesStoreFile: REVIVES_STORE_FILE }));
+  replaceMap(questProgress, loadQuestProgress({ datastore: questProgressStore, fs, questProgressFile: QUEST_PROGRESS_FILE }));
+  replaceMap(notificationsDb, loadNotifications({ datastore: notificationsStore, fs, notificationsFile: NOTIFICATIONS_FILE }));
+  challenges.splice(0, challenges.length, ...loadChallenges({ datastore: challengesStore, fs, challengesFile: CHALLENGES_FILE }));
   const tournamentState = loadTournaments({
+    datastore: tournamentStore,
     fs,
     tournamentFile: TOURNAMENT_FILE,
     tournamentTiers: TOURNAMENT_TIERS,
@@ -1528,16 +1787,38 @@ const initData = async () => {
 const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
 // address -> { unlocked: Set<string>, claimed: Set<string> }
 const achievementData = new Map();
+const achievementStore = createJsonColumnStore({
+  jsonPath: ACHIEVEMENTS_STORE_FILE,
+  tableName: 'achievements',
+  keyColumn: 'address',
+  readJson: (parsed) => {
+    const entries = new Map(Object.entries(parsed?.data || {}));
+    for (const [addr, ids] of Object.entries(parsed?.claims || {})) {
+      if (!entries.has(addr) && Array.isArray(ids)) {
+        entries.set(addr, { unlocked: ids, claimed: ids });
+      }
+    }
+    return entries;
+  },
+  writeJson: (entries) => ({
+    version: 2,
+    updatedAt: new Date().toISOString(),
+    data: Object.fromEntries(entries),
+  }),
+  debounceMs: 500,
+  logLabel: 'achievements',
+});
 
 const persistAchievementData = () => {
-  const obj = {};
-  for (const [k, v] of achievementData) {
-    obj[k] = { unlocked: [...v.unlocked], claimed: [...v.claimed] };
+  try {
+    const snapshot = new Map();
+    for (const [k, v] of achievementData) {
+      snapshot.set(k, { unlocked: [...v.unlocked], claimed: [...v.claimed] });
+    }
+    achievementStore.replaceAll(snapshot);
+  } catch (err) {
+    console.warn('[achievements] Failed to persist', err);
   }
-  const tmp = ACHIEVEMENTS_STORE_FILE + '.tmp';
-  fs.promises.writeFile(tmp, JSON.stringify({ version: 2, updatedAt: new Date().toISOString(), data: obj }, null, 2), 'utf8')
-    .then(() => fs.promises.rename(tmp, ACHIEVEMENTS_STORE_FILE))
-    .catch(err => console.warn('[achievements] Failed to persist', err));
 };
 
 const getWalletAchievements = (address) => {
@@ -1682,14 +1963,26 @@ const REVIVES_STORE_FILE = path.join(METADATA_DIR, 'revive-usage.json');
 const FREE_REVIVES_PER_DAY = 3;
 // address -> { orbit: { date: 'YYYY-MM-DD', used: number }, destroyer: { ... }, gravity: { ... } }
 const reviveData = new Map();
+const reviveStore = createJsonColumnStore({
+  jsonPath: REVIVES_STORE_FILE,
+  tableName: 'revives',
+  keyColumn: 'address',
+  readJson: (parsed) => Object.entries(parsed?.data || {}),
+  writeJson: (entries) => ({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    data: Object.fromEntries(entries),
+  }),
+  debounceMs: 500,
+  logLabel: 'revives',
+});
 
 const persistReviveData = () => {
-  const obj = {};
-  for (const [k, v] of reviveData) obj[k] = v;
-  const tmp = REVIVES_STORE_FILE + '.tmp';
-  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2), 'utf8')
-    .then(() => fs.promises.rename(tmp, REVIVES_STORE_FILE))
-    .catch(err => console.warn('[revives] Failed to persist', err));
+  try {
+    reviveStore.replaceAll(reviveData);
+  } catch (err) {
+    console.warn('[revives] Failed to persist', err);
+  }
 };
 
 const getToday = () => new Date().toISOString().slice(0, 10);
@@ -1726,13 +2019,25 @@ const useRevive = (address, gameMode) => {
 // ═══════════════════════════════════════════════════════════════════════════
 const QUEST_PROGRESS_FILE = path.join(METADATA_DIR, 'quest-progress.json');
 const questProgress = new Map();
+const questProgressStore = createJsonColumnStore({
+  jsonPath: QUEST_PROGRESS_FILE,
+  tableName: 'quest_progress',
+  keyColumn: 'address',
+  readJson: (parsed) => Object.entries(parsed?.data || {}),
+  writeJson: (entries) => ({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    data: Object.fromEntries(entries),
+  }),
+  debounceMs: 500,
+  logLabel: 'quests',
+});
 const persistQuestProgress = () => {
-  const obj = {};
-  for (const [k, v] of questProgress) obj[k] = v;
-  const tmp = QUEST_PROGRESS_FILE + '.tmp';
-  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2), 'utf8')
-    .then(() => fs.promises.rename(tmp, QUEST_PROGRESS_FILE))
-    .catch(err => console.warn('[quests] Failed to persist', err));
+  try {
+    questProgressStore.replaceAll(questProgress);
+  } catch (err) {
+    console.warn('[quests] Failed to persist', err);
+  }
 };
 
 const QUEST_SOURCE_IDS = Object.freeze({
@@ -7601,7 +7906,7 @@ const server = http.createServer(async (req, res) => {
       // Marketplace: platform is the seller — coins are spent (deflationary)
       setCoinBalance(address, buyerBal - listing.price);
       addCoinSpent(address, listing.price);
-      totalBurned += listing.price;
+      totalBurnedRef.value = totalBurnedRef.value + listing.price;
       listing.purchaseCount = (listing.purchaseCount || 0) + 1;
       marketplaceListings.set(listingId, listing);
       debouncedSavePrism();
@@ -8949,8 +9254,7 @@ const totalBurnedRef = {
 };
 function applyBurnFee(amount) {
   const burned = Math.max(1, Math.floor(amount * 0.02));
-  totalBurned += burned;
-  globalThis._totalBurned = totalBurned;
+  totalBurnedRef.value = totalBurnedRef.value + burned;
   return { net: amount - burned, burned };
 }
 
@@ -9051,13 +9355,46 @@ const TOURNAMENT_XP_REWARDS = {
 const activeTournaments = { daily: null, weekly: null, monthly: null };
 const tournamentHistory = [];
 let tournamentModeIndex = 0;
+const tournamentStore = createJsonColumnStore({
+  jsonPath: TOURNAMENT_FILE,
+  tableName: 'tournaments',
+  keyColumn: 'tier',
+  readJson: (parsed) => {
+    const entries = new Map();
+    for (const tier of Object.keys(TOURNAMENT_TIERS)) {
+      entries.set(tier, parsed?.active?.[tier] ?? null);
+    }
+    entries.set(TOURNAMENT_HISTORY_KEY, Array.isArray(parsed?.history) ? parsed.history.slice(0, 50) : []);
+    entries.set(TOURNAMENT_META_KEY, {
+      modeIndex: typeof parsed?.modeIndex === 'number' ? parsed.modeIndex : 0,
+    });
+    return entries;
+  },
+  writeJson: (entries) => ({
+    active: {
+      daily: entries.get('daily') ?? null,
+      weekly: entries.get('weekly') ?? null,
+      monthly: entries.get('monthly') ?? null,
+    },
+    history: Array.isArray(entries.get(TOURNAMENT_HISTORY_KEY)) ? entries.get(TOURNAMENT_HISTORY_KEY).slice(0, 50) : [],
+    modeIndex: typeof entries.get(TOURNAMENT_META_KEY)?.modeIndex === 'number' ? entries.get(TOURNAMENT_META_KEY).modeIndex : 0,
+  }),
+  debounceMs: 500,
+  logLabel: 'tournament',
+});
 
 function saveTournament() {
-  const tmp = TOURNAMENT_FILE + '.tmp';
-  const data = JSON.stringify({ active: activeTournaments, history: tournamentHistory.slice(0, 50), modeIndex: tournamentModeIndex });
-  fs.promises.writeFile(tmp, data, 'utf8')
-    .then(() => fs.promises.rename(tmp, TOURNAMENT_FILE))
-    .catch(e => console.warn('[tournament] save error', e.message));
+  try {
+    tournamentStore.replaceAll(new Map([
+      ['daily', activeTournaments.daily],
+      ['weekly', activeTournaments.weekly],
+      ['monthly', activeTournaments.monthly],
+      [TOURNAMENT_HISTORY_KEY, tournamentHistory.slice(0, 50)],
+      [TOURNAMENT_META_KEY, { modeIndex: tournamentModeIndex }],
+    ]));
+  } catch (e) {
+    console.warn('[tournament] save error', e.message);
+  }
 }
 
 function getTournamentBasePrizes(tier, participantCount = 0) {
@@ -9138,7 +9475,10 @@ function finalizeTournamentTier(tier) {
     }
   }
   // Any remaining pool dust (fewer participants than prize slots) is burned
-  if (totalPaid < pool) totalBurned += (pool - totalPaid);
+  if (totalPaid < pool) {
+    totalBurnedRef.value = totalBurnedRef.value + (pool - totalPaid);
+    persistCoinBalances();
+  }
   t.basePrizes = basePrizes.slice(0, maxWinners);
   t.winners = winners;
   tournamentHistory.unshift({ ...t });
@@ -9185,6 +9525,15 @@ const enhancedTxCache = new Map(); // address → { data, ts } — 10min TTL, ma
 const notificationsDb = new Map(); // address → notification[]
 const NOTIFICATIONS_FILE = path.join(METADATA_DIR, 'notifications.json');
 const MAX_NOTIFICATIONS_PER_USER = 100;
+const notificationsStore = createJsonColumnStore({
+  jsonPath: NOTIFICATIONS_FILE,
+  tableName: 'notifications',
+  keyColumn: 'address',
+  readJson: (parsed) => Object.entries(parsed || {}),
+  writeJson: (entries) => Object.fromEntries(entries),
+  debounceMs: 5000,
+  logLabel: 'notifications',
+});
 
 function pushNotification(address, type, message, meta = {}) {
   if (!address) return;
@@ -9205,6 +9554,27 @@ function pushNotification(address, type, message, meta = {}) {
 // ═══ P2P Challenge System ═══
 const CHALLENGES_FILE = path.join(METADATA_DIR, 'challenges.json');
 const challenges = [];
+const challengesStore = createJsonColumnStore({
+  jsonPath: CHALLENGES_FILE,
+  tableName: 'challenges',
+  keyColumn: 'id',
+  readJson: (parsed) => {
+    const entries = new Map();
+    const list = Array.isArray(parsed?.challenges) ? parsed.challenges : (Array.isArray(parsed) ? parsed : []);
+    list.forEach((challenge, index) => {
+      const key = typeof challenge?.id === 'string' && challenge.id ? challenge.id : `challenge:${index}`;
+      entries.set(key, challenge);
+    });
+    return entries;
+  },
+  writeJson: (entries) => ({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    challenges: Array.from(entries.values()),
+  }),
+  debounceMs: 500,
+  logLabel: 'challenges',
+});
 
 // ── Weekly Challenge Rewards — checks every hour, distributes Monday 00:00 UTC ──
 globalThis._challengeWeeklyHistory = globalThis._challengeWeeklyHistory || [];
@@ -9241,12 +9611,15 @@ const {
   fs,
   walletDatabase,
   walletDbFile: WALLET_DB_FILE,
+  walletStore,
   fbAvailable,
   fbBatchSet,
   notificationsDb,
   notificationsFile: NOTIFICATIONS_FILE,
+  notificationsStore,
   challenges,
   challengesFile: CHALLENGES_FILE,
+  challengesStore,
   persistCoinBalances,
   saveMintedAddresses,
   persistScoreHistory,

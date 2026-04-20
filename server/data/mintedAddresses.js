@@ -34,6 +34,33 @@ function createMintedAddressesStore({ storeFile }) {
 }
 
 function createMintedAddressesStoreFromContext(ctx) {
+  const { datastore } = ctx;
+  if (datastore) {
+    const mintedAddresses = new Set();
+
+    const loadMintedAddresses = () => {
+      mintedAddresses.clear();
+      for (const address of datastore.entries().keys()) {
+        if (typeof address === 'string' && address.trim()) mintedAddresses.add(address.trim());
+      }
+      console.log(`[minted] Loaded ${mintedAddresses.size} minted addresses`);
+    };
+
+    const saveMintedAddresses = () => {
+      const snapshot = new Map();
+      for (const address of mintedAddresses) {
+        snapshot.set(address, true);
+      }
+      datastore.replaceAll(snapshot);
+    };
+
+    return {
+      mintedAddresses,
+      loadMintedAddresses,
+      saveMintedAddresses,
+    };
+  }
+
   return createMintedAddressesStore({
     storeFile: ctx.mintedAddressesFile,
   });

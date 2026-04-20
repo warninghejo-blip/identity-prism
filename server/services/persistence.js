@@ -1,13 +1,34 @@
+function toSnapshotMap(source, serializeValue = (value) => value) {
+  const snapshot = new Map();
+  for (const [key, value] of source) {
+    snapshot.set(key, serializeValue(value, key));
+  }
+  return snapshot;
+}
+
+function replaceArrayStore(store, items, keySelector) {
+  const snapshot = new Map();
+  for (const item of items) {
+    const key = keySelector(item, snapshot.size);
+    if (!key) continue;
+    snapshot.set(key, item);
+  }
+  store.replaceAll(snapshot);
+}
+
 function createPersistenceServices({
   fs,
   walletDatabase,
   walletDbFile,
+  walletStore,
   fbAvailable,
   fbBatchSet,
   notificationsDb,
   notificationsFile,
+  notificationsStore,
   challenges,
   challengesFile,
+  challengesStore,
   persistCoinBalances,
   saveMintedAddresses,
   persistScoreHistory,
@@ -20,18 +41,22 @@ function createPersistenceServices({
 }) {
   const persistWalletDatabase = () => {
     try {
-      const obj = {};
-      for (const [k, v] of walletDatabase) obj[k] = v;
-      const tmp = walletDbFile + '.tmp';
-      const data = JSON.stringify({
-        version: 1,
-        updatedAt: new Date().toISOString(),
-        totalWallets: walletDatabase.size,
-        wallets: obj,
-      }, null, 2);
-      fs.promises.writeFile(tmp, data, 'utf8')
-        .then(() => fs.promises.rename(tmp, walletDbFile))
-        .catch((err) => { console.warn('[wallet-db] Write error:', err.message); });
+      if (walletStore) {
+        walletStore.replaceAll(walletDatabase);
+      } else {
+        const obj = {};
+        for (const [k, v] of walletDatabase) obj[k] = v;
+        const tmp = walletDbFile + '.tmp';
+        const data = JSON.stringify({
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          totalWallets: walletDatabase.size,
+          wallets: obj,
+        }, null, 2);
+        fs.promises.writeFile(tmp, data, 'utf8')
+          .then(() => fs.promises.rename(tmp, walletDbFile))
+          .catch((err) => { console.warn('[wallet-db] Write error:', err.message); });
+      }
     } catch (err) {
       console.warn('[wallet-db] Failed to persist', err);
     }
@@ -41,29 +66,40 @@ function createPersistenceServices({
     }
   };
 
-  let walletDbSaveTimer = null;
   const saveWalletDatabaseDebounced = () => {
-    if (walletDbSaveTimer) clearTimeout(walletDbSaveTimer);
-    walletDbSaveTimer = setTimeout(persistWalletDatabase, 500);
+    persistWalletDatabase();
   };
 
   function saveNotifications() {
     try {
-      const data = {};
-      for (const [addr, notifs] of notificationsDb) data[addr] = notifs;
-      fs.writeFileSync(notificationsFile, JSON.stringify(data), 'utf8');
+      if (notificationsStore) {
+        notificationsStore.replaceAll(toSnapshotMap(notificationsDb, (value) => Array.isArray(value) ? value : []));
+      } else {
+        const data = {};
+        for (const [addr, notifs] of notificationsDb) data[addr] = notifs;
+        fs.writeFileSync(notificationsFile, JSON.stringify(data), 'utf8');
+      }
     } catch (e) {
       console.warn('[notifications] Save failed:', e.message);
     }
   }
 
-  let notificationsSaveTimer;
   const saveNotificationsDebounced = () => {
-    clearTimeout(notificationsSaveTimer);
-    notificationsSaveTimer = setTimeout(saveNotifications, 5000);
+    saveNotifications();
   };
 
   function saveChallenges() {
+    if (challengesStore) {
+      replaceArrayStore(
+        challengesStore,
+        challenges,
+        (challenge, index) => (
+          typeof challenge?.id === 'string' && challenge.id ? challenge.id : `challenge:${index}`
+        ),
+      );
+      return;
+    }
+
     const tmp = challengesFile + '.tmp';
     fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2))
       .then(() => fs.promises.rename(tmp, challengesFile))

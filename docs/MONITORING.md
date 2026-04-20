@@ -73,6 +73,35 @@ Update this table when the team grows.
 
 ---
 
+## SQLite Persistence
+
+### Primary DB file
+
+- Default path: `server/data/app.db`
+- Override path: `APP_DB_PATH=/absolute/path/to/app.db`
+- Rate limits stay separate in `ratelimit.db`
+
+### Backup strategy
+
+- Keep dual-write enabled until cutover is explicitly approved
+- Back up the live DB daily to `/opt/identityprism/backups/`
+- Use copy-based snapshots while the process is running (`app.db`, `app.db-wal`, `app.db-shm`)
+
+### Migration/versioning
+
+- Schema version is tracked with `PRAGMA user_version`
+- Additive schema changes only during dual-write
+- Seed rule: if a table is empty on startup, it is cold-seeded from the existing JSON file before serving traffic
+
+### Cutover criteria
+
+1. Run dual-write for at least 7 days
+2. Compare SQLite rows vs JSON payload counts with no divergence
+3. Verify startup migration logs stay at zero on steady-state restarts
+4. Remove JSON writes only after a dedicated cutover PR
+
+---
+
 ## Health Response Shape
 
 The `/health` endpoint returns:

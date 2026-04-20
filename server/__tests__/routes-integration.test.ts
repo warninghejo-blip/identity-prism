@@ -201,6 +201,7 @@ const startServer = async () => {
       JWT_SECRET: TEST_JWT_SECRET,
       FIREBASE_SERVICE_ACCOUNT: path.join(workspaceDir, 'missing-service-account.json'),
       METADATA_DIR: metadataDir,
+      APP_DB_PATH: path.join(metadataDir, 'app.db'),
       RATE_LIMIT_DB_PATH: path.join(metadataDir, 'rate-limit.db'),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
