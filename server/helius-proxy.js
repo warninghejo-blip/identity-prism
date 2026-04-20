@@ -65,8 +65,18 @@ import { createLeaderboardStoreFromContext } from './data/leaderboards.js';
 import { createMintedAddressesStoreFromContext } from './data/mintedAddresses.js';
 import { createScoreHistoryStoreFromContext } from './data/scoreHistory.js';
 import { registerAuthRoute } from './routes/auth.js';
+import { registerBuyRoute } from './routes/buy.js';
+import { registerBlackholeRoute } from './routes/blackhole.js';
+import { registerEarnRoute } from './routes/earn.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerGameRoute, registerGameV1Route } from './routes/game.js';
 import { registerLeaderboardRoute } from './routes/leaderboard.js';
+import { registerQuestRoute } from './routes/quest.js';
+import { registerQuizRoute } from './routes/quiz.js';
+import { registerReputationRoute } from './routes/reputation.js';
+import { registerTournamentRoute } from './routes/tournament.js';
+import { registerVaultRoute } from './routes/vault.js';
+import { registerWalletRoute } from './routes/wallet.js';
 import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
 import { readBody } from './utils/readBody.js';
@@ -3505,10 +3515,9 @@ const fetchIdentitySnapshot = async (address) => {
 };
 
 // ═══ V1 COMPAT HANDLERS (old APK ≤1.0.32) ═══════════════════════════════════
-// These are simplified versions of the current (v2) handlers.
-// They write to the SAME data stores — no separate state.
+// Legacy game handlers now live in server/routes/game.js, except leaderboard shims,
+// which stay here because leaderboard routes were already split earlier.
 
-// a) GET /api/game/leaderboard — v1 shim: map legacy gameType aliases → canonical names
 async function handleGameLeaderboardGetV1(req, res, url) {
   if (!ipRateLimit('lb_get', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
   const rawFilter = url.searchParams.get('gameType') || '';
@@ -3532,7 +3541,6 @@ async function handleGameLeaderboardGetV1(req, res, url) {
   respondJson(res, 200, data);
 }
 
-// b) POST /api/game/leaderboard — v1: accepts body.address, no JWT/session required
 async function handleGameLeaderboardV1(req, res, url) {
   if (!ipRateLimit('lb_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
   try {
@@ -3548,95 +3556,6 @@ async function handleGameLeaderboardV1(req, res, url) {
     triggerCompositeUpdate(address);
     const filtered = leaderboardEntries.filter(e => (toCanonGameMode(e.gameType) || e.gameType || 'orbit') === canonMode);
     respondJson(res, 200, { entry: result, leaderboard: filtered.slice(0, 50) });
-  } catch {
-    respondJson(res, 400, { error: 'Invalid JSON body' });
-  }
-}
-
-// c) POST /api/game/coins — v1: accept body.address OR JWT, no session proof
-async function handleGameCoinsV1(req, res, url) {
-  if (!ipRateLimit('game_coins_post', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-  try {
-    const raw = await readBody(req);
-    const parsed = JSON.parse(raw);
-    const { address: bodyAddr, delta, mode } = parsed;
-    // Accept JWT if provided, else fall back to body.address (old APK may not send JWT)
-    // Use optionalJwt so an invalid/missing token never auto-sends a 401
-    let addr = bodyAddr;
-    const _jwtV1 = optionalJwt(req, null);
-    if (_jwtV1.ok && _jwtV1.address) {
-      addr = _jwtV1.address;
-      if (bodyAddr && bodyAddr !== addr) return respondJson(res, 403, { error: 'Address mismatch' });
-    }
-    if (!addr || typeof addr !== 'string') return respondJson(res, 400, { error: 'address required' });
-    if (typeof delta !== 'number' || !Number.isFinite(delta) || delta === 0 || !Number.isInteger(delta)) {
-      return respondJson(res, 400, { error: 'delta (non-zero integer) required' });
-    }
-    if (delta > 0) {
-      const gameMode = mode || 'orbit';
-      const todayCoins = getGameCoinsToday(addr);
-      const isHolder = mintedAddresses.has(addr);
-      const gameCap = isHolder ? DAILY_GAME_COIN_CAP : Math.floor(DAILY_GAME_COIN_CAP / 2);
-      if (todayCoins >= gameCap) {
-        return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
-      }
-      let baseDelta = Math.min(delta, gameCap - todayCoins);
-      addGameCoinsToday(addr, baseDelta);
-      const boost = getStakingBoost(addr);
-      const effectiveDelta = boost > 0 ? Math.floor(baseDelta * (1 + boost)) : baseDelta;
-      const newBalance = getCoinBalance(addr) + effectiveDelta;
-      setCoinBalance(addr, newBalance);
-      addCoinEarned(addr, effectiveDelta);
-      return respondJson(res, 200, {
-        address: addr,
-        coins: newBalance,
-        earned: effectiveDelta,
-        dailyRemaining: Math.max(0, gameCap - getGameCoinsToday(addr)),
-      });
-    } else {
-      const absDelta = Math.abs(delta);
-      const current = getCoinBalance(addr);
-      if (current < absDelta) return respondJson(res, 400, { error: 'Insufficient balance' });
-      setCoinBalance(addr, current - absDelta);
-      addCoinSpent(addr, absDelta);
-      return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr) });
-    }
-  } catch {
-    respondJson(res, 400, { error: 'Invalid JSON body' });
-  }
-}
-
-// d) GET /api/game/revives — v1: no holder gate, always eligible=true
-async function handleRevivesGetV1(req, res, url) {
-  if (!ipRateLimit('game_rev', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-  const addr = url.searchParams.get('address') || '';
-  const mode = url.searchParams.get('mode') || 'orbit';
-  if (!addr) return respondJson(res, 400, { error: 'address query param required' });
-  if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
-    return respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
-  }
-  const left = getRevivesLeft(addr, mode);
-  respondJson(res, 200, { address: addr, mode, left, max: FREE_REVIVES_PER_DAY, eligible: true });
-}
-
-// e) POST /api/game/revives — v1: allow for everyone, no holder check
-async function handleRevivesPostV1(req, res, url) {
-  if (!ipRateLimit('revive_post', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-  try {
-    const raw = await readBody(req);
-    const parsed = JSON.parse(raw);
-    const { address: addr, mode } = parsed;
-    if (!addr || typeof addr !== 'string') return respondJson(res, 400, { error: 'address (string) required' });
-    if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
-      return respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
-    }
-    const success = useRevive(addr, mode);
-    if (!success) {
-      const left = getRevivesLeft(addr, mode);
-      return respondJson(res, 429, { error: 'No free revives left today', left, max: FREE_REVIVES_PER_DAY });
-    }
-    const left = getRevivesLeft(addr, mode);
-    respondJson(res, 200, { address: addr, mode, success: true, left, max: FREE_REVIVES_PER_DAY });
   } catch {
     respondJson(res, 400, { error: 'Invalid JSON body' });
   }
@@ -3729,12 +3648,10 @@ const server = http.createServer(async (req, res) => {
     const V1_HANDLERS = {
       'GET /api/game/leaderboard': handleGameLeaderboardGetV1,
       'POST /api/game/leaderboard': handleGameLeaderboardV1,
-      'POST /api/game/coins': handleGameCoinsV1,
-      'GET /api/game/revives': handleRevivesGetV1,
-      'POST /api/game/revives': handleRevivesPostV1,
     };
     const v1Key = `${req.method} ${pathname}`;
     if (V1_HANDLERS[v1Key]) return V1_HANDLERS[v1Key](req, res, url);
+    if (await gameV1Handler(req, res, url, pathname)) return;
   }
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -4516,431 +4433,12 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ── MagicBlock game-session proof API ──
-  if (pathname === '/api/game/session' && req.method === 'POST') {
-    if (!ipRateLimit('game_session', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many session registrations' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const raw = await readBody(req);
-      const parsed = safeParseJson(raw);
-      if (!parsed) {
-        respondJson(res, 400, { error: 'Invalid JSON' });
-        return;
-      }
-
-      let payload;
-      try {
-        payload = normalizeGameSessionPayload(parsed);
-      } catch (error) {
-        respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
-        return;
-      }
-      // Enforce JWT address matches session wallet
-      if (payload.walletAddress !== jwtAuth.address) {
-        return respondJson(res, 403, { error: 'Wallet address mismatch' });
-      }
-
-      pruneGameSessionProofs();
-
-      const canonical = JSON.stringify({
-        walletAddress: payload.walletAddress,
-        score: payload.score,
-        survivalTime: payload.survivalTime,
-        seed: payload.seed,
-        slot: payload.slot,
-        startedAtMs: payload.startedAtMs,
-        endedAtMs: payload.endedAtMs,
-        txSignature: payload.txSignature,
-        gameMode: payload.gameMode,
-      });
-      const hash = crypto.createHash('sha256').update(canonical).digest('hex');
-      const id = createGameSessionProofId(payload.slot, hash);
-      const durationMs = Math.max(0, payload.endedAtMs - payload.startedAtMs);
-      // Score-time validation per game mode:
-      // orbit: score ≈ survival seconds (±5)
-      // gravity: score = points (not time-based), but cap at 10 pts/sec of play
-      // destroyer: score = points (high variance), cap at 100 pts/sec of play
-      const isDestroyerMode = payload.gameMode === 'destroyer';
-      const isGravityMode = payload.gameMode === 'gravity';
-      const durationSec = Math.max(1, durationMs / 1000);
-      const expectedScore = Math.floor(durationSec);
-      const maxDestroyerScore = Math.floor(Math.max(1, durationSec) * 100);
-      const maxGravityScore = Math.floor(Math.max(1, durationSec) * 10);
-      let scoreDelta = 0;
-      let modeScoreValid = true;
-      if (isDestroyerMode) {
-        modeScoreValid = payload.score <= maxDestroyerScore;
-      } else if (isGravityMode) {
-        modeScoreValid = payload.score <= maxGravityScore;
-      } else {
-        // orbit: score ≈ seconds survived
-        scoreDelta = Math.abs(expectedScore - payload.score);
-      }
-      const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
-      const verified = verification.seedMatchesSlot && scoreDelta <= 5 && modeScoreValid;
-      const nowIso = new Date().toISOString();
-      const baseUrl = getBaseUrl(req);
-      const proofUrl = baseUrl ? `${baseUrl}/api/game/session/${encodeURIComponent(id)}` : null;
-
-      const reason = verified
-        ? 'Seed matches MagicBlock slot and score delta is within tolerance'
-        : `${verification.reason}; score delta=${scoreDelta}s`;
-
-      // Preserve reuse-prevention flags if session already exists (prevents replay attack)
-      const existingSession = gameSessionProofs.get(id);
-      if (existingSession && (existingSession.usedForTournament || existingSession.usedForChallenge || existingSession.usedForLeaderboard)) {
-        // Session already used competitively — reject re-registration
-        return respondJson(res, 409, { error: 'Session already registered and used competitively' });
-      }
-
-        const entry = {
-          id,
-          hash,
-          walletAddress: payload.walletAddress,
-        score: payload.score,
-        survivalTime: payload.survivalTime,
-        seed: payload.seed,
-        slot: payload.slot,
-        startedAtMs: payload.startedAtMs,
-        endedAtMs: payload.endedAtMs,
-        durationMs,
-        scoreDelta,
-        verified,
-        gameMode: payload.gameMode,
-        proofUrl,
-        verification: {
-          ...verification,
-          reason,
-        },
-        createdAt: nowIso,
-        lastVerifiedAt: nowIso,
-          createdAtMs: Date.now(),
-          coinsCredited: existingSession?.coinsCredited ?? 0,
-          identityGameCoinMultiplier: Number.isFinite(Number(existingSession?.identityGameCoinMultiplier))
-            ? Math.max(1, Math.floor(Number(existingSession.identityGameCoinMultiplier)))
-            : null,
-          // Carry over any existing reuse flags
-          usedForTournament: existingSession?.usedForTournament ?? null,
-          usedForChallenge: existingSession?.usedForChallenge ?? null,
-          usedForLeaderboard: existingSession?.usedForLeaderboard ?? null,
-        };
-
-      // Evict oldest unprotected session if at capacity
-      if (gameSessionProofs.size >= MAX_GAME_SESSION_PROOFS) {
-        let evicted = false;
-        for (const [key, val] of gameSessionProofs) {
-          if (!val?.usedForTournament && !val?.usedForChallenge && !val?.usedForLeaderboard) {
-            gameSessionProofs.delete(key);
-            evicted = true;
-            break;
-          }
-        }
-        if (!evicted) { // all protected — evict absolute oldest as last resort
-          const oldest = gameSessionProofs.keys().next().value;
-          if (oldest) gameSessionProofs.delete(oldest);
-        }
-      }
-      gameSessionProofs.set(id, entry);
-      persistGameSessionProofs();
-      respondJson(res, 200, { session: toPublicGameSessionProof(entry) });
-      return;
-    } catch (error) {
-      respondJson(res, 500, {
-        error: 'Failed to register game session',
-      });
-      return;
-    }
-  }
-
-  if (pathname.startsWith('/api/game/session/') && req.method === 'GET') {
-    if (!ipRateLimit('sess_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Rate limited' });
-    pruneGameSessionProofs();
-    const rawId = pathname.slice('/api/game/session/'.length);
-    let sessionId = '';
-    try {
-      sessionId = decodeURIComponent(rawId).trim();
-    } catch {
-      sessionId = rawId.trim();
-    }
-    if (!sessionId) {
-      respondJson(res, 400, { error: 'Session id is required' });
-      return;
-    }
-
-    const existing = gameSessionProofs.get(sessionId);
-    if (!existing) {
-      respondJson(res, 404, { error: 'Session proof not found' });
-      return;
-    }
-
-    try {
-      const verification = await verifyMagicBlockSeedSlot(existing.seed, existing.slot);
-      // If RPC is unavailable, return cached data — never downgrade a verified session
-      if (!verification.rpcHealthy) {
-        respondJson(res, 200, {
-          session: toPublicGameSessionProof(existing),
-          verificationWarning: 'MagicBlock RPC unavailable; using cached verification',
-        });
-        return;
-      }
-      // Recalculate modeScoreValid (must match POST creation logic)
-      let modeScoreValid = true;
-      const exDurationSec = Math.max(1, (existing.durationMs || 0) / 1000);
-      if (existing.gameMode === 'destroyer') {
-        modeScoreValid = existing.score <= Math.floor(exDurationSec * 100);
-      } else if (existing.gameMode === 'gravity') {
-        modeScoreValid = existing.score <= Math.floor(exDurationSec * 10);
-      }
-      const verified = verification.seedMatchesSlot && existing.scoreDelta <= 5 && modeScoreValid;
-      const reason = verified
-        ? 'Seed matches MagicBlock slot and score delta is within tolerance'
-        : `${verification.reason}; score delta=${existing.scoreDelta}s`;
-
-      const refreshed = {
-        ...existing,
-        verified,
-        verification: {
-          ...verification,
-          reason,
-        },
-        lastVerifiedAt: new Date().toISOString(),
-      };
-      const verifiedChanged = refreshed.verified !== existing.verified;
-      gameSessionProofs.set(sessionId, refreshed);
-      if (verifiedChanged) persistGameSessionProofs(); // only persist on state change
-      respondJson(res, 200, { session: toPublicGameSessionProof(refreshed) });
-      return;
-    } catch (error) {
-      respondJson(res, 200, {
-        session: toPublicGameSessionProof(existing),
-        verificationWarning: 'Verification temporarily unavailable',
-      });
-      return;
-    }
+  if (await gameHandler(req, res, url, pathname)) {
+    return;
   }
 
   // ── Leaderboard API ──
   if (await leaderboardHandler(req, res, url, pathname)) {
-    return;
-  }
-
-  // ── Coins API (per-wallet coin balance) ──
-  if (pathname === '/api/game/coins' && req.method === 'GET') {
-    if (!ipRateLimit('coins_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const addr = url.searchParams.get('address') || '';
-    if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
-      respondJson(res, 400, { error: 'valid address required' });
-      return;
-    }
-    const coins = getCoinBalance(addr);
-    respondJson(res, 200, { address: addr, coins });
-    return;
-  }
-
-  if (pathname === '/api/game/coins' && req.method === 'POST') {
-    if (!ipRateLimit('game_coins_post', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const raw = await readBody(req);
-      const parsed = JSON.parse(raw);
-      const { address: bodyAddr, delta, mode } = parsed;
-      const addr = jwtAuth.address;
-      if (bodyAddr && bodyAddr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (!addr || typeof addr !== 'string') {
-        respondJson(res, 400, { error: 'address (string) required' });
-        return;
-      }
-      if (typeof delta !== 'number' || !Number.isFinite(delta) || delta === 0 || !Number.isInteger(delta)) {
-        respondJson(res, 400, { error: 'delta (non-zero integer) required' });
-        return;
-      }
-      // Delta validation per game mode.
-      if (delta > 0) {
-        // Require verified game session proof (prevents earning coins without playing)
-        const gameSessionId = parsed.gameSessionId;
-        if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for earning coins' });
-        const session = gameSessionProofs.get(gameSessionId);
-        if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
-        if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-        // Block coin earning if this session was used for a challenge — earnings come from challenge result
-        if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
-        const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
-        const gameMode = VALID_GAME_MODES.has(mode) ? mode : 'orbit';
-        if (session.gameMode && session.gameMode !== gameMode) {
-          return respondJson(res, 400, { error: 'Session mode mismatch' });
-        }
-        let pinnedIdentityGameCoinMultiplier = Number.isFinite(Number(session.identityGameCoinMultiplier))
-          ? Math.max(1, Math.floor(Number(session.identityGameCoinMultiplier)))
-          : null;
-        if (!pinnedIdentityGameCoinMultiplier) {
-          const holderPerks = await getIdentityHolderPerks(addr);
-          pinnedIdentityGameCoinMultiplier = Math.max(1, Math.floor(Number(holderPerks.gameCoinMultiplier) || 1));
-          session.identityGameCoinMultiplier = pinnedIdentityGameCoinMultiplier;
-        }
-        const normalizedRequestedDelta = normalizeGameCoinDeltaForCap(delta, pinnedIdentityGameCoinMultiplier);
-        const maxDelta = Math.round((MAX_DELTA_PER_GAME[gameMode] || 500) * GAME_SESSION_ONCHAIN_BONUS_MULTIPLIER);
-        if (normalizedRequestedDelta > maxDelta) {
-          return respondJson(res, 400, { error: 'Delta exceeds maximum for game mode' });
-        }
-        const alreadyCredited = Number(session.coinsCredited) || 0;
-        const remainingSessionAllowance = Math.max(0, Math.floor(maxDelta - alreadyCredited));
-        if (remainingSessionAllowance <= 0) {
-          return respondJson(res, 400, { error: 'Session coin allowance exhausted' });
-        }
-        // Daily cap tracks REAL coins earned (holder multiplier included, staking excluded).
-        // Holder perk = faster farming (2x per game), but same daily ceiling as everyone.
-        const todayCoins = getGameCoinsToday(addr);
-        const isHolder = mintedAddresses.has(addr);
-        const gameCap = isHolder ? DAILY_GAME_COIN_CAP : Math.floor(DAILY_GAME_COIN_CAP / 2);
-        if (todayCoins >= gameCap) {
-          return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
-        }
-        // delta is already the full amount (with holder multiplier applied client-side)
-        const requestedDelta = Math.min(delta, remainingSessionAllowance * pinnedIdentityGameCoinMultiplier);
-        let appliedDelta = requestedDelta;
-        if (todayCoins + requestedDelta > gameCap) {
-          appliedDelta = gameCap - todayCoins;
-        }
-        // Track real coins in daily counter (not normalized)
-        addGameCoinsToday(addr, appliedDelta);
-        session.coinsCredited = alreadyCredited + Math.ceil(appliedDelta / pinnedIdentityGameCoinMultiplier);
-        gameSessionProofs.set(gameSessionId, session);
-        persistGameSessionProofs();
-        // Apply staking boost ON TOP — bonus coins don't count towards cap
-        const boost = getStakingBoost(addr);
-        const effectiveDelta = boost > 0 ? Math.floor(appliedDelta * (1 + boost)) : appliedDelta;
-        const current = getCoinBalance(addr);
-        const newBalance = current + effectiveDelta;
-        setCoinBalance(addr, newBalance);
-        addCoinEarned(addr, effectiveDelta);
-        respondJson(res, 200, {
-          address: addr,
-          coins: newBalance,
-          earned: effectiveDelta,
-          dailyRemaining: Math.max(0, gameCap - getGameCoinsToday(addr)),
-          boost: boost > 0 ? boost : undefined,
-          idMultiplier: pinnedIdentityGameCoinMultiplier > 1 ? pinnedIdentityGameCoinMultiplier : undefined,
-        });
-      } else {
-        // Negative delta (spending) — deduct from balance (no separate burn; burn is only on /api/prism/spend)
-        const absDelta = Math.abs(delta);
-        const current = getCoinBalance(addr);
-        if (current < absDelta) return respondJson(res, 400, { error: 'Insufficient balance' });
-        setCoinBalance(addr, current - absDelta);
-        addCoinSpent(addr, absDelta);
-        respondJson(res, 200, { address: addr, coins: getCoinBalance(addr) });
-      }
-    } catch {
-      respondJson(res, 400, { error: 'Invalid JSON body' });
-    }
-    return;
-  }
-
-  // ── Achievements API (per-wallet unlocked + claimed) ──
-  if (pathname === '/api/game/achievements' && req.method === 'GET') {
-    if (!ipRateLimit('game_ach', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const addr = url.searchParams.get('address') || '';
-    if (!addr) {
-      respondJson(res, 400, { error: 'address query param required' });
-      return;
-    }
-    const entry = getWalletAchievements(addr);
-    respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
-    return;
-  }
-
-  // POST: claim a single achievement
-  if (pathname === '/api/game/achievements' && req.method === 'POST') {
-    if (!ipRateLimit('ach_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const raw = await readBody(req);
-      const parsed = JSON.parse(raw);
-      const { address: addr, achievementId, reward } = parsed;
-      if (addr && addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (!addr || typeof addr !== 'string' || !achievementId || typeof achievementId !== 'string') {
-        respondJson(res, 400, { error: 'address (string) and achievementId (string) required' });
-        return;
-      }
-      const success = claimAchievement(addr, achievementId);
-      if (!success) {
-        respondJson(res, 409, { error: 'Achievement already claimed', achievementId });
-        return;
-      }
-      // Server-side achievement reward lookup (ignore client-supplied reward)
-      const serverReward = ACHIEVEMENT_REWARDS_BY_ID[achievementId] || 0;
-      if (serverReward > 0) {
-        // Apply NON_GAME_DAILY_EARN_CAP to achievement rewards
-        const ngKey = `nongame_daily:${addr}`;
-        const ngToday = new Date().toISOString().slice(0, 10);
-        const ngEntry = getPrismEarnRateLimit(ngKey);
-        let ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === ngToday) ? (ngEntry.total || 0) : 0;
-        const remaining = Math.max(0, NON_GAME_DAILY_EARN_CAP - ngEarned);
-        const capped = Math.min(serverReward, remaining);
-        if (capped > 0) {
-          setCoinBalance(addr, getCoinBalance(addr) + capped);
-          addCoinEarned(addr, capped);
-          setPrismEarnRateLimit(ngKey, { date: ngToday, total: ngEarned + capped });
-        }
-      }
-      const entry = getWalletAchievements(addr);
-      const coins = getCoinBalance(addr);
-      respondJson(res, 200, { address: addr, achievementId, unlocked: [...entry.unlocked], claimed: [...entry.claimed], coins });
-    } catch {
-      respondJson(res, 400, { error: 'Invalid JSON body' });
-    }
-    return;
-  }
-
-  // PUT: sync unlocked achievements (batch, idempotent)
-  if (pathname === '/api/game/achievements' && req.method === 'PUT') {
-    if (!ipRateLimit('ach_put', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const raw = await readBody(req);
-      const parsed = JSON.parse(raw);
-      const { address: addr, unlocked: ids } = parsed;
-      if (!addr || typeof addr !== 'string' || !Array.isArray(ids)) {
-        respondJson(res, 400, { error: 'address (string) and unlocked (array) required' });
-        return;
-      }
-      if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      const verifiedIds = ids.filter((id) => typeof id === 'string' && isAchievementUnlockVerified(addr, id));
-      if (verifiedIds.length > 0) {
-        markAchievementsUnlocked(addr, verifiedIds);
-      }
-      const entry = getWalletAchievements(addr);
-      respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
-    } catch {
-      respondJson(res, 400, { error: 'Invalid JSON body' });
-    }
-    return;
-  }
-
-  // ── Free Revive API (3 per day per game mode, server-authoritative) ──
-  if (pathname === '/api/game/revives' && req.method === 'GET') {
-    if (!ipRateLimit('game_rev', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const addr = url.searchParams.get('address') || '';
-    const mode = url.searchParams.get('mode') || 'orbit';
-    if (!addr) {
-      respondJson(res, 400, { error: 'address query param required' });
-      return;
-    }
-    if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
-      respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
-      return;
-    }
-    const eligible = await hasCoreCollectionAsset(addr);
-    if (!eligible) {
-      respondJson(res, 200, { address: addr, mode, left: 0, max: FREE_REVIVES_PER_DAY, eligible: false });
-      return;
-    }
-    const left = getRevivesLeft(addr, mode);
-    respondJson(res, 200, { address: addr, mode, left, max: FREE_REVIVES_PER_DAY, eligible: true });
     return;
   }
 
@@ -4956,153 +4454,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === '/api/game/revives' && req.method === 'POST') {
-    if (!ipRateLimit('revive_post', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const raw = await readBody(req);
-      const parsed = JSON.parse(raw);
-      const { address: addr, mode } = parsed;
-      if (addr && addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (!addr || typeof addr !== 'string') {
-        respondJson(res, 400, { error: 'address (string) required' });
-        return;
-      }
-      if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
-        respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
-        return;
-      }
-      const eligible = await hasCoreCollectionAsset(addr);
-      if (!eligible) {
-        respondJson(res, 403, { error: 'Identity Prism holder perk required for free revives', left: 0, max: FREE_REVIVES_PER_DAY });
-        return;
-      }
-      const success = useRevive(addr, mode);
-      if (!success) {
-        const left = getRevivesLeft(addr, mode);
-        respondJson(res, 429, { error: 'No free revives left today', left, max: FREE_REVIVES_PER_DAY });
-        return;
-      }
-      const left = getRevivesLeft(addr, mode);
-      respondJson(res, 200, { address: addr, mode, success: true, left, max: FREE_REVIVES_PER_DAY });
-    } catch {
-      respondJson(res, 400, { error: 'Invalid JSON body' });
-    }
-    return;
-  }
-
   // ═══ Tournament System (Tiered) ═══
-  if (pathname === '/api/tournament/active' && req.method === 'GET') {
-    if (!ipRateLimit('tourney_active', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    checkTournaments();
-    // Optional JWT check for userJoined per tier
-    let userAddr = null;
-    try {
-      const authHeader = req.headers['authorization'];
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const decoded = verifyJwt(authHeader.slice(7));
-        if (decoded.address) userAddr = decoded.address;
-      }
-    } catch {}
-    const tournaments = {};
-    for (const tier of Object.keys(TOURNAMENT_TIERS)) {
-      const t = activeTournaments[tier];
-      if (!t) { tournaments[tier] = null; continue; }
-      const userJoined = !!(userAddr && t.entries[userAddr]);
-      const entriesArr = Object.entries(t.entries)
-        .map(([addr, data]) => ({ address: addr, score: data.score, submittedAt: data.submittedAt }))
-        .sort((a, b) => b.score - a.score);
-      const participantCount = entriesArr.length;
-      tournaments[tier] = {
-        id: t.id, tier, mode: t.mode, entryFee: t.entryFee, label: t.label || TOURNAMENT_TIERS[tier].label,
-        prizePool: t.prizePool,
-        basePrizes: getTournamentBasePrizes(tier, participantCount),
-        startTime: t.startTime, endTime: t.endTime, status: t.status,
-        entriesCount: participantCount, endsAt: t.endTime, entryCount: participantCount,
-        isEnded: t.status === 'ended', userJoined,
-        xpRewards: TOURNAMENT_XP_REWARDS[tier] || [],
-        // Gated: only show entries if user joined
-        entries: userJoined ? entriesArr.slice(0, 50) : [],
-        resultsHidden: !userJoined,
-      };
-    }
-    // Backward compat: also provide "tournament" key (daily as default)
-    respondJson(res, 200, { tournaments, tournament: tournaments.daily });
-    return;
-  }
-
-  if (pathname === '/api/tournament/join' && req.method === 'POST') {
-    if (!ipRateLimit('tourn_join', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    checkTournaments();
-    let tier = 'daily';
-    try { const body = JSON.parse(await readBody(req)); if (body.tier) tier = body.tier; } catch {}
-    if (!TOURNAMENT_TIERS[tier]) return respondJson(res, 400, { error: 'Invalid tier' });
-    const t = activeTournaments[tier];
-    if (!t) return respondJson(res, 400, { error: 'No active tournament for this tier' });
-    const addr = jwtAuth.address;
-    if (t.entries[addr]) return respondJson(res, 400, { error: 'Already joined' });
-    // Pre-lock entry to prevent race condition (double-join)
-    t.entries[addr] = { score: 0, submittedAt: null };
-    const fee = t.entryFee;
-    const bal = getCoinBalance(addr);
-    if (bal < fee) { delete t.entries[addr]; return respondJson(res, 400, { error: `Insufficient balance. Entry fee: ${fee} Coins` }); }
-    // Apply 15% burn fee to entry
-    const burnAmt = Math.max(1, Math.floor(fee * TOURNAMENT_TIERS[tier].burnRate));
-    const net = fee - burnAmt;
-    totalBurned += burnAmt;
-    setCoinBalance(addr, bal - fee);
-    addCoinSpent(addr, fee);
-    t.prizePool += net;
-    saveTournament();
-    respondJson(res, 200, { success: true, tier, prizePool: t.prizePool, newBalance: bal - fee, burned: burnAmt });
-    return;
-  }
-
-  if (pathname === '/api/tournament/submit' && req.method === 'POST') {
-    if (!ipRateLimit('tourn_submit', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    checkTournaments();
-    try {
-      const body = JSON.parse(await readBody(req));
-      const { score, tier: reqTier, gameSessionId } = body;
-      const tier = reqTier || 'daily';
-      if (!TOURNAMENT_TIERS[tier]) return respondJson(res, 400, { error: 'Invalid tier' });
-      const t = activeTournaments[tier];
-      if (!t || t.status === 'ended' || Date.now() > t.endTime) return respondJson(res, 400, { error: 'Tournament has ended' });
-      const addr = jwtAuth.address;
-      if (!t.entries[addr]) return respondJson(res, 400, { error: 'Not joined' });
-      if (typeof score !== 'number' || score <= 0) return respondJson(res, 400, { error: 'Valid score required' });
-      // Require game session proof for tournament
-      if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for tournament' });
-      const tSession = gameSessionProofs.get(gameSessionId);
-      if (!tSession || !tSession.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
-      if (tSession.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-      if (Math.abs(tSession.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
-      if (!t.mode) return respondJson(res, 500, { error: 'Tournament mode not configured' });
-      if (tSession.gameMode !== t.mode) return respondJson(res, 400, { error: 'Session gameMode does not match tournament mode' });
-      if (tSession.usedForTournament) return respondJson(res, 400, { error: 'Session already used for a tournament submission' });
-      const MAX_T_SCORES = { orbit: 600, gravity: 600, destroyer: 9999 };
-      const maxTScore = MAX_T_SCORES[t.mode] || 9999;
-      if (score > maxTScore) return respondJson(res, 400, { error: 'Score exceeds maximum' });
-      // Mark session used AFTER all validation passes (atomic)
-      tSession.usedForTournament = { tier, addr, at: Date.now() };
-      persistGameSessionProofs();
-      if (score > (t.entries[addr].score || 0)) {
-        t.entries[addr] = { score, submittedAt: new Date().toISOString() };
-        saveTournament();
-      }
-      respondJson(res, 200, { success: true, tier, score: t.entries[addr].score });
-    } catch { respondJson(res, 400, { error: 'Invalid JSON body' }); }
-    return;
-  }
-
-  if (pathname === '/api/tournament/history' && req.method === 'GET') {
-    if (!ipRateLimit('t_hist', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    respondJson(res, 200, { tournaments: tournamentHistory.slice(0, 20) });
+  if (await tournamentHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -5241,139 +4594,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ Prism Vault (Staking) ═══
-  const _pendingStakingOps = globalThis._pendingStakingOps || (globalThis._pendingStakingOps = new Set());
-  if (pathname === '/api/prism/vault/stake' && req.method === 'POST') {
-    if (!ipRateLimit('vault_stake', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const addr = jwtAuth.address;
-    if (_pendingStakingOps.has(addr)) return respondJson(res, 429, { error: 'Staking operation in progress' });
-    _pendingStakingOps.add(addr);
-    try {
-      const body = JSON.parse(await readBody(req));
-      const { amount, tier } = body;
-      const lockDays = Number.isInteger(body.lockDays) && body.lockDays > 0 ? body.lockDays : 7;
-      const tierConfig = STAKING_TIERS[tier];
-      if (!tierConfig) return respondJson(res, 400, { error: 'Invalid tier. Use: bronze, silver, gold' });
-      if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < tierConfig.minStake) {
-        return respondJson(res, 400, { error: `Minimum stake for ${tier}: ${tierConfig.minStake} Coins (integer)` });
-      }
-      const MAX_STAKE_PER_WALLET = 500_000;
-      if (amount > MAX_STAKE_PER_WALLET) {
-        return respondJson(res, 400, { error: `Maximum stake: ${MAX_STAKE_PER_WALLET} Coins` });
-      }
-      const bal = getCoinBalance(addr);
-      if (bal < amount) return respondJson(res, 400, { error: 'Insufficient balance' });
-      const w = walletDatabase.get(addr) || { address: addr };
-      if (w.staking && w.staking.amount > 0) {
-        return respondJson(res, 400, { error: 'Already staking. Unstake first to change tier.' });
-      }
-      const lockTier = getLockTier(lockDays);
-      setCoinBalance(addr, bal - amount);
-      addCoinSpent(addr, amount);
-      w.staking = {
-        amount, tier,
-        startTime: Date.now(), lastClaimTime: Date.now(),
-        lockEnd: Date.now() + lockTier.days * 24 * 60 * 60 * 1000,
-        lockDays: lockTier.days,
-        yieldMultiplier: lockTier.yieldMultiplier,
-        earlyPenalty: lockTier.earlyPenalty,
-      };
-      w.coins = bal - amount;
-      walletDatabase.set(addr, w);
-      saveWalletDatabaseDebounced();
-      respondJson(res, 200, { success: true, staking: w.staking, newBalance: bal - amount });
-    } catch { respondJson(res, 400, { error: 'Invalid JSON body' }); } finally { _pendingStakingOps.delete(addr); }
-    return;
-  }
-
-  if (pathname === '/api/prism/vault/claim' && req.method === 'POST') {
-    if (!ipRateLimit('vault_claim', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const addr = jwtAuth.address;
-    if (_pendingStakingOps.has(addr)) return respondJson(res, 429, { error: 'Staking operation in progress' });
-    _pendingStakingOps.add(addr);
-    try {
-      const w = walletDatabase.get(addr);
-      if (!w?.staking || !w.staking.amount) { respondJson(res, 400, { error: 'No active stake' }); return; }
-      const yieldAmount = calcUnclaimedYield(w.staking);
-      if (yieldAmount <= 0) { respondJson(res, 200, { success: true, claimed: 0, message: 'No yield to claim yet' }); return; }
-      const bal = getCoinBalance(addr);
-      setCoinBalance(addr, bal + yieldAmount);
-      addCoinEarned(addr, yieldAmount);
-      w.staking.lastClaimTime = Date.now();
-      w.coins = bal + yieldAmount;
-      walletDatabase.set(addr, w);
-      saveWalletDatabaseDebounced();
-      respondJson(res, 200, { success: true, claimed: yieldAmount, newBalance: bal + yieldAmount });
-    } finally { _pendingStakingOps.delete(addr); }
-    return;
-  }
-
-  if (pathname === '/api/prism/vault/unstake' && req.method === 'POST') {
-    if (!ipRateLimit('vault_unstake', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const addr = jwtAuth.address;
-    if (_pendingStakingOps.has(addr)) return respondJson(res, 429, { error: 'Staking operation in progress' });
-    _pendingStakingOps.add(addr);
-    try {
-      const w = walletDatabase.get(addr);
-      if (!w?.staking || !w.staking.amount) { respondJson(res, 400, { error: 'No active stake' }); return; }
-      const stake = w.staking;
-      const now = Date.now();
-      const isEarly = now < stake.lockEnd;
-      let returnAmount = stake.amount;
-      let penalty = 0;
-      let burned = 0;
-      // Claim any unclaimed yield first
-      const yieldAmount = calcUnclaimedYield(stake);
-      if (isEarly) {
-        // Use stored earlyPenalty if available, otherwise look up from lockDays, fallback 0.25
-        const penaltyRate = stake.earlyPenalty != null
-          ? stake.earlyPenalty
-          : getLockTier(stake.lockDays || 7).earlyPenalty;
-        penalty = Math.floor(stake.amount * penaltyRate);
-        burned = penalty; // early unstake penalty is fully burned
-        totalBurned += burned;
-        returnAmount = stake.amount - penalty;
-      }
-      const total = returnAmount + yieldAmount;
-      const bal = getCoinBalance(addr);
-      setCoinBalance(addr, bal + total);
-      addCoinEarned(addr, yieldAmount); // only yield is earned income, not the returned deposit
-      w.staking = null;
-      w.coins = bal + total;
-      walletDatabase.set(addr, w);
-      saveWalletDatabaseDebounced();
-      respondJson(res, 200, { success: true, returned: returnAmount, yield: yieldAmount, penalty, burned, early: isEarly, newBalance: bal + total });
-    } finally { _pendingStakingOps.delete(addr); }
-    return;
-  }
-
-  if (pathname === '/api/prism/vault/status' && req.method === 'GET') {
-    if (!ipRateLimit('vault_st', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const addr = url.searchParams.get('address') || '';
-    if (!addr) return respondJson(res, 400, { error: 'address required' });
-    const w = walletDatabase.get(addr);
-    const stake = w?.staking;
-    if (!stake || !stake.amount) return respondJson(res, 200, { staking: null, boostRate: 0 });
-    const tierConfig = STAKING_TIERS[stake.tier] || {};
-    const unclaimedYield = calcUnclaimedYield(stake);
-    const timeLeft = Math.max(0, (stake.lockEnd || 0) - Date.now());
-    const lockMult = stake.yieldMultiplier != null ? stake.yieldMultiplier : 1.0;
-    const dailyYield = stake.startTime < BRACKETS_DEPLOY_TS
-      ? Math.floor((tierConfig.rateMultiplier ? calcDailyYieldForAmount(stake.amount, tierConfig.rateMultiplier) : 0))
-      : Math.floor(calcDailyYieldForAmount(stake.amount, (tierConfig.rateMultiplier || 1) * lockMult));
-    const effectiveRate = getEffectiveRate(stake.amount, (tierConfig.rateMultiplier || 1) * lockMult);
-    respondJson(res, 200, {
-      staking: { amount: stake.amount, tier: stake.tier, startTime: stake.startTime, lockEnd: stake.lockEnd, lastClaimTime: stake.lastClaimTime, lockDays: stake.lockDays || 7, yieldMultiplier: stake.yieldMultiplier || 1.0, earlyPenalty: stake.earlyPenalty != null ? stake.earlyPenalty : 0.25 },
-      unclaimedYield, timeLeft, boostRate: tierConfig.boostRate || 0,
-      dailyYield,
-      effectiveRate: +(effectiveRate * 100).toFixed(3),
-      rateSchedule: getRateSchedule(tierConfig.rateMultiplier || 1),
-    });
+  if (await vaultHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -5768,102 +4989,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Sybil Blink — GET /api/actions/sybil/:address ──────────────────────────
-  // Solana Actions spec: https://docs.solana.com/developing/actions
-  if (pathname.startsWith('/api/actions/sybil/')) {
-    if (!ipRateLimit('actions', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-
-    // OPTIONS preflight — required by dial.to / blink.solana
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Expose-Headers': 'X-Action-Version',
-      });
-      res.end();
-      return;
-    }
-
-    if (req.method !== 'GET') {
-      respondJson(res, 405, { error: 'Method not allowed' });
-      return;
-    }
-
-    const rawAddr = pathname.slice('/api/actions/sybil/'.length).split('?')[0].trim();
-
-    // Validate address
-    let validAddr;
-    try {
-      const { PublicKey: PK } = await import('@solana/web3.js');
-      new PK(rawAddr);
-      validAddr = rawAddr;
-    } catch {
-      respondJson(res, 400, { error: 'Invalid Solana address' });
-      return;
-    }
-
-    try {
-      // Resolve score/tier/risk — prefer sybil cache, fall back to lightweight compute
-      let score = 0;
-      let tier = 'unknown';
-      let risk = 'unknown';
-
-      // Try sybilCache first (populated by full sybil analysis)
-      const cachedSybil = sybilCache.get(validAddr);
-      const cachedWallet = walletDatabase.get(validAddr);
-
-      if (cachedSybil && Date.now() - cachedSybil.cachedAt < 3600_000) {
-        score = cachedSybil.analysis.trustScore ?? 0;
-        tier = cachedSybil.analysis.trustGrade ?? 'unknown';
-        risk = cachedSybil.analysis.riskLevel ?? 'unknown';
-      } else if (cachedWallet?._lastReputation) {
-        // Use cached /api/reputation response
-        const rep = cachedWallet._lastReputation;
-        score = rep.score ?? 0;
-        tier = rep.tier ?? rep.trustGrade ?? 'unknown';
-        risk = rep.riskLevel ?? 'unknown';
-      } else {
-        // No cached data — this address hasn't been indexed yet
-        respondJson(res, 404, { error: 'Address not indexed yet' });
-        return;
-      }
-
-      const shortAddr = `${validAddr.slice(0, 4)}…${validAddr.slice(-4)}`;
-
-      // Normalise score to /1000 if it came from reputation (already 0-1000)
-      // trustScore from sybil is 0-100, so scale it
-      const displayScore = score > 100 ? score : Math.round(score * 10);
-
-      const blinkPayload = {
-        type: 'action',
-        icon: 'https://identityprism.xyz/og-image.png',
-        title: 'Identity Prism — Sybil Snapshot',
-        description: `Check the sybil risk and reputation score for this Solana wallet: ${shortAddr}\n\nScore: ${displayScore}/1000  |  Tier: ${String(tier).toUpperCase()}  |  Risk: ${String(risk).toUpperCase()}\n\nPowered by Identity Prism behavioral + on-chain sybil detection.`,
-        label: 'View Full Report',
-        links: {
-          actions: [
-            {
-              label: 'Open Full Report',
-              href: `https://identityprism.xyz/?scan=${validAddr}`,
-            },
-          ],
-        },
-      };
-
-      // Apply Blink CORS headers explicitly on GET response
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-      res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version');
-
-      respondJson(res, 200, blinkPayload);
-      return;
-    } catch (error) {
-      console.error('[actions/sybil] failed for', rawAddr, error);
-      respondJson(res, 500, { error: 'Failed to compute sybil snapshot' });
-      return;
-    }
+  // ── Sybil Blink / Reputation APIs ──────────────────────────────────────────
+  if ((pathname.startsWith('/api/actions/sybil/') || pathname.startsWith('/api/v1/reputation/') || pathname === '/api/v2/reputation') && await reputationHandler(req, res, url, pathname)) {
+    return;
   }
 
   if (pathname === '/api/actions/view-app') {
@@ -7202,476 +6330,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ PRISM Earn ═══
-  if (pathname === '/api/prism/earn' && req.method === 'POST') {
-    if (!ipRateLimit('prism_earn_burst', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many earn requests, slow down' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const {
-        address: bodyAddress,
-        source,
-        amount,
-        description,
-        questId,
-        scanTarget: scanTargetRaw,
-        gameSessionId,
-      } = JSON.parse(await readBody(req));
-      const address = jwtAuth.address;
-      if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
-      // Whitelist valid earn sources — reject unknown sources to prevent rate-limit bypass
-      // burn_tokens/burn_nfts REMOVED — no on-chain verification, was exploitable for 144K coins/day
-      if (!source || !PRISM_EARN_MAX_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
-      const maxAllowed = PRISM_EARN_MAX_PER_CALL[source];
-      if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
-      if (source === 'first_mint') {
-        if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
-        if (globalThis._firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
-        const firstMintWallet = walletDatabase.get(address);
-        if (firstMintWallet?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
-      }
-      // Per-source rate limit with per-source cooldowns
-      const rlKey = `${address}:${source || 'unknown'}`;
-      const lastEarn = getPrismEarnRateLimit(rlKey) || 0;
-      const cooldownMs = PRISM_EARN_COOLDOWN_TABLE[source] ?? PRISM_EARN_COOLDOWN_DEFAULT;
-      if (Date.now() - lastEarn < cooldownMs) {
-        return respondJson(res, 429, { error: 'Rate limited — try again later', cooldownMs: cooldownMs - (Date.now() - lastEarn) });
-      }
-      // Global per-address rate limit (max 1 earn per 2 seconds regardless of source)
-      const globalKey = `${address}:__global__`;
-      const lastGlobal = getPrismEarnRateLimit(globalKey) || 0;
-      if (Date.now() - lastGlobal < 2000) {
-        return respondJson(res, 429, { error: 'Too many requests — slow down' });
-      }
-      setPrismEarnRateLimit(globalKey, Date.now());
-      setPrismEarnRateLimit(rlKey, Date.now());
-      if (prismEarnRateLimit.size > 5000) {
-        rateLimitStore.cleanup();
-      }
-      let earned = Math.max(0, Math.floor(Number(amount)));
-      if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
-      // Enforce daily game coin cap for game sources via /api/prism/earn (prevents bypass of /api/game/coins cap)
-      const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
-
-      if (source === 'achievement') {
-        return respondJson(res, 400, { error: 'Use POST /api/game/achievements for achievement rewards' });
-      }
-      if (source === 'referral') {
-        return respondJson(res, 400, { error: 'Use POST /api/referral/claim for referral rewards' });
-      }
-
-      if (GAME_EARN_SOURCES.has(source)) {
-        const verifiedGame = verifyGameEarnClaim(address, source, gameSessionId);
-        if (!verifiedGame.ok) return respondJson(res, 400, { error: verifiedGame.error });
-
-        const todayCoins = getGameCoinsToday(address);
-        const isHolder = mintedAddresses.has(address);
-        const gameCap = getHolderAdjustedCap(DAILY_GAME_COIN_CAP, isHolder);
-        if (todayCoins >= gameCap) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
-
-        let baseDelta = Math.min(earned, gameCap - todayCoins);
-        addGameCoinsToday(address, baseDelta);
-        markGameEarnClaimed(gameSessionId, source, baseDelta);
-
-        const gameBoost = getStakingBoost(address);
-        earned = applyStakingBoostAfterCap(baseDelta, gameBoost);
-      } else {
-        // Non-game sources: enforce global daily cap to prevent coin inflation
-        // Server-side verification for one-time/conditional sources BEFORE cap consumption
-        if (source === 'quest_daily' || source === 'quest_weekly' || source === 'quest_milestone') {
-          const allowedQuestIds = QUEST_SOURCE_IDS[source];
-          if (!questId || !allowedQuestIds?.has(questId)) {
-            return respondJson(res, 400, { error: `Invalid questId for ${source}` });
-          }
-
-          const snapshot = getQuestProgressSnapshot(address);
-          const questState = snapshot[questId];
-          if (!questState?.completed) {
-            return respondJson(res, 400, { error: 'Quest is not completed on server' });
-          }
-
-          const existingQuestState = questProgress.get(address) || { quests: {}, streakDays: 0 };
-          const prevQuest = existingQuestState.quests?.[questId] || {};
-          if (prevQuest.claimed === true && (prevQuest.periodKey || 'all_time') === questState.periodKey) {
-            return respondJson(res, 400, { error: 'Quest reward already claimed' });
-          }
-
-          questProgress.set(address, {
-            ...existingQuestState,
-            quests: {
-              ...(existingQuestState.quests || {}),
-              [questId]: {
-                ...prevQuest,
-                progress: questState.progress,
-                completed: true,
-                claimed: true,
-                periodKey: questState.periodKey,
-                completedAt: prevQuest.completedAt || new Date().toISOString(),
-                claimedAt: new Date().toISOString(),
-              },
-            },
-            updatedAt: new Date().toISOString(),
-          });
-          persistQuestProgress();
-        }
-
-        if (source === 'first_mint') {
-          if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
-          globalThis._firstMintLocks.add(address);
-          updateWalletEntry(address, { _firstMintClaimed: true });
-        }
-        if (source === 'text_quest') {
-          const qid = String(questId || '').trim();
-          if (!qid || !VALID_TEXT_QUEST_IDS.has(qid)) return respondJson(res, 400, { error: 'Invalid or missing questId' });
-          const w = walletDatabase.get(address) || {};
-          const completedQuests = w._completedTextQuests || {};
-          if (completedQuests[qid]) return respondJson(res, 400, { error: 'Quest reward already claimed' });
-          updateWalletEntry(address, { _completedTextQuests: { ...completedQuests, [qid]: Date.now() } });
-        }
-        if (source === 'challenge_win') {
-          const recentChallenges = Array.from(challenges.values()).filter(
-            c => c.status === 'completed' && c.winner === address && !c.earnClaimed && Date.now() - new Date(c.completedAt || c.createdAt).getTime() < 600_000
-          );
-          if (recentChallenges.length === 0) return respondJson(res, 400, { error: 'No recent challenge win found' });
-          recentChallenges[0].earnClaimed = true; // mark so it can't be double-claimed
-          // Await persist before awarding coins (prevent double-claim on crash)
-          try {
-            const _tmp = CHALLENGES_FILE + '.tmp';
-            await fs.promises.writeFile(_tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges }, null, 2));
-            await fs.promises.rename(_tmp, CHALLENGES_FILE);
-          } catch { /* saveChallenges debounced will retry */ }
-        }
-        let scanRewardState = null;
-        let scanRewardTarget = null;
-        if (source === 'scan_wallet' || source === 'sybil_hunt') {
-          const normalizedTarget = normalizePubkey(scanTargetRaw || (source === 'scan_wallet' ? address : ''));
-          if (!normalizedTarget) return respondJson(res, 400, { error: 'scanTarget required' });
-          if (source === 'sybil_hunt' && normalizedTarget === address) {
-            return respondJson(res, 400, { error: 'Cannot claim sybil bounty for your own wallet' });
-          }
-          const analysis = getRecentSybilAnalysis(normalizedTarget);
-          if (!analysis || !Number.isFinite(Number(analysis.trustScore))) {
-            return respondJson(res, 400, { error: 'Scan target must be analyzed before claiming reward' });
-          }
-          const verdict = getSybilVerdict(analysis);
-          const rewardPath = verdict?.rewardPath || getSybilRewardPath(analysis);
-          const isSybilTarget = rewardPath === 'sybil_hunt';
-          if (source === 'sybil_hunt' && !isSybilTarget) {
-            return respondJson(res, 400, { error: 'Target does not qualify for sybil bounty' });
-          }
-          if (source === 'scan_wallet' && isSybilTarget) {
-            return respondJson(res, 400, { error: 'Flagged target must use sybil_hunt reward path' });
-          }
-
-          scanRewardState = getScanRewardState(address);
-          scanRewardTarget = normalizedTarget;
-          if (source === 'scan_wallet') {
-            const lastClaimedAt = Number(scanRewardState.cleanClaims[normalizedTarget]) || 0;
-            const cooldownRemaining = CLEAN_SCAN_REWARD_COOLDOWN_MS - (Date.now() - lastClaimedAt);
-            if (lastClaimedAt && cooldownRemaining > 0) {
-              return respondJson(res, 429, { error: 'Scan reward already claimed recently for this wallet', cooldownMs: cooldownRemaining });
-            }
-            earned = SCAN_WALLET_REWARD;
-          } else {
-            if (scanRewardState.sybilClaims[normalizedTarget]) {
-              return respondJson(res, 400, { error: 'Sybil bounty already claimed for this wallet' });
-            }
-            earned = computeSybilHuntReward(Object.keys(scanRewardState.sybilClaims).length + 1);
-          }
-        }
-
-        // Per-activity daily sub-caps
-        const today = new Date().toISOString().slice(0, 10);
-        const SUB_CAPS = { sybil_hunt: DAILY_HUNT_CAP, scan_wallet: DAILY_SCAN_CAP };
-        if (SUB_CAPS[source]) {
-          const subKey = `subcap:${address}:${source}:${today}`;
-          const subEntry = getPrismEarnRateLimit(subKey) || 0;
-          if (subEntry >= SUB_CAPS[source]) return respondJson(res, 429, { error: `Daily ${source.replace('_', ' ')} cap reached (${SUB_CAPS[source]} coins/day)`, dailyRemaining: 0 });
-          if (scanRewardState && subEntry + earned > SUB_CAPS[source]) {
-            return respondJson(res, 429, {
-              error: `Verified ${source.replace('_', ' ')} reward would exceed daily cap`,
-              dailyRemaining: Math.max(0, SUB_CAPS[source] - subEntry),
-            });
-          }
-          if (!scanRewardState) earned = Math.min(earned, SUB_CAPS[source] - subEntry);
-          setPrismEarnRateLimit(subKey, subEntry + earned);
-        }
-        // Global non-game daily cap
-        const isHolder = mintedAddresses.has(address);
-        const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
-        const ngKey = `nongame_daily:${address}`;
-        const ngEntry = getPrismEarnRateLimit(ngKey);
-        let ngEarned = 0;
-        if (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) {
-          ngEarned = ngEntry.total || 0;
-        }
-        if (ngEarned >= nonGameCap) return respondJson(res, 429, { error: 'Daily earn cap reached', dailyRemaining: 0 });
-        if (scanRewardState && ngEarned + earned > nonGameCap) {
-          return respondJson(res, 429, {
-            error: 'Not enough daily earn cap remaining for verified reward',
-            dailyRemaining: Math.max(0, nonGameCap - ngEarned),
-          });
-        }
-        if (!scanRewardState) earned = Math.min(earned, nonGameCap - ngEarned);
-        setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + earned });
-        // Apply staking boost AFTER cap (bonus coins don't count towards cap)
-        const earnBoost = getStakingBoost(address);
-        earned = applyStakingBoostAfterCap(earned, earnBoost);
-        if (scanRewardState && scanRewardTarget) {
-          const nextScanRewardState = normalizeScanRewardState(scanRewardState);
-          if (source === 'scan_wallet') nextScanRewardState.cleanClaims[scanRewardTarget] = Date.now();
-          if (source === 'sybil_hunt') nextScanRewardState.sybilClaims[scanRewardTarget] = Date.now();
-          updateWalletEntry(address, { _scanRewardState: nextScanRewardState });
-        }
-      }
-      const prevBal = getCoinBalance(address);
-      const newBal = prevBal + earned;
-      setCoinBalance(address, newBal);
-      addCoinEarned(address, earned);
-      // ── Sync coins to wallet database ──
-      const wEarn = walletDatabase.get(address);
-      if (wEarn) { wEarn.coins = newBal; saveWalletDatabaseDebounced(); }
-      const bal = getPrismBalance(address);
-      const tx = {
-        id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        address, amount: earned, type: 'earn', source: source || 'unknown',
-        description: description || `Earned ${earned} Coins`,
-        timestamp: new Date().toISOString(),
-      };
-      const txs = prismTransactions.get(address) || [];
-      txs.unshift(tx);
-      if (txs.length > 500) txs.length = 500;
-      prismTransactions.set(address, txs);
-      debouncedSavePrism();
-      feedItems.unshift({
-        id: tx.id, type: source?.includes('burn') ? 'burn' : source?.includes('game') ? 'achievement' : 'scan',
-        address, description: description || `Earned ${earned} Coins from ${source}`,
-        timestamp: tx.timestamp,
-      });
-      if (feedItems.length > 200) feedItems.length = 200;
-      // Track social stats for challenge wins
-      if (source === 'challenge_win') {
-        const wCh = walletDatabase.get(address) || {};
-        const ssCh = wCh.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
-        ssCh.challengesWon = (ssCh.challengesWon || 0) + 1;
-        updateWalletEntry(address, { socialStats: ssCh });
-      }
-      // Quest milestone notification
-      if (source === 'quest_milestone') {
-        const questName = description || 'Quest';
-        pushNotification(address, 'quest_milestone', `Quest completed: ${questName}`, { questId: questId || null });
-      }
-      respondJson(res, 200, { balance: bal, earned });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+  if (await earnHandler(req, res, url, pathname)) {
     return;
   }
 
-  if (pathname === '/api/blackhole/claim' && req.method === 'POST') {
-    if (!ipRateLimit('blackhole_claim', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      cleanupBlackHoleUsedSignatures();
-      const parsed = JSON.parse(await readBody(req));
-      const opsRaw = Array.isArray(parsed?.operations) ? parsed.operations : [];
-      if (opsRaw.length === 0 || opsRaw.length > 64) {
-        respondJson(res, 400, { error: 'operations array is required' });
-        return;
-      }
-
-      const operations = opsRaw.map((op) => {
-        const account = normalizePubkey(op?.account);
-        const mint = normalizePubkey(op?.mint);
-        const action = String(op?.action || '').trim();
-        const closeSignature = String(op?.closeSignature || '').trim();
-        const swapSignature = op?.swapSignature ? String(op.swapSignature).trim() : null;
-        if (!account || !mint || !closeSignature) {
-          throw new Error('Invalid Black Hole operation payload');
-        }
-        if (!['swap', 'burn', 'close'].includes(action)) {
-          throw new Error('Invalid Black Hole action');
-        }
-        if (action === 'swap' && !swapSignature) {
-          throw new Error('swapSignature required for swap operations');
-        }
-        return { account, mint, action, closeSignature, swapSignature };
-      });
-
-      const uniqueSignatures = [...new Set(operations.flatMap((op) => [op.closeSignature, op.swapSignature].filter(Boolean)))];
-      for (const signature of uniqueSignatures) {
-        if (blackHoleUsedSignatures.has(signature)) {
-          respondJson(res, 400, { error: 'One or more signatures were already claimed' });
-          return;
-        }
-      }
-
-      // Optimistic lock: reserve signatures BEFORE async work to prevent race conditions
-      for (const signature of uniqueSignatures) blackHoleUsedSignatures.set(signature, Date.now());
-      let lockAcquired = true;
-
-      const connection = new Connection(getRpcUrl(jwtAuth.address), 'confirmed');
-      const txMap = new Map();
-      try {
-        for (const signature of uniqueSignatures) {
-          const tx = await connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0 });
-          if (!tx) {
-            respondJson(res, 400, { error: `Transaction ${signature} not found or not confirmed yet` });
-            return;
-          }
-          txMap.set(signature, tx);
-        }
-      } catch (rpcError) {
-        // Release lock on RPC failure
-        for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
-        lockAcquired = false;
-        throw rpcError;
-      }
-
-      const releaseLock = () => { for (const sig of uniqueSignatures) blackHoleUsedSignatures.delete(sig); };
-
-      let holderPerks;
-      try {
-        holderPerks = await getIdentityHolderPerks(jwtAuth.address, { allowStale: true, throwOnLookupFailure: true });
-      } catch {
-        releaseLock();
-        respondJson(res, 503, { error: 'Identity holder verification temporarily unavailable' });
-        return;
-      }
-
-      const uniqueOperations = [];
-      const seenOperations = new Set();
-      for (const operation of operations) {
-        const key = `${operation.action}:${operation.account}:${operation.mint}:${operation.closeSignature}:${operation.swapSignature || ''}`;
-        if (seenOperations.has(key)) continue;
-        seenOperations.add(key);
-        uniqueOperations.push(operation);
-      }
-
-      let fungibleResolved = 0;
-      let nftResolved = 0;
-      const verifiedCommissionBySignature = new Map();
-      for (const operation of uniqueOperations) {
-        const closeTx = txMap.get(operation.closeSignature);
-        if (!verifiedCommissionBySignature.has(operation.closeSignature)) {
-          verifiedCommissionBySignature.set(
-            operation.closeSignature,
-            verifyBlackHoleCommissionTx(closeTx, jwtAuth.address, holderPerks.blackHoleCommissionRate),
-          );
-        }
-        if (!verifiedCommissionBySignature.get(operation.closeSignature)) {
-          releaseLock();
-          respondJson(res, 400, { error: 'Black Hole commission verification failed' });
-          return;
-        }
-        if (!verifyCloseOperationTx(closeTx, jwtAuth.address, operation.account)) {
-          releaseLock();
-          respondJson(res, 400, { error: 'Close transaction verification failed' });
-          return;
-        }
-        if (operation.action === 'burn' && !verifyBurnOperationTx(closeTx, jwtAuth.address, operation.account, operation.mint)) {
-          releaseLock();
-          respondJson(res, 400, { error: 'Burn transaction verification failed' });
-          return;
-        }
-        if (operation.action === 'swap') {
-          const swapTx = txMap.get(operation.swapSignature);
-          if (!verifySwapOperationTx(swapTx, jwtAuth.address, operation.account, operation.mint)) {
-            releaseLock();
-            respondJson(res, 400, { error: 'Swap transaction verification failed' });
-            return;
-          }
-        }
-        if (inferBlackHoleAssetKind(closeTx, operation.account, operation.mint) === 'nft') {
-          nftResolved += 1;
-        } else {
-          fungibleResolved += 1;
-        }
-      }
-
-      const netResolvedLamports = uniqueSignatures.reduce(
-        (sum, signature) => sum + getWalletLamportDelta(txMap.get(signature), jwtAuth.address),
-        0,
-      );
-      const netResolvedSol = netResolvedLamports / LAMPORTS_PER_SOL;
-      let earned = calculateBlackHoleReward(fungibleResolved, nftResolved, netResolvedSol);
-
-      const today = new Date().toISOString().slice(0, 10);
-      const bhKey = `blackhole_cleanup:${jwtAuth.address}:${today}`;
-      const bhToday = getPrismEarnRateLimit(bhKey) || 0;
-      earned = Math.max(0, Math.min(earned, DAILY_BLACKHOLE_CLEANUP_CAP - bhToday));
-
-      const isHolder = mintedAddresses.has(jwtAuth.address);
-      const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
-      const ngKey = `nongame_daily:${jwtAuth.address}`;
-      const ngEntry = getPrismEarnRateLimit(ngKey);
-      let ngEarned = 0;
-      if (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) {
-        ngEarned = ngEntry.total || 0;
-      }
-      earned = Math.max(0, Math.min(earned, nonGameCap - ngEarned));
-
-      if (earned > 0) {
-        setPrismEarnRateLimit(bhKey, bhToday + earned);
-        setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + earned });
-      }
-
-      let credited = earned;
-      const earnBoost = getStakingBoost(jwtAuth.address);
-      if (credited > 0 && earnBoost > 0) credited = Math.floor(credited * (1 + earnBoost));
-
-      if (credited > 0) {
-        const prevBal = getCoinBalance(jwtAuth.address);
-        const newBal = prevBal + credited;
-        setCoinBalance(jwtAuth.address, newBal);
-        addCoinEarned(jwtAuth.address, credited);
-        const walletEntry = walletDatabase.get(jwtAuth.address);
-        if (walletEntry) {
-          walletEntry.coins = newBal;
-          saveWalletDatabaseDebounced();
-        }
-        const tx = {
-          id: `bh_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          address: jwtAuth.address,
-          amount: credited,
-          type: 'earn',
-          source: 'blackhole_cleanup',
-          description: `Black Hole cleanup verified (${fungibleResolved + nftResolved} resolved)`,
-          timestamp: new Date().toISOString(),
-        };
-        const txs = prismTransactions.get(jwtAuth.address) || [];
-        txs.unshift(tx);
-        if (txs.length > 500) txs.length = 500;
-        prismTransactions.set(jwtAuth.address, txs);
-        debouncedSavePrism();
-        feedItems.unshift({
-          id: tx.id,
-          type: 'scan',
-          address: jwtAuth.address,
-          description: `Earned ${credited} PRISM from Black Hole cleanup`,
-          timestamp: tx.timestamp,
-        });
-        if (feedItems.length > 200) feedItems.length = 200;
-      }
-
-      // Signatures already reserved via optimistic lock — just persist
-      persistBlackHoleUsedSignatures();
-
-      respondJson(res, 200, {
-        earned: credited,
-        balance: getPrismBalance(jwtAuth.address),
-        netResolvedSol,
-        fungibleResolved,
-        nftResolved,
-      });
-    } catch (error) {
-      // Release optimistic lock on any unhandled error
-      if (typeof releaseLock === 'function') {
-        releaseLock();
-      } else if (typeof uniqueSignatures !== 'undefined') {
-        for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
-      }
-      respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
-    }
+  if (await blackholeHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -7757,275 +6420,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ PRISM Buy Coins ═══
-  // Replay protection map with TTL (48h auto-cleanup) + file persistence
-  const USED_TX_FILE = path.join(METADATA_DIR, 'used-tx-signatures.json');
-  const usedBuyTxSignatures = globalThis._usedBuyTxMap || (() => {
-    const m = new Map();
-    try { const d = JSON.parse(fs.readFileSync(USED_TX_FILE, 'utf8')); for (const [k, v] of Object.entries(d)) m.set(k, v); } catch {}
-    return (globalThis._usedBuyTxMap = m);
-  })();
-  // Periodic cleanup of expired entries (every 1000 requests) + persist
-  if (!globalThis._buyTxCleanupCounter) globalThis._buyTxCleanupCounter = 0;
-  if (++globalThis._buyTxCleanupCounter % 1000 === 0) {
-    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-    for (const [sig, ts] of usedBuyTxSignatures) { if (ts < cutoff) usedBuyTxSignatures.delete(sig); }
-    const _txTmp = USED_TX_FILE + '.tmp';
-    const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
-    fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {});
-  }
-  // Daily purchase tracking (persisted to survive restarts)
-  const DAILY_PURCHASES_FILE = path.join(METADATA_DIR, 'daily-purchases.json');
-  const dailyPurchases = globalThis._dailyPurchases || (() => {
-    const m = new Map();
-    try {
-      const d = JSON.parse(fs.readFileSync(DAILY_PURCHASES_FILE, 'utf8'));
-      const today = new Date().toISOString().slice(0, 10);
-      for (const [k, v] of Object.entries(d)) { if (k.endsWith(`:${today}`)) m.set(k, v); }
-    } catch {}
-    return (globalThis._dailyPurchases = m);
-  })();
-
-  const COIN_PACKAGES = [
-    { coins: 5000,    solPrice: 0.015 },
-    { coins: 15000,   solPrice: 0.038 },
-    { coins: 50000,   solPrice: 0.11 },
-    { coins: 150000,  solPrice: 0.23 },
-  ];
-  const DAILY_COIN_LIMIT = 300000;
-
-  if (pathname === '/api/prism/buy/status' && req.method === 'GET') {
-    if (!ipRateLimit('buy_status', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
-    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address format' });
-    const today = new Date().toISOString().slice(0, 10);
-    const dayKey = `${address}:${today}`;
-    const purchasedToday = dailyPurchases.get(dayKey) || 0;
-    respondJson(res, 200, {
-      purchasedToday,
-      remainingToday: Math.max(0, DAILY_COIN_LIMIT - purchasedToday),
-      packages: COIN_PACKAGES,
-    });
-    return;
-  }
-
-  if (pathname === '/api/prism/buy' && req.method === 'POST') {
-    if (!ipRateLimit('prism_buy', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const { packageIndex, txSignature } = JSON.parse(await readBody(req));
-      const address = jwtAuth.address;
-      if (!address) return respondJson(res, 400, { error: 'address required' });
-
-      // Validate package
-      const pkgIdx = Number(packageIndex);
-      if (pkgIdx < 0 || pkgIdx >= COIN_PACKAGES.length) return respondJson(res, 400, { error: 'Invalid package' });
-      const pkg = COIN_PACKAGES[pkgIdx];
-
-      // Daily limit check
-      const today = new Date().toISOString().slice(0, 10);
-      const dayKey = `${address}:${today}`;
-      const purchasedToday = dailyPurchases.get(dayKey) || 0;
-      if (purchasedToday + pkg.coins > DAILY_COIN_LIMIT) {
-        return respondJson(res, 400, { error: `Daily limit reached. Purchased today: ${purchasedToday}/${DAILY_COIN_LIMIT}` });
-      }
-
-      // Replay protection — reserve BEFORE async verification to prevent race condition
-      if (!txSignature || typeof txSignature !== 'string') return respondJson(res, 400, { error: 'txSignature required' });
-      if (usedBuyTxSignatures.has(txSignature)) return respondJson(res, 400, { error: 'Transaction already used' });
-      usedBuyTxSignatures.set(txSignature, Date.now()); // reserve immediately with timestamp
-
-      // Verify on-chain transaction
-      try {
-        const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-        const tx = await conn.getParsedTransaction(txSignature, { maxSupportedTransactionVersion: 0 });
-        if (!tx) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' }); }
-        const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-        const instructions = tx.transaction?.message?.instructions || [];
-        const validTransfer = instructions.some(ix => {
-          if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
-            const info = ix.parsed.info;
-            return info.source === address && info.destination === treasuryAddr && info.lamports >= Math.floor(pkg.solPrice * 1e9 * 0.99);
-          }
-          return false;
-        });
-        if (!validTransfer) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' }); }
-      } catch (e) {
-        usedBuyTxSignatures.delete(txSignature); // release on error so user can retry
-        console.error('[buy] Transaction verification failed:', e.message);
-        return respondJson(res, 400, { error: 'Transaction verification failed' });
-      }
-
-      // Credit coins
-      const prevBuyBal = getCoinBalance(address);
-      setCoinBalance(address, prevBuyBal + pkg.coins);
-      addCoinEarned(address, pkg.coins);
-
-      // Sync to wallet database
-      const wBuy = walletDatabase.get(address);
-      if (wBuy) { wBuy.coins = prevBuyBal + pkg.coins; saveWalletDatabaseDebounced(); }
-
-      // Update daily tracking + persist
-      dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
-      { const _dpTmp = DAILY_PURCHASES_FILE + '.tmp'; const _dpObj = {}; for (const [k, v] of dailyPurchases) _dpObj[k] = v;
-        fs.promises.writeFile(_dpTmp, JSON.stringify(_dpObj), 'utf8').then(() => fs.promises.rename(_dpTmp, DAILY_PURCHASES_FILE)).catch(() => {}); }
-      // Persist used tx signature immediately (survive restart)
-      { const _txTmp = USED_TX_FILE + '.tmp'; const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
-        fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {}); }
-
-      // Log transaction
-      const txLog = {
-        id: `buy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        address, amount: pkg.coins, type: 'buy', source: 'sol_purchase',
-        description: `Purchased ${pkg.coins} Coins for ${pkg.solPrice} SOL`,
-        timestamp: new Date().toISOString(),
-        solTx: txSignature,
-      };
-      const txs = prismTransactions.get(address) || [];
-      txs.unshift(txLog);
-      if (txs.length > 500) txs.length = 500;
-      prismTransactions.set(address, txs);
-      debouncedSavePrism();
-
-      respondJson(res, 200, { balance: getPrismBalance(address), purchased: pkg.coins, solPaid: pkg.solPrice });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
-    return;
-  }
-
-  // ═══ Buy Coins with SKR — quote ═══
-  if (pathname === '/api/prism/buy/skr-quote' && req.method === 'GET') {
-    if (!ipRateLimit('buy_skr_quote', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    try {
-      const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
-      if (!solUsd || !skrUsd) return respondJson(res, 503, { error: 'Price data unavailable' });
-      const quotes = COIN_PACKAGES.map(pkg => {
-        const pkgUsd = pkg.solPrice * solUsd;
-        const skrAmount = Math.max(1, Math.ceil(pkgUsd / skrUsd));
-        return { coins: pkg.coins, solPrice: pkg.solPrice, skrPrice: skrAmount };
-      });
-      respondJson(res, 200, { quotes, solUsd, skrUsd });
-    } catch { respondJson(res, 500, { error: 'Failed to fetch SKR quote' }); }
-    return;
-  }
-
-  // ═══ Buy Coins with SKR — purchase ═══
-  if (pathname === '/api/prism/buy/skr' && req.method === 'POST') {
-    if (!ipRateLimit('prism_buy_skr', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const { packageIndex, txSignature } = JSON.parse(await readBody(req));
-      const address = jwtAuth.address;
-      if (!address) return respondJson(res, 400, { error: 'address required' });
-
-      const pkgIdx = Number(packageIndex);
-      if (pkgIdx < 0 || pkgIdx >= COIN_PACKAGES.length) return respondJson(res, 400, { error: 'Invalid package' });
-      const pkg = COIN_PACKAGES[pkgIdx];
-
-      // Daily limit check
-      const today = new Date().toISOString().slice(0, 10);
-      const dayKey = `${address}:${today}`;
-      const purchasedToday = dailyPurchases.get(dayKey) || 0;
-      if (purchasedToday + pkg.coins > DAILY_COIN_LIMIT) {
-        return respondJson(res, 400, { error: `Daily limit reached. Purchased today: ${purchasedToday}/${DAILY_COIN_LIMIT}` });
-      }
-
-      if (!txSignature || typeof txSignature !== 'string') return respondJson(res, 400, { error: 'txSignature required' });
-      if (usedBuyTxSignatures.has(txSignature)) return respondJson(res, 400, { error: 'Transaction already used' });
-      usedBuyTxSignatures.set(txSignature, Date.now());
-
-      // Compute expected SKR amount
-      const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
-      if (!solUsd || !skrUsd) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 503, { error: 'Price data unavailable' }); }
-      const pkgUsd = pkg.solPrice * solUsd;
-      const expectedSkrAmount = Math.max(1, Math.ceil(pkgUsd / skrUsd));
-
-      // Verify on-chain SPL token transfer
-      try {
-        const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-        const tx = await conn.getParsedTransaction(txSignature, { maxSupportedTransactionVersion: 0 });
-        if (!tx) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' }); }
-        const treasuryAddr = TREASURY_ADDRESS || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-        const treasuryKey = parsePublicKey(treasuryAddr, 'TREASURY_ADDRESS');
-        const skrMintKey = parsePublicKey(SKR_MINT, 'SKR_MINT');
-        if (!treasuryKey || !skrMintKey) {
-          usedBuyTxSignatures.delete(txSignature);
-          return respondJson(res, 500, { error: 'SKR treasury configuration invalid' });
-        }
-        const mintInfo = await getMint(conn, skrMintKey, undefined, TOKEN_PROGRAM_ID)
-          .then((info) => ({ info, programId: TOKEN_PROGRAM_ID }))
-          .catch(async () => {
-            const info = await getMint(conn, skrMintKey, undefined, TOKEN_2022_PROGRAM_ID);
-            return { info, programId: TOKEN_2022_PROGRAM_ID };
-          });
-        const treasuryAta = await getAssociatedTokenAddress(
-          skrMintKey,
-          treasuryKey,
-          false,
-          mintInfo.programId,
-        );
-        const treasuryAtaStr = treasuryAta.toBase58();
-        const instructions = tx.transaction?.message?.instructions || [];
-        const skrMintAddr = skrMintKey.toBase58();
-        const validTransfer = instructions.some(ix => {
-          const parsed = ix.parsed;
-          if (!parsed) return false;
-          if (parsed.type === 'transferChecked' || parsed.type === 'transfer') {
-            const info = parsed.info;
-            const authority = String(info.authority || info.multisigAuthority || '');
-            const destination = String(info.destination || '');
-            if (authority !== address || destination !== treasuryAtaStr) return false;
-            const mint = String(info.mint || '');
-            const amount = parsed.type === 'transferChecked'
-              ? Number(info.tokenAmount?.uiAmount ?? info.tokenAmount?.uiAmountString ?? 0)
-              : Number(info.amount || 0) / 10 ** (mintInfo.info.decimals || 0);
-            // Accept if at least 95% of expected amount (rounding tolerance)
-            const minAmount = expectedSkrAmount * 0.95;
-            if (parsed.type === 'transferChecked') {
-              if (mint !== skrMintAddr) return false;
-              return Number.isFinite(amount) && amount >= minAmount;
-            }
-            return Number.isFinite(amount) && amount >= minAmount;
-          }
-          return false;
-        });
-        if (!validTransfer) { usedBuyTxSignatures.delete(txSignature); return respondJson(res, 400, { error: 'SKR transfer to treasury not verified' }); }
-      } catch (e) {
-        usedBuyTxSignatures.delete(txSignature);
-        console.error('[buy-skr] Transaction verification failed:', e.message);
-        return respondJson(res, 400, { error: 'Transaction verification failed' });
-      }
-
-      // Credit coins
-      const prevBuyBal = getCoinBalance(address);
-      setCoinBalance(address, prevBuyBal + pkg.coins);
-      addCoinEarned(address, pkg.coins);
-
-      const wBuy = walletDatabase.get(address);
-      if (wBuy) { wBuy.coins = prevBuyBal + pkg.coins; saveWalletDatabaseDebounced(); }
-
-      dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
-      { const _dpTmp = DAILY_PURCHASES_FILE + '.tmp'; const _dpObj = {}; for (const [k, v] of dailyPurchases) _dpObj[k] = v;
-        fs.promises.writeFile(_dpTmp, JSON.stringify(_dpObj), 'utf8').then(() => fs.promises.rename(_dpTmp, DAILY_PURCHASES_FILE)).catch(() => {}); }
-      { const _txTmp = USED_TX_FILE + '.tmp'; const _txObj = {}; for (const [k, v] of usedBuyTxSignatures) _txObj[k] = v;
-        fs.promises.writeFile(_txTmp, JSON.stringify(_txObj), 'utf8').then(() => fs.promises.rename(_txTmp, USED_TX_FILE)).catch(() => {}); }
-
-      const txLog = {
-        id: `buy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        address, amount: pkg.coins, type: 'buy', source: 'skr_purchase',
-        description: `Purchased ${pkg.coins} Coins for ${expectedSkrAmount} SKR`,
-        timestamp: new Date().toISOString(),
-        solTx: txSignature,
-      };
-      const txs = prismTransactions.get(address) || [];
-      txs.unshift(txLog);
-      if (txs.length > 500) txs.length = 500;
-      prismTransactions.set(address, txs);
-      debouncedSavePrism();
-
-      respondJson(res, 200, { balance: getPrismBalance(address), purchased: pkg.coins, skrPaid: expectedSkrAmount });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
+  if (await buyHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -9394,114 +7789,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ Wallet Token Holdings ═══
-  if (pathname === '/api/wallet/tokens' && req.method === 'GET') {
-    const rlIp = getClientIp(req);
-    const rlKey = `walletTokens:${rlIp}`;
-    const lastWT = reputationRateLimit.get(rlKey) || 0;
-    if (Date.now() - lastWT < 10000) {
-      return respondJson(res, 429, { error: 'Rate limited — 10s cooldown' });
-    }
-    reputationRateLimit.set(rlKey, Date.now());
-    const address = url.searchParams.get('address');
-    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
-    try {
-      const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-      const pubkey = new PublicKey(address);
-      const [balResult, tokenResult] = await Promise.allSettled([
-        conn.getBalance(pubkey),
-        conn.getParsedTokenAccountsByOwner(pubkey, { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }),
-      ]);
-      const solBalance = balResult.status === 'fulfilled' ? balResult.value / 1e9 : 0;
-      const tokenAccounts = tokenResult.status === 'fulfilled' ? tokenResult.value?.value || [] : [];
-      const tokens = [];
-      for (const acc of tokenAccounts) {
-        const info = acc.account?.data?.parsed?.info;
-        if (!info) continue;
-        const amount = parseFloat(info.tokenAmount?.uiAmountString || '0');
-        if (amount <= 0) continue;
-        const decimals = info.tokenAmount?.decimals ?? 0;
-        tokens.push({
-          mint: info.mint,
-          amount,
-          decimals,
-          isNft: decimals === 0 && amount === 1,
-        });
-      }
-      tokens.sort((a, b) => b.amount - a.amount);
-      respondJson(res, 200, {
-        solBalance: Math.round(solBalance * 10000) / 10000,
-        tokens: tokens.slice(0, 30),
-        totalTokens: tokens.filter(t => !t.isNft).length,
-        totalNfts: tokens.filter(t => t.isNft).length,
-      });
-    } catch (e) {
-      respondJson(res, 500, { error: 'Failed to fetch tokens' });
-    }
-    return;
-  }
-
-  // ═══ Wallet Recent Transactions ═══
-  if (pathname === '/api/wallet/recent-txs' && req.method === 'GET') {
-    const rlIp = getClientIp(req);
-    const rlKey = `walletTxs:${rlIp}`;
-    const lastWTx = reputationRateLimit.get(rlKey) || 0;
-    if (Date.now() - lastWTx < 10000) {
-      return respondJson(res, 429, { error: 'Rate limited — 10s cooldown' });
-    }
-    reputationRateLimit.set(rlKey, Date.now());
-    const address = url.searchParams.get('address');
-    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
-    try {
-      const rpcUrl = getRpcUrl(address) || 'https://api.mainnet-beta.solana.com';
-      const conn = new Connection(rpcUrl, 'confirmed');
-      const pubkey = new PublicKey(address);
-      const sigs = await conn.getSignaturesForAddress(pubkey, { limit: 15 });
-      const sigBatch = sigs.map(s => s.signature);
-      // Single batch call for 15 txs (well within 100 limit)
-      const parsed = sigBatch.length > 0
-        ? (await batchGetParsedTxs(getBatchRpcUrl(address), sigBatch, { batchSize: 15 })).filter(Boolean)
-        : [];
-      const txs = [];
-      for (let i = 0; i < parsed.length; i++) {
-        const tx = parsed[i];
-        if (!tx?.meta || !tx?.transaction) continue;
-        const accounts = tx.transaction.message?.accountKeys || [];
-        const pre = tx.meta.preBalances || [];
-        const post = tx.meta.postBalances || [];
-        let targetIdx = -1;
-        for (let j = 0; j < accounts.length; j++) {
-          const acc = resolveAccountKey(accounts[j]);
-          if (acc === address) { targetIdx = j; break; }
-        }
-        const balChange = targetIdx >= 0 ? ((post[targetIdx] || 0) - (pre[targetIdx] || 0)) / 1e9 : 0;
-        // Detect tx type from instructions
-        const ixs = tx.transaction.message?.instructions || [];
-        let txType = 'unknown';
-        for (const ix of ixs) {
-          const pid = ix.programId?.toBase58?.() || (typeof ix.programId === 'string' ? ix.programId : '');
-          if (pid === '11111111111111111111111111111111') txType = 'transfer';
-          else if (pid.startsWith('JUP')) txType = 'swap';
-          else if (['whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc', '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', 'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo'].includes(pid)) txType = 'swap';
-          else if (['M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K', 'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN', 'hadeK9DLv9eA7ya5KnRSb4dTSitisSCRoB68Y8hmjtR'].includes(pid)) txType = 'nft_trade';
-          else if (['So1endDq2YkqhipRh3WViPa8hFb7GVEtcEMF3CBAK8h', 'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA', 'KLend2g3cP87ber41GXWsSZQz9R1hGT2bVBaeEdnKHR'].includes(pid)) txType = 'lending';
-          else if (['CgDG2CLNqR2ypE3CXTMEq5R6J8FaqVjChn9Tfmwocs4Y', 'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy'].includes(pid)) txType = 'staking';
-          else if (txType === 'unknown') txType = 'contract';
-        }
-        txs.push({
-          signature: sigs[i]?.signature || '',
-          blockTime: tx.blockTime || sigs[i]?.blockTime || null,
-          balanceChange: Math.round(balChange * 10000) / 10000,
-          fee: (tx.meta.fee || 0) / 1e9,
-          type: txType,
-          success: !tx.meta.err,
-          programCount: new Set(ixs.map(ix => ix.programId?.toBase58?.() || '')).size,
-        });
-      }
-      respondJson(res, 200, { transactions: txs });
-    } catch (e) {
-      respondJson(res, 500, { error: 'Failed to fetch transactions' });
-    }
+  // ═══ Wallet Token Holdings / Recent Transactions ═══
+  if (pathname.startsWith('/api/wallet/') && await walletHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -9769,85 +8058,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ Sybil Hunt Quiz — blockchain trivia for coins ═══
-  if (pathname === '/api/quiz/question' && req.method === 'GET') {
-    if (!ipRateLimit('quiz', getClientIp(req), 10, 5000)) return respondJson(res, 429, { error: 'Rate limited' });
-    // Pick random question, return without correct answer
-    const q = QUIZ_BANK[Math.floor(Math.random() * QUIZ_BANK.length)];
-    const qId = crypto.createHash('sha256').update(q.q + q.a).digest('hex').slice(0, 12);
-    // Store answer temporarily (60s TTL)
-    quizAnswers.set(qId, { correct: q.a, expiresAt: Date.now() + 60_000 });
-    // Shuffle options
-    const options = [...q.options].sort(() => Math.random() - 0.5);
-    respondJson(res, 200, { id: qId, question: q.q, options, category: q.cat, difficulty: q.diff || 'medium' });
-    return;
-  }
-  if (pathname === '/api/quiz/answer' && req.method === 'POST') {
-    if (!ipRateLimit('quiz_ans', getClientIp(req), 10, 3000)) return respondJson(res, 429, { error: 'Rate limited' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const body = JSON.parse(await readBody(req));
-      const { id, answer, address: bodyAddress } = body;
-      const address = jwtAuth.address;
-      if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (!id || !answer) return respondJson(res, 400, { error: 'id and answer required' });
-
-      const stored = quizAnswers.get(id);
-      if (!stored) return respondJson(res, 400, { error: 'Question expired or invalid' });
-      quizAnswers.delete(id);
-      if (Date.now() > stored.expiresAt) return respondJson(res, 400, { error: 'Time expired' });
-
-      const isCorrect = answer === stored.correct;
-      let earned = 0;
-
-      if (isCorrect) {
-        const today = getToday();
-        const dailyKey = `quiz:${address}:${today}`;
-        const dailyCount = getPrismEarnRateLimit(dailyKey) || 0;
-        const maxDailyAnswers = Math.floor(DAILY_QUIZ_CAP / QUIZ_CORRECT_REWARD);
-
-        const ngKey = `nongame_daily:${address}`;
-        const ngEntry = getPrismEarnRateLimit(ngKey);
-        const ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
-        const isHolder = mintedAddresses.has(address);
-        const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
-
-        if (canAwardQuizReward({
-          dailyCount,
-          maxDailyAnswers,
-          ngEarned,
-          reward: QUIZ_CORRECT_REWARD,
-          nonGameCap,
-        })) {
-          setPrismEarnRateLimit(dailyKey, dailyCount + 1);
-          setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + QUIZ_CORRECT_REWARD });
-          earned = QUIZ_CORRECT_REWARD;
-
-          const prevBal = getCoinBalance(address);
-          setCoinBalance(address, prevBal + earned);
-          addCoinEarned(address, earned);
-
-          const txRecord = {
-            id: `quiz_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            address,
-            amount: earned,
-            type: 'earn',
-            source: 'quiz',
-            description: 'Quiz correct answer',
-            timestamp: new Date().toISOString(),
-          };
-          const txs = prismTransactions.get(address) || [];
-          txs.unshift(txRecord);
-          if (txs.length > 500) txs.length = 500;
-          prismTransactions.set(address, txs);
-          debouncedSavePrism();
-        }
-      }
-
-      respondJson(res, 200, { correct: isCorrect, correctAnswer: stored.correct, earned });
-    } catch {
-      respondJson(res, 400, { error: 'Invalid request body' });
-    }
+  if (await quizHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -9915,204 +8126,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const publicReputationMatch = pathname.match(/^\/api\/v1\/reputation\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
-  if (publicReputationMatch && req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': resolveCorsOrigin(req),
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Max-Age': '86400',
-    });
-    res.end();
-    return;
-  }
-
-  if (publicReputationMatch && req.method === 'GET') {
-    if (!ipRateLimit('public_reputation', getClientIp(req), 60, 60000)) {
-      return respondJson(res, 429, { error: 'Too many reputation requests' });
-    }
-
-    const address = publicReputationMatch[1];
-    const response = buildPublicReputationResponse(address);
-    if (!response) return respondJson(res, 404, { error: 'address not found' });
-
-    res.writeHead(200, {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': resolveCorsOrigin(req),
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Cache-Control': `public, max-age=${PUBLIC_REPUTATION_TTL_SECONDS}`,
-    });
-    res.end(JSON.stringify(response));
-    return;
-  }
-
-  // ═══ Reputation API v2 — OPTIONS preflight ═══
-  if (pathname === '/api/v2/reputation' && req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': resolveCorsOrigin(req), 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key', 'Access-Control-Max-Age': '86400' });
-    res.end();
-    return;
-  }
-
-  // ═══ Reputation API v2 ═══
-  if (pathname === '/api/v2/reputation' && req.method === 'GET') {
-    const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address query parameter required', docs: 'GET /api/v2/reputation?address=<solana_address>' });
-    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
-    const ip = getClientIp(req);
-    const apiKey = req.headers['x-api-key']; // only accept via header (not URL query — leaks in logs)
-    // API key validation
-    const API_KEY_REGISTRY = new Map(
-      (process.env.REPUTATION_API_KEYS || '').split(',').filter(Boolean).map(k => [k.trim(), true])
-    );
-    let maxPerMin = 10; // no key
-    if (apiKey) {
-      if (!API_KEY_REGISTRY.has(apiKey) && API_KEY_REGISTRY.size > 0) {
-        return respondJson(res, 401, { error: 'Invalid API key' });
-      }
-      maxPerMin = 60;
-    }
-    const now = Date.now();
-    const rl = reputationV2RateLimit.get(ip) || { count: 0, resetAt: now + 60000 };
-    if (now > rl.resetAt) { rl.count = 0; rl.resetAt = now + 60000; }
-    rl.count++;
-    reputationV2RateLimit.set(ip, rl);
-    if (rl.count > maxPerMin) {
-      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
-      res.end(JSON.stringify({ error: 'Rate limited', retryAfterSec: Math.ceil((rl.resetAt - now) / 1000) }));
-      return;
-    }
-    try {
-      const snapshot = await fetchIdentitySnapshot(address);
-      const identity = snapshot.identity;
-      if (!identity || identity.error) return respondJson(res, 404, { error: 'Could not resolve wallet identity', address });
-      let sybil = null;
-      const cachedSybil = sybilCache.get(address);
-      if (cachedSybil && now - cachedSybil.cachedAt < 3600_000) sybil = cachedSybil.analysis;
-      const history = getScoreHistory(address);
-      const latestScores = (history.scores || []).slice(0, 5);
-      const coinBal = getCoinBalance(address);
-      // Composite score
-      // Always recalculate composite to avoid stale data (cheap operation)
-      const compositeData = calculateCompositeScore(buildCompositeInput(address));
-      const achEntry = achievementData.get(address);
-      const response = {
-        version: '2.1', address,
-        onchainScore: identity.score,
-        compositeScore: compositeData.compositeScore,
-        compositeTier: compositeData.compositeTier,
-        scoreBreakdown: compositeData.breakdown,
-        scoreDetails: compositeData.details || null,
-        identity: { score: identity.score, maxScore: 1000, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
-        stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
-        sybilAnalysis: sybil ? {
-          trustScore: sybil.trustScore,
-          trustGrade: sybil.trustGrade,
-          riskScore: sybil.riskScore,
-          riskLevel: sybil.riskLevel,
-          verdict: sybil.verdict || getSybilVerdict(sybil),
-          signalsDetected: sybil.signals?.filter(s => s.detected).length || 0,
-          totalSignals: sybil.signals?.length || 0,
-        } : null,
-        achievements: { unlocked: achEntry ? achEntry.unlocked.size : 0, claimed: achEntry ? achEntry.claimed.size : 0 },
-        prism: coinBal > 0 ? { balance: coinBal, totalEarned: coinBal } : null,
-        scoreHistory: latestScores,
-        meta: { timestamp: new Date().toISOString(), cached: Boolean(cachedSybil), provider: 'Identity Prism', website: 'https://identityprism.xyz' },
-      };
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': resolveCorsOrigin(req), 'Access-Control-Allow-Methods': 'GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-API-Key', 'Cache-Control': 'private, no-store' });
-      res.end(JSON.stringify(response));
-    } catch (e) {
-      respondJson(res, 500, { error: 'Internal error' });
-    }
-    return;
-  }
-
   // ═══ Quest Sync ═══
-  if (pathname === '/api/quest/sync' && req.method === 'POST') {
-    if (!ipRateLimit('quest_sync', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const { address, quests } = JSON.parse(await readBody(req));
-      if (address && address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      const addr = jwtAuth.address;
-      if (!quests || typeof quests !== 'object' || Array.isArray(quests)) return respondJson(res, 400, { error: 'quests object required' });
-
-      const VALID_QUEST_IDS = new Set([
-        'daily_scan', 'daily_game', 'daily_burn', 'daily_explore', 'daily_highscore',
-        'weekly_burn5', 'weekly_games5', 'weekly_arena', 'weekly_streak', 'weekly_forge',
-        'ot_first_scan', 'ot_first_mint', 'ot_first_burn', 'ot_first_game',
-        'ot_reach_sun', 'ot_burn100', 'ot_score1000', 'ot_forge5', 'ot_arena_wins', 'ot_text_quest',
-      ]);
-
-      const existing = questProgress.get(addr) || { quests: {}, streakDays: 0, lastStreakDate: '' };
-      const existingQuests = existing.quests || {};
-      const serverSnapshot = getQuestProgressSnapshot(addr);
-      const sanitized = {};
-
-      for (const key of VALID_QUEST_IDS) {
-        const prev = existingQuests[key] || {};
-        const serverQuest = serverSnapshot[key] || { progress: 0, completed: false, periodKey: getQuestPeriodKey(key) };
-        const periodChanged = (prev.periodKey || 'all_time') !== serverQuest.periodKey;
-        const stickyClaim = (QUEST_SOURCE_IDS.quest_daily.has(key) || QUEST_SOURCE_IDS.quest_weekly.has(key))
-          ? (!periodChanged && prev.claimed === true)
-          : (prev.claimed === true);
-
-        sanitized[key] = {
-          progress: serverQuest.progress,
-          completed: serverQuest.completed,
-          claimed: stickyClaim,
-          periodKey: serverQuest.periodKey,
-          completedAt: serverQuest.completed ? (prev.completedAt || new Date().toISOString()) : null,
-          claimedAt: stickyClaim ? (prev.claimedAt || new Date().toISOString()) : null,
-        };
-      }
-
-      const today = getToday();
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      const hasCompletedDailyQuest = ['daily_scan', 'daily_game', 'daily_burn', 'daily_explore', 'daily_highscore']
-        .some((questId) => sanitized[questId]?.completed);
-
-      let streakDays = existing.streakDays || 0;
-      if (existing.lastStreakDate === today) {
-        // same day — keep streak as-is
-      } else if (!hasCompletedDailyQuest) {
-        if (existing.lastStreakDate && existing.lastStreakDate !== yesterday) streakDays = 0;
-      } else {
-        streakDays = existing.lastStreakDate === yesterday ? streakDays + 1 : 1;
-      }
-
-      sanitized.weekly_streak = {
-        ...sanitized.weekly_streak,
-        progress: Math.min(5, streakDays),
-        completed: streakDays >= 5,
-      };
-
-      const streakDate = hasCompletedDailyQuest ? today : (existing.lastStreakDate || today);
-
-      questProgress.set(addr, {
-        ...existing,
-        quests: sanitized,
-        streakDays,
-        lastStreakDate: streakDate,
-        updatedAt: new Date().toISOString(),
-      });
-
-      persistQuestProgress();
-      triggerCompositeUpdate(addr);
-      respondJson(res, 200, { ok: true });
-    } catch {
-      respondJson(res, 400, { error: 'Invalid JSON body' });
-    }
-    return;
-  }
-
-  if (pathname === '/api/quest/progress' && req.method === 'GET') {
-    if (!ipRateLimit('quest_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const addr = url.searchParams.get('address');
-    if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) return respondJson(res, 400, { error: 'Valid address required' });
-    const qp = questProgress.get(addr) || { quests: {} };
-    respondJson(res, 200, qp);
+  if (await questHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -11291,46 +9306,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ═══ Wallet Database API ═══
-  if (pathname === '/api/wallet-database/stats' && req.method === 'GET') {
-    if (!requireAdminKey(req, res)) return;
-    let totalMinted = 0;
-    let totalScore = 0;
-    let scoreCount = 0;
-    const tierDist = {};
-    const sybilDist = { clean: 0, low: 0, medium: 0, high: 0, critical: 0 };
-    let totalSybilRisk = 0;
-    let sybilCount = 0;
-    for (const w of walletDatabase.values()) {
-      if (w.mint?.minted) totalMinted++;
-      if (typeof w.score === 'number') { totalScore += w.score; scoreCount++; }
-      if (w.tier) tierDist[w.tier] = (tierDist[w.tier] || 0) + 1;
-      if (w.sybil?.riskLevel) {
-        sybilDist[w.sybil.riskLevel] = (sybilDist[w.sybil.riskLevel] || 0) + 1;
-        totalSybilRisk += w.sybil.riskScore || 0;
-        sybilCount++;
-      }
-    }
-    respondJson(res, 200, {
-      totalWallets: walletDatabase.size,
-      totalMinted,
-      avgScore: scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0,
-      tierDistribution: tierDist,
-      sybilDistribution: sybilDist,
-      avgSybilRisk: sybilCount > 0 ? Math.round(totalSybilRisk / sybilCount) : 0,
-    });
-    return;
-  }
-
-  if (pathname === '/api/wallet-database/export' && req.method === 'GET') {
-    if (!requireAdminKey(req, res)) return;
-    const obj = {};
-    for (const [k, v] of walletDatabase) obj[k] = v;
-    respondJson(res, 200, {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      totalWallets: walletDatabase.size,
-      wallets: obj,
-    });
+  if (pathname.startsWith('/api/wallet-database') && await walletHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -11390,46 +9366,6 @@ const server = http.createServer(async (req, res) => {
       ...(forgeStateChanged ? { forgeState } : {}),
     });
     respondJson(res, 200, { ok: true, address, userData: merged });
-    return;
-  }
-
-  if (pathname === '/api/wallet-database' && req.method === 'GET') {
-    if (!ipRateLimit('wallet_db', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const address = url.searchParams.get('address');
-    if (address) {
-      const w = walletDatabase.get(address);
-      if (!w) return respondJson(res, 404, { error: 'Wallet not found' });
-      // Public view: only expose safe fields (strip sybil details, internal stats, sensitive data)
-      const publicData = {
-        address,
-        tier: w.tier || 'mercury',
-        score: w.score || 0,
-        badges: w.badges || [],
-        composite: w.composite ? { compositeScore: w.composite.compositeScore, compositeTier: w.composite.compositeTier, breakdown: w.composite.breakdown, details: w.composite.details || null } : null,
-        scoreBreakdown: w.scoreBreakdown || null,
-        scoreDetails: w.composite?.details || null,
-        joinedAt: w.joinedAt || null,
-        lastSeenAt: w.lastSeenAt || null,
-        tournamentXP: w.tournamentXP || 0,
-      };
-      respondJson(res, 200, publicData);
-      return;
-    }
-    // Paginated list requires admin key
-    if (!requireAdminKey(req, res)) return;
-    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '50', 10) || 50, 1), 500);
-    const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10) || 0, 0);
-    const sort = url.searchParams.get('sort') || 'lastSeenAt';
-    const entries = [...walletDatabase.values()];
-    entries.sort((a, b) => {
-      if (sort === 'score') return (b.score || 0) - (a.score || 0);
-      if (sort === 'scanCount') return (b.scanCount || 0) - (a.scanCount || 0);
-      if (sort === 'coins') return (b.coins || 0) - (a.coins || 0);
-      // default: lastSeenAt descending
-      return (b.lastSeenAt || '').localeCompare(a.lastSeenAt || '');
-    });
-    const page = entries.slice(offset, offset + limit);
-    respondJson(res, 200, { total: entries.length, limit, offset, wallets: page });
     return;
   }
 
@@ -13005,6 +10941,7 @@ const notifications = notificationsDb;
 const achievements = achievementData;
 const revives = reviveData;
 const quests = questProgress;
+const completedTournaments = tournamentHistory;
 const saveCoinBalancesDebounced = persistCoinBalances;
 const saveMintedAddressesDebounced = saveMintedAddresses;
 const saveScoreHistoryDebounced = persistScoreHistory;
@@ -13012,8 +10949,42 @@ const saveLeaderboardDebounced = persistLeaderboard;
 const saveAchievementDataDebounced = persistAchievementData;
 const saveReviveDataDebounced = persistReviveData;
 const saveQuestProgressDebounced = persistQuestProgress;
+const saveTournamentsDebounced = saveTournament;
 const saveChallengesDebounced = saveChallenges;
 const savePrismDataDebounced = debouncedSavePrism;
+const USED_TX_FILE = path.join(METADATA_DIR, 'used-tx-signatures.json');
+const usedBuyTxSignatures = globalThis._usedBuyTxMap || (() => {
+  const map = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(USED_TX_FILE, 'utf8'));
+    for (const [key, value] of Object.entries(raw)) map.set(key, value);
+  } catch {}
+  return (globalThis._usedBuyTxMap = map);
+})();
+const DAILY_PURCHASES_FILE = path.join(METADATA_DIR, 'daily-purchases.json');
+const dailyPurchases = globalThis._dailyPurchases || (() => {
+  const map = new Map();
+  try {
+    const raw = JSON.parse(fs.readFileSync(DAILY_PURCHASES_FILE, 'utf8'));
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [key, value] of Object.entries(raw)) {
+      if (key.endsWith(`:${today}`)) map.set(key, value);
+    }
+  } catch {}
+  return (globalThis._dailyPurchases = map);
+})();
+const COIN_PACKAGES = [
+  { coins: 5000, solPrice: 0.015 },
+  { coins: 15000, solPrice: 0.038 },
+  { coins: 50000, solPrice: 0.11 },
+  { coins: 150000, solPrice: 0.23 },
+];
+const DAILY_COIN_LIMIT = 300000;
+const pendingStakingOps = globalThis._pendingStakingOps || (globalThis._pendingStakingOps = new Set());
+const mintBonusLocks = globalThis._mintBonusLocks || (globalThis._mintBonusLocks = new Set());
+const firstMintLocks = globalThis._firstMintLocks || (globalThis._firstMintLocks = new Set());
+const usedChallengeSolTx = globalThis._usedChallengeSolTx || (globalThis._usedChallengeSolTx = new Map());
+const challengeWeeklyHistory = globalThis._challengeWeeklyHistory;
 
 const ctx = createContext({
   walletDatabase,
@@ -13028,10 +10999,32 @@ const ctx = createContext({
   authChallenges,
   activeChallenges,
   activeTournaments,
+  completedTournaments,
   notifications,
   achievements,
   revives,
   quests,
+  walletIpLog,
+  identityOwnershipCache,
+  blackHoleUsedSignatures,
+  pendingMintSigners,
+  gameSessionProofs,
+  prismTransactions,
+  feedItems,
+  sybilInFlight,
+  quizAnswers,
+  clusterCache,
+  reputationV2RateLimit,
+  gameCoinsToday,
+  usedBuyTxSignatures,
+  dailyPurchases,
+  constellationCache,
+  enhancedTxCache,
+  pendingStakingOps,
+  mintBonusLocks,
+  firstMintLocks,
+  usedChallengeSolTx,
+  challengeWeeklyHistory,
   respondJson,
   readBody,
   getClientIp,
@@ -13049,15 +11042,121 @@ const ctx = createContext({
   saveAchievementDataDebounced,
   saveReviveDataDebounced,
   saveQuestProgressDebounced,
+  saveTournamentsDebounced,
   saveNotificationsDebounced,
   saveChallengesDebounced,
   savePrismDataDebounced,
+  saveTournament,
+  saveChallenges,
+  persistBlackHoleUsedSignatures,
+  cleanupBlackHoleUsedSignatures,
+  pushNotification,
+  requireAdminKey,
   safeParseJson,
   verifyWalletSignature,
+  getToday,
+  updateWalletEntry,
+  getCoinBalance,
+  setCoinBalance,
+  addCoinEarned,
+  addCoinSpent,
+  getPrismBalance,
+  getCachedSolPriceUsd,
+  getCachedSkrPriceUsd,
+  getRpcUrl,
+  getBatchRpcUrl,
+  parsePublicKey,
   getPrismEarnRateLimit,
   setPrismEarnRateLimit,
+  getQuestProgressSnapshot,
+  getQuestPeriodKey,
+  batchGetParsedTxs,
+  resolveAccountKey,
+  resolveCorsOrigin,
+  buildPublicReputationResponse,
+  fetchIdentitySnapshot,
+  getScoreHistory,
+  calculateCompositeScore,
+  buildCompositeInput,
+  getSybilVerdict,
+  getIdentityHolderPerks,
+  getStakingBoost,
+  getGameCoinsToday,
+  addGameCoinsToday,
+  verifyGameEarnClaim,
+  markGameEarnClaimed,
+  applyStakingBoostAfterCap,
+  getWalletAchievements,
+  claimAchievement,
+  isAchievementUnlockVerified,
+  markAchievementsUnlocked,
+  hasCoreCollectionAsset,
+  getRevivesLeft,
+  useRevive,
+  getBaseUrl,
+  createGameSessionProofId,
+  toPublicGameSessionProof,
+  verifyMagicBlockSeedSlot,
+  normalizeGameSessionPayload,
+  pruneGameSessionProofs,
+  normalizePubkey,
+  verifyBlackHoleCommissionTx,
+  verifyCloseOperationTx,
+  verifyBurnOperationTx,
+  verifySwapOperationTx,
+  inferBlackHoleAssetKind,
+  getWalletLamportDelta,
+  calculateBlackHoleReward,
+  canAwardQuizReward,
+  getHolderAdjustedCap,
+  questSourceIds: QUEST_SOURCE_IDS,
   authChallengeTtlMs: AUTH_CHALLENGE_TTL_MS,
   jwtTtl: JWT_TTL,
+  nonGameDailyEarnCap: NON_GAME_DAILY_EARN_CAP,
+  dailyQuizCap: DAILY_QUIZ_CAP,
+  quizCorrectReward: QUIZ_CORRECT_REWARD,
+  dailyGameCoinCap: DAILY_GAME_COIN_CAP,
+  dailyHuntCap: DAILY_HUNT_CAP,
+  dailyScanCap: DAILY_SCAN_CAP,
+  freeRevivesPerDay: FREE_REVIVES_PER_DAY,
+  achievementRewardsById: ACHIEVEMENT_REWARDS_BY_ID,
+  maxDeltaPerGame: MAX_DELTA_PER_GAME,
+  maxGameSessionProofs: MAX_GAME_SESSION_PROOFS,
+  gameSessionOnchainBonusMultiplier: GAME_SESSION_ONCHAIN_BONUS_MULTIPLIER,
+  normalizeGameCoinDeltaForCap,
+  prismEarnMaxPerCall: PRISM_EARN_MAX_PER_CALL,
+  prismEarnCooldownTable: PRISM_EARN_COOLDOWN_TABLE,
+  prismEarnCooldownDefault: PRISM_EARN_COOLDOWN_DEFAULT,
+  coinPackages: COIN_PACKAGES,
+  dailyCoinLimit: DAILY_COIN_LIMIT,
+  buyUsedTxFile: USED_TX_FILE,
+  buyDailyPurchasesFile: DAILY_PURCHASES_FILE,
+  lamportsPerSol: LAMPORTS_PER_SOL,
+  dailyBlackHoleCleanupCap: DAILY_BLACKHOLE_CLEANUP_CAP,
+  treasuryAddress: TREASURY_ADDRESS,
+  skrMint: SKR_MINT,
+  tokenProgramId: TOKEN_PROGRAM_ID,
+  token2022ProgramId: TOKEN_2022_PROGRAM_ID,
+  QUIZ_BANK,
+  publicReputationTtlSeconds: PUBLIC_REPUTATION_TTL_SECONDS,
+  validTextQuestIds: VALID_TEXT_QUEST_IDS,
+  challengesFile: CHALLENGES_FILE,
+  getRecentSybilAnalysis,
+  getSybilRewardPath,
+  getScanRewardState,
+  normalizeScanRewardState,
+  computeSybilHuntReward,
+  cleanScanRewardCooldownMs: CLEAN_SCAN_REWARD_COOLDOWN_MS,
+  scanWalletReward: SCAN_WALLET_REWARD,
+  stakingTiers: STAKING_TIERS,
+  getLockTier,
+  calcUnclaimedYield,
+  bracketsDeployTs: BRACKETS_DEPLOY_TS,
+  calcDailyYieldForAmount,
+  getEffectiveRate,
+  getRateSchedule,
+  tournamentTiers: TOURNAMENT_TIERS,
+  tournamentXpRewards: TOURNAMENT_XP_REWARDS,
   leaderboardStoreFile: LEADERBOARD_STORE_FILE,
   leaderboardMaxEntries: LEADERBOARD_MAX_ENTRIES,
   mintedAddressesFile: MINTED_ADDRESSES_FILE,
@@ -13069,7 +11168,6 @@ const ctx = createContext({
   fbBatchSet,
   leaderboardEntries,
   submitLeaderboardEntry,
-  gameSessionProofs,
   persistGameSessionProofs,
   triggerCompositeUpdate,
   toCanonGameMode,
@@ -13077,8 +11175,19 @@ const ctx = createContext({
   leaderboardCacheTimeRef,
 });
 const authHandler = registerAuthRoute(ctx);
+const blackholeHandler = registerBlackholeRoute(ctx);
+const earnHandler = registerEarnRoute(ctx);
+const gameHandler = registerGameRoute(ctx);
+const gameV1Handler = registerGameV1Route(ctx);
 const healthHandler = registerHealthRoute(ctx);
 const leaderboardHandler = registerLeaderboardRoute(ctx);
+const buyHandler = registerBuyRoute(ctx);
+const questHandler = registerQuestRoute(ctx);
+const quizHandler = registerQuizRoute(ctx);
+const reputationHandler = registerReputationRoute(ctx);
+const tournamentHandler = registerTournamentRoute(ctx);
+const vaultHandler = registerVaultRoute(ctx);
+const walletHandler = registerWalletRoute(ctx);
 
 // Cleanup: remove old challenges + cancel stale ones (every 30 minutes)
 setInterval(() => {
