@@ -93,4 +93,15 @@ function createScoreHistoryStore({
   };
 }
 
-export { createScoreHistoryStore };
+function createScoreHistoryStoreFromContext(ctx) {
+  return createScoreHistoryStore({
+    storeFile: ctx.scoreHistoryFile,
+    maxEntries: ctx.scoreHistoryMaxEntries,
+    fbAvailable: ctx.fbAvailable,
+    fbGetAll: ctx.fbGetAll,
+    fbSet: ctx.fbSet,
+    fbBatchSet: ctx.fbBatchSet,
+  });
+}
+
+export { createScoreHistoryStore, createScoreHistoryStoreFromContext };

@@ -82,4 +82,11 @@ function createLeaderboardStore({ storeFile, maxEntries }) {
   };
 }
 
-export { createLeaderboardStore };
+function createLeaderboardStoreFromContext(ctx) {
+  return createLeaderboardStore({
+    storeFile: ctx.leaderboardStoreFile,
+    maxEntries: ctx.leaderboardMaxEntries,
+  });
+}
+
+export { createLeaderboardStore, createLeaderboardStoreFromContext };

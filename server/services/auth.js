@@ -65,4 +65,13 @@ function createOptionalJwt() {
   };
 }
 
-export { JWT_TTL, createJwt, createOptionalJwt, createRequireJwt, verifyJwt };
+function createAuthServices(ctx) {
+  return {
+    createJwt,
+    verifyJwt,
+    requireJwt: createRequireJwt(ctx),
+    optionalJwt: createOptionalJwt(ctx),
+  };
+}
+
+export { JWT_TTL, createAuthServices, createJwt, createOptionalJwt, createRequireJwt, verifyJwt };

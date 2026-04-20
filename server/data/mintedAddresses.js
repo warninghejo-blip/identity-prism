@@ -33,4 +33,10 @@ function createMintedAddressesStore({ storeFile }) {
   };
 }
 
-export { createMintedAddressesStore };
+function createMintedAddressesStoreFromContext(ctx) {
+  return createMintedAddressesStore({
+    storeFile: ctx.mintedAddressesFile,
+  });
+}
+
+export { createMintedAddressesStore, createMintedAddressesStoreFromContext };

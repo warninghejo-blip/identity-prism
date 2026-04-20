@@ -31,7 +31,7 @@ import { create, fetchCollection, fetchAsset, mplCore, burnV1, updateV1 } from '
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
 import { createRequire } from 'node:module';
 import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
-import { JWT_TTL, createJwt, createOptionalJwt, createRequireJwt, verifyJwt } from './services/auth.js';
+import { JWT_TTL, createAuthServices, createJwt, verifyJwt } from './services/auth.js';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
 import {
@@ -60,10 +60,13 @@ import {
   getAllDocs as fbGetAll,
   batchSet as fbBatchSet,
 } from './services/firebase.js';
-import { createLeaderboardStore } from './data/leaderboards.js';
-import { createMintedAddressesStore } from './data/mintedAddresses.js';
-import { createScoreHistoryStore } from './data/scoreHistory.js';
+import { createContext } from './context.js';
+import { createLeaderboardStoreFromContext } from './data/leaderboards.js';
+import { createMintedAddressesStoreFromContext } from './data/mintedAddresses.js';
+import { createScoreHistoryStoreFromContext } from './data/scoreHistory.js';
 import { registerAuthRoute } from './routes/auth.js';
+import { registerHealthRoute } from './routes/health.js';
+import { registerLeaderboardRoute } from './routes/leaderboard.js';
 import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
 import { readBody } from './utils/readBody.js';
@@ -757,8 +760,7 @@ function verifyWalletSignature(address, message, signatureRaw) {
   }
 }
 
-const requireJwt = createRequireJwt({ walletIpLog, getClientIp, respondJson });
-const optionalJwt = createOptionalJwt();
+const { requireJwt, optionalJwt } = createAuthServices({ walletIpLog, getClientIp, respondJson });
 
 const blackHoleUsedSignatures = globalThis._usedBlackHoleSigMap || (() => {
   const map = new Map();
@@ -1210,14 +1212,30 @@ pruneGameSessionProofs();
 
 let leaderboardCache = null;
 let leaderboardCacheTime = 0;
+const leaderboardCacheRef = {
+  get value() {
+    return leaderboardCache;
+  },
+  set value(value) {
+    leaderboardCache = value;
+  },
+};
+const leaderboardCacheTimeRef = {
+  get value() {
+    return leaderboardCacheTime;
+  },
+  set value(value) {
+    leaderboardCacheTime = value;
+  },
+};
 const {
   leaderboardEntries,
   persistLeaderboard: rawPersistLeaderboard,
   submitLeaderboardEntry,
   initLeaderboardStore,
-} = createLeaderboardStore({
-  storeFile: LEADERBOARD_STORE_FILE,
-  maxEntries: LEADERBOARD_MAX_ENTRIES,
+} = createLeaderboardStoreFromContext({
+  leaderboardStoreFile: LEADERBOARD_STORE_FILE,
+  leaderboardMaxEntries: LEADERBOARD_MAX_ENTRIES,
 });
 
 const persistLeaderboard = () => {
@@ -1326,8 +1344,8 @@ const {
   mintedAddresses,
   loadMintedAddresses,
   saveMintedAddresses,
-} = createMintedAddressesStore({
-  storeFile: MINTED_ADDRESSES_FILE,
+} = createMintedAddressesStoreFromContext({
+  mintedAddressesFile: MINTED_ADDRESSES_FILE,
 });
 
 // mintedAddresses loaded in initData()
@@ -1341,9 +1359,9 @@ const {
   persistScoreHistory,
   getScoreHistory,
   addScoreEntry,
-} = createScoreHistoryStore({
-  storeFile: SCORE_HISTORY_FILE,
-  maxEntries: SCORE_HISTORY_MAX,
+} = createScoreHistoryStoreFromContext({
+  scoreHistoryFile: SCORE_HISTORY_FILE,
+  scoreHistoryMaxEntries: SCORE_HISTORY_MAX,
   fbAvailable,
   fbGetAll,
   fbSet,
@@ -3813,20 +3831,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  if (await registerAuthRoute(req, res, url, pathname, {
-    getClientIp,
-    getPrismEarnRateLimit,
-    setPrismEarnRateLimit,
-    readBody,
-    safeParseJson,
-    respondJson,
-    authChallenges,
-    authChallengeTtlMs: AUTH_CHALLENGE_TTL_MS,
-    reputationRateLimit,
-    verifyWalletSignature,
-    createJwt,
-    jwtTtl: JWT_TTL,
-  })) {
+  if (await authHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -4716,69 +4721,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Leaderboard API ──
-  if (pathname === '/api/game/leaderboard' && req.method === 'GET') {
-    if (!ipRateLimit('lb_get', getClientIp(req), 60, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const gameTypeFilter = url.searchParams.get('gameType') || '';
-    const cacheKey = `lb:${gameTypeFilter}`;
-    if (leaderboardCache && leaderboardCache.key === cacheKey && Date.now() - leaderboardCacheTime < 10_000) {
-      respondJson(res, 200, leaderboardCache.data);
-      return;
-    }
-    const canonFilter = toCanonGameMode(gameTypeFilter) || gameTypeFilter;
-    const filtered = canonFilter
-      ? leaderboardEntries.filter(e => (toCanonGameMode(e.gameType) || e.gameType || 'orbit') === canonFilter)
-      : leaderboardEntries;
-    const data = { entries: filtered.slice(0, 50) };
-    leaderboardCache = { key: cacheKey, data };
-    leaderboardCacheTime = Date.now();
-    respondJson(res, 200, data);
-    return;
-  }
-
-  if (pathname === '/api/game/leaderboard' && req.method === 'POST') {
-    if (!ipRateLimit('lb_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const raw = await readBody(req);
-      const parsed = JSON.parse(raw);
-      const { address: bodyAddress, score, txSignature, gameType, gameSessionId } = parsed;
-      const playedAt = new Date().toISOString(); // server-authoritative timestamp
-      const address = jwtAuth.address;
-      if (bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
-        respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
-        return;
-      }
-      // Require game session proof for leaderboard submit
-      if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for leaderboard' });
-      const session = gameSessionProofs.get(gameSessionId);
-      if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
-      if (session.walletAddress !== address) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-      if (Math.abs(session.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
-      // Require gameType and enforce exact match
-      if (!gameType) return respondJson(res, 400, { error: 'gameType required' });
-      if (session.gameMode !== gameType) return respondJson(res, 400, { error: 'Session gameMode mismatch' });
-      if (session.usedForLeaderboard) return respondJson(res, 400, { error: 'Session already used for leaderboard' });
-      // MAX_SCORE validation per game mode (BEFORE marking session used)
-      const MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
-      const gtCheck = gameType;
-      const maxScore = MAX_SCORES[gtCheck] || 9999;
-      if (score > maxScore) {
-        respondJson(res, 400, { error: 'Score exceeds maximum allowed' });
-        return;
-      }
-      // Mark session used AFTER all validation passes
-      session.usedForLeaderboard = { address, at: Date.now() };
-      persistGameSessionProofs();
-      const result = submitLeaderboardEntry({ address, score, playedAt, txSignature, gameType });
-      triggerCompositeUpdate(address);
-      const gt = gameType || 'orbit';
-      const filtered = leaderboardEntries.filter(e => (e.gameType || 'orbit') === gt);
-      respondJson(res, 200, { entry: result, leaderboard: filtered.slice(0, 50) });
-    } catch (error) {
-      respondJson(res, 400, { error: 'Invalid JSON body' });
-    }
+  if (await leaderboardHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -7130,9 +7073,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
+  if (await healthHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -12549,6 +12490,15 @@ const reputationV2RateLimit = new Map();
 
 // ═══ 2% Burn Fee Helper ═══
 let totalBurned = globalThis._totalBurned || 0;
+const totalBurnedRef = {
+  get value() {
+    return totalBurned;
+  },
+  set value(value) {
+    totalBurned = value;
+    globalThis._totalBurned = value;
+  },
+};
 function applyBurnFee(amount) {
   const burned = Math.max(1, Math.floor(amount * 0.02));
   totalBurned += burned;
@@ -13048,6 +12998,87 @@ function saveChallenges() {
     .then(() => fs.promises.rename(tmp, CHALLENGES_FILE))
     .catch(e => console.warn('[challenges] save error', e.message));
 }
+
+const leaderboards = leaderboardEntries;
+const activeChallenges = challenges;
+const notifications = notificationsDb;
+const achievements = achievementData;
+const revives = reviveData;
+const quests = questProgress;
+const saveCoinBalancesDebounced = persistCoinBalances;
+const saveMintedAddressesDebounced = saveMintedAddresses;
+const saveScoreHistoryDebounced = persistScoreHistory;
+const saveLeaderboardDebounced = persistLeaderboard;
+const saveAchievementDataDebounced = persistAchievementData;
+const saveReviveDataDebounced = persistReviveData;
+const saveQuestProgressDebounced = persistQuestProgress;
+const saveChallengesDebounced = saveChallenges;
+const savePrismDataDebounced = debouncedSavePrism;
+
+const ctx = createContext({
+  walletDatabase,
+  coinBalances,
+  totalBurned: totalBurnedRef,
+  mintedAddresses,
+  scoreHistory,
+  leaderboards,
+  sybilCache,
+  reputationRateLimit,
+  prismEarnRateLimit,
+  authChallenges,
+  activeChallenges,
+  activeTournaments,
+  notifications,
+  achievements,
+  revives,
+  quests,
+  respondJson,
+  readBody,
+  getClientIp,
+  ipRateLimit,
+  rateLimitStore,
+  createJwt,
+  verifyJwt,
+  requireJwt,
+  optionalJwt,
+  saveWalletDatabaseDebounced,
+  saveCoinBalancesDebounced,
+  saveMintedAddressesDebounced,
+  saveScoreHistoryDebounced,
+  saveLeaderboardDebounced,
+  saveAchievementDataDebounced,
+  saveReviveDataDebounced,
+  saveQuestProgressDebounced,
+  saveNotificationsDebounced,
+  saveChallengesDebounced,
+  savePrismDataDebounced,
+  safeParseJson,
+  verifyWalletSignature,
+  getPrismEarnRateLimit,
+  setPrismEarnRateLimit,
+  authChallengeTtlMs: AUTH_CHALLENGE_TTL_MS,
+  jwtTtl: JWT_TTL,
+  leaderboardStoreFile: LEADERBOARD_STORE_FILE,
+  leaderboardMaxEntries: LEADERBOARD_MAX_ENTRIES,
+  mintedAddressesFile: MINTED_ADDRESSES_FILE,
+  scoreHistoryFile: SCORE_HISTORY_FILE,
+  scoreHistoryMaxEntries: SCORE_HISTORY_MAX,
+  fbAvailable,
+  fbGetAll,
+  fbSet,
+  fbBatchSet,
+  leaderboardEntries,
+  submitLeaderboardEntry,
+  gameSessionProofs,
+  persistGameSessionProofs,
+  triggerCompositeUpdate,
+  toCanonGameMode,
+  leaderboardCacheRef,
+  leaderboardCacheTimeRef,
+});
+const authHandler = registerAuthRoute(ctx);
+const healthHandler = registerHealthRoute(ctx);
+const leaderboardHandler = registerLeaderboardRoute(ctx);
 
 // Cleanup: remove old challenges + cancel stale ones (every 30 minutes)
 setInterval(() => {
