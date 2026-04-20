@@ -41,6 +41,12 @@ import {
   normalizeGameCoinDeltaForCap,
   scaleAppliedGameCoinDelta,
 } from './services/identityPerks.js';
+import {
+  PRISM_EARN_MAX_PER_CALL,
+  applyStakingBoostAfterCap,
+  canAwardQuizReward,
+  getHolderAdjustedCap,
+} from './services/economyRules.js';
 import { getCompositeTrustProfile, getSybilQuickVerdict, getSybilRewardPath, getSybilVerdict } from './services/sybilVerdict.js';
 
 // Load tweetnacl at module level (used by verifyWalletSignature as fallback)
@@ -3785,24 +3791,23 @@ async function handlePrismEarnV1(req, res, url) {
       description,
     } = JSON.parse(await readBody(req));
     if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
-    const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 5, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 1000, referral: 20, text_quest: 1200, sybil_hunt: 70 };
-    if (!source || !MAX_EARN_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
-    const maxAllowed = MAX_EARN_PER_CALL[source];
+    if (!source || !PRISM_EARN_MAX_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
+    const maxAllowed = PRISM_EARN_MAX_PER_CALL[source];
     if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source}` });
     let earned = Math.max(0, Math.floor(Number(amount)));
     if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
     // Apply daily caps (same caps as v2)
     const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
     const isHolder = mintedAddresses.has(address);
-    const gameCap = isHolder ? DAILY_GAME_COIN_CAP : Math.floor(DAILY_GAME_COIN_CAP / 2);
-    const nonGameCap = isHolder ? NON_GAME_DAILY_EARN_CAP : Math.floor(NON_GAME_DAILY_EARN_CAP / 2);
+    const gameCap = getHolderAdjustedCap(DAILY_GAME_COIN_CAP, isHolder);
+    const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
     if (GAME_EARN_SOURCES.has(source)) {
       const todayCoins = getGameCoinsToday(address);
       if (todayCoins >= gameCap) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
       let baseDelta = Math.min(earned, gameCap - todayCoins);
       addGameCoinsToday(address, baseDelta);
       const gameBoost = getStakingBoost(address);
-      earned = gameBoost > 0 ? Math.floor(baseDelta * (1 + gameBoost)) : baseDelta;
+      earned = applyStakingBoostAfterCap(baseDelta, gameBoost);
     } else {
       const today = new Date().toISOString().slice(0, 10);
       const ngKey = `nongame_daily:${address}`;
@@ -3812,7 +3817,7 @@ async function handlePrismEarnV1(req, res, url) {
       earned = Math.min(earned, nonGameCap - ngEarned);
       prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
       const earnBoost = getStakingBoost(address);
-      if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
+      earned = applyStakingBoostAfterCap(earned, earnBoost);
     }
     const prevBal = getCoinBalance(address);
     const newBal = prevBal + earned;
@@ -3919,14 +3924,13 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
 
   if (_apiMeta.apiVersion === 'v1') {
-    // V1: intercept only the 6 breaking routes — everything else falls through
+    // V1: intercept only the remaining breaking routes — everything else falls through
     const V1_HANDLERS = {
       'GET /api/game/leaderboard': handleGameLeaderboardGetV1,
       'POST /api/game/leaderboard': handleGameLeaderboardV1,
       'POST /api/game/coins': handleGameCoinsV1,
       'GET /api/game/revives': handleRevivesGetV1,
       'POST /api/game/revives': handleRevivesPostV1,
-      'POST /api/prism/earn': handlePrismEarnV1,
     };
     const v1Key = `${req.method} ${pathname}`;
     if (V1_HANDLERS[v1Key]) return V1_HANDLERS[v1Key](req, res, url);
@@ -7432,8 +7436,8 @@ const server = http.createServer(async (req, res) => {
     const quizToday = (prismEarnRateLimit.get(`quiz:${address}:${today}`) || 0) * QUIZ_CORRECT_REWARD;
     const blackHoleToday = prismEarnRateLimit.get(`blackhole_cleanup:${address}:${today}`) || 0;
     const isHolder = mintedAddresses.has(address);
-    const gameCap = isHolder ? DAILY_GAME_COIN_CAP : Math.floor(DAILY_GAME_COIN_CAP / 2);
-    const nonGameCap = isHolder ? NON_GAME_DAILY_EARN_CAP : Math.floor(NON_GAME_DAILY_EARN_CAP / 2);
+    const gameCap = getHolderAdjustedCap(DAILY_GAME_COIN_CAP, isHolder);
+    const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
     respondJson(res, 200, {
       game:         { earned: gameToday, cap: gameCap },
       hunt:         { earned: huntToday, cap: DAILY_HUNT_CAP },
@@ -7466,9 +7470,8 @@ const server = http.createServer(async (req, res) => {
       if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
       // Whitelist valid earn sources — reject unknown sources to prevent rate-limit bypass
       // burn_tokens/burn_nfts REMOVED — no on-chain verification, was exploitable for 144K coins/day
-      const MAX_EARN_PER_CALL = { game_orbit: 50, game_defender: 50, game_gravity: 50, scan_wallet: 5, achievement: 50, quest_daily: 15, quest_weekly: 50, quest_milestone: 100, challenge_win: 30, first_mint: 1000, referral: 20, text_quest: 1200, sybil_hunt: 70 };
-      if (!source || !MAX_EARN_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
-      const maxAllowed = MAX_EARN_PER_CALL[source];
+      if (!source || !PRISM_EARN_MAX_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
+      const maxAllowed = PRISM_EARN_MAX_PER_CALL[source];
       if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
       // Per-source rate limit with per-source cooldowns
       const rlKey = `${address}:${source || 'unknown'}`;
@@ -7514,7 +7517,7 @@ const server = http.createServer(async (req, res) => {
 
         const todayCoins = getGameCoinsToday(address);
         const isHolder = mintedAddresses.has(address);
-        const gameCap = isHolder ? DAILY_GAME_COIN_CAP : Math.floor(DAILY_GAME_COIN_CAP / 2);
+        const gameCap = getHolderAdjustedCap(DAILY_GAME_COIN_CAP, isHolder);
         if (todayCoins >= gameCap) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
 
         let baseDelta = Math.min(earned, gameCap - todayCoins);
@@ -7522,7 +7525,7 @@ const server = http.createServer(async (req, res) => {
         markGameEarnClaimed(gameSessionId, source, baseDelta);
 
         const gameBoost = getStakingBoost(address);
-        earned = gameBoost > 0 ? Math.floor(baseDelta * (1 + gameBoost)) : baseDelta;
+        earned = applyStakingBoostAfterCap(baseDelta, gameBoost);
       } else {
         // Non-game sources: enforce global daily cap to prevent coin inflation
         // Server-side verification for one-time/conditional sources BEFORE cap consumption
@@ -7649,7 +7652,7 @@ const server = http.createServer(async (req, res) => {
         }
         // Global non-game daily cap
         const isHolder = mintedAddresses.has(address);
-        const nonGameCap = isHolder ? NON_GAME_DAILY_EARN_CAP : Math.floor(NON_GAME_DAILY_EARN_CAP / 2);
+        const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
         const ngKey = `nongame_daily:${address}`;
         const ngEntry = prismEarnRateLimit.get(ngKey);
         let ngEarned = 0;
@@ -7667,7 +7670,7 @@ const server = http.createServer(async (req, res) => {
         prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
         // Apply staking boost AFTER cap (bonus coins don't count towards cap)
         const earnBoost = getStakingBoost(address);
-        if (earnBoost > 0) earned = Math.floor(earned * (1 + earnBoost));
+        earned = applyStakingBoostAfterCap(earned, earnBoost);
         if (scanRewardState && scanRewardTarget) {
           const nextScanRewardState = normalizeScanRewardState(scanRewardState);
           if (source === 'scan_wallet') nextScanRewardState.cleanClaims[scanRewardTarget] = Date.now();
@@ -7852,7 +7855,7 @@ const server = http.createServer(async (req, res) => {
       earned = Math.max(0, Math.min(earned, DAILY_BLACKHOLE_CLEANUP_CAP - bhToday));
 
       const isHolder = mintedAddresses.has(jwtAuth.address);
-      const nonGameCap = isHolder ? NON_GAME_DAILY_EARN_CAP : Math.floor(NON_GAME_DAILY_EARN_CAP / 2);
+      const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
       const ngKey = `nongame_daily:${jwtAuth.address}`;
       const ngEntry = prismEarnRateLimit.get(ngKey);
       let ngEarned = 0;
@@ -10061,9 +10064,15 @@ const server = http.createServer(async (req, res) => {
         const ngEntry = prismEarnRateLimit.get(ngKey);
         const ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
         const isHolder = mintedAddresses.has(address);
-        const nonGameCap = isHolder ? NON_GAME_DAILY_EARN_CAP : Math.floor(NON_GAME_DAILY_EARN_CAP / 2);
+        const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
 
-        if (dailyCount < maxDailyAnswers && ngEarned + QUIZ_CORRECT_REWARD <= nonGameCap) {
+        if (canAwardQuizReward({
+          dailyCount,
+          maxDailyAnswers,
+          ngEarned,
+          reward: QUIZ_CORRECT_REWARD,
+          nonGameCap,
+        })) {
           prismEarnRateLimit.set(dailyKey, dailyCount + 1);
           prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + QUIZ_CORRECT_REWARD });
           earned = QUIZ_CORRECT_REWARD;
