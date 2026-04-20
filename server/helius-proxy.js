@@ -47,6 +47,7 @@ import {
   canAwardQuizReward,
   getHolderAdjustedCap,
 } from './services/economyRules.js';
+import { rateLimitCache, rateLimitStore } from './services/rateLimitStore.js';
 import { getCompositeTrustProfile, getSybilQuickVerdict, getSybilRewardPath, getSybilVerdict } from './services/sybilVerdict.js';
 
 // Load tweetnacl at module level (used by verifyWalletSignature as fallback)
@@ -2134,7 +2135,7 @@ const getQuestProgressSnapshot = (address, nowMs = Date.now()) => {
   const weekScoreEntries = scoreEntries.filter((entry) => parseTs(entry.playedAt || entry.timestamp) >= weekStart);
   const priorScoreEntries = scoreEntries.filter((entry) => parseTs(entry.playedAt || entry.timestamp) < dayStart);
 
-  const scanDailyEntry = prismEarnRateLimit.get(`scan_daily:${address}`);
+  const scanDailyEntry = getPrismEarnRateLimit(`scan_daily:${address}`);
   const scansToday = (scanDailyEntry && typeof scanDailyEntry === 'object' && scanDailyEntry.date === getToday())
     ? (Number(scanDailyEntry.count) || 0)
     : 0;
@@ -2353,6 +2354,84 @@ function calculateCompositeScore(input) {
       social: { challengesWon, challengePts, scanCount, scanPts: socialScanPts, questsCompleted, questPts: Math.min(16, Math.floor((questsCompleted || 0) * 1.1)), badgeBonus: socialBadgeBonus },
       engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
     },
+  };
+}
+
+const PUBLIC_REPUTATION_TTL_SECONDS = 300;
+
+function getQuestCompletionSummary(address) {
+  const qp = questProgress.get(address);
+  if (!qp?.quests) return { questsCompleted: 0, updatedAt: null };
+  let questsCompleted = 0;
+  for (const quest of Object.values(qp.quests)) {
+    if (quest?.completed) questsCompleted += 1;
+  }
+  return { questsCompleted, updatedAt: qp.updatedAt || null };
+}
+
+function getTournamentParticipationCount(address) {
+  const seen = new Set();
+  const allTournaments = [
+    ...Object.values(activeTournaments || {}).filter(Boolean),
+    ...(Array.isArray(tournamentHistory) ? tournamentHistory : []),
+  ];
+  for (const tournament of allTournaments) {
+    if (!tournament?.id) continue;
+    if (tournament.entries && Object.prototype.hasOwnProperty.call(tournament.entries, address)) {
+      seen.add(tournament.id);
+    }
+  }
+  return seen.size;
+}
+
+function formatRangerRankLabel(rankId) {
+  const normalized = String(rankId || 'cadet').trim().toLowerCase();
+  return normalized ? `${normalized[0].toUpperCase()}${normalized.slice(1)}` : 'Cadet';
+}
+
+function mapPublicSybilRisk(verdictKey) {
+  if (verdictKey === 'confirmed_sybil' || verdictKey === 'probable_sybil') return 'high';
+  if (verdictKey === 'cluster_linked' || verdictKey === 'suspicious') return 'medium';
+  return 'low';
+}
+
+function buildPublicReputationResponse(address) {
+  const walletEntry = walletDatabase.get(address);
+  if (!walletEntry) return null;
+
+  const compositeData = calculateCompositeScore(buildCompositeInput(address));
+  const sybilAnalysis = getRecentSybilAnalysis(address) || walletEntry.sybil || null;
+  const sybilVerdict = sybilAnalysis ? getSybilVerdict(sybilAnalysis) : null;
+  const rangerSnapshot = getServerRangerSnapshot(address, walletEntry);
+  const { questsCompleted, updatedAt: questUpdatedAt } = getQuestCompletionSummary(address);
+  const gamesPlayed = leaderboardEntries.filter((entry) => entry.address === address).length;
+  const tournamentsPlayed = getTournamentParticipationCount(address);
+  const updatedCandidates = [
+    walletEntry.lastSeenAt,
+    walletEntry.updatedAt,
+    walletEntry.composite?.updatedAt,
+    walletEntry.sybil?.updatedAt,
+    questUpdatedAt,
+  ]
+    .map((value) => Date.parse(String(value || '')))
+    .filter((value) => Number.isFinite(value));
+  const updatedAt = new Date(updatedCandidates.length > 0 ? Math.max(...updatedCandidates) : Date.now()).toISOString();
+
+  return {
+    address,
+    score: compositeData.compositeScore,
+    tier: compositeData.compositeTier,
+    sybilRisk: mapPublicSybilRisk(sybilVerdict?.key),
+    sybilConfidence: Math.max(0, Math.min(1, Number(sybilVerdict?.confidenceScore || 35) / 100)),
+    breakdown: compositeData.breakdown,
+    behavioralProof: {
+      rank: formatRangerRankLabel(rangerSnapshot.rank),
+      gamesPlayed,
+      questsCompleted,
+      tournamentsPlayed,
+    },
+    updatedAt,
+    ttl: PUBLIC_REPUTATION_TTL_SECONDS,
   };
 }
 
@@ -3780,67 +3859,6 @@ async function handleRevivesPostV1(req, res, url) {
   }
 }
 
-// f) POST /api/prism/earn — v1: simplified, no cooldowns for scan_wallet, accept client amount
-async function handlePrismEarnV1(req, res, url) {
-  if (!ipRateLimit('prism_earn', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-  try {
-    const {
-      address,
-      source,
-      amount,
-      description,
-    } = JSON.parse(await readBody(req));
-    if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
-    if (!source || !PRISM_EARN_MAX_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
-    const maxAllowed = PRISM_EARN_MAX_PER_CALL[source];
-    if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source}` });
-    let earned = Math.max(0, Math.floor(Number(amount)));
-    if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
-    // Apply daily caps (same caps as v2)
-    const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
-    const isHolder = mintedAddresses.has(address);
-    const gameCap = getHolderAdjustedCap(DAILY_GAME_COIN_CAP, isHolder);
-    const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
-    if (GAME_EARN_SOURCES.has(source)) {
-      const todayCoins = getGameCoinsToday(address);
-      if (todayCoins >= gameCap) return respondJson(res, 429, { error: 'Daily game coin cap reached', dailyRemaining: 0 });
-      let baseDelta = Math.min(earned, gameCap - todayCoins);
-      addGameCoinsToday(address, baseDelta);
-      const gameBoost = getStakingBoost(address);
-      earned = applyStakingBoostAfterCap(baseDelta, gameBoost);
-    } else {
-      const today = new Date().toISOString().slice(0, 10);
-      const ngKey = `nongame_daily:${address}`;
-      const ngEntry = prismEarnRateLimit.get(ngKey);
-      let ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
-      if (ngEarned >= nonGameCap) return respondJson(res, 429, { error: 'Daily earn cap reached', dailyRemaining: 0 });
-      earned = Math.min(earned, nonGameCap - ngEarned);
-      prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
-      const earnBoost = getStakingBoost(address);
-      earned = applyStakingBoostAfterCap(earned, earnBoost);
-    }
-    const prevBal = getCoinBalance(address);
-    const newBal = prevBal + earned;
-    setCoinBalance(address, newBal);
-    addCoinEarned(address, earned);
-    const wEarn = walletDatabase.get(address);
-    if (wEarn) { wEarn.coins = newBal; saveWalletDatabaseDebounced(); }
-    const bal = getPrismBalance(address);
-    const tx = {
-      id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      address, amount: earned, type: 'earn', source: source || 'unknown',
-      description: description || `Earned ${earned} Coins`,
-      timestamp: new Date().toISOString(),
-    };
-    const txs = prismTransactions.get(address) || [];
-    txs.unshift(tx);
-    if (txs.length > 500) txs.length = 500;
-    prismTransactions.set(address, txs);
-    debouncedSavePrism();
-    respondJson(res, 200, { balance: bal, earned });
-  } catch { respondJson(res, 400, { error: 'Invalid request body' }); }
-}
-
 // ═══ V2 MIGRATION: lazy account state seeding on first v2 request ════════════
 const V2_MIGRATION_REV = 1;
 
@@ -4035,9 +4053,9 @@ const server = http.createServer(async (req, res) => {
     // Rate limit: 6 challenges per minute per IP
     const challengeIp = getClientIp(req);
     const challengeRlKey = `authChallenge:${challengeIp}`;
-    const lastChallengeTs = prismEarnRateLimit.get(challengeRlKey) || 0;
+    const lastChallengeTs = getPrismEarnRateLimit(challengeRlKey) || 0;
     if (Date.now() - lastChallengeTs < 3_000) return respondJson(res, 429, { error: 'Too many auth challenges, try again later' });
-    prismEarnRateLimit.set(challengeRlKey, Date.now());
+    setPrismEarnRateLimit(challengeRlKey, Date.now());
     try {
       const body = await readBody(req);
       const parsed = safeParseJson(body);
@@ -4385,9 +4403,9 @@ const server = http.createServer(async (req, res) => {
       // Increment compareCount — per-pair-per-day limit (prevent inflation)
       const comparePairKey = `compare_pair:${[a, b].sort().join(':')}`;
       const compareToday = new Date().toISOString().slice(0, 10);
-      const comparePairEntry = prismEarnRateLimit.get(comparePairKey);
+      const comparePairEntry = getPrismEarnRateLimit(comparePairKey);
       if (!comparePairEntry || comparePairEntry.date !== compareToday) {
-        prismEarnRateLimit.set(comparePairKey, { date: compareToday });
+        setPrismEarnRateLimit(comparePairKey, { date: compareToday });
         for (const addr of [a, b]) {
           const w = walletDatabase.get(addr) || {};
           const ss = w.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
@@ -5221,14 +5239,14 @@ const server = http.createServer(async (req, res) => {
         // Apply NON_GAME_DAILY_EARN_CAP to achievement rewards
         const ngKey = `nongame_daily:${addr}`;
         const ngToday = new Date().toISOString().slice(0, 10);
-        const ngEntry = prismEarnRateLimit.get(ngKey);
+        const ngEntry = getPrismEarnRateLimit(ngKey);
         let ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === ngToday) ? (ngEntry.total || 0) : 0;
         const remaining = Math.max(0, NON_GAME_DAILY_EARN_CAP - ngEarned);
         const capped = Math.min(serverReward, remaining);
         if (capped > 0) {
           setCoinBalance(addr, getCoinBalance(addr) + capped);
           addCoinEarned(addr, capped);
-          prismEarnRateLimit.set(ngKey, { date: ngToday, total: ngEarned + capped });
+          setPrismEarnRateLimit(ngKey, { date: ngToday, total: ngEarned + capped });
         }
       }
       const entry = getWalletAchievements(addr);
@@ -5828,7 +5846,7 @@ const server = http.createServer(async (req, res) => {
       updateWalletEntry(addr, {
         firstSeenAt: wExisting.firstSeenAt || new Date().toISOString(),
         lastSeenAt: new Date().toISOString(),
-        scanCount: (wExisting.scanCount || 0) + ((() => { const scKey = `scan_daily:${addr}`; const scToday = new Date().toISOString().slice(0, 10); const sc = prismEarnRateLimit.get(scKey); if (sc && typeof sc === 'object' && sc.date === scToday && sc.count >= 5) return 0; prismEarnRateLimit.set(scKey, { date: scToday, count: ((sc && sc.date === scToday) ? sc.count : 0) + 1 }); return 1; })()),
+        scanCount: (wExisting.scanCount || 0) + ((() => { const scKey = `scan_daily:${addr}`; const scToday = new Date().toISOString().slice(0, 10); const sc = getPrismEarnRateLimit(scKey); if (sc && typeof sc === 'object' && sc.date === scToday && sc.count >= 5) return 0; setPrismEarnRateLimit(scKey, { date: scToday, count: ((sc && sc.date === scToday) ? sc.count : 0) + 1 }); return 1; })()),
         score,
         tier: computedTier,
         source: 'live',
@@ -6111,6 +6129,104 @@ const server = http.createServer(async (req, res) => {
       });
     }
     return;
+  }
+
+  // ── Sybil Blink — GET /api/actions/sybil/:address ──────────────────────────
+  // Solana Actions spec: https://docs.solana.com/developing/actions
+  if (pathname.startsWith('/api/actions/sybil/')) {
+    if (!ipRateLimit('actions', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+
+    // OPTIONS preflight — required by dial.to / blink.solana
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Expose-Headers': 'X-Action-Version',
+      });
+      res.end();
+      return;
+    }
+
+    if (req.method !== 'GET') {
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return;
+    }
+
+    const rawAddr = pathname.slice('/api/actions/sybil/'.length).split('?')[0].trim();
+
+    // Validate address
+    let validAddr;
+    try {
+      const { PublicKey: PK } = await import('@solana/web3.js');
+      new PK(rawAddr);
+      validAddr = rawAddr;
+    } catch {
+      respondJson(res, 400, { error: 'Invalid Solana address' });
+      return;
+    }
+
+    try {
+      // Resolve score/tier/risk — prefer sybil cache, fall back to lightweight compute
+      let score = 0;
+      let tier = 'unknown';
+      let risk = 'unknown';
+
+      // Try sybilCache first (populated by full sybil analysis)
+      const cachedSybil = sybilCache.get(validAddr);
+      const cachedWallet = walletDatabase.get(validAddr);
+
+      if (cachedSybil && Date.now() - cachedSybil.cachedAt < 3600_000) {
+        score = cachedSybil.analysis.trustScore ?? 0;
+        tier = cachedSybil.analysis.trustGrade ?? 'unknown';
+        risk = cachedSybil.analysis.riskLevel ?? 'unknown';
+      } else if (cachedWallet?._lastReputation) {
+        // Use cached /api/reputation response
+        const rep = cachedWallet._lastReputation;
+        score = rep.score ?? 0;
+        tier = rep.tier ?? rep.trustGrade ?? 'unknown';
+        risk = rep.riskLevel ?? 'unknown';
+      } else {
+        // No cached data — this address hasn't been indexed yet
+        respondJson(res, 404, { error: 'Address not indexed yet' });
+        return;
+      }
+
+      const shortAddr = `${validAddr.slice(0, 4)}…${validAddr.slice(-4)}`;
+
+      // Normalise score to /1000 if it came from reputation (already 0-1000)
+      // trustScore from sybil is 0-100, so scale it
+      const displayScore = score > 100 ? score : Math.round(score * 10);
+
+      const blinkPayload = {
+        type: 'action',
+        icon: 'https://identityprism.xyz/og-image.png',
+        title: 'Identity Prism — Sybil Snapshot',
+        description: `Check the sybil risk and reputation score for this Solana wallet: ${shortAddr}\n\nScore: ${displayScore}/1000  |  Tier: ${String(tier).toUpperCase()}  |  Risk: ${String(risk).toUpperCase()}\n\nPowered by Identity Prism behavioral + on-chain sybil detection.`,
+        label: 'View Full Report',
+        links: {
+          actions: [
+            {
+              label: 'Open Full Report',
+              href: `https://identityprism.xyz/?scan=${validAddr}`,
+            },
+          ],
+        },
+      };
+
+      // Apply Blink CORS headers explicitly on GET response
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Expose-Headers', 'X-Action-Version');
+
+      respondJson(res, 200, blinkPayload);
+      return;
+    } catch (error) {
+      console.error('[actions/sybil] failed for', rawAddr, error);
+      respondJson(res, 500, { error: 'Failed to compute sybil snapshot' });
+      return;
+    }
   }
 
   if (pathname === '/api/actions/view-app') {
@@ -7428,13 +7544,13 @@ const server = http.createServer(async (req, res) => {
     const gameToday = getGameCoinsToday ? getGameCoinsToday(address) : 0;
     // Non-game global
     const ngKey = `nongame_daily:${address}`;
-    const ngEntry = prismEarnRateLimit.get(ngKey);
+    const ngEntry = getPrismEarnRateLimit(ngKey);
     const nonGameToday = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
     // Sub-caps
-    const huntToday = prismEarnRateLimit.get(`subcap:${address}:sybil_hunt:${today}`) || 0;
-    const scanToday = prismEarnRateLimit.get(`subcap:${address}:scan_wallet:${today}`) || 0;
-    const quizToday = (prismEarnRateLimit.get(`quiz:${address}:${today}`) || 0) * QUIZ_CORRECT_REWARD;
-    const blackHoleToday = prismEarnRateLimit.get(`blackhole_cleanup:${address}:${today}`) || 0;
+    const huntToday = getPrismEarnRateLimit(`subcap:${address}:sybil_hunt:${today}`) || 0;
+    const scanToday = getPrismEarnRateLimit(`subcap:${address}:scan_wallet:${today}`) || 0;
+    const quizToday = (getPrismEarnRateLimit(`quiz:${address}:${today}`) || 0) * QUIZ_CORRECT_REWARD;
+    const blackHoleToday = getPrismEarnRateLimit(`blackhole_cleanup:${address}:${today}`) || 0;
     const isHolder = mintedAddresses.has(address);
     const gameCap = getHolderAdjustedCap(DAILY_GAME_COIN_CAP, isHolder);
     const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
@@ -7452,7 +7568,7 @@ const server = http.createServer(async (req, res) => {
 
   // ═══ PRISM Earn ═══
   if (pathname === '/api/prism/earn' && req.method === 'POST') {
-    if (!ipRateLimit('prism_earn', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+    if (!ipRateLimit('prism_earn_burst', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many earn requests, slow down' });
     const jwtAuth = requireJwt(req, res);
     if (!jwtAuth.ok) return;
     try {
@@ -7473,31 +7589,29 @@ const server = http.createServer(async (req, res) => {
       if (!source || !PRISM_EARN_MAX_PER_CALL[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
       const maxAllowed = PRISM_EARN_MAX_PER_CALL[source];
       if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
+      if (source === 'first_mint') {
+        if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
+        if (globalThis._firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
+        const firstMintWallet = walletDatabase.get(address);
+        if (firstMintWallet?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
+      }
       // Per-source rate limit with per-source cooldowns
       const rlKey = `${address}:${source || 'unknown'}`;
-      const lastEarn = prismEarnRateLimit.get(rlKey) || 0;
+      const lastEarn = getPrismEarnRateLimit(rlKey) || 0;
       const cooldownMs = PRISM_EARN_COOLDOWN_TABLE[source] ?? PRISM_EARN_COOLDOWN_DEFAULT;
       if (Date.now() - lastEarn < cooldownMs) {
         return respondJson(res, 429, { error: 'Rate limited — try again later', cooldownMs: cooldownMs - (Date.now() - lastEarn) });
       }
       // Global per-address rate limit (max 1 earn per 2 seconds regardless of source)
       const globalKey = `${address}:__global__`;
-      const lastGlobal = prismEarnRateLimit.get(globalKey) || 0;
+      const lastGlobal = getPrismEarnRateLimit(globalKey) || 0;
       if (Date.now() - lastGlobal < 2000) {
         return respondJson(res, 429, { error: 'Too many requests — slow down' });
       }
-      prismEarnRateLimit.set(globalKey, Date.now());
-      prismEarnRateLimit.set(rlKey, Date.now());
+      setPrismEarnRateLimit(globalKey, Date.now());
+      setPrismEarnRateLimit(rlKey, Date.now());
       if (prismEarnRateLimit.size > 5000) {
-        const now = Date.now();
-        const todayCleanup = new Date().toISOString().slice(0, 10);
-        for (const [k, v] of prismEarnRateLimit) {
-          if (typeof v === 'object' && v !== null && v.date) {
-            if (v.date < todayCleanup) prismEarnRateLimit.delete(k);
-            continue;
-          }
-          if (now - v > 7 * 24 * 60 * 60_000) prismEarnRateLimit.delete(k);
-        }
+        rateLimitStore.cleanup();
       }
       let earned = Math.max(0, Math.floor(Number(amount)));
       if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
@@ -7568,10 +7682,7 @@ const server = http.createServer(async (req, res) => {
 
         if (source === 'first_mint') {
           if (!globalThis._firstMintLocks) globalThis._firstMintLocks = new Set();
-          if (globalThis._firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
           globalThis._firstMintLocks.add(address);
-          const wfm = walletDatabase.get(address);
-          if (wfm?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
           updateWalletEntry(address, { _firstMintClaimed: true });
         }
         if (source === 'text_quest') {
@@ -7639,7 +7750,7 @@ const server = http.createServer(async (req, res) => {
         const SUB_CAPS = { sybil_hunt: DAILY_HUNT_CAP, scan_wallet: DAILY_SCAN_CAP };
         if (SUB_CAPS[source]) {
           const subKey = `subcap:${address}:${source}:${today}`;
-          const subEntry = prismEarnRateLimit.get(subKey) || 0;
+          const subEntry = getPrismEarnRateLimit(subKey) || 0;
           if (subEntry >= SUB_CAPS[source]) return respondJson(res, 429, { error: `Daily ${source.replace('_', ' ')} cap reached (${SUB_CAPS[source]} coins/day)`, dailyRemaining: 0 });
           if (scanRewardState && subEntry + earned > SUB_CAPS[source]) {
             return respondJson(res, 429, {
@@ -7648,13 +7759,13 @@ const server = http.createServer(async (req, res) => {
             });
           }
           if (!scanRewardState) earned = Math.min(earned, SUB_CAPS[source] - subEntry);
-          prismEarnRateLimit.set(subKey, subEntry + earned);
+          setPrismEarnRateLimit(subKey, subEntry + earned);
         }
         // Global non-game daily cap
         const isHolder = mintedAddresses.has(address);
         const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
         const ngKey = `nongame_daily:${address}`;
-        const ngEntry = prismEarnRateLimit.get(ngKey);
+        const ngEntry = getPrismEarnRateLimit(ngKey);
         let ngEarned = 0;
         if (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) {
           ngEarned = ngEntry.total || 0;
@@ -7667,7 +7778,7 @@ const server = http.createServer(async (req, res) => {
           });
         }
         if (!scanRewardState) earned = Math.min(earned, nonGameCap - ngEarned);
-        prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
+        setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + earned });
         // Apply staking boost AFTER cap (bonus coins don't count towards cap)
         const earnBoost = getStakingBoost(address);
         earned = applyStakingBoostAfterCap(earned, earnBoost);
@@ -7851,13 +7962,13 @@ const server = http.createServer(async (req, res) => {
 
       const today = new Date().toISOString().slice(0, 10);
       const bhKey = `blackhole_cleanup:${jwtAuth.address}:${today}`;
-      const bhToday = prismEarnRateLimit.get(bhKey) || 0;
+      const bhToday = getPrismEarnRateLimit(bhKey) || 0;
       earned = Math.max(0, Math.min(earned, DAILY_BLACKHOLE_CLEANUP_CAP - bhToday));
 
       const isHolder = mintedAddresses.has(jwtAuth.address);
       const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
       const ngKey = `nongame_daily:${jwtAuth.address}`;
-      const ngEntry = prismEarnRateLimit.get(ngKey);
+      const ngEntry = getPrismEarnRateLimit(ngKey);
       let ngEarned = 0;
       if (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) {
         ngEarned = ngEntry.total || 0;
@@ -7865,8 +7976,8 @@ const server = http.createServer(async (req, res) => {
       earned = Math.max(0, Math.min(earned, nonGameCap - ngEarned));
 
       if (earned > 0) {
-        prismEarnRateLimit.set(bhKey, bhToday + earned);
-        prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + earned });
+        setPrismEarnRateLimit(bhKey, bhToday + earned);
+        setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + earned });
       }
 
       let credited = earned;
@@ -9770,8 +9881,8 @@ const server = http.createServer(async (req, res) => {
     }
     // Fresh fetch: rate limited (5s per IP)
     const fsRlKey = `fundSrc:${getClientIp(req)}`;
-    if (Date.now() - (prismEarnRateLimit.get(fsRlKey) || 0) < 5_000) return respondJson(res, 429, { error: 'Rate limited' });
-    prismEarnRateLimit.set(fsRlKey, Date.now());
+    if (Date.now() - (getPrismEarnRateLimit(fsRlKey) || 0) < 5_000) return respondJson(res, 429, { error: 'Rate limited' });
+    setPrismEarnRateLimit(fsRlKey, Date.now());
     try {
       const { parsed } = await fetchParsedTransactions(address, 200);
       const { incoming } = extractSolTransfers(parsed, address);
@@ -9802,9 +9913,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sybil/cluster' && req.method === 'GET') {
     const clusterIp = getClientIp(req);
     const clusterRlKey = `sybilHeavy:${clusterIp}`;
-    const lastCluster = prismEarnRateLimit.get(clusterRlKey) || 0;
+    const lastCluster = getPrismEarnRateLimit(clusterRlKey) || 0;
     if (Date.now() - lastCluster < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
-    prismEarnRateLimit.set(clusterRlKey, Date.now());
+    setPrismEarnRateLimit(clusterRlKey, Date.now());
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     const cachedCluster = clusterCache.get(address);
@@ -9861,9 +9972,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sybil/circular-flow' && req.method === 'GET') {
     const circIp = getClientIp(req);
     const circRlKey = `sybilHeavy:${circIp}`;
-    const lastCirc = prismEarnRateLimit.get(circRlKey) || 0;
+    const lastCirc = getPrismEarnRateLimit(circRlKey) || 0;
     if (Date.now() - lastCirc < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
-    prismEarnRateLimit.set(circRlKey, Date.now());
+    setPrismEarnRateLimit(circRlKey, Date.now());
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
@@ -9884,9 +9995,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sybil/dark-pool' && req.method === 'GET') {
     const dpIp = getClientIp(req);
     const dpRlKey = `sybilHeavy:${dpIp}`;
-    const lastDp = prismEarnRateLimit.get(dpRlKey) || 0;
+    const lastDp = getPrismEarnRateLimit(dpRlKey) || 0;
     if (Date.now() - lastDp < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
-    prismEarnRateLimit.set(dpRlKey, Date.now());
+    setPrismEarnRateLimit(dpRlKey, Date.now());
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
@@ -10057,11 +10168,11 @@ const server = http.createServer(async (req, res) => {
       if (isCorrect) {
         const today = getToday();
         const dailyKey = `quiz:${address}:${today}`;
-        const dailyCount = prismEarnRateLimit.get(dailyKey) || 0;
+        const dailyCount = getPrismEarnRateLimit(dailyKey) || 0;
         const maxDailyAnswers = Math.floor(DAILY_QUIZ_CAP / QUIZ_CORRECT_REWARD);
 
         const ngKey = `nongame_daily:${address}`;
-        const ngEntry = prismEarnRateLimit.get(ngKey);
+        const ngEntry = getPrismEarnRateLimit(ngKey);
         const ngEarned = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
         const isHolder = mintedAddresses.has(address);
         const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
@@ -10073,8 +10184,8 @@ const server = http.createServer(async (req, res) => {
           reward: QUIZ_CORRECT_REWARD,
           nonGameCap,
         })) {
-          prismEarnRateLimit.set(dailyKey, dailyCount + 1);
-          prismEarnRateLimit.set(ngKey, { date: today, total: ngEarned + QUIZ_CORRECT_REWARD });
+          setPrismEarnRateLimit(dailyKey, dailyCount + 1);
+          setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + QUIZ_CORRECT_REWARD });
           earned = QUIZ_CORRECT_REWARD;
 
           const prevBal = getCoinBalance(address);
@@ -10109,9 +10220,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/scam-check' && req.method === 'POST') {
     const scamClientIp = getClientIp(req);
     const scamRlKey = `scam:${scamClientIp}`;
-    const lastScam = prismEarnRateLimit.get(scamRlKey) || 0;
+    const lastScam = getPrismEarnRateLimit(scamRlKey) || 0;
     if (Date.now() - lastScam < 10_000) return respondJson(res, 429, { error: 'Rate limited' });
-    prismEarnRateLimit.set(scamRlKey, Date.now());
+    setPrismEarnRateLimit(scamRlKey, Date.now());
     try {
       const { address } = JSON.parse(await readBody(req));
       if (!address) return respondJson(res, 400, { error: 'contract address required' });
@@ -10166,6 +10277,38 @@ const server = http.createServer(async (req, res) => {
     const entries = [...entryMap.values()].sort((a, b) => b.totalCoins - a.totalCoins || b.score - a.score || b.prismBalance - a.prismBalance);
     entries.forEach((e, i) => { e.rank = i + 1; });
     respondJson(res, 200, { entries: entries.slice(0, limit) });
+    return;
+  }
+
+  const publicReputationMatch = pathname.match(/^\/api\/v1\/reputation\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
+  if (publicReputationMatch && req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': resolveCorsOrigin(req),
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+    });
+    res.end();
+    return;
+  }
+
+  if (publicReputationMatch && req.method === 'GET') {
+    if (!ipRateLimit('public_reputation', getClientIp(req), 60, 60000)) {
+      return respondJson(res, 429, { error: 'Too many reputation requests' });
+    }
+
+    const address = publicReputationMatch[1];
+    const response = buildPublicReputationResponse(address);
+    if (!response) return respondJson(res, 404, { error: 'address not found' });
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': resolveCorsOrigin(req),
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Cache-Control': `public, max-age=${PUBLIC_REPUTATION_TTL_SECONDS}`,
+    });
+    res.end(JSON.stringify(response));
     return;
   }
 
@@ -11369,14 +11512,14 @@ const server = http.createServer(async (req, res) => {
     const cachedConst = constellationCache.get(address);
     if (cachedConst && Date.now() - cachedConst.ts < 600_000) { respondJson(res, 200, cachedConst.data); return; }
     const constRlKey = `constellation:${address}`;
-    const lastConst = prismEarnRateLimit.get(constRlKey) || 0;
+    const lastConst = getPrismEarnRateLimit(constRlKey) || 0;
     if (Date.now() - lastConst < 10_000) {
       const cached = constellationCache.get(address);
       if (cached && Date.now() - cached.ts < 600_000) { return respondJson(res, 200, cached.data); }
       return respondJson(res, 429, { error: 'Constellation data is being fetched, try again in 10s' });
     }
     reputationRateLimit.set(constIpRlKey, Date.now());
-    prismEarnRateLimit.set(constRlKey, Date.now());
+    setPrismEarnRateLimit(constRlKey, Date.now());
     try {
       const parsedLimit = Math.min(parseInt(url.searchParams.get('limit') || '500', 10) || 500, 500);
       const [{ parsed }, enhancedResult] = await Promise.all([
@@ -11469,10 +11612,10 @@ const server = http.createServer(async (req, res) => {
         // Daily limit: 10 constellation explorations per day (self-explore doesn't count)
         const ceKey = `ce_daily:${viewerAddr}`;
         const ceToday = new Date().toISOString().slice(0, 10);
-        const ce = prismEarnRateLimit.get(ceKey);
+        const ce = getPrismEarnRateLimit(ceKey);
         const ceDayCount = (ce && typeof ce === 'object' && ce.date === ceToday) ? ce.count : 0;
         if (ceDayCount < 10) {
-          prismEarnRateLimit.set(ceKey, { date: ceToday, count: ceDayCount + 1 });
+          setPrismEarnRateLimit(ceKey, { date: ceToday, count: ceDayCount + 1 });
           const wViewer = walletDatabase.get(viewerAddr) || {};
           const ssViewer = wViewer.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
           ssViewer.constellationExplored = (ssViewer.constellationExplored || 0) + 1;
@@ -12137,7 +12280,36 @@ function ipRateLimit(prefix, ip, maxReqs, windowMs) {
 }
 
 // PRISM earn rate-limit: per-source cooldowns
-const prismEarnRateLimit = new Map(); // key: `${address}:${source}` → timestamp
+const prismEarnRateLimit = rateLimitCache; // write-through cache in front of SQLite
+
+function getPrismEarnRateLimitTtlSeconds(key, value) {
+  if (value && typeof value === 'object' && typeof value.date === 'string') return 2 * 24 * 60 * 60;
+  if (
+    key.startsWith('nongame_daily:')
+    || key.startsWith('scan_daily:')
+    || key.startsWith('quiz:')
+    || key.startsWith('blackhole_cleanup:')
+    || key.startsWith('subcap:')
+  ) {
+    return 2 * 24 * 60 * 60;
+  }
+  if (key.startsWith('authChallenge:')) return 60;
+  if (key.startsWith('fundSrc:')) return 60;
+  if (key.startsWith('sybilHeavy:')) return 120;
+  if (key.startsWith('scam:')) return 120;
+  if (key.startsWith('constellation:')) return 120;
+  if (key.endsWith(':__global__')) return 60;
+
+  const parts = key.split(':');
+  const source = parts[0] === 'subcap' ? (parts[2] || '') : (parts[1] || '');
+  const cooldownMs = PRISM_EARN_COOLDOWN_TABLE[source] ?? PRISM_EARN_COOLDOWN_DEFAULT;
+  return Math.max(60, Math.ceil((cooldownMs * 2) / 1000));
+}
+
+const getPrismEarnRateLimit = (key) => rateLimitStore.get(key);
+const setPrismEarnRateLimit = (key, value, ttlSeconds = getPrismEarnRateLimitTtlSeconds(key, value)) => {
+  rateLimitStore.set(key, value, ttlSeconds);
+};
 
 // ── Quiz System: Blockchain Trivia ──
 const quizAnswers = new Map(); // qId → { correct, expiresAt }
@@ -13307,21 +13479,7 @@ setInterval(() => {
   if (enhancedTxCache.size > 200) { const it = enhancedTxCache.keys(); for (let i = enhancedTxCache.size - 200; i > 0; i--) enhancedTxCache.delete(it.next().value); }
   if (reputationV2RateLimit.size > 1000) { const it = reputationV2RateLimit.keys(); for (let i = reputationV2RateLimit.size - 1000; i > 0; i--) reputationV2RateLimit.delete(it.next().value); }
   if (reputationRateLimit.size > 1000) { const it = reputationRateLimit.keys(); for (let i = reputationRateLimit.size - 1000; i > 0; i--) reputationRateLimit.delete(it.next().value); }
-  // prismEarnRateLimit: remove entries older than their source cooldown (max 7d)
-  if (prismEarnRateLimit.size > 0) {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    for (const [k, v] of prismEarnRateLimit) {
-      // Handle object-format entries (nongame_daily:*, firstMintLocks)
-      if (typeof v === 'object' && v !== null && v.date) {
-        if (v.date < todayStr) prismEarnRateLimit.delete(k);
-        continue;
-      }
-      const src = k.split(':')[1] || '';
-      const cd = PRISM_EARN_COOLDOWN_TABLE[src] ?? PRISM_EARN_COOLDOWN_DEFAULT;
-      if (now - v > cd * 2) prismEarnRateLimit.delete(k);
-    }
-  }
-  if (prismEarnRateLimit.size > 3000) { const it = prismEarnRateLimit.keys(); for (let i = prismEarnRateLimit.size - 3000; i > 0; i--) prismEarnRateLimit.delete(it.next().value); }
+  rateLimitStore.cleanup();
 }, 300_000);
 
 server.keepAliveTimeout = 65000;

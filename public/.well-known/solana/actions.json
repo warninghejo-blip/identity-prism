@@ -11,6 +11,10 @@
     {
       "pathPattern": "/api/actions/share",
       "apiPath": "/api/actions/share"
+    },
+    {
+      "pathPattern": "/api/actions/sybil/*",
+      "apiPath": "/api/actions/sybil/*"
     }
   ]
 }
