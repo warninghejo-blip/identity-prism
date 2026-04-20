@@ -3,7 +3,6 @@ import https from 'node:https';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
 import { URL, fileURLToPath } from 'node:url';
 import {
   Connection,
@@ -30,9 +29,9 @@ import {
 } from '@metaplex-foundation/umi';
 import { create, fetchCollection, fetchAsset, mplCore, burnV1, updateV1 } from '@metaplex-foundation/mpl-core';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
-import jwt from 'jsonwebtoken';
 import { createRequire } from 'node:module';
 import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
+import { JWT_TTL, createJwt, createOptionalJwt, createRequireJwt, verifyJwt } from './services/auth.js';
 import { calculateIdentity } from './services/scoring.js';
 import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
 import {
@@ -61,6 +60,14 @@ import {
   getAllDocs as fbGetAll,
   batchSet as fbBatchSet,
 } from './services/firebase.js';
+import { createLeaderboardStore } from './data/leaderboards.js';
+import { createMintedAddressesStore } from './data/mintedAddresses.js';
+import { createScoreHistoryStore } from './data/scoreHistory.js';
+import { registerAuthRoute } from './routes/auth.js';
+import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
+import { ipRateLimit } from './utils/ipRateLimit.js';
+import { readBody } from './utils/readBody.js';
+import { respondJson } from './utils/respondJson.js';
 
 const loadEnvFile = (filePath) => {
   try {
@@ -654,18 +661,6 @@ function getApiMeta(req, pathname) {
   };
 }
 
-// ── JWT Auth ──────────────────────────────────────────────────────────────────
-const JWT_SECRET_FILE = path.join(process.cwd(), '.jwt_secret');
-const JWT_SECRET = (() => {
-  if (process.env.JWT_SECRET) return process.env.JWT_SECRET.trim();
-  try {
-    if (fs.existsSync(JWT_SECRET_FILE)) return fs.readFileSync(JWT_SECRET_FILE, 'utf8').trim();
-  } catch {}
-  const secret = crypto.randomBytes(32).toString('hex');
-  try { fs.writeFileSync(JWT_SECRET_FILE, secret, 'utf8'); } catch (e) { console.warn('[jwt] Could not persist secret:', e.message); }
-  return secret;
-})();
-const JWT_TTL = '24h';
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 min nonce window
 const authChallenges = new Map(); // nonce → { address, expiresAt }
 
@@ -675,17 +670,6 @@ const _referralSalt = process.env.REFERRAL_SALT || (() => {
   console.warn('[referral] REFERRAL_SALT env var not set — using random per-process fallback. Referral codes will change on restart!');
   return fallback;
 })();
-
-// Trusted proxy IPs — only trust X-Forwarded-For from these sources
-const TRUSTED_PROXIES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-/** Extract real client IP, only trusting X-Forwarded-For from trusted proxies */
-function getClientIp(req) {
-  const socketIp = req.socket?.remoteAddress || 'unknown';
-  if (TRUSTED_PROXIES.has(socketIp) && req.headers['x-forwarded-for']) {
-    return req.headers['x-forwarded-for'].split(',')[0].trim();
-  }
-  return socketIp;
-}
 
 // Clean up expired challenges every minute
 setInterval(() => {
@@ -773,51 +757,8 @@ function verifyWalletSignature(address, message, signatureRaw) {
   }
 }
 
-/**
- * Middleware: verify Authorization: Bearer <jwt> header.
- * Returns { ok: true, address } or sends 401 and returns { ok: false }.
- */
-function requireJwt(req, res) {
-  const authHeader = req.headers['authorization'] ?? '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) {
-    respondJson(res, 401, { error: 'Missing auth token. Call /api/auth/challenge then /api/auth/token first.' });
-    return { ok: false };
-  }
-  try {
-    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
-    const clientIp = getClientIp(req);
-    if (payload.address && clientIp) {
-      const ips = walletIpLog.get(payload.address) || new Set();
-      ips.add(clientIp);
-      walletIpLog.set(payload.address, ips);
-    }
-    return { ok: true, address: payload.address };
-  } catch {
-    respondJson(res, 401, { error: 'Invalid or expired auth token' });
-    return { ok: false };
-  }
-}
-
-/**
- * Optional JWT: if token present and valid, returns { ok: true, address }.
- * If no token, returns { ok: true, address: null } (caller must get address elsewhere).
- * Only returns { ok: false } if token IS present but invalid/expired.
- */
-function optionalJwt(req, res) {
-  const authHeader = req.headers['authorization'] ?? '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-  if (!token) {
-    return { ok: true, address: null };
-  }
-  try {
-    const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
-    return { ok: true, address: payload.address };
-  } catch {
-    // Token present but invalid — reject to prevent spoofing
-    return { ok: false, address: null };
-  }
-}
+const requireJwt = createRequireJwt({ walletIpLog, getClientIp, respondJson });
+const optionalJwt = createOptionalJwt();
 
 const blackHoleUsedSignatures = globalThis._usedBlackHoleSigMap || (() => {
   const map = new Map();
@@ -1267,80 +1208,24 @@ if (!fs.existsSync(gameSessionStoreDir)) {
 loadGameSessionProofs();
 pruneGameSessionProofs();
 
-// ── Server-side Leaderboard persistence ──
-const leaderboardEntries = [];
-
-const loadLeaderboard = () => {
-  try {
-    if (!fs.existsSync(LEADERBOARD_STORE_FILE)) return;
-    const raw = fs.readFileSync(LEADERBOARD_STORE_FILE, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    const entries = Array.isArray(parsed?.entries) ? parsed.entries : (Array.isArray(parsed) ? parsed : []);
-    leaderboardEntries.length = 0;
-    for (const e of entries) {
-      if (e && typeof e.address === 'string' && typeof e.score === 'number') {
-        leaderboardEntries.push(e);
-      }
-    }
-    leaderboardEntries.sort((a, b) => b.score - a.score);
-    if (leaderboardEntries.length > LEADERBOARD_MAX_ENTRIES) leaderboardEntries.length = LEADERBOARD_MAX_ENTRIES;
-    console.log(`[leaderboard] Loaded ${leaderboardEntries.length} entries`);
-  } catch (err) {
-    console.warn('[leaderboard] Failed to load', err);
-  }
-};
-
 let leaderboardCache = null;
 let leaderboardCacheTime = 0;
+const {
+  leaderboardEntries,
+  persistLeaderboard: rawPersistLeaderboard,
+  submitLeaderboardEntry,
+  initLeaderboardStore,
+} = createLeaderboardStore({
+  storeFile: LEADERBOARD_STORE_FILE,
+  maxEntries: LEADERBOARD_MAX_ENTRIES,
+});
 
 const persistLeaderboard = () => {
   leaderboardCache = null; // invalidate cache on write
-  const tmp = LEADERBOARD_STORE_FILE + '.tmp';
-  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), entries: leaderboardEntries }, null, 2))
-    .then(() => fs.promises.rename(tmp, LEADERBOARD_STORE_FILE))
-    .catch(err => console.warn('[leaderboard] Failed to persist', err));
+  rawPersistLeaderboard();
 };
 
-const submitLeaderboardEntry = (entry) => {
-  const { address, score, playedAt, txSignature, gameType } = entry;
-  if (!address || typeof score !== 'number' || score <= 0) return null;
-  const gt = gameType || 'orbit';
-  // Find existing entry for same address + gameType
-  const existing = leaderboardEntries.findIndex((e) => e.address === address && (e.gameType || 'orbit') === gt);
-  if (existing !== -1) {
-    if (score > leaderboardEntries[existing].score) {
-      leaderboardEntries[existing] = { address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || leaderboardEntries[existing].txSignature, gameType: gt };
-    } else if (txSignature && !leaderboardEntries[existing].txSignature) {
-      leaderboardEntries[existing].txSignature = txSignature;
-    } else {
-      return leaderboardEntries[existing];
-    }
-  } else {
-    leaderboardEntries.push({ address, score, playedAt: playedAt || new Date().toISOString(), txSignature: txSignature || undefined, gameType: gt });
-  }
-  leaderboardEntries.sort((a, b) => b.score - a.score);
-  if (leaderboardEntries.length > LEADERBOARD_MAX_ENTRIES) leaderboardEntries.length = LEADERBOARD_MAX_ENTRIES;
-  persistLeaderboard();
-  return leaderboardEntries.find((e) => e.address === address && (e.gameType || 'orbit') === gt) || null;
-};
-
-loadLeaderboard();
-// Backfill gameType for old entries
-leaderboardEntries.forEach(e => { if (!e.gameType) e.gameType = 'orbit'; });
-// Clean cheated orbit/gravity scores > 600
-const preClean = leaderboardEntries.length;
-for (let i = leaderboardEntries.length - 1; i >= 0; i--) {
-  const e = leaderboardEntries[i];
-  const gt = e.gameType || 'orbit';
-  if ((gt === 'orbit' || gt === 'gravity') && e.score > 600) {
-    leaderboardEntries.splice(i, 1);
-  }
-}
-if (leaderboardEntries.length < preClean) {
-  console.log(`[leaderboard] Cleaned ${preClean - leaderboardEntries.length} cheated entries (score > 600)`);
-  persistLeaderboard();
-}
+initLeaderboardStore();
 
 // ── Server-side Coin balance persistence ──
 const COINS_STORE_FILE = process.env.COINS_STORE_FILE
@@ -1437,111 +1322,33 @@ const setCoinBalance = (address, coins) => {
 
 // ── Server-side Minted address tracking ──
 const MINTED_ADDRESSES_FILE = path.join(METADATA_DIR, 'minted-addresses.json');
-const mintedAddresses = new Set();
-
-const loadMintedAddresses = () => {
-  try {
-    if (!fs.existsSync(MINTED_ADDRESSES_FILE)) return;
-    const raw = fs.readFileSync(MINTED_ADDRESSES_FILE, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    const addresses = Array.isArray(parsed?.addresses) ? parsed.addresses : (Array.isArray(parsed) ? parsed : []);
-    for (const addr of addresses) {
-      if (typeof addr === 'string' && addr.trim()) mintedAddresses.add(addr.trim());
-    }
-    console.log(`[minted] Loaded ${mintedAddresses.size} minted addresses`);
-  } catch (err) {
-    console.warn('[minted] Failed to load', err);
-  }
-};
-
-const saveMintedAddresses = () => {
-  const tmp = MINTED_ADDRESSES_FILE + '.tmp';
-  fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), addresses: [...mintedAddresses] }, null, 2), 'utf8')
-    .then(() => fs.promises.rename(tmp, MINTED_ADDRESSES_FILE))
-    .catch(err => console.warn('[minted] Failed to persist', err));
-};
+const {
+  mintedAddresses,
+  loadMintedAddresses,
+  saveMintedAddresses,
+} = createMintedAddressesStore({
+  storeFile: MINTED_ADDRESSES_FILE,
+});
 
 // mintedAddresses loaded in initData()
 
 // ── Server-side Score History (per wallet, last 20 scores) ──
 const SCORE_HISTORY_FILE = path.join(METADATA_DIR, 'score-history.json');
-const scoreHistory = new Map(); // address -> { scores: [{ score, tier, date }], lastUpdated }
 const SCORE_HISTORY_MAX = 20;
-
-const loadScoreHistory = async () => {
-  // Try Firestore first
-  if (fbAvailable()) {
-    try {
-      const docs = await fbGetAll('scoreHistory');
-      if (docs.size > 0) {
-        for (const [addr, data] of docs) {
-          if (Array.isArray(data.scores)) {
-            scoreHistory.set(addr, { scores: data.scores.slice(0, SCORE_HISTORY_MAX), lastUpdated: data.lastUpdated || null });
-          }
-        }
-        console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets from Firestore`);
-        return;
-      }
-    } catch (err) {
-      console.warn('[score-history] Firestore load failed, falling back to JSON:', err.message);
-    }
-  }
-  // Fallback to JSON
-  try {
-    if (!fs.existsSync(SCORE_HISTORY_FILE)) return;
-    const raw = fs.readFileSync(SCORE_HISTORY_FILE, 'utf8');
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw);
-    const data = parsed?.data || {};
-    for (const [addr, entry] of Object.entries(data)) {
-      if (Array.isArray(entry.scores)) {
-        scoreHistory.set(addr, { scores: entry.scores.slice(0, SCORE_HISTORY_MAX), lastUpdated: entry.lastUpdated || null });
-      }
-    }
-    console.log(`[score-history] Loaded history for ${scoreHistory.size} wallets from JSON`);
-    // Auto-migrate to Firestore
-    if (scoreHistory.size > 0 && fbAvailable()) {
-      console.log('[score-history] Migrating JSON data to Firestore...');
-      fbBatchSet('scoreHistory', [...scoreHistory.entries()])
-        .then(() => console.log('[score-history] Migration complete'))
-        .catch(err => console.warn('[score-history] Migration failed:', err.message));
-    }
-  } catch (err) {
-    console.warn('[score-history] Failed to load', err);
-  }
-};
-
-const persistScoreHistory = async () => {
-  try {
-    const obj = {};
-    for (const [k, v] of scoreHistory) obj[k] = v;
-    const tmp = SCORE_HISTORY_FILE + '.tmp';
-    await fs.promises.writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), data: obj }, null, 2));
-    await fs.promises.rename(tmp, SCORE_HISTORY_FILE);
-  } catch (err) {
-    console.warn('[score-history] Failed to persist', err);
-  }
-};
-
-const getScoreHistory = (address) => {
-  return scoreHistory.get(address) || { scores: [], lastUpdated: null };
-};
-
-const addScoreEntry = (address, score, tier) => {
-  const entry = scoreHistory.get(address) || { scores: [], lastUpdated: null };
-  const now = new Date().toISOString();
-  entry.scores.unshift({ score, tier, date: now });
-  if (entry.scores.length > SCORE_HISTORY_MAX) entry.scores.length = SCORE_HISTORY_MAX;
-  entry.lastUpdated = now;
-  scoreHistory.set(address, entry);
-  persistScoreHistory();
-  if (fbAvailable()) {
-    fbSet('scoreHistory', address, { scores: entry.scores, lastUpdated: entry.lastUpdated })
-      .catch(() => {});
-  }
-  return entry;
-};
+const {
+  scoreHistory,
+  loadScoreHistory,
+  persistScoreHistory,
+  getScoreHistory,
+  addScoreEntry,
+} = createScoreHistoryStore({
+  storeFile: SCORE_HISTORY_FILE,
+  maxEntries: SCORE_HISTORY_MAX,
+  fbAvailable,
+  fbGetAll,
+  fbSet,
+  fbBatchSet,
+});
 
 // scoreHistory loaded async in initData()
 
@@ -2925,23 +2732,6 @@ const applyCors = (req, res) => {
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 };
 
-const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB hard limit
-const readBody = (req) => new Promise((resolve, reject) => {
-  let data = '';
-  let size = 0;
-  req.on('data', (chunk) => {
-    size += chunk.length;
-    if (size > MAX_BODY_SIZE) {
-      req.destroy();
-      reject(new Error('Request body too large'));
-      return;
-    }
-    data += chunk;
-  });
-  req.on('end', () => resolve(data));
-  req.on('error', reject);
-});
-
 const getBaseUrl = (req) => {
   if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
   // Only trust forwarded headers from trusted proxies (same as getClientIp)
@@ -2955,31 +2745,6 @@ const getBaseUrl = (req) => {
   }
   const host = req.headers.host;
   return host ? `http://${host}` : '';
-};
-
-const respondJson = (res, status, payload) => {
-  if (res.headersSent) return;
-  const body = JSON.stringify(payload);
-  const acceptEncoding = String(res.req?.headers?.['accept-encoding'] ?? '');
-  if (body.length > 256 && acceptEncoding.includes('gzip')) {
-    zlib.gzip(Buffer.from(body), (err, compressed) => {
-      if (res.headersSent) return;
-      if (err || !compressed) {
-        res.writeHead(status, { 'Content-Type': 'application/json' });
-        res.end(body);
-        return;
-      }
-      res.writeHead(status, {
-        'Content-Type': 'application/json',
-        'Content-Encoding': 'gzip',
-        'Content-Length': compressed.length,
-      });
-      res.end(compressed);
-    });
-    return;
-  }
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(body);
 };
 
 const safeParseJson = (raw) => {
@@ -4048,91 +3813,20 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // ── Auth: issue challenge nonce ──
-  if (pathname === '/api/auth/challenge' && req.method === 'POST') {
-    // Rate limit: 6 challenges per minute per IP
-    const challengeIp = getClientIp(req);
-    const challengeRlKey = `authChallenge:${challengeIp}`;
-    const lastChallengeTs = getPrismEarnRateLimit(challengeRlKey) || 0;
-    if (Date.now() - lastChallengeTs < 3_000) return respondJson(res, 429, { error: 'Too many auth challenges, try again later' });
-    setPrismEarnRateLimit(challengeRlKey, Date.now());
-    try {
-      const body = await readBody(req);
-      const parsed = safeParseJson(body);
-      const address = typeof parsed?.address === 'string' ? parsed.address.trim() : '';
-      if (!address) { respondJson(res, 400, { error: 'address required' }); return; }
-      try { new PublicKey(address); } catch { respondJson(res, 400, { error: 'Invalid address' }); return; }
-      const nonce = crypto.randomBytes(16).toString('hex');
-      const message = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
-      authChallenges.set(nonce, { address, message, expiresAt: Date.now() + AUTH_CHALLENGE_TTL_MS });
-      respondJson(res, 200, { nonce, message });
-    } catch (e) {
-      respondJson(res, 500, { error: 'Challenge failed' });
-    }
-    return;
-  }
-
-  // ── Auth: verify signature, issue JWT ──
-  if (pathname === '/api/auth/token' && req.method === 'POST') {
-    const rlIp = getClientIp(req);
-    const rlKey = `authToken:${rlIp}`;
-    const lastAuth = reputationRateLimit.get(rlKey) || 0;
-    if (Date.now() - lastAuth < 5000) {
-      return respondJson(res, 429, { error: 'Rate limited — 5s cooldown' });
-    }
-    reputationRateLimit.set(rlKey, Date.now());
-    try {
-      const parsed = safeParseJson(await readBody(req));
-      const address = typeof parsed?.address === 'string' ? parsed.address.trim() : '';
-      const { nonce, signature } = parsed ?? {};
-      if (!address || !nonce || !signature) {
-        respondJson(res, 400, { error: 'address, nonce, and signature required' }); return;
-      }
-      const challenge = authChallenges.get(nonce);
-      if (!challenge) {
-        console.warn('[auth:token] nonce not found in authChallenges. Map size:', authChallenges.size);
-        respondJson(res, 401, { error: 'Invalid or expired nonce' }); return;
-      }
-      if (challenge.address !== address) {
-        console.warn('[auth:token] address mismatch:', { expected: challenge.address.slice(0, 8), got: address.slice(0, 8) });
-        respondJson(res, 401, { error: 'Address mismatch' }); return;
-      }
-      if (challenge.expiresAt < Date.now()) {
-        authChallenges.delete(nonce);
-        respondJson(res, 401, { error: 'Challenge expired' }); return;
-      }
-      // Use the STORED challenge message (the one wallet actually signed)
-      const challengeMessage = challenge.message;
-      // Also reconstruct for comparison logging
-      const reconstructed = `Identity Prism auth\nAddress: ${address}\nNonce: ${nonce}`;
-      const messagesMatch = challengeMessage === reconstructed;
-
-      // Try stored message first (wallet signed THIS), then reconstructed as fallback
-      let verified = verifyWalletSignature(address, challengeMessage, signature);
-      if (!verified && !messagesMatch) {
-        console.warn('[auth] Stored message failed, trying reconstructed...');
-        verified = verifyWalletSignature(address, reconstructed, signature);
-      }
-      if (!verified) {
-        // Log detailed info for debugging
-        console.warn('[auth] Signature verification failed', {
-          address: address.slice(0, 8),
-          nonce: nonce.slice(0, 8),
-          sigLen: signature?.length,
-          sigType: typeof signature,
-          sigPreview: typeof signature === 'string' ? signature.slice(0, 16) + '...' : 'N/A',
-          messagesMatch,
-          challengeMsgLen: challengeMessage.length,
-        });
-        respondJson(res, 401, { error: 'Invalid signature' }); return;
-      }
-      authChallenges.delete(nonce); // one-time use
-      const token = jwt.sign({ address }, JWT_SECRET, { expiresIn: JWT_TTL, algorithm: 'HS256', issuer: 'identity-prism', audience: 'identity-prism-api' });
-      console.info('[auth] JWT issued', { address: address.slice(0, 8) });
-      respondJson(res, 200, { token, expiresIn: JWT_TTL });
-    } catch (e) {
-      respondJson(res, 500, { error: 'Auth failed' });
-    }
+  if (await registerAuthRoute(req, res, url, pathname, {
+    getClientIp,
+    getPrismEarnRateLimit,
+    setPrismEarnRateLimit,
+    readBody,
+    safeParseJson,
+    respondJson,
+    authChallenges,
+    authChallengeTtlMs: AUTH_CHALLENGE_TTL_MS,
+    reputationRateLimit,
+    verifyWalletSignature,
+    createJwt,
+    jwtTtl: JWT_TTL,
+  })) {
     return;
   }
 
@@ -5364,7 +5058,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const authHeader = req.headers['authorization'];
       if (authHeader && authHeader.startsWith('Bearer ')) {
-        const decoded = jwt.verify(authHeader.slice(7), JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
+        const decoded = verifyJwt(authHeader.slice(7));
         if (decoded.address) userAddr = decoded.address;
       }
     } catch {}
@@ -11267,7 +10961,7 @@ const server = http.createServer(async (req, res) => {
     let jwtAuth;
     if (urlToken && typeof urlToken === 'string') {
       try {
-        const payload = jwt.verify(urlToken, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
+        const payload = verifyJwt(urlToken);
         jwtAuth = { ok: true, address: payload.address };
       } catch {
         respondJson(res, 401, { error: 'Invalid or expired auth token' });
@@ -12264,19 +11958,6 @@ function getPrismBalance(address) {
   const coins = getCoinBalance(address);
   const stats = getCoinStats(address);
   return { address, balance: coins, totalEarned: stats.totalEarned, totalSpent: stats.totalSpent, lastUpdated: new Date().toISOString() };
-}
-
-// Generic per-IP rate limiter: returns true if allowed, false if rate-limited
-const _ipRateLimits = new Map(); // key: `${prefix}:${ip}` → { count, resetAt }
-function ipRateLimit(prefix, ip, maxReqs, windowMs) {
-  const key = `${prefix}:${ip}`;
-  const now = Date.now();
-  let entry = _ipRateLimits.get(key);
-  if (!entry || now > entry.resetAt) { entry = { count: 0, resetAt: now + windowMs }; _ipRateLimits.set(key, entry); }
-  if (++entry.count > maxReqs) return false;
-  // Periodic cleanup (every 10k entries)
-  if (_ipRateLimits.size > 10000) { for (const [k, v] of _ipRateLimits) { if (now > v.resetAt) _ipRateLimits.delete(k); } }
-  return true;
 }
 
 // PRISM earn rate-limit: per-source cooldowns

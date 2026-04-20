@@ -132,4 +132,6 @@ twitter-bot-python/.env.server
 virezat/
 google-services.json
 prism_data.json
-server/data/
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
