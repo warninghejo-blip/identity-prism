@@ -106,6 +106,7 @@ import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
 import { readBody } from './utils/readBody.js';
 import { respondJson } from './utils/respondJson.js';
+import * as Sentry from '@sentry/node';
 
 const loadEnvFile = (filePath) => {
   try {
@@ -168,6 +169,22 @@ const getCachedSkrPriceUsd = async () => {
 
 loadEnvFile(process.env.ENV_PATH ?? path.join(process.cwd(), '.env'));
 initFirebase();
+
+// Sentry — optional, enabled only when SENTRY_DSN is set
+const SENTRY_DSN = process.env.SENTRY_DSN;
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    tracesSampleRate: 0.1,
+    environment: process.env.NODE_ENV || 'staging',
+    release: process.env.RELEASE || 'unknown',
+    integrations: [
+      Sentry.httpIntegration(),
+      Sentry.onUncaughtExceptionIntegration({ exitEvenIfOtherHandlersAreRegistered: false }),
+    ],
+  });
+  console.log('[sentry] initialized');
+}
 
 const PORT = Number(process.env.PORT ?? 3000);
 const HOST = (process.env.HOST ?? '0.0.0.0').trim() || '0.0.0.0';

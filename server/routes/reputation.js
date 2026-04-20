@@ -2,22 +2,28 @@ import { PublicKey } from '@solana/web3.js';
 
 function registerReputationRoute(ctx) {
   const {
-    ipRateLimit,
-    getClientIp,
-    respondJson,
-    sybilCache,
-    walletDatabase,
-    resolveCorsOrigin,
-    buildPublicReputationResponse,
-    publicReputationTtlSeconds,
-    reputationV2RateLimit,
-    fetchIdentitySnapshot,
-    getScoreHistory,
-    getCoinBalance,
-    calculateCompositeScore,
-    buildCompositeInput,
-    achievements,
-    getSybilVerdict,
+    core: {
+      ipRateLimit,
+      getClientIp,
+      respondJson,
+      resolveCorsOrigin,
+    },
+    wallet: {
+      walletDatabase,
+      getScoreHistory,
+      getCoinBalance,
+      achievements,
+    },
+    sybil: {
+      sybilCache,
+      buildPublicReputationResponse,
+      publicReputationTtlSeconds,
+      reputationV2RateLimit,
+      fetchIdentitySnapshot,
+      calculateCompositeScore,
+      buildCompositeInput,
+      getSybilVerdict,
+    },
   } = ctx;
 
   return async function handleReputationRoute(req, res, url, pathname) {

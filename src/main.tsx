@@ -2,8 +2,19 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Buffer } from 'buffer';
 import { initAnalytics } from './lib/analytics';
+import * as Sentry from '@sentry/react';
 import './index.css';
 import '@solana/wallet-adapter-react-ui/styles.css';
+
+const SENTRY_DSN_CLIENT = import.meta.env.VITE_SENTRY_DSN;
+if (SENTRY_DSN_CLIENT) {
+  Sentry.init({
+    dsn: SENTRY_DSN_CLIENT,
+    tracesSampleRate: 0.1,
+    environment: import.meta.env.MODE,
+    release: import.meta.env.VITE_APP_VERSION || 'dev',
+  });
+}
 
 declare global {
   interface Window {
@@ -20,12 +31,12 @@ if (!globalThis.Buffer) globalThis.Buffer = Buffer;
 const AppShell = React.lazy(() => import('./AppShell'));
 
 initAnalytics();
-console.log("[IdentityPrism] v2.0.1");
-const root = document.getElementById("root");
+console.log('[IdentityPrism] v2.0.1');
+const root = document.getElementById('root');
 ReactDOM.createRoot(root!).render(
   <React.StrictMode>
-    <React.Suspense fallback={<div style={{position:'fixed',inset:0,background:'#05070a',zIndex:999998}} />}>
+    <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#05070a', zIndex: 999998 }} />}>
       <AppShell />
     </React.Suspense>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

@@ -34,6 +34,8 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@react-three/postprocessing": "^2.19.1",
+    "@sentry/node": "^10.49.0",
+    "@sentry/react": "^10.49.0",
     "@solana-mobile/wallet-adapter-mobile": "^2.2.5",
     "@solana/spl-token": "^0.4.9",
     "@solana/wallet-adapter-react": "^0.15.39",

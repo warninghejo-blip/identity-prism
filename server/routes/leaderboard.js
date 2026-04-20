@@ -1,18 +1,22 @@
 function registerLeaderboardRoute(ctx) {
   const {
-    respondJson,
-    ipRateLimit,
-    getClientIp,
-    requireJwt,
-    readBody,
-    leaderboardEntries,
-    submitLeaderboardEntry,
-    gameSessionProofs,
-    persistGameSessionProofs,
-    triggerCompositeUpdate,
-    toCanonGameMode,
-    leaderboardCacheRef,
-    leaderboardCacheTimeRef,
+    core: {
+      respondJson,
+      ipRateLimit,
+      getClientIp,
+      requireJwt,
+      readBody,
+    },
+    wallet: {
+      leaderboardEntries,
+      submitLeaderboardEntry,
+      gameSessionProofs,
+      persistGameSessionProofs,
+      triggerCompositeUpdate,
+      toCanonGameMode,
+      leaderboardCacheRef,
+      leaderboardCacheTimeRef,
+    },
   } = ctx;
 
   return async function handleLeaderboardRoute(req, res, url, pathname) {
