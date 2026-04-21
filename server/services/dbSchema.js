@@ -205,6 +205,16 @@ function initAppDbSchema(db) {
       );
       CREATE INDEX IF NOT EXISTS idx_api_usage_day ON api_key_usage(day);
 
+      CREATE TABLE IF NOT EXISTS black_hole_signatures (
+        signature TEXT PRIMARY KEY,
+        wallet TEXT NOT NULL,
+        amount INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_bh_signatures_wallet
+      ON black_hole_signatures (wallet, created_at);
+
       PRAGMA user_version = 2;
      `);
   }

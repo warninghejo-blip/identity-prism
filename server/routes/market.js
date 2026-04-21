@@ -1,3 +1,26 @@
+import crypto from 'node:crypto';
+import { PublicKey } from '@solana/web3.js';
+
+const isValidPubkey = (s) => { try { new PublicKey(s); return true; } catch { return false; } };
+
+// Swap intent store: requestId → { wallet, amount, inputMint, outputMint, expiresAt, messageHash }
+const swapIntents = new Map();
+const INTENT_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function evictExpiredIntents() {
+  const now = Date.now();
+  for (const [id, intent] of swapIntents) {
+    if (intent.expiresAt < now) swapIntents.delete(id);
+  }
+}
+
+setInterval(evictExpiredIntents, 5 * 60 * 1000).unref?.();
+
+const MAX_AMOUNT_SOL = 100 * 1e9;   // 100 SOL in lamports
+const MAX_AMOUNT_TOKEN = 1e6 * 1e6; // 1M tokens (6-decimal)
+const MIN_SLIPPAGE_BPS = 1;
+const MAX_SLIPPAGE_BPS = 500;
+
 function registerMarketRoute(ctx) {
   const {
     core: {
@@ -244,33 +267,75 @@ function registerMarketRoute(ctx) {
       if (!jwtAuth.ok) return true;
       try {
         const parsed = JSON.parse(await readBody(req));
+
+        // FIX 1: Accept only canonical inputs; never trust client-supplied quoteResponse
         const userPublicKey = normalizePubkey(parsed?.userPublicKey);
-        const quoteResponse = parsed?.quoteResponse;
+        const inputMintRaw = String(parsed?.inputMint || '').trim();
+        const outputMintRaw = String(parsed?.outputMint || '').trim();
+        const amountRaw = String(parsed?.amount || '').trim();
+        const slippageBpsRaw = parsed?.slippageBps;
+
+        // Ownership check
         if (!userPublicKey || userPublicKey !== jwtAuth.address) {
           respondJson(res, 403, { error: 'Wallet address mismatch' });
           return true;
         }
-        if (!quoteResponse || quoteResponse.outputMint !== solMint || !normalizePubkey(quoteResponse.inputMint)) {
-          respondJson(res, 400, { error: 'Invalid swap quote' });
+
+        // Validate mints
+        if (!isValidPubkey(inputMintRaw) || !isValidPubkey(outputMintRaw)) {
+          respondJson(res, 400, { error: 'Invalid inputMint or outputMint' });
+          return true;
+        }
+        const inputMint = normalizePubkey(inputMintRaw);
+        const outputMint = normalizePubkey(outputMintRaw);
+
+        // Validate amount
+        let amount;
+        try { amount = BigInt(amountRaw); } catch { respondJson(res, 400, { error: 'Invalid amount' }); return true; }
+        const maxAmount = BigInt(Math.max(MAX_AMOUNT_SOL, MAX_AMOUNT_TOKEN));
+        if (amount <= 0n || amount > maxAmount) {
+          respondJson(res, 400, { error: 'Amount out of allowed range' });
           return true;
         }
 
-        if (jupiterApiKey && quoteResponse.mode === 'order_execute' && String(quoteResponse.amount || '').trim()) {
+        // Validate slippage
+        const slippageBps = Number(slippageBpsRaw);
+        if (!Number.isInteger(slippageBps) || slippageBps < MIN_SLIPPAGE_BPS || slippageBps > MAX_SLIPPAGE_BPS) {
+          respondJson(res, 400, { error: `slippageBps must be ${MIN_SLIPPAGE_BPS}-${MAX_SLIPPAGE_BPS}` });
+          return true;
+        }
+
+        evictExpiredIntents();
+
+        // Re-fetch quote server-side using canonical inputs
+        if (jupiterApiKey) {
           const orderUrl = new URL(`${jupiterSwapApiV2}/order`);
-          orderUrl.searchParams.set('inputMint', normalizePubkey(quoteResponse.inputMint));
-          orderUrl.searchParams.set('outputMint', solMint);
-          orderUrl.searchParams.set('amount', String(quoteResponse.amount));
+          orderUrl.searchParams.set('inputMint', inputMint);
+          orderUrl.searchParams.set('outputMint', outputMint);
+          orderUrl.searchParams.set('amount', amount.toString());
           orderUrl.searchParams.set('taker', userPublicKey);
-          orderUrl.searchParams.set('slippageBps', '100');
+          orderUrl.searchParams.set('slippageBps', slippageBps.toString());
           orderUrl.searchParams.set('restrictIntermediateTokens', 'true');
           const orderResp = await fetch(orderUrl.toString(), {
             headers: { 'x-api-key': jupiterApiKey },
           });
           const orderData = await orderResp.json().catch(() => ({}));
           if (orderResp.ok && orderData?.transaction && orderData?.requestId) {
+            // Derive messageHash from the transaction bytes for FIX 2 binding
+            const txBytes = Buffer.from(orderData.transaction, 'base64');
+            const messageHash = crypto.createHash('sha256').update(txBytes).digest('hex');
+            const requestId = orderData.requestId;
+            swapIntents.set(requestId, {
+              wallet: userPublicKey,
+              amount: amount.toString(),
+              inputMint,
+              outputMint,
+              expiresAt: Date.now() + INTENT_TTL_MS,
+              messageHash,
+            });
             respondJson(res, 200, {
               swapTransaction: orderData.transaction,
-              requestId: orderData.requestId,
+              requestId,
               transport: 'order_execute',
             });
             return true;
@@ -278,11 +343,26 @@ function registerMarketRoute(ctx) {
           console.warn('[market] Jupiter /order build failed, falling back to lite swap', orderData?.error || orderResp.status);
         }
 
+        // Server-side lite quote
+        const quoteUrl = new URL(jupiterLiteQuoteApi);
+        quoteUrl.searchParams.set('inputMint', inputMint);
+        quoteUrl.searchParams.set('outputMint', outputMint);
+        quoteUrl.searchParams.set('amount', amount.toString());
+        quoteUrl.searchParams.set('swapMode', 'ExactIn');
+        quoteUrl.searchParams.set('slippageBps', slippageBps.toString());
+        quoteUrl.searchParams.set('restrictIntermediateTokens', 'true');
+        const quoteResp = await fetch(quoteUrl.toString());
+        const serverQuote = await quoteResp.json().catch(() => ({}));
+        if (!quoteResp.ok || !serverQuote?.outAmount) {
+          respondJson(res, quoteResp.status || 502, { error: serverQuote?.error || 'Swap quote unavailable' });
+          return true;
+        }
+
         const swapResp = await fetch(jupiterLiteSwapApi, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            quoteResponse,
+            quoteResponse: serverQuote,
             userPublicKey,
             wrapAndUnwrapSol: true,
             dynamicComputeUnitLimit: true,
@@ -293,10 +373,24 @@ function registerMarketRoute(ctx) {
           respondJson(res, swapResp.status || 502, { error: swapData?.error || 'Failed to build swap transaction' });
           return true;
         }
+
+        const txBytes = Buffer.from(swapData.swapTransaction, 'base64');
+        const messageHash = crypto.createHash('sha256').update(txBytes).digest('hex');
+        const requestId = crypto.randomUUID();
+        swapIntents.set(requestId, {
+          wallet: userPublicKey,
+          amount: amount.toString(),
+          inputMint,
+          outputMint,
+          expiresAt: Date.now() + INTENT_TTL_MS,
+          messageHash,
+        });
+
         respondJson(res, 200, {
           swapTransaction: swapData.swapTransaction,
           lastValidBlockHeight: swapData.lastValidBlockHeight ?? null,
           prioritizationFeeLamports: swapData.prioritizationFeeLamports ?? null,
+          requestId,
           transport: 'legacy_raw',
         });
       } catch (error) {
@@ -307,6 +401,7 @@ function registerMarketRoute(ctx) {
 
     if (pathname === '/api/market/execute-swap' && req.method === 'POST') {
       if (!ipRateLimit('mkt_execute_swap', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+      // FIX 2: Require JWT — verify caller owns the swap intent
       const jwtAuth = requireJwt(req, res);
       if (!jwtAuth.ok) return true;
       if (!jupiterApiKey) {
@@ -321,6 +416,39 @@ function registerMarketRoute(ctx) {
           respondJson(res, 400, { error: 'signedTransaction and requestId are required' });
           return true;
         }
+
+        // FIX 2: Look up intent and enforce ownership + expiry
+        const intent = swapIntents.get(requestId);
+        if (!intent || intent.expiresAt < Date.now()) {
+          swapIntents.delete(requestId);
+          respondJson(res, 404, { error: 'Swap intent not found or expired' });
+          return true;
+        }
+        if (intent.wallet !== jwtAuth.address) {
+          respondJson(res, 403, { error: 'Swap intent belongs to a different wallet' });
+          return true;
+        }
+
+        // FIX 2: Verify transaction bytes match the server-issued transaction (anti-tampering)
+        let txBytes;
+        try {
+          txBytes = Buffer.from(signedTransaction, 'base64');
+        } catch {
+          respondJson(res, 400, { error: 'Invalid signedTransaction encoding' });
+          return true;
+        }
+        // The signed transaction prepends a signatures section before the message;
+        // we hash the full base64-decoded bytes and compare to what was stored at build time.
+        // This catches wholesale substitution of a different transaction.
+        const incomingHash = crypto.createHash('sha256').update(txBytes).digest('hex');
+        if (incomingHash !== intent.messageHash) {
+          respondJson(res, 400, { error: 'Transaction does not match original swap intent' });
+          return true;
+        }
+
+        // Intent is valid — delete before forwarding (single-use)
+        swapIntents.delete(requestId);
+
         const executeResp = await fetch(`${jupiterSwapApiV2}/execute`, {
           method: 'POST',
           headers: {

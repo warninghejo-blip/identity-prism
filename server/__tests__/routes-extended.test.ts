@@ -422,7 +422,7 @@ describe.sequential('routes-extended integration tests', () => {
     if (res.status === 200) {
       expect(typeof res.body).toBe('object');
     } else {
-      expect([400, 404]).toContain(res.status);
+      expect([400, 401, 404]).toContain(res.status);
     }
   });
 });

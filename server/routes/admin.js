@@ -2,36 +2,20 @@
 // Required env var: ADMIN_KEY — must match X-Admin-Key header.
 // If ADMIN_KEY is not set, all admin endpoints return 501 "Admin API not configured".
 
-import crypto from 'crypto';
 import { statSync } from 'fs';
 import { appDb, APP_DB_PATH } from '../services/appDb.js';
 
+// FIX 5: removed inline checkAdminKey (duplicated ctx.core.requireAdminKey with its own
+// crypto.timingSafeEqual). Now using ctx.core.requireAdminKey everywhere for consistency.
+
 export function registerAdminRoute(ctx) {
   const {
-    core: { ipRateLimit, getClientIp, respondJson, readBody, requireAdminKey },
+    core: { ipRateLimit, getClientIp, respondJson, readBody, requireAdminKey, normalizePubkey },
     wallet: { getCoinBalance, setCoinBalance, updateWalletEntry },
   } = ctx;
 
-  /** Returns true if request is authorised; sends 501/403 and returns false otherwise. */
-  function checkAdminKey(req, res) {
-    const adminKey = process.env.ADMIN_KEY;
-    if (!adminKey) {
-      respondJson(res, 501, { error: 'Admin API not configured' });
-      return false;
-    }
-    const key = req.headers['x-admin-key'];
-    if (!key) {
-      respondJson(res, 401, { error: 'Admin key required' });
-      return false;
-    }
-    const buf1 = Buffer.from(key);
-    const buf2 = Buffer.from(adminKey);
-    if (buf1.length !== buf2.length || !crypto.timingSafeEqual(buf1, buf2)) {
-      respondJson(res, 403, { error: 'Forbidden' });
-      return false;
-    }
-    return true;
-  }
+  // FIX 5: alias — all former checkAdminKey call-sites now use requireAdminKey from ctx.core.
+  const checkAdminKey = requireAdminKey;
 
   return async function handleAdminRoute(req, res, url, pathname) {
     // ── GET /api/admin/sybil/feedback ──────────────────────────────────────
@@ -66,7 +50,8 @@ export function registerAdminRoute(ctx) {
 
         respondJson(res, 200, { reports, total });
       } catch (err) {
-        respondJson(res, 500, { error: 'Database error', detail: err.message });
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
       }
       return true;
     }
@@ -106,7 +91,8 @@ export function registerAdminRoute(ctx) {
           respondJson(res, 200, { ok: true, id, admin_verified: body.verified ? 1 : 0 });
         }
       } catch (err) {
-        respondJson(res, 500, { error: 'Database error', detail: err.message });
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
       }
       return true;
     }
@@ -185,7 +171,8 @@ export function registerAdminRoute(ctx) {
           lastLouvainRun,
         });
       } catch (err) {
-        respondJson(res, 500, { error: 'Database error', detail: err.message });
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
       }
       return true;
     }
@@ -220,7 +207,8 @@ export function registerAdminRoute(ctx) {
         ).run(key, owner_name ?? null, contact_email ?? null, tier, Date.now(), notes ?? null);
         respondJson(res, 201, { key, owner_name: owner_name ?? null, tier });
       } catch (err) {
-        respondJson(res, 500, { error: 'Database error', detail: err.message });
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
       }
       return true;
     }
@@ -248,7 +236,8 @@ export function registerAdminRoute(ctx) {
         `).all(today, limit);
         respondJson(res, 200, { keys: rows });
       } catch (err) {
-        respondJson(res, 500, { error: 'Database error', detail: err.message });
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
       }
       return true;
     }
@@ -273,34 +262,55 @@ export function registerAdminRoute(ctx) {
           respondJson(res, 200, { ok: true, key: targetKey });
         }
       } catch (err) {
-        respondJson(res, 500, { error: 'Database error', detail: err.message });
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
       }
       return true;
     }
 
     if (pathname === '/api/admin/set-coins' && req.method === 'POST') {
+      // FIX 4: rate limit, input validation, no error leakage.
+      if (!ipRateLimit('admin_set_coins', getClientIp(req), 30, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
       if (!requireAdminKey(req, res)) return true;
       try {
         const { address, coins } = JSON.parse(await readBody(req));
         if (!address || typeof coins !== 'number') return respondJson(res, 400, { error: 'address and coins (number) required' });
+        if (!normalizePubkey(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
+        if (!Number.isInteger(coins) || coins < 0 || coins > 1_000_000_000) {
+          return respondJson(res, 400, { error: 'coins must be an integer between 0 and 1,000,000,000' });
+        }
         setCoinBalance(address, coins);
         respondJson(res, 200, { ok: true, address, balance: getCoinBalance(address) });
       } catch (error) {
-        respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        console.error('[admin] set-coins error:', error);
+        respondJson(res, 400, { error: 'Internal error' });
       }
       return true;
     }
 
     if (pathname === '/api/admin/set-wallet' && req.method === 'POST') {
+      // FIX 4: rate limit, input validation, no error leakage.
+      if (!ipRateLimit('admin_set_wallet', getClientIp(req), 30, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
       if (!requireAdminKey(req, res)) return true;
       try {
         const { address, data } = JSON.parse(await readBody(req));
         if (!address || !data || typeof data !== 'object') return respondJson(res, 400, { error: 'address and data (object) required' });
+        if (!normalizePubkey(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
+        if (typeof data.coins === 'number' && (!Number.isInteger(data.coins) || data.coins < 0 || data.coins > 1_000_000_000)) {
+          return respondJson(res, 400, { error: 'coins must be an integer between 0 and 1,000,000,000' });
+        }
         updateWalletEntry(address, data);
         if (typeof data.coins === 'number') setCoinBalance(address, data.coins);
         respondJson(res, 200, { ok: true, address, updatedFields: Object.keys(data) });
       } catch (error) {
-        respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        console.error('[admin] set-wallet error:', error);
+        respondJson(res, 400, { error: 'Internal error' });
       }
       return true;
     }

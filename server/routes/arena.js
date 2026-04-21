@@ -28,14 +28,7 @@ function registerArenaRoute(ctx) {
     weeklyXpRewards,
   } = arena;
 
-  if (Array.isArray(challenges)) {
-    const coinChallenges = challenges.filter((challenge) => challenge && challenge.stakeType !== 'sol');
-    if (coinChallenges.length !== challenges.length) {
-      challenges.splice(0, challenges.length, ...coinChallenges);
-      saveChallenges();
-      console.warn('[challenges] Removed legacy SOL challenges during Arena route init');
-    }
-  }
+  // Legacy SOL challenge cleanup moved to scheduler startup (purgeLegacySolChallenges)
 
   const recordChallengeWin = (address, amount) => {
     setCoinBalance(address, getCoinBalance(address) + amount);

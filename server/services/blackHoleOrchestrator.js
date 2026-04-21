@@ -37,6 +37,7 @@ function createBlackHoleOrchestrator(ctx) {
       savePrismDataDebounced,
       feedItems,
       persistBlackHoleUsedSignatures,
+      durableClaimSignatures,
     },
   } = ctx;
 
@@ -92,7 +93,17 @@ function createBlackHoleOrchestrator(ctx) {
         }
       }
 
+      // Durable replay protection: insert into SQLite BEFORE crediting.
+      // durableClaimSignatures is synchronous (better-sqlite3).
+      // Amount 0 at this point — reward is calculated below; the record existence is what matters.
+      if (!durableClaimSignatures(uniqueSignatures, address, 0)) {
+        return { status: 400, body: { error: 'One or more signatures were already claimed' } };
+      }
+
+      // Mark in-memory cache (fast path for future requests within the same process lifetime).
       for (const signature of uniqueSignatures) blackHoleUsedSignatures.set(signature, Date.now());
+      // NOTE: releaseLock only clears in-memory cache. The durable SQLite record is intentionally
+      // kept even on failure — a consumed signature must never be re-claimable.
       releaseLock = () => {
         for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
       };

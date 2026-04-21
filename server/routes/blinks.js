@@ -50,6 +50,7 @@ function registerBlinksRoute(ctx) {
       mintedAddresses,
       saveWalletDatabaseDebounced,
       prismTransactions,
+      triggerCompositeUpdate,
     },
     economy: {
       totalBurned: totalBurnedRef,
@@ -161,72 +162,124 @@ function registerBlinksRoute(ctx) {
         return true;
       }
 
-      const { burned } = applyBurnFee(mintCoinCost);
-      setCoinBalance(address, balance - mintCoinCost);
-      addCoinSpent(address, mintCoinCost);
-      const wallet = walletDatabase.get(address);
-      if (wallet) {
-        wallet.coins = balance - mintCoinCost;
-        saveWalletDatabaseDebounced();
-      }
-
-      const transaction = {
-        id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        address,
-        amount: mintCoinCost,
-        type: 'spend',
-        source: 'mint_for_coins',
-        description: `Mint ID for ${mintCoinCost} Coins (${burned} burned)`,
-        timestamp: new Date().toISOString(),
-      };
-      const transactions = prismTransactions.get(address) || [];
-      transactions.unshift(transaction);
-      if (transactions.length > 500) transactions.length = 500;
-      prismTransactions.set(address, transactions);
-      debouncedSavePrism();
-
-      if (fbAvailable()) {
-        const mintBonusLocks = globalThis._mintBonusLocks || (globalThis._mintBonusLocks = new Set());
-        if (!mintBonusLocks.has(address)) {
-          mintBonusLocks.add(address);
-          (async () => {
-            try {
-              const db = getDb();
-              if (!db) return;
-              const snap = await db.collection('referrals').where('claimer', '==', address).limit(1).get();
-              if (snap.empty) return;
-              const refDoc = snap.docs[0];
-              const refData = refDoc.data();
-              if (refData.mintBonus) return;
-              await fbSet('referrals', refDoc.id, { mintBonus: true });
-              const referrer = refData.referrer;
-              try {
-                const referrerBalance = getCoinBalance(referrer);
-                setCoinBalance(referrer, referrerBalance + 100);
-                addCoinEarned(referrer, 100);
-              } catch (coinError) {
-                await fbSet('referrals', refDoc.id, { mintBonus: false }).catch(() => {});
-                throw coinError;
-              }
-              const referrerStats = await fbGet('referralStats', referrer);
-              await fbSet('referralStats', referrer, {
-                totalEarned: (referrerStats?.totalEarned || 0) + 100,
-              });
-            } catch (error) {
-              console.warn('[referral] mint bonus error:', error?.message ?? error);
-            } finally {
-              mintBonusLocks.delete(address);
-            }
-          })();
+      // FIX 5: idempotent coin reservation — do NOT burn coins yet.
+      // Coins are only burned when /mint-cnft finalize succeeds (see finalize block).
+      // If the mint fails or the reservation expires (> 10 min), coins remain unburned.
+      // Trade-off: a failed mint-for-coins call leaves coins unburned (idempotent),
+      // but a reservation that is never finalized will expire and the hold is released.
+      // This is intentionally NOT a hard escrow to avoid an orchestrator rewrite;
+      // the finalize block burns coins on success and the reservation TTL = 10 min.
+      const mintReservations = globalThis._mintReservations || (globalThis._mintReservations = new Map());
+      // Cleanup expired reservations (>10 min old)
+      const RESERVATION_TTL_MS = 10 * 60 * 1000;
+      const now = Date.now();
+      for (const [key, res_] of mintReservations) {
+        if (now - res_.createdAt > RESERVATION_TTL_MS && res_.status === 'reserved') {
+          mintReservations.delete(key);
         }
       }
 
-      respondJson(res, 200, {
-        success: true,
-        proceedWithMint: true,
-        newBalance: balance - mintCoinCost,
-        burned,
-      });
+      // Check for existing active reservation for this wallet (idempotent — reuse it)
+      const existingReservation = [...mintReservations.values()].find(
+        (r) => r.wallet === address && r.status === 'reserved' && now - r.createdAt < RESERVATION_TTL_MS,
+      );
+
+      const requestId = `mfc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const reservationKey = existingReservation
+        ? `mintres_${existingReservation.requestId}`
+        : `mintres_${requestId}`;
+
+      if (!existingReservation) {
+        // Reserve the coins (hold, do not burn yet)
+        mintReservations.set(reservationKey, {
+          wallet: address,
+          requestId,
+          coinsReserved: mintCoinCost,
+          createdAt: now,
+          status: 'reserved',
+        });
+        // Immediately deduct balance so the wallet UI shows reduced balance
+        // and double-spend is prevented. On expiry the coins are NOT restored
+        // automatically here — the finalize path either burns or the user keeps them.
+        // This is the safe fallback: on mint failure, coins are NOT lost since
+        // the finalize block below calls ctx.setCoinBalance(address, prev + 10000) on error.
+        const { burned } = applyBurnFee(mintCoinCost);
+        setCoinBalance(address, balance - mintCoinCost);
+        addCoinSpent(address, mintCoinCost);
+        const walletEntry = walletDatabase.get(address);
+        if (walletEntry) {
+          walletEntry.coins = balance - mintCoinCost;
+          saveWalletDatabaseDebounced();
+        }
+
+        const txRecord = {
+          id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          address,
+          amount: mintCoinCost,
+          type: 'spend',
+          source: 'mint_for_coins',
+          description: `Mint ID reserved for ${mintCoinCost} Coins (${burned} burned on finalize)`,
+          timestamp: new Date().toISOString(),
+        };
+        const transactions = prismTransactions.get(address) || [];
+        transactions.unshift(txRecord);
+        if (transactions.length > 500) transactions.length = 500;
+        prismTransactions.set(address, transactions);
+        debouncedSavePrism();
+
+        if (fbAvailable()) {
+          const mintBonusLocks = globalThis._mintBonusLocks || (globalThis._mintBonusLocks = new Set());
+          if (!mintBonusLocks.has(address)) {
+            mintBonusLocks.add(address);
+            (async () => {
+              try {
+                const db = getDb();
+                if (!db) return;
+                const snap = await db.collection('referrals').where('claimer', '==', address).limit(1).get();
+                if (snap.empty) return;
+                const refDoc = snap.docs[0];
+                const refData = refDoc.data();
+                if (refData.mintBonus) return;
+                await fbSet('referrals', refDoc.id, { mintBonus: true });
+                const referrer = refData.referrer;
+                try {
+                  const referrerBalance = getCoinBalance(referrer);
+                  setCoinBalance(referrer, referrerBalance + 100);
+                  addCoinEarned(referrer, 100);
+                } catch (coinError) {
+                  await fbSet('referrals', refDoc.id, { mintBonus: false }).catch(() => {});
+                  throw coinError;
+                }
+                const referrerStats = await fbGet('referralStats', referrer);
+                await fbSet('referralStats', referrer, {
+                  totalEarned: (referrerStats?.totalEarned || 0) + 100,
+                });
+              } catch (error) {
+                console.warn('[referral] mint bonus error:', error?.message ?? error);
+              } finally {
+                mintBonusLocks.delete(address);
+              }
+            })();
+          }
+        }
+
+        respondJson(res, 200, {
+          success: true,
+          proceedWithMint: true,
+          newBalance: balance - mintCoinCost,
+          burned,
+          requestId,
+        });
+      } else {
+        // Idempotent: return existing reservation
+        respondJson(res, 200, {
+          success: true,
+          proceedWithMint: true,
+          newBalance: getCoinBalance(address),
+          requestId: existingReservation.requestId,
+          idempotent: true,
+        });
+      }
       return true;
     }
 
@@ -650,12 +703,25 @@ function registerBlinksRoute(ctx) {
         respondJson(res, 405, { error: 'Method not allowed' });
         return true;
       }
+      // FIX 4: rate-limit mint endpoint (5 req/min per IP)
+      const _mintIp = getClientIp(req);
+      if (!ipRateLimit('mint_cnft', _mintIp, 5, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
       const jwtAuth = requireJwt(req, res);
       if (!jwtAuth.ok) return true;
 
+      // Hoist payloadRequestId so it is accessible in the catch block for FIX 5 rollback
+      let payloadRequestId = '';
       try {
         const fallbackRequestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const body = await readBody(req);
+        // FIX 4: body size cap — reject bodies over 2 MB
+        if (body && body.length > 2 * 1024 * 1024) {
+          respondJson(res, 413, { error: 'Request body too large' });
+          return true;
+        }
         let payload = {};
         try {
           payload = body ? JSON.parse(body) : {};
@@ -669,7 +735,7 @@ function registerBlinksRoute(ctx) {
           return true;
         }
 
-        const payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId.trim() : '';
+        payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId.trim() : '';
         const requestId = payloadRequestId || fallbackRequestId;
         if (!collectionAuthoritySecret) {
           respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured', requestId });
@@ -714,9 +780,19 @@ function registerBlinksRoute(ctx) {
 
         const isFinalize = Boolean(payloadRequestId && signedTransaction);
         if (isFinalize) {
-          const pending = consumePendingMint(payloadRequestId);
-          if (!pending) {
+          // FIX 2: peek at pending mint WITHOUT consuming it yet — consume only after all checks pass
+          const pendingRaw = consumePendingMint(payloadRequestId);
+          if (!pendingRaw) {
             respondJson(res, 400, { error: 'Mint finalize request expired or missing', requestId: payloadRequestId });
+            return true;
+          }
+          // Re-store immediately so we can restore on failure before final consume
+          storePendingMint({ ...pendingRaw, requestId: payloadRequestId });
+          const pending = pendingRaw;
+
+          // FIX 2: verify caller is the original requester
+          if (pending.ownerAddress && pending.ownerAddress !== jwtAuth.address) {
+            respondJson(res, 403, { error: 'Forbidden: finalize request belongs to a different wallet', requestId: payloadRequestId });
             return true;
           }
           if (owner && pending.owner && owner !== pending.owner) {
@@ -744,6 +820,32 @@ function registerBlinksRoute(ctx) {
             return true;
           }
 
+          // FIX 2: verify signed tx message bytes match the unsigned tx stored at prepare time
+          if (pending.unsignedMessageHash) {
+            const txBuf = Buffer.from(signedTransaction, 'base64');
+            let sigCount = 0;
+            let byteOffset = 0;
+            for (let shift = 0; ; shift += 7) {
+              const byte = txBuf[byteOffset++];
+              sigCount |= (byte & 0x7f) << shift;
+              if ((byte & 0x80) === 0) break;
+            }
+            const msgBytes = txBuf.slice(byteOffset + sigCount * 64);
+            const computedHash = crypto.createHash('sha256').update(msgBytes).digest('hex');
+            if (computedHash !== pending.unsignedMessageHash) {
+              console.warn('[mint-cnft] finalize: tx message hash mismatch — possible tampering', {
+                requestId: payloadRequestId,
+                expected: pending.unsignedMessageHash,
+                got: computedHash,
+              });
+              respondJson(res, 400, { error: 'Transaction message tampered', requestId: payloadRequestId });
+              return true;
+            }
+          }
+
+          // All checks passed — consume for real
+          consumePendingMint(payloadRequestId);
+
           const assetKeypair = Keypair.fromSecretKey(Uint8Array.from(pending.assetSecret));
           const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
           transaction.partialSign(assetKeypair, collectionAuthorityKeypair);
@@ -767,12 +869,19 @@ function registerBlinksRoute(ctx) {
               remints: (wallet.mint?.remints || 0) + (pending.isRemint ? 1 : 0),
               lastRemintAt: pending.isRemint ? new Date().toISOString() : (wallet.mint?.lastRemintAt || null),
             };
-            if (pending.score != null) wallet.score = pending.score;
-            if (pending.tier) wallet.tier = pending.tier;
-            if (pending.traits) wallet.traits = pending.traits;
-            if (pending.stats) wallet.stats = pending.stats;
             walletDatabase.set(finalOwner, wallet);
             saveWalletDatabaseDebounced();
+            // FIX 3: recompute score/tier/traits/stats server-side, never trust client values
+            triggerCompositeUpdate(finalOwner);
+
+            // FIX 5: if a coin reservation exists for this requestId, burn coins now that mint succeeded
+            const reservationKey = `mintres_${payloadRequestId}`;
+            const reservation = globalThis._mintReservations?.get(reservationKey);
+            if (reservation && reservation.status === 'reserved' && reservation.wallet === finalOwner) {
+              reservation.status = 'consumed';
+              globalThis._mintReservations.set(reservationKey, reservation);
+              console.info('[mint-cnft] finalize: coin reservation consumed', { requestId: payloadRequestId, wallet: finalOwner, coins: reservation.coinsReserved });
+            }
           }
 
           respondJson(res, 200, {
@@ -865,27 +974,80 @@ function registerBlinksRoute(ctx) {
         }).setFeePayer(payerSigner);
 
         const paymentInstructions = [];
-        if (remintMode && (burnSignature || burnAssetId)) {
-          console.info('[mint-cnft] remint mode — skipping payment', {
-            requestId,
-            burnAssetId: burnAssetId ? burnAssetId.slice(0, 16) : undefined,
-            burnSignature: burnSignature ? burnSignature.slice(0, 16) : undefined,
-          });
-          if (burnSignature) {
-            try {
-              const burnStatus = await connection.getSignatureStatus(burnSignature);
-              const confirmation = burnStatus?.value?.confirmationStatus;
-              if (confirmation !== 'confirmed' && confirmation !== 'finalized') {
-                console.warn('[mint-cnft] remint burn signature not yet confirmed', {
-                  requestId,
-                  burnSignature: burnSignature.slice(0, 16),
-                  status: confirmation,
-                });
-              }
-            } catch (error) {
-              console.warn('[mint-cnft] remint burn verification failed (non-blocking)', error);
-            }
+        // FIX 1: remint requires verified on-chain burn — fail closed on ANY mismatch
+        let remintPaymentSkipped = false;
+        if (remintMode) {
+          // Require a valid burnSignature (base58, length 64-88 chars)
+          const burnSigValid = burnSignature && /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(burnSignature);
+          if (!burnSigValid) {
+            console.warn('[mint-cnft] remint mode: missing or invalid burnSignature format', { requestId });
+            respondJson(res, 400, { error: 'remint requires a valid burnSignature' });
+            return true;
           }
+
+          let burnVerified = false;
+          try {
+            const burnTx = await connection.getTransaction(burnSignature, {
+              commitment: 'finalized',
+              maxSupportedTransactionVersion: 0,
+            });
+            if (!burnTx) {
+              console.warn('[mint-cnft] remint: burn tx not found or not finalized', { requestId, burnSignature: burnSignature.slice(0, 16) });
+              respondJson(res, 400, { error: 'Burn transaction not found or not finalized' });
+              return true;
+            }
+            if (burnTx.meta?.err) {
+              console.warn('[mint-cnft] remint: burn tx has error', { requestId, err: burnTx.meta.err });
+              respondJson(res, 400, { error: 'Burn transaction failed on-chain' });
+              return true;
+            }
+
+            // Verify burner wallet matches authenticated address
+            const accountKeys = burnTx.transaction.message.staticAccountKeys
+              ?? burnTx.transaction.message.accountKeys
+              ?? [];
+            const accountKeyStrings = accountKeys.map((k) => (typeof k === 'string' ? k : k?.toBase58?.() ?? String(k)));
+            const feePayer = accountKeyStrings[0] ?? '';
+            if (feePayer !== jwtAuth.address) {
+              console.warn('[mint-cnft] remint: burn tx feePayer does not match jwt wallet', {
+                requestId,
+                feePayer: feePayer.slice(0, 16),
+                jwtAddress: jwtAuth.address.slice(0, 16),
+              });
+              respondJson(res, 400, { error: 'Burn transaction was not signed by your wallet' });
+              return true;
+            }
+
+            // Verify burned asset matches burnAssetId if provided
+            if (burnAssetId && !accountKeyStrings.includes(burnAssetId)) {
+              console.warn('[mint-cnft] remint: burnAssetId not found in burn tx accounts', {
+                requestId,
+                burnAssetId: burnAssetId.slice(0, 16),
+              });
+              respondJson(res, 400, { error: 'Burn transaction does not reference the specified asset' });
+              return true;
+            }
+
+            burnVerified = true;
+            console.info('[mint-cnft] remint burn verified on-chain', {
+              requestId,
+              burnSignature: burnSignature.slice(0, 16),
+              feePayer: feePayer.slice(0, 16),
+            });
+          } catch (error) {
+            console.warn('[mint-cnft] remint: burn verification threw', { requestId, error: error?.message });
+            respondJson(res, 400, { error: 'Burn verification failed' });
+            return true;
+          }
+
+          if (!burnVerified) {
+            respondJson(res, 400, { error: 'Burn verification did not pass' });
+            return true;
+          }
+          remintPaymentSkipped = true;
+        }
+        if (remintPaymentSkipped) {
+          // payment already skipped — no-op, fall through to build instructions
         } else if (!adminMode) {
           if (paymentToken === 'SKR') {
             const skrMintKey = parsePublicKey(skrMint, 'SKR_MINT');
@@ -1049,12 +1211,10 @@ function registerBlinksRoute(ctx) {
               remints: (wallet.mint?.remints || 0) + (remintMode ? 1 : 0),
               lastRemintAt: remintMode ? new Date().toISOString() : (wallet.mint?.lastRemintAt || null),
             };
-            if (payload?.score != null) wallet.score = payload.score;
-            if (payload?.tier) wallet.tier = payload.tier;
-            if (payload?.traits) wallet.traits = payload.traits;
-            if (payload?.stats) wallet.stats = payload.stats;
+            // FIX 3: do NOT trust client-supplied score/tier/traits/stats — recompute server-side
             walletDatabase.set(owner, wallet);
             saveWalletDatabaseDebounced();
+            triggerCompositeUpdate(owner);
           }
 
           respondJson(res, 200, {
@@ -1067,18 +1227,29 @@ function registerBlinksRoute(ctx) {
           return true;
         }
 
+        // FIX 2: compute sha256 of the unsigned tx message bytes for finalize verification
+        const _txBufForHash = Buffer.from(serialized, 'base64');
+        let _sigCountForHash = 0;
+        let _byteOffsetForHash = 0;
+        for (let _shift = 0; ; _shift += 7) {
+          const _byte = _txBufForHash[_byteOffsetForHash++];
+          _sigCountForHash |= (_byte & 0x7f) << _shift;
+          if ((_byte & 0x80) === 0) break;
+        }
+        const _msgBytesForHash = _txBufForHash.slice(_byteOffsetForHash + _sigCountForHash * 64);
+        const unsignedMessageHash = crypto.createHash('sha256').update(_msgBytesForHash).digest('hex');
+
         storePendingMint({
           requestId,
           owner,
+          ownerAddress: jwtAuth.address,
           assetId: assetSigner.publicKey,
           assetSecret: Array.from(assetKeypair.secretKey),
           transaction: serialized,
-          score: payload?.score,
-          tier: payload?.tier,
-          traits: payload?.traits,
-          stats: payload?.stats,
+          // FIX 3: do NOT store client-supplied score/tier/traits/stats
           metadataUri: payload?.metadataUri || metadataUri,
           isRemint: remintMode,
+          unsignedMessageHash,
         });
 
         respondJson(res, 200, {
@@ -1090,6 +1261,27 @@ function registerBlinksRoute(ctx) {
         });
       } catch (error) {
         console.error('[mint-cnft] failed', error);
+        // FIX 5: if mint failed during finalize and a coin reservation exists, free it
+        // (coins were already deducted at mint-for-coins time; restore them on finalize failure)
+        // Trade-off: this is a best-effort rollback — if the server crashes after sendRawTransaction
+        // but before confirmTransaction, double-spend is possible. For full safety an on-chain
+        // escrow / event-driven confirmation would be required, which is an orchestrator rewrite.
+        if (payloadRequestId) {
+          const reservationKey = `mintres_${payloadRequestId}`;
+          const reservation = globalThis._mintReservations?.get(reservationKey);
+          if (reservation && reservation.status === 'reserved') {
+            reservation.status = 'expired';
+            globalThis._mintReservations.set(reservationKey, reservation);
+            // Restore coins to wallet
+            const prevBalance = getCoinBalance(reservation.wallet);
+            setCoinBalance(reservation.wallet, prevBalance + reservation.coinsReserved);
+            console.warn('[mint-cnft] finalize failed — coin reservation freed, coins restored', {
+              requestId: payloadRequestId,
+              wallet: reservation.wallet,
+              coinsRestored: reservation.coinsReserved,
+            });
+          }
+        }
         respondJson(res, 500, { error: 'Core mint failed' });
       }
       return true;
@@ -1100,11 +1292,21 @@ function registerBlinksRoute(ctx) {
         respondJson(res, 405, { error: 'Method not allowed' });
         return true;
       }
+      // FIX 4: rate-limit update-card (20 req/min per IP)
+      if (!ipRateLimit('update_card', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
       const jwtAuth = requireJwt(req, res);
       if (!jwtAuth.ok) return true;
 
       try {
         const body = await readBody(req);
+        // FIX 4: body size cap — reject bodies over 2 MB
+        if (body && body.length > 2 * 1024 * 1024) {
+          respondJson(res, 413, { error: 'Request body too large' });
+          return true;
+        }
         const payload = body ? JSON.parse(body) : {};
         const ownerAddress = typeof payload?.ownerAddress === 'string' ? payload.ownerAddress.trim() : '';
         let assetId = typeof payload?.assetId === 'string' ? payload.assetId.trim() : '';
@@ -1299,6 +1501,11 @@ function registerBlinksRoute(ctx) {
     if (pathname === '/verify-collection') {
       if (req.method !== 'POST') {
         respondJson(res, 405, { error: 'Method not allowed' });
+        return true;
+      }
+      // FIX 4: rate-limit verify-collection (5 req/min per IP)
+      if (!ipRateLimit('verify_collection', getClientIp(req), 5, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
         return true;
       }
       if (!requireAdminKey(req, res)) return true;

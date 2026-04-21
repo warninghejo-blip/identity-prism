@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
 
 function registerEarnRoute(ctx) {
   const { core, wallet, economy, sybil, quest, game, arena } = ctx;
@@ -43,7 +43,7 @@ function registerEarnRoute(ctx) {
     quest;
   const { verifyGameEarnClaim, getGameCoinsToday, dailyGameCoinCap, addGameCoinsToday, markGameEarnClaimed } =
     game;
-  const { activeChallenges, challengesFile } = arena;
+  const { activeChallenges, challengesFile, saveChallenges } = arena;
 
   return async function handleEarnRoute(req, res, url, pathname) {
     if (pathname !== '/api/prism/earn' || req.method !== 'POST') return false;
@@ -91,8 +91,6 @@ function registerEarnRoute(ctx) {
       }
       let earned = Math.max(0, Math.floor(Number(amount)));
       if (earned <= 0) return respondJson(res, 400, { error: 'amount must be positive' });
-      const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
-
       if (source === 'achievement') {
         return respondJson(res, 400, { error: 'Use POST /api/game/achievements for achievement rewards' });
       }
@@ -172,10 +170,8 @@ function registerEarnRoute(ctx) {
           if (recentChallenges.length === 0) return respondJson(res, 400, { error: 'No recent challenge win found' });
           recentChallenges[0].earnClaimed = true;
           try {
-            const tmpFile = challengesFile + '.tmp';
-            await fs.promises.writeFile(tmpFile, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), challenges: activeChallenges }, null, 2));
-            await fs.promises.rename(tmpFile, challengesFile);
-          } catch {}
+            await saveChallenges();
+          } catch (err) { console.error('[earn] saveChallenges failed:', err); }
         }
 
         let scanRewardState = null;

@@ -4,6 +4,20 @@ import {
   runLouvainCommunityDetection,
 } from './louvainCommunityDetection.js';
 
+/**
+ * One-time startup cleanup: purge legacy SOL-staked challenges from the challenges array.
+ * Moved here from arena route factory so it only runs once at server startup, not on every route registration.
+ */
+function purgeLegacySolChallenges({ activeChallenges, saveChallenges }) {
+  if (!Array.isArray(activeChallenges)) return;
+  const coinChallenges = activeChallenges.filter((c) => c && c.stakeType !== 'sol');
+  if (coinChallenges.length !== activeChallenges.length) {
+    activeChallenges.splice(0, activeChallenges.length, ...coinChallenges);
+    saveChallenges();
+    console.warn('[challenges] Removed legacy SOL challenges at startup');
+  }
+}
+
 function startSchedulers(ctx) {
   const {
     authChallenges,
@@ -30,6 +44,7 @@ function startSchedulers(ctx) {
     weeklyRewards,
     weeklyXpRewards,
     backfillCompositeScores,
+    walletIpLog,
   } = ctx;
 
   const handles = [];
@@ -273,6 +288,13 @@ function startSchedulers(ctx) {
     if (reputationV2RateLimit.size > 1000) { const it = reputationV2RateLimit.keys(); for (let i = reputationV2RateLimit.size - 1000; i > 0; i--) reputationV2RateLimit.delete(it.next().value); }
     if (reputationRateLimit.size > 1000) { const it = reputationRateLimit.keys(); for (let i = reputationRateLimit.size - 1000; i > 0; i--) reputationRateLimit.delete(it.next().value); }
     rateLimitStore.cleanup();
+    // Evict walletIpLog entries not seen in 24h to prevent unbounded growth
+    if (walletIpLog) {
+      const ipLogCutoff = now - 24 * 60 * 60 * 1000;
+      for (const [address, entry] of walletIpLog) {
+        if (entry.lastSeen < ipLogCutoff) walletIpLog.delete(address);
+      }
+    }
   }, 300_000));
 
   handles.push(setTimeout(backfillCompositeScores, 3000));

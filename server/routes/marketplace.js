@@ -19,6 +19,7 @@ function registerMarketplaceRoute(ctx) {
     },
     economy: {
       totalBurned: totalBurnedRef,
+      refundCoinSpent,
     },
     marketplaceListings,
     marketplacePurchases,
@@ -127,19 +128,12 @@ function registerMarketplaceRoute(ctx) {
           return true;
         }
 
-        applyBurnFee(listingFee);
-        setCoinBalance(address, balance - listingFee);
-        addCoinSpent(address, listingFee);
-        const wallet = walletDatabase.get(address);
-        if (wallet) {
-          wallet.coins = balance - listingFee;
-          saveWalletDatabaseDebounced();
-        }
-
+        // FIX 2: write file + listing BEFORE burning fee.
+        // If file write or listing save fails, the user keeps their coins.
         const id = `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const modelsDir = path.join(process.cwd(), 'marketplace_models');
         if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
-        await fs.promises.writeFile(path.join(modelsDir, `${id}.${format}`), modelBuffer);
+        const modelFilePath = path.join(modelsDir, `${id}.${format}`);
 
         let safePreview = null;
         if (previewImage) {
@@ -148,6 +142,15 @@ function registerMarketplaceRoute(ctx) {
             return true;
           }
           safePreview = previewImage.slice(0, 100000);
+        }
+
+        // Write file — if this throws, no coins are burned.
+        try {
+          await fs.promises.writeFile(modelFilePath, modelBuffer);
+        } catch (writeError) {
+          console.error('[marketplace] File write failed:', writeError?.message ?? writeError);
+          respondJson(res, 500, { error: 'Upload failed' });
+          return true;
         }
 
         const listing = {
@@ -164,8 +167,29 @@ function registerMarketplaceRoute(ctx) {
           purchaseCount: 0,
           createdAt: Date.now(),
         };
-        marketplaceListings.set(id, listing);
-        saveMarketplace();
+
+        // Register listing — if this throws, rollback file and do not burn fee.
+        try {
+          marketplaceListings.set(id, listing);
+          saveMarketplace();
+        } catch (saveError) {
+          console.error('[marketplace] Listing save failed:', saveError?.message ?? saveError);
+          // Rollback: remove the written file so no orphan exists.
+          fs.unlink(modelFilePath, () => {});
+          respondJson(res, 500, { error: 'Upload failed' });
+          return true;
+        }
+
+        // Only now burn the listing fee — listing is durably stored.
+        applyBurnFee(listingFee);
+        setCoinBalance(address, balance - listingFee);
+        addCoinSpent(address, listingFee);
+        const wallet = walletDatabase.get(address);
+        if (wallet) {
+          wallet.coins = balance - listingFee;
+          saveWalletDatabaseDebounced();
+        }
+
         respondJson(res, 200, { listing, message: 'Model uploaded successfully!' });
       } catch (error) {
         console.error('[marketplace] Upload failed:', error?.message ?? error);

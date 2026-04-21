@@ -1,10 +1,6 @@
 function registerSpendRoute(ctx) {
+  const { requireJwt, readBody, respondJson, ipRateLimit, getClientIp } = ctx.core;
   const {
-    requireJwt,
-    readBody,
-    respondJson,
-    ipRateLimit,
-    getClientIp,
     walletDatabase,
     getCoinBalance,
     setCoinBalance,
@@ -12,6 +8,10 @@ function registerSpendRoute(ctx) {
     updateWalletEntry,
     prismTransactions,
     getPrismBalance,
+    savePrismDataDebounced: debouncedSavePrism,
+  } = ctx.wallet;
+  // flat: not yet in a slice
+  const {
     getOrCreateForgeState,
     mergeForgeEntries,
     getServerRangerSnapshot,
@@ -20,7 +20,6 @@ function registerSpendRoute(ctx) {
     applyBurnFee,
     forgeItemMap,
     forgeModuleMap,
-    debouncedSavePrism,
   } = ctx;
 
   return async function handleSpendRoute(req, res, url, pathname) {

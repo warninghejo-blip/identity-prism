@@ -33,7 +33,6 @@ import { createRequire } from 'node:module';
 import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
 import { JWT_TTL, createAuthServices, createJwt, verifyJwt } from './services/auth.js';
 import { calculateIdentity } from './services/scoring.js';
-import { drawBackCard, drawFrontCard, drawFrontCardImage } from './services/cardGenerator.js';
 import {
   loadAchievementData,
   loadChallenges,
@@ -66,7 +65,6 @@ import {
   buildIdentityHolderPerks,
   GAME_SESSION_ONCHAIN_BONUS_MULTIPLIER,
   normalizeGameCoinDeltaForCap,
-  scaleAppliedGameCoinDelta,
 } from './services/identityPerks.js';
 import {
   PRISM_EARN_MAX_PER_CALL,
@@ -1527,6 +1525,7 @@ const {
   blackHoleUsedSignatures,
   persistBlackHoleUsedSignatures,
   cleanupBlackHoleUsedSignatures,
+  durableClaimSignatures,
 } = createBlackHoleSignatureStore({
   fs,
   filePath: BLACKHOLE_USED_SIG_FILE,
@@ -5277,6 +5276,7 @@ const ctx = createContext({
   saveChallenges,
   persistBlackHoleUsedSignatures,
   cleanupBlackHoleUsedSignatures,
+  durableClaimSignatures,
   pushNotification,
   requireAdminKey,
   safeParseJson,
@@ -5452,6 +5452,7 @@ const ctx = createContext({
   scoreHistoryFile: SCORE_HISTORY_FILE,
   scoreHistoryMaxEntries: SCORE_HISTORY_MAX,
   fbAvailable,
+  fbGet,
   fbGetAll,
   fbSet,
   fbBatchSet,
@@ -5565,6 +5566,24 @@ initOrchestrator.initialize(ctx).then(() => {
   console.error('[init] Failed to load data:', err);
   process.exit(1);
 });
+
+const shutdown = (signal) => {
+  console.log(`[shutdown] ${signal} received, flushing...`);
+  const timer = setTimeout(() => { console.error('[shutdown] force exit after 10s'); process.exit(1); }, 10000);
+  server.close(async () => {
+    try {
+      if (typeof persistWalletDatabase === 'function') await persistWalletDatabase();
+      if (typeof savePrismDataDebounced === 'function') savePrismDataDebounced();
+      if (typeof saveCoinBalancesDebounced === 'function') saveCoinBalancesDebounced();
+      if (appDb?.close) appDb.close();
+      console.log('[shutdown] flushed, exiting cleanly');
+    } catch (err) { console.error('[shutdown] flush error:', err); }
+    clearTimeout(timer);
+    process.exit(0);
+  });
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 process.on('uncaughtException', (err, origin) => {
   console.error(`[fatal:${origin}]`, err.stack || err);

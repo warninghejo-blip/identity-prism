@@ -36,9 +36,14 @@ function createRequireJwt({ walletIpLog, getClientIp, respondJson }) {
       const payload = verifyJwt(token);
       const clientIp = getClientIp(req);
       if (payload.address && clientIp) {
-        const ips = walletIpLog.get(payload.address) || new Set();
-        ips.add(clientIp);
-        walletIpLog.set(payload.address, ips);
+        // Option B: cap per-address IP list at 50 (array, oldest shifted out)
+        const entry = walletIpLog.get(payload.address) || { ips: [], lastSeen: 0 };
+        if (!entry.ips.includes(clientIp)) {
+          entry.ips.push(clientIp);
+          if (entry.ips.length > 50) entry.ips.shift();
+        }
+        entry.lastSeen = Date.now();
+        walletIpLog.set(payload.address, entry);
       }
       return { ok: true, address: payload.address };
     } catch {

@@ -7,6 +7,9 @@ function registerUtilityRoute(ctx) {
       respondJson,
       readBody,
       getRpcUrl,
+      requireJwt,
+      normalizePubkey,
+      ipRateLimit,
     },
     wallet: {
       walletDatabase,
@@ -21,8 +24,21 @@ function registerUtilityRoute(ctx) {
 
   return async function handleUtilityRoute(req, res, url, pathname) {
     if (pathname === '/api/migration-status' && req.method === 'GET') {
+      // FIX 3: require authentication; caller may only read their own migration record.
+      if (!ipRateLimit('migration_status', getClientIp(req), 20, 60000)) {
+        return respondJson(res, 429, { error: 'Too many requests' });
+      }
+      const jwtAuth = requireJwt(req, res);
+      if (!jwtAuth.ok) return true;
+
       const address = String(url.searchParams.get('address') ?? '').trim();
       if (!address) return respondJson(res, 400, { error: 'address required' });
+
+      // Enforce: authenticated wallet may only query its own migration record.
+      if (normalizePubkey(address) !== normalizePubkey(jwtAuth.address)) {
+        return respondJson(res, 403, { error: 'Forbidden' });
+      }
+
       const walletEntry = walletDatabase.get(address);
       if (!walletEntry || !walletEntry._v2MigrationResult) {
         return respondJson(res, 200, { migrated: false });

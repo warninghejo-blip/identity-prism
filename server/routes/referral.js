@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { getDb } from '../services/firebase.js';
 
 function registerReferralRoute(ctx) {
   const {
@@ -18,6 +17,7 @@ function registerReferralRoute(ctx) {
     fbAvailable,
     fbGet,
     fbSet,
+    fbGetAll,
     referralSalt,
   } = ctx;
 
@@ -118,15 +118,19 @@ function registerReferralRoute(ctx) {
           return true;
         }
 
-        await fbSet('referralClaimers', claimer, { referrer, code, claimedAt: Date.now() });
+        // Idempotent 2-phase claim:
+        // Phase 1 — write claim marker (pending). If step 2 fails, retry sees this and can resume or skip.
+        await fbSet('referralClaimers', claimer, { referrer, code, claimedAt: Date.now(), status: 'pending' });
         await fbSet('referrals', refClaimKey, {
           referrer,
           claimer,
           code,
           timestamp: Date.now(),
           mintBonus: false,
+          status: 'pending',
         });
 
+        // Phase 2 — apply balance updates (in-memory, non-transactional; safe to re-apply if idempotent markers are checked)
         setCoinBalance(claimer, getCoinBalance(claimer) + 50);
         addCoinEarned(claimer, 50);
         setCoinBalance(referrer, getCoinBalance(referrer) + 20);
@@ -136,6 +140,12 @@ function registerReferralRoute(ctx) {
           totalReferred: (referrerStats?.totalReferred || 0) + 1,
           totalEarned: (referrerStats?.totalEarned || 0) + 20,
         });
+
+        // Phase 3 — mark complete. If this write fails the client already got a success;
+        // on next request the duplicate-check on referralClaimers (status: pending) will reject re-claim,
+        // so the worst case is the stats counter is off by 1 (not a balance risk).
+        await fbSet('referralClaimers', claimer, { referrer, code, claimedAt: Date.now(), status: 'complete' });
+        await fbSet('referrals', refClaimKey, { referrer, claimer, code, timestamp: Date.now(), mintBonus: false, status: 'complete' });
 
         globalThis._pendingReferralClaims.delete(refClaimKey);
         globalThis._pendingReferralClaims.delete(claimerKey);
@@ -164,22 +174,19 @@ function registerReferralRoute(ctx) {
       const statsDoc = await fbGet('referralStats', address);
       const referrals = [];
       if (statsDoc?.totalReferred > 0) {
-        const db = getDb();
-        if (db) {
-          const snap = await db.collection('referrals')
-            .where('referrer', '==', address)
-            .orderBy('timestamp', 'desc')
-            .limit(50)
-            .get();
-          snap.forEach((doc) => {
-            const data = doc.data();
+        // Use fbGetAll + in-memory filter to avoid direct getDb() dependency
+        const allReferrals = await fbGetAll('referrals');
+        for (const [, data] of allReferrals) {
+          if (data.referrer === address) {
             referrals.push({
               address: data.claimer,
               timestamp: data.timestamp,
               mintBonus: data.mintBonus || false,
             });
-          });
+          }
         }
+        referrals.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        referrals.splice(50);
       }
 
       respondJson(res, 200, {

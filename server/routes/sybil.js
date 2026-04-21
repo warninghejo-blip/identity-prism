@@ -4,27 +4,16 @@ import { createScanOrchestrator } from '../services/scanOrchestrator.js';
 
 function registerSybilRoute(ctx) {
   const runSybilAnalysis = createScanOrchestrator(ctx);
+  const { ipRateLimit, getClientIp, respondJson, requireAdminKey, getRpcUrl, getBatchRpcUrl, batchGetParsedTxs, resolveAccountKey, readBody, reputationRateLimit } = ctx.core;
+  // optionalJwt is in ctx.auth — it does NOT write to res on bad token, so passing res is safe
+  const { optionalJwt } = ctx.auth;
+  const { walletDatabase, updateWalletEntry, triggerCompositeUpdate, achievements, leaderboardEntries } = ctx.wallet;
+  const { getPrismEarnRateLimit, setPrismEarnRateLimit, getScanRewardState, skrMint } = ctx.economy;
+  const { sybilCache, getSybilVerdict } = ctx.sybil;
+  // flat: not yet in a slice
   const {
-    ipRateLimit,
-    getClientIp,
-    respondJson,
-    requireAdminKey,
-    getRpcUrl,
-    getBatchRpcUrl,
-    batchGetParsedTxs,
-    resolveAccountKey,
-    optionalJwt,
-    readBody,
-    reputationRateLimit,
-    walletDatabase,
-    updateWalletEntry,
-    triggerCompositeUpdate,
-    getPrismEarnRateLimit,
-    setPrismEarnRateLimit,
-    sybilCache,
     sybilInFlight,
     clusterCache,
-    getSybilVerdict,
     getSybilQuickVerdict,
     sybilGraph,
     saveSybilGraph,
@@ -51,16 +40,12 @@ function registerSybilRoute(ctx) {
     sybilScanVersion,
     solMint,
     usdcMint,
-    skrMint,
     programLabels,
     treasuryWallets,
     knownLabels,
     knownScamAddresses,
-    achievements,
     quests,
-    leaderboardEntries,
     activeChallenges,
-    getScanRewardState,
     getUniqueScanTargetCount,
   } = ctx;
 
