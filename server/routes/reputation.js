@@ -1,4 +1,10 @@
-import { PublicKey } from '@solana/web3.js';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
 import { checkApiKey } from '../services/apiKeyMiddleware.js';
 
 function registerReputationRoute(ctx) {
@@ -329,4 +335,498 @@ function registerReputationRoute(ctx) {
   };
 }
 
-export { registerReputationRoute };
+function registerReputationInlineRoute(ctx) {
+  const {
+    core: {
+      ipRateLimit,
+      getClientIp,
+      respondJson,
+      readBody,
+      getRpcUrl,
+      getBatchRpcUrl,
+      getBaseUrl,
+      batchGetParsedTxs,
+      reputationRateLimit,
+    },
+    wallet: {
+      walletDatabase,
+      saveWalletDatabaseDebounced,
+      updateWalletEntry,
+      triggerCompositeUpdate,
+    },
+    economy: {
+      getPrismEarnRateLimit,
+      setPrismEarnRateLimit,
+    },
+    sybil: {
+      sybilCache,
+      fetchIdentitySnapshot,
+      calculateCompositeScore,
+      buildCompositeInput,
+      getSybilVerdict,
+    },
+    treasuryAddress,
+    treasurySecret,
+    treasurySecretPath,
+    parseSecretKey,
+    loadSecretKeyFromFile,
+  } = ctx;
+
+  const PROGRAM_NAMES = {
+    JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4: 'Jupiter',
+    whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc: 'Orca',
+    CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK: 'Raydium CLMM',
+    '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': 'Raydium AMM',
+    SSwpkEEcbUqx4vtoEByFjSkhKdCT862DNVb52nZg1UZ: 'Saber',
+    mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68: 'Marinade',
+    MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA: 'Marinade Finance',
+    MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD: 'Marinade',
+    TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: 'Token Program',
+    ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL: 'ATA Program',
+    MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr: 'Memo',
+    metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: 'Metaplex',
+    BGUMAp9Gq7iTEuizy4pqAxsTkFQ1XyUbSreFdn6YqwPc: 'Bubblegum',
+    DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1: 'Tensor',
+    TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN: 'Tensor Swap',
+    M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K: 'Magic Eden V2',
+    CMZYPASGWeTz7RNGHaRJfCq2XQ5pYK6nDvVQxzkH51zb: 'Solend',
+    PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY: 'Phoenix',
+    LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo: 'Meteora',
+    Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB: 'Phantom',
+    FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH: 'Pyth Oracle',
+    wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb: 'Wormhole',
+    SSwapUtytfBdBn1b9NUGG6foMVPtcWgpRU32HToDUZr: 'Step Finance',
+    DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M: 'Jupiter DCA',
+    jCebN34bUfdeUhR6bhNixjhCSnx9CY23HsmUkT7XjVV: 'Jito',
+  };
+
+  const formatCompareWallet = (snapshot, address) => {
+    const comp = walletDatabase.get(address)?.composite || calculateCompositeScore(buildCompositeInput(address));
+    return {
+      address,
+      score: snapshot.identity.score,
+      tier: snapshot.identity.tier,
+      badges: snapshot.identity.badges,
+      compositeScore: comp.compositeScore,
+      compositeTier: comp.compositeTier,
+      stats: {
+        walletAgeDays: snapshot.walletAgeDays,
+        solBalance: Math.round(snapshot.solBalance * 1000) / 1000,
+        txCount: snapshot.txCount,
+        tokenCount: snapshot.tokenCount,
+        nftCount: snapshot.nftCount,
+      },
+    };
+  };
+
+  return async function handleReputationInlineRoute(req, res, url, pathname) {
+    if (
+      (pathname === '/api/reputation' || pathname === '/api/reputation/compare' || pathname === '/api/reputation/batch')
+      && (req.method === 'GET' || req.method === 'POST')
+    ) {
+      const rlIp = getClientIp(req);
+      const rlKey = `repv1:${rlIp}`;
+      const now = Date.now();
+      const lastReq = reputationRateLimit.get(rlKey) || 0;
+      if (now - lastReq < 1_000) {
+        respondJson(res, 429, { error: 'Rate limited', retryAfterMs: 1_000 - (now - lastReq) });
+        return true;
+      }
+      reputationRateLimit.set(rlKey, now);
+      if (reputationRateLimit.size > 5000) {
+        const cutoff = now - 20_000;
+        for (const [key, value] of reputationRateLimit) {
+          if (value < cutoff) reputationRateLimit.delete(key);
+        }
+      }
+    }
+
+    if (pathname === '/api/reputation' && req.method === 'GET') {
+      const address = String(url.searchParams.get('address') ?? '').trim();
+      if (!address) {
+        respondJson(res, 400, { error: 'address query parameter is required' });
+        return true;
+      }
+      try {
+        new PublicKey(address);
+      } catch {
+        respondJson(res, 400, { error: 'Invalid Solana address' });
+        return true;
+      }
+
+      const cachedWallet = walletDatabase.get(address);
+      if (cachedWallet?.lastReputationAt && Date.now() - cachedWallet.lastReputationAt < 60_000 && cachedWallet._lastReputation) {
+        respondJson(res, 200, cachedWallet._lastReputation);
+        return true;
+      }
+
+      try {
+        const snapshot = await fetchIdentitySnapshot(address);
+        const { identity, walletAgeDays, solBalance, txCount, tokenCount, nftCount } = snapshot;
+
+        let trustGrade = null;
+        let trustScore = null;
+        let riskLevel = null;
+        let sybilVerdict = null;
+        let topPrograms = [];
+
+        try {
+          const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+          const pubkey = new PublicKey(address);
+          const cachedSybil = sybilCache.get(address);
+          if (cachedSybil && Date.now() - cachedSybil.cachedAt < 3600_000) {
+            trustGrade = cachedSybil.analysis.trustGrade;
+            trustScore = cachedSybil.analysis.trustScore;
+            riskLevel = cachedSybil.analysis.riskLevel;
+            sybilVerdict = cachedSybil.analysis.verdict || getSybilVerdict(cachedSybil.analysis);
+            topPrograms = cachedSybil.analysis.metrics?.topPrograms || [];
+          } else {
+            let riskPts = 0;
+            if (walletAgeDays < 30) riskPts += 15;
+            if (txCount < 10) riskPts += 10;
+            if (solBalance < 0.01) riskPts += 8;
+            if (nftCount === 0) riskPts += 5;
+            if (tokenCount < 3) riskPts += 6;
+            if (walletAgeDays > 365) riskPts -= 5;
+            if (tokenCount >= 10) riskPts -= 3;
+            if (nftCount >= 5) riskPts -= 2;
+            riskPts = Math.max(0, Math.min(100, riskPts));
+            const ts = Math.min(90, Math.max(0, 100 - riskPts));
+            trustScore = ts;
+            trustGrade = ts >= 90 ? 'A+' : ts >= 80 ? 'A' : ts >= 70 ? 'B' : ts >= 60 ? 'C' : ts >= 50 ? 'D' : 'F';
+            riskLevel = riskPts >= 75 ? 'critical' : riskPts >= 50 ? 'high' : riskPts >= 30 ? 'medium' : riskPts >= 10 ? 'low' : 'clean';
+          }
+
+          if (topPrograms.length === 0) {
+            try {
+              const recentSigs = await conn.getSignaturesForAddress(pubkey, { limit: 100 });
+              const sigBatch = recentSigs.map((entry) => entry.signature);
+              if (sigBatch.length > 0) {
+                const programCounts = new Map();
+                const batchTxs = await batchGetParsedTxs(getBatchRpcUrl(address), sigBatch, { batchSize: 100 });
+                for (const tx of batchTxs) {
+                  if (!tx?.transaction?.message?.instructions) continue;
+                  for (const instruction of tx.transaction.message.instructions) {
+                    const programId = instruction.programId?.toBase58?.() || (typeof instruction.programId === 'string' ? instruction.programId : '');
+                    if (
+                      programId
+                      && programId !== '11111111111111111111111111111111'
+                      && programId !== 'ComputeBudget111111111111111111111111111111'
+                    ) {
+                      programCounts.set(programId, (programCounts.get(programId) || 0) + 1);
+                    }
+                  }
+                }
+                topPrograms = [...programCounts.entries()]
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 8)
+                  .map(([programId, interactions]) => ({
+                    programId,
+                    name: PROGRAM_NAMES[programId] || null,
+                    interactions,
+                  }));
+              }
+            } catch {
+              // non-critical enrichment only
+            }
+          }
+        } catch {
+          // trust enrichment is best-effort
+        }
+
+        const firstTxTimestamp = snapshot.firstTxTime || null;
+        updateWalletEntry(address, {
+          score: identity.score,
+          tier: identity.tier,
+          badges: identity.badges,
+          scoreBreakdown: identity.scoreBreakdown,
+          ...(firstTxTimestamp ? { firstTxTimestamp } : {}),
+          stats: {
+            tokens: tokenCount,
+            nfts: nftCount,
+            transactions: txCount,
+            solBalance: Math.round(solBalance * 1000) / 1000,
+            walletAgeYears: Math.floor(walletAgeDays / 365),
+          },
+        });
+        triggerCompositeUpdate(address);
+
+        const repResponse = {
+          address,
+          score: identity.score,
+          tier: identity.tier,
+          badges: identity.badges,
+          scoreBreakdown: identity.scoreBreakdown,
+          trustGrade,
+          trustScore,
+          riskLevel,
+          sybilVerdict,
+          topPrograms,
+          stats: {
+            walletAgeDays,
+            solBalance: Math.round(solBalance * 1000) / 1000,
+            txCount,
+            tokenCount,
+            nftCount,
+          },
+        };
+        updateWalletEntry(address, { _lastReputation: repResponse, lastReputationAt: Date.now() });
+        respondJson(res, 200, repResponse);
+      } catch (error) {
+        console.error('[reputation] failed for', address, error);
+        respondJson(res, 500, { error: 'Failed to compute reputation' });
+      }
+      return true;
+    }
+
+    if (pathname === '/api/reputation/batch' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        let payload = {};
+        try {
+          payload = body ? JSON.parse(body) : {};
+        } catch {
+          respondJson(res, 400, { error: 'Invalid JSON' });
+          return true;
+        }
+        const addresses = Array.isArray(payload.addresses) ? payload.addresses : [];
+        if (!addresses.length || addresses.length > 5) {
+          respondJson(res, 400, { error: 'Provide 1-5 addresses in { "addresses": [...] }' });
+          return true;
+        }
+
+        const results = [];
+        for (const address of addresses) {
+          const trimmed = String(address).trim();
+          try {
+            new PublicKey(trimmed);
+            const snapshot = await fetchIdentitySnapshot(trimmed);
+            const comp = walletDatabase.get(trimmed)?.composite || calculateCompositeScore(buildCompositeInput(trimmed));
+            results.push({
+              address: trimmed,
+              score: snapshot.identity.score,
+              tier: snapshot.identity.tier,
+              badges: snapshot.identity.badges,
+              compositeScore: comp.compositeScore,
+              compositeTier: comp.compositeTier,
+              stats: {
+                walletAgeDays: snapshot.walletAgeDays,
+                solBalance: Math.round(snapshot.solBalance * 1000) / 1000,
+                txCount: snapshot.txCount,
+                tokenCount: snapshot.tokenCount,
+                nftCount: snapshot.nftCount,
+              },
+            });
+          } catch {
+            results.push({ address: trimmed, error: 'Failed to compute reputation' });
+          }
+        }
+        respondJson(res, 200, { results });
+      } catch {
+        respondJson(res, 500, { error: 'Failed to compute batch reputation' });
+      }
+      return true;
+    }
+
+    if (pathname === '/api/reputation/compare' && req.method === 'GET') {
+      const a = String(url.searchParams.get('a') ?? '').trim();
+      const b = String(url.searchParams.get('b') ?? '').trim();
+      if (!a || !b) {
+        respondJson(res, 400, { error: 'Both ?a= and ?b= address parameters are required' });
+        return true;
+      }
+      try {
+        new PublicKey(a);
+        new PublicKey(b);
+      } catch {
+        respondJson(res, 400, { error: 'Invalid Solana address' });
+        return true;
+      }
+
+      try {
+        const [snapA, snapB] = await Promise.all([
+          fetchIdentitySnapshot(a),
+          fetchIdentitySnapshot(b),
+        ]);
+        const resultA = formatCompareWallet(snapA, a);
+        const resultB = formatCompareWallet(snapB, b);
+        const diff = resultA.compositeScore - resultB.compositeScore;
+
+        const comparePairKey = `compare_pair:${[a, b].sort().join(':')}`;
+        const compareToday = new Date().toISOString().slice(0, 10);
+        const comparePairEntry = getPrismEarnRateLimit(comparePairKey);
+        if (!comparePairEntry || comparePairEntry.date !== compareToday) {
+          setPrismEarnRateLimit(comparePairKey, { date: compareToday });
+          for (const address of [a, b]) {
+            const wallet = walletDatabase.get(address) || {};
+            const socialStats = wallet.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
+            socialStats.compareCount = (socialStats.compareCount || 0) + 1;
+            updateWalletEntry(address, { socialStats });
+          }
+          triggerCompositeUpdate(a);
+          triggerCompositeUpdate(b);
+        }
+
+        respondJson(res, 200, {
+          wallets: [resultA, resultB],
+          scoreDiff: diff,
+          winner: diff > 0 ? a : diff < 0 ? b : 'tie',
+        });
+      } catch (error) {
+        console.error('[reputation/compare] failed', error);
+        respondJson(res, 500, { error: 'Failed to compare reputations' });
+      }
+      return true;
+    }
+
+    if (pathname === '/api/actions/attest' || pathname === '/api/reputation/attest') {
+      if (!ipRateLimit('attest', getClientIp(req), 10, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+
+      const memoProgramId = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+      const baseUrl = getBaseUrl(req);
+      if (req.method === 'GET' || req.method === 'OPTIONS') {
+        const address = String(url.searchParams.get('address') ?? '').trim();
+        if (!address) {
+          respondJson(res, 200, {
+            type: 'action',
+            icon: `${baseUrl}/assets/icon.png`,
+            title: 'Attest Your On-Chain Reputation',
+            description: 'Record your Identity Prism reputation score permanently on the Solana blockchain. This creates a verifiable, immutable attestation signed by both you and our authority.',
+            label: 'Attest Reputation',
+            links: {
+              actions: [
+                {
+                  label: 'Attest My Wallet',
+                  href: `${baseUrl}/api/actions/attest?address={address}`,
+                  parameters: [
+                    { name: 'address', label: 'Enter your Solana wallet address', required: true },
+                  ],
+                },
+              ],
+            },
+          });
+          return true;
+        }
+
+        try {
+          new PublicKey(address);
+          const snapshot = await fetchIdentitySnapshot(address);
+          respondJson(res, 200, {
+            type: 'action',
+            icon: `${baseUrl}/api/actions/render?address=${address}&side=front`,
+            title: `Attest Score: ${snapshot.identity.score}/1000 — ${snapshot.identity.tier.replace('_', ' ').toUpperCase()}`,
+            description: `Badges: ${snapshot.identity.badges.join(', ') || 'none'}. Click to record this reputation permanently on the Solana blockchain.`,
+            label: `Attest ${snapshot.identity.score} pts`,
+            links: {
+              actions: [
+                { label: `Attest Score ${snapshot.identity.score}`, href: `${baseUrl}/api/actions/attest?address=${address}` },
+              ],
+            },
+          });
+        } catch (error) {
+          respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid address' });
+        }
+        return true;
+      }
+
+      if (req.method === 'POST') {
+        try {
+          const body = await readBody(req);
+          let payload = {};
+          try {
+            payload = body ? JSON.parse(body) : {};
+          } catch {
+            respondJson(res, 400, { error: 'Invalid JSON' });
+            return true;
+          }
+
+          const account = String(payload.account ?? '').trim();
+          const addressParam = String(url.searchParams.get('address') ?? '').trim();
+          const address = addressParam || account;
+          if (!account) {
+            respondJson(res, 400, { error: 'account is required' });
+            return true;
+          }
+          if (!address) {
+            respondJson(res, 400, { error: 'address parameter is required' });
+            return true;
+          }
+
+          let payerKey;
+          let walletKey;
+          try {
+            payerKey = new PublicKey(account);
+          } catch {
+            respondJson(res, 400, { error: 'Invalid account' });
+            return true;
+          }
+          try {
+            walletKey = new PublicKey(address);
+          } catch {
+            respondJson(res, 400, { error: 'Invalid address' });
+            return true;
+          }
+
+          const snapshot = await fetchIdentitySnapshot(address);
+          const { identity, walletAgeDays, solBalance, txCount, tokenCount, nftCount } = snapshot;
+          const attestation = JSON.stringify({
+            protocol: 'identity-prism-v1',
+            wallet: address,
+            score: identity.score,
+            tier: identity.tier,
+            badges: identity.badges,
+            stats: {
+              walletAgeDays,
+              solBalance: Math.round(solBalance * 1000) / 1000,
+              txCount,
+              tokenCount,
+              nftCount,
+            },
+            timestamp: Math.floor(Date.now() / 1000),
+            authority: treasuryAddress,
+          });
+
+          const treasurySecretKey = parseSecretKey(treasurySecret) ?? loadSecretKeyFromFile(treasurySecretPath);
+          if (!treasurySecretKey) {
+            respondJson(res, 500, { error: 'Attestation authority not configured' });
+            return true;
+          }
+          const treasuryKeypair = Keypair.fromSecretKey(treasurySecretKey);
+          const memoInstruction = new TransactionInstruction({
+            keys: [
+              { pubkey: payerKey, isSigner: true, isWritable: true },
+              { pubkey: treasuryKeypair.publicKey, isSigner: true, isWritable: false },
+            ],
+            programId: memoProgramId,
+            data: Buffer.from(attestation, 'utf-8'),
+          });
+          const connection = new Connection(getRpcUrl(walletKey.toBase58()) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+          const latestBlockhash = await connection.getLatestBlockhash('confirmed');
+          const transaction = new Transaction().add(memoInstruction);
+          transaction.feePayer = payerKey;
+          transaction.recentBlockhash = latestBlockhash.blockhash;
+          transaction.partialSign(treasuryKeypair);
+
+          respondJson(res, 200, {
+            transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64'),
+            message: `Reputation attestation: Score ${identity.score}/400, Tier ${identity.tier.replace('_', ' ').toUpperCase()}. This will be permanently recorded on Solana.`,
+          });
+        } catch (error) {
+          console.error('[attest] failed', error);
+          respondJson(res, 500, { error: 'Attestation failed' });
+        }
+        return true;
+      }
+
+      respondJson(res, 405, { error: 'Method not allowed' });
+      return true;
+    }
+
+    return false;
+  };
+}
+
+export { registerReputationRoute, registerReputationInlineRoute };
