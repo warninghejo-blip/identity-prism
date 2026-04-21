@@ -28,6 +28,7 @@ import {
   publicKey,
 } from '@metaplex-foundation/umi';
 import { create, fetchCollection, fetchAsset, mplCore, burnV1, updateV1 } from '@metaplex-foundation/mpl-core';
+import { getToday } from './utils/date.js';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
 import { createRequire } from 'node:module';
 import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
@@ -2318,8 +2319,6 @@ const persistReviveData = () => {
     console.warn('[revives] Failed to persist', err);
   }
 };
-
-const getToday = () => new Date().toISOString().slice(0, 10);
 
 const getRevivesUsedToday = (address, gameMode) => {
   const entry = reviveData.get(address);
