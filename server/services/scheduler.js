@@ -20,6 +20,7 @@ function startSchedulers(ctx) {
     reputationV2RateLimit,
     reputationRateLimit,
     rateLimitStore,
+    getSybilCacheTtlMs,
     weeklyRewards,
     weeklyXpRewards,
     backfillCompositeScores,
@@ -233,7 +234,9 @@ function startSchedulers(ctx) {
   handles.push(setInterval(() => {
     const now = Date.now();
     for (const [key, value] of sybilCache) {
-      if (now - value.cachedAt > 3600_000) sybilCache.delete(key);
+      const txCount = Number(value?.analysis?.metrics?.txCount ?? value?.estimatedTxCount ?? 0) || 0;
+      const ttlMs = typeof getSybilCacheTtlMs === 'function' ? getSybilCacheTtlMs(txCount, false) : 3600_000;
+      if (!value?.cachedAt || now - value.cachedAt > ttlMs) sybilCache.delete(key);
     }
     for (const [key, value] of clusterCache) {
       if (now - value.ts > 1800_000) clusterCache.delete(key);

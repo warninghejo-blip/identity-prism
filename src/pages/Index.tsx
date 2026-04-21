@@ -1044,13 +1044,20 @@ const Index = () => {
           }
         }
         if (canEarnFromScan(resolvedAddress)) {
+          const _earnBase = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
           import('@/components/prism/shared')
             .then(({ fetchSybilAnalysis }) => fetchSybilAnalysis(resolvedAddress))
             .then((analysis) => {
               if (!analysis) return null;
-              return earnPrism(resolvedAddress, 'scan_wallet', undefined, undefined, undefined, {
-                scanTarget: resolvedAddress,
-              });
+              // Re-hit server analysis to warm its in-memory cache (may have restarted).
+              // Server requires recent analysis (1h TTL) before approving earn reward.
+              return fetch(`${_earnBase}/api/sybil/analysis?address=${resolvedAddress}`)
+                .catch(() => null)
+                .then(() =>
+                  earnPrism(resolvedAddress, 'scan_wallet', undefined, undefined, undefined, {
+                    scanTarget: resolvedAddress,
+                  }),
+                );
             })
             .then((reward) => {
               if (!reward || reward.earned <= 0) return;

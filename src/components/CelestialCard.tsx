@@ -157,6 +157,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [isDeepSybilLoading, setIsDeepSybilLoading] = useState(false);
   const [hasFullSybilAnalysis, setHasFullSybilAnalysis] = useState(false);
   const [isFundingLoading, setIsFundingLoading] = useState(false);
+  const [trustHistory, setTrustHistory] = useState<{ ts: string; trustScore: number }[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [forgeFrame, setForgeFrame] = useState<string | null>(null);
   const [forgeAura, setForgeAura] = useState<string | null>(null);
   const [forgeTitle, setForgeTitle] = useState<string | null>(null);
@@ -269,6 +271,34 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
       cancelled = true;
     };
   }, [address, isCapture, refetchComposite]);
+
+  useEffect(() => {
+    if (!address || isCapture) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    (async () => {
+      try {
+        const r = await fetch(`/api/v1/reputation/${address}/history?days=30`);
+        if (r.status === 404) {
+          if (!cancelled) {
+            setTrustHistory(null);
+            setHistoryLoading(false);
+          }
+          return;
+        }
+        if (!r.ok) throw new Error('history_fetch_failed');
+        const d = await r.json();
+        if (!cancelled) setTrustHistory(Array.isArray(d?.history) ? d.history : null);
+      } catch {
+        if (!cancelled) setTrustHistory(null);
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, isCapture]);
 
   const clearTransitionTimers = useCallback(() => {
     transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -1150,6 +1180,105 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                           </div>
                         </div>
 
+                        {/* Trust Breakdown */}
+                        {dossierRisk.metrics &&
+                          (() => {
+                            const m = dossierRisk.metrics;
+                            const sigs = dossierRisk.signals ?? [];
+                            const behavSigs = sigs.filter((s) => s.category === 'behavioral');
+                            const detectedBehav = behavSigs.filter((s) => s.detected).length;
+                            const totalBehav = behavSigs.length;
+                            const passedBehav = totalBehav - detectedBehav;
+                            const dangerSigs = sigs.filter((s) => s.detected && s.severity === 'danger');
+                            const onchain = Math.min(
+                              150,
+                              Math.round(
+                                (m.walletAgeDays / 365) * 40 +
+                                  (Math.min(m.txCount, 1000) / 1000) * 60 +
+                                  (Math.min(m.uniquePrograms, 20) / 20) * 50,
+                              ),
+                            );
+                            const behavioral = Math.min(
+                              75,
+                              totalBehav === 0 ? 75 : Math.round(75 * (1 - detectedBehav / totalBehav)),
+                            );
+                            const social = sigs.find((s) => s.id === 'social_verify')?.detected === false ? 25 : 15;
+                            const total = onchain + behavioral + social;
+                            return (
+                              <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">
+                                    Trust Breakdown
+                                  </span>
+                                  <span className="text-[10px] font-mono text-white/65">{total}/250</span>
+                                </div>
+                                <div className="space-y-2 pl-3 border-l border-white/[0.08]">
+                                  {[
+                                    { label: 'On-chain', value: onchain, max: 150, color: '#60a5fa' },
+                                    { label: 'Behavioral', value: behavioral, max: 75, color: '#f59e0b' },
+                                    { label: 'Social', value: social, max: 25, color: '#4ade80' },
+                                  ].map((row) => (
+                                    <div key={row.label} className="grid grid-cols-[72px_1fr_auto] items-center gap-2">
+                                      <span className="text-[10px] text-white/45">{row.label}</span>
+                                      <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                                        <div
+                                          className="h-full rounded-full"
+                                          style={{ width: `${(row.value / row.max) * 100}%`, background: row.color }}
+                                        />
+                                      </div>
+                                      <span className="text-[10px] font-mono text-white/65">
+                                        {row.value}/{row.max}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {(m.txCount > 100 ||
+                                  m.walletAgeDays > 365 ||
+                                  passedBehav > 3 ||
+                                  dangerSigs.length > 0) && (
+                                  <div className="space-y-1">
+                                    <div className="text-[9px] uppercase tracking-[0.15em] text-white/25 font-bold">
+                                      Reasoning
+                                    </div>
+                                    <ul className="space-y-1">
+                                      {m.txCount > 100 && (
+                                        <li className="flex items-start gap-2 text-[10px] text-white/55">
+                                          <CheckCircle2 className="w-3 h-3 mt-0.5 text-emerald-400/70 shrink-0" />
+                                          <span>{m.txCount.toLocaleString()} transactions on-chain</span>
+                                        </li>
+                                      )}
+                                      {m.walletAgeDays > 365 && (
+                                        <li className="flex items-start gap-2 text-[10px] text-white/55">
+                                          <CheckCircle2 className="w-3 h-3 mt-0.5 text-emerald-400/70 shrink-0" />
+                                          <span>{(m.walletAgeDays / 365).toFixed(1)}y wallet age</span>
+                                        </li>
+                                      )}
+                                      {passedBehav > 3 && (
+                                        <li className="flex items-start gap-2 text-[10px] text-white/55">
+                                          <CheckCircle2 className="w-3 h-3 mt-0.5 text-emerald-400/70 shrink-0" />
+                                          <span>{passedBehav} behavioral checks passed</span>
+                                        </li>
+                                      )}
+                                      {dangerSigs.map((sig) => (
+                                        <li key={sig.id} className="flex items-start gap-2 text-[10px] text-white/55">
+                                          <AlertTriangle className="w-3 h-3 mt-0.5 text-amber-400 shrink-0" />
+                                          <span>
+                                            {sig.name}
+                                            {sig.value
+                                              ? ` · ${sig.value}`
+                                              : sig.description
+                                                ? ` · ${sig.description}`
+                                                : ''}
+                                          </span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+
                         {/* Trust Recovery link */}
                         {dossierRisk.trustScore < 80 && (
                           <Link
@@ -1332,6 +1461,40 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                             </div>
                           </div>
                         )}
+
+                        {/* Trust Timeline */}
+                        <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                          <div className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold mb-2">
+                            30D Trust Timeline
+                          </div>
+                          {historyLoading ? (
+                            <div className="text-[10px] text-white/30">Loading...</div>
+                          ) : trustHistory && trustHistory.length > 1 ? (
+                            <svg viewBox="0 0 200 50" className="w-full h-12 overflow-visible">
+                              <path
+                                d={(() => {
+                                  const pts = trustHistory.map((h, i) => [
+                                    (i / (trustHistory.length - 1)) * 200,
+                                    50 - ((h.trustScore ?? 0) / 100) * 48,
+                                  ]);
+                                  return pts
+                                    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
+                                    .join(' ');
+                                })()}
+                                stroke="#22d3ee"
+                                strokeWidth="1.5"
+                                fill="none"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                style={{ filter: 'drop-shadow(0 0 4px #22d3ee80)' }}
+                              />
+                            </svg>
+                          ) : (
+                            <p className="text-[10px] text-white/20 text-center py-2">
+                              Timeline starts collecting from next scan
+                            </p>
+                          )}
+                        </div>
                       </div>
                     )}
                   </TabsContent>

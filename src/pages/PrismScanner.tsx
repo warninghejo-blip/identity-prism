@@ -34,6 +34,7 @@ import {
   Trophy,
   Target,
   Coins,
+  RotateCcw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PageShell from '@/components/PageShell';
@@ -42,11 +43,14 @@ import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import {
   fetchWalletPreview,
   formatWalletAge,
+  ensureJwt,
   type SybilVerdictSummary,
   type WalletPreview,
 } from '@/components/prism/shared';
 import { earnPrism } from '@/lib/prismCoin';
+import { toast } from 'sonner';
 import { RANGER_RANKS } from '@/lib/rangerRanks';
+import { getProgramLabel, PROGRAM_LABELS } from '@/lib/solanaPrograms';
 
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
 const SCAN_HISTORY_KEY = 'prism_scan_history_v1';
@@ -382,9 +386,18 @@ function ScanningSequence({ targetAddress, walletAddress }: { targetAddress: str
     setSelected(answer);
     setLoadingAnswer(true);
     try {
+      const jwt = await ensureJwt();
+      if (!jwt) {
+        toast.error('Sign in to submit quiz answers');
+        setLoadingAnswer(false);
+        return;
+      }
       const r = await fetch(`${BASE()}/api/quiz/answer`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jwt}`,
+        },
         body: JSON.stringify({ id: quiz.id, answer, address: walletAddress }),
       });
       if (r.ok) {
@@ -558,6 +571,17 @@ export default function PrismScanner() {
   const [huntVerdict, setHuntVerdict] = useState<SybilVerdictSummary | null>(null);
   const [huntCoinsEarned, setHuntCoinsEarned] = useState(0);
   const [showVerdictAnim, setShowVerdictAnim] = useState(false);
+  const [rescanUsedAt, setRescanUsedAt] = useState<number | null>(() => {
+    try {
+      return Number(sessionStorage.getItem('prism_rescan_ts')) || null;
+    } catch {
+      return null;
+    }
+  });
+  const [isRescanning, setIsRescanning] = useState(false);
+  const [rescanStep, setRescanStep] = useState('');
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
 
   // Suggested targets from sybil graph
   const [suggestedTargets, setSuggestedTargets] = useState<
@@ -605,6 +629,55 @@ export default function PrismScanner() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleRescan = useCallback(async () => {
+    if (!result?.address) return;
+    const remainingMs = rescanUsedAt ? 86_400_000 - (Date.now() - rescanUsedAt) : 0;
+    if (remainingMs > 0) {
+      const hoursLeft = Math.ceil(remainingMs / 3_600_000);
+      toast(`1 free re-scan per day · available in ${hoursLeft}h`);
+      return;
+    }
+    sybilClientCache.delete(result.address);
+    setIsRescanning(true);
+    try {
+      const steps = [
+        'Fetching tx history (1/5)...',
+        'Analyzing patterns (2/5)...',
+        'Checking network links (3/5)...',
+        'Computing trust score (4/5)...',
+        'Finalizing verdict (5/5)...',
+      ];
+      for (const step of steps) {
+        setRescanStep(step);
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+      await fetchSybil(result.address);
+      const ts = Date.now();
+      setRescanUsedAt(ts);
+      try {
+        sessionStorage.setItem('prism_rescan_ts', String(ts));
+      } catch {}
+      toast('Verdict updated');
+    } finally {
+      setIsRescanning(false);
+      setRescanStep('');
+    }
+  }, [fetchSybil, rescanUsedAt, result?.address]);
+
+  const handleFeedbackSubmit = useCallback(async () => {
+    if (!result?.address || !huntVerdict) return;
+    try {
+      await fetch(`${BASE()}/api/sybil/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: result.address, verdict: huntVerdict.key, feedback: feedbackText.trim() }),
+      });
+    } catch {}
+    toast('Thanks, flagged for review');
+    setShowFeedbackModal(false);
+    setFeedbackText('');
+  }, [feedbackText, huntVerdict, result?.address]);
+
   const processHuntVerdict = useCallback(
     (data: SybilAnalysis, addr: string) => {
       if (!data) return;
@@ -620,18 +693,25 @@ export default function PrismScanner() {
       setTimeout(() => setShowVerdictAnim(false), 3000);
 
       setHuntCoinsEarned(0);
-      void earnPrism(
-        myAddress,
-        rewardPath,
-        undefined,
-        rewardPath === 'sybil_hunt'
-          ? `Sybil bounty: ${addr.slice(0, 8)}...`
-          : verdict.key === 'clean'
-            ? `Cleared wallet: ${addr.slice(0, 8)}...`
-            : `Intel scan: ${addr.slice(0, 8)}...`,
-        undefined,
-        { scanTarget: addr },
-      )
+      // Ensure server-side sybil cache is warm before claiming earn reward.
+      // Server requires a recent analysis (1h TTL) to approve scan_wallet/sybil_hunt.
+      // If server restarted, its in-memory cache is gone even if client has cached data.
+      void fetch(`${BASE()}/api/sybil/analysis?address=${addr}`)
+        .catch(() => null)
+        .then(() =>
+          earnPrism(
+            myAddress,
+            rewardPath,
+            undefined,
+            rewardPath === 'sybil_hunt'
+              ? `Sybil bounty: ${addr.slice(0, 8)}...`
+              : verdict.key === 'clean'
+                ? `Cleared wallet: ${addr.slice(0, 8)}...`
+                : `Intel scan: ${addr.slice(0, 8)}...`,
+            undefined,
+            { scanTarget: addr },
+          ),
+        )
         .then((reward) => {
           if (!reward || reward.earned <= 0) return;
           setHuntCoinsEarned(reward.earned);
@@ -960,6 +1040,14 @@ export default function PrismScanner() {
                     +{huntCoinsEarned} Coins {isBounty ? 'Bounty' : isClean ? '(clear scan)' : '(intel scan)'}
                   </span>
                 </div>
+                {['probable_sybil', 'confirmed_sybil', 'suspicious'].includes(huntVerdict.key) && (
+                  <button
+                    onClick={() => setShowFeedbackModal(true)}
+                    className="mt-2 text-[10px] text-white/20 hover:text-white/40 underline underline-offset-2"
+                  >
+                    Report false flag
+                  </button>
+                )}
               </div>
             );
           })()}
@@ -1049,6 +1137,43 @@ export default function PrismScanner() {
                       </div>
                     </div>
 
+                    {/* Re-scan button */}
+                    {result.address !== myAddress &&
+                      (() => {
+                        const rescanRemainingMs = rescanUsedAt
+                          ? Math.max(0, 86_400_000 - (Date.now() - rescanUsedAt))
+                          : 0;
+                        const rescanQuotaUsed = rescanRemainingMs > 0;
+                        return (
+                          <div className="mt-3 mb-1">
+                            <button
+                              onClick={handleRescan}
+                              disabled={isRescanning || rescanQuotaUsed}
+                              className={`w-full rounded-xl border px-3 py-2 text-sm font-semibold flex items-center justify-center gap-2 ${
+                                isRescanning
+                                  ? 'border-cyan-500/20 bg-cyan-500/10 text-cyan-200'
+                                  : rescanQuotaUsed
+                                    ? 'border-white/10 bg-white/[0.02] text-white/25 cursor-not-allowed'
+                                    : 'border-cyan-500/20 bg-cyan-500/[0.06] text-cyan-300 hover:bg-cyan-500/[0.12]'
+                              }`}
+                            >
+                              {isRescanning ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  <span>{rescanStep}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <RotateCcw className="w-4 h-4" />
+                                  <span>{rescanQuotaUsed ? 'Re-scan (used)' : 'Re-scan'}</span>
+                                </>
+                              )}
+                            </button>
+                            <p className="text-[9px] text-white/20 text-center mt-1">1 free re-scan / day</p>
+                          </div>
+                        );
+                      })()}
+
                     {/* Key Metrics Grid */}
                     <div className="grid grid-cols-3 gap-2 mt-3">
                       {[
@@ -1059,7 +1184,10 @@ export default function PrismScanner() {
                         },
                         {
                           label: 'Txns',
-                          value: (Number(metrics.txCount) || result.txCount).toLocaleString(),
+                          value: (() => {
+                            const n = Number(metrics.txCount) || result.txCount;
+                            return n >= 10000 ? '10 000+' : n.toLocaleString();
+                          })(),
                           color: 'text-cyan-400/70',
                         },
                         {
@@ -1192,8 +1320,8 @@ export default function PrismScanner() {
                     const maxInt = Math.max(...(result.topPrograms as TopProgram[]).map((x) => x.interactions), 1);
                     return (
                       <div key={p.programId || i} className="flex items-center gap-3">
-                        <span className="text-xs text-white/60 font-bold w-24 truncate">
-                          {p.name || p.programId.slice(0, 8)}
+                        <span className="text-xs text-white/60 font-bold w-24 truncate" title={p.programId}>
+                          {PROGRAM_LABELS[p.programId]?.label ?? p.name ?? getProgramLabel(p.programId)}
                         </span>
                         <div className="flex-1 h-2 bg-white/[0.04] rounded-full overflow-hidden">
                           <div
@@ -1302,6 +1430,42 @@ export default function PrismScanner() {
           </div>
         )}
       </div>
+
+      {showFeedbackModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowFeedbackModal(false)}
+        >
+          <div
+            className="bg-[#0a0a14] border border-white/10 rounded-2xl p-5 w-80 mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-bold text-white/80 mb-1">Report False Flag</h3>
+            <p className="text-[10px] text-white/30 mb-3">Help us improve. Why do you think this verdict is wrong?</p>
+            <textarea
+              className="w-full bg-white/[0.04] border border-white/10 rounded-xl text-xs text-white/70 p-2.5 h-24 resize-none focus:outline-none focus:border-cyan-500/30"
+              placeholder="Describe why this verdict seems incorrect..."
+              value={feedbackText}
+              onChange={(e) => setFeedbackText(e.target.value)}
+            />
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={() => setShowFeedbackModal(false)}
+                className="flex-1 py-2 rounded-xl text-xs text-white/30 border border-white/[0.08] hover:bg-white/[0.04]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleFeedbackSubmit}
+                disabled={!feedbackText.trim()}
+                className="flex-1 py-2 rounded-xl text-xs font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageShell>
   );
 }
@@ -1521,19 +1685,19 @@ function SybilReportPanel({
           </div>
           <div className="flex flex-wrap gap-1.5 mt-2">
             {metrics.hasSolDomain && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20">
+              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20">
                 <CheckCircle className="w-3 h-3 inline mr-0.5" />
                 .sol
               </span>
             )}
             {Array.isArray(metrics.defiCategories) &&
               (metrics.defiCategories as string[]).map((c) => (
-                <span key={c} className="px-2 py-0.5 rounded text-[10px] font-bold text-cyan-400/60 bg-cyan-400/5">
+                <span key={c} className="px-2 py-0.5 rounded-lg text-[10px] font-bold text-cyan-400/60 bg-cyan-400/5">
                   {c}
                 </span>
               ))}
             {Number(metrics.trustBonus) > 0 && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold text-emerald-400 bg-emerald-400/5">
+              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-400 bg-emerald-400/5">
                 bonus -{String(metrics.trustBonus)}
               </span>
             )}
@@ -1541,22 +1705,22 @@ function SybilReportPanel({
           <div className={`mt-3 rounded-xl border p-3 ${verdictTheme.panelClass}`}>
             <div className="flex flex-wrap items-center gap-2">
               <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
+                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
               >
                 {verdict.label}
               </span>
               <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
               >
                 {formatConfidence(verdict.confidence)}
               </span>
               <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
               >
                 {VERDICT_DATA_QUALITY_LABELS[verdict.dataQuality]}
               </span>
               <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
               >
                 {verdict.rewardPath === 'sybil_hunt'
                   ? 'bounty path'
@@ -1593,11 +1757,11 @@ function SybilReportPanel({
               <span style={{ color: cat.color }}>{cat.icon}</span>
               <span className="text-xs font-bold text-white/60 flex-1">{cat.label}</span>
               {catFlagged > 0 ? (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/15 text-red-400">
+                <span className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold bg-red-500/15 text-red-400">
                   {catFlagged} flagged
                 </span>
               ) : (
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400">
+                <span className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/10 text-emerald-400">
                   clean
                 </span>
               )}

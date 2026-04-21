@@ -76,14 +76,36 @@ function initAppDbSchema(db) {
       address TEXT PRIMARY KEY
     );
 
-    CREATE TABLE IF NOT EXISTS game_session_proofs (
-      session_id TEXT PRIMARY KEY,
-      data TEXT NOT NULL
-    );
+     CREATE TABLE IF NOT EXISTS game_session_proofs (
+       session_id TEXT PRIMARY KEY,
+       data TEXT NOT NULL
+     );
 
-    PRAGMA user_version = 1;
-  `);
-}
+     CREATE TABLE IF NOT EXISTS sybil_verdicts (
+       address TEXT PRIMARY KEY,
+       score INTEGER,
+       risk_level TEXT,
+       confidence REAL,
+       signals_json TEXT,
+       analysis_json TEXT NOT NULL,
+       funding_sources_json TEXT,
+       last_seen_signature TEXT,
+       first_seen_signature TEXT,
+       estimated_tx_count INTEGER,
+       computed_at INTEGER,
+       ttl_expires_at INTEGER,
+       scan_version INTEGER DEFAULT 1
+     );
+
+     CREATE INDEX IF NOT EXISTS idx_verdicts_computed
+     ON sybil_verdicts (computed_at);
+
+     CREATE INDEX IF NOT EXISTS idx_verdicts_risk
+     ON sybil_verdicts (risk_level, computed_at);
+ 
+     PRAGMA user_version = 1;
+   `);
+ }
 
 export {
   DATA_DIR,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getHeliusProxyUrl } from '@/constants';
 
 interface CompositeBreakdown {
@@ -133,6 +133,8 @@ export function invalidateCompositeCache(address: string) {
 export function useCompositeScore(address: string | null): CompositeData & { refetch: () => void } {
   const [data, setData] = useState<CompositeData>(INITIAL_COMPOSITE_DATA);
   const [fetchTick, setFetchTick] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refetch = useCallback(() => {
     if (address) invalidateCompositeCache(address);
@@ -140,6 +142,10 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
   }, [address]);
 
   useEffect(() => {
+    // Cancel any pending debounce and in-flight request
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (abortRef.current) abortRef.current.abort();
+
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
       setData({ ...INITIAL_COMPOSITE_DATA, isLoading: false });
       return;
@@ -162,83 +168,93 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
       }
     } catch {}
 
-    let cancelled = false;
-    const proxyUrl = getHeliusProxyUrl() || '';
-    fetch(`${proxyUrl}/api/wallet-database?address=${encodeURIComponent(address)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((wallet) => {
-        if (cancelled) return;
-        if (!wallet) {
-          setData(
-            staleCachedData
-              ? { ...staleCachedData, isLoading: false }
-              : { ...INITIAL_COMPOSITE_DATA, isLoading: false },
-          );
-          return;
-        }
-        const fallbackScore = typeof wallet.score === 'number' ? wallet.score : 0;
-        const fallbackTier = typeof wallet.tier === 'string' && wallet.tier ? wallet.tier : 'mercury';
-        const hasComposite = Boolean(wallet.composite);
-        const fallbackBreakdown = buildOnchainFallbackBreakdown(fallbackScore);
-        const composite = wallet.composite
-          ? {
-              compositeScore:
-                typeof wallet.composite.compositeScore === 'number' ? wallet.composite.compositeScore : fallbackScore,
-              compositeTier:
-                typeof wallet.composite.compositeTier === 'string' && wallet.composite.compositeTier
-                  ? wallet.composite.compositeTier
-                  : fallbackTier,
-              breakdown: wallet.composite.breakdown ?? fallbackBreakdown,
-              details: wallet.composite.details ?? null,
-            }
-          : {
-              compositeScore: fallbackScore,
-              compositeTier: fallbackTier,
-              breakdown: fallbackBreakdown,
-              details: null,
-            };
-        const details: ScoreDetails | null = wallet.scoreDetails || composite.details || null;
-        // Merge top-level scoreBreakdown into composite details if missing
-        // (composite may have been computed before wallet was fully scanned)
-        if (details?.onchain && !details.onchain.scoreBreakdown && wallet.scoreBreakdown) {
-          details.onchain.scoreBreakdown = wallet.scoreBreakdown;
-        }
-        const result = {
-          score: composite.compositeScore,
-          tier: composite.compositeTier,
-          breakdown: composite.breakdown,
-          details,
-          hasComposite,
-        };
-        setData({ ...result, isLoading: false });
-        // Sync tournament XP from server to localStorage for ranger rank calculation
-        // Always write (even 0) to clear stale values
-        if (address) {
-          try {
-            const txp = wallet.tournamentXP || 0;
-            localStorage.setItem(`prism_tournament_xp_${address}`, String(txp));
-          } catch {}
-          // Sync arenaWeeklyXP from socialStats (written by weekly arena settlement)
-          try {
-            const awxp = wallet.socialStats?.arenaWeeklyXP || 0;
-            localStorage.setItem(`prism_arena_weekly_xp_${address}`, String(awxp));
-          } catch {}
-        }
-        try {
-          sessionStorage.setItem(cacheKey, JSON.stringify({ data: result, ts: Date.now() }));
-        } catch {}
+    // Debounce: wait 200ms before firing request (collapses rapid re-renders)
+    debounceRef.current = setTimeout(() => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const proxyUrl = getHeliusProxyUrl() || '';
+      fetch(`${proxyUrl}/api/wallet-database?address=${encodeURIComponent(address)}`, {
+        signal: controller.signal,
       })
-      .catch(() => {
-        if (!cancelled) {
-          setData(
-            staleCachedData
-              ? { ...staleCachedData, isLoading: false }
-              : { ...INITIAL_COMPOSITE_DATA, isLoading: false },
-          );
-        }
-      });
+        .then((r) => (r.ok ? r.json() : null))
+        .then((wallet) => {
+          if (controller.signal.aborted) return;
+          if (!wallet) {
+            setData(
+              staleCachedData
+                ? { ...staleCachedData, isLoading: false }
+                : { ...INITIAL_COMPOSITE_DATA, isLoading: false },
+            );
+            return;
+          }
+          const fallbackScore = typeof wallet.score === 'number' ? wallet.score : 0;
+          const fallbackTier = typeof wallet.tier === 'string' && wallet.tier ? wallet.tier : 'mercury';
+          const hasComposite = Boolean(wallet.composite);
+          const fallbackBreakdown = buildOnchainFallbackBreakdown(fallbackScore);
+          const composite = wallet.composite
+            ? {
+                compositeScore:
+                  typeof wallet.composite.compositeScore === 'number' ? wallet.composite.compositeScore : fallbackScore,
+                compositeTier:
+                  typeof wallet.composite.compositeTier === 'string' && wallet.composite.compositeTier
+                    ? wallet.composite.compositeTier
+                    : fallbackTier,
+                breakdown: wallet.composite.breakdown ?? fallbackBreakdown,
+                details: wallet.composite.details ?? null,
+              }
+            : {
+                compositeScore: fallbackScore,
+                compositeTier: fallbackTier,
+                breakdown: fallbackBreakdown,
+                details: null,
+              };
+          const details: ScoreDetails | null = wallet.scoreDetails || composite.details || null;
+          // Merge top-level scoreBreakdown into composite details if missing
+          // (composite may have been computed before wallet was fully scanned)
+          if (details?.onchain && !details.onchain.scoreBreakdown && wallet.scoreBreakdown) {
+            details.onchain.scoreBreakdown = wallet.scoreBreakdown;
+          }
+          const result = {
+            score: composite.compositeScore,
+            tier: composite.compositeTier,
+            breakdown: composite.breakdown,
+            details,
+            hasComposite,
+          };
+          setData({ ...result, isLoading: false });
+          // Sync tournament XP from server to localStorage for ranger rank calculation
+          // Always write (even 0) to clear stale values
+          if (address) {
+            try {
+              const txp = wallet.tournamentXP || 0;
+              localStorage.setItem(`prism_tournament_xp_${address}`, String(txp));
+            } catch {}
+            // Sync arenaWeeklyXP from socialStats (written by weekly arena settlement)
+            try {
+              const awxp = wallet.socialStats?.arenaWeeklyXP || 0;
+              localStorage.setItem(`prism_arena_weekly_xp_${address}`, String(awxp));
+            } catch {}
+          }
+          try {
+            sessionStorage.setItem(cacheKey, JSON.stringify({ data: result, ts: Date.now() }));
+          } catch {}
+        })
+        .catch((err) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          if (!controller.signal.aborted) {
+            setData(
+              staleCachedData
+                ? { ...staleCachedData, isLoading: false }
+                : { ...INITIAL_COMPOSITE_DATA, isLoading: false },
+            );
+          }
+        });
+    }, 200);
+
     return () => {
-      cancelled = true;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (abortRef.current) abortRef.current.abort();
     };
   }, [address, fetchTick]);
 

@@ -136,3 +136,6 @@ server/data/*.db
 server/data/*.db-shm
 server/data/*.db-wal
 coverage/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
