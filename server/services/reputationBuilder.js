@@ -1,5 +1,6 @@
 import { calculateIdentity } from './scoring.js';
 import { calculateCompositeScore } from './compositeScore.js';
+import { createCompositeOrchestrator } from './compositeOrchestrator.js';
 
 function createReputationBuilderService({
   walletDatabase,
@@ -230,87 +231,17 @@ function createReputationBuilderService({
     };
   }
 
-  function triggerCompositeUpdate(address) {
-    try {
-      const input = buildCompositeInput(address);
-      const result = calculateCompositeScore(input);
-      const existing = walletDatabase.get(address) || {};
-      existing.composite = result;
-      walletDatabase.set(address, existing);
-      saveWalletDatabaseDebounced();
-      if (fbAvailable()) {
-        fbSet('wallets', address, existing).catch(() => {});
-      }
-    } catch (err) {
-      console.warn('[composite] Failed to update for', address, err.message);
-    }
-  }
-
-  async function backfillCompositeScores() {
-    let count = 0;
-    let recalculated = 0;
-    for (const [address, entry] of walletDatabase) {
-      const sbStale = entry.scoreBreakdown && (
-        (entry.scoreBreakdown.solBalance?.max || 0) !== 40
-        || entry.scoreBreakdown.behavioral
-      );
-      const scoreLegacy = entry.score > 400;
-      if (entry.score > 0 && (!entry.scoreBreakdown || sbStale || scoreLegacy) && entry.stats) {
-        try {
-          const s = entry.stats;
-          const firstTxTime = entry.firstTxTimestamp || (s.walletAgeYears > 0 ? Date.now() - s.walletAgeYears * 365 * 86400000 : 0);
-          const badges = entry.badges || [];
-          const extraTraits = {
-            hasSeeker: badges.includes('seeker'),
-            hasPreorder: badges.includes('visionary'),
-            swapCount: 0, nftTradeCount: 0, stakingCount: 0, defiProtocols: [],
-            ...(entry.traits || {}),
-          };
-          const identity = calculateIdentity(
-            s.transactions || 0,
-            firstTxTime,
-            s.solBalance || 0,
-            s.tokens || 0,
-            s.nfts || 0,
-            extraTraits,
-          );
-          entry.scoreBreakdown = identity.scoreBreakdown;
-          entry.score = identity.score;
-          entry.tier = identity.tier;
-          entry.badges = identity.badges;
-          walletDatabase.set(address, entry);
-          recalculated++;
-        } catch (err) {
-          console.warn(`[composite] Failed to recalculate identity for ${address.slice(0, 8)}:`, err.message);
-        }
-      }
-      triggerCompositeUpdate(address);
-      count++;
-      if (count % 50 === 0) await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    console.log(`[composite] Backfilled ${count} wallets (recalculated ${recalculated} identities)`);
-    let cleaned = 0;
-    for (const [addr, entry] of walletDatabase) {
-      const ss = entry.socialStats;
-      if (!ss) continue;
-      const realChallengeWins = challenges.filter((challenge) => challenge.status === 'completed' && challenge.winner === addr).length;
-      if ((ss.challengesWon || 0) > realChallengeWins) {
-        ss.challengesWon = realChallengeWins;
-        cleaned++;
-      }
-      if ((ss.constellationExplored || 0) > 20) { ss.constellationExplored = 0; cleaned++; }
-      if ((ss.compareCount || 0) > 20) { ss.compareCount = 0; cleaned++; }
-    }
-    if (cleaned > 0) {
-      console.log(`[cleanup] Fixed ${cleaned} suspicious socialStats entries`);
-      saveWalletDatabaseDebounced();
-      for (const [addr] of walletDatabase) {
-        try { triggerCompositeUpdate(addr); } catch {}
-      }
-    }
-    rebuildTwitterWalletMap();
-    if (twitterWalletMap.size > 0) console.log(`[recovery] ${twitterWalletMap.size} Twitter-linked wallets`);
-  }
+  const { triggerCompositeUpdate, backfillCompositeScores } = createCompositeOrchestrator({
+    walletDatabase,
+    challenges,
+    saveWalletDatabaseDebounced,
+    fbAvailable,
+    fbSet,
+    buildCompositeInput,
+    calculateCompositeScore,
+    calculateIdentity,
+    rebuildTwitterWalletMap,
+  });
 
   return {
     buildPublicReputationResponse,
