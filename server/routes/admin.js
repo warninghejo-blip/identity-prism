@@ -18,7 +18,7 @@ export function registerAdminRoute(ctx) {
     }
     const key = req.headers['x-admin-key'];
     if (!key) {
-      respondJson(res, 403, { error: 'Forbidden' });
+      respondJson(res, 401, { error: 'Admin key required' });
       return false;
     }
     const buf1 = Buffer.from(key);

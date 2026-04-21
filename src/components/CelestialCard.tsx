@@ -1329,17 +1329,17 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
                         {/* Temporal Cohort & Funding Signals (version 2) */}
                         {reputationSignals?.version === 2 && (
-                          <div className="space-y-1.5">
+                          <div className="space-y-1">
                             {(reputationSignals.fundingDepth ?? 0) >= 3 && (
-                              <div className="text-[10px] text-red-300">
+                              <div className="text-[9px] text-red-300/70">
                                 ⚠ Deep funding chain: {reputationSignals.fundingDepth}-hop trace
                               </div>
                             )}
                             {reputationSignals.splFlowDetected && (
-                              <div className="text-[10px] text-orange-300">Funded via stablecoin</div>
+                              <div className="text-[9px] text-orange-300/70">Funded via stablecoin</div>
                             )}
                             {(reputationSignals.hubSpokeScore ?? 0) > 0.5 && (
-                              <div className="text-[10px] text-amber-300">
+                              <div className="text-[9px] text-amber-300/70">
                                 Hub-spoke pattern ({Math.round((reputationSignals.hubSpokeScore ?? 0) * 100)}%
                                 dominance)
                               </div>
@@ -1349,10 +1349,10 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
                         {/* Birthday Cohort Panel */}
                         {reputationSignals?.version === 2 && (reputationSignals?.temporalCohortScore ?? 0) > 0.3 && (
-                          <div className="mt-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                          <div className="mt-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/15">
                             <div className="flex items-center gap-2 mb-1">
-                              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                              <span className="text-[11px] font-bold text-amber-300">BIRTHDAY COHORT</span>
+                              <AlertTriangle className="w-3 h-3 text-amber-400/80" />
+                              <span className="text-[10px] font-bold text-amber-300/90">BIRTHDAY COHORT</span>
                             </div>
                             <p className="text-[10px] text-white/60 leading-relaxed">
                               This wallet appears created within a <strong>1-hour window</strong> alongside others
