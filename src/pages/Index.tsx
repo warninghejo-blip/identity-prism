@@ -115,19 +115,6 @@ const Index = () => {
     fadeOutTransition(isReturn ? 0 : 50);
   }, []);
 
-  // Referral claim — check for ?ref= param on first load
-  useEffect(() => {
-    const refCode = searchParams.get('ref');
-    if (!refCode) return;
-    // Store ref code, claim when wallet connects
-    sessionStorage.setItem('pending_referral', refCode);
-    // Clean URL
-    const next = new URLSearchParams(searchParams);
-    next.delete('ref');
-    setSearchParams(next, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const [isWarping, setIsWarping] = useState(false);
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [skrBalance, setSkrBalance] = useState<number | null>(null);
@@ -1015,34 +1002,6 @@ const Index = () => {
             } catch {}
           })
           .catch(() => {});
-        // Claim pending referral
-        const pendingRef = sessionStorage.getItem('pending_referral');
-        if (pendingRef) {
-          sessionStorage.removeItem('pending_referral');
-          const base = getHeliusProxyUrl() || window.location.origin;
-          const jwt = (() => {
-            try {
-              const r = sessionStorage.getItem('ip_auth_jwt');
-              if (!r) return null;
-              const p = JSON.parse(r);
-              return p.expiresAt > Date.now() + 60000 ? p.token : null;
-            } catch {
-              return null;
-            }
-          })();
-          if (jwt) {
-            fetch(`${base}/api/referral/claim`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-              body: JSON.stringify({ code: pendingRef }),
-            })
-              .then((r) => r.json())
-              .then((d) => {
-                if (d.success) toast.success('Referral bonus! +50 Coins');
-              })
-              .catch(() => {});
-          }
-        }
         if (canEarnFromScan(resolvedAddress)) {
           const _earnBase = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
           import('@/components/prism/shared')

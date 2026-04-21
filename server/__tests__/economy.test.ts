@@ -19,7 +19,6 @@ const ADDRESSES = {
   unknown: '11111111111111111111111111111112',
   max: '11111111111111111111111111111113',
   achievement: '11111111111111111111111111111114',
-  referral: '11111111111111111111111111111115',
   firstMint: '11111111111111111111111111111116',
   quiz: '11111111111111111111111111111117',
 };
@@ -201,17 +200,6 @@ describe.sequential('economy guards', () => {
 
     expect(response.status).toBe(400);
     expect(response.body).toMatchObject({ error: 'Use POST /api/game/achievements for achievement rewards' });
-  });
-
-  it('blocks referral rewards on /api/prism/earn', async () => {
-    const response = await postJson('/api/prism/earn', {
-      address: ADDRESSES.referral,
-      source: 'referral',
-      amount: 20,
-    }, makeJwt(ADDRESSES.referral));
-
-    expect(response.status).toBe(400);
-    expect(response.body).toMatchObject({ error: 'Use POST /api/referral/claim for referral rewards' });
   });
 
   it('applies the non-game cap at half for non-holders and full for holders', () => {

@@ -227,42 +227,6 @@ function registerBlinksRoute(ctx) {
         prismTransactions.set(address, transactions);
         debouncedSavePrism();
 
-        if (fbAvailable()) {
-          const mintBonusLocks = globalThis._mintBonusLocks || (globalThis._mintBonusLocks = new Set());
-          if (!mintBonusLocks.has(address)) {
-            mintBonusLocks.add(address);
-            (async () => {
-              try {
-                const db = getDb();
-                if (!db) return;
-                const snap = await db.collection('referrals').where('claimer', '==', address).limit(1).get();
-                if (snap.empty) return;
-                const refDoc = snap.docs[0];
-                const refData = refDoc.data();
-                if (refData.mintBonus) return;
-                await fbSet('referrals', refDoc.id, { mintBonus: true });
-                const referrer = refData.referrer;
-                try {
-                  const referrerBalance = getCoinBalance(referrer);
-                  setCoinBalance(referrer, referrerBalance + 100);
-                  addCoinEarned(referrer, 100);
-                } catch (coinError) {
-                  await fbSet('referrals', refDoc.id, { mintBonus: false }).catch(() => {});
-                  throw coinError;
-                }
-                const referrerStats = await fbGet('referralStats', referrer);
-                await fbSet('referralStats', referrer, {
-                  totalEarned: (referrerStats?.totalEarned || 0) + 100,
-                });
-              } catch (error) {
-                console.warn('[referral] mint bonus error:', error?.message ?? error);
-              } finally {
-                mintBonusLocks.delete(address);
-              }
-            })();
-          }
-        }
-
         respondJson(res, 200, {
           success: true,
           proceedWithMint: true,

@@ -2,7 +2,7 @@
  * Route integration tests — extended coverage.
  * Spawns the real server (same pattern as routes-integration.test.ts).
  * Covers: prism economy, score-history, daily-limits, sybil analysis,
- * prism/balance JWT, prism/spend JWT, game leaderboard, referral, xp.
+ * prism/balance JWT, prism/spend JWT, game leaderboard, xp.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -396,23 +396,6 @@ describe.sequential('routes-extended integration tests', () => {
     });
     expect([200, 400, 401, 403, 422]).toContain(res.status);
     expect(typeof res.body).toBe('object');
-  });
-
-  // ── Referral ─────────────────────────────────────────────────────────────
-
-  it('GET /api/referral/code without address returns 400 or 401', async () => {
-    const res = await getJson('/api/referral/code');
-    expect([400, 401, 404]).toContain(res.status);
-  });
-
-  it('GET /api/referral/code with address returns code or 404', async () => {
-    const res = await getJson(`/api/referral/code?address=${ADDRESSES.known}`);
-    if (res.status === 200) {
-      const body = res.body as Record<string, unknown>;
-      expect(typeof body.code === 'string' || typeof body.referralCode === 'string').toBe(true);
-    } else {
-      expect([400, 401, 404]).toContain(res.status);
-    }
   });
 
   // ── Migration status ──────────────────────────────────────────────────────

@@ -9,7 +9,6 @@ export const PRISM_EARN_MAX_PER_CALL = Object.freeze({
   quest_milestone: 100,
   challenge_win: 30,
   first_mint: 1000,
-  referral: 20,
   text_quest: 1200,
   sybil_hunt: 70,
 });

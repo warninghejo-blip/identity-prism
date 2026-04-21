@@ -95,10 +95,6 @@ function registerEarnRoute(ctx) {
       if (source === 'achievement') {
         return respondJson(res, 400, { error: 'Use POST /api/game/achievements for achievement rewards' });
       }
-      if (source === 'referral') {
-        return respondJson(res, 400, { error: 'Use POST /api/referral/claim for referral rewards' });
-      }
-
       if (GAME_EARN_SOURCES.has(source)) {
         const verifiedGame = verifyGameEarnClaim(address, source, gameSessionId);
         if (!verifiedGame.ok) return respondJson(res, 400, { error: verifiedGame.error });

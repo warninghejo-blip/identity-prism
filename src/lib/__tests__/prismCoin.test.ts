@@ -29,7 +29,6 @@ describe('PRISM_EARN_RATES', () => {
       'quest_milestone',
       'challenge_win',
       'first_mint',
-      'referral',
       'text_quest',
       'sybil_hunt',
       'quiz',

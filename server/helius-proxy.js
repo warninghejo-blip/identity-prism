@@ -108,7 +108,6 @@ import { registerNotificationsRoute } from './routes/notifications.js';
 import { registerQuestRoute } from './routes/quest.js';
 import { registerQuizRoute } from './routes/quiz.js';
 import { registerBlinksRoute } from './routes/blinks.js';
-import { registerReferralRoute } from './routes/referral.js';
 import { registerReputationInlineRoute, registerReputationRoute } from './routes/reputation.js';
 import { registerTournamentRoute } from './routes/tournament.js';
 import { registerVaultRoute } from './routes/vault.js';
@@ -1435,12 +1434,6 @@ function getApiMeta(req, pathname) {
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 min nonce window
 const authChallenges = new Map(); // nonce → { address, expiresAt }
 
-// ── Referral salt (cached per-process; production MUST set REFERRAL_SALT env var) ──
-const _referralSalt = process.env.REFERRAL_SALT || (() => {
-  const fallback = crypto.randomBytes(16).toString('hex');
-  console.warn('[referral] REFERRAL_SALT env var not set — using random per-process fallback. Referral codes will change on restart!');
-  return fallback;
-})();
 
 /**
  * Verify a Solana wallet signature (Ed25519) using node:crypto.
@@ -3680,10 +3673,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (await referralHandler(req, res, url, pathname)) {
-    return;
-  }
-
   // ═══ Prism Vault (Staking) ═══
   if (await vaultHandler(req, res, url, pathname)) {
     return;
@@ -4605,7 +4594,6 @@ const PRISM_EARN_COOLDOWN_TABLE = {
   sybil_hunt: 120_000,                  // 2 min
   text_quest: 24 * 60 * 60_000,        // 1 per day (was 30s — exploitable for 288K/day)
   first_mint: 30 * 24 * 60 * 60_000,   // effectively one-time (30 days)
-  referral: 60 * 60_000,               // 1 per hour
   achievement: 5 * 60_000,
 };
 // Global daily cap for non-game earn sources (prevents coin inflation exploits)
@@ -5455,7 +5443,6 @@ const ctx = createContext({
   fbGetAll,
   fbSet,
   fbBatchSet,
-  referralSalt: _referralSalt,
   notificationsDb,
   tokenMetadataProgramId: TOKEN_METADATA_PROGRAM_ID,
   sendImageDataUrl,
@@ -5536,7 +5523,6 @@ const discoveryHandler = registerDiscoveryRoute(ctx);
 const buyHandler = registerBuyRoute(ctx);
 const questHandler = registerQuestRoute(ctx);
 const quizHandler = registerQuizRoute(ctx);
-const referralHandler = registerReferralRoute(ctx);
 const reputationInlineHandler = registerReputationInlineRoute(ctx);
 const reputationHandler = registerReputationRoute(ctx);
 const tournamentHandler = registerTournamentRoute(ctx);
@@ -5559,10 +5545,6 @@ function validateProductionEnv() {
   if (!process.env.TREASURY_ADDRESS) {
     errors.push('TREASURY_ADDRESS is required for buy operations');
   }
-  if (!process.env.REFERRAL_SALT) {
-    warnings.push('REFERRAL_SALT not set — referral codes will break on server restart');
-  }
-
   warnings.forEach(w => console.warn(`[STARTUP WARNING] ${w}`));
   if (errors.length > 0) {
     errors.forEach(e => console.error(`[STARTUP ERROR] ${e}`));
