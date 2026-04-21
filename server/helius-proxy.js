@@ -50,7 +50,9 @@ import { createReputationBuilderService } from './services/reputationBuilder.js'
 import { startSchedulers } from './services/scheduler.js';
 import { buildDeterministicClusterId, upsertSybilClusterWithMembers } from './services/sybilClusterStore.js';
 import { createSybilClusterService } from './services/sybilCluster.js';
-import { backfillWalletDatabaseAsync, backfillWalletDatabaseSync } from './services/walletBackfill.js';
+import { createInitOrchestrator } from './services/initOrchestrator.js';
+import { createBlackHoleSignatureStore } from './services/blackHoleSignatureStore.js';
+import { createBlackHoleTxVerifier } from './services/blackHoleTx.js';
 import {
   STAKING_TIERS,
   getLockTier,
@@ -91,6 +93,7 @@ import { createContext } from './context.js';
 import { createLeaderboardStoreFromContext } from './data/leaderboards.js';
 import { createMintedAddressesStoreFromContext } from './data/mintedAddresses.js';
 import { createScoreHistoryStoreFromContext } from './data/scoreHistory.js';
+import { KNOWN_LABELS, TREASURY_WALLETS } from './constants/labels.js';
 import { registerAuthRoute } from './routes/auth.js';
 import { registerArenaRoute } from './routes/arena.js';
 import { registerBuyRoute } from './routes/buy.js';
@@ -99,6 +102,7 @@ import { registerEarnRoute } from './routes/earn.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerGameRoute, registerGameV1Route } from './routes/game.js';
 import { registerLeaderboardRoute } from './routes/leaderboard.js';
+import { registerMarketRoute } from './routes/market.js';
 import { registerQuestRoute } from './routes/quest.js';
 import { registerQuizRoute } from './routes/quiz.js';
 import { registerReputationRoute } from './routes/reputation.js';
@@ -114,6 +118,7 @@ import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
 import { readBody } from './utils/readBody.js';
 import { respondJson } from './utils/respondJson.js';
+import { extractSolTransfers, isProgramAddress, resolveAccountKey } from './utils/txHelpers.js';
 import * as Sentry from '@sentry/node';
 
 const loadEnvFile = (filePath) => {
@@ -1511,31 +1516,14 @@ function verifyWalletSignature(address, message, signatureRaw) {
 
 const { requireJwt, optionalJwt } = createAuthServices({ walletIpLog, getClientIp, respondJson });
 
-const blackHoleUsedSignatures = globalThis._usedBlackHoleSigMap || (() => {
-  const map = new Map();
-  try {
-    const raw = JSON.parse(fs.readFileSync(BLACKHOLE_USED_SIG_FILE, 'utf8'));
-    for (const [signature, ts] of Object.entries(raw)) map.set(signature, Number(ts) || Date.now());
-  } catch {}
-  return (globalThis._usedBlackHoleSigMap = map);
-})();
-
-function persistBlackHoleUsedSignatures() {
-  const tmp = `${BLACKHOLE_USED_SIG_FILE}.tmp`;
-  const payload = {};
-  for (const [signature, ts] of blackHoleUsedSignatures) payload[signature] = ts;
-  fs.promises
-    .writeFile(tmp, JSON.stringify(payload), 'utf8')
-    .then(() => fs.promises.rename(tmp, BLACKHOLE_USED_SIG_FILE))
-    .catch(() => {});
-}
-
-function cleanupBlackHoleUsedSignatures() {
-  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  for (const [signature, ts] of blackHoleUsedSignatures) {
-    if (ts < cutoff) blackHoleUsedSignatures.delete(signature);
-  }
-}
+const {
+  blackHoleUsedSignatures,
+  persistBlackHoleUsedSignatures,
+  cleanupBlackHoleUsedSignatures,
+} = createBlackHoleSignatureStore({
+  fs,
+  filePath: BLACKHOLE_USED_SIG_FILE,
+});
 
 function normalizePubkey(value) {
   try {
@@ -1545,158 +1533,19 @@ function normalizePubkey(value) {
   }
 }
 
-function getParsedAccountKeyString(key) {
-  if (!key) return null;
-  if (typeof key === 'string') return normalizePubkey(key) || key;
-  if (typeof key?.pubkey === 'string') return normalizePubkey(key.pubkey) || key.pubkey;
-  if (key?.pubkey && typeof key.pubkey.toBase58 === 'function') return key.pubkey.toBase58();
-  if (typeof key.toBase58 === 'function') return key.toBase58();
-  return null;
-}
-
-function getInstructionProgramId(ix) {
-  return getParsedAccountKeyString(ix?.programId) || null;
-}
-
-function getParsedTxKeys(tx) {
-  return Array.isArray(tx?.transaction?.message?.accountKeys) ? tx.transaction.message.accountKeys : [];
-}
-
-function findTokenBalanceEntry(tx, account, mint) {
-  const accountKeys = getParsedTxKeys(tx);
-  const allBalances = [...(tx?.meta?.preTokenBalances || []), ...(tx?.meta?.postTokenBalances || [])];
-  return (
-    allBalances.find((entry) => {
-      const key = accountKeys[entry.accountIndex];
-      return getParsedAccountKeyString(key) === account && (!mint || entry.mint === mint);
-    }) || null
-  );
-}
-
-function getTokenAmountRaw(entry) {
-  if (!entry?.uiTokenAmount) return null;
-  const raw = entry.uiTokenAmount.amount;
-  return raw == null ? null : BigInt(raw);
-}
-
-function inferBlackHoleAssetKind(tx, account, mint) {
-  const entry = findTokenBalanceEntry(tx, account, mint);
-  if (!entry?.uiTokenAmount) return 'fungible';
-  const decimals = Number(entry.uiTokenAmount.decimals || 0);
-  const amountRaw = getTokenAmountRaw(entry);
-  return decimals === 0 && amountRaw === 1n ? 'nft' : 'fungible';
-}
-
-function getWalletLamportDelta(tx, address) {
-  const accountKeys = getParsedTxKeys(tx);
-  const index = accountKeys.findIndex((key) => getParsedAccountKeyString(key) === address);
-  if (index < 0) return 0;
-  const pre = tx?.meta?.preBalances?.[index] || 0;
-  const post = tx?.meta?.postBalances?.[index] || 0;
-  return post - pre;
-}
-
-function getParsedInstructionProgramId(ix) {
-  if (!ix?.programId) return '';
-  return typeof ix.programId === 'string'
-    ? ix.programId
-    : ix.programId?.toBase58?.() || ix.programId?.toString?.() || '';
-}
-
-function getParsedTxInstructions(tx) {
-  const outer = Array.isArray(tx?.transaction?.message?.instructions)
-    ? tx.transaction.message.instructions
-    : [];
-  const inner = Array.isArray(tx?.meta?.innerInstructions)
-    ? tx.meta.innerInstructions.flatMap((entry) => Array.isArray(entry?.instructions) ? entry.instructions : [])
-    : [];
-  return [...outer, ...inner];
-}
-
-function isParsedTokenInstruction(ix, types) {
-  if (!ix?.parsed || !types.includes(ix.parsed.type)) return false;
-  const programId = getParsedInstructionProgramId(ix);
-  return programId === TOKEN_PROGRAM_KEY_STRING || programId === TOKEN_2022_PROGRAM_KEY_STRING;
-}
-
-function verifyCloseOperationTx(tx, address, account) {
-  if (!tx?.meta || tx.meta.err) return false;
-  const keys = getParsedTxKeys(tx);
-  if (!keys.some((key) => getParsedAccountKeyString(key) === address)) return false;
-  return getParsedTxInstructions(tx).some((ix) => {
-    if (!isParsedTokenInstruction(ix, ['closeAccount'])) return false;
-    const info = ix.parsed.info || {};
-    return (
-      normalizePubkey(info.account) === account &&
-      normalizePubkey(info.destination) === address &&
-      normalizePubkey(info.owner) === address
-    );
-  });
-}
-
-function verifyBurnOperationTx(tx, address, account, mint) {
-  if (!verifyCloseOperationTx(tx, address, account)) return false;
-  return getParsedTxInstructions(tx).some((ix) => {
-    if (!isParsedTokenInstruction(ix, ['burn', 'burnChecked'])) return false;
-    const info = ix.parsed.info || {};
-    return normalizePubkey(info.account) === account && normalizePubkey(info.authority) === address && info.mint === mint;
-  });
-}
-
-function verifySwapOperationTx(tx, address, account, mint) {
-  if (!tx?.meta || tx.meta.err) return false;
-  const accountKeys = getParsedTxKeys(tx);
-  if (!accountKeys.some((key) => getParsedAccountKeyString(key) === address)) return false;
-  // Verify Jupiter aggregator was involved in the transaction
-  const JUPITER_PROGRAM_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
-  const hasJupiter = accountKeys.some((key) => getParsedAccountKeyString(key) === JUPITER_PROGRAM_ID);
-  if (!hasJupiter) return false;
-  const entry = findTokenBalanceEntry(tx, account, mint);
-  const postEntry = (tx?.meta?.postTokenBalances || []).find((balance) => {
-    const key = accountKeys[balance.accountIndex];
-    return getParsedAccountKeyString(key) === account && balance.mint === mint;
-  });
-  const preAmount = getTokenAmountRaw(entry);
-  const postAmount = getTokenAmountRaw(postEntry);
-  return preAmount !== null && preAmount > 0n && (!postEntry || postAmount === 0n);
-}
-
-function getClosedAccountLamports(tx, address) {
-  if (!tx?.meta) return 0;
-  const keys = getParsedTxKeys(tx);
-  const preBalances = Array.isArray(tx.meta.preBalances) ? tx.meta.preBalances : [];
-  let total = 0;
-  for (const ix of getParsedTxInstructions(tx)) {
-    if (!isParsedTokenInstruction(ix, ['closeAccount'])) continue;
-    const info = ix.parsed.info || {};
-    if (normalizePubkey(info.destination) !== address || normalizePubkey(info.owner) !== address) continue;
-    const account = normalizePubkey(info.account);
-    const accountIndex = keys.findIndex((key) => getParsedAccountKeyString(key) === account);
-    if (accountIndex >= 0) total += Number(preBalances[accountIndex] || 0);
-  }
-  return total;
-}
-
-function verifyBlackHoleCommissionTx(tx, address, commissionRate) {
-  if (!tx?.meta || tx.meta.err) return false;
-  const normalizedAddress = normalizePubkey(address);
-  const treasuryAddress = normalizePubkey(TREASURY_ADDRESS);
-  if (!normalizedAddress || !treasuryAddress) return false;
-  if (normalizedAddress === treasuryAddress) return true;
-  const chunkLamports = getClosedAccountLamports(tx, normalizedAddress);
-  if (chunkLamports <= 0) return true;
-  const requiredCommissionLamports = Math.round(chunkLamports * commissionRate);
-  if (requiredCommissionLamports <= 0) return true;
-
-  let transferredLamports = 0;
-  for (const ix of tx.transaction?.message?.instructions || []) {
-    if (!ix?.parsed || ix.parsed.type !== 'transfer') continue;
-    const info = ix.parsed.info || {};
-    if (normalizePubkey(info.source) !== normalizedAddress || normalizePubkey(info.destination) !== treasuryAddress) continue;
-    transferredLamports += Number(info.lamports) || 0;
-  }
-  return transferredLamports >= requiredCommissionLamports;
-}
+const {
+  inferBlackHoleAssetKind,
+  getWalletLamportDelta,
+  verifyBlackHoleCommissionTx,
+  verifyCloseOperationTx,
+  verifyBurnOperationTx,
+  verifySwapOperationTx,
+} = createBlackHoleTxVerifier({
+  treasuryAddress: TREASURY_ADDRESS,
+  tokenProgramKeyString: TOKEN_PROGRAM_KEY_STRING,
+  token2022ProgramKeyString: TOKEN_2022_PROGRAM_KEY_STRING,
+});
+const extractTrackedSolTransfers = (parsed, targetAddress) => extractSolTransfers(parsed, targetAddress, TREASURY_WALLETS);
 
 /**
  * Admin key check: requires X-Admin-Key header matching ADMIN_KEY env var.
@@ -2261,78 +2110,6 @@ const updateWalletEntry = (address, updates) => {
 };
 
 // walletDatabase loaded async in initData()
-
-// ── Async init: load data from Firestore (fallback JSON) ──
-const initData = async () => {
-  const replaceMap = (target, source) => {
-    target.clear();
-    for (const [key, value] of source) target.set(key, value);
-  };
-  const migrations = [
-    ['coins', coinBalanceStore],
-    ['minted', mintedAddressesStore],
-    ['score-history', scoreHistoryStore],
-    ['wallet-db', walletStore],
-    ['sybil-verdicts', sybilVerdictStore],
-    ['game-session', gameSessionProofStore],
-    ['achievements', achievementStore],
-    ['revives', reviveStore],
-    ['quests', questProgressStore],
-    ['notifications', notificationsStore],
-    ['challenges', challengesStore],
-    ['tournament', tournamentStore],
-  ];
-
-  for (const [label, store] of migrations) {
-    const result = store.migrateFromJson();
-    if (result.migrated && result.count > 0) {
-      console.log(`[sqlite] Seeded ${label} with ${result.count} record(s) from JSON`);
-    }
-  }
-
-  await loadCoinBalances();
-  loadMintedAddresses();
-  await loadScoreHistory();
-  await loadWalletDatabase();
-  replaceMap(gameSessionProofs, loadGameSessionProofs({
-    datastore: gameSessionProofStore,
-    fs,
-    gameSessionStoreFile: GAME_SESSION_STORE_FILE,
-    normalizeStoredGameSessionEntry,
-  }));
-  pruneGameSessionProofs();
-  replaceMap(achievementData, loadAchievementData({ datastore: achievementStore, fs, achievementsStoreFile: ACHIEVEMENTS_STORE_FILE }));
-  replaceMap(reviveData, loadReviveData({ datastore: reviveStore, fs, revivesStoreFile: REVIVES_STORE_FILE }));
-  replaceMap(questProgress, loadQuestProgress({ datastore: questProgressStore, fs, questProgressFile: QUEST_PROGRESS_FILE }));
-  replaceMap(notificationsDb, loadNotifications({ datastore: notificationsStore, fs, notificationsFile: NOTIFICATIONS_FILE }));
-  challenges.splice(0, challenges.length, ...loadChallenges({ datastore: challengesStore, fs, challengesFile: CHALLENGES_FILE }));
-  const tournamentState = loadTournaments({
-    datastore: tournamentStore,
-    fs,
-    tournamentFile: TOURNAMENT_FILE,
-    tournamentTiers: TOURNAMENT_TIERS,
-  });
-  for (const tier of Object.keys(activeTournaments)) {
-    activeTournaments[tier] = tournamentState.activeTournaments[tier];
-  }
-  tournamentHistory.splice(0, tournamentHistory.length, ...tournamentState.tournamentHistory);
-  tournamentModeIndex = tournamentState.tournamentModeIndex;
-  // Backfill mintedAddresses from walletDatabase .mint field
-  // (legacy mints before minted-addresses.json file was introduced)
-  let backfilled = 0;
-  for (const [addr, entry] of walletDatabase.entries()) {
-    if (entry?.mint && !mintedAddresses.has(addr)) {
-      mintedAddresses.add(addr);
-      backfilled++;
-    }
-  }
-  if (backfilled > 0) {
-    console.log(`[minted] Backfilled ${backfilled} addresses from walletDatabase, total: ${mintedAddresses.size}`);
-    saveMintedAddresses();
-  }
-  backfillWalletDatabaseSync(ctx);
-};
-
 
 // ── Server-side Achievement tracking (unlocked + claimed per wallet) ──
 const ACHIEVEMENTS_STORE_FILE = path.join(METADATA_DIR, 'achievement-claims.json');
@@ -3877,80 +3654,8 @@ const server = http.createServer(async (req, res) => {
     return respondJson(res, 200, { migrated: true, migrationData: result });
   }
 
-  if (pathname === '/api/market/collection-stats' && req.method === 'GET') {
-    if (!ipRateLimit('mkt_colstats', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const symbol = String(url.searchParams.get('symbol') ?? '').trim();
-    const collectionId = String(url.searchParams.get('collectionId') ?? '').trim();
-    const collName = String(url.searchParams.get('name') ?? '').trim();
-    const mint = String(url.searchParams.get('mint') ?? '').trim();
-    try {
-      // 1. Try ME slug from mint, then collectionId as slug, then symbol/name derivation
-      let meSlug = null;
-      if (mint) {
-        meSlug = await fetchMeSlugByMint(mint).catch(() => null);
-      }
-
-      // 2. Build candidate slugs
-      const candidates = [];
-      if (collectionId) candidates.push(collectionId);
-      if (symbol) candidates.push(symbol, symbol.toLowerCase());
-      if (collName) {
-        candidates.push(collName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''));
-        candidates.push(collName.toLowerCase().replace(/\s+/g, '_'));
-      }
-
-      // 3. Fetch ME stats — try meSlug first, then candidates
-      let magicStats = null;
-      if (meSlug) {
-        magicStats = await fetchMagicEdenCollectionStats(meSlug).catch(() => null);
-      }
-      if (!magicStats?.floorSol) {
-        for (const slug of candidates) {
-          if (!slug || slug === meSlug) continue;
-          const test = await fetchMagicEdenCollectionStats(slug).catch(() => null);
-          if (test?.floorSol) {
-            magicStats = test;
-            meSlug = slug;
-            break;
-          }
-          if (test?.status === 'listed' && !magicStats) {
-            magicStats = test;
-            meSlug = slug;
-          }
-        }
-      }
-      if (!meSlug && candidates.length > 0) meSlug = candidates[0];
-
-      // 4. Tensor fallback
-      let tensorStats = null;
-      if (!magicStats?.floorSol && collectionId) {
-        tensorStats = await fetchTensorCollectionStats(collectionId).catch(() => null);
-      }
-
-      // 5. Individual NFT last price as ultimate fallback
-      let tokenLastPrice = null;
-      if (!magicStats?.floorSol && !tensorStats?.floorSol && mint) {
-        tokenLastPrice = await fetchMeTokenLastPrice(mint).catch(() => null);
-      }
-
-      const tensorUrl = collectionId ? `https://www.tensor.trade/trade/${collectionId}` : null;
-      const meUrl = meSlug ? `https://magiceden.io/marketplace/${meSlug}` : (mint ? `https://magiceden.io/item-details/${mint}` : null);
-      const floorSol = magicStats?.floorSol ?? tensorStats?.floorSol ?? tokenLastPrice ?? null;
-      const bestSource = magicStats?.floorSol ? 'magic_eden' : (tensorStats?.floorSol ? 'tensor' : (tokenLastPrice ? 'magic_eden' : null));
-      const status = magicStats?.status === 'listed' ? 'listed' : (tensorStats?.status === 'listed' ? 'listed' : (magicStats?.status ?? tensorStats?.status ?? 'unknown'));
-      respondJson(res, 200, {
-        status,
-        floorSol,
-        source: bestSource,
-        tensorUrl,
-        meUrl,
-        meSlug: meSlug ?? null,
-      });
-      return;
-    } catch (error) {
-      respondJson(res, 500, { status: 'unknown', floorSol: null, error: 'Failed to fetch collection stats' });
-      return;
-    }
+  if (await marketHandler(req, res, url, pathname)) {
+    return;
   }
 
   if (await authHandler(req, res, url, pathname)) {
@@ -4382,263 +4087,6 @@ const server = http.createServer(async (req, res) => {
         respondJson(res, 500, { error: 'Attestation failed' });
         return;
       }
-    }
-  }
-
-  if (pathname === '/api/market/sol-price' && req.method === 'GET') {
-    if (!ipRateLimit('mkt_sol', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    try {
-      const price = await getCachedSolPriceUsd();
-      respondJson(res, 200, { usd: price });
-      return;
-    } catch (error) {
-      respondJson(res, 500, { usd: null, error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-  }
-
-  if (pathname === '/api/market/skr-price' && req.method === 'GET') {
-    if (!ipRateLimit('mkt_skr', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    try {
-      const price = await getCachedSkrPriceUsd();
-      respondJson(res, 200, { usd: price });
-      return;
-    } catch (error) {
-      respondJson(res, 500, { usd: null, error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-  }
-
-  if (pathname === '/api/market/jupiter-prices' && req.method === 'GET') {
-    if (!ipRateLimit('mkt_jup', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const ids = url.searchParams.get('ids') || '';
-    if (!ids || ids.length > 2000) {
-      respondJson(res, 400, { error: 'Invalid ids parameter' });
-      return;
-    }
-    try {
-      const jupResp = await fetch(`https://api.jup.ag/price/v2?ids=${encodeURIComponent(ids)}`);
-      if (!jupResp.ok) {
-        respondJson(res, jupResp.status, { error: `Jupiter API returned ${jupResp.status}` });
-        return;
-      }
-      const jupData = await jupResp.json();
-      respondJson(res, 200, jupData);
-      return;
-    } catch (error) {
-      console.warn('[market] Jupiter price proxy failed', error);
-      respondJson(res, 502, { error: 'Jupiter price fetch failed' });
-      return;
-    }
-  }
-
-  if (pathname === '/api/market/mint-quote' && req.method === 'GET') {
-    if (!ipRateLimit('mkt_quote', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    try {
-      const quote = await getSkrQuote();
-      if (!quote) {
-        respondJson(res, 503, { error: 'SKR price unavailable' });
-        return;
-      }
-      respondJson(res, 200, {
-        solUsd: quote.solUsd,
-        skrUsd: quote.skrUsd,
-        baseSol: MINT_PRICE_SOL,
-        skrAmount: quote.amount,
-        skrAmountRaw: quote.rawAmount,
-      });
-      return;
-    } catch (error) {
-      respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-  }
-
-  if (pathname === '/api/market/swap-quote' && req.method === 'GET') {
-    if (!ipRateLimit('mkt_swap_quote', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const inputMint = normalizePubkey(url.searchParams.get('inputMint'));
-    const amountRaw = String(url.searchParams.get('amount') || '').trim();
-    const taker = normalizePubkey(url.searchParams.get('taker'));
-    if (!inputMint || !amountRaw) {
-      respondJson(res, 400, { error: 'inputMint and amount are required' });
-      return;
-    }
-    let amount;
-    try {
-      amount = BigInt(amountRaw);
-    } catch {
-      respondJson(res, 400, { error: 'Invalid amount' });
-      return;
-    }
-    if (amount <= 0n) {
-      respondJson(res, 400, { error: 'Amount must be positive' });
-      return;
-    }
-    try {
-      if (JUPITER_API_KEY && taker) {
-        const orderUrl = new URL(`${JUPITER_SWAP_API_V2}/order`);
-        orderUrl.searchParams.set('inputMint', inputMint);
-        orderUrl.searchParams.set('outputMint', SOL_MINT);
-        orderUrl.searchParams.set('amount', amount.toString());
-        orderUrl.searchParams.set('taker', taker);
-        orderUrl.searchParams.set('slippageBps', '100');
-        orderUrl.searchParams.set('restrictIntermediateTokens', 'true');
-        const orderResp = await fetch(orderUrl.toString(), {
-          headers: { 'x-api-key': JUPITER_API_KEY },
-        });
-        const orderData = await orderResp.json().catch(() => ({}));
-        if (orderResp.ok && orderData?.outAmount) {
-          respondJson(res, 200, {
-            inputMint,
-            outputMint: SOL_MINT,
-            outAmount: orderData.outAmount,
-            priceImpactPct: orderData.priceImpactPct ?? '0',
-            transport: 'order_execute',
-            quoteResponse: {
-              mode: 'order_execute',
-              inputMint,
-              outputMint: SOL_MINT,
-              amount: amount.toString(),
-            },
-          });
-          return;
-        }
-        console.warn('[market] Jupiter /order quote failed, falling back to lite quote', orderData?.error || orderResp.status);
-      }
-
-      const quoteUrl = new URL(JUPITER_LITE_QUOTE_API);
-      quoteUrl.searchParams.set('inputMint', inputMint);
-      quoteUrl.searchParams.set('outputMint', SOL_MINT);
-      quoteUrl.searchParams.set('amount', amount.toString());
-      quoteUrl.searchParams.set('swapMode', 'ExactIn');
-      quoteUrl.searchParams.set('slippageBps', '100');
-      quoteUrl.searchParams.set('restrictIntermediateTokens', 'true');
-      const quoteResp = await fetch(quoteUrl.toString());
-      const quoteData = await quoteResp.json().catch(() => ({}));
-      if (!quoteResp.ok || !quoteData?.outAmount) {
-        respondJson(res, quoteResp.status || 502, { error: quoteData?.error || 'Swap quote unavailable' });
-        return;
-      }
-      respondJson(res, 200, {
-        inputMint,
-        outputMint: SOL_MINT,
-        outAmount: quoteData.outAmount,
-        priceImpactPct: quoteData.priceImpactPct ?? '0',
-        transport: 'legacy_raw',
-        quoteResponse: quoteData,
-      });
-      return;
-    } catch (error) {
-      respondJson(res, 502, { error: error instanceof Error ? error.message : 'Swap quote fetch failed' });
-      return;
-    }
-  }
-
-  if (pathname === '/api/market/build-swap' && req.method === 'POST') {
-    if (!ipRateLimit('mkt_build_swap', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const parsed = JSON.parse(await readBody(req));
-      const userPublicKey = normalizePubkey(parsed?.userPublicKey);
-      const quoteResponse = parsed?.quoteResponse;
-      if (!userPublicKey || userPublicKey !== jwtAuth.address) {
-        respondJson(res, 403, { error: 'Wallet address mismatch' });
-        return;
-      }
-      if (!quoteResponse || quoteResponse.outputMint !== SOL_MINT || !normalizePubkey(quoteResponse.inputMint)) {
-        respondJson(res, 400, { error: 'Invalid swap quote' });
-        return;
-      }
-
-      if (JUPITER_API_KEY && quoteResponse.mode === 'order_execute' && String(quoteResponse.amount || '').trim()) {
-        const orderUrl = new URL(`${JUPITER_SWAP_API_V2}/order`);
-        orderUrl.searchParams.set('inputMint', normalizePubkey(quoteResponse.inputMint));
-        orderUrl.searchParams.set('outputMint', SOL_MINT);
-        orderUrl.searchParams.set('amount', String(quoteResponse.amount));
-        orderUrl.searchParams.set('taker', userPublicKey);
-        orderUrl.searchParams.set('slippageBps', '100');
-        orderUrl.searchParams.set('restrictIntermediateTokens', 'true');
-        const orderResp = await fetch(orderUrl.toString(), {
-          headers: { 'x-api-key': JUPITER_API_KEY },
-        });
-        const orderData = await orderResp.json().catch(() => ({}));
-        if (orderResp.ok && orderData?.transaction && orderData?.requestId) {
-          respondJson(res, 200, {
-            swapTransaction: orderData.transaction,
-            requestId: orderData.requestId,
-            transport: 'order_execute',
-          });
-          return;
-        }
-        console.warn('[market] Jupiter /order build failed, falling back to lite swap', orderData?.error || orderResp.status);
-      }
-
-      const swapResp = await fetch(JUPITER_LITE_SWAP_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quoteResponse,
-          userPublicKey,
-          wrapAndUnwrapSol: true,
-          dynamicComputeUnitLimit: true,
-        }),
-      });
-      const swapData = await swapResp.json().catch(() => ({}));
-      if (!swapResp.ok || !swapData?.swapTransaction) {
-        respondJson(res, swapResp.status || 502, { error: swapData?.error || 'Failed to build swap transaction' });
-        return;
-      }
-      respondJson(res, 200, {
-        swapTransaction: swapData.swapTransaction,
-        lastValidBlockHeight: swapData.lastValidBlockHeight ?? null,
-        prioritizationFeeLamports: swapData.prioritizationFeeLamports ?? null,
-        transport: 'legacy_raw',
-      });
-      return;
-    } catch (error) {
-      respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
-      return;
-    }
-  }
-
-  if (pathname === '/api/market/execute-swap' && req.method === 'POST') {
-    if (!ipRateLimit('mkt_execute_swap', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    if (!JUPITER_API_KEY) {
-      respondJson(res, 503, { error: 'Jupiter API key is not configured on the server' });
-      return;
-    }
-    try {
-      const parsed = JSON.parse(await readBody(req));
-      const signedTransaction = String(parsed?.signedTransaction || '').trim();
-      const requestId = String(parsed?.requestId || '').trim();
-      if (!signedTransaction || !requestId) {
-        respondJson(res, 400, { error: 'signedTransaction and requestId are required' });
-        return;
-      }
-      const executeResp = await fetch(`${JUPITER_SWAP_API_V2}/execute`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': JUPITER_API_KEY,
-        },
-        body: JSON.stringify({
-          signedTransaction,
-          requestId,
-        }),
-      });
-      const executeData = await executeResp.json().catch(() => ({}));
-      if (!executeResp.ok || !executeData?.signature) {
-        respondJson(res, executeResp.status || 502, { error: executeData?.error || 'Failed to execute swap' });
-        return;
-      }
-      respondJson(res, 200, executeData);
-      return;
-    } catch (error) {
-      respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
-      return;
     }
   }
 
@@ -6763,7 +6211,7 @@ const server = http.createServer(async (req, res) => {
         fetchParsedTransactions(address, parsedLimit),
         fetchEnhancedTransactions(address, 1000).catch(() => null),
       ]);
-      const { incoming, outgoing, programIds } = extractSolTransfers(parsed, address);
+      const { incoming, outgoing, programIds } = extractTrackedSolTransfers(parsed, address);
       // Enhanced TX edge type map: signature → exact type classification
       const enhancedEdgeTypes = enhancedResult?.edgeTypesMap || new Map();
       const nodeMap = new Map();
@@ -7821,32 +7269,6 @@ const PROGRAM_LABELS = {
   '11111111111111111111111111111111': 'System Program',
 };
 
-// Treasury / project wallets — excluded from sybil detection entirely
-const TREASURY_WALLETS = new Set([
-  '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN', // Identity Prism treasury
-]);
-
-// Known CEX/Bridge/DEX addresses for labeling
-const KNOWN_LABELS = {
-  '2ojv9BAiHUrvsm9gxDe7fJSzbNZSJcxZvf8dqmWGHG8S': { label: 'Binance', type: 'cex' },
-  '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM': { label: 'Binance Hot', type: 'cex' },
-  '5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9': { label: 'Binance', type: 'cex' },
-  'H8sMJSCQxfKbeSTMe3fPaFKBMq3pS3bhVwn9dSjYqYLn': { label: 'Coinbase', type: 'cex' },
-  'GJRs4FwHtemZ5ZE9Q3MNTDzoH7VDrKEswLzVRSJNDRLZ': { label: 'Coinbase', type: 'cex' },
-  'FWznbcNXWQuHTawe9RxvQ2LdCENssh12dsznf4RiouN5': { label: 'Kraken', type: 'cex' },
-  '6FEVkH18iu1gKLksoKHiYq4VJFL6Lr2VkqhqRMp4VEto': { label: 'OKX', type: 'cex' },
-  'ASTyfSima4LLAdDgoFGkgqoKowG1LZFDr9fAQrg7iaJZ': { label: 'Bybit', type: 'cex' },
-  'BmFdpraQhkiDQE6SnfG5PVb197fsGoiASaQUq8JEE6sB': { label: 'KuCoin', type: 'cex' },
-  '88o1cLRMEDpbz1HZk8c5Ti6Rjs1yFhbqWrv5WmY5jdKm': { label: 'Gate.io', type: 'cex' },
-  'HE1u8snzF1fPqtYVHSUGMsbiYFCYfXMVLJJDgGACrJHR': { label: 'Huobi', type: 'cex' },
-  'BtQM6yeaU6B89RhMqYGasEJXEEXLjvwBpsHHRVxv9boW': { label: 'Bitget', type: 'cex' },
-  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': { label: 'Jupiter', type: 'dex' },
-  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': { label: 'Raydium', type: 'dex' },
-  'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb': { label: 'Wormhole', type: 'bridge' },
-  'So1endDq2YkqhipRh3WViPa8hFvz0XP1MXF1VZU8Q4Mw': { label: 'Solend', type: 'dex' },
-  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': { label: 'Orca', type: 'dex' },
-};
-
 // Known scam contracts / rug-pull deployers
 const KNOWN_SCAM_ADDRESSES = new Set([]);
 const scamListFile = path.join(process.cwd(), 'scam_addresses.json');
@@ -7946,268 +7368,6 @@ async function fetchDominantEnhancedFunder(address, minShare = 0.7) {
   const dominant = getDominantFundingSource(summary.incoming, 'totalSol');
   if (!dominant.address || dominant.share < minShare || dominant.amount <= 0.01) return null;
   return { summary, dominant };
-}
-
-// Well-known Solana program addresses to filter out of wallet-to-wallet connections
-const PROGRAM_ADDRESSES = new Set([
-  '11111111111111111111111111111111',                   // System Program
-  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',      // Token Program
-  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',      // Token 2022
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',     // Associated Token Account
-  'ComputeBudget111111111111111111111111111111',        // Compute Budget
-  'Vote111111111111111111111111111111111111111',         // Vote Program
-  'Stake11111111111111111111111111111111111111',         // Stake Program
-  'Config1111111111111111111111111111111111111',         // Config Program
-  'BPFLoader2111111111111111111111111111111111',         // BPF Loader
-  'BPFLoaderUpgradeab1e11111111111111111111111',        // BPF Loader Upgradeable
-  'NativeLoader1111111111111111111111111111111',         // Native Loader
-  'Sysvar1111111111111111111111111111111111111',         // Sysvar (prefix match below too)
-  'SysvarRent111111111111111111111111111111111',         // Sysvar Rent
-  'SysvarC1ock11111111111111111111111111111111',         // Sysvar Clock
-  'SysvarS1otHashes111111111111111111111111111',         // Sysvar Slot Hashes
-  'SysvarStakeHistory1111111111111111111111111',         // Sysvar Stake History
-  'SysvarRecentB1telephones11111111111111111111',        // Sysvar Recent Blockhashes
-  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',     // Memo Program v2
-  'Memo1UhkJBfCR6MNB7C3EUkApJBswJaqzS6vQRHJph4',      // Memo Program v1
-  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',      // Metaplex Token Metadata
-  'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',      // Metaplex Auth Rules
-  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',      // Jupiter v6
-  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX7H',      // Jupiter v4
-  'JUP3jqKEFnJHTnQ9pP1bTJjrm3W9RWoWTxJoQGMGifDN',    // Jupiter v3
-  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',    // Raydium AMM v4
-  '27haf8L6oxUeXrHrgEgsexjSY5hbVUWEmvv9Nyxg8vQv',     // Raydium AMM authority
-  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',     // Raydium CLMM
-  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',      // Orca Whirlpool
-  'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb',      // Wormhole
-  'So1endDq2YkqhipRh3WViPa8hFvz0XP1MXF1VZU8Q4Mw',    // Solend
-  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA',      // Marinade Finance
-  'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD',      // Marinade State
-  'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68',      // Mango v4
-  'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY',      // Phoenix DEX
-  'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1',    // Orca legacy
-  'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX',      // Serum/OpenBook
-  'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy',      // Stake Pool Program
-  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',      // Meteora DLMM
-  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB',    // Phantom fee wallet
-]);
-
-// Check if an address looks like a program (static set + dynamic per-tx programIds)
-function isProgramAddress(addr, txProgramIds) {
-  if (PROGRAM_ADDRESSES.has(addr)) return true;
-  if (txProgramIds && txProgramIds.has(addr)) return true;
-  // Sysvar addresses all start with 'Sysvar'
-  if (addr.startsWith('Sysvar')) return true;
-  return false;
-}
-
-// ── Transaction type classification by program IDs ──
-const TX_TYPE_PROGRAMS = {
-  defi: new Set([
-    'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',  // Jupiter v6
-    'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX7H',  // Jupiter v4
-    'JUP3jqKEFnJHTnQ9pP1bTJjrm3W9RWoWTxJoQGMGifDN', // Jupiter v3
-    '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', // Raydium AMM v4
-    'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK', // Raydium CLMM
-    'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  // Orca Whirlpool
-    'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1', // Orca legacy
-    'So1endDq2YkqhipRh3WViPa8hFvz0XP1MXF1VZU8Q4Mw', // Solend
-    'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68',  // Mango v4
-    'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY',  // Phoenix DEX
-    'srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX',  // Serum/OpenBook
-    'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo', // Meteora DLMM
-    'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA',  // Marinade Finance (DeFi)
-    'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb',  // Wormhole
-  ]),
-  nft: new Set([
-    'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',  // Metaplex Token Metadata
-    'auth9SigNpDKz4sJJ1DfCTuZrZNSAgh9sFD3rboVmgg',  // Metaplex Auth Rules
-    'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN',  // Tensor Swap
-    'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K',  // Magic Eden v2
-    'hausS13jsjafwWwGqZTUQRmWyvyxn9EQpqMwV1PBBmk',  // Metaplex Auction House
-    'CJsLwbP1iu5DuUikHEJnLfANgKy6stB2uFgvBBHoyxwz', // Solanart
-  ]),
-  staking: new Set([
-    'Stake11111111111111111111111111111111111111',      // Native Stake
-    'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy',  // Stake Pool Program
-    'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD',  // Marinade State (staking)
-  ]),
-};
-
-function classifyTxType(txProgramIdSet) {
-  const types = new Set();
-  for (const pid of txProgramIdSet) {
-    if (TX_TYPE_PROGRAMS.defi.has(pid)) types.add('defi');
-    if (TX_TYPE_PROGRAMS.nft.has(pid)) types.add('nft');
-    if (TX_TYPE_PROGRAMS.staking.has(pid)) types.add('staking');
-  }
-  if (types.size === 0) types.add('transfer');
-  return [...types];
-}
-
-// Extract SOL transfers from parsed transactions — wallet-to-wallet only
-// Helper: extract address string from accountKey (works with both batch JSON-RPC and @solana/web3.js)
-function resolveAccountKey(accKey) {
-  if (typeof accKey === 'string') return accKey;
-  if (!accKey) return '';
-  // @solana/web3.js returns PublicKey objects with .toBase58()
-  if (accKey.pubkey?.toBase58) return accKey.pubkey.toBase58();
-  // Raw JSON-RPC returns { pubkey: "string", signer: bool, ... }
-  if (typeof accKey.pubkey === 'string') return accKey.pubkey;
-  return '';
-}
-
-function extractSolTransfers(parsed, targetAddress) {
-  const incoming = new Map();
-  const outgoing = new Map();
-  const programIds = new Set();
-
-  for (const tx of parsed) {
-    if (!tx?.meta || !tx?.transaction) continue;
-    if (tx.meta.err) continue;
-    const blockTime = tx.blockTime ? tx.blockTime * 1000 : Date.now();
-
-    const txProgramIds = new Set();
-    const ixs = tx.transaction.message?.instructions || [];
-    for (const ix of ixs) {
-      if (ix.programId) {
-        const pid = typeof ix.programId === 'string' ? ix.programId : (ix.programId?.toBase58?.() || ix.programId?.toString?.() || '');
-        if (pid) { txProgramIds.add(pid); programIds.add(pid); }
-      }
-    }
-    const innerIxs = tx.meta.innerInstructions || [];
-    for (const inner of innerIxs) {
-      for (const iix of (inner.instructions || [])) {
-        if (iix.programId) {
-          const pid = typeof iix.programId === 'string' ? iix.programId : (iix.programId?.toBase58?.() || iix.programId?.toString?.() || '');
-          if (pid) { txProgramIds.add(pid); programIds.add(pid); }
-        }
-      }
-    }
-
-    const accounts = tx.transaction.message?.accountKeys || [];
-    const pre = tx.meta.preBalances || [];
-    const post = tx.meta.postBalances || [];
-
-    const signerAddresses = new Set();
-    for (const acc of accounts) {
-      if (typeof acc === 'object' && acc?.signer) {
-        const addr = resolveAccountKey(acc);
-        if (addr) signerAddresses.add(addr);
-      }
-    }
-
-    let targetIdx = -1;
-    let targetDiff = 0;
-    for (let i = 0; i < accounts.length; i++) {
-      const acc = resolveAccountKey(accounts[i]);
-      if (acc === targetAddress) {
-        targetIdx = i;
-        targetDiff = ((post[i] || 0) - (pre[i] || 0)) / 1e9;
-        break;
-      }
-    }
-    if (targetIdx === -1) continue;
-
-    // ── SOL Transfer Detection ──
-    // Threshold 0.0003 SOL — catches micro-transfers but ignores pure fee dust
-    if (Math.abs(targetDiff) >= 0.0003) {
-      const candidates = [];
-      for (let j = 0; j < accounts.length; j++) {
-        if (j === targetIdx) continue;
-        const acc = resolveAccountKey(accounts[j]);
-        if (!acc) continue;
-        const diff = ((post[j] || 0) - (pre[j] || 0)) / 1e9;
-        const isSigner = typeof accounts[j] === 'object' ? !!accounts[j]?.signer : signerAddresses.has(acc);
-        candidates.push({ addr: acc, diff, isSigner, isProgram: isProgramAddress(acc, txProgramIds) });
-      }
-
-      if (targetDiff > 0.0003) {
-        const senders = candidates
-          .filter(c => c.diff < -0.0003 && !c.isProgram)
-          .sort((a, b) => {
-            if (a.isSigner && !b.isSigner) return -1;
-            if (!a.isSigner && b.isSigner) return 1;
-            return a.diff - b.diff;
-          });
-        const sender = senders[0];
-        if (sender && !TREASURY_WALLETS.has(sender.addr)) {
-          const existing = incoming.get(sender.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
-          existing.totalSol += Math.abs(targetDiff);
-          existing.count += 1;
-          existing.firstTime = Math.min(existing.firstTime, blockTime);
-          existing.lastTime = Math.max(existing.lastTime, blockTime);
-          for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
-          const sig = tx.transaction.signatures?.[0];
-          if (sig) existing.signatures.push(sig);
-          incoming.set(sender.addr, existing);
-        }
-      } else if (targetDiff < -0.0003) {
-        const receivers = candidates
-          .filter(c => c.diff > 0.0003 && !c.isProgram)
-          .sort((a, b) => {
-            if (a.isSigner && !b.isSigner) return -1;
-            if (!a.isSigner && b.isSigner) return 1;
-            return b.diff - a.diff;
-          });
-        const receiver = receivers[0];
-        if (receiver && !TREASURY_WALLETS.has(receiver.addr)) {
-          const existing = outgoing.get(receiver.addr) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
-          existing.totalSol += Math.abs(receiver.diff);
-          existing.count += 1;
-          existing.firstTime = Math.min(existing.firstTime, blockTime);
-          existing.lastTime = Math.max(existing.lastTime, blockTime);
-          for (const t of classifyTxType(txProgramIds)) existing.txTypeSet.add(t);
-          const sig = tx.transaction.signatures?.[0];
-          if (sig) existing.signatures.push(sig);
-          outgoing.set(receiver.addr, existing);
-        }
-      }
-    }
-
-    // ── SPL Token Transfer Detection ──
-    // Runs ALWAYS (not gated by SOL diff) — catches funding via USDC, tokens, etc.
-    const preTok = tx.meta.preTokenBalances || [];
-    const postTok = tx.meta.postTokenBalances || [];
-    if (preTok.length > 0 || postTok.length > 0) {
-      const preMap = new Map();
-      for (const tb of preTok) {
-        if (tb.owner) preMap.set(`${tb.owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
-      }
-      const postMap = new Map();
-      for (const tb of postTok) {
-        if (tb.owner) postMap.set(`${tb.owner}:${tb.mint}`, tb.uiTokenAmount?.uiAmount || 0);
-      }
-      // Check if target gained tokens
-      let targetGainedToken = false;
-      for (const [key, postAmt] of postMap) {
-        if (!key.startsWith(targetAddress + ':')) continue;
-        const preAmt = preMap.get(key) || 0;
-        if (postAmt > preAmt + 0.001) { targetGainedToken = true; break; }
-      }
-      // If target gained tokens and SOL diff was negligible (fee-only), record token sender as funder
-      if (targetGainedToken && Math.abs(targetDiff) < 0.01) {
-        for (const [key, preAmt] of preMap) {
-          const [owner] = key.split(':');
-          if (owner === targetAddress) continue;
-          const postAmt = postMap.get(key) || 0;
-          if (preAmt > postAmt + 0.001 && !isProgramAddress(owner, txProgramIds)) {
-            const tokenSolProxy = 0.05; // proxy value per token tx (better weight than 0.01)
-            const existing = incoming.get(owner) || { totalSol: 0, count: 0, firstTime: blockTime, lastTime: blockTime, txTypeSet: new Set(), signatures: [] };
-            existing.totalSol += tokenSolProxy;
-            existing.count += 1;
-            existing.firstTime = Math.min(existing.firstTime, blockTime);
-            existing.lastTime = Math.max(existing.lastTime, blockTime);
-            existing.txTypeSet.add('token_transfer');
-            const sig = tx.transaction.signatures?.[0];
-            if (sig) existing.signatures.push(sig);
-            incoming.set(owner, existing);
-            break;
-          }
-        }
-      }
-    }
-  }
-  return { incoming, outgoing, programIds };
 }
 
 const clusterCache = new Map();
@@ -8738,6 +7898,7 @@ const ctx = createContext({
   getPrismBalance,
   getCachedSolPriceUsd,
   getCachedSkrPriceUsd,
+  getSkrQuote,
   getRpcUrl,
   getBatchRpcUrl,
   parsePublicKey,
@@ -8773,6 +7934,10 @@ const ctx = createContext({
   getRevivesLeft,
   useRevive,
   getBaseUrl,
+  fetchMeSlugByMint,
+  fetchMagicEdenCollectionStats,
+  fetchTensorCollectionStats,
+  fetchMeTokenLastPrice,
   resolveAssetFile,
   resolveMetadataFile,
   getContentType,
@@ -8828,6 +7993,11 @@ const ctx = createContext({
   treasurySecret: TREASURY_SECRET,
   treasurySecretPath: TREASURY_SECRET_PATH,
   metadataDir: METADATA_DIR,
+  jupiterApiKey: JUPITER_API_KEY,
+  jupiterSwapApiV2: JUPITER_SWAP_API_V2,
+  jupiterLiteQuoteApi: JUPITER_LITE_QUOTE_API,
+  jupiterLiteSwapApi: JUPITER_LITE_SWAP_API,
+  mintPriceSol: MINT_PRICE_SOL,
   skrMint: SKR_MINT,
   tokenProgramId: TOKEN_PROGRAM_ID,
   token2022ProgramId: TOKEN_2022_PROGRAM_ID,
@@ -8854,7 +8024,7 @@ const ctx = createContext({
   fetchEnhancedTxHistory,
   fetchDominantEnhancedFunder,
   isProgramAddress,
-  extractSolTransfers,
+  extractSolTransfers: extractTrackedSolTransfers,
   detectTemporalFundingCohort,
   persistFundingEdge,
   persistFundingEdgesForTarget,
@@ -8905,6 +8075,45 @@ const ctx = createContext({
   refundCoinSpent,
   backfillCompositeScores,
 });
+const initOrchestrator = createInitOrchestrator({
+  coinBalanceStore,
+  mintedAddressesStore,
+  scoreHistoryStore,
+  walletStore,
+  sybilVerdictStore,
+  gameSessionProofStore,
+  achievementStore,
+  reviveStore,
+  questProgressStore,
+  notificationsStore,
+  challengesStore,
+  tournamentStore,
+  loadCoinBalances,
+  loadMintedAddresses,
+  loadScoreHistory,
+  loadWalletDatabase,
+  loadGameSessionProofs,
+  loadAchievementData,
+  loadReviveData,
+  loadQuestProgress,
+  loadNotifications,
+  loadChallenges,
+  loadTournaments,
+  normalizeStoredGameSessionEntry,
+  gameSessionStoreFile: GAME_SESSION_STORE_FILE,
+  achievementsStoreFile: ACHIEVEMENTS_STORE_FILE,
+  revivesStoreFile: REVIVES_STORE_FILE,
+  questProgressFile: QUEST_PROGRESS_FILE,
+  notificationsFile: NOTIFICATIONS_FILE,
+  challengesFile: CHALLENGES_FILE,
+  tournamentFile: TOURNAMENT_FILE,
+  tournamentTiers: TOURNAMENT_TIERS,
+  saveMintedAddresses,
+  setTournamentModeIndex: (value) => {
+    tournamentModeIndex = value;
+  },
+  fs,
+});
 const authHandler = registerAuthRoute(ctx);
 const arenaHandler = registerArenaRoute(ctx);
 const blackholeHandler = registerBlackholeRoute(ctx);
@@ -8912,6 +8121,7 @@ const earnHandler = registerEarnRoute(ctx);
 const gameHandler = registerGameRoute(ctx);
 const gameV1Handler = registerGameV1Route(ctx);
 const healthHandler = registerHealthRoute(ctx);
+const marketHandler = registerMarketRoute(ctx);
 const metadataHandler = registerMetadataRoute(ctx);
 const spendHandler = registerSpendRoute(ctx);
 const sybilHandler = registerSybilRoute(ctx);
@@ -8929,7 +8139,7 @@ server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 
 // Load data from Firestore (fallback JSON), then start server
-initData().then(() => {
+initOrchestrator.initialize(ctx).then(() => {
   server.listen(PORT, HOST, () => {
     const providers = [];
     if (ALCHEMY_RPC_URL) providers.push('alchemy');
@@ -8938,8 +8148,7 @@ initData().then(() => {
     if (FALLBACK_RPC_URL) providers.push('solana-public');
     console.log(`[helius-proxy] listening on ${HOST}:${PORT} | RPC chain: ${providers.join(' → ') || 'none'} (gzip, keep-alive 65s)`);
     startSchedulers(ctx);
-    // Start async wallet database backfill (non-blocking)
-    backfillWalletDatabaseAsync(ctx).catch(err => console.warn('[wallet-db] Async backfill error', err.message || err));
+    initOrchestrator.startBackgroundBackfills(ctx);
   });
 }).catch(err => {
   console.error('[init] Failed to load data:', err);
