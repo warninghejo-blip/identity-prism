@@ -1,24 +1,32 @@
 function registerTournamentRoute(ctx) {
   const {
-    ipRateLimit,
-    getClientIp,
-    respondJson,
-    checkTournaments,
-    verifyJwt,
-    tournamentTiers,
-    activeTournaments,
-    getTournamentBasePrizes,
-    tournamentXpRewards,
-    requireJwt,
-    readBody,
-    getCoinBalance,
-    totalBurned,
-    setCoinBalance,
-    addCoinSpent,
-    saveTournament,
-    gameSessionProofs,
-    persistGameSessionProofs,
-    completedTournaments,
+    core: {
+      ipRateLimit,
+      getClientIp,
+      respondJson,
+      verifyJwt,
+      requireJwt,
+      readBody,
+    },
+    wallet: {
+      getCoinBalance,
+      setCoinBalance,
+      addCoinSpent,
+      gameSessionProofs,
+      persistGameSessionProofs,
+    },
+    economy: {
+      totalBurned,
+    },
+    tournament: {
+      checkTournaments,
+      tournamentTiers,
+      activeTournaments,
+      getTournamentBasePrizes,
+      tournamentXpRewards,
+      saveTournament,
+      completedTournaments,
+    },
   } = ctx;
 
   return async function handleTournamentRoute(req, res, url, pathname) {

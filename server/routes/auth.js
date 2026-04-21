@@ -109,13 +109,53 @@ function createAuthRouteHandler({
   };
 }
 
+function resolveAuthRouteConfig(ctx) {
+  if (!ctx?.core || !ctx?.economy || !ctx?.auth) return ctx;
+
+  const {
+    core: {
+      getClientIp,
+      readBody,
+      safeParseJson,
+      respondJson,
+    },
+    economy: {
+      getPrismEarnRateLimit,
+      setPrismEarnRateLimit,
+    },
+    auth: {
+      authChallenges,
+      authChallengeTtlMs,
+      reputationRateLimit,
+      verifyWalletSignature,
+      createJwt,
+      jwtTtl,
+    },
+  } = ctx;
+
+  return {
+    getClientIp,
+    getPrismEarnRateLimit,
+    setPrismEarnRateLimit,
+    readBody,
+    safeParseJson,
+    respondJson,
+    authChallenges,
+    authChallengeTtlMs,
+    reputationRateLimit,
+    verifyWalletSignature,
+    createJwt,
+    jwtTtl,
+  };
+}
+
 function registerAuthRoute(...args) {
   if (args.length === 1 && args[0] && typeof args[0] === 'object') {
-    return createAuthRouteHandler(args[0]);
+    return createAuthRouteHandler(resolveAuthRouteConfig(args[0]));
   }
 
   const [req, res, url, pathname, ctx] = args;
-  return createAuthRouteHandler(ctx)(req, res, url, pathname);
+  return createAuthRouteHandler(resolveAuthRouteConfig(ctx))(req, res, url, pathname);
 }
 
 export { registerAuthRoute };

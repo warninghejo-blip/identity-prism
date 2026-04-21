@@ -1,17 +1,23 @@
 function registerQuestRoute(ctx) {
   const {
-    ipRateLimit,
-    getClientIp,
-    requireJwt,
-    readBody,
-    respondJson,
-    quests,
-    getQuestProgressSnapshot,
-    getQuestPeriodKey,
-    questSourceIds,
-    getToday,
-    saveQuestProgressDebounced,
-    triggerCompositeUpdate,
+    core: {
+      ipRateLimit,
+      getClientIp,
+      requireJwt,
+      readBody,
+      respondJson,
+      getToday,
+    },
+    wallet: {
+      triggerCompositeUpdate,
+    },
+    economy: {
+      quests,
+      getQuestProgressSnapshot,
+      getQuestPeriodKey,
+      questSourceIds,
+      saveQuestProgressDebounced,
+    },
   } = ctx;
 
   const validQuestIds = new Set([

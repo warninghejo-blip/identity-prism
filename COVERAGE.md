@@ -1,6 +1,6 @@
 # Test Coverage Report
 
-Generated: 2026-04-16 (updated after integration test sprint #2)  
+Generated: 2026-04-16 (updated after integration test sprint #3)  
 Tool: `npx vitest run --coverage` (provider: v8)
 
 ## Summary
@@ -61,6 +61,32 @@ Tool: `npx vitest run --coverage` (provider: v8)
 - `src/pages/BlackHole.tsx` — 0% → 18% statements
 - `src/pages/PrismScanner.tsx` — 0% → 15% statements
 - `src/hooks/useWalletData.ts` — 13% → 33% statements (hook flow paths added)
+
+---
+
+## New Tests Added (sprint #3, 2026-04-16)
+
+| File | Tests | What's covered |
+|------|-------|----------------|
+| `src/lib/__tests__/safeNavigate.test.ts`       | 10 | trackInternalNavigation depth counter, goBack navigate call + flags, cleanupOverlays removes all overlay ids |
+| `src/lib/__tests__/fadeTransition.test.ts`     | 9  | startFadeTransition: overlay creation, z-index, onNavigate timing, deduplication, error recovery; fadeOutTransition: opacity+pointerEvents, no-op when absent |
+| `src/lib/__tests__/prismCoin.test.ts`          | 18 | PRISM_EARN_RATES all sources numeric, rate ordering; COIN_PACKAGES count+order; calculateGamePrism all 3 modes + edge cases; calculateBurnPrism combined/units |
+| `src/lib/__tests__/shipStats.extended.test.ts` | 17 | getBoostedCompositeScore null/sum/frame-boost; applyFrameToBreakdown unknown frame/no-mutation/all-frames; TITLE/AURA bonus table invariants; stat cap 5–70; getEquipmentBonusLines |
+| `src/lib/__tests__/userDataSync.test.ts`       | 11 | collectLocalData: empty, loadout, wrong-address, gameStats, bestScores, rangerXP, textQuests, corrupt JSON; syncToServer: debounce delay, deduplication |
+| `server/__tests__/routes-extended.test.ts`     | 19 | /api/prism/economy, /api/prism/balance (anon+JWT), /api/score-history, /api/daily-limits, /api/xp, /api/sybil/analysis, /api/prism/spend JWT-401, /api/game/leaderboard, /api/referral/code, /api/migration-status |
+| **Total new sprint #3**                        | **83** | — |
+
+**Total tests: 297 passing** (up from 214)
+
+## Coverage for Targeted Modules (post sprint #3)
+
+| File | Stmts | Branches | Funcs | Lines | Delta |
+|------|-------|----------|-------|-------|-------|
+| `src/lib/safeNavigate.ts`    | 95.23% | 90.9%  | 100%  | 94.73% | 0% → 95% |
+| `src/lib/fadeTransition.ts`  | 92.85% | 100%   | 71.4% | 100%   | 0% → 93% |
+| `src/lib/userDataSync.ts`    | 55.55% | 32.25% | 50%   | 53.94% | 0% → 56% |
+| `src/lib/shipStats.ts`       | 64.18% | 51.89% | 55.5% | 64%    | was 50% → 64% |
+| `src/lib/prismCoin.ts`       | 17.64% | 13.46% | 15.4% | 19.73% | 0% → 18% |
 
 ## Note on Overall % vs 45% Target
 

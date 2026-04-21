@@ -7,7 +7,15 @@ const CORE_KEYS = [
   'getToday',
   'resolveCorsOrigin',
   'getRpcUrl',
+  'getBatchRpcUrl',
+  'batchGetParsedTxs',
   'parsePublicKey',
+  'safeParseJson',
+  'requireAdminKey',
+  'reputationRateLimit',
+  'resolveAccountKey',
+  'normalizePubkey',
+  'verifyJwt',
 ];
 
 const WALLET_KEYS = [
@@ -16,7 +24,9 @@ const WALLET_KEYS = [
   'getCoinBalance',
   'setCoinBalance',
   'addCoinEarned',
+  'addCoinSpent',
   'getPrismBalance',
+  'getStakingBoost',
   'saveWalletDatabaseDebounced',
   'leaderboardEntries',
   'submitLeaderboardEntry',
@@ -54,6 +64,34 @@ const ECONOMY_KEYS = [
   'skrMint',
   'tokenProgramId',
   'token2022ProgramId',
+  'pendingStakingOps',
+  'totalBurned',
+  'stakingTiers',
+  'getLockTier',
+  'calcUnclaimedYield',
+  'bracketsDeployTs',
+  'calcDailyYieldForAmount',
+  'getEffectiveRate',
+  'getRateSchedule',
+  'quests',
+  'getQuestProgressSnapshot',
+  'getQuestPeriodKey',
+  'questSourceIds',
+  'saveQuestProgressDebounced',
+  'cleanupBlackHoleUsedSignatures',
+  'blackHoleUsedSignatures',
+  'getIdentityHolderPerks',
+  'verifyBlackHoleCommissionTx',
+  'verifyCloseOperationTx',
+  'verifyBurnOperationTx',
+  'verifySwapOperationTx',
+  'inferBlackHoleAssetKind',
+  'getWalletLamportDelta',
+  'lamportsPerSol',
+  'calculateBlackHoleReward',
+  'dailyBlackHoleCleanupCap',
+  'feedItems',
+  'persistBlackHoleUsedSignatures',
 ];
 
 const SYBIL_KEYS = [
@@ -65,6 +103,28 @@ const SYBIL_KEYS = [
   'calculateCompositeScore',
   'buildCompositeInput',
   'getSybilVerdict',
+];
+
+const TOURNAMENT_KEYS = [
+  'checkTournaments',
+  'tournamentTiers',
+  'activeTournaments',
+  'getTournamentBasePrizes',
+  'tournamentXpRewards',
+  'saveTournament',
+  'completedTournaments',
+  'tournamentHistory',
+];
+
+const AUTH_KEYS = [
+  'authChallenges',
+  'authChallengeTtlMs',
+  'verifyWalletSignature',
+  'createJwt',
+  'verifyJwt',
+  'requireJwt',
+  'jwtTtl',
+  'reputationRateLimit',
 ];
 
 function createFrozenSlice(rawConfig, keys, extras = {}) {
@@ -80,12 +140,16 @@ function createContext(rawConfig) {
   const wallet = createFrozenSlice(rawConfig, WALLET_KEYS);
   const economy = createFrozenSlice(rawConfig, ECONOMY_KEYS);
   const sybil = createFrozenSlice(rawConfig, SYBIL_KEYS);
+  const tournament = createFrozenSlice(rawConfig, TOURNAMENT_KEYS);
+  const auth = createFrozenSlice(rawConfig, AUTH_KEYS);
 
   return {
     core,
     wallet,
     economy,
     sybil,
+    tournament,
+    auth,
     ...rawConfig,
   };
 }

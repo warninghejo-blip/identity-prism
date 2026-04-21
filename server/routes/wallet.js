@@ -2,16 +2,20 @@ import { Connection, PublicKey } from '@solana/web3.js';
 
 function registerWalletRoute(ctx) {
   const {
-    requireAdminKey,
-    walletDatabase,
-    respondJson,
-    ipRateLimit,
-    getClientIp,
-    reputationRateLimit,
-    getRpcUrl,
-    getBatchRpcUrl,
-    batchGetParsedTxs,
-    resolveAccountKey,
+    core: {
+      requireAdminKey,
+      respondJson,
+      ipRateLimit,
+      getClientIp,
+      reputationRateLimit,
+      getRpcUrl,
+      getBatchRpcUrl,
+      batchGetParsedTxs,
+      resolveAccountKey,
+    },
+    wallet: {
+      walletDatabase,
+    },
   } = ctx;
 
   return async function handleWalletRoute(req, res, url, pathname) {
