@@ -78,7 +78,7 @@ interface Challenge {
   opponent: string | null;
   type: 'score' | 'game';
   gameMode: string | null;
-  stakeType: 'coins' | 'sol';
+  stakeType: 'coins';
   stakeAmount: number;
   status: 'open' | 'accepted' | 'playing' | 'completed' | 'cancelled';
   creatorScore: number | null;
@@ -204,12 +204,11 @@ export default function PrismArena() {
   const [formType, setFormType] = useState<'score' | 'game'>('score');
   const [formGameMode, setFormGameMode] = useState<'orbit' | 'destroyer' | 'gravity'>('orbit');
   const [formStake, setFormStake] = useState<number>(10);
-  const formBetType = 'coins' as const; // SOL stakes disabled — security risk without escrow contract
   const [formOpponent, setFormOpponent] = useState('');
   const [formExpiry, setFormExpiry] = useState<number>(60);
 
   const [readyModal, setReadyModal] = useState<{
-    challenge: { id: string; gameMode: string | null; stakeAmount: number; stakeType: 'coins' | 'sol' };
+    challenge: { id: string; gameMode: string | null; stakeAmount: number; stakeType: 'coins' };
     role: 'creator' | 'acceptor';
   } | null>(null);
   const [battleResult, setBattleResult] = useState<ChallengeResult | null>(null);
@@ -347,8 +346,7 @@ export default function PrismArena() {
                 toast(<ArenaToast cover={coverUrl} color="#facc15" title="Battle in Progress!" sub={gameName} />);
               } else if (c.status === 'completed') {
                 const won = c.winner === myAddress;
-                const unit = c.stakeType === 'sol' ? 'SOL' : 'Coins';
-                const title = won ? `YOU WON! +${c.stakeAmount * 2} ${unit}` : `YOU LOST -${c.stakeAmount} ${unit}`;
+                const title = won ? `YOU WON! +${c.stakeAmount * 2} Coins` : `YOU LOST -${c.stakeAmount} Coins`;
                 toast(
                   <ArenaToast
                     cover={coverUrl}
@@ -436,13 +434,8 @@ export default function PrismArena() {
       toast.error('Connect your wallet first');
       return;
     }
-    const isSol = formBetType === 'sol';
-    if (!isSol && (formStake < 5 || formStake > 1000)) {
+    if (formStake < 5 || formStake > 1000) {
       toast.error('Stake must be between 5 and 1000 Coins');
-      return;
-    }
-    if (isSol && (formStake <= 0 || formStake > 10)) {
-      toast.error('SOL stake must be between 0.01 and 10 SOL');
       return;
     }
 
@@ -458,57 +451,9 @@ export default function PrismArena() {
         }
       }
 
-      let solTxSignature: string | undefined;
-      if (isSol) {
-        if (!wallet.signTransaction) {
-          toast.error('Wallet does not support signing');
-          return;
-        }
-        try {
-          const {
-            Connection: SolConn,
-            PublicKey: SolPK,
-            SystemProgram: SolSP,
-            Transaction: SolTx,
-          } = await import('@solana/web3.js');
-          const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
-          const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-          const tx = new SolTx().add(
-            SolSP.transfer({
-              fromPubkey: new SolPK(myAddress),
-              toPubkey: new SolPK(treasuryAddr),
-              lamports: Math.floor(formStake * 1e9),
-            }),
-          );
-          tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-          tx.feePayer = new SolPK(myAddress);
-          const simulation = await conn.simulateTransaction(tx, undefined, {
-            sigVerify: false,
-            replaceRecentBlockhash: true,
-          });
-          if (simulation.value.err)
-            throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-          tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-          const origSerializeCreate = tx.serialize.bind(tx);
-          tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
-            origSerializeCreate({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
-          const signed = await wallet.signTransaction(tx);
-          const sig = await conn.sendRawTransaction(
-            signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-          );
-          await conn.confirmTransaction(sig, 'confirmed');
-          solTxSignature = sig;
-          toast.info('SOL transfer confirmed, creating challenge...');
-        } catch (e: unknown) {
-          toast.error((e as Error)?.message || 'SOL transfer failed');
-          return;
-        }
-      }
-
       const body: Record<string, unknown> = {
         type: formType,
         stakeAmount: formStake,
-        betType: formBetType,
         expiresMinutes: formExpiry,
       };
       if (formType === 'game') body.gameMode = formGameMode;
@@ -525,7 +470,7 @@ export default function PrismArena() {
         const resData = await res.json().catch(() => ({}));
         setCreating(false);
         setFormOpponent('');
-        setFormStake(isSol ? 0.1 : 10);
+        setFormStake(10);
         fetchOpen();
         fetchMine();
 
@@ -549,7 +494,7 @@ export default function PrismArena() {
               cover={GAME_MODE_LABELS[formGameMode]?.cover}
               color="#22c55e"
               title="Challenge Created!"
-              sub={`${formStake} ${formBetType === 'sol' ? 'SOL' : 'Coins'} staked — starting game...`}
+              sub={`${formStake} Coins staked — starting game...`}
             />,
           );
           // Navigate directly to game — no intermediate modal
@@ -564,13 +509,7 @@ export default function PrismArena() {
             );
           });
         } else {
-          toast.success(
-            <ArenaToast
-              color="#22c55e"
-              title="Challenge Created!"
-              sub={`${formStake} ${formBetType === 'sol' ? 'SOL' : 'Coins'} staked`}
-            />,
-          );
+          toast.success(<ArenaToast color="#22c55e" title="Challenge Created!" sub={`${formStake} Coins staked`} />);
           setSubTab('mine');
         }
       } else {
@@ -583,7 +522,7 @@ export default function PrismArena() {
       actionLockRef.current = false;
       setSubmitting(false);
     }
-  }, [myAddress, formType, formGameMode, formStake, formBetType, formOpponent, base, wallet, fetchOpen, fetchMine]);
+  }, [myAddress, formType, formGameMode, formStake, formOpponent, base, wallet, fetchOpen, fetchMine]);
 
   // ── Accept challenge ──
   const handleAccept = useCallback(
@@ -607,61 +546,11 @@ export default function PrismArena() {
         }
 
         const challenge = [...openChallenges, ...myChallenges].find((c) => c.id === challengeId);
-        let solTxSignature: string | undefined;
-        if (challenge?.stakeType === 'sol') {
-          if (!wallet.signTransaction) {
-            toast.error('Wallet does not support signing');
-            return;
-          }
-          try {
-            const {
-              Connection: SolConn,
-              PublicKey: SolPK,
-              SystemProgram: SolSP,
-              Transaction: SolTx,
-            } = await import('@solana/web3.js');
-            const conn = new SolConn(base.replace(/\/+$/, '').replace('/api', '') + '/rpc', 'confirmed');
-            const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-            const stakeAmt = challenge.stakeAmount ?? 0;
-            const tx = new SolTx().add(
-              SolSP.transfer({
-                fromPubkey: new SolPK(myAddress),
-                toPubkey: new SolPK(treasuryAddr),
-                lamports: Math.floor(stakeAmt * 1e9),
-              }),
-            );
-            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-            tx.feePayer = new SolPK(myAddress);
-            const simulation = await conn.simulateTransaction(tx, undefined, {
-              sigVerify: false,
-              replaceRecentBlockhash: true,
-            });
-            if (simulation.value.err)
-              throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
-            const origSerializeAccept = tx.serialize.bind(tx);
-            tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
-              origSerializeAccept({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
-            const signed = await wallet.signTransaction(tx);
-            const sig = await conn.sendRawTransaction(
-              signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-            );
-            await conn.confirmTransaction(sig, 'confirmed');
-            solTxSignature = sig;
-            toast.info('SOL transfer confirmed, accepting challenge...');
-          } catch (e: unknown) {
-            toast.error((e as Error)?.message || 'SOL transfer failed');
-            return;
-          }
-        }
-
-        const acceptBody: Record<string, unknown> = { challengeId };
-        if (solTxSignature) acceptBody.solTxSignature = solTxSignature;
 
         const res = await fetch(`${base}/api/challenge/accept`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify(acceptBody),
+          body: JSON.stringify({ challengeId }),
         });
 
         if (res.ok) {
@@ -712,8 +601,7 @@ export default function PrismArena() {
       const feeRate = ch.creatorScore !== null && ch.creatorScore !== undefined ? 0.2 : 0.1;
       const fee = Math.ceil(ch.stakeAmount * feeRate);
       const refund = ch.stakeAmount - fee;
-      const unit = ch.stakeType === 'sol' ? 'SOL' : 'Coins';
-      setCancelConfirm({ challengeId, fee, refund, feeRate, unit });
+      setCancelConfirm({ challengeId, fee, refund, feeRate, unit: 'Coins' });
     },
     [myChallenges],
   );
@@ -1022,8 +910,7 @@ export default function PrismArena() {
                 </>
               ) : (
                 <>
-                  <Swords className="w-4 h-4" /> Create Challenge — {formStake}{' '}
-                  {formBetType === 'sol' ? 'SOL' : 'Coins'}
+                  <Swords className="w-4 h-4" /> Create Challenge — {formStake} Coins
                 </>
               )}
             </button>
@@ -1095,9 +982,7 @@ export default function PrismArena() {
                       <div className="text-[10px] text-white/30 font-mono truncate mb-1">{formatAddr(c.creator)}</div>
                       <div className="flex items-center gap-1">
                         <Coins className="w-3 h-3 text-amber-400" />
-                        <span className="text-[11px] font-bold text-amber-400">
-                          {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
-                        </span>
+                        <span className="text-[11px] font-bold text-amber-400">{c.stakeAmount} Coins</span>
                       </div>
                     </div>
 
@@ -1228,7 +1113,7 @@ export default function PrismArena() {
                           </div>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 border border-amber-400/15 text-[11px] font-bold text-amber-400">
                             <Coins className="w-3 h-3" />
-                            {c.stakeAmount} {c.stakeType === 'sol' ? 'SOL' : 'Coins'}
+                            {c.stakeAmount} Coins
                           </span>
                         </div>
                         <StatusBadge status={c.status} />
@@ -1257,9 +1142,7 @@ export default function PrismArena() {
                           <div className="flex items-center justify-between">
                             <div>
                               <p className={`text-xs font-bold ${didWin ? 'text-green-400' : 'text-red-400'}`}>
-                                {didWin
-                                  ? `Won ${c.stakeAmount * 2} ${c.stakeType === 'sol' ? 'SOL' : 'Coins'}`
-                                  : 'Lost'}
+                                {didWin ? `Won ${c.stakeAmount * 2} Coins` : 'Lost'}
                               </p>
                               {(myScore !== null || theirScore !== null) && (
                                 <p className="text-[10px] text-white/30 mt-0.5">

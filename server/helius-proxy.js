@@ -9661,7 +9661,6 @@ const DAILY_COIN_LIMIT = 300000;
 const pendingStakingOps = globalThis._pendingStakingOps || (globalThis._pendingStakingOps = new Set());
 const mintBonusLocks = globalThis._mintBonusLocks || (globalThis._mintBonusLocks = new Set());
 const firstMintLocks = globalThis._firstMintLocks || (globalThis._firstMintLocks = new Set());
-const usedChallengeSolTx = globalThis._usedChallengeSolTx || (globalThis._usedChallengeSolTx = new Map());
 const challengeWeeklyHistory = globalThis._challengeWeeklyHistory;
 const {
   buildPublicReputationResponse,
@@ -9725,7 +9724,6 @@ const ctx = createContext({
   pendingStakingOps,
   mintBonusLocks,
   firstMintLocks,
-  usedChallengeSolTx,
   challengeWeeklyHistory,
   port: PORT,
   respondJson,

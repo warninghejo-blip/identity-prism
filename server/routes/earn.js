@@ -1,50 +1,13 @@
 import fs from 'node:fs';
 
 function registerEarnRoute(ctx) {
+  const { core, wallet, economy, sybil, quest, game, arena } = ctx;
+  const { ipRateLimit, getClientIp, respondJson, requireJwt, readBody, normalizePubkey } = core;
   const {
-    ipRateLimit,
-    getClientIp,
-    respondJson,
-    requireJwt,
-    readBody,
-    prismEarnMaxPerCall,
-    firstMintLocks,
     walletDatabase,
-    getPrismEarnRateLimit,
-    prismEarnCooldownTable,
-    prismEarnCooldownDefault,
-    setPrismEarnRateLimit,
-    prismEarnRateLimit,
-    rateLimitStore,
-    verifyGameEarnClaim,
-    getGameCoinsToday,
     mintedAddresses,
-    getHolderAdjustedCap,
-    dailyGameCoinCap,
-    addGameCoinsToday,
-    markGameEarnClaimed,
     getStakingBoost,
-    applyStakingBoostAfterCap,
-    questSourceIds,
-    getQuestProgressSnapshot,
-    quests,
-    saveQuestProgressDebounced,
     updateWalletEntry,
-    validTextQuestIds,
-    activeChallenges,
-    challengesFile,
-    normalizePubkey,
-    getRecentSybilAnalysis,
-    getSybilVerdict,
-    getSybilRewardPath,
-    getScanRewardState,
-    cleanScanRewardCooldownMs,
-    scanWalletReward,
-    computeSybilHuntReward,
-    dailyHuntCap,
-    dailyScanCap,
-    nonGameDailyEarnCap,
-    normalizeScanRewardState,
     getCoinBalance,
     setCoinBalance,
     addCoinEarned,
@@ -54,7 +17,33 @@ function registerEarnRoute(ctx) {
     savePrismDataDebounced,
     feedItems,
     pushNotification,
-  } = ctx;
+  } = wallet;
+  const {
+    prismEarnMaxPerCall,
+    firstMintLocks,
+    getPrismEarnRateLimit,
+    prismEarnCooldownTable,
+    prismEarnCooldownDefault,
+    setPrismEarnRateLimit,
+    prismEarnRateLimit,
+    rateLimitStore,
+    getHolderAdjustedCap,
+    applyStakingBoostAfterCap,
+    getScanRewardState,
+    cleanScanRewardCooldownMs,
+    scanWalletReward,
+    computeSybilHuntReward,
+    dailyHuntCap,
+    dailyScanCap,
+    nonGameDailyEarnCap,
+    normalizeScanRewardState,
+  } = economy;
+  const { getRecentSybilAnalysis, getSybilVerdict, getSybilRewardPath } = sybil;
+  const { questSourceIds, getQuestProgressSnapshot, quests, saveQuestProgressDebounced, validTextQuestIds } =
+    quest;
+  const { verifyGameEarnClaim, getGameCoinsToday, dailyGameCoinCap, addGameCoinsToday, markGameEarnClaimed } =
+    game;
+  const { activeChallenges, challengesFile } = arena;
 
   return async function handleEarnRoute(req, res, url, pathname) {
     if (pathname !== '/api/prism/earn' || req.method !== 'POST') return false;

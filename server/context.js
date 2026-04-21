@@ -8,6 +8,7 @@ const CORE_KEYS = [
   'resolveCorsOrigin',
   'getRpcUrl',
   'getBatchRpcUrl',
+  'getBaseUrl',
   'batchGetParsedTxs',
   'parsePublicKey',
   'safeParseJson',
@@ -38,16 +39,29 @@ const WALLET_KEYS = [
   'leaderboardCacheTimeRef',
   'getScoreHistory',
   'achievements',
+  'updateWalletEntry',
+  'pushNotification',
+  'prismTransactions',
+  'savePrismDataDebounced',
+  'feedItems',
 ];
 
 const ECONOMY_KEYS = [
   'quizAnswers',
+  'prismEarnMaxPerCall',
+  'firstMintLocks',
   'getPrismEarnRateLimit',
   'setPrismEarnRateLimit',
+  'prismEarnRateLimit',
+  'rateLimitStore',
+  'prismEarnCooldownTable',
+  'prismEarnCooldownDefault',
   'dailyQuizCap',
   'quizCorrectReward',
   'getHolderAdjustedCap',
   'nonGameDailyEarnCap',
+  'dailyHuntCap',
+  'dailyScanCap',
   'canAwardQuizReward',
   'prismTransactions',
   'savePrismDataDebounced',
@@ -92,6 +106,12 @@ const ECONOMY_KEYS = [
   'dailyBlackHoleCleanupCap',
   'feedItems',
   'persistBlackHoleUsedSignatures',
+  'applyStakingBoostAfterCap',
+  'scanWalletReward',
+  'computeSybilHuntReward',
+  'getScanRewardState',
+  'normalizeScanRewardState',
+  'cleanScanRewardCooldownMs',
 ];
 
 const SYBIL_KEYS = [
@@ -103,6 +123,9 @@ const SYBIL_KEYS = [
   'calculateCompositeScore',
   'buildCompositeInput',
   'getSybilVerdict',
+  'triggerCompositeUpdate',
+  'getRecentSybilAnalysis',
+  'getSybilRewardPath',
 ];
 
 const TOURNAMENT_KEYS = [
@@ -123,8 +146,57 @@ const AUTH_KEYS = [
   'createJwt',
   'verifyJwt',
   'requireJwt',
+  'optionalJwt',
   'jwtTtl',
   'reputationRateLimit',
+];
+
+const ARENA_KEYS = [
+  'activeChallenges',
+  'challengesFile',
+  'saveChallenges',
+  'challengeWeeklyHistory',
+  'weeklyRewards',
+  'weeklyXpRewards',
+];
+
+const QUEST_KEYS = [
+  'quests',
+  'questSourceIds',
+  'getQuestProgressSnapshot',
+  'getQuestPeriodKey',
+  'saveQuestProgressDebounced',
+  'validTextQuestIds',
+];
+
+const GAME_KEYS = [
+  'normalizeGameSessionPayload',
+  'pruneGameSessionProofs',
+  'createGameSessionProofId',
+  'verifyMagicBlockSeedSlot',
+  'gameSessionProofs',
+  'maxGameSessionProofs',
+  'persistGameSessionProofs',
+  'toPublicGameSessionProof',
+  'normalizeGameCoinDeltaForCap',
+  'maxDeltaPerGame',
+  'gameSessionOnchainBonusMultiplier',
+  'getGameCoinsToday',
+  'addGameCoinsToday',
+  'markGameEarnClaimed',
+  'verifyGameEarnClaim',
+  'dailyGameCoinCap',
+  'getWalletAchievements',
+  'claimAchievement',
+  'achievementRewardsById',
+  'isAchievementUnlockVerified',
+  'markAchievementsUnlocked',
+  'getRevivesLeft',
+  'freeRevivesPerDay',
+  'useRevive',
+  'getIdentityHolderPerks',
+  'hasCoreCollectionAsset',
+  'achievements',
 ];
 
 function createFrozenSlice(rawConfig, keys, extras = {}) {
@@ -142,6 +214,9 @@ function createContext(rawConfig) {
   const sybil = createFrozenSlice(rawConfig, SYBIL_KEYS);
   const tournament = createFrozenSlice(rawConfig, TOURNAMENT_KEYS);
   const auth = createFrozenSlice(rawConfig, AUTH_KEYS);
+  const arena = createFrozenSlice(rawConfig, ARENA_KEYS);
+  const quest = createFrozenSlice(rawConfig, QUEST_KEYS);
+  const game = createFrozenSlice(rawConfig, GAME_KEYS);
 
   return {
     core,
@@ -150,6 +225,9 @@ function createContext(rawConfig) {
     sybil,
     tournament,
     auth,
+    arena,
+    quest,
+    game,
     ...rawConfig,
   };
 }

@@ -1,25 +1,19 @@
 import crypto from 'node:crypto';
 
 function registerGameV1Route(ctx) {
+  const { core, auth, wallet, game } = ctx;
+  const { ipRateLimit, getClientIp, respondJson, readBody } = core;
+  const { optionalJwt } = auth;
   const {
-    ipRateLimit,
-    getClientIp,
-    respondJson,
-    readBody,
-    optionalJwt,
     getCoinBalance,
     setCoinBalance,
     addCoinEarned,
     addCoinSpent,
-    getGameCoinsToday,
-    addGameCoinsToday,
     mintedAddresses,
-    dailyGameCoinCap,
     getStakingBoost,
-    getRevivesLeft,
-    freeRevivesPerDay,
-    useRevive,
-  } = ctx;
+  } = wallet;
+  const { getGameCoinsToday, addGameCoinsToday, dailyGameCoinCap, getRevivesLeft, freeRevivesPerDay, useRevive } =
+    game;
 
   return async function handleGameV1Route(req, res, url, pathname) {
     if (pathname === '/api/game/coins' && req.method === 'POST') {
@@ -114,16 +108,13 @@ function registerGameV1Route(ctx) {
 }
 
 function registerGameRoute(ctx) {
+  const { core, wallet, economy, game } = ctx;
+  const { ipRateLimit, getClientIp, respondJson, requireJwt, readBody, safeParseJson, getBaseUrl } = core;
+  const { mintedAddresses, getStakingBoost, getCoinBalance, setCoinBalance, addCoinEarned, addCoinSpent } = wallet;
+  const { getPrismEarnRateLimit, setPrismEarnRateLimit, nonGameDailyEarnCap } = economy;
   const {
-    ipRateLimit,
-    getClientIp,
-    respondJson,
-    requireJwt,
-    readBody,
-    safeParseJson,
     normalizeGameSessionPayload,
     pruneGameSessionProofs,
-    getBaseUrl,
     createGameSessionProofId,
     verifyMagicBlockSeedSlot,
     gameSessionProofs,
@@ -134,28 +125,19 @@ function registerGameRoute(ctx) {
     normalizeGameCoinDeltaForCap,
     maxDeltaPerGame,
     gameSessionOnchainBonusMultiplier,
-    mintedAddresses,
     dailyGameCoinCap,
     getGameCoinsToday,
     addGameCoinsToday,
-    getStakingBoost,
-    getCoinBalance,
-    setCoinBalance,
-    addCoinEarned,
-    addCoinSpent,
     getWalletAchievements,
     claimAchievement,
     achievementRewardsById,
-    getPrismEarnRateLimit,
-    setPrismEarnRateLimit,
-    nonGameDailyEarnCap,
     isAchievementUnlockVerified,
     markAchievementsUnlocked,
     hasCoreCollectionAsset,
     getRevivesLeft,
     freeRevivesPerDay,
     useRevive,
-  } = ctx;
+  } = game;
 
   return async function handleGameRoute(req, res, url, pathname) {
     if (pathname === '/api/game/session' && req.method === 'POST') {
