@@ -104,6 +104,7 @@ import { registerGameRoute, registerGameV1Route } from './routes/game.js';
 import { registerLeaderboardRoute } from './routes/leaderboard.js';
 import { registerMarketRoute } from './routes/market.js';
 import { registerMarketplaceRoute } from './routes/marketplace.js';
+import { registerDiscoveryRoute } from './routes/discovery.js';
 import { registerNotificationsRoute } from './routes/notifications.js';
 import { registerQuestRoute } from './routes/quest.js';
 import { registerQuizRoute } from './routes/quiz.js';
@@ -117,6 +118,8 @@ import { registerAdminRoute } from './routes/admin.js';
 import { registerMetadataRoute } from './routes/metadata.js';
 import { registerSpendRoute } from './routes/spend.js';
 import { registerSybilRoute } from './routes/sybil.js';
+import { registerUserDataRoute } from './routes/userData.js';
+import { registerUtilityRoute } from './routes/utility.js';
 import { formatActionAddress, isFungibleAsset } from './utils/formatters.js';
 import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
@@ -3641,21 +3644,8 @@ const server = http.createServer(async (req, res) => {
   }
   // ─────────────────────────────────────────────────────────────────────────
 
-  // GET /api/migration-status?address=X  (accessed via /api/v2/migration-status)
-  // Returns _v2MigrationResult for the address if it was just migrated, else { migrated: false }
-  if (pathname === '/api/migration-status' && req.method === 'GET') {
-    const addr = String(url.searchParams.get('address') ?? '').trim();
-    if (!addr) return respondJson(res, 400, { error: 'address required' });
-    const walletEntry = walletDatabase.get(addr);
-    if (!walletEntry || !walletEntry._v2MigrationResult) {
-      return respondJson(res, 200, { migrated: false });
-    }
-    const result = walletEntry._v2MigrationResult;
-    // Clear after reading so it only shows once
-    delete walletEntry._v2MigrationResult;
-    walletDatabase.set(addr, walletEntry);
-    saveWalletDatabaseDebounced();
-    return respondJson(res, 200, { migrated: true, migrationData: result });
+  if (await utilityHandler(req, res, url, pathname)) {
+    return;
   }
 
   if (await marketHandler(req, res, url, pathname)) {
@@ -3683,15 +3673,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === '/api/identity/perks' && req.method === 'GET') {
-    if (!ipRateLimit('identity_perks_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const addr = url.searchParams.get('address') || '';
-    if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
-      respondJson(res, 400, { error: 'valid address required' });
-      return;
-    }
-    const perks = await getIdentityHolderPerks(addr);
-    respondJson(res, 200, { address: addr, ...perks });
+  if (await userDataHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -3722,108 +3704,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Score History API ──
-  if (pathname === '/api/score-history' && req.method === 'GET') {
-    if (!ipRateLimit('score_hist', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const addr = url.searchParams.get('address') || '';
-    if (!addr) {
-      respondJson(res, 400, { error: 'address query param required' });
-      return;
-    }
-    const history = getScoreHistory(addr);
-    respondJson(res, 200, { address: addr, scores: history.scores, lastUpdated: history.lastUpdated });
-    return;
-  }
-
-  if (pathname === '/api/score-history' && req.method === 'POST') {
-    if (!ipRateLimit('score_hist_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    try {
-      const raw = await readBody(req);
-      const parsed = JSON.parse(raw);
-      const { address: addr, score, tier } = parsed;
-      if (!addr || typeof addr !== 'string' || typeof score !== 'number') {
-        respondJson(res, 400, { error: 'address (string) and score (number) required' });
-        return;
-      }
-      if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (typeof score !== 'number' || score < 0 || score > 1000) return respondJson(res, 400, { error: 'Score must be between 0 and 1000' });
-      // Server-authoritative tier computation (ignore client-supplied tier)
-      const computedTier = score >= 800 ? 'binary_sun' : score >= 600 ? 'pulsar' : score >= 400 ? 'neutron_star' : score >= 200 ? 'dwarf_star' : 'mercury';
-      const entry = addScoreEntry(addr, score, computedTier);
-      // ── Update wallet database ──
-      const wExisting = walletDatabase.get(addr) || {};
-      updateWalletEntry(addr, {
-        firstSeenAt: wExisting.firstSeenAt || new Date().toISOString(),
-        lastSeenAt: new Date().toISOString(),
-        scanCount: (wExisting.scanCount || 0) + ((() => { const scKey = `scan_daily:${addr}`; const scToday = new Date().toISOString().slice(0, 10); const sc = getPrismEarnRateLimit(scKey); if (sc && typeof sc === 'object' && sc.date === scToday && sc.count >= 5) return 0; setPrismEarnRateLimit(scKey, { date: scToday, count: ((sc && sc.date === scToday) ? sc.count : 0) + 1 }); return 1; })()),
-        score,
-        tier: computedTier,
-        source: 'live',
-      });
-      triggerCompositeUpdate(addr);
-      respondJson(res, 200, { address: addr, scores: entry.scores, lastUpdated: entry.lastUpdated });
-    } catch {
-      respondJson(res, 400, { error: 'Invalid JSON body' });
-    }
-    return;
-  }
   if (await metadataHandler(req, res, url, pathname)) {
     return;
   }
   if (await healthHandler(req, res, url, pathname)) {
-    return;
-  }
-
-  // ═══ PRISM Balance ═══
-  if (pathname === '/api/prism/balance' && req.method === 'GET') {
-    if (!ipRateLimit('prismBal', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const address = url.searchParams.get('address');
-    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address' });
-    respondJson(res, 200, getPrismBalance(address));
-    return;
-  }
-
-  // ═══ XP Sources (server-authoritative) ═══
-  if (pathname === '/api/xp' && req.method === 'GET') {
-    if (!ipRateLimit('xp', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const address = url.searchParams.get('address');
-    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address' });
-    const snapshot = getServerRangerSnapshot(address);
-    respondJson(res, 200, { sources: snapshot.sources, computedXP: snapshot.xp, computedRank: snapshot.rank });
-    return;
-  }
-
-  // ═══ Daily Limits (public, no auth) ═══
-  if (pathname === '/api/daily-limits' && req.method === 'GET') {
-    if (!ipRateLimit('dailyLimits', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
-    const today = new Date().toISOString().slice(0, 10);
-    // Game coins
-    const gameToday = getGameCoinsToday ? getGameCoinsToday(address) : 0;
-    // Non-game global
-    const ngKey = `nongame_daily:${address}`;
-    const ngEntry = getPrismEarnRateLimit(ngKey);
-    const nonGameToday = (ngEntry && typeof ngEntry === 'object' && ngEntry.date === today) ? (ngEntry.total || 0) : 0;
-    // Sub-caps
-    const huntToday = getPrismEarnRateLimit(`subcap:${address}:sybil_hunt:${today}`) || 0;
-    const scanToday = getPrismEarnRateLimit(`subcap:${address}:scan_wallet:${today}`) || 0;
-    const quizToday = (getPrismEarnRateLimit(`quiz:${address}:${today}`) || 0) * QUIZ_CORRECT_REWARD;
-    const blackHoleToday = getPrismEarnRateLimit(`blackhole_cleanup:${address}:${today}`) || 0;
-    const isHolder = mintedAddresses.has(address);
-    const gameCap = getHolderAdjustedCap(DAILY_GAME_COIN_CAP, isHolder);
-    const nonGameCap = getHolderAdjustedCap(NON_GAME_DAILY_EARN_CAP, isHolder);
-    respondJson(res, 200, {
-      game:         { earned: gameToday, cap: gameCap },
-      hunt:         { earned: huntToday, cap: DAILY_HUNT_CAP },
-      scan:         { earned: scanToday, cap: DAILY_SCAN_CAP },
-      quiz:         { earned: quizToday, cap: DAILY_QUIZ_CAP },
-      nonGame:      { earned: nonGameToday, cap: nonGameCap },
-      blackHole:    { earned: blackHoleToday, cap: DAILY_BLACKHOLE_CLEANUP_CAP },
-      blackHoleCap: DAILY_BLACKHOLE_CLEANUP_CAP,
-    });
     return;
   }
 
@@ -3846,19 +3730,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ PRISM Transaction History ═══
-  if (pathname === '/api/prism/transactions' && req.method === 'GET') {
-    if (!ipRateLimit('prism_txs', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const address = jwtAuth.address;
-    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
-    if (!address) return respondJson(res, 400, { error: 'address required' });
-    const txs = (prismTransactions.get(address) || []).slice(0, limit);
-    respondJson(res, 200, txs);
-    return;
-  }
-
   // ═══ Sybil Analysis & Cluster Intelligence ═══
   if (await sybilHandler(req, res, url, pathname)) {
     return;
@@ -3874,67 +3745,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ Scam Check ═══
-  if (pathname === '/api/scam-check' && req.method === 'POST') {
-    const scamClientIp = getClientIp(req);
-    const scamRlKey = `scam:${scamClientIp}`;
-    const lastScam = getPrismEarnRateLimit(scamRlKey) || 0;
-    if (Date.now() - lastScam < 10_000) return respondJson(res, 429, { error: 'Rate limited' });
-    setPrismEarnRateLimit(scamRlKey, Date.now());
-    try {
-      const { address } = JSON.parse(await readBody(req));
-      if (!address) return respondJson(res, 400, { error: 'contract address required' });
-      const isKnownScam = KNOWN_SCAM_ADDRESSES.has(address);
-      let programInfo = null;
-      try {
-        const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
-        const info = await conn.getAccountInfo(new PublicKey(address));
-        if (info) { programInfo = { executable: info.executable, owner: info.owner?.toBase58(), lamports: info.lamports, dataSize: info.data?.length || 0 }; }
-      } catch {}
-      respondJson(res, 200, { address, isKnownScam, isExecutable: programInfo?.executable || false, programInfo, verdict: isKnownScam ? 'FLAGGED — Known scam contract' : programInfo?.executable ? 'Program found — not in blocklist' : 'Not a program account' });
-    } catch (e) { respondJson(res, 400, { error: 'Invalid request body' }); }
-    return;
-  }
-
-  // ═══ Global Leaderboard ═══
-  if (pathname === '/api/leaderboard' && req.method === 'GET') {
-    if (!ipRateLimit('glb_lb', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
-    const entryMap = new Map();
-    // Seed from score history
-    for (const [address, hist] of scoreHistory) {
-      const latest = hist.scores?.[0];
-      if (latest) {
-        entryMap.set(address, {
-          address,
-          totalCoins: getCoinBalance(address),
-          score: latest.score,
-          tier: latest.tier || 'unknown',
-          prismBalance: getCoinBalance(address),
-          isMinted: mintedAddresses.has(address),
-          badges: 0,
-          rank: 0,
-        });
-      }
-    }
-    // Add wallets that have coins but no score history
-    for (const [address] of coinBalances) {
-      if (!entryMap.has(address)) {
-        entryMap.set(address, {
-          address,
-          totalCoins: getCoinBalance(address),
-          score: 0,
-          tier: 'unknown',
-          prismBalance: getCoinBalance(address),
-          isMinted: mintedAddresses.has(address),
-          badges: 0,
-          rank: 0,
-        });
-      }
-    }
-    const entries = [...entryMap.values()].sort((a, b) => b.totalCoins - a.totalCoins || b.score - a.score || b.prismBalance - a.prismBalance);
-    entries.forEach((e, i) => { e.rank = i + 1; });
-    respondJson(res, 200, { entries: entries.slice(0, limit) });
+  if (await discoveryHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -3977,260 +3788,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ═══ Identity Feed ═══
-  if (pathname === '/api/feed' && req.method === 'GET') {
-    if (!ipRateLimit('feed', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 30));
-    respondJson(res, 200, { items: feedItems.slice(0, limit) });
-    return;
-  }
-
-  // ═══ Enhanced TX Data ═══
-  if (pathname === '/api/enhanced-tx' && req.method === 'GET') {
-    const address = url.searchParams.get('address');
-    if (!address) return respondJson(res, 400, { error: 'address required' });
-    // Rate limit: 30s per address (cache covers repeats)
-    const etxRlKey = `etx:${address}`;
-    if (Date.now() - (reputationRateLimit.get(etxRlKey) || 0) < 30_000) {
-      // Return cached if available during rate limit window
-      const cached = enhancedTxCache.get(address);
-      if (cached && Date.now() - cached.ts < 600_000) {
-        const { edgeTypesMap, txs, historyExhausted, ...safe } = cached.data;
-        return respondJson(res, 200, safe);
-      }
-      return respondJson(res, 429, { error: 'Rate limited. Try again in 30 seconds.' });
-    }
-    reputationRateLimit.set(etxRlKey, Date.now());
-    try {
-      const data = await fetchEnhancedTransactions(address, 1000);
-      if (!data) return respondJson(res, 200, { swapCount: 0, nftTradeCount: 0, stakingCount: 0, defiProtocols: [], isDeFiUser: false, isDeFiKing: false });
-      const { edgeTypesMap, txs, historyExhausted, ...safe } = data;
-      respondJson(res, 200, safe);
-    } catch (e) {
-      respondJson(res, 200, { swapCount: 0, nftTradeCount: 0, stakingCount: 0, defiProtocols: [], isDeFiUser: false, isDeFiKing: false, error: e.message });
-    }
-    return;
-  }
-
-  // ═══ Constellation Network ═══
-  if (pathname === '/api/constellation' && req.method === 'GET') {
-    const address = url.searchParams.get('address');
-    if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Valid address required' });
-    // Rate limit: 30s per IP (heavy — up to 1000 tx parsing)
-    const constIp = getClientIp(req);
-    const constIpRlKey = `const:${constIp}`;
-    if (Date.now() - (reputationRateLimit.get(constIpRlKey) || 0) < 10_000) {
-      const cached = constellationCache.get(address);
-      if (cached && Date.now() - cached.ts < 600_000) { return respondJson(res, 200, cached.data); }
-      return respondJson(res, 429, { error: 'Rate limited. Try again in 10 seconds.' });
-    }
-    const cachedConst = constellationCache.get(address);
-    if (cachedConst && Date.now() - cachedConst.ts < 600_000) { respondJson(res, 200, cachedConst.data); return; }
-    const constRlKey = `constellation:${address}`;
-    const lastConst = getPrismEarnRateLimit(constRlKey) || 0;
-    if (Date.now() - lastConst < 10_000) {
-      const cached = constellationCache.get(address);
-      if (cached && Date.now() - cached.ts < 600_000) { return respondJson(res, 200, cached.data); }
-      return respondJson(res, 429, { error: 'Constellation data is being fetched, try again in 10s' });
-    }
-    reputationRateLimit.set(constIpRlKey, Date.now());
-    setPrismEarnRateLimit(constRlKey, Date.now());
-    try {
-      const parsedLimit = Math.min(parseInt(url.searchParams.get('limit') || '500', 10) || 500, 500);
-      const [{ parsed }, enhancedResult] = await Promise.all([
-        fetchParsedTransactions(address, parsedLimit),
-        fetchEnhancedTransactions(address, 1000).catch(() => null),
-      ]);
-      const { incoming, outgoing, programIds } = extractTrackedSolTransfers(parsed, address);
-      // Enhanced TX edge type map: signature → exact type classification
-      const enhancedEdgeTypes = enhancedResult?.edgeTypesMap || new Map();
-      const nodeMap = new Map();
-      const centerTier = url.searchParams.get('tier') || null;
-      nodeMap.set(address, { id: address, label: address.slice(0, 4) + '...' + address.slice(-4), size: 14, x: 0, y: 0, vx: 0, vy: 0, color: '#22d3ee', isCenter: true, solVolume: 0, txCount: 0, tier: centerTier });
-      const allCounterparties = new Map();
-      for (const [addr, info] of incoming) {
-        // Double-check: skip any remaining program addresses
-        if (isProgramAddress(addr, programIds)) continue;
-        const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0, firstTime: Infinity, lastTime: 0 };
-        existing.solIn += info.totalSol; existing.count += info.count;
-        existing.firstTime = Math.min(existing.firstTime, info.firstTime || Date.now());
-        existing.lastTime = Math.max(existing.lastTime, info.lastTime || Date.now());
-        allCounterparties.set(addr, existing);
-      }
-      for (const [addr, info] of outgoing) {
-        if (isProgramAddress(addr, programIds)) continue;
-        const existing = allCounterparties.get(addr) || { solIn: 0, solOut: 0, count: 0, firstTime: Infinity, lastTime: 0 };
-        existing.solOut += info.totalSol; existing.count += info.count;
-        existing.firstTime = Math.min(existing.firstTime, info.firstTime || Date.now());
-        existing.lastTime = Math.max(existing.lastTime, info.lastTime || Date.now());
-        allCounterparties.set(addr, existing);
-      }
-      // Filter out counterparties with negligible activity (< 0.001 SOL total)
-      const filtered = [...allCounterparties.entries()].filter(([, info]) => (info.solIn + info.solOut) >= 0.001);
-      const sorted = filtered.sort((a, b) => (b[1].solIn + b[1].solOut) - (a[1].solIn + a[1].solOut));
-      const TIER_COLORS_MAP = { mercury: '#8B8B8B', mars: '#C1440E', venus: '#E8CDA0', earth: '#4B9CD3', neptune: '#3F54BE', uranus: '#73C2FB', saturn: '#E8D191', jupiter: '#C88B3A', sun: '#FFD700', binary_sun: '#22D3EE' };
-      const colorPalette = Object.values(TIER_COLORS_MAP);
-      const edges = [];
-      for (let i = 0; i < sorted.length; i++) {
-        const [addr, info] = sorted[i];
-        const known = KNOWN_LABELS[addr];
-        const angle = (i / sorted.length) * Math.PI * 2;
-        const dist = 80 + Math.random() * 100;
-        const totalVol = info.solIn + info.solOut;
-        nodeMap.set(addr, {
-          id: addr,
-          label: known?.label || (addr.slice(0, 4) + '...' + addr.slice(-4)),
-          size: Math.min(10, 3 + Math.log1p(totalVol) * 2),
-          x: Math.cos(angle) * dist + (Math.random() - 0.5) * 30,
-          y: Math.sin(angle) * dist + (Math.random() - 0.5) * 30,
-          vx: 0, vy: 0,
-          color: known ? '#f59e0b' : colorPalette[i % colorPalette.length],
-          isCenter: false,
-          tier: known?.type || null,
-          solVolume: Math.round(totalVol * 10000) / 10000,
-          txCount: info.count,
-        });
-        // Merge txTypes from both incoming and outgoing maps for this counterparty
-        const txTypeSet = new Set();
-        const inInfo = incoming.get(addr);
-        const outInfo = outgoing.get(addr);
-        if (inInfo?.txTypeSet) for (const t of inInfo.txTypeSet) txTypeSet.add(t);
-        if (outInfo?.txTypeSet) for (const t of outInfo.txTypeSet) txTypeSet.add(t);
-        // Enrich with Helius Enhanced TX classifications (more accurate)
-        if (enhancedEdgeTypes.size > 0) {
-          if (inInfo?.signatures) for (const sig of inInfo.signatures) { const et = enhancedEdgeTypes.get(sig); if (et && et !== 'transfer') txTypeSet.add(et); }
-          if (outInfo?.signatures) for (const sig of outInfo.signatures) { const et = enhancedEdgeTypes.get(sig); if (et && et !== 'transfer') txTypeSet.add(et); }
-        }
-        const txTypes = txTypeSet.size > 0 ? [...txTypeSet] : ['transfer'];
-        edges.push({
-          source: address,
-          target: addr,
-          weight: info.count,
-          totalSol: Math.round(totalVol * 10000) / 10000,
-          outSol: Math.round((info.solOut || 0) * 10000) / 10000,
-          inSol: Math.round((info.solIn || 0) * 10000) / 10000,
-          firstTx: info.firstTime !== Infinity ? info.firstTime : null,
-          lastTx: info.lastTime > 0 ? info.lastTime : null,
-          txTypes,
-        });
-      }
-      const allNodes = [...nodeMap.values()];
-      const cappedNodes = allNodes.length > 200 ? allNodes.slice(0, 200) : allNodes;
-      const nodeIds = new Set(cappedNodes.map(n => n.id));
-      const cappedEdges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
-      const result = { nodes: cappedNodes, edges: cappedEdges };
-      constellationCache.set(address, { data: result, ts: Date.now() });
-      // Track social stats: constellation explored — credit the VIEWER, not the target
-      const viewerAuth = optionalJwt(req, res);
-      const viewerAddr = viewerAuth?.address;
-      if (viewerAddr && viewerAddr !== address) {
-        // Daily limit: 10 constellation explorations per day (self-explore doesn't count)
-        const ceKey = `ce_daily:${viewerAddr}`;
-        const ceToday = new Date().toISOString().slice(0, 10);
-        const ce = getPrismEarnRateLimit(ceKey);
-        const ceDayCount = (ce && typeof ce === 'object' && ce.date === ceToday) ? ce.count : 0;
-        if (ceDayCount < 10) {
-          setPrismEarnRateLimit(ceKey, { date: ceToday, count: ceDayCount + 1 });
-          const wViewer = walletDatabase.get(viewerAddr) || {};
-          const ssViewer = wViewer.socialStats || { challengesWon: 0, constellationExplored: 0, compareCount: 0 };
-          ssViewer.constellationExplored = (ssViewer.constellationExplored || 0) + 1;
-          updateWalletEntry(viewerAddr, { socialStats: ssViewer });
-          triggerCompositeUpdate(viewerAddr);
-        }
-      }
-      respondJson(res, 200, result);
-    } catch (e) {
-      respondJson(res, 200, { nodes: [], edges: [], error: 'Failed to compute constellation' });
-    }
-    return;
-  }
-
-  // ═══ Admin: Set coin balance (dev/testing) ═══
-  if (pathname === '/api/admin/set-coins' && req.method === 'POST') {
-    if (!requireAdminKey(req, res)) return;
-    try {
-      const { address, coins } = JSON.parse(await readBody(req));
-      if (!address || typeof coins !== 'number') return respondJson(res, 400, { error: 'address and coins (number) required' });
-      setCoinBalance(address, coins);
-      respondJson(res, 200, { ok: true, address, balance: getCoinBalance(address) });
-    } catch (e) { respondJson(res, 400, { error: e.message }); }
-    return;
-  }
-
-  // ═══ Admin: Set full wallet profile (dev/testing) ═══
-  if (pathname === '/api/admin/set-wallet' && req.method === 'POST') {
-    if (!requireAdminKey(req, res)) return;
-    try {
-      const { address, data } = JSON.parse(await readBody(req));
-      if (!address || !data || typeof data !== 'object') return respondJson(res, 400, { error: 'address and data (object) required' });
-      updateWalletEntry(address, data);
-      if (typeof data.coins === 'number') setCoinBalance(address, data.coins);
-      respondJson(res, 200, { ok: true, address, updatedFields: Object.keys(data) });
-    } catch (e) { respondJson(res, 400, { error: e.message }); }
-    return;
-  }
-
   // ═══ Wallet Database API ═══
   if (pathname.startsWith('/api/wallet-database') && await walletHandler(req, res, url, pathname)) {
-    return;
-  }
-
-  // ── User Data Sync (loadout, game stats, text quests, XP) ──
-  // Stores per-wallet JSON blobs in walletDatabase so data survives browser clears.
-  // All fields are stored under wallet.userData = { loadout, gameStats, textQuests, ... }
-
-  if (pathname === '/api/user-data' && req.method === 'GET') {
-    if (!ipRateLimit('user_data_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const address = jwtAuth.address;
-    const walletEntry = walletDatabase.get(address) || { address };
-    const { forgeState, changed: forgeStateChanged } = getOrCreateForgeState(address, walletEntry);
-    const existingUserData = getWalletUserData(walletEntry);
-    const sanitizedLoadout = sanitizeForgeLoadout(address, existingUserData.loadout, forgeState);
-    const userData = {
-      ...existingUserData,
-      loadout: sanitizedLoadout,
-    };
-    if (forgeStateChanged || JSON.stringify(existingUserData.loadout || null) !== JSON.stringify(sanitizedLoadout)) {
-      updateWalletEntry(address, { forgeState, userData });
-    }
-    respondJson(res, 200, { address, userData });
-    return;
-  }
-
-  if (pathname === '/api/user-data' && req.method === 'POST') {
-    if (!ipRateLimit('user_data_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-    const jwtAuth = requireJwt(req, res);
-    if (!jwtAuth.ok) return;
-    const address = jwtAuth.address;
-    const rawBody = await readBody(req);
-    if (!rawBody) return respondJson(res, 400, { error: 'Missing body' });
-    if (rawBody.length > 512 * 1024) return respondJson(res, 413, { error: 'Payload too large (max 512KB)' });
-    let body;
-    try { body = JSON.parse(rawBody); } catch { return respondJson(res, 400, { error: 'Invalid JSON' }); }
-    if (!body || typeof body !== 'object') return respondJson(res, 400, { error: 'Body must be a JSON object' });
-
-    // Merge incoming fields into existing userData (don't overwrite unrelated fields)
-    const walletEntry = walletDatabase.get(address) || { address };
-    const { forgeState, changed: forgeStateChanged } = getOrCreateForgeState(address, walletEntry);
-    const existing = getWalletUserData(walletEntry);
-    const ALLOWED_KEYS = ['loadout', 'gameStats', 'bestScores', 'textQuests', 'rangerXP', 'achievements'];
-    const updates = {};
-    for (const key of ALLOWED_KEYS) {
-      if (body[key] !== undefined) updates[key] = body[key];
-    }
-    const merged = {
-      ...existing,
-      ...updates,
-      loadout: sanitizeForgeLoadout(address, updates.loadout ?? existing.loadout, forgeState),
-      lastSyncAt: new Date().toISOString(),
-    };
-    updateWalletEntry(address, {
-      userData: merged,
-      ...(forgeStateChanged ? { forgeState } : {}),
-    });
-    respondJson(res, 200, { ok: true, address, userData: merged });
     return;
   }
 
@@ -5748,6 +5307,7 @@ const ctx = createContext({
   buildPublicReputationResponse,
   fetchIdentitySnapshot,
   getScoreHistory,
+  addScoreEntry,
   calculateCompositeScore,
   buildCompositeInput,
   getSybilVerdict,
@@ -5789,6 +5349,7 @@ const ctx = createContext({
   getWalletLamportDelta,
   calculateBlackHoleReward,
   getOrCreateForgeState,
+  getWalletUserData,
   mergeForgeEntries,
   getServerRangerSnapshot,
   meetsForgeRequiredRank,
@@ -5852,6 +5413,7 @@ const ctx = createContext({
   fetchSybilSampleFor,
   findFirstTxTime,
   fetchParsedTransactions,
+  fetchEnhancedTransactions,
   getDominantFundingSource,
   getDominantTokenFundingSource,
   summarizeEnhancedTxHistory,
@@ -5897,6 +5459,7 @@ const ctx = createContext({
   notificationsDb,
   tokenMetadataProgramId: TOKEN_METADATA_PROGRAM_ID,
   sendImageDataUrl,
+  sanitizeForgeLoadout,
   leaderboardEntries,
   submitLeaderboardEntry,
   persistGameSessionProofs,
@@ -5969,6 +5532,7 @@ const notificationsHandler = registerNotificationsRoute(ctx);
 const spendHandler = registerSpendRoute(ctx);
 const sybilHandler = registerSybilRoute(ctx);
 const leaderboardHandler = registerLeaderboardRoute(ctx);
+const discoveryHandler = registerDiscoveryRoute(ctx);
 const buyHandler = registerBuyRoute(ctx);
 const questHandler = registerQuestRoute(ctx);
 const quizHandler = registerQuizRoute(ctx);
@@ -5976,6 +5540,8 @@ const referralHandler = registerReferralRoute(ctx);
 const reputationInlineHandler = registerReputationInlineRoute(ctx);
 const reputationHandler = registerReputationRoute(ctx);
 const tournamentHandler = registerTournamentRoute(ctx);
+const userDataHandler = registerUserDataRoute(ctx);
+const utilityHandler = registerUtilityRoute(ctx);
 const vaultHandler = registerVaultRoute(ctx);
 const walletHandler = registerWalletRoute(ctx);
 const adminHandler = registerAdminRoute(ctx);

@@ -7,7 +7,10 @@ import { statSync } from 'fs';
 import { appDb, APP_DB_PATH } from '../services/appDb.js';
 
 export function registerAdminRoute(ctx) {
-  const { core: { ipRateLimit, getClientIp, respondJson, readBody } } = ctx;
+  const {
+    core: { ipRateLimit, getClientIp, respondJson, readBody, requireAdminKey },
+    wallet: { getCoinBalance, setCoinBalance, updateWalletEntry },
+  } = ctx;
 
   /** Returns true if request is authorised; sends 501/403 and returns false otherwise. */
   function checkAdminKey(req, res) {
@@ -271,6 +274,33 @@ export function registerAdminRoute(ctx) {
         }
       } catch (err) {
         respondJson(res, 500, { error: 'Database error', detail: err.message });
+      }
+      return true;
+    }
+
+    if (pathname === '/api/admin/set-coins' && req.method === 'POST') {
+      if (!requireAdminKey(req, res)) return true;
+      try {
+        const { address, coins } = JSON.parse(await readBody(req));
+        if (!address || typeof coins !== 'number') return respondJson(res, 400, { error: 'address and coins (number) required' });
+        setCoinBalance(address, coins);
+        respondJson(res, 200, { ok: true, address, balance: getCoinBalance(address) });
+      } catch (error) {
+        respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
+
+    if (pathname === '/api/admin/set-wallet' && req.method === 'POST') {
+      if (!requireAdminKey(req, res)) return true;
+      try {
+        const { address, data } = JSON.parse(await readBody(req));
+        if (!address || !data || typeof data !== 'object') return respondJson(res, 400, { error: 'address and data (object) required' });
+        updateWalletEntry(address, data);
+        if (typeof data.coins === 'number') setCoinBalance(address, data.coins);
+        respondJson(res, 200, { ok: true, address, updatedFields: Object.keys(data) });
+      } catch (error) {
+        respondJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
       }
       return true;
     }
