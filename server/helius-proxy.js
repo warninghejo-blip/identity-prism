@@ -220,6 +220,14 @@ const MINT_PRICE_SOL = Number.isFinite(MINT_PRICE_SOL_RAW) && MINT_PRICE_SOL_RAW
   ? MINT_PRICE_SOL_RAW
   : 0.01;
 const SKR_MINT = (process.env.SKR_MINT ?? 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3').trim();
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const TRACKED_FUNDING_TOKEN_MINTS = new Map([
+  [USDC_MINT, 'USDC'],
+  [USDT_MINT, 'USDT'],
+  [SKR_MINT, 'SKR'],
+]);
+const STABLECOIN_FUNDING_MINTS = new Set([USDC_MINT, USDT_MINT]);
 const SKR_DISCOUNT = Number(process.env.SKR_DISCOUNT ?? '0');
 const SKR_DISCOUNT_RATE = Number.isFinite(SKR_DISCOUNT) && SKR_DISCOUNT >= 0 ? SKR_DISCOUNT : 0;
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -1142,6 +1150,175 @@ const getRecentSybilAnalysis = (targetAddress) => {
   return null;
 };
 
+function persistFundingEdge(fromAddress, toAddress, tokenMint, info, chainDepth = 1) {
+  if (!fromAddress || !toAddress || !tokenMint || !info) return;
+  const totalAmount = Number(info.totalAmount ?? info.totalSol) || 0;
+  const txCount = Math.max(0, Math.round(Number(info.count) || 0));
+  if (totalAmount <= 0 || txCount <= 0) return;
+
+  upsertSybilFundingEdge.run({
+    from_address: fromAddress,
+    to_address: toAddress,
+    token_mint: tokenMint,
+    total_amount: totalAmount,
+    tx_count: txCount,
+    first_seen_at: Math.max(0, Math.round(Number(info.firstTime) || Date.now())),
+    last_seen_at: Math.max(0, Math.round(Number(info.lastTime) || Date.now())),
+    chain_depth: Math.max(1, Math.min(4, Math.round(Number(chainDepth) || 1))),
+  });
+}
+
+function persistFundingEdgesForTarget(targetAddress, incoming, tokenFundingSources) {
+  for (const [fromAddress, info] of incoming || []) {
+    persistFundingEdge(fromAddress, targetAddress, SOL_MINT, info, 1);
+  }
+  for (const [mint, mintSources] of tokenFundingSources || []) {
+    for (const [fromAddress, info] of mintSources || []) {
+      persistFundingEdge(fromAddress, targetAddress, mint, info, 1);
+    }
+  }
+}
+
+function getStoredDominantFundingSource(address) {
+  if (!address) return null;
+  const row = selectDominantFundingEdgeRow.get(address);
+  if (row?.from_address) {
+    return {
+      address: row.from_address,
+      tokenMint: row.token_mint || SOL_MINT,
+      totalAmount: Number(row.total_amount) || 0,
+      txCount: Number(row.tx_count) || 0,
+    };
+  }
+
+  const walletEntry = walletDatabase.get(address);
+  const legacySource = walletEntry?.funding?.sources?.[0];
+  if (legacySource?.address) {
+    return {
+      address: legacySource.address,
+      tokenMint: legacySource.tokenMint || SOL_MINT,
+      totalAmount: Number(legacySource.totalAmount ?? legacySource.totalSolReceived) || 0,
+      txCount: Number(legacySource.transactionCount) || 0,
+    };
+  }
+  return null;
+}
+
+function detectTemporalFundingCohort({ address, firstTxBlockTime, txCount, dominantFunder }) {
+  if (!address || !dominantFunder || !Number.isFinite(Number(firstTxBlockTime)) || !Number.isFinite(Number(txCount)) || txCount <= 0) {
+    return { cohortId: null, score: 0, walletCount: 0 };
+  }
+
+  const members = [{
+    address,
+    firstTxAt: Number(firstTxBlockTime),
+    txCount: Number(txCount),
+  }];
+
+  for (const [candidateAddress, entry] of walletDatabase) {
+    if (!candidateAddress || candidateAddress === address) continue;
+    const candidateFirstTx = Number(entry?.firstTxTimestamp);
+    if (!Number.isFinite(candidateFirstTx) || Math.abs(candidateFirstTx - Number(firstTxBlockTime)) > 3600) continue;
+    const candidateTxCount = Number(entry?.stats?.transactions ?? entry?.sybil?.metrics?.txCount ?? 0);
+    if (!Number.isFinite(candidateTxCount) || candidateTxCount <= 0) continue;
+    if (candidateTxCount < txCount / 2 || candidateTxCount > txCount * 2) continue;
+    const candidateFunder = getStoredDominantFundingSource(candidateAddress);
+    if (!candidateFunder?.address || candidateFunder.address !== dominantFunder) continue;
+    members.push({
+      address: candidateAddress,
+      firstTxAt: candidateFirstTx,
+      txCount: candidateTxCount,
+    });
+  }
+
+  if (members.length < 3) return { cohortId: null, score: 0, walletCount: members.length };
+
+  const firstWalletAt = Math.min(...members.map((member) => member.firstTxAt));
+  const windowEndAt = Math.max(...members.map((member) => member.firstTxAt));
+  const birthWindowSeconds = Math.max(0, windowEndAt - firstWalletAt);
+  if (birthWindowSeconds > 24 * 3600) return { cohortId: null, score: 0, walletCount: members.length };
+
+  const minTxCount = Math.min(...members.map((member) => member.txCount));
+  const maxTxCount = Math.max(...members.map((member) => member.txCount));
+  const txSimilarity = maxTxCount > 0 ? minTxCount / maxTxCount : 0;
+  const windowSimilarity = 1 - Math.min(1, birthWindowSeconds / (24 * 3600));
+  const sizeScore = Math.min(1, members.length / 6);
+  const score = Math.max(0, Math.min(1, Number((((txSimilarity * 0.45) + (windowSimilarity * 0.35) + (sizeScore * 0.20))).toFixed(4))));
+  const cohortId = crypto.createHash('sha256')
+    .update(`${dominantFunder}:${Math.floor(firstWalletAt / 3600)}`)
+    .digest('hex')
+    .slice(0, 24);
+
+  upsertSybilTemporalCohort.run({
+    cohort_id: cohortId,
+    first_wallet_at: firstWalletAt,
+    window_end_at: windowEndAt,
+    wallet_count: members.length,
+    similarity_score: score,
+    first_common_funder: dominantFunder,
+  });
+
+  return { cohortId, score, walletCount: members.length };
+}
+
+function snapshotSybilVerdictHistory(address, cacheEntry) {
+  if (!address || !cacheEntry?.analysis) return;
+  const computedAt = Math.max(0, Math.round(Number(cacheEntry.computedAt ?? cacheEntry.analysis?.scanMeta?.computedAt) || 0));
+  if (!computedAt) return;
+
+  insertSybilVerdictHistoryRow.run({
+    address,
+    version: Math.max(1, Math.round(Number(cacheEntry.analysis?.verdictSignals?.version ?? cacheEntry.scanVersion ?? cacheEntry.analysis?.scanMeta?.scanVersion) || 1)),
+    score: Math.round(Number(cacheEntry.score ?? cacheEntry.analysis?.riskScore) || 0),
+    risk_level: cacheEntry.riskLevel || cacheEntry.analysis?.riskLevel || 'clean',
+    signals_json: JSON.stringify(Array.isArray(cacheEntry.analysis?.signals) ? cacheEntry.analysis.signals : []),
+    computed_at: computedAt,
+  });
+  pruneSybilVerdictHistoryRows.run(address, address);
+}
+
+function getSybilVerdictHistory(address, days = 30) {
+  const cutoff = Date.now() - Math.max(1, Number(days) || 30) * 24 * 60 * 60 * 1000;
+  const rows = selectSybilVerdictHistoryRows.all(address, cutoff).map((row) => ({
+    computed_at: Number(row.computed_at) || 0,
+    score: Number(row.score) || 0,
+    risk_level: row.risk_level || 'clean',
+  }));
+
+  if (rows.length > 0) return rows;
+
+  const fallback = getRecentSybilAnalysis(address) || walletDatabase.get(address)?.sybil;
+  const computedAt = Date.parse(String(fallback?.updatedAt || ''));
+  if (!fallback || !Number.isFinite(computedAt)) return [];
+  return [{
+    computed_at: computedAt,
+    score: Math.round(Number(fallback.riskScore) || 0),
+    risk_level: fallback.riskLevel || 'clean',
+  }];
+}
+
+function submitSybilFeedback({ targetAddress, reportedBy, reportType, notes = null, adminVerified = null }) {
+  const reportedAt = Date.now();
+  const result = insertSybilFeedbackRow.run({
+    target_address: targetAddress,
+    reported_by: reportedBy,
+    report_type: reportType,
+    admin_verified: adminVerified == null ? null : (adminVerified ? 1 : 0),
+    reported_at: reportedAt,
+    notes,
+  });
+
+  return {
+    id: Number(result.lastInsertRowid),
+    target_address: targetAddress,
+    reported_by: reportedBy,
+    report_type: reportType,
+    admin_verified: adminVerified == null ? null : (adminVerified ? 1 : 0),
+    reported_at: reportedAt,
+    notes,
+  };
+}
+
 // === API VERSION DISPATCH ===
 const GAME_MODE_ALIASES = {
   orbit: 'orbit', orbit_survival: 'orbit',
@@ -1852,6 +2029,123 @@ const SYBIL_VERDICTS_FILE = path.join(METADATA_DIR, 'sybil-verdicts.json');
 const sybilVerdictStore = createSybilVerdictDataStore({
   jsonPath: SYBIL_VERDICTS_FILE,
 });
+
+const upsertSybilFundingEdge = appDb.prepare(`
+  INSERT INTO sybil_funding_edges (
+    from_address,
+    to_address,
+    token_mint,
+    total_amount,
+    tx_count,
+    first_seen_at,
+    last_seen_at,
+    chain_depth
+  ) VALUES (
+    @from_address,
+    @to_address,
+    @token_mint,
+    @total_amount,
+    @tx_count,
+    @first_seen_at,
+    @last_seen_at,
+    @chain_depth
+  )
+  ON CONFLICT(from_address, to_address, token_mint) DO UPDATE SET
+    total_amount = excluded.total_amount,
+    tx_count = excluded.tx_count,
+    first_seen_at = MIN(sybil_funding_edges.first_seen_at, excluded.first_seen_at),
+    last_seen_at = MAX(sybil_funding_edges.last_seen_at, excluded.last_seen_at),
+    chain_depth = MAX(sybil_funding_edges.chain_depth, excluded.chain_depth)
+`);
+
+const upsertSybilTemporalCohort = appDb.prepare(`
+  INSERT INTO sybil_temporal_cohorts (
+    cohort_id,
+    first_wallet_at,
+    window_end_at,
+    wallet_count,
+    similarity_score,
+    first_common_funder
+  ) VALUES (
+    @cohort_id,
+    @first_wallet_at,
+    @window_end_at,
+    @wallet_count,
+    @similarity_score,
+    @first_common_funder
+  )
+  ON CONFLICT(cohort_id) DO UPDATE SET
+    first_wallet_at = excluded.first_wallet_at,
+    window_end_at = excluded.window_end_at,
+    wallet_count = excluded.wallet_count,
+    similarity_score = excluded.similarity_score,
+    first_common_funder = excluded.first_common_funder
+`);
+
+const insertSybilFeedbackRow = appDb.prepare(`
+  INSERT INTO sybil_feedback (
+    target_address,
+    reported_by,
+    report_type,
+    admin_verified,
+    reported_at,
+    notes
+  ) VALUES (
+    @target_address,
+    @reported_by,
+    @report_type,
+    @admin_verified,
+    @reported_at,
+    @notes
+  )
+`);
+
+const insertSybilVerdictHistoryRow = appDb.prepare(`
+  INSERT OR REPLACE INTO sybil_verdict_history (
+    address,
+    version,
+    score,
+    risk_level,
+    signals_json,
+    computed_at
+  ) VALUES (
+    @address,
+    @version,
+    @score,
+    @risk_level,
+    @signals_json,
+    @computed_at
+  )
+`);
+
+const pruneSybilVerdictHistoryRows = appDb.prepare(`
+  DELETE FROM sybil_verdict_history
+  WHERE address = ?
+    AND computed_at < (
+      SELECT computed_at
+      FROM sybil_verdict_history
+      WHERE address = ?
+      ORDER BY computed_at DESC
+      LIMIT 1 OFFSET 30
+    )
+`);
+
+const selectSybilVerdictHistoryRows = appDb.prepare(`
+  SELECT computed_at, score, risk_level
+  FROM sybil_verdict_history
+  WHERE address = ?
+    AND computed_at >= ?
+  ORDER BY computed_at ASC
+`);
+
+const selectDominantFundingEdgeRow = appDb.prepare(`
+  SELECT from_address, token_mint, total_amount, tx_count
+  FROM sybil_funding_edges
+  WHERE to_address = ?
+    AND chain_depth = 1
+  ORDER BY total_amount DESC, tx_count DESC, last_seen_at DESC
+  LIMIT 1
+`);
 
 const loadWalletDatabase = async () => {
   try {
@@ -4832,7 +5126,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Sybil Blink / Reputation APIs ──────────────────────────────────────────
-  if ((pathname.startsWith('/api/actions/sybil/') || pathname.startsWith('/api/v1/reputation/') || pathname === '/api/v2/reputation') && await reputationHandler(req, res, url, pathname)) {
+  if ((
+    pathname.startsWith('/api/actions/sybil/')
+    || pathname.startsWith('/api/v1/reputation/')
+    || pathname === '/api/v2/reputation'
+    || pathname === '/api/sybil/feedback'
+  ) && await reputationHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -6567,6 +6866,9 @@ const server = http.createServer(async (req, res) => {
       let clusterSimilarity = 0;
       let fundingChainDepth = 0;
       let hubSpokeScore = 0;
+      let temporalCohortScore = 0;
+      let splFlowDetected = Boolean(enhancedSampleSummary?.splFlowDetected);
+      let adaptiveThresholdTriggered = false;
       const allSiblings = new Set();
       let hasSolDomain = false;
       let topFunderPctExport = 0; // share of top funder in total received SOL
@@ -6575,37 +6877,84 @@ const server = http.createServer(async (req, res) => {
 
       let resolvedTopFunder = null; // shared: used for cluster key later
       let resolvedIncoming = null; // shared: expose for funding-sources cache
+      let resolvedTokenFundingSources = enhancedSampleSummary?.tokenFundingSources || new Map();
+      let resolvedPrimaryFundingSource = null;
       const fundingGraphPromise = (async () => {
         try {
           const allTxsForFunding = [...parsedTxs, ...earlyParsedTxs];
-          const incoming = enhancedSampleSummary?.incoming || extractSolTransfers(allTxsForFunding, address).incoming;
+          const fundingSummary = enhancedSampleSummary || summarizeEnhancedTxHistory(allTxsForFunding, address, balance);
+          const incoming = fundingSummary?.incoming || extractSolTransfers(allTxsForFunding, address).incoming;
           resolvedIncoming = incoming;
-          let topFunder = null, topAmount = 0, topFunderCount = 0;
-          for (const [addr, info] of incoming) {
-            if (TREASURY_WALLETS.has(addr)) continue; // skip treasury
-            if (info.totalSol > topAmount) { topFunder = addr; topAmount = info.totalSol; topFunderCount = info.count; }
+          resolvedTokenFundingSources = fundingSummary?.tokenFundingSources || new Map();
+          splFlowDetected = splFlowDetected || Boolean(fundingSummary?.splFlowDetected);
+          persistFundingEdgesForTarget(address, incoming, resolvedTokenFundingSources);
+
+          const dominantSolFunder = getDominantFundingSource(incoming, 'totalSol');
+          const dominantStableFunder = getDominantTokenFundingSource(resolvedTokenFundingSources, { stableOnly: true });
+          const dominantTrackedTokenFunder = getDominantTokenFundingSource(resolvedTokenFundingSources);
+
+          let topFunder = dominantSolFunder.address;
+          let topAmount = dominantSolFunder.amount;
+          let topFunderCount = dominantSolFunder.count;
+          let topFunderPct = dominantSolFunder.share;
+          let topFundingMint = SOL_MINT;
+
+          if (dominantStableFunder.address && dominantStableFunder.share > 0.6 && dominantStableFunder.share >= topFunderPct) {
+            topFunder = dominantStableFunder.address;
+            topAmount = dominantStableFunder.amount;
+            topFunderCount = dominantStableFunder.count;
+            topFunderPct = dominantStableFunder.share;
+            topFundingMint = dominantStableFunder.mints[0] || USDC_MINT;
           }
+
           topFunderTxCount = topFunderCount;
           resolvedTopFunder = topFunder; // expose for cluster key
+          topFunderPctExport = topFunderPct;
           if (incoming.size === 0 && allTxsForFunding.length > 0) {
             console.warn(`[sybil-funding] ${address.slice(0,8)}: 0 funding sources from ${allTxsForFunding.length} parsed txs`);
           }
-          if (topFunder && topAmount >= 0.01) {
-            const totalReceived = [...incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
-            const topFunderPct = topAmount / totalReceived;
-            topFunderPctExport = topFunderPct;
+
+          const topFunderLabel = topFunder ? KNOWN_LABELS[topFunder] : null;
+          if (topFunder) {
+            resolvedPrimaryFundingSource = {
+              address: topFunder,
+              label: topFunderLabel?.label || null,
+              type: topFunderLabel?.type || 'wallet',
+              tokenMint: topFundingMint,
+              transactionCount: topFunderCount,
+              percentage: Math.round(topFunderPct * 100),
+              ...(topFundingMint === SOL_MINT
+                ? { totalSolReceived: Math.round(topAmount * 10000) / 10000 }
+                : { totalAmount: Math.round(topAmount * 10000) / 10000 }),
+            };
+          } else if (dominantTrackedTokenFunder.address) {
+            const tokenOnlyLabel = KNOWN_LABELS[dominantTrackedTokenFunder.address];
+            resolvedPrimaryFundingSource = {
+              address: dominantTrackedTokenFunder.address,
+              label: tokenOnlyLabel?.label || null,
+              type: tokenOnlyLabel?.type || 'wallet',
+              tokenMint: dominantTrackedTokenFunder.mints[0] || SKR_MINT,
+              transactionCount: dominantTrackedTokenFunder.count,
+              percentage: Math.round(dominantTrackedTokenFunder.share * 100),
+              totalAmount: Math.round(dominantTrackedTokenFunder.amount * 10000) / 10000,
+            };
+          }
+
+          const hasMeaningfulFunding = topFundingMint === SOL_MINT ? topAmount >= 0.01 : topAmount >= 1;
+          if (topFunder && hasMeaningfulFunding) {
             if (topFunderPct > 0.3) {
               fundingChainDepth = 1;
-              const topFunderLabel = KNOWN_LABELS[topFunder];
               if (topFunderLabel && (topFunderLabel.type === 'cex' || topFunderLabel.type === 'bridge')) {
                 cexTrustBonus = 3;
-              } else try {
+              } else if (topFundingMint === SOL_MINT) try {
                 const topFunderHistoryPromise = fetchEnhancedTxHistory(topFunder, { limit: 100 })
                   .then(data => data?.txs?.length ? summarizeEnhancedTxHistory(data.txs, topFunder, 0) : null)
                   .catch(() => null);
                 const grandFunderSeedPromise = topFunderHistoryPromise.then(summary => summary ? { incoming: summary.incoming } : null);
                 const [level1Summary, level2Seed] = await Promise.all([topFunderHistoryPromise, grandFunderSeedPromise]);
                 let usedLegacyFunderFallback = false;
+                let grandFunder = null;
+                let grandShare = 0;
 
                 if (level1Summary) {
                   for (const sibling of level1Summary.outgoing.keys()) {
@@ -6647,14 +6996,12 @@ const server = http.createServer(async (req, res) => {
                     if (topFunderPct > 0.5 && funderParsed.length > 0) {
                       try {
                         const { incoming: level2In } = extractSolTransfers(funderParsed, topFunder);
-                        let grandFunder = null, grandAmount = 0;
-                        for (const [addr, info] of level2In) {
-                          if (TREASURY_WALLETS.has(addr)) continue;
-                          if (info.totalSol > grandAmount) { grandFunder = addr; grandAmount = info.totalSol; }
-                        }
-                        if (grandFunder && grandAmount > 0.01) {
-                          const totalL2 = [...level2In.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
-                          if (grandAmount / totalL2 > 0.7) fundingChainDepth = 2;
+                        const dominantLevel2 = getDominantFundingSource(level2In, 'totalSol');
+                        grandFunder = dominantLevel2.address;
+                        grandShare = dominantLevel2.share;
+                        if (grandFunder && dominantLevel2.amount > 0.01 && grandShare > 0.7) {
+                          fundingChainDepth = 2;
+                          persistFundingEdge(grandFunder, topFunder, SOL_MINT, level2In.get(grandFunder), 2);
                         }
                       } catch {}
                     }
@@ -6662,37 +7009,59 @@ const server = http.createServer(async (req, res) => {
                 }
 
                 if (!usedLegacyFunderFallback && topFunderPct > 0.5 && level2Seed?.incoming?.size) {
-                  let grandFunder = null, grandAmount = 0;
-                  for (const [addr, info] of level2Seed.incoming) {
-                    if (TREASURY_WALLETS.has(addr)) continue;
-                    if (info.totalSol > grandAmount) { grandFunder = addr; grandAmount = info.totalSol; }
-                  }
-                  if (grandFunder && grandAmount > 0.01) {
-                    const totalL2 = [...level2Seed.incoming.values()].reduce((s, v) => s + v.totalSol, 0) || 1;
-                    if (grandAmount / totalL2 > 0.7) {
-                      fundingChainDepth = 2;
-                      try {
-                        const grandFunderHistory = await fetchEnhancedTxHistory(grandFunder, { limit: 100 });
-                        const grandFunderSummary = grandFunderHistory?.txs?.length ? summarizeEnhancedTxHistory(grandFunderHistory.txs, grandFunder, 0) : null;
-                        if (grandFunderSummary?.outgoing) {
-                          for (const sibling of grandFunderSummary.outgoing.keys()) {
-                            if (sibling !== grandFunder && sibling !== topFunder && sibling !== address
-                                && sibling !== '11111111111111111111111111111111' && !isProgramAddress(sibling, new Set())) {
-                              allSiblings.add(sibling);
-                            }
+                  const dominantLevel2 = getDominantFundingSource(level2Seed.incoming, 'totalSol');
+                  grandFunder = dominantLevel2.address;
+                  grandShare = dominantLevel2.share;
+                  if (grandFunder && dominantLevel2.amount > 0.01 && grandShare > 0.7) {
+                    fundingChainDepth = 2;
+                    persistFundingEdge(grandFunder, topFunder, SOL_MINT, level2Seed.incoming.get(grandFunder), 2);
+                    try {
+                      const grandFunderHistory = await fetchEnhancedTxHistory(grandFunder, { limit: 100 });
+                      const grandFunderSummary = grandFunderHistory?.txs?.length ? summarizeEnhancedTxHistory(grandFunderHistory.txs, grandFunder, 0) : null;
+                      if (grandFunderSummary?.outgoing) {
+                        for (const sibling of grandFunderSummary.outgoing.keys()) {
+                          if (sibling !== grandFunder && sibling !== topFunder && sibling !== address
+                              && sibling !== '11111111111111111111111111111111' && !isProgramAddress(sibling, new Set())) {
+                            allSiblings.add(sibling);
                           }
                         }
-                      } catch {}
-                    }
-                    if (fundingChainDepth >= 2) {
-                      updateSybilGraphNode(grandFunder, {
-                        riskScore: Math.max((sybilGraph.nodes[grandFunder]?.riskScore || 0), 60),
-                        inferredFromCluster: address,
-                        fundedBy: [],
-                        siblings: [topFunder, address],
-                      });
+                      }
+                    } catch {}
+                  }
+                }
+
+                if (fundingChainDepth >= 2 && grandFunder && grandShare > 0.7) {
+                  const level3 = await fetchDominantEnhancedFunder(grandFunder, 0.7).catch(() => null);
+                  if (level3?.dominant?.address) {
+                    const greatGrandFunder = level3.dominant.address;
+                    const greatGrandLabel = KNOWN_LABELS[greatGrandFunder];
+                    if (greatGrandLabel && (greatGrandLabel.type === 'cex' || greatGrandLabel.type === 'bridge')) {
+                      cexTrustBonus = Math.max(cexTrustBonus, 3);
+                    } else {
+                      fundingChainDepth = 3;
+                      persistFundingEdge(greatGrandFunder, grandFunder, SOL_MINT, level3.summary.incoming.get(greatGrandFunder), 3);
+                      const level4 = await fetchDominantEnhancedFunder(greatGrandFunder, 0.7).catch(() => null);
+                      if (level4?.dominant?.address) {
+                        const greatGreatGrandFunder = level4.dominant.address;
+                        const greatGreatGrandLabel = KNOWN_LABELS[greatGreatGrandFunder];
+                        if (greatGreatGrandLabel && (greatGreatGrandLabel.type === 'cex' || greatGreatGrandLabel.type === 'bridge')) {
+                          cexTrustBonus = Math.max(cexTrustBonus, 3);
+                        } else {
+                          fundingChainDepth = 4;
+                          persistFundingEdge(greatGreatGrandFunder, greatGrandFunder, SOL_MINT, level4.summary.incoming.get(greatGreatGrandFunder), 4);
+                        }
+                      }
                     }
                   }
+                }
+
+                if (fundingChainDepth >= 2 && grandFunder) {
+                  updateSybilGraphNode(grandFunder, {
+                    riskScore: Math.max((sybilGraph.nodes[grandFunder]?.riskScore || 0), 60),
+                    inferredFromCluster: address,
+                    fundedBy: [],
+                    siblings: [topFunder, address],
+                  });
                 }
               } catch {}
               if (topFunder && allSiblings.size >= 2) {
@@ -6708,6 +7077,16 @@ const server = http.createServer(async (req, res) => {
                 clusterSimilarity = Math.min(1, allSiblings.size / 12);
               }
             }
+          }
+
+          if (resolvedTopFunder && Number.isFinite(Number(firstTxBlockTime)) && totalSigCount > 0) {
+            const temporalCohort = detectTemporalFundingCohort({
+              address,
+              firstTxBlockTime,
+              txCount: totalSigCount,
+              dominantFunder: resolvedTopFunder,
+            });
+            temporalCohortScore = temporalCohort.score;
           }
         } catch {}
       })();
@@ -6990,6 +7369,17 @@ const server = http.createServer(async (req, res) => {
         description: highClusterSim ? 'Wallet shares funding source with multiple similar wallets' : 'No suspicious wallet clusters detected',
       });
 
+      const temporalCohortDetected = temporalCohortScore >= 0.45;
+      signals.push({
+        id: 'temporal_cohort', name: 'Temporal Cohort', category: 'network',
+        detected: temporalCohortDetected, weight: temporalCohortDetected ? Math.round(8 + temporalCohortScore * 6) : 0,
+        severity: temporalCohortScore >= 0.7 ? 'danger' : (temporalCohortDetected ? 'warning' : 'info'),
+        value: `${Math.round(temporalCohortScore * 100)}%`,
+        description: temporalCohortDetected
+          ? 'Wallet was created alongside multiple same-funder wallets in a narrow time window'
+          : 'No suspicious wallet birth cohort detected',
+      });
+
       // Signal 9: Dust Transactions — many tiny transactions indicate farming
       const dustRatio = totalSolTxCount > 0 ? dustTxCount / totalSolTxCount : 0;
       const highDust = totalSolTxCount >= 5 && dustRatio > 0.5;
@@ -7053,9 +7443,12 @@ const server = http.createServer(async (req, res) => {
       // depth 1 + non-CEX = wallet-to-wallet funding (mild risk), depth 2+ = layered chain (high risk)
       const deepChain = fundingChainDepth >= 2;
       const walletToWallet = fundingChainDepth === 1 && cexTrustBonus === 0; // funded by a random wallet, not CEX
+      const fundingChainWeight = deepChain
+        ? Math.min(19, 15 + Math.max(0, fundingChainDepth - 2) * 2)
+        : (walletToWallet ? 10 : 0);
       signals.push({
         id: 'funding_chain', name: deepChain ? 'Funding Chain' : (walletToWallet ? 'Wallet-to-Wallet Funding' : 'Funding Chain'), category: 'network',
-        detected: deepChain || walletToWallet, weight: deepChain ? 15 : (walletToWallet ? 10 : 0),
+        detected: deepChain || walletToWallet, weight: fundingChainWeight,
         severity: deepChain ? 'danger' : (walletToWallet ? 'warning' : 'info'),
         value: `${fundingChainDepth} hops`,
         description: deepChain
@@ -7081,7 +7474,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       // Signal 15b: Concentrated single-source funding (>90% from one non-CEX wallet)
-      const concentratedFunding = topFunderPctExport > 0.4 && cexTrustBonus === 0 && totalSolTxCount >= 3;
+      const concentratedFunding = topFunderPctExport > 0.4 && cexTrustBonus === 0 && (topFunderTxCount >= 3 || totalSolTxCount >= 3);
       signals.push({
         id: 'concentrated_funding', name: 'Single-Source Concentration', category: 'network',
         detected: concentratedFunding, weight: 10,
@@ -7244,7 +7637,10 @@ const server = http.createServer(async (req, res) => {
       riskScore = Math.min(100, riskScore);
 
       // ── Cross-session graph intelligence (applied BEFORE trust bonus) ──
-      const fundingSources = [...incomingSenders].filter(a => !TREASURY_WALLETS.has(a));
+      const fundingSources = [...new Set([
+        ...incomingSenders,
+        ...(resolvedTopFunder ? [resolvedTopFunder] : []),
+      ])].filter(a => !TREASURY_WALLETS.has(a));
       const { graphRisk, graphDetails } = checkGraphForKnownSybils(address, fundingSources, [...allSiblings]);
       if (graphRisk > 0) {
         riskScore = Math.min(100, riskScore + graphRisk);
@@ -7331,6 +7727,8 @@ const server = http.createServer(async (req, res) => {
           fundingChainDepth,
           topFunderTxCount,
           topFunderPct: Math.round(topFunderPctExport * 100),
+          temporalCohortScore: Math.round(temporalCohortScore * 100) / 100,
+          splFlowDetected,
           hourBuckets,
           dayBuckets,
           hubSpokeScore: Math.round(hubSpokeScore * 100),
@@ -7358,6 +7756,15 @@ const server = http.createServer(async (req, res) => {
           defiDepth,
           activeDaysRatio: Math.round(activeDaysRatio * 100) / 100,
         },
+        verdictSignals: {
+          version: 2,
+          temporalCohortScore: Math.round(temporalCohortScore * 100) / 100,
+          fundingDepth: Math.max(0, Math.min(4, fundingChainDepth)),
+          splFlowDetected,
+          hubSpokeScore: Math.round(hubSpokeScore * 100) / 100,
+          adaptiveThresholdTriggered,
+        },
+        primaryFundingSource: resolvedPrimaryFundingSource,
         scanMeta: {
           strategy: sampledHistory ? 'enhanced_stratified_sampling' : 'legacy_signature_scan',
           scanVersion: sampledHistory ? SYBIL_SCAN_VERSION : 1,
@@ -7400,7 +7807,7 @@ const server = http.createServer(async (req, res) => {
           });
       }
       // Embed top funding source directly in analysis response so client doesn't need a 2nd rate-limited call
-      const topFundingSource = cachedFundingSources.length > 0 ? cachedFundingSources[0] : null;
+      const topFundingSource = cachedFundingSources.length > 0 ? cachedFundingSources[0] : (resolvedPrimaryFundingSource || null);
       if (topFundingSource) analysis.primaryFundingSource = topFundingSource;
       persistSybilAnalysis(address, analysis, {
         fundingSources: cachedFundingSources,
@@ -7433,6 +7840,8 @@ const server = http.createServer(async (req, res) => {
           updatedAt: new Date().toISOString(),
           detectedSignals,
           signalCount: detectedSignals.length,
+          verdictSignals: analysis.verdictSignals,
+          primaryFundingSource: analysis.primaryFundingSource || null,
         },
         // On-chain stats
         stats: {
@@ -7465,9 +7874,12 @@ const server = http.createServer(async (req, res) => {
           topFunderPct: m.topFunderPct || 0,
           topFunderTxCount: m.topFunderTxCount || 0,
           sources: cachedFundingSources.slice(0, 10),
+          primarySource: analysis.primaryFundingSource || null,
           siblingCount: m.siblingCount || 0,
           hubSpokeScore: m.hubSpokeScore || 0,
           clusterSimilarity: m.clusterSimilarity || 0,
+          temporalCohortScore: m.temporalCohortScore || 0,
+          splFlowDetected: Boolean(m.splFlowDetected),
         },
         // Behavioral fingerprint
         behavior: {
@@ -8724,6 +9136,7 @@ function persistSybilAnalysis(address, analysis, {
 
   sybilCache.set(address, cacheEntry);
   sybilVerdictStore.set(address, cacheEntry);
+  snapshotSybilVerdictHistory(address, cacheEntry);
   return cacheEntry;
 }
 
@@ -9500,15 +9913,102 @@ function recordEnhancedCounterparty(map, addr, amountSol, blockTime, txType, sig
   map.set(addr, existing);
 }
 
+function normalizeFundingMint(mint) {
+  if (typeof mint !== 'string') return '';
+  const trimmed = mint.trim();
+  return TRACKED_FUNDING_TOKEN_MINTS.has(trimmed) ? trimmed : '';
+}
+
+function getEnhancedTokenAmount(transfer) {
+  const direct = Number(transfer?.tokenAmount);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
+  const uiAmount = Number(
+    transfer?.tokenAmount?.uiAmount
+    ?? transfer?.rawTokenAmount?.tokenAmount
+    ?? transfer?.amount
+    ?? 0,
+  );
+  if (Number.isFinite(uiAmount) && uiAmount > 0) return uiAmount;
+
+  const rawAmount = Number(transfer?.rawTokenAmount?.tokenAmount ?? transfer?.tokenAmount?.amount ?? 0);
+  const decimals = Number(transfer?.rawTokenAmount?.decimals ?? transfer?.tokenAmount?.decimals ?? 0);
+  if (Number.isFinite(rawAmount) && Number.isFinite(decimals) && rawAmount > 0) {
+    return rawAmount / (10 ** decimals);
+  }
+  return 0;
+}
+
+function recordTokenFundingSource(map, mint, addr, amount, blockTime, signature) {
+  if (!mint || !addr || !Number.isFinite(amount) || amount <= 0) return;
+  const mintMap = map.get(mint) || new Map();
+  const existing = mintMap.get(addr) || { totalAmount: 0, count: 0, firstTime: blockTime, lastTime: blockTime, signatures: [] };
+  existing.totalAmount += amount;
+  existing.count += 1;
+  existing.firstTime = Math.min(existing.firstTime, blockTime);
+  existing.lastTime = Math.max(existing.lastTime, blockTime);
+  if (signature) existing.signatures.push(signature);
+  mintMap.set(addr, existing);
+  map.set(mint, mintMap);
+}
+
+function getDominantFundingSource(map, amountKey) {
+  let address = null;
+  let amount = 0;
+  let count = 0;
+  let total = 0;
+  for (const [candidate, info] of map || []) {
+    if (!candidate || TREASURY_WALLETS.has(candidate)) continue;
+    const candidateAmount = Number(info?.[amountKey]) || 0;
+    if (candidateAmount <= 0) continue;
+    total += candidateAmount;
+    if (candidateAmount > amount) {
+      address = candidate;
+      amount = candidateAmount;
+      count = Math.max(0, Math.round(Number(info?.count) || 0));
+    }
+  }
+  return {
+    address,
+    amount,
+    count,
+    total,
+    share: total > 0 ? amount / total : 0,
+  };
+}
+
+function getDominantTokenFundingSource(tokenFundingSources, { stableOnly = false } = {}) {
+  const aggregated = new Map();
+  for (const [mint, mintSources] of tokenFundingSources || []) {
+    if (stableOnly && !STABLECOIN_FUNDING_MINTS.has(mint)) continue;
+    for (const [address, info] of mintSources || []) {
+      const existing = aggregated.get(address) || { totalAmount: 0, count: 0, mints: new Set() };
+      existing.totalAmount += Number(info?.totalAmount) || 0;
+      existing.count += Math.max(0, Math.round(Number(info?.count) || 0));
+      existing.mints.add(mint);
+      aggregated.set(address, existing);
+    }
+  }
+
+  const dominant = getDominantFundingSource(aggregated, 'totalAmount');
+  const dominantEntry = dominant.address ? aggregated.get(dominant.address) : null;
+  return {
+    ...dominant,
+    mints: dominantEntry ? [...dominantEntry.mints] : [],
+  };
+}
+
 function summarizeEnhancedTxHistory(txs, address, currentBalance = 0) {
   const incoming = new Map();
   const outgoing = new Map();
+  const tokenFundingSources = new Map();
   const allProgramIds = new Set();
   const programInteractionCounts = new Map();
   const incomingSenders = new Set();
   const outgoingRecipients = new Set();
   const timestamps = [];
   const netSolChanges = [];
+  const trackedTokenMints = new Set();
 
   let incomingVolume = 0;
   let outgoingVolume = 0;
@@ -9561,6 +10061,17 @@ function summarizeEnhancedTxHistory(txs, address, currentBalance = 0) {
     }
 
     const tokenTransfers = Array.isArray(tx.tokenTransfers) ? tx.tokenTransfers : [];
+    for (const transfer of tokenTransfers) {
+      const mint = normalizeFundingMint(transfer?.mint);
+      const amount = getEnhancedTokenAmount(transfer);
+      const from = normalizeEnhancedAddress(transfer?.fromUserAccount ?? transfer?.from ?? transfer?.source);
+      const to = normalizeEnhancedAddress(transfer?.toUserAccount ?? transfer?.to ?? transfer?.destination);
+      if (!mint || amount <= 0) continue;
+      trackedTokenMints.add(mint);
+      if (to === address && from && from !== address && !TREASURY_WALLETS.has(from) && !isProgramAddress(from, txPrograms)) {
+        recordTokenFundingSource(tokenFundingSources, mint, from, amount, blockTime, signature);
+      }
+    }
     if (tokenTransfers.length > 0 && Math.abs(netSol) < 0.01) {
       for (const transfer of tokenTransfers) {
         const from = normalizeEnhancedAddress(transfer?.fromUserAccount ?? transfer?.from ?? transfer?.source);
@@ -9658,6 +10169,9 @@ function summarizeEnhancedTxHistory(txs, address, currentBalance = 0) {
     programInteractionCounts,
     incomingSenders,
     outgoingRecipients,
+    tokenFundingSources,
+    trackedTokenMints: [...trackedTokenMints],
+    splFlowDetected: trackedTokenMints.size > 0,
     shallowProtocols,
     deepProtocols,
     farmingRatio,
@@ -9736,6 +10250,15 @@ async function fetchEnhancedTransactions(address, limit = 1000) {
   const data = await fetchEnhancedTxHistory(address, { limit });
   if (!data) return null;
   return data;
+}
+
+async function fetchDominantEnhancedFunder(address, minShare = 0.7) {
+  const history = await fetchEnhancedTxHistory(address, { limit: 100 });
+  if (!history?.txs?.length) return null;
+  const summary = summarizeEnhancedTxHistory(history.txs, address, 0);
+  const dominant = getDominantFundingSource(summary.incoming, 'totalSol');
+  if (!dominant.address || dominant.share < minShare || dominant.amount <= 0.01) return null;
+  return { summary, dominant };
 }
 
 // Well-known Solana program addresses to filter out of wallet-to-wallet connections
@@ -10533,6 +11056,8 @@ const ctx = createContext({
   getPrismEarnRateLimit,
   setPrismEarnRateLimit,
   getSybilCacheTtlMs,
+  getSybilVerdictHistory,
+  submitSybilFeedback,
   getQuestProgressSnapshot,
   getQuestPeriodKey,
   batchGetParsedTxs,

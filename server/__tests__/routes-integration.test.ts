@@ -315,6 +315,12 @@ describe.sequential('route integration tests', () => {
     expect(typeof breakdown.humanProof).toBe('number');
   });
 
+  it('GET /api/v1/reputation/:addr/history returns a timeline array', async () => {
+    const res = await getJson(`/api/v1/reputation/${ADDRESSES.known}/history?days=30`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
   // ── Vault status ──────────────────────────────────────────────────────────
 
   it('GET /api/prism/vault/status returns structured response', async () => {
@@ -341,6 +347,31 @@ describe.sequential('route integration tests', () => {
   it('POST /api/prism/buy returns 401 without JWT', async () => {
     const res = await postJson('/api/prism/buy', { packageIndex: 0, txSignature: 'fakesig' });
     expect(res.status).toBe(401);
+  });
+
+  it('POST /api/sybil/feedback requires JWT', async () => {
+    const res = await postJson('/api/sybil/feedback', {
+      target_address: ADDRESSES.known,
+      report_type: 'false_positive',
+      notes: 'Looks organic',
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/sybil/feedback with valid JWT persists feedback', async () => {
+    const token = makeJwt(ADDRESSES.jwt);
+    const res = await postJson('/api/sybil/feedback', {
+      target_address: ADDRESSES.known,
+      report_type: 'false_positive',
+      notes: 'Looks organic',
+    }, token);
+    expect(res.status).toBe(201);
+    const body = res.body as Record<string, unknown>;
+    expect(body).toMatchObject({
+      target_address: ADDRESSES.known,
+      reported_by: ADDRESSES.jwt,
+      report_type: 'false_positive',
+    });
   });
 
   // ── Balance endpoint ──────────────────────────────────────────────────────

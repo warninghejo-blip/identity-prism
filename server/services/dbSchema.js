@@ -102,10 +102,84 @@ function initAppDbSchema(db) {
 
      CREATE INDEX IF NOT EXISTS idx_verdicts_risk
      ON sybil_verdicts (risk_level, computed_at);
+
+     CREATE TABLE IF NOT EXISTS sybil_funding_edges (
+       from_address TEXT,
+       to_address TEXT,
+       token_mint TEXT,
+       total_amount REAL,
+       tx_count INTEGER,
+       first_seen_at INTEGER,
+       last_seen_at INTEGER,
+       chain_depth INTEGER,
+       PRIMARY KEY (from_address, to_address, token_mint)
+     );
+
+     CREATE INDEX IF NOT EXISTS idx_funding_edges_to
+     ON sybil_funding_edges (to_address);
+
+     CREATE INDEX IF NOT EXISTS idx_funding_edges_from
+     ON sybil_funding_edges (from_address);
+
+     CREATE TABLE IF NOT EXISTS sybil_clusters (
+       cluster_id TEXT PRIMARY KEY,
+       size INTEGER,
+       detection_method TEXT,
+       confidence REAL,
+       detected_at INTEGER,
+       last_updated_at INTEGER
+     );
+
+     CREATE TABLE IF NOT EXISTS sybil_cluster_members (
+       cluster_id TEXT,
+       address TEXT,
+       PRIMARY KEY (cluster_id, address)
+     );
+
+     CREATE TABLE IF NOT EXISTS sybil_temporal_cohorts (
+       cohort_id TEXT PRIMARY KEY,
+       first_wallet_at INTEGER,
+       window_end_at INTEGER,
+       wallet_count INTEGER,
+       similarity_score REAL,
+       first_common_funder TEXT
+     );
+
+     CREATE INDEX IF NOT EXISTS idx_temporal_window
+     ON sybil_temporal_cohorts (first_wallet_at);
+
+     CREATE TABLE IF NOT EXISTS sybil_feedback (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       target_address TEXT,
+       reported_by TEXT,
+       report_type TEXT,
+       admin_verified INTEGER,
+       reported_at INTEGER,
+       notes TEXT
+     );
+
+     CREATE INDEX IF NOT EXISTS idx_feedback_target
+     ON sybil_feedback (target_address);
+
+     CREATE INDEX IF NOT EXISTS idx_feedback_reported
+     ON sybil_feedback (reported_at);
+
+     CREATE TABLE IF NOT EXISTS sybil_verdict_history (
+       address TEXT,
+       version INTEGER,
+       score INTEGER,
+       risk_level TEXT,
+       signals_json TEXT,
+       computed_at INTEGER,
+       PRIMARY KEY (address, computed_at)
+     );
+
+     CREATE INDEX IF NOT EXISTS idx_history_address
+     ON sybil_verdict_history (address, computed_at);
  
-     PRAGMA user_version = 1;
-   `);
- }
+     PRAGMA user_version = 2;
+    `);
+  }
 
 export {
   DATA_DIR,

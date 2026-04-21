@@ -6,6 +6,8 @@ function registerReputationRoute(ctx) {
       ipRateLimit,
       getClientIp,
       respondJson,
+      readBody,
+      requireJwt,
       resolveCorsOrigin,
     },
     wallet: {
@@ -23,6 +25,8 @@ function registerReputationRoute(ctx) {
       calculateCompositeScore,
       buildCompositeInput,
       getSybilVerdict,
+      getSybilVerdictHistory,
+      submitSybilFeedback,
     },
   } = ctx;
 
@@ -107,7 +111,19 @@ function registerReputationRoute(ctx) {
     }
 
     const publicReputationMatch = pathname.match(/^\/api\/v1\/reputation\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
+    const publicHistoryMatch = pathname.match(/^\/api\/v1\/reputation\/([1-9A-HJ-NP-Za-km-z]{32,44})\/history$/);
     if (publicReputationMatch && req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': resolveCorsOrigin(req),
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '86400',
+      });
+      res.end();
+      return true;
+    }
+
+    if (publicHistoryMatch && req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': resolveCorsOrigin(req),
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -135,6 +151,80 @@ function registerReputationRoute(ctx) {
         'Cache-Control': `public, max-age=${publicReputationTtlSeconds}`,
       });
       res.end(JSON.stringify(response));
+      return true;
+    }
+
+    if (publicHistoryMatch && req.method === 'GET') {
+      if (!ipRateLimit('public_reputation_history', getClientIp(req), 30, 60000)) {
+        return respondJson(res, 429, { error: 'Too many reputation history requests' });
+      }
+
+      const address = publicHistoryMatch[1];
+      const days = Math.min(365, Math.max(1, Number(url.searchParams.get('days')) || 30));
+      const history = getSybilVerdictHistory(address, days);
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': resolveCorsOrigin(req),
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Cache-Control': 'private, no-store',
+      });
+      res.end(JSON.stringify(history));
+      return true;
+    }
+
+    if (pathname === '/api/sybil/feedback' && req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': resolveCorsOrigin(req),
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+      });
+      res.end();
+      return true;
+    }
+
+    if (pathname === '/api/sybil/feedback' && req.method === 'POST') {
+      if (!ipRateLimit('sybil_feedback', getClientIp(req), 5, 60000)) {
+        return respondJson(res, 429, { error: 'Too many feedback submissions' });
+      }
+
+      const jwtAuth = requireJwt(req, res);
+      if (!jwtAuth.ok) return true;
+
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        return respondJson(res, 400, { error: 'Invalid JSON body' });
+      }
+
+      const targetAddress = typeof body?.target_address === 'string' ? body.target_address.trim() : '';
+      const reportType = typeof body?.report_type === 'string' ? body.report_type.trim() : '';
+      const notes = typeof body?.notes === 'string' && body.notes.trim() ? body.notes.trim().slice(0, 1000) : null;
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(targetAddress)) {
+        return respondJson(res, 400, { error: 'Invalid target_address' });
+      }
+      if (!new Set(['sybil', 'human_verified', 'false_positive']).has(reportType)) {
+        return respondJson(res, 400, { error: 'Invalid report_type' });
+      }
+
+      const created = submitSybilFeedback({
+        targetAddress,
+        reportedBy: jwtAuth.address || null,
+        reportType,
+        notes,
+      });
+
+      res.writeHead(201, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': resolveCorsOrigin(req),
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Cache-Control': 'private, no-store',
+      });
+      res.end(JSON.stringify(created));
       return true;
     }
 

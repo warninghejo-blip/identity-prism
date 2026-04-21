@@ -78,6 +78,9 @@ function createReputationBuilderService({
       .map((value) => Date.parse(String(value || '')))
       .filter((value) => Number.isFinite(value));
     const updatedAt = new Date(updatedCandidates.length > 0 ? Math.max(...updatedCandidates) : Date.now()).toISOString();
+    const signalSummary = sybilAnalysis?.verdictSignals || {};
+    const metricHubSpokeScore = Number(sybilAnalysis?.metrics?.hubSpokeScore);
+    const metricFundingDepth = Number(sybilAnalysis?.metrics?.fundingChainDepth);
 
     return {
       address,
@@ -91,6 +94,14 @@ function createReputationBuilderService({
         gamesPlayed,
         questsCompleted,
         tournamentsPlayed,
+      },
+      signals: {
+        version: 2,
+        temporalCohortScore: Number(signalSummary.temporalCohortScore) || 0,
+        fundingDepth: Math.max(0, Math.min(4, Number(signalSummary.fundingDepth) || metricFundingDepth || 0)),
+        splFlowDetected: Boolean(signalSummary.splFlowDetected),
+        hubSpokeScore: Math.max(0, Math.min(1, Number(signalSummary.hubSpokeScore) || (Number.isFinite(metricHubSpokeScore) ? metricHubSpokeScore / 100 : 0))),
+        adaptiveThresholdTriggered: Boolean(signalSummary.adaptiveThresholdTriggered),
       },
       updatedAt,
       ttl: publicReputationTtlSeconds,

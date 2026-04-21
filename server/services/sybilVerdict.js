@@ -32,6 +32,7 @@ const SIGNAL_REASON_MAP = {
   hub_spoke: 'A shared funder fans out to many sibling wallets',
   funding_chain: 'Funding is layered through intermediary wallets',
   cluster_similarity: 'Sibling wallets share unusually similar funding behavior',
+  temporal_cohort: 'Multiple same-funder wallets were created in the same time window',
   repeated_funder: 'The same non-exchange wallet funds this address repeatedly',
   concentrated_funding: 'Most funding comes from one non-exchange wallet',
   low_counterparty: 'Too many transfers involve too few counterparties',

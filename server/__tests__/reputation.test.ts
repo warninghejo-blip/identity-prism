@@ -359,6 +359,14 @@ describe.sequential('public reputation endpoint', () => {
         questsCompleted: 2,
         tournamentsPlayed: 2,
       },
+      signals: {
+        version: 2,
+        temporalCohortScore: expect.any(Number),
+        fundingDepth: expect.any(Number),
+        splFlowDetected: expect.any(Boolean),
+        hubSpokeScore: expect.any(Number),
+        adaptiveThresholdTriggered: expect.any(Boolean),
+      },
       ttl: 300,
     });
     expect(response.body.score).toBeGreaterThan(0);
@@ -372,6 +380,18 @@ describe.sequential('public reputation endpoint', () => {
 
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: 'address not found' });
+  });
+
+  it('GET /api/v1/reputation/:address/history returns timeline entries', async () => {
+    const response = await getJson(`/api/v1/reputation/${ADDRESSES.known}/history?days=30`, '198.51.100.14');
+
+    expect(response.status).toBe(200);
+    expect(Array.isArray(response.body)).toBe(true);
+    expect((response.body as Array<Record<string, unknown>>)[0]).toMatchObject({
+      computed_at: expect.any(Number),
+      score: expect.any(Number),
+      risk_level: expect.any(String),
+    });
   });
 
   it('respects the 60 req/min public rate limit', async () => {

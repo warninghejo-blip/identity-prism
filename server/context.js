@@ -126,6 +126,8 @@ const SYBIL_KEYS = [
   'triggerCompositeUpdate',
   'getRecentSybilAnalysis',
   'getSybilRewardPath',
+  'getSybilVerdictHistory',
+  'submitSybilFeedback',
 ];
 
 const TOURNAMENT_KEYS = [
