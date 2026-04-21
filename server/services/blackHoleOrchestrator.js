@@ -93,34 +93,17 @@ function createBlackHoleOrchestrator(ctx) {
         }
       }
 
-      // Durable replay protection: insert into SQLite BEFORE crediting.
-      // durableClaimSignatures is synchronous (better-sqlite3).
-      // Amount 0 at this point — reward is calculated below; the record existence is what matters.
-      if (!durableClaimSignatures(uniqueSignatures, address, 0)) {
-        return { status: 400, body: { error: 'One or more signatures were already claimed' } };
-      }
-
-      // Mark in-memory cache (fast path for future requests within the same process lifetime).
-      for (const signature of uniqueSignatures) blackHoleUsedSignatures.set(signature, Date.now());
-      // NOTE: releaseLock only clears in-memory cache. The durable SQLite record is intentionally
-      // kept even on failure — a consumed signature must never be re-claimable.
-      releaseLock = () => {
-        for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
-      };
-
       const connection = new Connection(getRpcUrl(address), 'confirmed');
       const txMap = new Map();
       try {
         for (const signature of uniqueSignatures) {
           const tx = await connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0 });
           if (!tx) {
-            releaseLock();
             return { status: 400, body: { error: `Transaction ${signature} not found or not confirmed yet` } };
           }
           txMap.set(signature, tx);
         }
       } catch (rpcError) {
-        releaseLock();
         throw rpcError;
       }
 
@@ -128,7 +111,6 @@ function createBlackHoleOrchestrator(ctx) {
       try {
         holderPerks = await getIdentityHolderPerks(address, { allowStale: true, throwOnLookupFailure: true });
       } catch {
-        releaseLock();
         return { status: 503, body: { error: 'Identity holder verification temporarily unavailable' } };
       }
 
@@ -145,21 +127,17 @@ function createBlackHoleOrchestrator(ctx) {
           );
         }
         if (!verifiedCommissionBySignature.get(operation.closeSignature)) {
-          releaseLock();
           return { status: 400, body: { error: 'Black Hole commission verification failed' } };
         }
         if (!verifyCloseOperationTx(closeTx, address, operation.account)) {
-          releaseLock();
           return { status: 400, body: { error: 'Close transaction verification failed' } };
         }
         if (operation.action === 'burn' && !verifyBurnOperationTx(closeTx, address, operation.account, operation.mint)) {
-          releaseLock();
           return { status: 400, body: { error: 'Burn transaction verification failed' } };
         }
         if (operation.action === 'swap') {
           const swapTx = txMap.get(operation.swapSignature);
           if (!verifySwapOperationTx(swapTx, address, operation.account, operation.mint)) {
-            releaseLock();
             return { status: 400, body: { error: 'Swap transaction verification failed' } };
           }
         }
@@ -169,6 +147,21 @@ function createBlackHoleOrchestrator(ctx) {
           fungibleResolved += 1;
         }
       }
+
+      // Durable replay protection: insert into SQLite only AFTER all verification passes.
+      // durableClaimSignatures is synchronous (better-sqlite3).
+      // Amount 0 at this point — reward is calculated below; the record existence is what matters.
+      if (!durableClaimSignatures(uniqueSignatures, address, 0)) {
+        return { status: 400, body: { error: 'One or more signatures were already claimed' } };
+      }
+
+      // Mark in-memory cache (fast path for future requests within the same process lifetime).
+      // NOTE: releaseLock only clears in-memory cache. The durable SQLite record is intentionally
+      // kept even on failure — a consumed signature must never be re-claimable.
+      for (const signature of uniqueSignatures) blackHoleUsedSignatures.set(signature, Date.now());
+      releaseLock = () => {
+        for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
+      };
 
       const netResolvedLamports = uniqueSignatures.reduce(
         (sum, signature) => sum + getWalletLamportDelta(txMap.get(signature), address),
@@ -247,10 +240,11 @@ function createBlackHoleOrchestrator(ctx) {
         },
       };
     } catch (error) {
+      // releaseLock is only set after durableClaimSignatures succeeds (i.e., after all verification).
+      // If we reach here before that point, in-memory was never written — nothing to clean up.
+      // If we reach here after, clear in-memory so the SQLite record acts as the sole guard.
       if (typeof releaseLock === 'function') {
         releaseLock();
-      } else if (typeof uniqueSignatures !== 'undefined') {
-        for (const signature of uniqueSignatures) blackHoleUsedSignatures.delete(signature);
       }
       return {
         status: 400,

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, VersionedTransaction } from '@solana/web3.js';
 
 const isValidPubkey = (s) => { try { new PublicKey(s); return true; } catch { return false; } };
 
@@ -325,9 +325,9 @@ function registerMarketRoute(ctx) {
           });
           const orderData = await orderResp.json().catch(() => ({}));
           if (orderResp.ok && orderData?.transaction && orderData?.requestId) {
-            // Derive messageHash from the transaction bytes for FIX 2 binding
+            // Derive messageHash from the transaction message (stable across signing) for FIX 2 binding
             const txBytes = Buffer.from(orderData.transaction, 'base64');
-            const messageHash = crypto.createHash('sha256').update(txBytes).digest('hex');
+            const messageHash = crypto.createHash('sha256').update(VersionedTransaction.deserialize(txBytes).message.serialize()).digest('hex');
             const requestId = orderData.requestId;
             swapIntents.set(requestId, {
               wallet: userPublicKey,
@@ -379,7 +379,7 @@ function registerMarketRoute(ctx) {
         }
 
         const txBytes = Buffer.from(swapData.swapTransaction, 'base64');
-        const messageHash = crypto.createHash('sha256').update(txBytes).digest('hex');
+        const messageHash = crypto.createHash('sha256').update(VersionedTransaction.deserialize(txBytes).message.serialize()).digest('hex');
         const requestId = crypto.randomUUID();
         swapIntents.set(requestId, {
           wallet: userPublicKey,
@@ -442,10 +442,9 @@ function registerMarketRoute(ctx) {
           respondJson(res, 400, { error: 'Invalid signedTransaction encoding' });
           return true;
         }
-        // The signed transaction prepends a signatures section before the message;
-        // we hash the full base64-decoded bytes and compare to what was stored at build time.
-        // This catches wholesale substitution of a different transaction.
-        const incomingHash = crypto.createHash('sha256').update(txBytes).digest('hex');
+        // Hash the transaction message (same bytes before and after signing) to compare
+        // with what was stored at build time — catches substitution of a different transaction.
+        const incomingHash = crypto.createHash('sha256').update(VersionedTransaction.deserialize(txBytes).message.serialize()).digest('hex');
         if (incomingHash !== intent.messageHash) {
           respondJson(res, 400, { error: 'Transaction does not match original swap intent' });
           return true;

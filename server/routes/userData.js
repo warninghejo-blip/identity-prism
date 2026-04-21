@@ -195,11 +195,20 @@ function registerUserDataRoute(ctx) {
       }
       if (!body || typeof body !== 'object') return respondJson(res, 400, { error: 'Body must be a JSON object' });
 
+      // Only accept fields the client is allowed to set.
+      // Progression fields (gameStats, textQuests, rangerXP, achievements, bestScores, score, tier, badges)
+      // are managed exclusively by server-side routes and must never be trusted from the client.
+      const CLIENT_SETTABLE_FIELDS = new Set([
+        'loadout',
+        'displayName', 'avatar', 'bio', 'socialLinks',
+        'settings', 'preferences', 'theme',
+      ]);
+
       const walletEntry = walletDatabase.get(address) || { address };
       const { forgeState, changed: forgeStateChanged } = getOrCreateForgeState(address, walletEntry);
       const existing = getWalletUserData(walletEntry);
       const updates = {};
-      for (const key of ['loadout', 'gameStats', 'bestScores', 'textQuests', 'rangerXP', 'achievements']) {
+      for (const key of CLIENT_SETTABLE_FIELDS) {
         if (body[key] !== undefined) updates[key] = body[key];
       }
       const merged = {

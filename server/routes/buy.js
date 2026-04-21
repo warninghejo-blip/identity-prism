@@ -109,6 +109,10 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' });
           }
+          if (tx.meta?.err) {
+            usedBuyTxSignatures.delete(txSignature);
+            return respondJson(res, 400, { error: 'Transaction failed on-chain' });
+          }
           const treasuryAddr = treasuryAddress || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
           const instructions = tx.transaction?.message?.instructions || [];
           const validTransfer = instructions.some((ix) => {
@@ -131,6 +135,11 @@ function registerBuyRoute(ctx) {
           pendingBuyRequests.delete(txSignature);
         }
 
+        const currentPurchasedSol = dailyPurchases.get(dayKey) || 0;
+        if (currentPurchasedSol + pkg.coins > dailyCoinLimit) {
+          return respondJson(res, 429, { error: 'Daily purchase limit reached' });
+        }
+
         const prevBuyBal = getCoinBalance(address);
         setCoinBalance(address, prevBuyBal + pkg.coins);
         addCoinEarned(address, pkg.coins);
@@ -141,7 +150,7 @@ function registerBuyRoute(ctx) {
           saveWalletDatabaseDebounced();
         }
 
-        dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
+        dailyPurchases.set(dayKey, currentPurchasedSol + pkg.coins);
         {
           const dpTmp = `${buyDailyPurchasesFile}.tmp`;
           const dpObj = {};
@@ -239,6 +248,10 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'Transaction not found. Wait for confirmation and retry.' });
           }
+          if (tx.meta?.err) {
+            usedBuyTxSignatures.delete(txSignature);
+            return respondJson(res, 400, { error: 'Transaction failed on-chain' });
+          }
           const treasuryAddr = treasuryAddress || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
           const treasuryKey = parsePublicKey(treasuryAddr, 'TREASURY_ADDRESS');
           const skrMintKey = parsePublicKey(skrMint, 'SKR_MINT');
@@ -292,6 +305,11 @@ function registerBuyRoute(ctx) {
           pendingBuyRequests.delete(txSignature);
         }
 
+        const currentPurchasedSkr = dailyPurchases.get(dayKey) || 0;
+        if (currentPurchasedSkr + pkg.coins > dailyCoinLimit) {
+          return respondJson(res, 429, { error: 'Daily purchase limit reached' });
+        }
+
         const prevBuyBal = getCoinBalance(address);
         setCoinBalance(address, prevBuyBal + pkg.coins);
         addCoinEarned(address, pkg.coins);
@@ -302,7 +320,7 @@ function registerBuyRoute(ctx) {
           saveWalletDatabaseDebounced();
         }
 
-        dailyPurchases.set(dayKey, purchasedToday + pkg.coins);
+        dailyPurchases.set(dayKey, currentPurchasedSkr + pkg.coins);
         {
           const dpTmp = `${buyDailyPurchasesFile}.tmp`;
           const dpObj = {};
