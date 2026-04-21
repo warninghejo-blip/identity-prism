@@ -192,6 +192,7 @@ const CONFIG = {
   gmMinLikes: Math.max(0, toNumber(getEnv('GM_MIN_LIKES'), 20)),
   blinkBaseUrl: getEnv('BLINK_BASE_URL', 'https://identityprism.xyz/?address='),
   statsApiBase: getEnv('STATS_API_BASE', 'https://identityprism.xyz/api/actions/share'),
+  prismApiUrl: getEnv('PRISM_API_URL', 'https://staging.identityprism.xyz'),
   botUsername: BOT_USERNAME,
   twitterHost: getEnv('TWITTER_HOST', 'twitter.com').toLowerCase(),
   useLegacyScraper: toBoolean(getEnv('USE_LEGACY_SCRAPER'), false),
@@ -201,6 +202,17 @@ const CONFIG = {
 
 const STATE_FILE = path.join(__dirname, 'agent_bot_state.json');
 const WALLET_REGEX = /[1-9A-HJ-NP-Za-km-z]{32,44}/g;
+
+// Sybil scanner — fire-and-forget wallet population
+const scanSeen = new Map(); // addr -> timestamp, 24h dedup (clears on restart)
+function scanAddressInBackground(addr) {
+  const key = `seen:${addr}`;
+  if (scanSeen.has(key) && Date.now() - scanSeen.get(key) < 86400000) return;
+  scanSeen.set(key, Date.now());
+  const url = `${CONFIG.prismApiUrl}/api/sybil/analysis?address=${addr}`;
+  fetch(url, { method: 'GET', signal: AbortSignal.timeout(10000) }).catch(() => {});
+  console.log(`[sybil] Triggered background scan for ${addr}`);
+}
 
 let mentionsInFlight = false;
 let engagementInFlight = false;
@@ -1357,6 +1369,7 @@ async function handleMentions(scraper) {
         continue;
       }
       console.log(`[mentions] Extracted wallet ${wallet} from tweet ${tweetId}.`);
+      scanAddressInBackground(wallet);
 
       try {
         console.log(`[mentions] Fetching stats for ${wallet}...`);

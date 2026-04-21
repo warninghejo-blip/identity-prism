@@ -174,11 +174,19 @@ function initAppDbSchema(db) {
        PRIMARY KEY (address, computed_at)
      );
 
-     CREATE INDEX IF NOT EXISTS idx_history_address
-     ON sybil_verdict_history (address, computed_at);
- 
-     PRAGMA user_version = 2;
-    `);
+      CREATE INDEX IF NOT EXISTS idx_history_address
+      ON sybil_verdict_history (address, computed_at);
+
+      CREATE TABLE IF NOT EXISTS scheduler_job_runs (
+        job_name TEXT PRIMARY KEY,
+        last_run_at INTEGER,
+        last_status TEXT,
+        summary_json TEXT,
+        updated_at INTEGER
+      );
+  
+      PRAGMA user_version = 2;
+     `);
   }
 
 export {

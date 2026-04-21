@@ -1,3 +1,9 @@
+import {
+  getLouvainCommunityDetectionState,
+  getMsUntilNextLouvainWindow,
+  runLouvainCommunityDetection,
+} from './louvainCommunityDetection.js';
+
 function startSchedulers(ctx) {
   const {
     authChallenges,
@@ -27,6 +33,13 @@ function startSchedulers(ctx) {
   } = ctx;
 
   const handles = [];
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+  const launchLouvainDetection = (reason) => {
+    Promise.resolve()
+      .then(() => runLouvainCommunityDetection({ reason }))
+      .catch((error) => console.warn(`[sybil-louvain] ${reason} failed: ${error.message}`));
+  };
 
   handles.push(setInterval(() => {
     const now = Date.now();
@@ -263,6 +276,20 @@ function startSchedulers(ctx) {
   }, 300_000));
 
   handles.push(setTimeout(backfillCompositeScores, 3000));
+
+  const louvainState = getLouvainCommunityDetectionState();
+  if (!louvainState?.lastRunAt) {
+    handles.push(setTimeout(() => {
+      if (getLouvainCommunityDetectionState()?.lastRunAt) return;
+      launchLouvainDetection('startup_bootstrap');
+    }, FIVE_MINUTES_MS));
+  }
+
+  const dailyLouvainStarter = setTimeout(() => {
+    launchLouvainDetection('scheduled');
+    handles.push(setInterval(() => launchLouvainDetection('scheduled'), DAY_MS));
+  }, getMsUntilNextLouvainWindow());
+  handles.push(dailyLouvainStarter);
 
   return handles;
 }

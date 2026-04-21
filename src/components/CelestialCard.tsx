@@ -144,6 +144,14 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const [unsucking, setUnsucking] = useState(false);
 
   const [sybilRisk, setSybilRisk] = useState<SybilCardRisk | null>(null);
+  const [reputationSignals, setReputationSignals] = useState<{
+    temporalCohortScore?: number;
+    fundingDepth?: number;
+    splFlowDetected?: boolean;
+    hubSpokeScore?: number;
+    adaptiveThresholdTriggered?: boolean;
+    version?: number;
+  } | null>(null);
   const [fundingSources, setFundingSources] = useState<
     {
       address: string;
@@ -241,6 +249,22 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             signals: d.signals as SybilSignal[] | undefined,
             metrics: d.metrics,
           });
+          // Extract temporal cohort signals from reputation response if available
+          const repSignals = d.reputationSignals as Record<string, unknown> | undefined;
+          if (repSignals && typeof repSignals === 'object') {
+            setReputationSignals({
+              temporalCohortScore:
+                typeof repSignals.temporalCohortScore === 'number' ? repSignals.temporalCohortScore : undefined,
+              fundingDepth: typeof repSignals.fundingDepth === 'number' ? repSignals.fundingDepth : undefined,
+              splFlowDetected: typeof repSignals.splFlowDetected === 'boolean' ? repSignals.splFlowDetected : undefined,
+              hubSpokeScore: typeof repSignals.hubSpokeScore === 'number' ? repSignals.hubSpokeScore : undefined,
+              adaptiveThresholdTriggered:
+                typeof repSignals.adaptiveThresholdTriggered === 'boolean'
+                  ? repSignals.adaptiveThresholdTriggered
+                  : undefined,
+              version: typeof repSignals.version === 'number' ? repSignals.version : undefined,
+            });
+          }
           setHasFullSybilAnalysis(true);
           setTimeout(() => refetchComposite(), 500);
         } catch {
@@ -264,7 +288,31 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         }
       })();
 
-      await Promise.allSettled([sybilTask, fundingTask]);
+      const reputationTask = (async () => {
+        try {
+          const r3 = await fetch(`${base}/api/v1/reputation/${address}`);
+          if (!cancelled && r3.ok) {
+            const d3 = await r3.json();
+            const sigs = d3?.signals;
+            if (sigs && typeof sigs === 'object' && !Array.isArray(sigs)) {
+              setReputationSignals({
+                temporalCohortScore:
+                  typeof sigs.temporalCohortScore === 'number' ? sigs.temporalCohortScore : undefined,
+                fundingDepth: typeof sigs.fundingDepth === 'number' ? sigs.fundingDepth : undefined,
+                splFlowDetected: typeof sigs.splFlowDetected === 'boolean' ? sigs.splFlowDetected : undefined,
+                hubSpokeScore: typeof sigs.hubSpokeScore === 'number' ? sigs.hubSpokeScore : undefined,
+                adaptiveThresholdTriggered:
+                  typeof sigs.adaptiveThresholdTriggered === 'boolean' ? sigs.adaptiveThresholdTriggered : undefined,
+                version: typeof sigs.version === 'number' ? sigs.version : undefined,
+              });
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      })();
+
+      await Promise.allSettled([sybilTask, fundingTask, reputationTask]);
     })();
 
     return () => {
@@ -1278,6 +1326,54 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               </div>
                             );
                           })()}
+
+                        {/* Temporal Cohort & Funding Signals (version 2) */}
+                        {reputationSignals?.version === 2 && (
+                          <div className="space-y-1.5">
+                            {(reputationSignals.fundingDepth ?? 0) >= 3 && (
+                              <div className="text-[10px] text-red-300">
+                                ⚠ Deep funding chain: {reputationSignals.fundingDepth}-hop trace
+                              </div>
+                            )}
+                            {reputationSignals.splFlowDetected && (
+                              <div className="text-[10px] text-orange-300">Funded via stablecoin</div>
+                            )}
+                            {(reputationSignals.hubSpokeScore ?? 0) > 0.5 && (
+                              <div className="text-[10px] text-amber-300">
+                                Hub-spoke pattern ({Math.round((reputationSignals.hubSpokeScore ?? 0) * 100)}%
+                                dominance)
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Birthday Cohort Panel */}
+                        {reputationSignals?.version === 2 && (reputationSignals?.temporalCohortScore ?? 0) > 0.3 && (
+                          <div className="mt-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+                            <div className="flex items-center gap-2 mb-1">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                              <span className="text-[11px] font-bold text-amber-300">BIRTHDAY COHORT</span>
+                            </div>
+                            <p className="text-[10px] text-white/60 leading-relaxed">
+                              This wallet appears created within a <strong>1-hour window</strong> alongside others
+                              sharing the same funding source. Often indicates coordinated farm activity.
+                            </p>
+                            <div className="mt-2 flex items-center gap-3 text-[9px] text-white/40">
+                              <span>
+                                Similarity:{' '}
+                                <strong className="text-amber-300">
+                                  {Math.round((reputationSignals.temporalCohortScore ?? 0) * 100)}%
+                                </strong>
+                              </span>
+                              {(reputationSignals.fundingDepth ?? 0) > 2 && (
+                                <span>
+                                  Funding chain:{' '}
+                                  <strong className="text-red-300">{reputationSignals.fundingDepth} hops</strong>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Trust Recovery link */}
                         {dossierRisk.trustScore < 80 && (

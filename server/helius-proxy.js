@@ -48,6 +48,7 @@ import { DataStore } from './services/datastore.js';
 import { createPersistenceServices } from './services/persistence.js';
 import { createReputationBuilderService } from './services/reputationBuilder.js';
 import { startSchedulers } from './services/scheduler.js';
+import { buildDeterministicClusterId, upsertSybilClusterWithMembers } from './services/sybilClusterStore.js';
 import { createSybilClusterService } from './services/sybilCluster.js';
 import { backfillWalletDatabaseAsync, backfillWalletDatabaseSync } from './services/walletBackfill.js';
 import {
@@ -103,6 +104,7 @@ import { registerReputationRoute } from './routes/reputation.js';
 import { registerTournamentRoute } from './routes/tournament.js';
 import { registerVaultRoute } from './routes/vault.js';
 import { registerWalletRoute } from './routes/wallet.js';
+import { registerAdminRoute } from './routes/admin.js';
 import { formatActionAddress, isFungibleAsset } from './utils/formatters.js';
 import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
@@ -1206,7 +1208,7 @@ function getStoredDominantFundingSource(address) {
 
 function detectTemporalFundingCohort({ address, firstTxBlockTime, txCount, dominantFunder }) {
   if (!address || !dominantFunder || !Number.isFinite(Number(firstTxBlockTime)) || !Number.isFinite(Number(txCount)) || txCount <= 0) {
-    return { cohortId: null, score: 0, walletCount: 0 };
+    return { cohortId: null, score: 0, walletCount: 0, members: [] };
   }
 
   const members = [{
@@ -1231,12 +1233,12 @@ function detectTemporalFundingCohort({ address, firstTxBlockTime, txCount, domin
     });
   }
 
-  if (members.length < 3) return { cohortId: null, score: 0, walletCount: members.length };
+  if (members.length < 3) return { cohortId: null, score: 0, walletCount: members.length, members };
 
   const firstWalletAt = Math.min(...members.map((member) => member.firstTxAt));
   const windowEndAt = Math.max(...members.map((member) => member.firstTxAt));
   const birthWindowSeconds = Math.max(0, windowEndAt - firstWalletAt);
-  if (birthWindowSeconds > 24 * 3600) return { cohortId: null, score: 0, walletCount: members.length };
+  if (birthWindowSeconds > 24 * 3600) return { cohortId: null, score: 0, walletCount: members.length, members };
 
   const minTxCount = Math.min(...members.map((member) => member.txCount));
   const maxTxCount = Math.max(...members.map((member) => member.txCount));
@@ -1258,7 +1260,86 @@ function detectTemporalFundingCohort({ address, firstTxBlockTime, txCount, domin
     first_common_funder: dominantFunder,
   });
 
-  return { cohortId, score, walletCount: members.length };
+  return { cohortId, score, walletCount: members.length, members };
+}
+
+function computeSameFunderScore(memberCount, siblingCount) {
+  const normalizedMembers = Math.max(0, Number(memberCount) || 0);
+  const normalizedSiblings = Math.max(0, Number(siblingCount) || 0);
+  const coverageScore = normalizedSiblings > 0
+    ? Math.min(1, Math.max(0, (normalizedMembers - 1) / normalizedSiblings))
+    : (normalizedMembers >= 3 ? 1 : 0);
+  const sizeScore = Math.min(1, normalizedMembers / 6);
+  return Number(((coverageScore * 0.6) + (sizeScore * 0.4)).toFixed(4));
+}
+
+function persistAutoDetectedScanClusters({
+  address,
+  temporalCohort,
+  temporalCohortScore,
+  fundingChainDepth,
+  sameDepthSiblings,
+}) {
+  const now = Date.now();
+  const detectedClusters = [];
+  const normalizedSameDepthSiblings = [...new Set(
+    Array.from(sameDepthSiblings || [])
+      .map((sibling) => String(sibling ?? '').trim())
+      .filter(Boolean)
+  )];
+
+  const cohortMembers = [...new Set(
+    (temporalCohort?.members || [])
+      .map((member) => member?.address)
+      .filter(Boolean)
+  )].sort((left, right) => left.localeCompare(right));
+  if (temporalCohort?.cohortId && cohortMembers.length >= 3) {
+    const sameFunderScore = computeSameFunderScore(cohortMembers.length, Math.max(normalizedSameDepthSiblings.length, cohortMembers.length - 1));
+    const confidence = Math.min(0.95, ((Number(temporalCohortScore) || 0) * 0.5) + (sameFunderScore * 0.5));
+    const clusterId = buildDeterministicClusterId(cohortMembers);
+    if (clusterId) {
+      upsertSybilClusterWithMembers({
+        clusterId,
+        members: cohortMembers,
+        detectionMethod: 'temporal_same_funder',
+        confidence,
+        detectedAt: now,
+        lastUpdatedAt: now,
+      });
+      detectedClusters.push({
+        clusterId,
+        detectionMethod: 'temporal_same_funder',
+        size: cohortMembers.length,
+        confidence,
+      });
+    }
+  }
+
+  const deepChainMembers = [address, ...normalizedSameDepthSiblings].sort((left, right) => left.localeCompare(right));
+  if ((Number(fundingChainDepth) || 0) >= 3 && deepChainMembers.length >= 3) {
+    const depthScore = Math.min(1, (Number(fundingChainDepth) || 0) / 4);
+    const siblingScore = computeSameFunderScore(deepChainMembers.length, normalizedSameDepthSiblings.length);
+    const confidence = Math.min(0.95, (depthScore * 0.55) + (siblingScore * 0.45));
+    const clusterId = buildDeterministicClusterId(deepChainMembers);
+    if (clusterId) {
+      upsertSybilClusterWithMembers({
+        clusterId,
+        members: deepChainMembers,
+        detectionMethod: 'deep_funder_chain',
+        confidence,
+        detectedAt: now,
+        lastUpdatedAt: now,
+      });
+      detectedClusters.push({
+        clusterId,
+        detectionMethod: 'deep_funder_chain',
+        size: deepChainMembers.length,
+        confidence,
+      });
+    }
+  }
+
+  return detectedClusters;
 }
 
 function snapshotSybilVerdictHistory(address, cacheEntry) {
@@ -3885,6 +3966,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (await authHandler(req, res, url, pathname)) {
+    return;
+  }
+
+  if (await adminHandler(req, res, url, pathname)) {
     return;
   }
 
@@ -6867,9 +6952,11 @@ const server = http.createServer(async (req, res) => {
       let fundingChainDepth = 0;
       let hubSpokeScore = 0;
       let temporalCohortScore = 0;
+      let temporalCohort = null;
       let splFlowDetected = Boolean(enhancedSampleSummary?.splFlowDetected);
       let adaptiveThresholdTriggered = false;
       const allSiblings = new Set();
+      const sameDepthSiblings = new Set();
       let hasSolDomain = false;
       let topFunderPctExport = 0; // share of top funder in total received SOL
       let topFunderTxCount = 0; // how many times top funder sent to target
@@ -6960,6 +7047,7 @@ const server = http.createServer(async (req, res) => {
                   for (const sibling of level1Summary.outgoing.keys()) {
                     if (sibling !== topFunder && sibling !== address && sibling !== '11111111111111111111111111111111' && !isProgramAddress(sibling, new Set())) {
                       allSiblings.add(sibling);
+                      sameDepthSiblings.add(sibling);
                     }
                   }
                   hubSpokeScore = Math.min(1, allSiblings.size / 20);
@@ -6989,6 +7077,7 @@ const server = http.createServer(async (req, res) => {
                         if (diff > 0.01 && acc !== topFunder && acc !== address && acc !== '11111111111111111111111111111111'
                             && !isProgramAddress(acc, txProgs)) {
                           allSiblings.add(acc);
+                          sameDepthSiblings.add(acc);
                         }
                       }
                     }
@@ -7080,7 +7169,7 @@ const server = http.createServer(async (req, res) => {
           }
 
           if (resolvedTopFunder && Number.isFinite(Number(firstTxBlockTime)) && totalSigCount > 0) {
-            const temporalCohort = detectTemporalFundingCohort({
+            temporalCohort = detectTemporalFundingCohort({
               address,
               firstTxBlockTime,
               txCount: totalSigCount,
@@ -7775,6 +7864,13 @@ const server = http.createServer(async (req, res) => {
         timestamp: new Date().toISOString(),
       };
       analysis.verdict = getSybilVerdict(analysis);
+      persistAutoDetectedScanClusters({
+        address,
+        temporalCohort,
+        temporalCohortScore,
+        fundingChainDepth,
+        sameDepthSiblings,
+      });
       analysis.walletType = (() => {
         if (analysis.verdict?.key === 'confirmed_sybil' || analysis.verdict?.key === 'probable_sybil') return 'sybil';
         if (analysis.verdict?.key === 'cluster_linked') return 'sybil_cluster';
@@ -11190,6 +11286,7 @@ const reputationHandler = registerReputationRoute(ctx);
 const tournamentHandler = registerTournamentRoute(ctx);
 const vaultHandler = registerVaultRoute(ctx);
 const walletHandler = registerWalletRoute(ctx);
+const adminHandler = registerAdminRoute(ctx);
 
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
