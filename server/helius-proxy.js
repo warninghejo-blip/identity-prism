@@ -5549,6 +5549,29 @@ const adminHandler = registerAdminRoute(ctx);
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 
+function validateProductionEnv() {
+  const warnings = [];
+  const errors = [];
+
+  if (!process.env.ADMIN_KEY || process.env.ADMIN_KEY.length < 32) {
+    warnings.push('ADMIN_KEY is missing or too short (< 32 chars). Use: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  }
+  if (!process.env.TREASURY_ADDRESS) {
+    errors.push('TREASURY_ADDRESS is required for buy operations');
+  }
+  if (!process.env.REFERRAL_SALT) {
+    warnings.push('REFERRAL_SALT not set — referral codes will break on server restart');
+  }
+
+  warnings.forEach(w => console.warn(`[STARTUP WARNING] ${w}`));
+  if (errors.length > 0) {
+    errors.forEach(e => console.error(`[STARTUP ERROR] ${e}`));
+    // Don't crash — just warn. Let the operator decide.
+  }
+}
+
+validateProductionEnv();
+
 // Load data from Firestore (fallback JSON), then start server
 initOrchestrator.initialize(ctx).then(() => {
   server.listen(PORT, HOST, () => {

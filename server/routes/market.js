@@ -124,7 +124,8 @@ function registerMarketRoute(ctx) {
         const price = await getCachedSolPriceUsd();
         respondJson(res, 200, { usd: price });
       } catch (error) {
-        respondJson(res, 500, { usd: null, error: error instanceof Error ? error.message : String(error) });
+        console.error('[market] operation failed:', error);
+        respondJson(res, 500, { usd: null, error: 'Service temporarily unavailable' });
       }
       return true;
     }
@@ -135,7 +136,8 @@ function registerMarketRoute(ctx) {
         const price = await getCachedSkrPriceUsd();
         respondJson(res, 200, { usd: price });
       } catch (error) {
-        respondJson(res, 500, { usd: null, error: error instanceof Error ? error.message : String(error) });
+        console.error('[market] operation failed:', error);
+        respondJson(res, 500, { usd: null, error: 'Service temporarily unavailable' });
       }
       return true;
     }
@@ -177,7 +179,8 @@ function registerMarketRoute(ctx) {
           skrAmountRaw: quote.rawAmount,
         });
       } catch (error) {
-        respondJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+        console.error('[market] operation failed:', error);
+        respondJson(res, 500, { error: 'Service temporarily unavailable' });
       }
       return true;
     }
@@ -256,7 +259,8 @@ function registerMarketRoute(ctx) {
           quoteResponse: quoteData,
         });
       } catch (error) {
-        respondJson(res, 502, { error: error instanceof Error ? error.message : 'Swap quote fetch failed' });
+        console.error('[market] operation failed:', error);
+        respondJson(res, 502, { error: 'Service temporarily unavailable' });
       }
       return true;
     }
@@ -394,7 +398,8 @@ function registerMarketRoute(ctx) {
           transport: 'legacy_raw',
         });
       } catch (error) {
-        respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
+        console.error('[market] operation failed:', error);
+        respondJson(res, 400, { error: 'Service temporarily unavailable' });
       }
       return true;
     }
@@ -467,7 +472,8 @@ function registerMarketRoute(ctx) {
         }
         respondJson(res, 200, executeData);
       } catch (error) {
-        respondJson(res, 400, { error: error instanceof Error ? error.message : 'Invalid request body' });
+        console.error('[market] operation failed:', error);
+        respondJson(res, 400, { error: 'Service temporarily unavailable' });
       }
       return true;
     }

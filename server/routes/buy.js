@@ -5,6 +5,8 @@ import {
   getMint,
 } from '@solana/spl-token';
 
+const pendingBuyRequests = new Set();
+
 function registerBuyRoute(ctx) {
   const {
     core: {
@@ -96,8 +98,9 @@ function registerBuyRoute(ctx) {
         }
 
         if (!txSignature || typeof txSignature !== 'string') return respondJson(res, 400, { error: 'txSignature required' });
+        if (pendingBuyRequests.has(txSignature)) return respondJson(res, 429, { error: 'Transaction verification in progress' });
         if (usedBuyTxSignatures.has(txSignature)) return respondJson(res, 400, { error: 'Transaction already used' });
-        usedBuyTxSignatures.set(txSignature, Date.now());
+        pendingBuyRequests.add(txSignature);
 
         try {
           const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
@@ -123,6 +126,8 @@ function registerBuyRoute(ctx) {
           usedBuyTxSignatures.delete(txSignature);
           console.error('[buy] Transaction verification failed:', error.message);
           return respondJson(res, 400, { error: 'Transaction verification failed' });
+        } finally {
+          pendingBuyRequests.delete(txSignature);
         }
 
         const prevBuyBal = getCoinBalance(address);
@@ -214,8 +219,9 @@ function registerBuyRoute(ctx) {
         }
 
         if (!txSignature || typeof txSignature !== 'string') return respondJson(res, 400, { error: 'txSignature required' });
+        if (pendingBuyRequests.has(txSignature)) return respondJson(res, 429, { error: 'Transaction verification in progress' });
         if (usedBuyTxSignatures.has(txSignature)) return respondJson(res, 400, { error: 'Transaction already used' });
-        usedBuyTxSignatures.set(txSignature, Date.now());
+        pendingBuyRequests.add(txSignature);
 
         const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
         if (!solUsd || !skrUsd) {
@@ -257,20 +263,17 @@ function registerBuyRoute(ctx) {
           const validTransfer = instructions.some((ix) => {
             const parsed = ix.parsed;
             if (!parsed) return false;
-            if (parsed.type === 'transferChecked' || parsed.type === 'transfer') {
+            // Only accept transferChecked which includes mint verification
+            if (parsed.type === 'transfer') return false; // Reject non-checked transfers — no mint verification possible
+            if (parsed.type === 'transferChecked') {
               const info = parsed.info;
               const authority = String(info.authority || info.multisigAuthority || '');
               const destination = String(info.destination || '');
               if (authority !== address || destination !== treasuryAtaStr) return false;
               const mint = String(info.mint || '');
-              const amount = parsed.type === 'transferChecked'
-                ? Number(info.tokenAmount?.uiAmount ?? info.tokenAmount?.uiAmountString ?? 0)
-                : Number(info.amount || 0) / 10 ** (mintInfo.info.decimals || 0);
+              if (mint !== skrMintAddr) return false;
+              const amount = Number(info.tokenAmount?.uiAmount ?? info.tokenAmount?.uiAmountString ?? 0);
               const minAmount = expectedSkrAmount * 0.95;
-              if (parsed.type === 'transferChecked') {
-                if (mint !== skrMintAddr) return false;
-                return Number.isFinite(amount) && amount >= minAmount;
-              }
               return Number.isFinite(amount) && amount >= minAmount;
             }
             return false;
@@ -283,6 +286,8 @@ function registerBuyRoute(ctx) {
           usedBuyTxSignatures.delete(txSignature);
           console.error('[buy-skr] Transaction verification failed:', error.message);
           return respondJson(res, 400, { error: 'Transaction verification failed' });
+        } finally {
+          pendingBuyRequests.delete(txSignature);
         }
 
         const prevBuyBal = getCoinBalance(address);

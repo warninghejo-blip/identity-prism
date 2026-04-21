@@ -305,9 +305,25 @@ export function registerAdminRoute(ctx) {
         if (typeof data.coins === 'number' && (!Number.isInteger(data.coins) || data.coins < 0 || data.coins > 1_000_000_000)) {
           return respondJson(res, 400, { error: 'coins must be an integer between 0 and 1,000,000,000' });
         }
-        updateWalletEntry(address, data);
-        if (typeof data.coins === 'number') setCoinBalance(address, data.coins);
-        respondJson(res, 200, { ok: true, address, updatedFields: Object.keys(data) });
+        // Security: allowlist of admin-settable fields; block all internal fields (starting with _)
+        const ADMIN_SETTABLE_FIELDS = new Set([
+          'coins', 'coinBalance', 'score', 'tier', 'badges',
+          'displayName', 'avatar', 'bio', 'socialLinks',
+          'suspended', 'flagged', 'notes',
+          'scanCount', 'firstSeenAt', 'lastSeenAt', 'source',
+        ]);
+        const sanitizedData = {};
+        for (const [key, value] of Object.entries(data)) {
+          if (ADMIN_SETTABLE_FIELDS.has(key)) {
+            sanitizedData[key] = value;
+          }
+        }
+        if (Object.keys(sanitizedData).length === 0) {
+          return respondJson(res, 400, { error: 'No valid fields to update' });
+        }
+        updateWalletEntry(address, sanitizedData);
+        if (typeof sanitizedData.coins === 'number') setCoinBalance(address, sanitizedData.coins);
+        respondJson(res, 200, { ok: true, address, updatedFields: Object.keys(sanitizedData) });
       } catch (error) {
         console.error('[admin] set-wallet error:', error);
         respondJson(res, 400, { error: 'Internal error' });

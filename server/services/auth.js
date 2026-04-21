@@ -6,11 +6,12 @@ import jwt from 'jsonwebtoken';
 const JWT_SECRET_FILE = path.join(process.cwd(), '.jwt_secret');
 const JWT_SECRET = (() => {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET.trim();
+  console.warn('[SECURITY WARNING] JWT_SECRET env var not set — using auto-generated file fallback. Set JWT_SECRET for production!');
   try {
     if (fs.existsSync(JWT_SECRET_FILE)) return fs.readFileSync(JWT_SECRET_FILE, 'utf8').trim();
   } catch {}
   const secret = crypto.randomBytes(32).toString('hex');
-  try { fs.writeFileSync(JWT_SECRET_FILE, secret, 'utf8'); } catch (e) { console.warn('[jwt] Could not persist secret:', e.message); }
+  try { fs.writeFileSync(JWT_SECRET_FILE, secret, { mode: 0o600 }); } catch (e) { console.warn('[jwt] Could not persist secret:', e.message); }
   return secret;
 })();
 

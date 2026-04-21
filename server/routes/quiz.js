@@ -35,7 +35,7 @@ function registerQuizRoute(ctx) {
     if (pathname === '/api/quiz/question' && req.method === 'GET') {
       if (!ipRateLimit('quiz', getClientIp(req), 10, 5000)) return respondJson(res, 429, { error: 'Rate limited' });
       const q = QUIZ_BANK[Math.floor(Math.random() * QUIZ_BANK.length)];
-      const qId = crypto.createHash('sha256').update(q.q + q.a).digest('hex').slice(0, 12);
+      const qId = crypto.randomBytes(16).toString('hex');
       quizAnswers.set(qId, { correct: q.a, expiresAt: Date.now() + 60_000 });
       const options = [...q.options].sort(() => Math.random() - 0.5);
       respondJson(res, 200, { id: qId, question: q.q, options, category: q.cat, difficulty: q.diff || 'medium' });

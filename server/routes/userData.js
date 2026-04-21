@@ -69,16 +69,17 @@ function registerUserDataRoute(ctx) {
       try {
         const raw = await readBody(req);
         const parsed = JSON.parse(raw);
-        const { address: addr, score } = parsed;
-        if (!addr || typeof addr !== 'string' || typeof score !== 'number') {
-          respondJson(res, 400, { error: 'address (string) and score (number) required' });
+        const { address: addr } = parsed;
+        if (!addr || typeof addr !== 'string') {
+          respondJson(res, 400, { error: 'address (string) required' });
           return true;
         }
         if (addr !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-        if (typeof score !== 'number' || score < 0 || score > 1000) return respondJson(res, 400, { error: 'Score must be between 0 and 1000' });
-        const computedTier = score >= 800 ? 'binary_sun' : score >= 600 ? 'pulsar' : score >= 400 ? 'neutron_star' : score >= 200 ? 'dwarf_star' : 'mercury';
-        const entry = addScoreEntry(addr, score, computedTier);
+        // Security: ignore client-provided score — use server-computed value to prevent tier self-elevation
         const existingWallet = walletDatabase.get(addr) || {};
+        const serverScore = existingWallet?.composite?.score ?? existingWallet?.score ?? 0;
+        const computedTier = serverScore >= 800 ? 'binary_sun' : serverScore >= 600 ? 'pulsar' : serverScore >= 400 ? 'neutron_star' : serverScore >= 200 ? 'dwarf_star' : 'mercury';
+        const entry = addScoreEntry(addr, serverScore, computedTier);
         updateWalletEntry(addr, {
           firstSeenAt: existingWallet.firstSeenAt || new Date().toISOString(),
           lastSeenAt: new Date().toISOString(),
@@ -90,7 +91,7 @@ function registerUserDataRoute(ctx) {
             setPrismEarnRateLimit(scanKey, { date: today, count: ((scanEntry && scanEntry.date === today) ? scanEntry.count : 0) + 1 });
             return 1;
           })()),
-          score,
+          score: serverScore,
           tier: computedTier,
           source: 'live',
         });

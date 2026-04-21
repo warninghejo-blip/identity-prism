@@ -1,4 +1,5 @@
 const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
+const pendingEarnRequests = new Set();
 
 function registerEarnRoute(ctx) {
   const { core, wallet, economy, sybil, quest, game, arena } = ctx;
@@ -164,14 +165,27 @@ function registerEarnRoute(ctx) {
           updateWalletEntry(address, { _completedTextQuests: { ...completedQuests, [qid]: Date.now() } });
         }
         if (source === 'challenge_win') {
-          const recentChallenges = Array.from(activeChallenges.values()).filter(
-            c => c.status === 'completed' && c.winner === address && !c.earnClaimed && Date.now() - new Date(c.completedAt || c.createdAt).getTime() < 600_000
-          );
-          if (recentChallenges.length === 0) return respondJson(res, 400, { error: 'No recent challenge win found' });
-          recentChallenges[0].earnClaimed = true;
+          const earnLockKey = `${address}:challenge_win`;
+          if (pendingEarnRequests.has(earnLockKey)) {
+            return respondJson(res, 429, { error: 'Earn request in progress' });
+          }
+          pendingEarnRequests.add(earnLockKey);
           try {
-            await saveChallenges();
-          } catch (err) { console.error('[earn] saveChallenges failed:', err); }
+            const recentChallenges = Array.from(activeChallenges.values()).filter(
+              c => c.status === 'completed' && c.winner === address && !c.earnClaimed && Date.now() - new Date(c.completedAt || c.createdAt).getTime() < 600_000
+            );
+            if (recentChallenges.length === 0) {
+              pendingEarnRequests.delete(earnLockKey);
+              return respondJson(res, 400, { error: 'No recent challenge win found' });
+            }
+            // Set earnClaimed FIRST (prevents race), then persist
+            recentChallenges[0].earnClaimed = true;
+            try {
+              await saveChallenges();
+            } catch (err) { console.error('[earn] saveChallenges failed:', err); }
+          } finally {
+            pendingEarnRequests.delete(earnLockKey);
+          }
         }
 
         let scanRewardState = null;
