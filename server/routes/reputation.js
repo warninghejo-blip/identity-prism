@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
+import { checkApiKey } from '../services/apiKeyMiddleware.js';
 
 function registerReputationRoute(ctx) {
   const {
@@ -32,6 +33,9 @@ function registerReputationRoute(ctx) {
 
   return async function handleReputationRoute(req, res, url, pathname) {
     if (pathname.startsWith('/api/actions/sybil/')) {
+      const apiKeyResult = await checkApiKey(respondJson, req, res);
+      if (!apiKeyResult.ok) return true;
+      if (apiKeyResult.remaining != null) res.setHeader('X-RateLimit-Remaining', String(apiKeyResult.remaining));
       if (!ipRateLimit('actions', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
 
       if (req.method === 'OPTIONS') {
@@ -135,6 +139,9 @@ function registerReputationRoute(ctx) {
     }
 
     if (publicReputationMatch && req.method === 'GET') {
+      const apiKeyResult = await checkApiKey(respondJson, req, res);
+      if (!apiKeyResult.ok) return true;
+      if (apiKeyResult.remaining != null) res.setHeader('X-RateLimit-Remaining', String(apiKeyResult.remaining));
       if (!ipRateLimit('public_reputation', getClientIp(req), 60, 60000)) {
         return respondJson(res, 429, { error: 'Too many reputation requests' });
       }

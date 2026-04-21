@@ -187,6 +187,94 @@ export function registerAdminRoute(ctx) {
       return true;
     }
 
+    // ── POST /api/admin/api-keys ───────────────────────────────────────────
+    if (pathname === '/api/admin/api-keys' && req.method === 'POST') {
+      if (!ipRateLimit('admin_api_keys', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        respondJson(res, 400, { error: 'Invalid JSON body' });
+        return true;
+      }
+
+      const { owner_name, contact_email, tier, notes } = body || {};
+      const validTiers = new Set(['free', 'pro', 'enterprise']);
+      if (!tier || !validTiers.has(tier)) {
+        respondJson(res, 400, { error: 'tier must be one of: free, pro, enterprise' });
+        return true;
+      }
+
+      const key = crypto.randomUUID();
+      try {
+        appDb.prepare(
+          'INSERT INTO api_keys (key, owner_name, contact_email, tier, created_at, notes) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(key, owner_name ?? null, contact_email ?? null, tier, Date.now(), notes ?? null);
+        respondJson(res, 201, { key, owner_name: owner_name ?? null, tier });
+      } catch (err) {
+        respondJson(res, 500, { error: 'Database error', detail: err.message });
+      }
+      return true;
+    }
+
+    // ── GET /api/admin/api-keys ────────────────────────────────────────────
+    if (pathname === '/api/admin/api-keys' && req.method === 'GET') {
+      if (!ipRateLimit('admin_api_keys', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10) || 50, 200);
+      const today = new Date().toISOString().slice(0, 10);
+
+      try {
+        const rows = appDb.prepare(`
+          SELECT ak.key, ak.owner_name, ak.contact_email, ak.tier,
+                 ak.created_at, ak.revoked_at, ak.last_used_at, ak.notes,
+                 COALESCE(aku.count, 0) AS today_count
+          FROM api_keys ak
+          LEFT JOIN api_key_usage aku ON aku.key = ak.key AND aku.day = ?
+          ORDER BY ak.created_at DESC
+          LIMIT ?
+        `).all(today, limit);
+        respondJson(res, 200, { keys: rows });
+      } catch (err) {
+        respondJson(res, 500, { error: 'Database error', detail: err.message });
+      }
+      return true;
+    }
+
+    // ── POST /api/admin/api-keys/:key/revoke ──────────────────────────────
+    const revokeMatch = pathname.match(/^\/api\/admin\/api-keys\/([^/]+)\/revoke$/);
+    if (revokeMatch && req.method === 'POST') {
+      if (!ipRateLimit('admin_api_keys', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      const targetKey = revokeMatch[1];
+      try {
+        const result = appDb.prepare(
+          'UPDATE api_keys SET revoked_at = ? WHERE key = ? AND revoked_at IS NULL'
+        ).run(Date.now(), targetKey);
+        if (result.changes === 0) {
+          respondJson(res, 404, { error: 'API key not found or already revoked' });
+        } else {
+          respondJson(res, 200, { ok: true, key: targetKey });
+        }
+      } catch (err) {
+        respondJson(res, 500, { error: 'Database error', detail: err.message });
+      }
+      return true;
+    }
+
     return false;
   };
 }

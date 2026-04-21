@@ -184,7 +184,27 @@ function initAppDbSchema(db) {
         summary_json TEXT,
         updated_at INTEGER
       );
-  
+
+      CREATE TABLE IF NOT EXISTS api_keys (
+        key TEXT PRIMARY KEY,
+        owner_name TEXT,
+        contact_email TEXT,
+        tier TEXT NOT NULL,
+        created_at INTEGER,
+        revoked_at INTEGER,
+        last_used_at INTEGER,
+        notes TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_keys_tier ON api_keys(tier, revoked_at);
+
+      CREATE TABLE IF NOT EXISTS api_key_usage (
+        key TEXT,
+        day TEXT,
+        count INTEGER DEFAULT 0,
+        PRIMARY KEY (key, day)
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_usage_day ON api_key_usage(day);
+
       PRAGMA user_version = 2;
      `);
   }
