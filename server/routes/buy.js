@@ -122,6 +122,7 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' });
           }
+          usedBuyTxSignatures.set(txSignature, Date.now());
         } catch (error) {
           usedBuyTxSignatures.delete(txSignature);
           console.error('[buy] Transaction verification failed:', error.message);
@@ -282,6 +283,7 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'SKR transfer to treasury not verified' });
           }
+          usedBuyTxSignatures.set(txSignature, Date.now());
         } catch (error) {
           usedBuyTxSignatures.delete(txSignature);
           console.error('[buy-skr] Transaction verification failed:', error.message);
