@@ -5560,6 +5560,13 @@ setInterval(() => {
   }
 }, 600_000);
 
+setInterval(() => {
+  if (walletIpLog.size > 10000) {
+    const entries = [...walletIpLog.keys()];
+    entries.slice(0, entries.length - 5000).forEach((k) => walletIpLog.delete(k));
+  }
+}, 3600_000);
+
 process.on('uncaughtException', (err, origin) => {
   console.error(`[fatal:${origin}]`, err.stack || err);
 });

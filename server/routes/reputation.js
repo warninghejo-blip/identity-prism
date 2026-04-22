@@ -7,6 +7,10 @@ import {
 } from '@solana/web3.js';
 import { checkApiKey } from '../services/apiKeyMiddleware.js';
 
+const apiKeyRegistry = new Map(
+  (process.env.REPUTATION_API_KEYS || '').split(',').filter(Boolean).map((key) => [key.trim(), true]),
+);
+
 function registerReputationRoute(ctx) {
   const {
     core: {
@@ -258,9 +262,6 @@ function registerReputationRoute(ctx) {
       if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
       const ip = getClientIp(req);
       const apiKey = req.headers['x-api-key'];
-      const apiKeyRegistry = new Map(
-        (process.env.REPUTATION_API_KEYS || '').split(',').filter(Boolean).map((key) => [key.trim(), true]),
-      );
       let maxPerMin = 10;
       if (apiKey) {
         if (!apiKeyRegistry.has(apiKey) && apiKeyRegistry.size > 0) {

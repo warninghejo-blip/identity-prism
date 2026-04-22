@@ -626,19 +626,7 @@ function registerArenaRoute(ctx) {
       if (!ipRateLimit('ch_abandon', getClientIp(req), 10, 60000)) {
         return respondJson(res, 429, { error: 'Too many requests' });
       }
-      const urlToken = url.searchParams.get('token');
-      let jwtAuth;
-      if (urlToken && typeof urlToken === 'string') {
-        try {
-          const payload = verifyJwt(urlToken);
-          jwtAuth = { ok: true, address: payload.address };
-        } catch {
-          respondJson(res, 401, { error: 'Invalid or expired auth token' });
-          return true;
-        }
-      } else {
-        jwtAuth = requireJwt(req, res);
-      }
+      const jwtAuth = requireJwt(req, res);
       if (!jwtAuth.ok) return true;
       try {
         const { challengeId } = JSON.parse(await readBody(req));

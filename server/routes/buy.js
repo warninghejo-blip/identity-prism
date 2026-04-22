@@ -113,7 +113,11 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'Transaction failed on-chain' });
           }
-          const treasuryAddr = treasuryAddress || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          if (!treasuryAddress) {
+            usedBuyTxSignatures.delete(txSignature);
+            return respondJson(res, 503, { error: 'Service not configured' });
+          }
+          const treasuryAddr = treasuryAddress;
           const instructions = tx.transaction?.message?.instructions || [];
           const validTransfer = instructions.some((ix) => {
             if (ix.programId?.toBase58?.() === '11111111111111111111111111111111' && ix.parsed?.type === 'transfer') {
@@ -252,7 +256,11 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'Transaction failed on-chain' });
           }
-          const treasuryAddr = treasuryAddress || '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
+          if (!treasuryAddress) {
+            usedBuyTxSignatures.delete(txSignature);
+            return respondJson(res, 503, { error: 'Service not configured' });
+          }
+          const treasuryAddr = treasuryAddress;
           const treasuryKey = parsePublicKey(treasuryAddr, 'TREASURY_ADDRESS');
           const skrMintKey = parsePublicKey(skrMint, 'SKR_MINT');
           if (!treasuryKey || !skrMintKey) {
