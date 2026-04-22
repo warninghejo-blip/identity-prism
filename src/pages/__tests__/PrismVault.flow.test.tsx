@@ -137,7 +137,21 @@ vi.mock('@/lib/haptics', () => ({
   hapticSuccess: vi.fn(),
   hapticError: vi.fn(),
 }));
-vi.mock('@/lib/analytics', () => ({ trackWalletConnect: vi.fn(), trackWalletDisconnect: vi.fn(), trackMint: vi.fn() }));
+vi.mock('@/lib/analytics', () => ({
+  initAnalytics: vi.fn(),
+  trackEvent: vi.fn(),
+  trackPageView: vi.fn(),
+  trackWalletConnect: vi.fn(),
+  trackWalletDisconnect: vi.fn(),
+  trackMint: vi.fn(),
+  trackGameStart: vi.fn(),
+  trackGameOver: vi.fn(),
+  trackChallengeCreate: vi.fn(),
+  trackChallengeAccept: vi.fn(),
+  trackCompare: vi.fn(),
+  trackForgePurchase: vi.fn(),
+  trackConstellationSearch: vi.fn(),
+}));
 vi.mock('@/lib/prefetch', () => ({ invalidateBalanceCache: vi.fn(), prefetchWalletData: vi.fn() }));
 vi.mock('@/hooks/useCompositeScore', () => ({
   useCompositeScore: () => ({ score: null, loading: false, error: null }),

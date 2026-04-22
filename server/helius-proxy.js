@@ -102,7 +102,6 @@ import { registerHealthRoute } from './routes/health.js';
 import { registerGameRoute, registerGameV1Route } from './routes/game.js';
 import { registerLeaderboardRoute } from './routes/leaderboard.js';
 import { registerMarketRoute } from './routes/market.js';
-import { registerMarketplaceRoute } from './routes/marketplace.js';
 import { registerDiscoveryRoute } from './routes/discovery.js';
 import { registerNotificationsRoute } from './routes/notifications.js';
 import { registerQuestRoute } from './routes/quest.js';
@@ -3754,37 +3753,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (await marketplaceHandler(req, res, url, pathname)) {
-    return;
-  }
-
   if ((pathname.startsWith('/api/challenge/') || pathname.startsWith('/api/admin/challenge/') || pathname.startsWith('/api/arena/')) && await arenaHandler(req, res, url, pathname)) {
     return;
   }
 
   if (await notificationsHandler(req, res, url, pathname)) {
-    return;
-  }
-
-  // ═══ Serve Marketplace Model Files ═══
-  if (pathname.startsWith('/marketplace_models/') && req.method === 'GET') {
-    const modelsRoot = path.join(process.cwd(), 'marketplace_models');
-    const filePath = path.resolve(path.join(process.cwd(), pathname));
-    if (!filePath.startsWith(modelsRoot + path.sep) && filePath !== modelsRoot) return respondJson(res, 403, { error: 'Forbidden' });
-    if (!fs.existsSync(filePath)) return respondJson(res, 404, { error: 'Model not found' });
-    // Access control: require JWT and verify caller has purchased the listing or is the seller
-    const jwtAuth = optionalJwt(req, res);
-    if (!jwtAuth.ok) return respondJson(res, 401, { error: 'Invalid token' });
-    if (!jwtAuth.address) return respondJson(res, 401, { error: 'Authentication required to download marketplace models' });
-    const fileBasename = path.basename(filePath, path.extname(filePath)); // listing id = filename without ext
-    const listing = marketplaceListings.get(fileBasename);
-    const isSeller = listing && listing.seller === jwtAuth.address;
-    const hasPurchased = marketplacePurchases.has(`${jwtAuth.address}:${fileBasename}`);
-    if (!isSeller && !hasPurchased) return respondJson(res, 403, { error: 'Purchase required to download this model' });
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeTypes = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain' };
-    res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Access-Control-Allow-Origin': resolveCorsOrigin(req) });
-    fs.createReadStream(filePath).pipe(res);
     return;
   }
 
@@ -5020,25 +4993,6 @@ function checkTournaments() {
 // Backward compat alias
 function checkTournament() { checkTournaments(); }
 
-// ═══ Prism Marketplace ═══
-const MARKETPLACE_FILE = path.join(process.cwd(), 'marketplace_data.json');
-const marketplaceListings = new Map();
-const marketplacePurchases = new Map();
-try {
-  if (fs.existsSync(MARKETPLACE_FILE)) {
-    const raw = JSON.parse(fs.readFileSync(MARKETPLACE_FILE, 'utf8'));
-    if (raw.listings) for (const [k, v] of Object.entries(raw.listings)) marketplaceListings.set(k, v);
-    if (raw.purchases) for (const [k, v] of Object.entries(raw.purchases)) marketplacePurchases.set(k, v);
-    console.log(`[marketplace] Loaded ${marketplaceListings.size} listings`);
-  }
-} catch {}
-function saveMarketplace() {
-  const tmp = MARKETPLACE_FILE + '.tmp';
-  fs.promises.writeFile(tmp, JSON.stringify({ listings: Object.fromEntries(marketplaceListings), purchases: Object.fromEntries(marketplacePurchases) }), 'utf8')
-    .then(() => fs.promises.rename(tmp, MARKETPLACE_FILE))
-    .catch(e => console.warn('[marketplace] save error', e.message));
-}
-
 const constellationCache = new Map();
 
 // ═══ Notification System ═══
@@ -5234,8 +5188,6 @@ const ctx = createContext({
   feedItems,
   sybilInFlight,
   quizAnswers,
-  marketplaceListings,
-  marketplacePurchases,
   clusterCache,
   sybilGraph,
   reputationV2RateLimit,
@@ -5271,7 +5223,6 @@ const ctx = createContext({
   saveNotificationsDebounced,
   saveChallengesDebounced,
   savePrismDataDebounced,
-  saveMarketplace,
   debouncedSavePrism,
   saveTournament,
   saveChallenges,
@@ -5527,7 +5478,6 @@ const gameHandler = registerGameRoute(ctx);
 const gameV1Handler = registerGameV1Route(ctx);
 const healthHandler = registerHealthRoute(ctx);
 const marketHandler = registerMarketRoute(ctx);
-const marketplaceHandler = registerMarketplaceRoute(ctx);
 const metadataHandler = registerMetadataRoute(ctx);
 const notificationsHandler = registerNotificationsRoute(ctx);
 const spendHandler = registerSpendRoute(ctx);

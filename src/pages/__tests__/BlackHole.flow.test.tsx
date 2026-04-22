@@ -109,9 +109,19 @@ vi.mock('@/lib/mwaAuthorizationCache', () => ({
   mwaAuthorizationCache: { get: vi.fn(), set: vi.fn(), clear: vi.fn() },
 }));
 vi.mock('@/lib/analytics', () => ({
+  initAnalytics: vi.fn(),
+  trackEvent: vi.fn(),
+  trackPageView: vi.fn(),
   trackWalletConnect: vi.fn(),
   trackWalletDisconnect: vi.fn(),
   trackMint: vi.fn(),
+  trackGameStart: vi.fn(),
+  trackGameOver: vi.fn(),
+  trackChallengeCreate: vi.fn(),
+  trackChallengeAccept: vi.fn(),
+  trackCompare: vi.fn(),
+  trackForgePurchase: vi.fn(),
+  trackConstellationSearch: vi.fn(),
 }));
 vi.mock('@capacitor/haptics', () => ({ Haptics: { impact: vi.fn(), vibrate: vi.fn() } }));
 vi.mock('sonner', () => ({
