@@ -47,6 +47,8 @@ function registerArenaRoute(ctx) {
     prismTransactions.set(address, txs);
   };
 
+  const pendingAccepts = new Set();
+
   return async function handleArenaRoute(req, res, url, pathname) {
     if (pathname === '/api/challenge/create' && req.method === 'POST') {
       if (!ipRateLimit('ch_create', getClientIp(req), 5, 60000)) {
@@ -288,6 +290,10 @@ function registerArenaRoute(ctx) {
         const acceptor = jwtAuth.address;
         if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
 
+        if (pendingAccepts.has(challengeId)) return respondJson(res, 429, { error: 'Accept in progress' });
+        pendingAccepts.add(challengeId);
+        try {
+
         const challenge = challenges.find((entry) => entry.id === challengeId);
         if (!challenge) return respondJson(res, 404, { error: 'Challenge not found' });
         if (challenge.expiresAt && Date.now() > challenge.expiresAt) {
@@ -411,6 +417,10 @@ function registerArenaRoute(ctx) {
           `[challenges] Accepted ${challengeId} by ${acceptor.slice(0, 8)}... → status: ${challenge.status}`,
         );
         respondJson(res, 200, { ok: true, challenge });
+
+        } finally {
+          pendingAccepts.delete(challengeId);
+        }
       } catch {
         respondJson(res, 400, { error: 'Invalid request body' });
       }

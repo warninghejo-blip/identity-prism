@@ -212,10 +212,8 @@ function registerSybilRoute(ctx) {
     if (cachedSybil?.fundingSources && cachedSybil.fundingSources.length > 0 && Date.now() - cachedSybil.cachedAt < 3600_000) {
       return respondJson(res, 200, { sources: cachedSybil.fundingSources });
     }
-    // Fresh fetch: rate limited (5s per IP)
-    const fsRlKey = `fundSrc:${getClientIp(req)}`;
-    if (Date.now() - (getPrismEarnRateLimit(fsRlKey) || 0) < 5_000) return respondJson(res, 429, { error: 'Rate limited' });
-    setPrismEarnRateLimit(fsRlKey, Date.now());
+    // Fresh fetch: rate limited
+    if (!ipRateLimit('sybil_funding_sources', getClientIp(req), 3, 30000)) return respondJson(res, 429, { error: 'Rate limited' });
     try {
       const { parsed } = await fetchParsedTransactions(address, 200);
       const { incoming } = extractSolTransfers(parsed, address);
@@ -244,11 +242,7 @@ function registerSybilRoute(ctx) {
 
   // ═══ Sybil Cluster Detection ═══
   if (pathname === '/api/sybil/cluster' && req.method === 'GET') {
-    const clusterIp = getClientIp(req);
-    const clusterRlKey = `sybilHeavy:${clusterIp}`;
-    const lastCluster = getPrismEarnRateLimit(clusterRlKey) || 0;
-    if (Date.now() - lastCluster < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
-    setPrismEarnRateLimit(clusterRlKey, Date.now());
+    if (!ipRateLimit('sybil_cluster', getClientIp(req), 3, 30000)) return respondJson(res, 429, { error: 'Rate limited' });
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     const cachedCluster = clusterCache.get(address);
@@ -303,11 +297,7 @@ function registerSybilRoute(ctx) {
 
   // ═══ Sybil Circular Flow ═══
   if (pathname === '/api/sybil/circular-flow' && req.method === 'GET') {
-    const circIp = getClientIp(req);
-    const circRlKey = `sybilHeavy:${circIp}`;
-    const lastCirc = getPrismEarnRateLimit(circRlKey) || 0;
-    if (Date.now() - lastCirc < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
-    setPrismEarnRateLimit(circRlKey, Date.now());
+    if (!ipRateLimit('sybil_circular_flow', getClientIp(req), 3, 30000)) return respondJson(res, 429, { error: 'Rate limited' });
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
@@ -326,11 +316,7 @@ function registerSybilRoute(ctx) {
 
   // ═══ Sybil Dark Pool ═══
   if (pathname === '/api/sybil/dark-pool' && req.method === 'GET') {
-    const dpIp = getClientIp(req);
-    const dpRlKey = `sybilHeavy:${dpIp}`;
-    const lastDp = getPrismEarnRateLimit(dpRlKey) || 0;
-    if (Date.now() - lastDp < 15_000) return respondJson(res, 429, { error: 'Rate limited — try again in 15s' });
-    setPrismEarnRateLimit(dpRlKey, Date.now());
+    if (!ipRateLimit('sybil_dark_pool', getClientIp(req), 3, 30000)) return respondJson(res, 429, { error: 'Rate limited' });
     const address = url.searchParams.get('address');
     if (!address || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
     try {
@@ -405,8 +391,14 @@ function registerSybilRoute(ctx) {
   }
 
   if (pathname === '/api/recovery/status' && req.method === 'GET') {
+    if (!ipRateLimit('recovery_status', getClientIp(req), 5, 60000)) {
+      return respondJson(res, 429, { error: 'Rate limited' });
+    }
     const address = url.searchParams.get('address');
     if (!address) return respondJson(res, 400, { error: 'address required' });
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
+      return respondJson(res, 400, { error: 'Invalid address' });
+    }
     const entry = walletDatabase.get(address) || {};
 
     // Gather activity data from authoritative server-side sources

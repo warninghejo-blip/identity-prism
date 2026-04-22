@@ -170,11 +170,12 @@ function registerBlinksRoute(ctx) {
       // This is intentionally NOT a hard escrow to avoid an orchestrator rewrite;
       // the finalize block burns coins on success and the reservation TTL = 10 min.
       const mintReservations = globalThis._mintReservations || (globalThis._mintReservations = new Map());
-      // Cleanup expired reservations (>10 min old)
+      // Cleanup all entries older than 1 hour regardless of status
       const RESERVATION_TTL_MS = 10 * 60 * 1000;
       const now = Date.now();
+      const CLEANUP_CUTOFF_MS = 3600_000; // 1 hour
       for (const [key, res_] of mintReservations) {
-        if (now - res_.createdAt > RESERVATION_TTL_MS && res_.status === 'reserved') {
+        if (now - res_.createdAt > CLEANUP_CUTOFF_MS) {
           mintReservations.delete(key);
         }
       }

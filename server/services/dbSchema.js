@@ -189,7 +189,7 @@ function initAppDbSchema(db) {
       );
 
       CREATE TABLE IF NOT EXISTS api_keys (
-        key TEXT PRIMARY KEY,
+        key_hash TEXT PRIMARY KEY,
         owner_name TEXT,
         contact_email TEXT,
         tier TEXT NOT NULL,

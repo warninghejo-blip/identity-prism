@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 function registerGameV1Route(ctx) {
   const { core, auth, wallet, game } = ctx;
-  const { ipRateLimit, getClientIp, respondJson, readBody } = core;
+  const { ipRateLimit, getClientIp, respondJson, readBody, requireJwt } = core;
   const { optionalJwt } = auth;
   const {
     getCoinBalance,
@@ -19,15 +19,13 @@ function registerGameV1Route(ctx) {
     if (pathname === '/api/game/coins' && req.method === 'POST') {
       if (!ipRateLimit('game_coins_post', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
       try {
+        const jwtV1 = requireJwt(req, res);
+        if (!jwtV1.ok) return true;
         const raw = await readBody(req);
         const parsed = JSON.parse(raw);
         const { address: bodyAddr, delta, mode } = parsed;
-        let addr = bodyAddr;
-        const jwtV1 = optionalJwt(req, null);
-        if (jwtV1.ok && jwtV1.address) {
-          addr = jwtV1.address;
-          if (bodyAddr && bodyAddr !== addr) return respondJson(res, 403, { error: 'Address mismatch' });
-        }
+        const addr = jwtV1.address;
+        if (bodyAddr && bodyAddr !== addr) return respondJson(res, 403, { error: 'Address mismatch' });
         if (!addr || typeof addr !== 'string') return respondJson(res, 400, { error: 'address required' });
         if (typeof delta !== 'number' || !Number.isFinite(delta) || delta === 0 || !Number.isInteger(delta)) {
           return respondJson(res, 400, { error: 'delta (non-zero integer) required' });
@@ -82,10 +80,14 @@ function registerGameV1Route(ctx) {
 
     if (pathname === '/api/game/revives' && req.method === 'POST') {
       if (!ipRateLimit('revive_post', getClientIp(req), 15, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+      const jwtV1Rev = requireJwt(req, res);
+      if (!jwtV1Rev.ok) return true;
       try {
         const raw = await readBody(req);
         const parsed = JSON.parse(raw);
-        const { address: addr, mode } = parsed;
+        const { address: bodyAddrRev, mode } = parsed;
+        const addr = jwtV1Rev.address;
+        if (bodyAddrRev && bodyAddrRev !== addr) return respondJson(res, 403, { error: 'Address mismatch' });
         if (!addr || typeof addr !== 'string') return respondJson(res, 400, { error: 'address (string) required' });
         if (mode !== 'orbit' && mode !== 'destroyer' && mode !== 'gravity') {
           return respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
