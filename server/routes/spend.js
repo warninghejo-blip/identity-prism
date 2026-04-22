@@ -1,3 +1,5 @@
+const pendingSpendRequests = new Set();
+
 function registerSpendRoute(ctx) {
   const { requireJwt, readBody, respondJson, ipRateLimit, getClientIp } = ctx.core;
   const {
@@ -75,17 +77,31 @@ function registerSpendRoute(ctx) {
         forgeState.items = mergeForgeEntries(forgeState.items, [{ itemId, purchasedAt: purchaseTimestamp }], 'itemId');
       }
 
-      const currentBal = getCoinBalance(address);
-      if (currentBal < spent) return respondJson(res, 400, { error: 'insufficient balance' });
-      // Apply 2% burn fee
-      const { burned } = applyBurnFee(spent);
-      const newBal = currentBal - spent;
-      setCoinBalance(address, newBal);
-      addCoinSpent(address, spent);
-      updateWalletEntry(address, {
-        coins: newBal,
-        ...(forgeStateChanged || sanitizedSource.startsWith('forge_') ? { forgeState } : {}),
-      });
+      if (pendingSpendRequests.has(address)) {
+        return respondJson(res, 429, { error: 'Spend in progress' });
+      }
+      pendingSpendRequests.add(address);
+      let spendResult;
+      try {
+        const currentBal = getCoinBalance(address);
+        if (currentBal < spent) {
+          pendingSpendRequests.delete(address);
+          return respondJson(res, 400, { error: 'insufficient balance' });
+        }
+        // Apply 2% burn fee
+        const { burned } = applyBurnFee(spent);
+        const newBal = currentBal - spent;
+        setCoinBalance(address, newBal);
+        addCoinSpent(address, spent);
+        updateWalletEntry(address, {
+          coins: newBal,
+          ...(forgeStateChanged || sanitizedSource.startsWith('forge_') ? { forgeState } : {}),
+        });
+        spendResult = { burned, newBal };
+      } finally {
+        pendingSpendRequests.delete(address);
+      }
+      const { burned, newBal } = spendResult;
       const tx = {
         id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         address, amount: spent, type: 'spend',

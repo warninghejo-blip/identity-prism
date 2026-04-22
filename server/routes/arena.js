@@ -312,30 +312,16 @@ function registerArenaRoute(ctx) {
           return respondJson(res, 403, { error: 'This challenge is for a specific opponent' });
         }
 
-        const original = {
-          opponent: challenge.opponent,
-          status: challenge.status,
-          acceptedAt: challenge.acceptedAt,
-        };
-        const rollback = () => {
-          challenge.status = original.status;
-          challenge.opponent = original.opponent;
-          challenge.acceptedAt = original.acceptedAt;
-          saveChallenges();
-        };
-
-        challenge.status = 'accepted';
-        challenge.opponent = acceptor;
-        challenge.acceptedAt = Date.now();
-        saveChallenges();
-
         const acceptorBalance = getCoinBalance(acceptor);
         if (acceptorBalance < challenge.stakeAmount) {
-          rollback();
           return respondJson(res, 400, {
             error: `Insufficient balance. Have ${acceptorBalance} Coins, need ${challenge.stakeAmount}`,
           });
         }
+
+        challenge.status = 'accepted';
+        challenge.opponent = acceptor;
+        challenge.acceptedAt = Date.now();
         setCoinBalance(acceptor, acceptorBalance - challenge.stakeAmount);
         addCoinSpent(acceptor, challenge.stakeAmount);
         debouncedSavePrism();
@@ -391,7 +377,7 @@ function registerArenaRoute(ctx) {
               debouncedSavePrism();
             }
             challenge.status = 'completed';
-            challenge.completedAt = Date.now();
+            challenge.completedAt = new Date().toISOString();
           } catch (scoreError) {
             console.warn('[challenges] Score fetch failed for', challengeId, scoreError.message);
             setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
@@ -399,7 +385,7 @@ function registerArenaRoute(ctx) {
             setCoinBalance(acceptor, getCoinBalance(acceptor) + challenge.stakeAmount);
             refundCoinSpent(acceptor, challenge.stakeAmount);
             challenge.status = 'cancelled';
-            challenge.completedAt = Date.now();
+            challenge.completedAt = new Date().toISOString();
             debouncedSavePrism();
             saveChallenges();
             return respondJson(res, 500, {
@@ -554,8 +540,10 @@ function registerArenaRoute(ctx) {
             challenge.winner = null;
             setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
             refundCoinSpent(challenge.creator, challenge.stakeAmount);
-            setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
-            refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+            if (challenge.opponent) {
+              setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+              refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+            }
           }
 
           if (fee > 0 && challenge.winner) {
@@ -563,7 +551,7 @@ function registerArenaRoute(ctx) {
           }
           debouncedSavePrism();
           challenge.status = 'completed';
-          challenge.completedAt = Date.now();
+          challenge.completedAt = new Date().toISOString();
           console.log(
             `[challenges] Completed ${challengeId}: creator=${challenge.creatorScore}, opponent=${challenge.opponentScore}, winner=${challenge.winner ? `${challenge.winner.slice(0, 8)}...` : 'tie'}`,
           );
@@ -607,7 +595,7 @@ function registerArenaRoute(ctx) {
         }
 
         challenge.status = 'cancelled';
-        challenge.completedAt = Date.now();
+        challenge.completedAt = new Date().toISOString();
         saveChallenges();
 
         const feeRate = challenge.creatorScore !== null ? 0.2 : 0.1;
@@ -678,7 +666,7 @@ function registerArenaRoute(ctx) {
         }
 
         challenge.status = 'cancelled';
-        challenge.completedAt = Date.now();
+        challenge.completedAt = new Date().toISOString();
         saveChallenges();
 
         setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);

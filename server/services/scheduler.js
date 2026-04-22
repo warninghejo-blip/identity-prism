@@ -240,7 +240,11 @@ function startSchedulers(ctx) {
           } else {
             challenge.winner = null;
             setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
-            if (challenge.opponent) setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+            refundCoinSpent(challenge.creator, challenge.stakeAmount);
+            if (challenge.opponent) {
+              setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+              refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+            }
           }
           challenge.status = 'completed';
         } else if (challenge.winner) {

@@ -191,7 +191,10 @@ function registerBlinksRoute(ctx) {
         : `mintres_${requestId}`;
 
       if (!existingReservation) {
-        // Reserve the coins (hold, do not burn yet)
+        // Reserve the slot — do NOT deduct coins yet.
+        // Coins are deducted at finalize time (/mint-cnft with signedTransaction).
+        // If the server restarts before finalize, the reservation is lost but NO coins
+        // were taken. The user simply retries mint-for-coins to get a new reservation.
         mintReservations.set(reservationKey, {
           wallet: address,
           requestId,
@@ -199,40 +202,11 @@ function registerBlinksRoute(ctx) {
           createdAt: now,
           status: 'reserved',
         });
-        // Immediately deduct balance so the wallet UI shows reduced balance
-        // and double-spend is prevented. On expiry the coins are NOT restored
-        // automatically here — the finalize path either burns or the user keeps them.
-        // This is the safe fallback: on mint failure, coins are NOT lost since
-        // the finalize block below calls ctx.setCoinBalance(address, prev + 10000) on error.
-        const { burned } = applyBurnFee(mintCoinCost);
-        setCoinBalance(address, balance - mintCoinCost);
-        addCoinSpent(address, mintCoinCost);
-        const walletEntry = walletDatabase.get(address);
-        if (walletEntry) {
-          walletEntry.coins = balance - mintCoinCost;
-          saveWalletDatabaseDebounced();
-        }
-
-        const txRecord = {
-          id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          address,
-          amount: mintCoinCost,
-          type: 'spend',
-          source: 'mint_for_coins',
-          description: `Mint ID reserved for ${mintCoinCost} Coins (${burned} burned on finalize)`,
-          timestamp: new Date().toISOString(),
-        };
-        const transactions = prismTransactions.get(address) || [];
-        transactions.unshift(txRecord);
-        if (transactions.length > 500) transactions.length = 500;
-        prismTransactions.set(address, transactions);
-        debouncedSavePrism();
 
         respondJson(res, 200, {
           success: true,
           proceedWithMint: true,
-          newBalance: balance - mintCoinCost,
-          burned,
+          newBalance: balance,
           requestId,
         });
       } else {
@@ -811,6 +785,46 @@ function registerBlinksRoute(ctx) {
           // All checks passed — consume for real
           consumePendingMint(payloadRequestId);
 
+          // Deduct coins NOW at finalize time (not at reservation time).
+          // This way a server restart before finalize never causes coin loss.
+          const reservationKey = `mintres_${payloadRequestId}`;
+          const reservation = globalThis._mintReservations?.get(reservationKey);
+          const reservationOwner = owner || pending.owner;
+          let coinDeducted = false;
+          if (reservation && reservation.status === 'reserved' && reservation.wallet === reservationOwner) {
+            const currentBalance = getCoinBalance(reservation.wallet);
+            if (currentBalance < reservation.coinsReserved) {
+              respondJson(res, 400, { error: 'Insufficient coin balance at finalize time', requestId: payloadRequestId });
+              return true;
+            }
+            const { burned } = applyBurnFee(reservation.coinsReserved);
+            setCoinBalance(reservation.wallet, currentBalance - reservation.coinsReserved);
+            addCoinSpent(reservation.wallet, reservation.coinsReserved);
+            const walletEntryFC = walletDatabase.get(reservation.wallet);
+            if (walletEntryFC) {
+              walletEntryFC.coins = currentBalance - reservation.coinsReserved;
+              saveWalletDatabaseDebounced();
+            }
+            const txRecord = {
+              id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              address: reservation.wallet,
+              amount: reservation.coinsReserved,
+              type: 'spend',
+              source: 'mint_for_coins',
+              description: `Minted Identity Prism for ${reservation.coinsReserved} Coins (${burned} burned)`,
+              timestamp: new Date().toISOString(),
+            };
+            const txList = prismTransactions.get(reservation.wallet) || [];
+            txList.unshift(txRecord);
+            if (txList.length > 500) txList.length = 500;
+            prismTransactions.set(reservation.wallet, txList);
+            debouncedSavePrism();
+            // Keep status 'reserved' until after confirmTransaction so the catch block
+            // can roll back coins if sendRawTransaction / confirmTransaction throws.
+            coinDeducted = true;
+            console.info('[mint-cnft] finalize: coins deducted', { requestId: payloadRequestId, wallet: reservation.wallet, coins: reservation.coinsReserved, burned });
+          }
+
           const assetKeypair = Keypair.fromSecretKey(Uint8Array.from(pending.assetSecret));
           const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
           transaction.partialSign(assetKeypair, collectionAuthorityKeypair);
@@ -819,6 +833,13 @@ function registerBlinksRoute(ctx) {
             preflightCommitment: 'confirmed',
           });
           await connection.confirmTransaction(signature, 'confirmed');
+
+          // Mint confirmed on-chain — mark reservation consumed so catch block skips rollback.
+          if (coinDeducted && globalThis._mintReservations?.get(reservationKey)) {
+            const r = globalThis._mintReservations.get(reservationKey);
+            r.status = 'consumed';
+            globalThis._mintReservations.set(reservationKey, r);
+          }
 
           const finalOwner = owner || pending.owner;
           if (finalOwner) {
@@ -838,15 +859,6 @@ function registerBlinksRoute(ctx) {
             saveWalletDatabaseDebounced();
             // FIX 3: recompute score/tier/traits/stats server-side, never trust client values
             triggerCompositeUpdate(finalOwner);
-
-            // FIX 5: if a coin reservation exists for this requestId, burn coins now that mint succeeded
-            const reservationKey = `mintres_${payloadRequestId}`;
-            const reservation = globalThis._mintReservations?.get(reservationKey);
-            if (reservation && reservation.status === 'reserved' && reservation.wallet === finalOwner) {
-              reservation.status = 'consumed';
-              globalThis._mintReservations.set(reservationKey, reservation);
-              console.info('[mint-cnft] finalize: coin reservation consumed', { requestId: payloadRequestId, wallet: finalOwner, coins: reservation.coinsReserved });
-            }
           }
 
           respondJson(res, 200, {
@@ -1226,11 +1238,11 @@ function registerBlinksRoute(ctx) {
         });
       } catch (error) {
         console.error('[mint-cnft] failed', error);
-        // FIX 5: if mint failed during finalize and a coin reservation exists, free it
-        // (coins were already deducted at mint-for-coins time; restore them on finalize failure)
-        // Trade-off: this is a best-effort rollback — if the server crashes after sendRawTransaction
-        // but before confirmTransaction, double-spend is possible. For full safety an on-chain
-        // escrow / event-driven confirmation would be required, which is an orchestrator rewrite.
+        // Rollback: if coins were deducted in this finalize call but the Helius send/confirm
+        // threw, restore them. Reservation status is still 'reserved' (set to 'consumed' only
+        // after confirmTransaction), so this check is safe against double-restore.
+        // Note: if the server restarts before finalize, no coins were deducted (they are taken
+        // at finalize time, not at mint-for-coins time), so there is nothing to restore.
         if (payloadRequestId) {
           const reservationKey = `mintres_${payloadRequestId}`;
           const reservation = globalThis._mintReservations?.get(reservationKey);
@@ -1240,7 +1252,7 @@ function registerBlinksRoute(ctx) {
             // Restore coins to wallet
             const prevBalance = getCoinBalance(reservation.wallet);
             setCoinBalance(reservation.wallet, prevBalance + reservation.coinsReserved);
-            console.warn('[mint-cnft] finalize failed — coin reservation freed, coins restored', {
+            console.warn('[mint-cnft] finalize failed — coins restored', {
               requestId: payloadRequestId,
               wallet: reservation.wallet,
               coinsRestored: reservation.coinsReserved,

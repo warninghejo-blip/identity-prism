@@ -265,9 +265,9 @@ function registerEarnRoute(ctx) {
           });
         }
         if (!scanRewardState) earned = Math.min(earned, nonGameCap - ngEarned);
-        setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + earned });
         const earnBoost = getStakingBoost(address);
         earned = applyStakingBoostAfterCap(earned, earnBoost);
+        setPrismEarnRateLimit(ngKey, { date: today, total: ngEarned + earned });
         if (scanRewardState && scanRewardTarget) {
           const nextScanRewardState = normalizeScanRewardState(scanRewardState);
           if (source === 'scan_wallet') nextScanRewardState.cleanClaims[scanRewardTarget] = Date.now();
