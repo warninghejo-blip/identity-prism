@@ -53,6 +53,16 @@ function buildHeliusUrl(seed) {
 
 const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
 
+// IP-based rate limiting — 120 req/min per IP
+const ipCounts = new Map();
+setInterval(() => ipCounts.clear(), 60_000).unref();
+
+function checkRateLimit(ip) {
+  const count = (ipCounts.get(ip) || 0) + 1;
+  ipCounts.set(ip, count);
+  return count <= 120;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -78,6 +88,13 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   if (req.method !== 'POST') { res.writeHead(405); res.end('Method not allowed'); return; }
+
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+  if (!checkRateLimit(clientIp)) {
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Rate limit exceeded' }));
+    return;
+  }
 
   try {
     const body = await readBody(req);

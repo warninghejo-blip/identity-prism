@@ -1,6 +1,11 @@
 // Partner API key middleware — tiered quota enforcement
+import crypto from 'node:crypto';
 import { appDb } from './appDb.js';
 import { ipRateLimit } from '../utils/ipRateLimit.js';
+
+function hashApiKey(rawKey) {
+  return crypto.createHash('sha256').update(rawKey).digest('hex');
+}
 
 const TIER_LIMITS = {
   free:       { daily: 100,      perMinute: 10 },
@@ -19,13 +24,15 @@ function todayStr() {
  * Returns { ok: true, tier: string, remaining: number|null } on success.
  */
 async function checkApiKey(respondJson, req, res) {
-  const key = req.headers['x-api-key'];
-  if (!key) return { ok: true, tier: null };
+  const rawKey = req.headers['x-api-key'];
+  if (!rawKey) return { ok: true, tier: null };
 
-  // Look up key — must exist and not be revoked
+  const keyHash = hashApiKey(rawKey);
+
+  // Look up key by hash — must exist and not be revoked
   const row = appDb.prepare(
-    'SELECT * FROM api_keys WHERE key = ? AND revoked_at IS NULL'
-  ).get(key);
+    'SELECT * FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL'
+  ).get(keyHash);
 
   if (!row) {
     respondJson(res, 401, { error: 'Invalid API key' });
@@ -39,8 +46,8 @@ async function checkApiKey(respondJson, req, res) {
   let used = 0;
   if (limits.daily !== Infinity) {
     const usageRow = appDb.prepare(
-      'SELECT count FROM api_key_usage WHERE key = ? AND day = ?'
-    ).get(key, day);
+      'SELECT count FROM api_key_usage WHERE key_hash = ? AND day = ?'
+    ).get(keyHash, day);
     used = usageRow ? usageRow.count : 0;
     if (used >= limits.daily) {
       respondJson(res, 429, { error: 'Daily quota exceeded' });
@@ -50,7 +57,7 @@ async function checkApiKey(respondJson, req, res) {
 
   // Check per-minute rate limit via existing ipRateLimit utility
   // ipRateLimit(prefix, ip, maxReqs, windowMs) → true=allowed, false=blocked
-  const allowed = ipRateLimit('apikey', key, limits.perMinute, 60000);
+  const allowed = ipRateLimit('apikey', keyHash, limits.perMinute, 60000);
   if (!allowed) {
     respondJson(res, 429, { error: 'Rate limit exceeded' });
     return { ok: false };
@@ -58,17 +65,17 @@ async function checkApiKey(respondJson, req, res) {
 
   // Increment daily usage counter
   appDb.prepare(`
-    INSERT INTO api_key_usage (key, day, count) VALUES (?, ?, 1)
-    ON CONFLICT(key, day) DO UPDATE SET count = count + 1
-  `).run(key, day);
+    INSERT INTO api_key_usage (key_hash, day, count) VALUES (?, ?, 1)
+    ON CONFLICT(key_hash, day) DO UPDATE SET count = count + 1
+  `).run(keyHash, day);
 
   // Update last_used_at timestamp
   appDb.prepare(
-    'UPDATE api_keys SET last_used_at = ? WHERE key = ?'
-  ).run(Date.now(), key);
+    'UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?'
+  ).run(Date.now(), keyHash);
 
   const remaining = limits.daily === Infinity ? null : limits.daily - used - 1;
   return { ok: true, tier: row.tier, remaining };
 }
 
-export { checkApiKey };
+export { checkApiKey, hashApiKey };

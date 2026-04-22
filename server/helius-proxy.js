@@ -1093,7 +1093,7 @@ const hasCoreCollectionAsset = async (address, options = {}) => {
     const payload = await response.json();
     const total = Number(payload?.result?.total ?? payload?.result?.grand_total ?? 0);
     const value = total > 0;
-    identityOwnershipCache.set(address, { value, expiresAt: Date.now() + IDENTITY_OWNERSHIP_CACHE_TTL_MS });
+    identityOwnershipCache.set(address, { value, expiresAt: Date.now() + IDENTITY_OWNERSHIP_CACHE_TTL_MS, ts: Date.now() });
     return value;
   } catch (error) {
     if (allowStale && cached) {
@@ -1231,9 +1231,14 @@ function detectTemporalFundingCohort({ address, firstTxBlockTime, txCount, domin
     txCount: Number(txCount),
   }];
 
+  let _scanned = 0;
+  const _maxScan = walletDatabase.size > 5000 ? 2000 : walletDatabase.size;
   for (const [candidateAddress, entry] of walletDatabase) {
+    if (_scanned >= _maxScan) break;
+    _scanned++;
     if (!candidateAddress || candidateAddress === address) continue;
-    const candidateFirstTx = Number(entry?.firstTxTimestamp);
+    if (!entry?.firstTxTimestamp) continue;
+    const candidateFirstTx = Number(entry.firstTxTimestamp);
     if (!Number.isFinite(candidateFirstTx) || Math.abs(candidateFirstTx - Number(firstTxBlockTime)) > 3600) continue;
     const candidateTxCount = Number(entry?.stats?.transactions ?? entry?.sybil?.metrics?.txCount ?? 0);
     if (!Number.isFinite(candidateTxCount) || candidateTxCount <= 0) continue;
@@ -1513,7 +1518,8 @@ function verifyWalletSignature(address, message, signatureRaw) {
   }
 }
 
-const { requireJwt, optionalJwt } = createAuthServices({ walletIpLog, getClientIp, respondJson });
+const authCtx = { walletIpLog, getClientIp, respondJson, walletDatabase: null };
+const { requireJwt, optionalJwt, createJwt: createJwtBound } = createAuthServices(authCtx);
 
 const {
   blackHoleUsedSignatures,
@@ -1943,6 +1949,7 @@ const {
 // ── Server-side Wallet Database (comprehensive wallet data) ──
 const WALLET_DB_FILE = path.join(METADATA_DIR, 'wallet-database.json');
 const walletDatabase = new Map(); // address -> wallet data object
+authCtx.walletDatabase = walletDatabase; // wire up for JWT token version checks
 const walletStore = createJsonColumnStore({
   jsonPath: WALLET_DB_FILE,
   tableName: 'wallets',
@@ -2398,7 +2405,10 @@ const getBlackHoleResolvedCountFromTx = (tx) => {
   return match ? (Number(match[1]) || 0) : 0;
 };
 
+const _questProgressCache = new Map();
 const getQuestProgressSnapshot = (address, nowMs = Date.now()) => {
+  const _cached = _questProgressCache.get(address);
+  if (_cached && nowMs - _cached.ts < 30_000) return _cached.data;
   const walletEntry = walletDatabase.get(address) || {};
   const userData = getWalletUserData(walletEntry);
   const forgeState = getOrCreateForgeState(address, walletEntry).forgeState;
@@ -2453,7 +2463,7 @@ const getQuestProgressSnapshot = (address, nowMs = Date.now()) => {
   const existing = questProgress.get(address) || { streakDays: 0 };
   const forgeItemsOwned = Array.isArray(forgeState.items) ? forgeState.items.length : 0;
 
-  return {
+  const _result = {
     daily_scan: { progress: Math.min(1, scansToday), completed: scansToday >= 1, periodKey: getQuestPeriodKey('daily_scan', nowMs) },
     daily_game: { progress: Math.min(1, todayScoreEntries.length), completed: todayScoreEntries.length >= 1, periodKey: getQuestPeriodKey('daily_game', nowMs) },
     daily_burn: { progress: Math.min(1, burnsToday), completed: burnsToday >= 1, periodKey: getQuestPeriodKey('daily_burn', nowMs) },
@@ -2477,6 +2487,8 @@ const getQuestProgressSnapshot = (address, nowMs = Date.now()) => {
     ot_arena_wins: { progress: Math.min(10, totalArenaWins), completed: totalArenaWins >= 10, periodKey: 'all_time' },
     ot_text_quest: { progress: Math.min(1, completedTextQuests), completed: completedTextQuests >= 1, periodKey: 'all_time' },
   };
+  _questProgressCache.set(address, { data: _result, ts: nowMs });
+  return _result;
 };
 
 const verifyGameEarnClaim = (address, source, gameSessionId) => {
@@ -2708,14 +2720,14 @@ const resolveCorsOrigin = (req) => {
     return configured || '*';
   }
   if (!configured || configured === '*') {
-    return origin;
+    return 'https://identityprism.xyz'; // safe default, not wildcard
   }
   const allowList = configured.split(',').map((value) => value.trim()).filter(Boolean);
   if (!allowList.length) {
-    return origin;
+    return 'https://identityprism.xyz'; // safe default, not wildcard
   }
   if (allowList.includes('*')) {
-    return origin;
+    return 'https://identityprism.xyz'; // safe default, not wildcard
   }
   if (allowList.includes(origin)) {
     return origin;
@@ -2752,6 +2764,7 @@ const applyCors = (req, res) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-DNS-Prefetch-Control', 'off');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 };
 
 const getBaseUrl = (req) => {
@@ -3770,7 +3783,7 @@ const server = http.createServer(async (req, res) => {
     if (!isSeller && !hasPurchased) return respondJson(res, 403, { error: 'Purchase required to download this model' });
     const ext = path.extname(filePath).toLowerCase();
     const mimeTypes = { '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.obj': 'text/plain' };
-    res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream', 'Access-Control-Allow-Origin': resolveCorsOrigin(req) });
     fs.createReadStream(filePath).pipe(res);
     return;
   }
@@ -4760,9 +4773,10 @@ const totalBurnedRef = {
   },
 };
 function applyBurnFee(amount) {
+  if (amount <= 50) return { spent: amount, burned: 0, net: amount };
   const burned = Math.max(1, Math.floor(amount * 0.02));
   totalBurnedRef.value = totalBurnedRef.value + burned;
-  return { net: amount - burned, burned };
+  return { spent: amount, burned, net: amount - burned };
 }
 
 // ═══ Daily Game Coin Cap ═══
@@ -5240,7 +5254,7 @@ const ctx = createContext({
   getClientIp,
   ipRateLimit,
   rateLimitStore,
-  createJwt,
+  createJwt: createJwtBound,
   verifyJwt,
   requireJwt,
   optionalJwt,
@@ -5588,6 +5602,13 @@ const shutdown = (signal) => {
 };
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+
+setInterval(() => {
+  const cutoff = Date.now() - 3600_000;
+  for (const [k, v] of identityOwnershipCache) {
+    if (v.ts < cutoff) identityOwnershipCache.delete(k);
+  }
+}, 600_000);
 
 process.on('uncaughtException', (err, origin) => {
   console.error(`[fatal:${origin}]`, err.stack || err);

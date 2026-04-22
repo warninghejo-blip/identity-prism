@@ -3,6 +3,7 @@
 // If ADMIN_KEY is not set, all admin endpoints return 501 "Admin API not configured".
 
 import { statSync } from 'fs';
+import crypto from 'node:crypto';
 import { appDb, APP_DB_PATH } from '../services/appDb.js';
 
 // FIX 5: removed inline checkAdminKey (duplicated ctx.core.requireAdminKey with its own
@@ -201,10 +202,12 @@ export function registerAdminRoute(ctx) {
       }
 
       const key = crypto.randomUUID();
+      const keyHash = crypto.createHash('sha256').update(key).digest('hex');
       try {
         appDb.prepare(
-          'INSERT INTO api_keys (key, owner_name, contact_email, tier, created_at, notes) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(key, owner_name ?? null, contact_email ?? null, tier, Date.now(), notes ?? null);
+          'INSERT INTO api_keys (key_hash, owner_name, contact_email, tier, created_at, notes) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(keyHash, owner_name ?? null, contact_email ?? null, tier, Date.now(), notes ?? null);
+        // Return raw key only once — it is never stored
         respondJson(res, 201, { key, owner_name: owner_name ?? null, tier });
       } catch (err) {
         console.error('[admin] Database error:', err);
@@ -226,11 +229,11 @@ export function registerAdminRoute(ctx) {
 
       try {
         const rows = appDb.prepare(`
-          SELECT ak.key, ak.owner_name, ak.contact_email, ak.tier,
+          SELECT ak.key_hash, ak.owner_name, ak.contact_email, ak.tier,
                  ak.created_at, ak.revoked_at, ak.last_used_at, ak.notes,
                  COALESCE(aku.count, 0) AS today_count
           FROM api_keys ak
-          LEFT JOIN api_key_usage aku ON aku.key = ak.key AND aku.day = ?
+          LEFT JOIN api_key_usage aku ON aku.key_hash = ak.key_hash AND aku.day = ?
           ORDER BY ak.created_at DESC
           LIMIT ?
         `).all(today, limit);
@@ -251,15 +254,16 @@ export function registerAdminRoute(ctx) {
       }
       if (!checkAdminKey(req, res)) return true;
 
-      const targetKey = revokeMatch[1];
+      // URL param is the key_hash (as returned by GET /api/admin/api-keys)
+      const targetKeyHash = revokeMatch[1];
       try {
         const result = appDb.prepare(
-          'UPDATE api_keys SET revoked_at = ? WHERE key = ? AND revoked_at IS NULL'
-        ).run(Date.now(), targetKey);
+          'UPDATE api_keys SET revoked_at = ? WHERE key_hash = ? AND revoked_at IS NULL'
+        ).run(Date.now(), targetKeyHash);
         if (result.changes === 0) {
           respondJson(res, 404, { error: 'API key not found or already revoked' });
         } else {
-          respondJson(res, 200, { ok: true, key: targetKey });
+          respondJson(res, 200, { ok: true, key_hash: targetKeyHash });
         }
       } catch (err) {
         console.error('[admin] Database error:', err);

@@ -1,5 +1,6 @@
 const GAME_EARN_SOURCES = new Set(['game_orbit', 'game_defender', 'game_gravity']);
 const pendingEarnRequests = new Set();
+const pendingQuestClaims = new Set();
 
 function registerEarnRoute(ctx) {
   const { core, wallet, economy, sybil, quest, game, arena } = ctx;
@@ -117,35 +118,44 @@ function registerEarnRoute(ctx) {
             return respondJson(res, 400, { error: `Invalid questId for ${source}` });
           }
 
-          const snapshot = getQuestProgressSnapshot(address);
-          const questState = snapshot[questId];
-          if (!questState?.completed) {
-            return respondJson(res, 400, { error: 'Quest is not completed on server' });
+          const claimKey = `${address}:${source}:${questId}`;
+          if (pendingQuestClaims.has(claimKey)) {
+            return respondJson(res, 429, { error: 'Claim in progress' });
           }
+          pendingQuestClaims.add(claimKey);
+          try {
+            const snapshot = getQuestProgressSnapshot(address);
+            const questState = snapshot[questId];
+            if (!questState?.completed) {
+              return respondJson(res, 400, { error: 'Quest is not completed on server' });
+            }
 
-          const existingQuestState = quests.get(address) || { quests: {}, streakDays: 0 };
-          const prevQuest = existingQuestState.quests?.[questId] || {};
-          if (prevQuest.claimed === true && (prevQuest.periodKey || 'all_time') === questState.periodKey) {
-            return respondJson(res, 400, { error: 'Quest reward already claimed' });
-          }
+            const existingQuestState = quests.get(address) || { quests: {}, streakDays: 0 };
+            const prevQuest = existingQuestState.quests?.[questId] || {};
+            if (prevQuest.claimed === true && (prevQuest.periodKey || 'all_time') === questState.periodKey) {
+              return respondJson(res, 400, { error: 'Quest reward already claimed' });
+            }
 
-          quests.set(address, {
-            ...existingQuestState,
-            quests: {
-              ...(existingQuestState.quests || {}),
-              [questId]: {
-                ...prevQuest,
-                progress: questState.progress,
-                completed: true,
-                claimed: true,
-                periodKey: questState.periodKey,
-                completedAt: prevQuest.completedAt || new Date().toISOString(),
-                claimedAt: new Date().toISOString(),
+            quests.set(address, {
+              ...existingQuestState,
+              quests: {
+                ...(existingQuestState.quests || {}),
+                [questId]: {
+                  ...prevQuest,
+                  progress: questState.progress,
+                  completed: true,
+                  claimed: true,
+                  periodKey: questState.periodKey,
+                  completedAt: prevQuest.completedAt || new Date().toISOString(),
+                  claimedAt: new Date().toISOString(),
+                },
               },
-            },
-            updatedAt: new Date().toISOString(),
-          });
-          saveQuestProgressDebounced();
+              updatedAt: new Date().toISOString(),
+            });
+            saveQuestProgressDebounced();
+          } finally {
+            pendingQuestClaims.delete(claimKey);
+          }
         }
 
         if (source === 'first_mint') {

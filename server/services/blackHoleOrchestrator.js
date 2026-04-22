@@ -96,12 +96,17 @@ function createBlackHoleOrchestrator(ctx) {
       const connection = new Connection(getRpcUrl(address), 'confirmed');
       const txMap = new Map();
       try {
-        for (const signature of uniqueSignatures) {
-          const tx = await connection.getParsedTransaction(signature, { maxSupportedTransactionVersion: 0 });
+        const txResults = await Promise.all(
+          [...uniqueSignatures].map(async (sig) => {
+            const tx = await connection.getParsedTransaction(sig, { maxSupportedTransactionVersion: 0 });
+            return [sig, tx];
+          })
+        );
+        for (const [sig, tx] of txResults) {
           if (!tx) {
-            return { status: 400, body: { error: `Transaction ${signature} not found or not confirmed yet` } };
+            return { status: 400, body: { error: `Transaction ${sig} not found or not confirmed yet` } };
           }
-          txMap.set(signature, tx);
+          txMap.set(sig, tx);
         }
       } catch (rpcError) {
         throw rpcError;

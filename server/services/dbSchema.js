@@ -20,6 +20,9 @@ function ensureAppDbDirectory(dbPath = getAppDbPath()) {
 function initAppDbSchema(db) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+
+  const currentVersion = db.pragma('user_version', { simple: true });
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS wallets (
       address TEXT PRIMARY KEY,
@@ -215,9 +218,14 @@ function initAppDbSchema(db) {
       CREATE INDEX IF NOT EXISTS idx_bh_signatures_wallet
       ON black_hole_signatures (wallet, created_at);
 
-      PRAGMA user_version = 2;
      `);
+
+  // Migration guard: run future schema migrations here
+  if (currentVersion < 2) {
+    // placeholder for future migrations when upgrading from v1 DBs
+    db.pragma('user_version = 2');
   }
+}
 
 export {
   DATA_DIR,

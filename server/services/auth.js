@@ -21,11 +21,12 @@ function verifyJwt(token) {
   return jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'identity-prism', audience: 'identity-prism-api' });
 }
 
-function createJwt(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_TTL, algorithm: 'HS256', issuer: 'identity-prism', audience: 'identity-prism-api' });
+function createJwt(payload, walletDatabase) {
+  const tokenVersion = walletDatabase?.get(payload.address)?.tokenVersion || 0;
+  return jwt.sign({ ...payload, tokenVersion }, JWT_SECRET, { expiresIn: JWT_TTL, algorithm: 'HS256', issuer: 'identity-prism', audience: 'identity-prism-api' });
 }
 
-function createRequireJwt({ walletIpLog, getClientIp, respondJson }) {
+function createRequireJwt({ walletIpLog, getClientIp, respondJson, walletDatabase }) {
   return function requireJwt(req, res) {
     const authHeader = req.headers['authorization'] ?? '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -35,6 +36,15 @@ function createRequireJwt({ walletIpLog, getClientIp, respondJson }) {
     }
     try {
       const payload = verifyJwt(token);
+      // Token version check — allows invalidation by incrementing tokenVersion in walletDatabase
+      if (payload.tokenVersion !== undefined) {
+        const entry = walletDatabase?.get(payload.address);
+        const currentVersion = entry?.tokenVersion || 0;
+        if (payload.tokenVersion !== currentVersion) {
+          respondJson(res, 401, { error: 'Token revoked' });
+          return { ok: false };
+        }
+      }
       const clientIp = getClientIp(req);
       if (payload.address && clientIp) {
         // Option B: cap per-address IP list at 50 (array, oldest shifted out)
@@ -72,8 +82,9 @@ function createOptionalJwt() {
 }
 
 function createAuthServices(ctx) {
+  const boundCreateJwt = (payload) => createJwt(payload, ctx.walletDatabase);
   return {
-    createJwt,
+    createJwt: boundCreateJwt,
     verifyJwt,
     requireJwt: createRequireJwt(ctx),
     optionalJwt: createOptionalJwt(ctx),

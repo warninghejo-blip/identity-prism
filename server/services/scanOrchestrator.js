@@ -163,7 +163,7 @@ function createScanOrchestrator(ctx) {
         ? findFirstTxTime(conn, pubkey, allSignatures.slice(-1000), cachedFirstTx, sybilRpcUrl)
         : Promise.resolve({ firstTxTime: firstTxBlockTime, totalSigs: totalSigCount });
       const firstTxResult = await Promise.allSettled([firstTxPromise]).then((results) => results[0]);
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, 100)); // brief pause before batch RPC parse to avoid rate limiting
 
       const parseRpcUrl = getBatchRpcUrl(address + ':parse');
       const limitedRecent = recentSigBatch.slice(0, 100);

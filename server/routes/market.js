@@ -150,7 +150,7 @@ function registerMarketRoute(ctx) {
         return true;
       }
       try {
-        const jupResp = await fetch(`https://api.jup.ag/price/v2?ids=${encodeURIComponent(ids)}`);
+        const jupResp = await fetch(`https://api.jup.ag/price/v2?ids=${encodeURIComponent(ids)}`, { signal: AbortSignal.timeout(10000) });
         if (!jupResp.ok) {
           respondJson(res, jupResp.status, { error: `Jupiter API returned ${jupResp.status}` });
           return true;
@@ -216,6 +216,7 @@ function registerMarketRoute(ctx) {
           orderUrl.searchParams.set('restrictIntermediateTokens', 'true');
           const orderResp = await fetch(orderUrl.toString(), {
             headers: { 'x-api-key': jupiterApiKey },
+            signal: AbortSignal.timeout(10000),
           });
           const orderData = await orderResp.json().catch(() => ({}));
           if (orderResp.ok && orderData?.outAmount) {
@@ -244,7 +245,7 @@ function registerMarketRoute(ctx) {
         quoteUrl.searchParams.set('swapMode', 'ExactIn');
         quoteUrl.searchParams.set('slippageBps', '100');
         quoteUrl.searchParams.set('restrictIntermediateTokens', 'true');
-        const quoteResp = await fetch(quoteUrl.toString());
+        const quoteResp = await fetch(quoteUrl.toString(), { signal: AbortSignal.timeout(10000) });
         const quoteData = await quoteResp.json().catch(() => ({}));
         if (!quoteResp.ok || !quoteData?.outAmount) {
           respondJson(res, quoteResp.status || 502, { error: quoteData?.error || 'Swap quote unavailable' });
@@ -322,6 +323,7 @@ function registerMarketRoute(ctx) {
           orderUrl.searchParams.set('restrictIntermediateTokens', 'true');
           const orderResp = await fetch(orderUrl.toString(), {
             headers: { 'x-api-key': jupiterApiKey },
+            signal: AbortSignal.timeout(10000),
           });
           const orderData = await orderResp.json().catch(() => ({}));
           if (orderResp.ok && orderData?.transaction && orderData?.requestId) {
@@ -355,7 +357,7 @@ function registerMarketRoute(ctx) {
         quoteUrl.searchParams.set('swapMode', 'ExactIn');
         quoteUrl.searchParams.set('slippageBps', slippageBps.toString());
         quoteUrl.searchParams.set('restrictIntermediateTokens', 'true');
-        const quoteResp = await fetch(quoteUrl.toString());
+        const quoteResp = await fetch(quoteUrl.toString(), { signal: AbortSignal.timeout(10000) });
         const serverQuote = await quoteResp.json().catch(() => ({}));
         if (!quoteResp.ok || !serverQuote?.outAmount) {
           respondJson(res, quoteResp.status || 502, { error: serverQuote?.error || 'Swap quote unavailable' });
@@ -371,6 +373,7 @@ function registerMarketRoute(ctx) {
             wrapAndUnwrapSol: true,
             dynamicComputeUnitLimit: true,
           }),
+          signal: AbortSignal.timeout(10000),
         });
         const swapData = await swapResp.json().catch(() => ({}));
         if (!swapResp.ok || !swapData?.swapTransaction) {
@@ -463,6 +466,7 @@ function registerMarketRoute(ctx) {
             signedTransaction,
             requestId,
           }),
+          signal: AbortSignal.timeout(10000),
         });
         const executeData = await executeResp.json().catch(() => ({}));
         if (!executeResp.ok || !executeData?.signature) {

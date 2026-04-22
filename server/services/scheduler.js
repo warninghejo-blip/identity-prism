@@ -158,7 +158,7 @@ function startSchedulers(ctx) {
       if (now < challenge.expiresAt) continue;
       if (challenge.status === 'open') {
         challenge.status = 'expired';
-        challenge.completedAt = now;
+        challenge.completedAt = new Date().toISOString();
         changed = true;
         if (challenge.stakeAmount > 0) {
           setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
@@ -171,9 +171,30 @@ function startSchedulers(ctx) {
         console.log(`[challenges] Expired ${challenge.id} (open/score, no opponent, ${Math.round((now - challenge.createdAt) / 60000)}m)`);
         continue;
       }
+      if (challenge.status === 'scoring') {
+        // Opponent never submitted score — refund both players
+        if (challenge.stakeAmount > 0) {
+          if (challenge.creator) {
+            setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
+            refundCoinSpent(challenge.creator, challenge.stakeAmount);
+          }
+          if (challenge.opponent) {
+            setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+            refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+          }
+        }
+        challenge.status = 'expired';
+        challenge.result = 'timeout_scoring';
+        challenge.completedAt = new Date().toISOString();
+        changed = true;
+        if (challenge.creator) pushNotification(challenge.creator, 'challenge_expired', `Challenge expired in scoring — ${challenge.stakeAmount} coins refunded`, { challengeId: challenge.id, refunded: challenge.stakeAmount });
+        if (challenge.opponent) pushNotification(challenge.opponent, 'challenge_expired', `Challenge expired in scoring — ${challenge.stakeAmount} coins refunded`, { challengeId: challenge.id, refunded: challenge.stakeAmount });
+        console.log(`[challenges] Expired ${challenge.id} (scoring timeout, ${Math.round((now - challenge.createdAt) / 60000)}m)`);
+        continue;
+      }
       if (challenge.status === 'playing' && !challenge.opponent) {
         challenge.status = 'expired';
-        challenge.completedAt = now;
+        challenge.completedAt = new Date().toISOString();
         changed = true;
         if (challenge.stakeAmount > 0) {
           setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
@@ -235,7 +256,7 @@ function startSchedulers(ctx) {
           }
           challenge.status = 'expired';
         }
-        challenge.completedAt = Date.now();
+        challenge.completedAt = new Date().toISOString();
         staleCancelled++;
         console.log(`[challenges] Safety-resolved stuck ${challenge.id} → ${challenge.status} (>24h)`);
       }
