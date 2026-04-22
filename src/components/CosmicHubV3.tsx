@@ -923,7 +923,7 @@ function DailyLimitsTable({ address }: { address: string }) {
       .catch(() => {});
   }, [address]);
 
-  const fmt = (n: number) => n.toLocaleString();
+  const fmt = (n: number | null | undefined) => (n != null ? n.toLocaleString() : '—');
 
   // Static caps as fallback
   const game = data?.game ?? { earned: 0, cap: 2000 };
