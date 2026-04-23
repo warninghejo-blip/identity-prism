@@ -968,7 +968,6 @@ function DailyLimitsTable({ address }: { address: string }) {
         <div className="flex justify-between items-center text-[10px]">
           <span className={labelClass}>{r.label}</span>
           <span className="font-mono flex items-center gap-1.5">
-            <span className="text-white/35 text-[9px]">{pct.toFixed(0)}%</span>
             <span className={earnColor}>{fmt(r.earned)}</span>
             <span className="text-white/40">/ {fmt(r.cap)}</span>
           </span>
