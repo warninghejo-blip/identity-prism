@@ -3,6 +3,7 @@
  * On-chain and Sybil details shown inline when bars are expanded.
  */
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { ScoreDetails } from '@/hooks/useCompositeScore';
 
 interface BreakdownProps {
@@ -231,6 +232,11 @@ function ExpandedDetails({ barKey, details, color }: { barKey: BarKey; details: 
             <div className="flex justify-end text-[9px] font-mono pt-0.5 border-t border-white/5">
               <span style={{ color }}>Sybil Trust: {finalPts}/250</span>
             </div>
+            {finalPts < 100 && (
+              <Link to="/recovery" className="text-xs text-amber-400 hover:underline">
+                Tips to improve →
+              </Link>
+            )}
           </div>
         );
       }

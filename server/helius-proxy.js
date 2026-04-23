@@ -5509,6 +5509,9 @@ function validateProductionEnv() {
   if (!process.env.TREASURY_ADDRESS) {
     errors.push('TREASURY_ADDRESS is required for buy operations');
   }
+  if (!process.env.CORE_COLLECTION) {
+    warnings.push('CORE_COLLECTION not set — identity holder perks will be disabled');
+  }
   warnings.forEach(w => console.warn(`[STARTUP WARNING] ${w}`));
   if (errors.length > 0) {
     errors.forEach(e => console.error(`[STARTUP ERROR] ${e}`));

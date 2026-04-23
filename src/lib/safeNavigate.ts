@@ -32,21 +32,18 @@ export function trackInternalNavigation() {
   setInternalNavDepth(getInternalNavDepth() + 1);
 }
 
-export function goBack(navigate: NavigateFunction, _fallback = '/') {
-  // Clean up any lingering wormhole tunnels that might block UI
+export function goBack(navigate: NavigateFunction, fallback = '/') {
   cleanupOverlays();
-
-  // Persist return flag + active address in sessionStorage so Index.tsx can
-  // detect back-nav and restore wallet address immediately (prevents race condition
-  // where connectedAddress is undefined on first render)
   try {
     sessionStorage.setItem('returnedFromSubPage', '1');
   } catch {}
-
-  // Always navigate to home/hub — prevents "kicking out" of the app
-  // and provides consistent UX: Back = return to main menu
-  setInternalNavDepth(0);
-  navigate('/', { replace: true, state: { fromSubPage: true } });
+  const depth = getInternalNavDepth();
+  setInternalNavDepth(Math.max(0, depth - 1));
+  if (depth > 0) {
+    navigate(-1);
+  } else {
+    navigate(fallback, { replace: true, state: { fromSubPage: true } });
+  }
 }
 
 export function cleanupOverlays() {

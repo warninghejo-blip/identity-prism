@@ -133,7 +133,7 @@ function registerUserDataRoute(ctx) {
       const quizToday = (getPrismEarnRateLimit(`quiz:${address}:${today}`) || 0) * quizCorrectReward;
       const blackHoleToday = getPrismEarnRateLimit(`blackhole_cleanup:${address}:${today}`) || 0;
       const isHolder = mintedAddresses.has(address);
-      const gameCap = getHolderAdjustedCap(dailyGameCoinCap, isHolder);
+      const gameCap = getHolderAdjustedCap(dailyGameCoinCap ?? 2000, isHolder);
       const nonGameCap = getHolderAdjustedCap(nonGameDailyEarnCap, isHolder);
       respondJson(res, 200, {
         game: { earned: gameToday, cap: gameCap },

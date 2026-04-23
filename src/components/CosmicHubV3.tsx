@@ -5,7 +5,7 @@
  */
 import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
@@ -570,6 +570,11 @@ function MiniPassport({
               {sybilGrade ?? '...'}
             </span>
           </div>
+          {sybilGrade && ['D', 'F'].includes(sybilGrade) && (
+            <Link to="/recovery" className="text-xs text-amber-400 hover:text-amber-300 underline">
+              Improve Score →
+            </Link>
+          )}
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
             style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.15)' }}

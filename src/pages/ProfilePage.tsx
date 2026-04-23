@@ -134,6 +134,11 @@ export default function ProfilePage() {
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="On-Chain Score" value={`${data.score || 0}/400`} />
         <StatCard label="Sybil Grade" value={data.sybil?.trustGrade || '—'} />
+        {data.sybil?.trustGrade && ['D', 'F'].includes(data.sybil.trustGrade) && (
+          <Link to="/recovery" className="text-xs text-amber-400 hover:underline ml-2">
+            Improve →
+          </Link>
+        )}
         <StatCard label="Scans" value={String(data.scanCount || 0)} />
         <StatCard label="Coins" value={String(data.coins || 0)} />
         {data.stats && (
