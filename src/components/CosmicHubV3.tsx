@@ -33,7 +33,6 @@ import {
   LogOut,
   Bell,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { useRangerProgress } from '@/hooks/useRangerProgress';
 
 /* ── Tier color map ── */
@@ -899,9 +898,6 @@ export default function CosmicHub({
 
         {/* Daily Limits Table */}
         {walletAddress && <DailyLimitsTable address={walletAddress} />}
-
-        {/* Daily Earnings Progress */}
-        {walletAddress && <DailyEarnings address={walletAddress} />}
       </div>
     </motion.div>
   );
@@ -949,19 +945,40 @@ function DailyLimitsTable({ address }: { address: string }) {
     { label: 'Black Hole', earned: 0, cap: bhCap },
   ];
 
+  const colorMap: Record<string, string> = {
+    Games: '#22d3ee',
+    'Non-game total': '#a78bfa',
+    Scans: '#34d399',
+    'Sybil Hunt': '#f87171',
+    Quiz: '#c084fc',
+    'Black Hole': '#fb923c',
+  };
+
   const renderRow = (r: { label: string; earned: number; cap: number }, variant: 'main' | 'header' | 'sub') => {
-    const atLimit = r.earned >= r.cap && r.cap > 0;
-    const nearLimit = !atLimit && r.cap > 0 && r.earned / r.cap >= 0.8;
+    const ratio = r.cap > 0 ? r.earned / r.cap : 0;
+    const atLimit = ratio >= 1;
+    const nearLimit = !atLimit && ratio >= 0.8;
+    const barColor = atLimit ? '#f87171' : nearLimit ? '#fbbf24' : (colorMap[r.label] ?? '#22d3ee');
     const earnColor = atLimit ? 'text-red-400' : nearLimit ? 'text-amber-400' : 'text-white';
     const labelClass =
       variant === 'header' ? 'text-white/80 font-semibold' : variant === 'sub' ? 'text-white/55 pl-3' : 'text-white/70';
+    const pct = Math.min(100, ratio * 100);
     return (
-      <div key={r.label} className="flex justify-between items-center text-[10px]">
-        <span className={labelClass}>{r.label}</span>
-        <span className="font-mono">
-          <span className={earnColor}>{fmt(r.earned)}</span>
-          <span className="text-white/40"> / {fmt(r.cap)}</span>
-        </span>
+      <div key={r.label} className="mb-1.5">
+        <div className="flex justify-between items-center text-[10px]">
+          <span className={labelClass}>{r.label}</span>
+          <span className="font-mono flex items-center gap-1.5">
+            <span className="text-white/35 text-[9px]">{pct.toFixed(0)}%</span>
+            <span className={earnColor}>{fmt(r.earned)}</span>
+            <span className="text-white/40">/ {fmt(r.cap)}</span>
+          </span>
+        </div>
+        <div className="w-full bg-white/[0.06] rounded-full h-[5px] mt-1 overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${barColor}60, ${barColor})` }}
+          />
+        </div>
       </div>
     );
   };
@@ -973,90 +990,12 @@ function DailyLimitsTable({ address }: { address: string }) {
       transition={{ duration: 0.25, delay: 0.35 }}
       className="bg-white/[0.02] rounded-xl p-3 mx-4 mt-3 mb-2 pointer-events-auto"
     >
-      <p className="text-[10px] font-bold text-white/50 mb-2 uppercase tracking-[0.12em]">Daily Limits</p>
-      <div className="space-y-0.5">
+      <p className="text-[10px] font-bold text-white/50 mb-2.5 uppercase tracking-[0.12em]">Daily Limits</p>
+      <div>
         {renderRow(gameRow, 'header')}
-        <div className="mt-1.5 pt-1.5 border-t border-white/[0.08]" />
+        <div className="my-2 border-t border-white/[0.08]" />
         {renderRow(nonGameRow, 'header')}
         {subRows.map((r) => renderRow(r, 'sub'))}
-      </div>
-    </motion.div>
-  );
-}
-
-/* ── Daily Earnings Widget ── */
-function DailyEarnings({ address }: { address: string }) {
-  const [data, setData] = useState<{
-    game: { earned: number; cap: number };
-    hunt: { earned: number; cap: number };
-    scan: { earned: number; cap: number };
-    quiz: { earned: number; cap: number };
-    nonGame: { earned: number; cap: number };
-  } | null>(null);
-
-  useEffect(() => {
-    const base = getHeliusProxyUrl() || '';
-    if (!base || !address) return;
-    fetch(`${base}/api/daily-limits?address=${encodeURIComponent(address)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d) setData(d);
-      })
-      .catch(() => {});
-  }, [address]);
-
-  if (!data) return null;
-  const totalEarned = data.game.earned + data.nonGame.earned;
-  if (totalEarned === 0) return null;
-
-  const huntTotal = data.hunt.earned + data.scan.earned;
-  const huntCap = data.hunt.cap; // scan is part of hunt activity
-  const otherEarned = Math.max(0, data.nonGame.earned - huntTotal - data.quiz.earned);
-  const bars = [
-    { label: 'Games', earned: data.game.earned, cap: data.game.cap, color: '#22d3ee' },
-    { label: 'Sybil Hunt', earned: huntTotal, cap: huntCap, color: '#f87171' },
-    { label: 'Quiz', earned: data.quiz.earned, cap: data.quiz.cap, color: '#a78bfa' },
-    { label: 'Other', earned: otherEarned, cap: data.nonGame.cap - huntCap - data.quiz.cap, color: '#34d399' },
-  ].filter((b) => b.earned > 0);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: 0.5 }}
-      className="w-full max-w-xs mx-auto rounded-2xl p-3.5 pointer-events-auto mb-3"
-      style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
-    >
-      <div className="flex items-center justify-between mb-2.5">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-white/50">Today's Earnings</span>
-        <span className="text-[11px] font-black text-amber-300">
-          {totalEarned} <span className="text-[9px] text-white/50 font-normal">coins today</span>
-        </span>
-      </div>
-      <div className="space-y-2">
-        {bars.map((b) => {
-          const pct = b.cap > 0 ? Math.min(100, (b.earned / b.cap) * 100) : 0;
-          return (
-            <div key={b.label} className="flex items-center gap-2.5">
-              <span className="text-[9px] font-bold w-11 text-right" style={{ color: b.color }}>
-                {b.label}
-              </span>
-              <div className="flex-1 h-[6px] rounded-full overflow-hidden bg-white/[0.06]">
-                <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${b.color}60, ${b.color})` }}
-                />
-              </div>
-              <span className="text-[9px] w-16 font-mono text-right">
-                <span className="text-white/50 font-bold">{b.earned}</span>
-                <span className="text-white/50">/{b.cap}</span>
-              </span>
-            </div>
-          );
-        })}
       </div>
     </motion.div>
   );
