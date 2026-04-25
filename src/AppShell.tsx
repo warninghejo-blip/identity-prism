@@ -75,6 +75,8 @@ function lazyRoute(element: ReactNode) {
 // wallet-adapter CSS imported eagerly in main.tsx to avoid lazy CSS dep
 import { mwaAuthorizationCache } from './lib/mwaAuthorizationCache';
 import { BLACKHOLE_ENABLED, getHeliusRpcUrl, MINT_CONFIG } from './constants';
+import { DEV_WALLET_ENABLED } from './lib/devWallet';
+import { DevWalletProvider } from './components/DevWalletProvider';
 
 const BlackHole = React.lazy(() => import('./pages/BlackHole'));
 const PreviewDeck = React.lazy(() => import('./pages/PreviewDeck'));
@@ -250,6 +252,30 @@ export default function AppShell() {
     return () => window.removeEventListener('popstate', handler);
   }, []);
 
+  const walletContent = DEV_WALLET_ENABLED ? (
+    // Dev mode: bypass Seed Vault entirely — use hardcoded test keypair
+    <DevWalletProvider>
+      <WalletModalProvider>
+        <React.Suspense
+          fallback={<div style={{ position: 'fixed', inset: 0, background: '#05070a', zIndex: 999998 }} />}
+        >
+          <RouterProvider router={router} />
+        </React.Suspense>
+      </WalletModalProvider>
+    </DevWalletProvider>
+  ) : (
+    <CustomWalletProvider wallets={wallets} autoConnect={false} localStorageKey="walletAdapter">
+      <DebugWallet />
+      <WalletModalProvider>
+        <React.Suspense
+          fallback={<div style={{ position: 'fixed', inset: 0, background: '#05070a', zIndex: 999998 }} />}
+        >
+          <RouterProvider router={router} />
+        </React.Suspense>
+      </WalletModalProvider>
+    </CustomWalletProvider>
+  );
+
   return (
     <ConnectionProvider endpoint={endpoint}>
       {DebugConsole && (
@@ -257,16 +283,7 @@ export default function AppShell() {
           <DebugConsole />
         </React.Suspense>
       )}
-      <CustomWalletProvider wallets={wallets} autoConnect={false} localStorageKey="walletAdapter">
-        <DebugWallet />
-        <WalletModalProvider>
-          <React.Suspense
-            fallback={<div style={{ position: 'fixed', inset: 0, background: '#05070a', zIndex: 999998 }} />}
-          >
-            <RouterProvider router={router} />
-          </React.Suspense>
-        </WalletModalProvider>
-      </CustomWalletProvider>
+      {walletContent}
     </ConnectionProvider>
   );
 }
