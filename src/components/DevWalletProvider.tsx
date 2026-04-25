@@ -62,7 +62,11 @@ export const DevWalletProvider = ({ children }: DevWalletProviderProps) => {
     // Small delay to let React tree settle before triggering auth
     const timer = setTimeout(async () => {
       try {
-        const { obtainJwt } = await import('@/components/prism/shared');
+        const { obtainJwt, setAuthWallet } = await import('@/components/prism/shared');
+        setAuthWallet({
+          publicKey: DEV_PUBLIC_KEY,
+          signMessage: async (msg: Uint8Array) => devSignMessage(msg),
+        });
         await obtainJwt({
           publicKey: DEV_PUBLIC_KEY,
           signMessage: async (msg: Uint8Array) => devSignMessage(msg),
@@ -73,7 +77,10 @@ export const DevWalletProvider = ({ children }: DevWalletProviderProps) => {
       }
     }, 800);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      import('@/components/prism/shared').then(({ setAuthWallet }) => setAuthWallet(null));
+    };
   }, []);
 
   const signMessage = useCallback(async (msg: Uint8Array): Promise<Uint8Array> => {
