@@ -14,7 +14,13 @@ import { WalletContext } from '@solana/wallet-adapter-react';
 import { WalletReadyState, WalletNotConnectedError } from '@solana/wallet-adapter-base';
 import type { Adapter, WalletError } from '@solana/wallet-adapter-base';
 import type { Transaction, VersionedTransaction, Connection, SendOptions } from '@solana/web3.js';
-import { DEV_PUBLIC_KEY, devSignMessage } from '@/lib/devWallet';
+import {
+  DEV_PUBLIC_KEY,
+  DEV_WALLET_ENABLED,
+  DEV_WALLET_INDEX,
+  DEV_WALLET_COUNT,
+  devSignMessage,
+} from '@/lib/devWallet';
 
 interface DevWalletProviderProps {
   children: React.ReactNode;
@@ -62,6 +68,11 @@ export const DevWalletProvider = ({ children }: DevWalletProviderProps) => {
     // Small delay to let React tree settle before triggering auth
     const timer = setTimeout(async () => {
       try {
+        // Clear any stale JWT from a previous wallet — each wallet address needs its own token
+        try {
+          sessionStorage.removeItem('ip_auth_jwt');
+        } catch {}
+
         const { obtainJwt, setAuthWallet } = await import('@/components/prism/shared');
         setAuthWallet({
           publicKey: DEV_PUBLIC_KEY,
@@ -120,6 +131,25 @@ export const DevWalletProvider = ({ children }: DevWalletProviderProps) => {
   return (
     <WalletContext.Provider value={contextValue as Parameters<typeof WalletContext.Provider>[0]['value']}>
       {children}
+      {DEV_WALLET_ENABLED && (
+        <div className="fixed bottom-2 right-2 z-[9999] bg-black/80 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-2 font-mono">
+          <span>DEV #{DEV_WALLET_INDEX + 1}</span>
+          <span className="text-white/50">{DEV_PUBLIC_KEY.toBase58().slice(0, 8)}...</span>
+          {Array.from({ length: DEV_WALLET_COUNT }, (_, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('wallet', String(i));
+                window.location.href = url.toString();
+              }}
+              className={`px-1.5 py-0.5 rounded ${i === DEV_WALLET_INDEX ? 'bg-emerald-500' : 'bg-white/10 hover:bg-white/20'}`}
+            >
+              W{i + 1}
+            </button>
+          ))}
+        </div>
+      )}
     </WalletContext.Provider>
   );
 };
