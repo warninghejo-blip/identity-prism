@@ -78,8 +78,8 @@
 | `/api/admin/api-keys` | POST | AdminKey | 20/60s | owner_name, contact_email, tier (free/pro/enterprise), notes | {key, owner_name, tier} | 400 (tier invalid), 500 | tier must be one of 3 values |
 | `/api/admin/api-keys` | GET | AdminKey | 20/60s | limit (1-200) | {keys: [{key_hash, owner_name, contact_email, tier, created_at, revoked_at, last_used_at, today_count}]} | 429 (RL), 500 | limit capped at 200 |
 | `/api/admin/api-keys/:key/revoke` | POST | AdminKey | 20/60s | — | {ok, key_hash} | 404 (key not found/already revoked) | — |
-| `/api/admin/set-coins` | POST | AdminKey | 30/60s | address, coins (number 0-1B) | {ok, address, balance} | 400 (invalid addr/coins range), 500 | coins: 0-1,000,000,000 max |
-| `/api/admin/set-wallet` | POST | AdminKey | 30/60s | address, data (settable fields only) | {ok, address, updatedFields} | 400 (invalid fields), 500 | allowlist blocks internal fields (_*) |
+| `/api/admin/set-coins` | POST | AdminKey | 30/60s | address, coins (number 0-1B) | {ok, address, balance} | 400 (invalid addr/coins range/parse error) | coins: 0-1,000,000,000 max |
+| `/api/admin/set-wallet` | POST | AdminKey | 30/60s | address, data (settable fields only) | {ok, address, updatedFields} | 400 (invalid fields/parse error) | allowlist blocks internal fields (_*) |
 
 **Auth Requirement Detail:** X-Admin-Key header must match `process.env.ADMIN_KEY` (timing-safe comparison). If ADMIN_KEY not set, all endpoints return 501 "Admin API not configured". (**Line 2-3, 18, 281-304**)
 
@@ -443,14 +443,14 @@
 
 | Endpoint | Method | Auth | Rate Limit | Params | Response | Notes |
 |----------|--------|------|-----------|--------|----------|-------|
-| `/api/market/collection-stats` | GET | None | 20/60s | symbol/collectionId/name/mint | {floor, volume, stats} | Tries ME slug by mint, then candidates |
-| `/api/market/sol-price` | GET | None | 30/60s | — | {price} | SOL/USD price |
-| `/api/market/skr-price` | GET | None | 30/60s | — | {price} | SKR/USD price |
-| `/api/market/jupiter-prices` | GET | None | 20/60s | mints (comma-separated, max 2000 chars) | {prices} | Batch price lookup |
-| `/api/market/mint-quote` | GET | None | 20/60s | — | {quote} | Mint pricing info |
-| `/api/market/swap-quote` | GET | None | 30/60s | — | {quote} | Jupiter swap quote (JWT optional) |
-| `/api/market/build-swap` | POST | JWT | 20/60s | inputMint, outputMint, amount, slippageBps (1-500) | {requestId, tx} | Builds swap tx + registers intent (TTL 10 min); stores messageHash bound to requestId (anti-tamper) |
-| `/api/market/execute-swap` | POST | JWT | 20/60s | requestId, signedTx | {txSignature} | Executes registered swap; verifies JWT matches intent wallet; verifies messageHash; single-use (intent deleted); 503 if no Jupiter API key |
+| `/api/market/collection-stats` | GET | None | 20/60s | symbol/collectionId/name/mint | {status, floorSol, source, tensorUrl, meUrl, meSlug} | Tries ME slug by mint, then candidates |
+| `/api/market/sol-price` | GET | None | 30/60s | — | {usd} | SOL/USD price |
+| `/api/market/skr-price` | GET | None | 30/60s | — | {usd} | SKR/USD price |
+| `/api/market/jupiter-prices` | GET | None | 20/60s | ids (comma-separated, max 2000 chars) | {prices} | Batch price lookup; param is `ids` not `mints` |
+| `/api/market/mint-quote` | GET | None | 20/60s | — | {solUsd, skrUsd, baseSol, skrAmount, skrAmountRaw} | Mint pricing info |
+| `/api/market/swap-quote` | GET | None | 30/60s | inputMint, amount, taker (optional) | {inputMint, outputMint, outAmount, priceImpactPct, transport, quoteResponse} | Jupiter swap quote (JWT optional) |
+| `/api/market/build-swap` | POST | JWT | 20/60s | userPublicKey (must === JWT address), inputMint, outputMint, amount, slippageBps (1-500) | {swapTransaction} | Builds swap tx + registers intent (TTL 10 min); stores messageHash bound to requestId (anti-tamper) |
+| `/api/market/execute-swap` | POST | JWT | 20/60s | requestId, signedTransaction | full executeData | Executes registered swap; verifies JWT matches intent wallet; verifies messageHash; single-use (intent deleted); 503 if no Jupiter API key |
 
 ## MARKET (Jupiter Integration)
 - `GET /api/market/sol-price` — SOL/USD price (30/60s rate limit)
@@ -635,8 +635,24 @@
 **Observable QA behavior:**
 - Push notification triggers → added to `notificationsDb[address]`
 - Server restart → notifications reloaded from SQL or JSON
-- Notification array capped at ~200 per userlink card format |
-| `/api/v1/reputation/:address` | GET | None (CORS) | 30/60s | Public reputation snapshot | **1-hour cache; public endpoints** |
+- Notification array capped at 100 per user (`MAX_NOTIFICATIONS_PER_USER = 100`; oldest dropped on overflow)
+
+---
+
+### **15. reputation.js** — Reputation/Sybil API
+**File:** `server/routes/reputation.js` (33.3 KB, sample)
+
+| Endpoint | Method | Auth | Rate Limit | Response | Notes |
+|----------|--------|------|-----------|----------|-------|
+| `/api/actions/sybil/:address` | GET | API Key | 20/60s | {type, icon, title, description, label, links.actions} | Blinks action for sybil scan |
+| `/api/v2/reputation` | GET | None (API Key optional, raises RL to 60/60s) | 10/60s (anon), 60/60s (API key) | {version, address, onchainScore, compositeScore, compositeTier, scoreBreakdown, identity, stats, sybilAnalysis, achievements, prism, scoreHistory, meta} | Full v2 snapshot |
+| `/api/reputation` | GET | None | 5s cooldown per IP (shared with compare+batch) | address | Full reputation (on-chain + sybil + social + xp + activity) | Deep fetch; cooldown applies to /api/reputation, /api/reputation/compare, /api/reputation/batch combined |
+| `/api/reputation/batch` | POST | None | 5s cooldown per IP | addresses (array, max as validated) | {results: [{address, ...}]} | Batch reputation lookup |
+| `/api/reputation/compare` | GET | None | 5s cooldown per IP | a, b (addresses) | {a, b, comparison} | Compares two wallets; increments `socialStats.compareCount` for both |
+| `/api/actions/attest` | GET/POST | None/JWT | 10/60s | address (GET) or body (POST) | GET: Blinks action descriptor; POST: build+sign attest tx | Records score attestation on-chain |
+| `/api/reputation/attest` | GET/POST | None/JWT | 10/60s | address (GET) or body (POST) | Same as /api/actions/attest | Alias |
+| `/api/sybil/feedback` | POST | JWT | 5/60s | target_address, report_type (sybil/human_verified/false_positive), notes | {id, ...created record} | Returns 201 on success; registered in `sybil_feedback` table |
+| `/api/v1/reputation/:address` | GET | None (CORS) | 60/60s | Public reputation snapshot | **1-hour cache; public endpoints** |
 | `/api/v1/reputation/:address/history` | GET | None (CORS) | 30/60s | Score history | — |
 
 **API Key Check:** REPUTATION_API_KEYS env var (comma-separated), checked via `checkApiKey()` (**Line 10-12, 46**)
@@ -651,9 +667,13 @@
 | `/api/sybil/analysis` | GET | JWT (optional) | 5/60s (new analyses) | address | Full analysis or cached | In-flight dedup + cache |
 | `/api/sybil/batch` | POST | None | 15s cooldown | addresses (array ≤20) | {results, total, analyzed} | Quick verdict from graph if uncached |
 | `/api/sybil/stats` | GET | AdminKey | None | — | {totalAnalyzed, gradeDistribution, verdictDistribution} | Graph intelligence |
-| `/api/sybil/graph` | GET | None | 6s per IP | address | {riskScore, trustGrade, verdict, walletAgeDays, siblingCount} | Safe subset, no full siblings |
-| `/api/sybil/funding-sources` | GET | None (cached), rate limited (fresh) | 3/30s | address | {sources: [{address, label, type, totalSolReceived, %, firstInteraction}]} | Top 20 sources |
-| `/api/sybil/cluster` | GET | None | 3 (typical soft limit in similar systems)
+| `/api/sybil/graph` | GET | None | 6s per IP | address | {riskScore, trustGrade, verdict, walletAgeDays, defiDepth, hasSolDomain, siblingCount} | Safe subset, no full siblings |
+| `/api/sybil/funding-sources` | GET | None (cached), rate limited (fresh) | 3/30s | address | {sources: [{address, label, type, totalSolReceived, transactionCount, firstInteraction, lastInteraction, percentage}]} | Top 20 sources; cache-first (no RL), fresh requires RL |
+| `/api/sybil/cluster` | GET | None | 3/30s | address | {clusterId, clusterSize, sharedFundingSource, siblingWallets, confidence} | 30m cache per addr |
+| `/api/sybil/circular-flow` | GET | None | 3/30s | address | {detected, cycle} | Circular funding detection |
+| `/api/sybil/dark-pool` | GET | None | 3/30s | address | {address, scamInteractions, scamCount, totalProgramsUsed, riskLevel} | Detects interactions with known scam programs/addresses; top 20 interactions |
+| `/api/sybil/suggested-targets` | GET | None | 5/30s | exclude (comma-sep), limit (1-20, default 10) | {targets: [{address, source, parentRisk, ...}], totalAvailable} | Wallets to hunt: uninvestigated siblings/cluster members of known sybils |
+| `/api/recovery/status` | GET | None | 5/60s | address | {currentTrustScore, adjustedTrustScore, recoveryBonus, breakdown, activity} | Activity-based trust recovery status; activity breakdown includes gameTypes, achievements, quests, streak, scans, challengeWins, gamesPlayed, textQuests, vaultStaked |
 
 ---
 
@@ -706,7 +726,7 @@
 
 | Endpoint | Method | Auth | Rate Limit | Params | Response | Notes |
 |----------|--------|------|-----------|--------|----------|-------|
-| `/api/prism/spend` | POST | JWT | 20/60s | source, amount, itemId, moduleId, description | {balance, spent} | 2% burn fee deducted |
+| `/api/prism/spend` | POST | JWT | 20/60s | source, amount, itemId, moduleId, description | {balance, spent} | Burn fee: floor(2%) min 1, but 0 for amounts ≤50. Logged separately, not extra deduction. |
 
 **Validation:**
 - Amount: 1-1,000,000 coins (**Line 46**)
@@ -715,7 +735,7 @@
 - Forge item purchase: requires rank + unlock satisfaction (**Line 70-76**)
 - Pending spend lock per address prevents race (**Line 80-83, 102**)
 
-**Burn Fee:** 2% of spent amount (**Line 92, 109**)
+**Burn Fee:** floor(2%) of spent amount, minimum 1, but 0 for amounts ≤50. Logged separately in transaction description, not an extra deduction on top of spent (**Line 92, 109**)
 
 ---
 
@@ -795,9 +815,9 @@
 | `/api/identity/perks` | GET | None | 30/60s | address | {address, ...perks} | Identity holder benefits |
 | `/api/score-history` | GET | None | 30/60s | address | {address, scores, lastUpdated} | Historical composite scores |
 | `/api/score-history` | POST | JWT | 20/60s | address | {address, scores, lastUpdated} | Server-computed tier (no client elevation) |
-| `/api/prism/balance` | GET | None | 30/60s | address | {coinBalance, prismBalance} | — |
+| `/api/prism/balance` | GET | None | 30/60s | address | {address, balance, totalEarned, totalSpent, lastUpdated} | — |
 | `/api/xp` | GET | None | 20/60s | address | {sources, computedXP, computedRank} | Ranger XP snapshot |
-| `/api/daily-limits` | GET | None | 20/60s | address | {game, hunt, scan, quiz, nonGame, blackHole} | Current day progress |
+| `/api/daily-limits` | GET | None | 20/60s | address | {game, hunt, scan, quiz, nonGame, blackHole, blackHoleCap} | Current day progress |
 | `/api/prism/transactions` | GET | JWT | 20/60s | address` table: job_name, last_run_at, last_status, summary_json
 
 **Louvain detection window:** `scheduler.js:53-57`
@@ -949,7 +969,10 @@
 ### **23. arena.js** — Challenges (1v1 Competitive)
 **File:** `server/routes/arena.js` (28.9 KB, sample)
 
-**Challenge State Machine:** open → accepted → playing → scoring → completed/expired/cancelled
+**Challenge State Machine:**
+- Score challenge: open → (accept) → completed instantly (composite scores fetched and compared on accept)
+- Game challenge: open/playing → (accept) → playing → (both scores submitted) → completed
+- Note: there is no `scoring` state in routes; `accepted` is not a valid transition state for game challenges
 
 ### Cancel vs Abandon:
 | Action | Who | When blocked | Fee |
@@ -961,13 +984,15 @@
 - [ ] Cancel when status=accepted → 409 (not allowed)
 - [ ] Cancel with creatorScore submitted → 20% fee (not 10%)
 - [ ] Abandon when score already submitted → 400
-- [ ] Challenge stuck in `scoring` >24h → scheduler refunds both (safety resolve)
+- [ ] Challenge stuck in `scoring` >24h → scheduler refunds both (defensive scheduler branch, not normal flow — `scoring` state does not appear in routes)
 - [ ] Challenge stuck in `playing`/`accepted` >24h → scheduler settles or expires
 - [ ] Completed challenges >7 days → auto-cleaned
 
 | Endpoint | Method | Auth | Rate Limit | Params | Response | Details |
 |----------|--------|------|-----------|--------|----------|---------|
 | `/api/challenge/create` | POST | JWT | 5/60s | type (score/game), gameMode (orbit/destroyer/gravity), stakeAmount (5-1000), opponent, expiresMinutes | {ok, challenge} | Validates stake balance, deducts immediately |
+| `/api/challenge/cancel` | POST | JWT | 10/60s | challengeId | {ok, refunded, fee} | Creator only; 409 if status=accepted or playing+opponent; fee=10% if no creatorScore yet, 20% if creatorScore submitted; opponent refunded in full if present |
+| `/api/challenge/abandon` | POST | JWT | 10/60s | challengeId | {ok} | Either participant; only open (creator) or playing (no scores submitted yet) challenges; full refund both parties, 0% fee; 400 if any score already submitted |
 
 ---
 
@@ -1007,7 +1032,7 @@
 ### **3. Daily Cap Resets**
 - **Risk:** Date boundary at midnight UTC; client submits in different timezone
 
-| `/api/challenge/leaderboard` | GET | None | 30/60s | — | {ok, weekly, allTime, nextReset, minGames, xpRewards} | Min 3 games/week to rank |
+| `/api/challenge/leaderboard` | GET | None | 30/60s | — | {ok, weekly, allTime, nextReset, minGames, lastWeekWinners} | Min 3 games/week to rank |
 | `/api/challenge/list` | GET | None | 60/60s | — | {ok, challenges} (open/playing, top 50) | Non-expired only |
 | `/api/challenge/my` | GET | JWT | None | — | {ok, challenges} (creator or opponent) | Top 50 of user's challenges |
 | `/api/challenge/accept` | POST | JWT | 10/60s | challengeId | {ok, challenge} | Auto-completes score challenges, triggers verification |
@@ -1017,7 +1042,7 @@
 **Challenge Mechanics:**
 - **Stake Range:** 5-1000 coins (**Line 74, 77**)
 - **Expiry Options:** 15, 30, 60, 180, 360, 720, 1440 minutes (default 60) (**Line 127-129**)
-- **Max Active:** 10,000; old completed/expired/cancelled >24h purged (**Line 134-149**)
+- **Max Active:** 10,000; 7-day scheduler cleanup runs periodically. Emergency 24h purge only triggers when active count reaches ≥10,000 (inline cleanup in create handler) (**Line 134-149**)
 - **Max Score No Proof:** 30 points; above requires verified session (**Line 471, 492-493**)
 - **Score Tolerance:** ±5 of session proof (**Line 482**)
 - **Score Champion Limits:** orbit=600, gravity=600, destroyer=9999, wars=600, territory=600 (**Line 465-466**)
@@ -1076,7 +1101,7 @@
 - Stays `playing` status until both scores submitted (**Line 397**)
 - Winner determined when 2nd score in; **5% fee**; winner gets `stake × 2 × 0.95` (**Line 528-550**)
 
-**Weekly Leaderboard:** Resets Sunday UTC 00:00; min 3 games to rank (**Line 209, 211**)
+**Weekly Leaderboard:** Resets Monday UTC 00:00 (weekStart calculated as most recent Monday via `(d.getUTCDay() + 6) % 7`); min 3 games to rank (**Line 209, 211**)
 
 ---
 
@@ -1100,6 +1125,12 @@ Core minting flow involves:
 ---
 
 ## NFT MINT Endpoints
+- `GET /api/prism/economy` — Economy stats (20/60s, None) → `{totalBurned, dailyGameCap}`
+- `GET /api/actions/render` — Render NFT card image (30/60s, None) → PNG/WebP image bytes; params: view (front/back), tab (stats/badges), address, empty, tier
+- `GET/POST /api/actions/share` — Blinks action for sharing/exploring wallet (30/60s, None) → Blinks action descriptor with links to front/back/stats/badges/mint/view-app
+- `POST /api/actions/view-app` — Redirect to app URL for wallet (30/60s, None) → `{type: "external-link", externalLink}`; params: address or addressInput
+- `POST /api/actions/mint-blink` — Execute mint via Blink (30/60s, None) → Serialized Solana transaction; params: address (owner), account (payer); requires COLLECTION_AUTHORITY_SECRET + TREASURY_ADDRESS + coreCollection configured
+- `POST /verify-collection` — Admin: verify NFT collection membership (5/60s, AdminKey + JWT) → `{ok, signature}` or error; params: mint, collectionMint
 - `POST /api/prism/mint-for-coins` — Create reservation (10/60s, JWT)
   - Cost: 10,000 coins — NOT deducted at reservation, only at finalize
   - Returns requestId, valid 10 minutes
@@ -1197,7 +1228,7 @@ Core minting flow involves:
 - **Expiry Options:** 15, 30, 60, 180, 360, 720, 1440 minutes
 - **Max Active Challenges:** 10,000 (auto-purges old)
 - **Max Score No Proof:** 30 (unverified session)
-- **State Machine:** open → accepted → playing → scoring → completed/expired/cancelled
+- **State Machine:** Score: open → (accept) → completed (instant). Game: open/playing → (accept) → playing → (both submit) → completed. No `scoring` state in routes.
 - **Score Challenge Fee:** 10% — winner gets `stake × 2 × 0.90`
 - **Game Challenge Fee:** 5% — winner gets `stake × 2 × 0.95`
 - **Score Challenge:** Auto-completes when creator score submitted (composite fetch)
@@ -1229,7 +1260,7 @@ Core minting flow involves:
 - **Game Challenge:** Waits for both scores, then settles
 - **Prize Calc (Score challenge):** `stake × 2 × 0.90` = winner prize; 10% burned
 - **Prize Calc (Game challenge):** `stake × 2 × 0.95` = winner prize; 5% burned
-- **Weekly Leaderboard:** Min 3 games to rank; resets Sunday UTC
+- **Weekly Leaderboard:** Min 3 games to rank; resets Monday UTC 00:00
 - **Pending Submit Lock:** Per challenge ID + submitter address
 
 ### **BLACK HOLE (Cleanup)**
@@ -1898,7 +1929,7 @@ Core minting flow involves:
 - ✅ Spend validation: amount 1-1M coins (**spend.js:46**)
 - ✅ Forge module: exact price match, no duplicates (**spend.js:55-60**)
 - ✅ Forge item: rank check, unlock check (**spend.js:70-76**)
-- ✅ Burn fee: 2% deducted from spend (**spend.js:92**)
+- ✅ Burn fee: floor(2%) of spent, min 1, but 0 for amounts ≤50; logged separately, not extra deduction (**spend.js:92**)
 - ✅ Spend race: pendingSpendRequests prevents concurrent (**spend.js:80-83**)
 
 ### **VAULT / STAKING**
@@ -2267,7 +2298,7 @@ create → open/playing
 accept → (score: auto-complete) → completed OR (game: playing)
 playing → (both scores) → completed
 completed → (earnClaimed) → (eligible for earn via challenge_win source)
-expired/cancelled → purged (>24h old)
+expired/cancelled → purged (>7 days old by scheduler; emergency inline purge only when ≥10,000 active)
 ```
 - **Assertion:** Challenge can't accept if already accepted by someone else
 - **Assertion:** Score can't resubhuman, cleanRecord, trustPillar): +10 each
@@ -2538,7 +2569,7 @@ staking → (unstake after lock) → (no penalty, full amount + yield)
   - [ ] Prize (game challenge): (stake × 2) × 0.95 to winner, 5% burned
   - [ ] Max active: 10,000 before purge triggers
   - [ ] Max score (no proof): 30; above requires session (**arena.js:471**)
-  - [ ] Weekly leaderboard: min 3 games, resets Sunday UTC
+  - [ ] Weekly leaderboard: min 3 games, resets Monday UTC 00:00
 
 - [ ] **Quests**
   - [ ] Valid quest IDs: 20 total (5 daily, 5 weekly, 10 one-time)
@@ -3980,7 +4011,7 @@ NFT-модуль сильно завязан на `blinks.js`. Возьму то
 ## NOTIFICATIONS TEST PLAN
 
 ### Preconditions:
-- W1 connected, JWT obtained via `POST /api/auth/verify`
+- W1 connected, JWT obtained via `POST /api/auth/token`
 - Notifications are JWT-gated (all read/write endpoints require Bearer token)
 
 ### Notification types (from code):
@@ -4012,7 +4043,7 @@ NFT-модуль сильно завязан на `blinks.js`. Возьму то
 ### Notes:
 - `yield_available` and `rank_up` types are defined in the type comment but no code currently emits them — skip for now or mark as future
 - Sybil bounty does NOT produce a notification currently (only coins are credited silently)
-- Challenge notifications are emitted by both the arena route (`POST /api/arena/challenge/resolve`) and the scheduler (stale challenge cleanup every 30min and hourly weekly reward check)
+- Challenge notifications are emitted by the arena route (accept/submit/cancel/abandon handlers in `arena.js`) and the scheduler (stale challenge cleanup every 30min and hourly weekly reward check)
 
 ---
 
