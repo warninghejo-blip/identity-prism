@@ -1,5 +1,13 @@
 # **Identity Prism Backend - Exhaustive Route Test Documentation**
 
+## Test Methodology
+- Dev wallets W1 (`3D1P7wRJpxXnih7uWtyjVhnPAZrvtHwjJYgzNc5mxLhJ`) and W2 (`8zBP5712pPeHxZirKDYR2Aysnts3iFMVpyegcgESNhsr`) — switch via ?wallet=0 / ?wallet=1
+- Coins/XP setup: via admin API (`POST /api/admin/set-coins`, `POST /api/admin/set-wallet`)
+- SOL/SKR purchases: user tests manually on Seeker, tester monitors server logs
+- Admin key required for setup: from `.env` `ADMIN_KEY`
+
+---
+
 ## **PART 1: FILE-BY-FILE ENDPOINT CATALOG**
 
 ### **1. admin.js** — Admin API (requires X-Admin-Key header)
@@ -8,7 +16,7 @@
 | Endpoint | Method | Auth | Rate Limit | Key Test Parameters | Success Response | Critical Errors | Caps/Limits |
 |----------|--------|------|-----------|-------------------|------------------|-----------------|------------|
 | `/api/admin/sybil/feedback` | GET | AdminKey | 20/60s | status (pending/verified/rejected), limit (1-200), offset | {reports, total} | 429 (RL), 500 (DB error) | limit capped at 200 |
-| `/api/admin/sybil/feedback/:id/verify` | POST | AdminKey | 20/60s | verified (boolean) | {ok, id, admin_verified} | 400Perfect! Now I have read all the files. Let me compile the comprehensive summary organized by module with test-relevant behavior.
+| `/api/admin/sybil/feedback/:id/verify` | POST | AdminKey | 20/60s | verified (boolean) | {ok, id, admin_verified} | 400 (bad bool), 404 (not found), 500 (DB) | — |
 
 ---
 
@@ -64,7 +72,8 @@
 - Increment `tokenVersion` → all existing tokens for wallet become invalid
 - 51st unique IP for wallet → oldest IP dropped, new IP added
 - Missing auth header → 401 with "Missing auth token" message
-- Invalid signature → 401 with "Invalid or (bad bool), 404 (not found), 500 (DB) | — |
+- Invalid signature → 401 with "Invalid or expired token" message
+
 | `/api/admin/sybil/stats` | GET | AdminKey | 20/60s | — | {totalVerdicts, riskDistribution, last24h, clusters, temporalCohorts, fundingEdges, cacheStats, sqliteSize} | 429 (RL), 500 | 24h lookback = 86400000ms |
 | `/api/admin/api-keys` | POST | AdminKey | 20/60s | owner_name, contact_email, tier (free/pro/enterprise), notes | {key, owner_name, tier} | 400 (tier invalid), 500 | tier must be one of 3 values |
 | `/api/admin/api-keys` | GET | AdminKey | 20/60s | limit (1-200) | {keys: [{key_hash, owner_name, contact_email, tier, created_at, revoked_at, last_used_at, today_count}]} | 429 (RL), 500 | limit capped at 200 |
@@ -97,7 +106,7 @@
 
 ---
 
-### **3. blackhole.js** — Black Hole Cleanup expired auth token"
+### **3. blackhole.js** — Black Hole Cleanup
 
 **Session tracking:** `auth.js:50-57`
 - Per-address IP log stored in `walletIpLog` Map
@@ -252,6 +261,8 @@
 | `challenge_win` | Max allowed | Per source | Linked to nongame cap | Race condition lock on address |
 | `scan_wallet` | `scanWalletReward` | Per wallet+target | `dailyScanCap` | 60s cooldown per wallet+target |
 | `sybil_hunt` | Computed per count | Once per wallet+target | `dailyHuntCap` | Bounty once per sybil target |
+
+> **NOTE:** `source=achievement` on `POST /api/prism/earn` returns **400** — achievements must be claimed via `POST /api/game/achievements` instead.
 
 **Rate Limiting:**
 - Per-source cooldown: `prismEarnCooldownTable[source] ?? prismEarnCooldownDefault` (**Line 80-82**)
@@ -427,12 +438,41 @@
 
 ---
 
-### **10. market.js** — Collection Stats, Swaps (skeleton)
+### **10. market.js** — Collection Stats, Swaps (Jupiter Integration)
 **File:** `server/routes/market.js` (20.6 KB, sample)
 
 | Endpoint | Method | Auth | Rate Limit | Params | Response | Notes |
 |----------|--------|------|-----------|--------|----------|-------|
 | `/api/market/collection-stats` | GET | None | 20/60s | symbol/collectionId/name/mint | {floor, volume, stats} | Tries ME slug by mint, then candidates |
+| `/api/market/sol-price` | GET | None | 30/60s | — | {price} | SOL/USD price |
+| `/api/market/skr-price` | GET | None | 30/60s | — | {price} | SKR/USD price |
+| `/api/market/jupiter-prices` | GET | None | 20/60s | mints (comma-separated, max 2000 chars) | {prices} | Batch price lookup |
+| `/api/market/mint-quote` | GET | None | 20/60s | — | {quote} | Mint pricing info |
+| `/api/market/swap-quote` | GET | None | 30/60s | — | {quote} | Jupiter swap quote (JWT optional) |
+| `/api/market/build-swap` | POST | JWT | 20/60s | inputMint, outputMint, amount, slippageBps (1-500) | {requestId, tx} | Builds swap tx + registers intent (TTL 10 min); stores messageHash bound to requestId (anti-tamper) |
+| `/api/market/execute-swap` | POST | JWT | 20/60s | requestId, signedTx | {txSignature} | Executes registered swap; verifies JWT matches intent wallet; verifies messageHash; single-use (intent deleted); 503 if no Jupiter API key |
+
+## MARKET (Jupiter Integration)
+- `GET /api/market/sol-price` — SOL/USD price (30/60s rate limit)
+- `GET /api/market/skr-price` — SKR/USD price (30/60s)
+- `GET /api/market/jupiter-prices` — Batch price lookup (20/60s, max 2000 chars)
+- `GET /api/market/mint-quote` — Mint pricing info (20/60s)
+- `GET /api/market/swap-quote` — Jupiter swap quote (30/60s, JWT optional)
+- `POST /api/market/build-swap` — Build swap tx + register intent (20/60s, JWT required)
+  - Stores messageHash bound to requestId (anti-tamper)
+  - Intent TTL: 10 minutes
+  - Slippage: 1-500 bps
+- `POST /api/market/execute-swap` — Execute registered swap (20/60s, JWT required)
+  - Verifies JWT matches intent wallet
+  - Verifies messageHash matches submitted tx
+  - Single-use: intent deleted before forwarding
+  - Returns 503 if Jupiter API key not configured
+
+### Market Edge Cases:
+- [ ] W1 builds swap, W2 tries execute with W1's requestId → 403
+- [ ] Execute same requestId twice → 404 on second
+- [ ] Submit different tx (not from build-swap) with valid requestId → 400 tamper
+- [ ] No Jupiter API key → 503
 
 ---
 
@@ -470,7 +510,9 @@
 **Sybil verdict derivation:** `sybilVerdict.js:152-228`
 - **Verdict keys:** unknown, clean, suspicious, cluster_linked, probable_sybil, confirmed_sybil
 - **Strong network signals:** graph_intelligence, fundingChainDepth ≥ 2, strongNetworkCount ≥ 2, sibling ≥ 5
-- **Cluster linked` or `/metadata/assets` | POST | JWT | None | image (base64/dataUrl), contentType | {url} | Saves to assetsDir with UUID |
+- **Cluster linked** → flagged if community detection assigns to known sybil cluster
+
+| `/assets` or `/metadata/assets` | POST | JWT | None | image (base64/dataUrl), contentType | {url} | Saves to assetsDir with UUID |
 | `/assets/:file` or `/metadata/assets/:file` | GET | None | None | — | Binary image data | Serves stored file |
 | `/metadata` | POST | JWT | 10/60s | metadata (object) | {uri} | Saves JSON to metadataDir |
 | `/metadata/:file` | GET | None | None | — | JSON metadata | Serves stored metadata |
@@ -558,7 +600,9 @@
 
 | Endpoint | Method | Auth | Rate Limit | Response | Notes |
 |----------|--------|------|-----------|----------|-------|
-| `/api/actions/sybil/:address` | GET | API Key | 20/60s | {type, icon, title, description, label, links.actions} | B checks:** `scheduler.js:73`
+| `/api/actions/sybil/:address` | GET | API Key | 20/60s | {type, icon, title, description, label, links.actions} | Blinks action for sybil scan |
+
+**Tournament check:** `scheduler.js:73`
 - **Interval:** 60,000ms (1 minute)
 - `checkTournaments()` called to advance/complete tournaments
 
@@ -718,6 +762,17 @@
 
 ## **12. SCHEDULER & BACKGROUND JOBS**
 
+### Scheduler Tasks:
+- Challenge expiry: every 60s — expires open/scoring challenges past TTL
+- Challenge safety-resolve: stuck playing/accepted >24h → settle or refund
+- Challenge cleanup: every 30min — removes completed/cancelled/expired >7 days
+- Tournament check: every 60s
+- walletIpLog cleanup: every 5min — evict entries >24h
+- backfillCompositeScores: once at startup (3s delay)
+- Louvain community detection: daily + bootstrap at 5min if no prior run
+- identityOwnershipCache: every 10min — evict entries >1h
+- walletIpLog cap: every 1h — evict if >10,000 entries
+
 **Job state tracking:** `sybilClusterStore.js:65-90`
 - Stored in `scheduler_job_runs leaderboard if joined |
 | `/api/tournament/join` | POST | JWT | 10/60s | tier | {success, tier, prizePool, burned} | Entry fee deducted, burned per tier rate |
@@ -847,7 +902,22 @@
 - Max entries: 200
 - LRU eviction when cache exceeds 200
 
-**Transaction classification/wallet |
+**Transaction classification:** `heliusEnhanced.js:5-16`
+- defi: SWAP, ADD_LIQUIDITY, etc. (18 types)
+- nft: NFT_SALE, NFT_MINT, TRANSFER, etc. (14 types)
+- staking: STAKE_SOL, UNSTAKE_SOL, etc. (7 types)
+- default: transfer
+
+*(See also section 7 for behavioral risk signals)*
+
+---
+
+### **21. vault.js** — Staking (Prism Coins)
+**File:** `server/routes/vault.js`
+
+| Endpoint | Method | Auth | Rate Limit | Params | Response | Notes |
+|----------|--------|------|-----------|--------|----------|-------|
+| `/api/prism/vault/stake` | POST | JWT | 10/60s | amount, tier, lockDays | {success, staked, tier, lockUntil} | Validates balance, tier min/max |
 | `/api/prism/vault/claim` | POST | JWT | 10/60s | — | {success, claimed, newBalance} | Yield calc from yield multiplier |
 | `/api/prism/vault/unstake` | POST | JWT | 10/60s | — | {success, returned, yield, penalty, burned, early} | Early: earlyPenalty %, burned coins |
 | `/api/prism/vault/status` | GET | None | 30/60s | address | {staking, unclaimedYield, timeLeft, dailyYield, effectiveRate} | — |
@@ -879,29 +949,25 @@
 ### **23. arena.js** — Challenges (1v1 Competitive)
 **File:** `server/routes/arena.js` (28.9 KB, sample)
 
+**Challenge State Machine:** open → accepted → playing → scoring → completed/expired/cancelled
+
+### Cancel vs Abandon:
+| Action | Who | When blocked | Fee |
+|--------|-----|-------------|-----|
+| Cancel | Creator only | status=accepted OR playing+opponent | 10% if no creatorScore, 20% if creatorScore submitted |
+| Abandon | Either participant | Any score submitted | 0% — full refund both |
+
+### Arena Edge Cases:
+- [ ] Cancel when status=accepted → 409 (not allowed)
+- [ ] Cancel with creatorScore submitted → 20% fee (not 10%)
+- [ ] Abandon when score already submitted → 400
+- [ ] Challenge stuck in `scoring` >24h → scheduler refunds both (safety resolve)
+- [ ] Challenge stuck in `playing`/`accepted` >24h → scheduler settles or expires
+- [ ] Completed challenges >7 days → auto-cleaned
+
 | Endpoint | Method | Auth | Rate Limit | Params | Response | Details |
 |----------|--------|------|-----------|--------|----------|---------|
-| `/api/challenge/create` | POST | JWT | 5/60s | type (score/game), gameMode (orbit/destroyer/gravity), stakeAmount (5-1000), opponent, expiresMinutes |:** `heliusEnhanced.js:5-16`
-- defi: SWAP, ADD_LIQUIDITY, etc. (18 types)
-- nft: NFT_SALE, NFT_MINT, TRANSFER, etc. (14 types)
-- staking: STAKE_SOL, UNSTAKE_SOL, etc. (7 types)
-- default: transfer
-
-**Behavioral risk signals:** `heliusEnhanced.js:175-356`
-- **Rapid cycling:** Incoming +0.01 SOL within 60s → outgoing -0.8x to 1.2x ratio → flag
-- **Farming ratio:** shallow protocols (≤2 interactions) / total protocols
-- **Behavior drift:** Jaccard similarity <0.1 (early vs. recent programs)
-- **Dust transactions:** <0.001 SOL
-- **Self-transfers:** Same source + destination
-- **Failed tx ratio:** Count of failed transactions
-- **Protocol interaction count:** Unique programs touched
-
-**Observable QA behavior:**
-- Fetch enhanced history (first call) → hits Helius API, caches 10 min
-- Fetch same address within 10 min → returns cached
-- Fetch 11th unique address → evicts oldest cached address
-- 5 swaps on Orca, Raydium, Marinade → 3 protocols detected, isDeFiKing=true (≥2)
-- Recent behavior (50 txs) only uses Serum, early (100 txs) used Orca + Marinade → drift detected
+| `/api/challenge/create` | POST | JWT | 5/60s | type (score/game), gameMode (orbit/destroyer/gravity), stakeAmount (5-1000), opponent, expiresMinutes | {ok, challenge} | Validates stake balance, deducts immediately |
 
 ---
 
@@ -909,10 +975,7 @@
 
 **Public reputation response:** `reputationBuilder.js:61-109`
 - Includes composite score, tier, sybil risk, confidence, breakdown
-- TTL header: `publicReputationTtlSeconds| Endpoint | Method | Auth | Rate Limit | Params | Response | Details |
-|----------|--------|------|-----------|--------|----------|---------|
-| `/api/challenge/create` | POST | JWT | 5/60s | type (score/game), gameMode (orbit/destroyer/gravity), stakeAmount (5-1000), opponent, expiresMinutes | {ok, challenge} | Validates stake balance, deducts immediately |
-| `/api/challenge/leaderboard` | GET | None` (configurable)
+- TTL header: `publicReputationTtlSeconds` (configurable)
 - Sybil risk mapped: confirmed/probable → "high", cluster_linked/suspicious → "medium", else → "low"
 - Confidence: `min(1, max(0, verdictConfidenceScore / 100))`
 
@@ -942,7 +1005,9 @@
 - **QA case:** Query coin balance immediately after update → SQL guarantees current value
 
 ### **3. Daily Cap Resets**
-- **Risk:** Date boundary at | 30/60s | — | {ok, weekly, allTime, nextReset, minGames, xpRewards} | Min 3 games/week to rank |
+- **Risk:** Date boundary at midnight UTC; client submits in different timezone
+
+| `/api/challenge/leaderboard` | GET | None | 30/60s | — | {ok, weekly, allTime, nextReset, minGames, xpRewards} | Min 3 games/week to rank |
 | `/api/challenge/list` | GET | None | 60/60s | — | {ok, challenges} (open/playing, top 50) | Non-expired only |
 | `/api/challenge/my` | GET | JWT | None | — | {ok, challenges} (creator or opponent) | Top 50 of user's challenges |
 | `/api/challenge/accept` | POST | JWT | 10/60s | challengeId | {ok, challenge} | Auto-completes score challenges, triggers verification |
@@ -956,7 +1021,10 @@
 - **Max Score No Proof:** 30 points; above requires verified session (**Line 471, 492-493**)
 - **Score Tolerance:** ±5 of session proof (**Line 482**)
 - **Score Champion Limits:** orbit=600, gravity=600, destroyer=9999, wars=600, territory=600 (**Line 465-466**)
-- **Pending Submit Lock:** Per `${challengeId}:${submitter midnight UTC; client submits in different timezone
+- **Pending Submit Lock:** Per `${challengeId}:${submitter}` to prevent race (**Line 496-501**)
+
+### **3. Daily Cap Resets (continued)**
+- **Risk:** Date boundary at midnight UTC; client submits in different timezone
 - **Guard:** All cap keys use UTC date string `YYYY-MM-DD` (hardcoded `new Date().toISOString().slice(0, 10)`)
 - **QA case:** Submit claim at 23:59:59 UTC → uses today's cap. At 00:00:01 UTC → uses new day's cap (verified by DB key)
 
@@ -993,17 +1061,20 @@
 | JWT TTL | 24h | auth.js:18 |
 | IP tracking per wallet | 50 max | auth.js:54 |
 | API key free tier daily | 100 req | apiKeyMiddleware.js:11 |
-| API key free tier per-minute | }` to prevent race (**Line 496-501**)
+| API key free tier per-minute | 10 req | apiKeyMiddleware.js:11 |
+| API key pro tier daily | 10,000 req | apiKeyMiddleware.js:12 |
+| API key pro tier per-minute | 100 req | apiKeyMiddleware.js:12 |
+| API key enterprise per-minute | 1000 req | apiKeyMiddleware.js:13 |
 
 **Score Challenge Auto-Complete:**
 - On accept, fetches composite scores from both wallets (**Line 329-340**)
 - Winner determined immediately, prize awarded (**Line 347-373**)
-- 10% fee → burned (**Line 343-345**)
+- **10% fee** → burned; winner gets `stake × 2 × 0.90` (**Line 343-345**)
 - Refunds on tie or score fetch failure (**Line 368-372, 383-390**)
 
 **Game Challenge:**
 - Stays `playing` status until both scores submitted (**Line 397**)
-- Winner determined when 2nd score in; 5% fee (**Line 528-550**)
+- Winner determined when 2nd score in; **5% fee**; winner gets `stake × 2 × 0.95` (**Line 528-550**)
 
 **Weekly Leaderboard:** Resets Sunday UTC 00:00; min 3 games to rank (**Line 209, 211**)
 
@@ -1028,19 +1099,30 @@ Core minting flow involves:
 
 ---
 
+## NFT MINT Endpoints
+- `POST /api/prism/mint-for-coins` — Create reservation (10/60s, JWT)
+  - Cost: 10,000 coins — NOT deducted at reservation, only at finalize
+  - Returns requestId, valid 10 minutes
+  - Idempotent: calling again within TTL returns same requestId
+- `POST /mint-cnft` — Finalize mint (JWT)
+  - Deducts coins HERE (not at reservation)
+  - On failure: coins restored automatically
+  - Handles: SOL payment, coin payment, remint (requires burnSignature)
+- `POST /api/update-card` — Update existing NFT metadata (20/60s, JWT)
+  - Cost: 0.0005 SOL
+
+### Mint Edge Cases:
+- [ ] Reservation → wait >1 hour → finalize → 400 reservation not found (cleanup)
+- [ ] Reservation → finalize with invalid tx → coins NOT lost (restored)
+- [ ] Double reservation within TTL → same requestId returned
+- [ ] Server restart between reservation and finalize → coins NOT deducted (safe)
+
+---
+
 ## **PART 2: CROSS-MODULE SUMMARY**
 
 ### **AUTH**
-- **Challenge Creation:** POST `/api/auth/challenge` —## **NUMERIC THRESHOLDS & CAPS SUMMARY (CONTINUED)**
-
-| Component | Threshold | Citation |
-|-----------|-----------|----------|
-| API key free tier per-minute | 10 req | apiKeyMiddleware.js:11 |
-| API key pro tier daily | 10,000 req | apiKeyMiddleware.js:12 |
-| API key pro tier per-minute | 100 req | apiKeyMiddleware.js:12 |
-| API key enterprise per-minute | 1000 req | apiKeyMiddleware.js:13 |
-| Black Hole operations per request | 64 max | blackHoleOrchestrator.js:46 |
-| Black Hole fungible reward | nonce issued
+- **Challenge Creation:** POST `/api/auth/challenge` — nonce issued
 - **Token Issuance:** POST `/api/auth/token` — JWT with address
 - **Rate Limits:** 3s min between challenges per IP; 5s cooldown on token auth per IP
 - **JWT TTL:** Configurable `jwtTtl`
@@ -1115,7 +1197,10 @@ Core minting flow involves:
 - **Expiry Options:** 15, 30, 60, 180, 360, 720, 1440 minutes
 - **Max Active Challenges:** 10,000 (auto-purges old)
 - **Max Score No Proof:** 30 (unverified session)
-- **Score Challenge:** Auto-complete< 10 | compositeScore.js:44 |
+- **State Machine:** open → accepted → playing → scoring → completed/expired/cancelled
+- **Score Challenge Fee:** 10% — winner gets `stake × 2 × 0.90`
+- **Game Challenge Fee:** 5% — winner gets `stake × 2 × 0.95`
+- **Score Challenge:** Auto-completes when creator score submitted (composite fetch)
 | Trust pillar badge threshold | trustScore ≥ 95 | compositeScore.js:45 |
 | Game master badge threshold | 3+ game types | compositeScore.js:53 |
 | Achievement hunter badge threshold | 10+ achievements | compositeScore.js:54 |
@@ -1142,7 +1227,8 @@ Core minting flow involves:
 | Twitter 50+ followers bonus | +1 pt | reputationBuilder.js:132 |
 | Twitter 1000 on accept (no replay risk)
 - **Game Challenge:** Waits for both scores, then settles
-- **Prize Calc:** (stakeAmount × 2) × 0.95 = winner prize; remaining 5% burned
+- **Prize Calc (Score challenge):** `stake × 2 × 0.90` = winner prize; 10% burned
+- **Prize Calc (Game challenge):** `stake × 2 × 0.95` = winner prize; 5% burned
 - **Weekly Leaderboard:** Min 3 games to rank; resets Sunday UTC
 - **Pending Submit Lock:** Per challenge ID + submitter address
 
@@ -1216,6 +1302,9 @@ Core minting flow involves:
 - **Metadata:** Uploaded to `metadataDir` with UUID
 - **Treasury Wallet:** Fee management via keypair signing
 - **Pending Mint Tracking:** Prevents double-mint race
+- **Coin Reservation Flow:** `POST /api/prism/mint-for-coins` reserves (10 min TTL, idempotent); coins deducted only at `POST /mint-cnft` finalize
+- **Failure Safety:** Coins auto-restored on finalize failure
+- **update-card Cost:** 0.0005 SOL (`POST /api/update-card`)
 
 ### **RANKS/TIERS (Composite Score)**
 - **Tier Thresholds:**
@@ -1227,6 +1316,7 @@ Core minting flow involves:
 - **Composite Input:** Sybil analysis + on-chain signals
 - **Server-Enforced:** No client elevation allowed
 - **Score History:** Tracked per wallet
+- **⚠️ WARNING:** `POST /api/score-history` uses legacy **5-tier** system. Composite score produces **10-tier** system. Do not confuse them.
 
 ### **LEADERBOARD**
 - **Game Leaderboard:** Top 50 per game mode, cached 10s
@@ -1321,7 +1411,22 @@ Core minting flow involves:
    - Key generated: `const today = new Date().toISOString().slice(0, 10)`
    - QA: Submit claim at 23:59 UTC using up cap. After midnight → new cap applies
 
-3. **Non-game daily cap:** Reset daily per `nongame_daily: |
+3. **Non-game daily cap:** Reset daily per `nongame_daily:${address}` with `{ date: today, total: amount }`
+   - Key generated: `const today = new Date().toISOString().slice(0, 10)`
+   - Checked: `if (ngEntry && ngEntry.date === today) { ngEarned = ngEntry.total }`
+   - QA: Quiz reward at 23:59 UTC uses current day. At 00:01 UTC next day → previous day data ignored
+
+4. **Weekly rewards:** Triggered on Monday (UTC day 1) at any time, guard prevents duplicate
+   - Check: `if (d.getUTCDay() !== 1) return`
+   - Guard: `globalThis._lastWeeklyRewardAt >= mondayStart.getTime()`
+   - QA: Monday 00:00 UTC → triggered once. Monday 12:00 → already triggered. Tuesday → skipped
+
+---
+
+## **NUMERIC THRESHOLDS & CAPS SUMMARY (CONTINUED)**
+
+| Component | Threshold | Citation | Notes |
+|-----------|-----------|----------|-------|
 | Challenge max stake | 1000 coins | arena.js:77 | validation |
 | Challenge expiry max | 1440 minutes | arena.js:127 | 24 hours |
 | Max active challenges | 10,000 | arena.js:134 | before purge triggers |
@@ -1340,19 +1445,12 @@ Core minting flow involves:
 | Max stake per wallet | 500,000 coins | vault.js:48 | staking limit |
 | Early unstake penalty | `earlyPenalty` per tier | vault.js:136-137 | % of staked amount |
 | Staking lock days (default) | 7 days | vault.js:42 | configurable |
-| Challenge prize calc | (stake × 2) × 0.95 | arena.js:181, 344 | 5% fee burned |
+| Challenge prize calc (score) | (stake × 2) × 0.90 | arena.js:343-345 | 10% fee burned |
+| Challenge prize calc (game) | (stake × 2) × 0.95 | arena.js:528-550 | 5% fee burned |
 | Spend burn fee | 2% | spend.js:92 | flat rate |
 | Leaderboard entries shown | 50 max | leaderboard.js:35, 82 | per mode |
 | Constellation nodes cap | 200 | discovery.js:232 | for viz performance |
-| Constellation edges cap | derived${address}` with date field
-   - Stores: `{ date: today, total: amount }`
-   - Checked: `if (ngEntry && ngEntry.date === today) { ngEarned = ngEntry.total }`
-   - QA: Quiz reward at 23:59 UTC uses current day. At 00:01 UTC next day → previous day data ignored
-
-4. **Weekly rewards:** Triggered on Monday (UTC day 1) at any time, guard prevents duplicate
-   - Check: `if (d.getUTCDay() !== 1) return`
-   - Guard: `globalThis._lastWeeklyRewardAt >= mondayStart.getTime()`
-   - QA: Monday 00:00 UTC → triggered once. Monday 12:00 → already triggered. Tuesday → skipped
+| Constellation edges cap | derived (≤200 nodes × edges) | discovery.js:232 | for viz performance |
 
 ---
 
@@ -1788,7 +1886,7 @@ Core minting flow involves:
 - [ ] Sybil clean verdict: trustScore floor=0, ceil=100: score challenges auto-complete, game challenges wait (**arena.js:329-397**)
 - ✅ Challenge score submit: game challenges only, validates session proof (**arena.js:458-493**)
 - ✅ Challenge race: pendingSubmits prevents double-submit (**arena.js:496-501**)
-- ✅ Prize calculation: (stake×2)×0.95 winner, 5% burned (**arena.js:344, 530**)
+- ✅ Prize calculation score challenge: (stake×2)×0.90 winner, 10% burned (**arena.js:344**); game challenge: (stake×2)×0.95 winner, 5% burned (**arena.js:530**)
 - ✅ Leaderboard weekly: min 3 games to rank (**arena.js:209**)
 - ✅ Score limits: orbit=600, destroyer=9999, gravity=600 (**arena.js:465**)
 
@@ -1815,6 +1913,7 @@ Core minting flow involves:
 - ✅ Streak logic: 5 daily complete → streak +1, else reset (**quest.js:64-84**)
 - ✅ Period claim sticky: claimed flag persists until period resets (**quest.js:50-52**)
 - ✅ Valid quest IDs: 20 total hardcoded (**quest.js:23-28**)
+- [ ] Submit earn for text_quest with invalid questId → 400
 
 ### **QUIZ**
 - ✅ Question rate limit: 10/5s per IP (**quiz.js:36**)
@@ -1980,9 +2079,17 @@ Core minting flow involves:
 - ✅ Constellation rate limit: 10s per address + 10s per IP (**discovery.js:121, 133-137**)
 - ✅ Constellation viewer stat: tracks explorer count (max 10/day) (**discovery.js:240-251**)
 
-### **MARKET (Collection Stats, Pricing)**
+### **MARKET (Collection Stats, Jupiter Integration)**
 - ✅ Collection stats: ME → Tensor → token price fallback (**market.js:50-100**)
-- ✅ Candidate matching: symbol, ID, name, mint tried in order (**market.js:62-89**)**
+- ✅ Candidate matching: symbol, ID, name, mint tried in order (**market.js:62-89**)
+- [ ] `GET /api/market/sol-price` → returns SOL/USD price (30/60s limit)
+- [ ] `GET /api/market/skr-price` → returns SKR/USD price (30/60s limit)
+- [ ] `GET /api/market/jupiter-prices` → batch prices; >2000 char input → 400
+- [ ] `POST /api/market/build-swap` → creates intent with messageHash; slippage out of 1-500 → 400
+- [ ] W1 builds swap, W2 executes with W1's requestId → 403
+- [ ] Execute same requestId twice → 404 on second attempt
+- [ ] Submit tampered tx (not from build-swap) with valid requestId → 400
+- [ ] `POST /api/market/execute-swap` with no Jupiter API key configured → 503
    - Submit valid BH claim → accepted
    - Submit same signature immediately → 400 "already claimed" (in-memory guard)
    - Restart server, resubmit → 400 (SQLite guard persists)
@@ -2299,7 +2406,8 @@ staking → (unstake after lock) → (no penalty, full amount + yield)
   - [ ] Buy (SKR): same as SOL
   - [ ] Spend (forge): balance decremented, 2% burned
   - [ ] Challenge create: coins deducted immediately
-  - [ ] Challenge settle: prize awarded to winner, 5% fee burned
+  - [ ] Challenge settle (score): prize = stake × 2 × 0.90, 10% fee burned
+  - [ ] Challenge settle (game): prize = stake × 2 × 0.95, 5% fee burned
   - [ ] Stake: balance reduced by amount, restored onlock mult)
    - Gold 75k/90d: daily = 75k * (1.25 * bracket rate) * 2.5 (lock mult)
    - Test: 50k silver (0.35% bracket, 1.5x lock) → daily = 50k * 0.0035 * 1.0 * 1.5 = 262.5
@@ -2379,7 +2487,8 @@ staking → (unstake after lock) → (no penalty, full amount + yield)
 - [ ] **Challenges**
   - [ ] Create: stake 5-1000, balance checked, immediately deducted
   - [ ] Expiry: 15-1440 min options, enforced on list/accept
-  - [ ] Accept 0.95 = 190
+  - [ ] Accept (score): auto-completes with composite score fetch
+  - [ ] Accept (game): stays playing until both scores submitted
 
 3. **Weekly distribution guard**
    - globalThis._lastWeeklyRewardAt prevents duplicate on same Monday
@@ -2421,9 +2530,12 @@ staking → (unstake after lock) → (no penalty, full amount + yield)
 3. **Rate limit: Per-minute check uses rolling window**
    - First 10 requests at t=0-1s → all accepted
    - Request at t=60s → accepted (outside window)
-   - No (score): auto-completes with composite score fetch
+
+- [ ] **Challenges (continued)**
+  - [ ] Accept (score): auto-completes with composite score fetch
   - [ ] Accept (game): stays playing until both scores in
-  - [ ] Prize: (stake × 2) × 0.95 to winner, 5% burned
+  - [ ] Prize (score challenge): (stake × 2) × 0.90 to winner, 10% burned
+  - [ ] Prize (game challenge): (stake × 2) × 0.95 to winner, 5% burned
   - [ ] Max active: 10,000 before purge triggers
   - [ ] Max score (no proof): 30; above requires session (**arena.js:471**)
   - [ ] Weekly leaderboard: min 3 games, resets Sunday UTC
@@ -3862,6 +3974,120 @@ NFT-модуль сильно завязан на `blinks.js`. Возьму то
 - [ ] **P2:** RECOVERY caps, weekly arena rewards, revive perks, update-card/remint edge cases, legacy/modern tier consistency.
 
 Если прогон делать по-настоящему “боевым” порядком, я бы шёл так: **AUTH -> scan -> game -> leaderboard -> arena -> forge -> vault -> black hole -> NFT mint/update -> quests/quiz -> notifications -> rate limits -> UTC reset checks**.
+
+---
+
+## NOTIFICATIONS TEST PLAN
+
+### Preconditions:
+- W1 connected, JWT obtained via `POST /api/auth/verify`
+- Notifications are JWT-gated (all read/write endpoints require Bearer token)
+
+### Notification types (from code):
+`challenge_win` | `challenge_loss` | `challenge_expired` | `tournament_result` | `quest_milestone` | `yield_available` | `weekly_payout` | `system`
+
+### Endpoints:
+- `GET /api/notifications` — returns `{ notifications: [...], unreadCount: N }` (JWT required)
+- `POST /api/notifications/read` — body: `{ ids: [...] }` or `{ all: true }` — marks as read
+- `POST /api/notifications/delete` — body: `{ ids: [...] }` or `{ all: true }` — deletes notifications
+- `GET /api/notifications/unread-count?address=<addr>` — no JWT, returns `{ count: N }`
+
+### Test cases:
+- [ ] NOTIF-01: **Quest complete** → `GET /api/notifications` returns entry with `type: “quest_milestone”`, message contains quest name
+- [ ] NOTIF-02: **Challenge win** → after challenge is resolved in W1's favour, notification with `type: “challenge_win”`, message `”You won the challenge! +<winnerPrize> coins”` (winnerPrize = stakeAmount * 2 * 0.95, floored)
+- [ ] NOTIF-03: **Challenge loss** → opponent gets `type: “challenge_loss”`, message contains winner's first 6 chars of address
+- [ ] NOTIF-04: **Challenge expired (open/no opponent)** → creator gets `type: “challenge_expired”`, message `”Your challenge expired — <stakeAmount> coins refunded”`, meta: `{ challengeId, refunded }`
+- [ ] NOTIF-05: **Challenge expired (scoring timeout)** → both creator and opponent get `challenge_expired` with refund message
+- [ ] NOTIF-06: **Tournament result** → after tournament finalizes, placed wallets get `type: “tournament_result”`, message `”<tier> tournament ended — #<placement>, +<totalPrize> coins”`, meta: `{ tier, placement, prize }`
+- [ ] NOTIF-07: **Weekly arena payout** → on Monday UTC+0, top-10 arena winners get `type: “weekly_payout”`, message `”Weekly arena ranking: #<rank>, +<reward> coins”`, meta: `{ rank, reward }`
+- [ ] NOTIF-08: **Read single notification** → `POST /api/notifications/read` with `{ ids: [“<id>”] }` → `GET /api/notifications` shows `read: true` for that id, others unchanged
+- [ ] NOTIF-09: **Read all** → `POST /api/notifications/read` with `{ all: true }` → all `read: true`, `unreadCount: 0`
+- [ ] NOTIF-10: **Notifications list order** → newest notification appears first (unshift order)
+- [ ] NOTIF-11: **Delete by IDs** → `POST /api/notifications/delete` with `{ ids: [...] }` → those notifications gone from list
+- [ ] NOTIF-12: **Delete all** → `POST /api/notifications/delete` with `{ all: true }` → empty list returned
+- [ ] NOTIF-13: **Unread count (no JWT)** → `GET /api/notifications/unread-count?address=<addr>` returns correct count without auth
+- [ ] NOTIF-14: **Max cap** → user with 100 notifications receives one more → oldest is dropped (cap = 100 per user)
+- [ ] NOTIF-15: **No notifications → empty array** → fresh wallet returns `{ notifications: [], unreadCount: 0 }`
+
+### Notes:
+- `yield_available` and `rank_up` types are defined in the type comment but no code currently emits them — skip for now or mark as future
+- Sybil bounty does NOT produce a notification currently (only coins are credited silently)
+- Challenge notifications are emitted by both the arena route (`POST /api/arena/challenge/resolve`) and the scheduler (stale challenge cleanup every 30min and hourly weekly reward check)
+
+---
+
+## TOURNAMENTS TEST PLAN
+
+### Tournament Types (from `TOURNAMENT_TIERS`):
+| Tier | Entry Fee | Duration | Burn Rate | Prize slots |
+|------|-----------|----------|-----------|-------------|
+| `daily` | 1,000 coins | 24h | 10% | top-3 |
+| `weekly` | 5,000 coins | 7 days | 10% | top-6 |
+| `monthly` | 25,000 coins | 30 days | 10% | top-10 |
+
+### Prize structure:
+**Pool shares** (from player entry fees, minus 10% burn):
+- Daily: 50% / 30% / 20% (top-3)
+- Weekly: 35% / 22% / 15% / 10% / 10% / 8% (top-6)
+- Monthly: 30% / 18% / 12% / 9% / 8% / 6% / 5% / 4% / 4% / 4% (top-10)
+
+**Base prizes** (platform-funded, scaled by participant count):
+- Daily: 500 / 250 / 100 (full, at 8 participants; min scale 35%)
+- Weekly: 2000 / 1500 / 1000 / 500 / 250 / 100 (full at 16 participants; min scale 25%)
+- Monthly: 10000 / 5000 / 3000 / 2000 / 1500 / 1000 / 750 / 500 / 250 / 100 (full at 30 participants; min scale 20%)
+
+**XP rewards** (100 XP step per placement):
+- Daily: 300 / 200 / 100 XP
+- Weekly: 600 / 500 / 400 / 300 / 200 / 100 XP
+- Monthly: 1000 / 900 / 800 / 700 / 600 / 500 / 400 / 300 / 200 / 100 XP
+
+**Weekly Arena rewards** (separate from tournaments, for challenge wins on Monday UTC):
+- Coins: 2000 / 1200 / 600 / 200 / 200 / 100 / 100 / 100 / 100 / 100 (top-10)
+- XP: 500 / 300 / 200 / 0 / 0 / ... (top-3 only)
+- Requires minimum 3 games played (`WEEKLY_MIN_GAMES = 3`)
+
+### Game modes (rotating): `orbit`, `gravity`, `destroyer`
+Score caps per mode: orbit=600, gravity=600, destroyer=9999
+
+### Endpoints:
+- `GET /api/tournament/active` — returns all 3 active tournaments; entries only visible if `userJoined` (max 50 entries returned)
+- `POST /api/tournament/join` — body: `{ tier: “daily”|”weekly”|”monthly” }` — deducts entry fee, 10% burned
+- `POST /api/tournament/submit` — body: `{ score, tier, gameSessionId }` — requires verified game session proof
+- `GET /api/tournament/history` — returns last 20 completed tournaments (no auth required)
+
+### Scheduler: `checkTournaments()` runs every 60 seconds via `setInterval`
+
+### Test cases:
+- [ ] TOURN-01: **Active tournaments** → `GET /api/tournament/active` returns `{ tournaments: { daily, weekly, monthly }, tournament: <daily> }` with correct `tier`, `mode`, `entryFee`, `endTime`
+- [ ] TOURN-02: **Join daily** → `POST /api/tournament/join { tier: “daily” }` deducts 1,000 coins, burns 100 (10%), adds 900 to prizePool; response: `{ success, tier, prizePool, newBalance, burned: 100 }`
+- [ ] TOURN-03: **Join weekly** → deducts 5,000 coins, burns 500, adds 4,500 to prizePool
+- [ ] TOURN-04: **Join monthly** → deducts 25,000 coins, burns 2,500, adds 22,500 to prizePool
+- [ ] TOURN-05: **Double join** → second `POST /api/tournament/join` for same wallet returns 400 `”Already joined”`
+- [ ] TOURN-06: **Insufficient balance** → join with balance < entryFee returns 400 `”Insufficient balance. Entry fee: <N> Coins”`
+- [ ] TOURN-07: **Submit score** → `POST /api/tournament/submit { score, tier, gameSessionId }` → score stored; subsequent GET shows user in entries
+- [ ] TOURN-08: **Submit higher score** → only best score kept; lower score submission keeps existing best
+- [ ] TOURN-09: **Submit same session twice** → second submit returns 400 `”Session already used for a tournament submission”`
+- [ ] TOURN-10: **Score cap** → submitting score > 600 for orbit/gravity mode returns 400 `”Score exceeds maximum”`
+- [ ] TOURN-11: **Entries hidden until joined** → `GET /api/tournament/active` returns `entries: []` and `resultsHidden: true` for non-joined user
+- [ ] TOURN-12: **Tournament history** → `GET /api/tournament/history` returns up to 20 completed tournaments with `winners` array
+- [ ] TOURN-13: **User with 0 score excluded from rewards** → players who joined but never submitted (`score = 0`) are filtered out of prize distribution (`filter(e => e.score > 0)`)
+- [ ] TOURN-14: **All 3 tournaments running simultaneously** → active endpoint returns non-null for daily, weekly, and monthly at the same time
+- [ ] TOURN-15: **Tournament result notification** → after tournament ends, placed wallets receive `type: “tournament_result”` notification
+
+### Dev shortcut for testing tournament completion:
+The scheduler calls `checkTournaments()` every 60 seconds. To force-complete without waiting:
+
+1. **Modify `endTime` in memory** — there is no admin API for this; requires direct server access:
+   ```
+   # In helius-proxy.js global scope, activeTournaments.daily.endTime = Date.now() - 1
+   # Wait up to 60s for next scheduler tick, or:
+   ```
+2. **Trigger via route** — `GET /api/tournament/active` also calls `checkTournaments()` — so hitting that endpoint after manually expiring `endTime` will trigger finalization immediately.
+3. **Restart server** — `checkTournaments()` runs on startup (called from `/api/tournament/active` on first hit); combined with an expired `endTime` in `tournament_data.json`, finalization fires immediately.
+4. **Verify rewards** — after finalization: check winner coin balances increased, `GET /api/tournament/history` shows the completed tournament with `winners` array, notifications present for placed wallets.
+
+### Note on mode rotation:
+Tournament mode cycles through `['orbit', 'gravity', 'destroyer']` via `tournamentModeIndex`. Each new tournament (any tier) increments the index. The current mode is returned in `GET /api/tournament/active` → `tournament.mode`.
 
 
 Changes   +0 -0
