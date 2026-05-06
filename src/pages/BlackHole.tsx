@@ -30,7 +30,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 // burn coin earning disabled server-side (no on-chain verification)
 // import { earnPrism, calculateBurnPrism } from '@/lib/prismCoin';
-import { ensureJwt, getApiBase } from '@/components/prism/shared';
+import { ensureJwt, getApiBase, setAuthWallet } from '@/components/prism/shared';
 import { api } from '@/lib/api';
 
 import { Button } from '@/components/ui/button';
@@ -468,9 +468,13 @@ const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: str
 
 const BlackHole = () => {
   const { connection } = useConnection();
-  const { publicKey, signTransaction, sendTransaction } = useWallet();
+  const wallet = useWallet();
+  const { publicKey, signTransaction, sendTransaction } = wallet;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  useEffect(() => {
+    setAuthWallet(wallet);
+  }, [wallet]);
 
   // Fade out wormhole tunnel (from Card→BH transition) + remove preloader
   useEffect(() => {

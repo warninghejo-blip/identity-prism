@@ -34,32 +34,32 @@ const PLANETS = [
 
 const FEATURES = [
   {
-    icon: '🔬',
+    icon: '/hub/scanner.png',
     title: 'On-Chain Identity',
     desc: 'Your wallet activity distilled into a single score — transactions, age, holdings, and more.',
   },
   {
-    icon: '🪐',
+    icon: '/textures/tiers/sun.png',
     title: 'Planet Tier System',
     desc: '9 tiers from Mercury to Sun. Each tier unlocks a unique 3D planet on your card.',
   },
   {
-    icon: '🎖️',
+    icon: '/badges/achievement_hunter.png',
     title: 'Achievement Badges',
     desc: 'OG, Whale, Collector, Tx Titan — earn badges based on your on-chain behavior.',
   },
   {
-    icon: '🎮',
+    icon: '/hub/league.png',
     title: 'Prism League',
     desc: 'Play Orbit Survival or Cosmic Defender. Earn coins, climb leaderboards.',
   },
   {
-    icon: '🕳️',
+    icon: '/hub/blackhole.png',
     title: 'Black Hole',
     desc: 'Burn dust tokens and abandoned NFTs. Reclaim locked SOL rent from your wallet.',
   },
   {
-    icon: '💎',
+    icon: '/hub/vault.png',
     title: 'Mint as NFT',
     desc: 'Mint your Identity Prism as a Metaplex Core NFT — your on-chain passport.',
   },
@@ -252,7 +252,12 @@ export default function HomePage() {
           {FEATURES.map((f, i) => (
             <FadeInSection key={f.title} delay={i * 0.08}>
               <div className="group p-6 rounded-2xl border border-white/[0.04] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/[0.08] transition-all duration-300">
-                <div className="text-3xl mb-3">{f.icon}</div>
+                <img
+                  src={f.icon}
+                  alt=""
+                  className="w-10 h-10 mb-3 object-contain drop-shadow-[0_0_12px_rgba(34,211,238,0.35)]"
+                  loading="lazy"
+                />
                 <h3 className="text-base font-bold text-white/90 mb-1.5 tracking-tight">{f.title}</h3>
                 <p className="text-sm text-white/30 leading-relaxed">{f.desc}</p>
               </div>

@@ -48,7 +48,7 @@ function registerEarnRoute(ctx) {
   const { activeChallenges, challengesFile, saveChallenges } = arena;
 
   return async function handleEarnRoute(req, res, url, pathname) {
-    if (pathname !== '/api/prism/earn' || req.method !== 'POST') return false;
+    if ((pathname !== '/api/prism/earn' && pathname !== '/api/v2/prism/earn') || req.method !== 'POST') return false;
 
     if (!ipRateLimit('prism_earn_burst', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many earn requests, slow down' });
     const jwtAuth = requireJwt(req, res);
@@ -73,6 +73,9 @@ function registerEarnRoute(ctx) {
         if (firstMintLocks.has(address)) return respondJson(res, 400, { error: 'first_mint already claimed' });
         const firstMintWallet = walletDatabase.get(address);
         if (firstMintWallet?._firstMintClaimed) return respondJson(res, 400, { error: 'first_mint already claimed' });
+        if (!mintedAddresses.has(address)) {
+          return respondJson(res, 403, { error: 'first_mint requires a verified minted Identity Prism' });
+        }
       }
 
       const rlKey = `${address}:${source || 'unknown'}`;
@@ -204,7 +207,12 @@ function registerEarnRoute(ctx) {
           }
           const analysis = getRecentSybilAnalysis(normalizedTarget);
           if (!analysis || !Number.isFinite(Number(analysis.trustScore))) {
-            return respondJson(res, 400, { error: 'Scan target must be analyzed before claiming reward' });
+            return respondJson(res, 200, {
+              balance: getPrismBalance(address),
+              earned: 0,
+              rewardPending: true,
+              message: 'Scan target must be analyzed before claiming reward',
+            });
           }
           const verdict = getSybilVerdict(analysis);
           const rewardPath = verdict?.rewardPath || getSybilRewardPath(analysis);
@@ -227,7 +235,12 @@ function registerEarnRoute(ctx) {
             earned = scanWalletReward;
           } else {
             if (scanRewardState.sybilClaims[normalizedTarget]) {
-              return respondJson(res, 400, { error: 'Sybil bounty already claimed for this wallet' });
+              return respondJson(res, 200, {
+                balance: getPrismBalance(address),
+                earned: 0,
+                alreadyClaimed: true,
+                message: 'Sybil bounty already claimed for this wallet',
+              });
             }
             earned = computeSybilHuntReward(Object.keys(scanRewardState.sybilClaims).length + 1);
           }
@@ -314,6 +327,17 @@ function registerEarnRoute(ctx) {
       if (source === 'quest_milestone') {
         const questName = description || 'Quest';
         pushNotification(address, 'quest_milestone', `Quest completed: ${questName}`, { questId: questId || null });
+      }
+      if (source === 'sybil_hunt') {
+        pushNotification(address, 'system', `Sybil bounty paid: +${earned} Coins`, {
+          scanTarget: scanTargetRaw || null,
+          amount: earned,
+        });
+      } else if (source === 'scan_wallet') {
+        pushNotification(address, 'system', `Wallet scan reward: +${earned} Coins`, {
+          scanTarget: scanTargetRaw || null,
+          amount: earned,
+        });
       }
       respondJson(res, 200, { balance: bal, earned });
     } catch {

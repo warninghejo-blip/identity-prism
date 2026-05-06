@@ -5,17 +5,17 @@ const STEPS = [
   {
     title: 'Welcome to Identity Prism',
     desc: 'Your Solana identity, visualized. We analyze your on-chain activity to create a unique cosmic identity card — your digital passport in Web3.',
-    icon: '🌟',
+    icon: '/onboarding/onboard_welcome.png',
   },
   {
     title: 'Your Identity Score',
     desc: 'Your Composite Score is built from 5 pillars: On-Chain activity (max 400), Sybil Trust (250), Human Proof (150), Social (100), and Engagement (100).',
-    icon: '📊',
+    icon: '/onboarding/onboard_score.png',
   },
   {
     title: 'Earn & Prove',
     desc: 'Play games in Prism League, complete daily quests, challenge others in Prism Arena, and burn dust tokens in Black Hole. Every action strengthens your identity.',
-    icon: '🚀',
+    icon: '/onboarding/onboard_earn.png',
   },
 ];
 
@@ -77,7 +77,7 @@ export default function OnboardingModal({ onClose }: OnboardingModalProps) {
               exit={{ opacity: 0, x: -30 }}
               transition={{ duration: 0.3 }}
             >
-              <div className="text-5xl mb-4">{current.icon}</div>
+              <img src={current.icon} alt="" className="w-32 h-32 mx-auto mb-4 object-contain" loading="eager" />
               <h2 className="text-lg font-bold text-white mb-2">{current.title}</h2>
               <p className="text-sm text-white/50 leading-relaxed">{current.desc}</p>
             </motion.div>

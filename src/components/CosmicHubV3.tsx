@@ -3,11 +3,10 @@
  * 3D rotating glass prism background + Glassmorphism Bento Box navigation grid.
  * Mini Identity Passport replaces the old "My Card" button.
  */
-import { useCallback, useRef, useEffect, useState, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useWallet } from '@solana/wallet-adapter-react';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { startFadeTransition } from '@/lib/fadeTransition';
@@ -185,7 +184,7 @@ function NavCard({
   iconName,
   colorClass,
   delay,
-  onClick,
+  route,
 }: {
   label: string;
   desc: string;
@@ -193,15 +192,23 @@ function NavCard({
   iconName: string;
   colorClass: string;
   delay: number;
-  onClick: () => void;
+  route: string;
 }) {
+  const navigate = useNavigate();
+  const handleActivate = () => {
+    trackInternalNavigation();
+    navigate(route);
+  };
+
   return (
-    <motion.div
+    <motion.button
+      type="button"
+      aria-label={label}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.25, delay }}
-      onClick={onClick}
-      className="group flex flex-col items-center gap-1.5 cursor-pointer pointer-events-auto active:scale-90 transition-transform overflow-visible"
+      onClick={handleActivate}
+      className="group flex min-h-[96px] w-full flex-col items-center justify-center gap-1.5 cursor-pointer pointer-events-auto active:scale-90 transition-transform overflow-visible rounded-lg bg-transparent p-0 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
     >
       <div className="relative">
         <HubIcon name={iconName} size={64} />
@@ -212,7 +219,7 @@ function NavCard({
       <span className="text-[10px] font-bold text-white/50 group-hover:text-white/80 transition-colors text-center leading-tight tracking-wide">
         {label}
       </span>
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -269,10 +276,18 @@ function MiniPassport({
   const strokeDashMobile = circMobile * pct;
 
   return (
-    <motion.button
+    <motion.div
+      role="button"
+      tabIndex={0}
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick();
+        }
+      }}
       className="passport-holo-shimmer relative w-full rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-white/[0.01] backdrop-blur-xl border border-white/[0.1] cursor-pointer hover:bg-white/[0.08] transition-all duration-500 hover:border-white/[0.2] text-left pointer-events-auto group focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
     >
       <div
@@ -380,6 +395,15 @@ function MiniPassport({
             <span className="text-[8px] text-white/20 font-mono">
               {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
             </span>
+            {sybilGrade && ['D', 'F'].includes(sybilGrade) && (
+              <Link
+                to="/recovery"
+                onClick={(event) => event.stopPropagation()}
+                className="mt-1 inline-flex text-[9px] font-bold text-amber-400 hover:text-amber-300 underline"
+              >
+                Improve Score →
+              </Link>
+            )}
           </div>
         </div>
 
@@ -570,7 +594,11 @@ function MiniPassport({
             </span>
           </div>
           {sybilGrade && ['D', 'F'].includes(sybilGrade) && (
-            <Link to="/recovery" className="text-xs text-amber-400 hover:text-amber-300 underline">
+            <Link
+              to="/recovery"
+              onClick={(event) => event.stopPropagation()}
+              className="text-xs text-amber-400 hover:text-amber-300 underline"
+            >
               Improve Score →
             </Link>
           )}
@@ -634,7 +662,7 @@ function MiniPassport({
           <div className="text-[8px] font-mono text-white/[0.1] tracking-[0.06em] truncate select-none">{mrz}</div>
         </div>
       </div>
-    </motion.button>
+    </motion.div>
   );
 }
 
@@ -762,17 +790,6 @@ export default function CosmicHub({
       .catch(() => {});
   }, [walletAddress]);
 
-  // JWT pre-warm moved to Index.tsx — fires at wallet connect time
-  const wallet = useWallet();
-
-  const goTo = useCallback(
-    (route: string) => {
-      trackInternalNavigation();
-      startFadeTransition(() => navigate(route));
-    },
-    [navigate],
-  );
-
   const hasIdentity = typeof identityScore === 'number' && identityScore >= 0 && planetTier;
 
   return (
@@ -815,7 +832,13 @@ export default function CosmicHub({
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-[9px] lg:text-[10px] text-white/40 font-medium tracking-wide">ONLINE</span>
-            <Link to="/inbox" className="relative p-2 flex items-center justify-center">
+            <Link
+              to="/inbox"
+              onClick={trackInternalNavigation}
+              aria-label={unreadCount > 0 ? `${unreadCount > 9 ? '9+' : unreadCount} notifications` : 'Notifications'}
+              title="Notifications"
+              className="relative p-2 flex items-center justify-center"
+            >
               <Bell className="w-5 h-5 text-white/40 hover:text-white/60 transition-colors" />
               {unreadCount > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center">
@@ -890,7 +913,7 @@ export default function CosmicHub({
                 iconName={m.iconName}
                 colorClass={m.colorClass}
                 delay={0.1 + i * 0.03}
-                onClick={() => goTo(m.route)}
+                route={m.route}
               />
             ))}
           </div>

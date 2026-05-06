@@ -1,7 +1,7 @@
 import zlib from 'node:zlib';
 
 const respondJson = (res, status, payload) => {
-  if (res.headersSent) return;
+  if (res.headersSent) return true;
   const body = JSON.stringify(payload);
   const acceptEncoding = String(res.req?.headers?.['accept-encoding'] ?? '');
   if (body.length > 256 && acceptEncoding.includes('gzip')) {
@@ -19,10 +19,11 @@ const respondJson = (res, status, payload) => {
       });
       res.end(compressed);
     });
-    return;
+    return true;
   }
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(body);
+  return true;
 };
 
 export { respondJson };

@@ -12,8 +12,19 @@ function registerGameV1Route(ctx) {
     mintedAddresses,
     getStakingBoost,
   } = wallet;
-  const { getGameCoinsToday, addGameCoinsToday, dailyGameCoinCap, getRevivesLeft, freeRevivesPerDay, useRevive } =
-    game;
+  const {
+    getGameCoinsToday,
+    addGameCoinsToday,
+    dailyGameCoinCap,
+    getRevivesLeft,
+    freeRevivesPerDay,
+    useRevive,
+    gameSessionProofs,
+    persistGameSessionProofs,
+    normalizeGameCoinDeltaForCap,
+    maxDeltaPerGame,
+    gameSessionOnchainBonusMultiplier,
+  } = game;
 
   return async function handleGameV1Route(req, res, url, pathname) {
     if (pathname === '/api/game/coins' && req.method === 'POST') {
@@ -31,15 +42,39 @@ function registerGameV1Route(ctx) {
           return respondJson(res, 400, { error: 'delta (non-zero integer) required' });
         }
         if (delta > 0) {
-          const gameMode = mode || 'orbit';
+          const gameSessionId = parsed.gameSessionId;
+          if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for earning coins' });
+          const session = gameSessionProofs?.get(gameSessionId);
+          if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+          if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+          if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
+
+          const gameMode = mode || session.gameMode || 'orbit';
+          if (session.gameMode && session.gameMode !== gameMode) {
+            return respondJson(res, 400, { error: 'Session mode mismatch' });
+          }
+          const idMultiplier = Math.max(1, Math.floor(Number(session.identityGameCoinMultiplier) || 1));
+          const normalizedRequestedDelta = normalizeGameCoinDeltaForCap(delta, idMultiplier);
+          const maxDelta = Math.round((maxDeltaPerGame[gameMode] || 500) * gameSessionOnchainBonusMultiplier);
+          if (normalizedRequestedDelta > maxDelta) {
+            return respondJson(res, 400, { error: 'Delta exceeds maximum for game mode' });
+          }
+          const alreadyCredited = Number(session.coinsCredited) || 0;
+          const remainingSessionAllowance = Math.max(0, Math.floor(maxDelta - alreadyCredited));
+          if (remainingSessionAllowance <= 0) {
+            return respondJson(res, 400, { error: 'Session coin allowance exhausted' });
+          }
           const todayCoins = getGameCoinsToday(addr);
           const isHolder = mintedAddresses.has(addr);
           const gameCap = isHolder ? dailyGameCoinCap : Math.floor(dailyGameCoinCap / 2);
           if (todayCoins >= gameCap) {
             return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
           }
-          let baseDelta = Math.min(delta, gameCap - todayCoins);
+          let baseDelta = Math.min(delta, remainingSessionAllowance * idMultiplier, gameCap - todayCoins);
           addGameCoinsToday(addr, baseDelta);
+          session.coinsCredited = alreadyCredited + Math.ceil(baseDelta / idMultiplier);
+          gameSessionProofs.set(gameSessionId, session);
+          persistGameSessionProofs();
           const boost = getStakingBoost(addr);
           const effectiveDelta = boost > 0 ? Math.floor(baseDelta * (1 + boost)) : baseDelta;
           const newBalance = getCoinBalance(addr) + effectiveDelta;
@@ -196,15 +231,23 @@ function registerGameRoute(ctx) {
         } else {
           scoreDelta = Math.abs(expectedScore - payload.score);
         }
+        const scoreDeltaToleranceSec = 8;
         const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
-        const verified = verification.seedMatchesSlot && scoreDelta <= 5 && modeScoreValid;
+        const maxSeedStartDriftMs = 120_000;
+        const seedStartDeltaMs = Number.isFinite(Number(verification.slotBlockTimeMs))
+          ? Math.abs(payload.startedAtMs - Number(verification.slotBlockTimeMs))
+          : 0;
+        const seedTimeValid = !Number.isFinite(Number(verification.slotBlockTimeMs)) || seedStartDeltaMs <= maxSeedStartDriftMs;
+        const verified =
+          verification.seedMatchesSlot && seedTimeValid && scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
         const nowIso = new Date().toISOString();
         const baseUrl = getBaseUrl(req);
         const proofUrl = baseUrl ? `${baseUrl}/api/game/session/${encodeURIComponent(id)}` : null;
 
+        const seedDeltaReason = seedTimeValid ? '' : `; seed/start delta=${Math.round(seedStartDeltaMs / 1000)}s`;
         const reason = verified
           ? 'Seed matches MagicBlock slot and score delta is within tolerance'
-          : `${verification.reason}; score delta=${scoreDelta}s`;
+          : `${verification.reason}; score delta=${scoreDelta}s${seedDeltaReason}`;
 
         const existingSession = gameSessionProofs.get(id);
         if (existingSession && (existingSession.usedForTournament || existingSession.usedForChallenge || existingSession.usedForLeaderboard)) {
@@ -223,6 +266,7 @@ function registerGameRoute(ctx) {
           endedAtMs: payload.endedAtMs,
           durationMs,
           scoreDelta,
+          seedStartDeltaMs,
           verified,
           gameMode: payload.gameMode,
           proofUrl,
@@ -302,14 +346,23 @@ function registerGameRoute(ctx) {
         } else if (existing.gameMode === 'gravity') {
           modeScoreValid = existing.score <= Math.floor(exDurationSec * 10);
         }
-        const verified = verification.seedMatchesSlot && existing.scoreDelta <= 5 && modeScoreValid;
+        const scoreDeltaToleranceSec = 8;
+        const maxSeedStartDriftMs = 120_000;
+        const seedStartDeltaMs = Number.isFinite(Number(verification.slotBlockTimeMs))
+          ? Math.abs((existing.startedAtMs || 0) - Number(verification.slotBlockTimeMs))
+          : existing.seedStartDeltaMs ?? 0;
+        const seedTimeValid = !Number.isFinite(Number(verification.slotBlockTimeMs)) || seedStartDeltaMs <= maxSeedStartDriftMs;
+        const verified =
+          verification.seedMatchesSlot && seedTimeValid && existing.scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
+        const seedDeltaReason = seedTimeValid ? '' : `; seed/start delta=${Math.round(seedStartDeltaMs / 1000)}s`;
         const reason = verified
           ? 'Seed matches MagicBlock slot and score delta is within tolerance'
-          : `${verification.reason}; score delta=${existing.scoreDelta}s`;
+          : `${verification.reason}; score delta=${existing.scoreDelta}s${seedDeltaReason}`;
 
         const refreshed = {
           ...existing,
           verified,
+          seedStartDeltaMs,
           verification: {
             ...verification,
             reason,
@@ -367,7 +420,8 @@ function registerGameRoute(ctx) {
           if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
           if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
           const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
-          const gameMode = VALID_GAME_MODES.has(mode) ? mode : 'orbit';
+          const requestedMode = mode || session.gameMode || 'orbit';
+          const gameMode = VALID_GAME_MODES.has(requestedMode) ? requestedMode : 'orbit';
           if (session.gameMode && session.gameMode !== gameMode) {
             return respondJson(res, 400, { error: 'Session mode mismatch' });
           }

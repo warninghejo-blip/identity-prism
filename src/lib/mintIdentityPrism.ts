@@ -7,11 +7,7 @@ import {
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
-import {
-  getAssociatedTokenAddress,
-  TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
-} from '@solana/spl-token';
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token';
 import { Buffer } from 'buffer';
 import {
   getAppBaseUrl,
@@ -85,20 +81,27 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ── JWT Auth Helper (persisted in sessionStorage — sign once per session) ──
 const JWT_STORAGE_KEY = 'ip_auth_jwt';
+const scopedJwtStorageKey = (baseUrl: string, address: string) => `${JWT_STORAGE_KEY}:${baseUrl}:${address}`;
 
-function loadCachedJwt(): { token: string; address: string; expiresAt: number } | null {
+function loadCachedJwt(baseUrl: string, address: string): { token: string; address: string; expiresAt: number } | null {
   try {
-    const raw = typeof window !== 'undefined' ? sessionStorage.getItem(JWT_STORAGE_KEY) : null;
+    const raw = typeof window !== 'undefined' ? sessionStorage.getItem(scopedJwtStorageKey(baseUrl, address)) : null;
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { token: string; address: string; expiresAt: number };
-    if (parsed.expiresAt > Date.now() + 60_000) return parsed;
-    sessionStorage.removeItem(JWT_STORAGE_KEY);
-  } catch { /* ignore */ }
+    if (parsed.address === address && parsed.expiresAt > Date.now() + 60_000) return parsed;
+    sessionStorage.removeItem(scopedJwtStorageKey(baseUrl, address));
+  } catch {
+    /* ignore */
+  }
   return null;
 }
 
-function saveCachedJwt(entry: { token: string; address: string; expiresAt: number }) {
-  try { sessionStorage.setItem(JWT_STORAGE_KEY, JSON.stringify(entry)); } catch { /* ignore */ }
+function saveCachedJwt(baseUrl: string, entry: { token: string; address: string; expiresAt: number }) {
+  try {
+    sessionStorage.setItem(scopedJwtStorageKey(baseUrl, entry.address), JSON.stringify(entry));
+  } catch {
+    /* ignore */
+  }
 }
 
 async function getAuthToken(
@@ -109,8 +112,8 @@ async function getAuthToken(
   if (!address || !wallet.signMessage) return null;
 
   // Return cached token (memory or sessionStorage) if still valid
-  const cached = loadCachedJwt();
-  if (cached && cached.address === address) return cached.token;
+  const cached = loadCachedJwt(baseUrl, address);
+  if (cached) return cached.token;
 
   try {
     // 1. Get challenge
@@ -120,7 +123,7 @@ async function getAuthToken(
       body: JSON.stringify({ address }),
     });
     if (!challengeRes.ok) return null;
-    const { nonce, message } = await challengeRes.json() as { nonce: string; message: string };
+    const { nonce, message } = (await challengeRes.json()) as { nonce: string; message: string };
 
     // 2. Sign the challenge message
     const msgBytes = new TextEncoder().encode(message);
@@ -134,10 +137,10 @@ async function getAuthToken(
       body: JSON.stringify({ address, nonce, signature: signatureBase64 }),
     });
     if (!tokenRes.ok) return null;
-    const { token } = await tokenRes.json() as { token: string };
+    const { token } = (await tokenRes.json()) as { token: string };
 
     const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
-    saveCachedJwt(entry);
+    saveCachedJwt(baseUrl, entry);
     console.info('[auth] JWT obtained (cached for session)');
     return token;
   } catch (e) {
@@ -152,7 +155,7 @@ const MIN_REQUIRED_SOL = 0.02;
 const buildPreflightError = (
   code: 'INSUFFICIENT_SOL' | 'INSUFFICIENT_SKR' | 'SIMULATION_FAILED',
   message: string,
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
 ) => {
   const error = new Error(message) as Error & { code?: string } & Record<string, unknown>;
   error.code = code;
@@ -163,7 +166,7 @@ const buildPreflightError = (
 async function confirmTransactionWithPolling(
   connection: Connection,
   signature: string,
-  timeoutMs = 60000
+  timeoutMs = 60000,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -315,12 +318,8 @@ export async function mintIdentityPrism({
     return `${fallbackBase}/phav.png`;
   })();
   const resolvedAppBaseUrl = resolveBaseUrl(appBaseUrl);
-  const resolvedExternalUrl = resolvedAppBaseUrl
-    ? `${resolvedAppBaseUrl}/?address=${address}`
-    : undefined;
-  const resolvedAnimationUrl = resolvedAppBaseUrl
-    ? `${resolvedAppBaseUrl}/?address=${address}&mode=nft`
-    : undefined;
+  const resolvedExternalUrl = resolvedAppBaseUrl ? `${resolvedAppBaseUrl}/?address=${address}` : undefined;
+  const resolvedAnimationUrl = resolvedAppBaseUrl ? `${resolvedAppBaseUrl}/?address=${address}&mode=nft` : undefined;
   const resolveImageContentType = (url: string) => {
     const normalized = url.split('?')[0]?.toLowerCase() ?? '';
     if (normalized.endsWith('.gif')) return 'image/gif';
@@ -347,7 +346,9 @@ export async function mintIdentityPrism({
   // Obtain JWT auth token (non-blocking — proceeds without if signMessage unavailable)
   const authToken = await getAuthToken(wallet, coreMintUrl);
 
-  // ── Coins payment: deduct 10,000 coins before proceeding ──
+  let coinReservationRequestId: string | null = null;
+
+  // ── Coins payment: reserve 10,000 coins before proceeding ──
   if (paidWithCoins) {
     if (!authToken) {
       throw new Error('Authentication required for coins payment. Please try again.');
@@ -356,7 +357,7 @@ export async function mintIdentityPrism({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
+        Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({ address }),
     });
@@ -366,14 +367,24 @@ export async function mintIdentityPrism({
       try {
         const errorJson = JSON.parse(errorText) as { error?: string; message?: string };
         errorMessage = errorJson.error ?? errorJson.message ?? errorMessage;
-      } catch { errorMessage = errorText || errorMessage; }
+      } catch {
+        errorMessage = errorText || errorMessage;
+      }
       throw new Error(errorMessage);
     }
-    const coinsPayload = (await coinsMintRes.json()) as { proceedWithMint?: boolean; error?: string };
+    const coinsPayload = (await coinsMintRes.json()) as {
+      proceedWithMint?: boolean;
+      error?: string;
+      requestId?: string;
+    };
     if (!coinsPayload.proceedWithMint) {
       throw new Error(coinsPayload.error ?? 'Coins deduction rejected by server. Please check your balance.');
     }
-    console.info('[mint] coins payment accepted — skipping SOL payment step');
+    if (!coinsPayload.requestId) {
+      throw new Error('Coins reservation missing requestId');
+    }
+    coinReservationRequestId = coinsPayload.requestId;
+    console.info('[mint] coins payment reserved — skipping SOL payment step');
   }
 
   const parseOptionalPublicKey = (value: string | null, label: string) => {
@@ -440,7 +451,7 @@ export async function mintIdentityPrism({
 
   const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
     body: JSON.stringify(metadataJson),
   });
 
@@ -501,10 +512,19 @@ export async function mintIdentityPrism({
     tier: metadata.planetTier,
     traits: metadata.traits,
     stats: metadata.stats,
-    ...(remint ? { remint: true, ...(burnSignature ? { burnSignature } : {}), ...(burnAssetId ? { burnAssetId } : {}) } : {}),
+    ...(remint
+      ? { remint: true, ...(burnSignature ? { burnSignature } : {}), ...(burnAssetId ? { burnAssetId } : {}) }
+      : {}),
     ...(paidWithCoins ? { paidWithCoins: true } : {}),
+    ...(coinReservationRequestId ? { requestId: coinReservationRequestId } : {}),
   };
-  console.info('[mint] sending mint-cnft payload', { coreMintUrl, remint, paidWithCoins, burnAssetId: burnAssetId?.slice(0, 16), payloadKeys: Object.keys(mintPayload) });
+  console.info('[mint] sending mint-cnft payload', {
+    coreMintUrl,
+    remint,
+    paidWithCoins,
+    burnAssetId: burnAssetId?.slice(0, 16),
+    payloadKeys: Object.keys(mintPayload),
+  });
 
   const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) authHeaders['Authorization'] = `Bearer ${authToken}`;
@@ -560,9 +580,7 @@ export async function mintIdentityPrism({
   const requiredSigners = compiledMessage.accountKeys
     .slice(0, compiledMessage.header.numRequiredSignatures)
     .map((key) => key.toBase58());
-  const signatureMap = new Map(
-    transaction.signatures.map((entry) => [entry.publicKey.toBase58(), entry.signature])
-  );
+  const signatureMap = new Map(transaction.signatures.map((entry) => [entry.publicKey.toBase58(), entry.signature]));
   transaction.signatures = requiredSigners.map((signer) => ({
     publicKey: new PublicKey(signer),
     signature: signatureMap.get(signer) ?? null,
@@ -577,7 +595,7 @@ export async function mintIdentityPrism({
     const feeLamports = feeForMessage.value ?? 0;
     // Remint and coins-paid modes have no SOL payment — only rent + tx fee are required
     const configuredLamports =
-      (remint || paidWithCoins) ? 0 : (paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0);
+      remint || paidWithCoins ? 0 : paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0;
     const transferLamports = transaction.instructions.reduce((total, instruction) => {
       if (!instruction.programId.equals(SystemProgram.programId)) return total;
       try {
@@ -604,10 +622,7 @@ export async function mintIdentityPrism({
       return total;
     }, 0);
     const baseLamports = Math.max(configuredLamports, transferLamports);
-    const bufferedLamports =
-      baseLamports +
-      feeLamports +
-      Math.round(TX_FEE_BUFFER_SOL * LAMPORTS_PER_SOL);
+    const bufferedLamports = baseLamports + feeLamports + Math.round(TX_FEE_BUFFER_SOL * LAMPORTS_PER_SOL);
     const minRequiredLamports = Math.round(MIN_REQUIRED_SOL * LAMPORTS_PER_SOL);
     const requiredLamports = Math.max(bufferedLamports, minRequiredLamports);
     const balanceLamports = await connection.getBalance(payer);
@@ -626,7 +641,8 @@ export async function mintIdentityPrism({
       });
       if (simulation.value.err) {
         console.error('[mint] simulation failed', simulation.value.err, simulation.value.logs);
-        throw buildPreflightError('SIMULATION_FAILED',
+        throw buildPreflightError(
+          'SIMULATION_FAILED',
           `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`,
           { simulationError: simulation.value.err, logs: simulation.value.logs },
         );
@@ -653,9 +669,7 @@ export async function mintIdentityPrism({
     const signedTransaction = await signWithDismissDetection(wallet, transaction);
     const walletSigner = wallet.publicKey?.toBase58();
     if (walletSigner) {
-      const walletSignature = signedTransaction.signatures.find(
-        (entry) => entry.publicKey.toBase58() === walletSigner
-      );
+      const walletSignature = signedTransaction.signatures.find((entry) => entry.publicKey.toBase58() === walletSigner);
       if (!walletSignature?.signature) {
         throw new Error(`Wallet signature missing for ${walletSigner}`);
       }
@@ -703,7 +717,7 @@ export async function mintIdentityPrism({
  * 3. User signs the combined tx once
  */
 export async function remintIdentityPrism(
-  args: MintIdentityPrismArgs
+  args: MintIdentityPrismArgs,
 ): Promise<MintIdentityPrismResult & { burnedAssetId: string }> {
   const { wallet, address } = args;
   if (!wallet.publicKey || !wallet.signTransaction || !wallet.sendTransaction) {
@@ -732,13 +746,13 @@ export async function remintIdentityPrism(
   });
   if (!dasResponse.ok) throw new Error(`DAS API error: ${dasResponse.status}`);
   const dasData = (await dasResponse.json()) as {
-    result?: { items: Array<{ id: string; interface?: string; grouping?: Array<{ group_key: string; group_value: string }> }> };
+    result?: {
+      items: Array<{ id: string; interface?: string; grouping?: Array<{ group_key: string; group_value: string }> }>;
+    };
   };
   const assets = dasData.result?.items ?? [];
   const matchingAssets = assets.filter((a) =>
-    a.grouping?.some(
-      (g) => g.group_key === 'collection' && g.group_value === collectionMintAddress
-    )
+    a.grouping?.some((g) => g.group_key === 'collection' && g.group_value === collectionMintAddress),
   );
   // Prefer Core assets (burnV1 only works with MplCoreAsset); fall back to any matching asset
   const coreAsset = matchingAssets.find((a) => a.interface === 'MplCoreAsset');
@@ -747,7 +761,10 @@ export async function remintIdentityPrism(
     throw new Error('No existing Identity Prism card found in this wallet. Use regular mint instead.');
   }
   if (!coreAsset && existingCard) {
-    console.warn('[remint] found legacy cNFT instead of Core asset — burn may fail', { id: existingCard.id, interface: existingCard.interface });
+    console.warn('[remint] found legacy cNFT instead of Core asset — burn may fail', {
+      id: existingCard.id,
+      interface: existingCard.interface,
+    });
   }
 
   const assetId = existingCard.id;
@@ -828,12 +845,14 @@ export async function updateIdentityPrism({
   });
   if (!dasResponse.ok) throw new Error(`DAS API error: ${dasResponse.status}`);
   const dasData = (await dasResponse.json()) as {
-    result?: { items: Array<{ id: string; interface?: string; grouping?: Array<{ group_key: string; group_value: string }> }> };
+    result?: {
+      items: Array<{ id: string; interface?: string; grouping?: Array<{ group_key: string; group_value: string }> }>;
+    };
   };
   const coreAsset = (dasData.result?.items ?? []).find(
     (a) =>
       a.interface === 'MplCoreAsset' &&
-      a.grouping?.some((g) => g.group_key === 'collection' && g.group_value === collectionMintAddress)
+      a.grouping?.some((g) => g.group_key === 'collection' && g.group_value === collectionMintAddress),
   );
   if (!coreAsset) {
     throw new Error('No existing Identity Prism Core NFT found. Use regular mint instead.');
@@ -881,7 +900,7 @@ export async function updateIdentityPrism({
 
   const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: updateAuthHeaders,
     body: JSON.stringify(metadataJson),
   });
   if (!metadataResponse.ok) {
@@ -911,7 +930,10 @@ export async function updateIdentityPrism({
 
   // Simulate before signing (dApp Store compliance)
   const updateConn = new Connection(heliusRpcUrl, 'confirmed');
-  const updateSim = await updateConn.simulateTransaction(transaction, undefined, { sigVerify: false, replaceRecentBlockhash: true });
+  const updateSim = await updateConn.simulateTransaction(transaction, undefined, {
+    sigVerify: false,
+    replaceRecentBlockhash: true,
+  });
   if (updateSim.value.err) {
     throw buildPreflightError('SIMULATION_FAILED', `Update simulation failed: ${JSON.stringify(updateSim.value.err)}`);
   }
@@ -933,7 +955,13 @@ export async function updateIdentityPrism({
   const finalizeResponse = await fetch(`${coreMintUrl}/api/update-card`, {
     method: 'POST',
     headers: updateAuthHeaders,
-    body: JSON.stringify({ ownerAddress: address, assetId, metadataUri, name: displayName, signedTransaction: serialized }),
+    body: JSON.stringify({
+      ownerAddress: address,
+      assetId,
+      metadataUri,
+      name: displayName,
+      signedTransaction: serialized,
+    }),
   });
   if (!finalizeResponse.ok) {
     const errorText = await finalizeResponse.text();

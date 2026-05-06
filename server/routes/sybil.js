@@ -198,11 +198,6 @@ function registerSybilRoute(ctx) {
     return true;
   }
 
-  // ═══ Wallet Token Holdings / Recent Transactions ═══
-  if (pathname.startsWith('/api/wallet/') && await walletHandler(req, res, url, pathname)) {
-    return true;
-  }
-
   // ═══ Sybil Funding Sources ═══
   if (pathname === '/api/sybil/funding-sources' && req.method === 'GET') {
     const address = url.searchParams.get('address');

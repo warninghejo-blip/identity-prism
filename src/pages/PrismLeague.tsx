@@ -4,7 +4,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 import { Button } from '@/components/ui/button';
-import { type WalletPreview } from '@/components/prism/shared';
+import { getApiBase, obtainJwt, setAuthWallet, type WalletPreview } from '@/components/prism/shared';
 import { invalidateCompositeCache, useCompositeScore } from '@/hooks/useCompositeScore';
 import { invalidateBalanceCache } from '@/lib/prefetch';
 import { toast } from 'sonner';
@@ -60,7 +60,7 @@ const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; cont
   {
     id: 'orbit',
     name: 'Orbit Survival',
-    icon: '🛸',
+    icon: '/icons/modes/mode_orbit.png',
     desc: 'Dodge asteroids, survive as long as you can',
     controls: 'Tap/Click to reverse orbit',
     cover: '/games/orbit_cover.png',
@@ -68,7 +68,7 @@ const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; cont
   {
     id: 'destroyer',
     name: 'Cosmic Defender',
-    icon: '💥',
+    icon: '/icons/modes/mode_defender.png',
     desc: '4 sectors of enemies & bosses. Auto-fire, collect powerups!',
     controls: 'WASD/Arrows to move, auto-fire. Touch: drag to move',
     cover: '/games/wars_cover.png',
@@ -76,7 +76,7 @@ const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; cont
   {
     id: 'gravity',
     name: 'Gravity Runner',
-    icon: '🔄',
+    icon: '/icons/modes/mode_gravity.png',
     desc: 'Tap to fly, collect crystals, dodge asteroid columns!',
     controls: 'Tap/Space to thrust upward',
     cover: '/games/gravity_cover.png',
@@ -84,7 +84,7 @@ const GAME_MODES: { id: GameMode; name: string; icon: string; desc: string; cont
   {
     id: 'text_quest',
     name: 'Text Adventures',
-    icon: '📖',
+    icon: '/icons/modes/mode_text.png',
     desc: 'Branching story quests. Your choices shape the narrative — no reflexes, just decisions. New chapters daily.',
     controls: 'Read the story, pick your path',
     cover: '/games/quest_cover.png',
@@ -715,6 +715,10 @@ const PrismLeague = () => {
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const address = publicKey?.toBase58();
 
+  useEffect(() => {
+    setAuthWallet(wallet);
+  }, [wallet]);
+
   // Composite score — cached in sessionStorage, loads instantly on revisit
   const composite = useCompositeScore(address || null);
 
@@ -743,29 +747,57 @@ const PrismLeague = () => {
     };
   }, [address, composite.score, composite.tier, composite.breakdown, composite.isLoading]);
 
-  // Load forge loadout from localStorage (re-reads on focus/visibility change)
+  // Load forge loadout from the server-sanitized state, with local cache as an instant fallback.
   const [forgeLoadout, setForgeLoadout] = useState<ForgeLoadout | null>(null);
   useEffect(() => {
-    const load = () => {
+    let cancelled = false;
+    const applyLoadout = (next: ForgeLoadout | null) => {
+      if (!cancelled) setForgeLoadout(next);
+    };
+    const loadLocal = () => {
       if (!address) {
-        setForgeLoadout(null);
+        applyLoadout(null);
         return;
       }
       try {
         const raw = localStorage.getItem(`prism_forge_loadout_v1_${address}`);
-        setForgeLoadout(raw ? JSON.parse(raw) : null);
+        applyLoadout(raw ? JSON.parse(raw) : null);
       } catch {
-        setForgeLoadout(null);
+        applyLoadout(null);
       }
     };
-    load();
-    window.addEventListener('focus', load);
-    document.addEventListener('visibilitychange', load);
-    return () => {
-      window.removeEventListener('focus', load);
-      document.removeEventListener('visibilitychange', load);
+    const loadServer = async () => {
+      if (!address) return;
+      const jwt = await obtainJwt(wallet);
+      if (!jwt || cancelled) return;
+      try {
+        const res = await fetch(`${getApiBase()}/api/user-data`, {
+          headers: { Authorization: `Bearer ${jwt}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { userData?: { loadout?: ForgeLoadout | null } };
+        const serverLoadout = data.userData?.loadout ?? null;
+        if (!cancelled) {
+          setForgeLoadout(serverLoadout);
+          localStorage.setItem(`prism_forge_loadout_v1_${address}`, JSON.stringify(serverLoadout));
+        }
+      } catch {
+        /* local fallback already applied */
+      }
     };
-  }, [address]);
+    const refresh = () => {
+      loadLocal();
+      void loadServer();
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [address, wallet]);
 
   // Derive ship stats from compositeScore + forge loadout
   const shipStats = useMemo(() => computeShipStats(walletPreview, forgeLoadout), [walletPreview, forgeLoadout]);
@@ -1029,11 +1061,10 @@ const PrismLeague = () => {
   // Auto-reset to free play when switching to text_quest
   const setPlayMode = useCallback((m: PlayMode) => setPlayModeRaw(m), []);
   useEffect(() => {
-    // Reset tournament mode when switching game modes, unless user has actively joined a tournament
-    if (playMode === 'tournament' && !activeTournament?.userJoined) setPlayModeRaw('free');
-    // Also reset for text_quest which never supports tournament
+    // Text quests never support tournament mode. Other game-mode changes can be caused
+    // by selecting a different tournament tier, so keep tournament view open there.
     if (gameMode === 'text_quest' && playMode === 'tournament') setPlayModeRaw('free');
-  }, [gameMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gameMode, playMode]);
   const [tournamentTier, setTournamentTier] = useState<TournamentTierKey>('daily');
   const [tournaments, setTournaments] = useState<Record<TournamentTierKey, ActiveTournament | null>>({
     daily: null,
@@ -1215,7 +1246,7 @@ const PrismLeague = () => {
   const [showContinue, setShowContinue] = useState(false);
   const [revivePaying, setRevivePaying] = useState(false);
   const [isVictory, setIsVictory] = useState(false);
-  const pendingGameOver = useRef<{ score: number; coins: number; isVictory?: boolean } | null>(null);
+  const pendingGameOver = useRef<{ score: number; coins: number; endedAtMs: number; isVictory?: boolean } | null>(null);
 
   // Helper: read/write daily free revives from localStorage per arcade mode.
   const getDailyRevivesUsed = useCallback(
@@ -1592,7 +1623,7 @@ const PrismLeague = () => {
   }, [urlChallengeId, urlMode, connected, address, hasMintedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finalizeDeath = useCallback(
-    (finalScore: number, finalCoins: number, victory = false) => {
+    (finalScore: number, finalCoins: number, victory = false, endedAtOverrideMs?: number) => {
       stopAllAudio();
       if (victory) {
         hapticSuccess();
@@ -1637,7 +1668,7 @@ const PrismLeague = () => {
         invalidateCompositeCache(walletAddr);
       }
       const startedAtMs = runStartedAtRef.current || Date.now();
-      const endedAtMs = Date.now();
+      const endedAtMs = endedAtOverrideMs ?? Date.now();
       const playerAddr = address || 'anonymous';
       const newEntry: LeaderboardEntry = {
         id: Date.now().toString(),
@@ -1919,7 +1950,7 @@ const PrismLeague = () => {
       }
       // Show continue if: has free revives OR (hasn't used paid continue yet AND connected)
       if (freeRevivesLeft.current > 0 || (!continueUsed.current && connected)) {
-        pendingGameOver.current = { score: finalScore, coins: finalCoins };
+        pendingGameOver.current = { score: finalScore, coins: finalCoins, endedAtMs: Date.now() };
         setScore(finalScore);
         setCoins(finalCoins);
         setShowContinue(true);
@@ -2018,9 +2049,9 @@ const PrismLeague = () => {
 
   const handleDeclineContinue = useCallback(() => {
     if (!pendingGameOver.current) return;
-    const { score: s, coins: c } = pendingGameOver.current;
+    const { score: s, coins: c, endedAtMs } = pendingGameOver.current;
     pendingGameOver.current = null;
-    finalizeDeath(s, c);
+    finalizeDeath(s, c, false, endedAtMs);
   }, [finalizeDeath]);
 
   const handleCommitOnchain = async () => {
@@ -2613,7 +2644,7 @@ const PrismLeague = () => {
 
                 {mbSeed && (
                   <div className="hidden sm:flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded-full bg-black/40 border border-purple-500/20">
-                    <span className="text-[8px]">⚡</span>
+                    <img src="/icons/stats/stat_speed.svg" alt="" className="w-3 h-3 object-contain" loading="lazy" />
                     <span className="text-[8px] text-purple-300/60 font-mono">MB: {mbSeed.slice(0, 6)}…</span>
                   </div>
                 )}
@@ -2753,7 +2784,12 @@ const PrismLeague = () => {
                                   loading="lazy"
                                 />
                               ) : (
-                                <span className="text-3xl mb-2 block">{mode.icon}</span>
+                                <img
+                                  src={mode.icon}
+                                  alt=""
+                                  className="w-12 h-12 object-contain mx-auto mb-2"
+                                  loading="lazy"
+                                />
                               )}
                               <div className="text-sm font-black text-cyan-200 tracking-wide mb-1">{mode.name}</div>
                               <div className="text-[11px] text-white/40 leading-relaxed">{mode.desc}</div>
@@ -2773,9 +2809,10 @@ const PrismLeague = () => {
                         {GAME_MODES.map((mode) => (
                           <button
                             key={mode.id}
-                            className="p-2 -m-2 flex items-center justify-center"
+                            className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/35 disabled:cursor-not-allowed disabled:opacity-35"
                             onClick={() => handleModeSelect(mode.id)}
                             disabled={tournamentModeLocked && mode.id !== activeTournamentMode}
+                            aria-label={`Select ${mode.name}`}
                           >
                             <span
                               className={`w-2 h-2 rounded-full transition-all duration-300 block ${
@@ -2897,12 +2934,21 @@ const PrismLeague = () => {
                                       if (!r) return null;
                                       const isFirst = idx === 0;
                                       const isSecond = idx === 1;
-                                      const medal = isFirst ? '🥇' : isSecond ? '🥈' : '🥉';
+                                      const medal = isFirst
+                                        ? '/icons/tiers/tier_gold.png'
+                                        : isSecond
+                                          ? '/icons/tiers/tier_silver.png'
+                                          : '/icons/tiers/tier_bronze.png';
                                       const color = isFirst ? '#fbbf24' : isSecond ? '#c0c0c0' : '#cd7f32';
                                       const h = isFirst ? 'h-24' : isSecond ? 'h-20' : 'h-16';
                                       return (
                                         <div key={r.place} className="flex flex-col items-center flex-1 max-w-[90px]">
-                                          <span className="text-lg mb-1">{medal}</span>
+                                          <img
+                                            src={medal}
+                                            alt=""
+                                            className="w-8 h-8 object-contain mb-1"
+                                            loading="lazy"
+                                          />
                                           <div
                                             className={`w-full ${h} rounded-t-lg flex flex-col items-center justify-center`}
                                             style={{
@@ -2950,14 +2996,26 @@ const PrismLeague = () => {
                                       </p>
                                       {activeTournament.entries.slice(0, 5).map((entry, idx) => {
                                         const isMine = entry.address === address;
-                                        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
+                                        const medal =
+                                          idx === 0
+                                            ? '/icons/tiers/tier_gold.png'
+                                            : idx === 1
+                                              ? '/icons/tiers/tier_silver.png'
+                                              : idx === 2
+                                                ? '/icons/tiers/tier_bronze.png'
+                                                : null;
                                         return (
                                           <div
                                             key={`${entry.address}-${idx}`}
                                             className={`flex items-center gap-2 px-4 py-1.5 text-xs ${isMine ? 'bg-purple-500/10' : ''}`}
                                           >
                                             {medal ? (
-                                              <span className="w-5 text-center">{medal}</span>
+                                              <img
+                                                src={medal}
+                                                alt=""
+                                                className="w-5 h-5 object-contain"
+                                                loading="lazy"
+                                              />
                                             ) : (
                                               <span className="w-5 text-center text-[10px] text-white/30">
                                                 {idx + 1}
@@ -3137,23 +3195,43 @@ const PrismLeague = () => {
                         <div className="text-sm text-amber-300 font-black mb-3 text-center">How It Works</div>
                         <div className="flex flex-col gap-2.5 text-[13px] text-left">
                           <div className="flex items-center gap-2.5">
-                            <span className="text-lg flex-shrink-0">📖</span>
+                            <img
+                              src="/icons/modes/mode_text.png"
+                              alt=""
+                              className="w-6 h-6 object-contain flex-shrink-0"
+                              loading="lazy"
+                            />
                             <span className="text-white/70 flex-1">
                               Read branching stories — your choices shape the plot
                             </span>
                           </div>
                           <div className="flex items-center gap-2.5">
-                            <span className="text-lg flex-shrink-0">🎲</span>
+                            <img
+                              src="/icons/stats/stat_luck.svg"
+                              alt=""
+                              className="w-6 h-6 object-contain flex-shrink-0"
+                              loading="lazy"
+                            />
                             <span className="text-white/70 flex-1">
                               Multiple endings — replay for different outcomes
                             </span>
                           </div>
                           <div className="flex items-center gap-2.5">
-                            <span className="text-lg flex-shrink-0">🪙</span>
+                            <img
+                              src="/textures/powerups/powerup_coin.png"
+                              alt=""
+                              className="w-6 h-6 object-contain flex-shrink-0"
+                              loading="lazy"
+                            />
                             <span className="text-white/70 flex-1">Earn Coins & XP for completing chapters</span>
                           </div>
                           <div className="flex items-center gap-2.5">
-                            <span className="text-lg flex-shrink-0">📅</span>
+                            <img
+                              src="/icons/tabs/quest_tab_weekly.svg"
+                              alt=""
+                              className="w-6 h-6 object-contain flex-shrink-0"
+                              loading="lazy"
+                            />
                             <span className="text-white/70 flex-1">New chapters available daily — 16 quests total</span>
                           </div>
                         </div>
@@ -3375,7 +3453,12 @@ const PrismLeague = () => {
                     {/* MagicBlock — separate frame, hide for text_quest */}
                     {gameMode !== 'text_quest' && (
                       <div className="w-full mb-3 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-purple-500/8 border border-purple-500/20">
-                        <span className="text-sm">⚡</span>
+                        <img
+                          src="/icons/stats/stat_speed.svg"
+                          alt=""
+                          className="w-4 h-4 object-contain"
+                          loading="lazy"
+                        />
                         <div className="flex-1 min-w-0">
                           <span className="text-[11px] text-purple-300/70 font-medium">
                             Provably Fair via MagicBlock
@@ -3409,26 +3492,54 @@ const PrismLeague = () => {
                     {gameMode !== 'text_quest' && (
                       <div className="w-full mb-3 p-3 rounded-xl bg-white/[0.03] border border-white/10 backdrop-blur-sm">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="text-sm">🚀</span>
+                          <img
+                            src="/icons/forge/forge_ship.png"
+                            alt=""
+                            className="w-4 h-4 object-contain"
+                            loading="lazy"
+                          />
                           <span className="text-xs font-bold text-white/80 uppercase tracking-wider">Ship Stats</span>
                         </div>
                         <div className="space-y-1.5">
                           {(
                             [
-                              { key: 'speed', label: 'Speed', icon: '⚡', color: '#22d3ee', value: shipStats.speed },
-                              { key: 'shield', label: 'Shield', icon: '🛡️', color: '#3b82f6', value: shipStats.shield },
+                              {
+                                key: 'speed',
+                                label: 'Speed',
+                                icon: '/icons/stats/stat_speed.svg',
+                                color: '#22d3ee',
+                                value: shipStats.speed,
+                              },
+                              {
+                                key: 'shield',
+                                label: 'Shield',
+                                icon: '/icons/stats/stat_shield.svg',
+                                color: '#3b82f6',
+                                value: shipStats.shield,
+                              },
                               {
                                 key: 'firepower',
                                 label: 'Firepower',
-                                icon: '🔥',
+                                icon: '/icons/stats/stat_firepower.svg',
                                 color: '#ef4444',
                                 value: shipStats.firepower,
                               },
-                              { key: 'luck', label: 'Luck', icon: '🍀', color: '#22c55e', value: shipStats.luck },
+                              {
+                                key: 'luck',
+                                label: 'Luck',
+                                icon: '/icons/stats/stat_luck.svg',
+                                color: '#22c55e',
+                                value: shipStats.luck,
+                              },
                             ] as const
                           ).map((stat) => (
                             <div key={stat.key} className="flex items-center gap-2">
-                              <span className="text-[10px] w-3 text-center">{stat.icon}</span>
+                              <img
+                                src={stat.icon}
+                                alt=""
+                                className="w-3.5 h-3.5 object-contain shrink-0"
+                                loading="lazy"
+                              />
                               <span className="text-[10px] text-white/50 w-14">{stat.label}</span>
                               <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
                                 <div
@@ -3657,7 +3768,13 @@ const PrismLeague = () => {
                       </>
                     ) : (
                       <>
-                        <Coins className="w-4 h-4 mr-1.5" /> Revive for 5 SKR
+                        <img
+                          src="/tokens/skr-icon.png"
+                          alt=""
+                          className="w-5 h-5 mr-1.5 object-contain"
+                          loading="lazy"
+                        />{' '}
+                        Revive for 5 SKR
                       </>
                     )}
                   </Button>
@@ -3697,7 +3814,12 @@ const PrismLeague = () => {
                   >
                     {isVictory ? (
                       <>
-                        <div className="text-4xl mb-1">🏆</div>
+                        <img
+                          src="/hub/leaderboard.png"
+                          alt=""
+                          className="w-16 h-16 object-contain mx-auto mb-1"
+                          loading="lazy"
+                        />
                         <div
                           className="font-black text-4xl tracking-tight uppercase mb-0.5"
                           style={{
@@ -3861,7 +3983,12 @@ const PrismLeague = () => {
                     <div
                       className={`w-full mb-2 flex items-center gap-1.5 px-3 py-2 rounded-xl border ${mbVerified ? 'bg-purple-500/8 border-purple-500/20' : 'bg-white/[0.02] border-white/[0.06]'}`}
                     >
-                      <span className="text-xs">⚡</span>
+                      <img
+                        src="/icons/stats/stat_speed.svg"
+                        alt=""
+                        className="w-3.5 h-3.5 object-contain"
+                        loading="lazy"
+                      />
                       <span
                         className={`text-[10px] font-medium ${mbVerified ? 'text-purple-300/80' : 'text-white/30'}`}
                       >

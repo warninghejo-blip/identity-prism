@@ -1,11 +1,9 @@
 /**
  * Safe navigation helpers.
- * goBack() navigates to previous page if history exists, otherwise falls back to /app.
+ * goBack() always returns to the app fallback instead of relying on browser history.
  * Also cleans up any lingering wormhole tunnel overlays.
  *
- * Uses a sessionStorage counter to track internal navigation depth instead of
- * window.history.length, which includes external sites and can navigate the user
- * away from the app.
+ * The depth counter is still tracked so callers can reset page state consistently.
  */
 import type { NavigateFunction } from 'react-router-dom';
 
@@ -37,13 +35,8 @@ export function goBack(navigate: NavigateFunction, fallback = '/') {
   try {
     sessionStorage.setItem('returnedFromSubPage', '1');
   } catch {}
-  const depth = getInternalNavDepth();
-  setInternalNavDepth(Math.max(0, depth - 1));
-  if (depth > 0) {
-    navigate(-1);
-  } else {
-    navigate(fallback, { replace: true, state: { fromSubPage: true } });
-  }
+  setInternalNavDepth(0);
+  navigate(fallback, { replace: true, state: { fromSubPage: true } });
 }
 
 export function cleanupOverlays() {

@@ -10,7 +10,7 @@
  * Multi-wallet: select via URL param ?wallet=0 or ?wallet=1
  */
 
-import { Keypair, PublicKey } from '@solana/web3.js';
+import { Keypair, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 
 // Random test seeds — no real SOL, safe to commit
@@ -46,7 +46,7 @@ const DEV_KEYPAIR: Keypair = (() => {
   }
 })();
 
-export const DEV_WALLET_ENABLED: boolean = import.meta.env.DEV === true && import.meta.env.VITE_DEV_WALLET === 'true';
+export const DEV_WALLET_ENABLED: boolean = import.meta.env.VITE_DEV_WALLET === 'true';
 
 export const DEV_WALLET_INDEX: number = walletIndex;
 export const DEV_WALLET_COUNT: number = DEV_SEEDS.length;
@@ -58,4 +58,13 @@ export const DEV_PUBLIC_KEY: PublicKey = DEV_KEYPAIR.publicKey;
  */
 export function devSignMessage(message: Uint8Array): Uint8Array {
   return nacl.sign.detached(message, DEV_KEYPAIR.secretKey);
+}
+
+export function devSignTransaction<T extends Transaction | VersionedTransaction>(transaction: T): T {
+  if (transaction instanceof VersionedTransaction) {
+    transaction.sign([DEV_KEYPAIR]);
+    return transaction;
+  }
+  transaction.partialSign(DEV_KEYPAIR);
+  return transaction;
 }

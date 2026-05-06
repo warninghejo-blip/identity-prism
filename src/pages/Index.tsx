@@ -1243,29 +1243,81 @@ const Index = () => {
     return canvas.toDataURL('image/jpeg', quality);
   }, []);
 
-  const uploadCardImage = useCallback(async (dataUrl: string) => {
-    const metadataBaseUrl = getMetadataBaseUrl();
-    if (!metadataBaseUrl) throw new Error('Metadata URL missing');
+  const obtainScopedJwt = useCallback(
+    async (baseUrl: string): Promise<string | null> => {
+      const address = wallet.publicKey?.toBase58();
+      if (!address || !wallet.signMessage) return null;
+      const cacheKey = `ip_auth_jwt:${baseUrl}:${address}`;
+      try {
+        const raw = sessionStorage.getItem(cacheKey);
+        if (raw) {
+          const cached = JSON.parse(raw) as { token?: string; expiresAt?: number };
+          if (cached.token && typeof cached.expiresAt === 'number' && cached.expiresAt > Date.now() + 60_000) {
+            return cached.token;
+          }
+          sessionStorage.removeItem(cacheKey);
+        }
+      } catch {
+        /* ignore */
+      }
 
-    const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: dataUrl, contentType: 'image/jpeg' }),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      const error = new Error(
-        `Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 120)}`,
-      ) as Error & { status?: number };
-      error.status = response.status;
-      throw error;
-    }
-    const payload = JSON.parse(text);
-    if (!payload?.url) {
-      throw new Error('Card image URL missing from upload response');
-    }
-    return payload.url as string;
-  }, []);
+      const challengeRes = await fetch(`${baseUrl}/api/auth/challenge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      });
+      if (!challengeRes.ok) return null;
+      const { nonce, message } = (await challengeRes.json()) as { nonce: string; message: string };
+      const signatureBytes = await wallet.signMessage(new TextEncoder().encode(message));
+      const signatureHex = Array.from(signatureBytes, (b) => b.toString(16).padStart(2, '0')).join('');
+      const tokenRes = await fetch(`${baseUrl}/api/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address, nonce, signature: signatureHex }),
+      });
+      if (!tokenRes.ok) return null;
+      const { token } = (await tokenRes.json()) as { token: string };
+      try {
+        sessionStorage.setItem(
+          cacheKey,
+          JSON.stringify({ token, address, expiresAt: Date.now() + 23 * 60 * 60 * 1000 }),
+        );
+      } catch {
+        /* ignore */
+      }
+      return token;
+    },
+    [wallet],
+  );
+
+  const uploadCardImage = useCallback(
+    async (dataUrl: string) => {
+      const metadataBaseUrl = getMetadataBaseUrl();
+      if (!metadataBaseUrl) throw new Error('Metadata URL missing');
+      const jwt = await obtainScopedJwt(metadataBaseUrl);
+      if (!jwt) throw new Error('Wallet authorization required for card image upload');
+
+      const response = await fetch(`${metadataBaseUrl}/metadata/assets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ image: dataUrl, contentType: 'image/jpeg' }),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        const error = new Error(
+          `Upload failed: ${response.status}. Please check Nginx client_max_body_size or check log: ${text.slice(0, 120)}`,
+        ) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
+      }
+      const payload = JSON.parse(text);
+      if (!payload?.url) {
+        throw new Error('Card image URL missing from upload response');
+      }
+      return payload.url as string;
+    },
+    [obtainScopedJwt],
+  );
 
   const captureCardImage = useCallback(async () => {
     const dataUrl = await renderCardImage(1.5, 0.85);
@@ -1748,7 +1800,7 @@ const Index = () => {
                               title={SEEKER_TOKEN.SYMBOL}
                             >
                               <img
-                                src="/badges/seeker.png"
+                                src="/tokens/skr-icon.png"
                                 alt={SEEKER_TOKEN.SYMBOL}
                                 style={{ width: 22, height: 22, objectFit: 'contain' }}
                               />
@@ -1766,7 +1818,11 @@ const Index = () => {
                                     : {}
                                 }
                               >
-                                <Coins style={{ width: 22, height: 22 }} />
+                                <img
+                                  src="/tokens/prism-icon.png"
+                                  alt="Coins"
+                                  style={{ width: 22, height: 22, objectFit: 'contain' }}
+                                />
                               </button>
                             )}
                           </div>

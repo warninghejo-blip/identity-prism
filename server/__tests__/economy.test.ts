@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -151,6 +151,11 @@ describe.sequential('economy guards', () => {
     workspaceDir = mkdtempSync(path.join(os.tmpdir(), 'identity-prism-economy-'));
     metadataDir = path.join(workspaceDir, 'metadata');
     mkdirSync(metadataDir, { recursive: true });
+    writeFileSync(
+      path.join(metadataDir, 'minted-addresses.json'),
+      JSON.stringify({ version: 1, addresses: [ADDRESSES.firstMint] }),
+      'utf8',
+    );
     await startServer();
   }, 30_000);
 
@@ -249,7 +254,7 @@ describe.sequential('economy guards', () => {
     }, token);
 
     expect(firstResponse.status).toBe(200);
-    expect(firstResponse.body.earned).toBe(750);
+    expect(firstResponse.body.earned).toBe(1000);
 
     await sleep(800);
     await restartServer();

@@ -26,7 +26,22 @@ class LazyErrorBoundary extends Component<
     return { hasError: true };
   }
 
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    // DIAGNOSTIC: log full error to see crash root cause
+    console.error('[LazyErrorBoundary] componentDidCatch error:', error);
+    console.error('[LazyErrorBoundary] componentDidCatch errorInfo:', info?.componentStack);
+    // DIAGNOSTIC: persist to localStorage for ADB extraction
+    try {
+      localStorage.setItem(
+        '__diag_last_error',
+        JSON.stringify({
+          message: error?.message,
+          stack: error?.stack,
+          componentStack: info?.componentStack,
+          ts: Date.now(),
+        }),
+      );
+    } catch {}
     // Dynamic import failures (e.g. after HMR reconnect) — retry once
     if (!this.state.retried && error.message?.includes('dynamically imported module')) {
       this.setState({ hasError: false, retried: true });

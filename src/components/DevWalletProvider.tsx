@@ -20,6 +20,7 @@ import {
   DEV_WALLET_INDEX,
   DEV_WALLET_COUNT,
   devSignMessage,
+  devSignTransaction,
 } from '@/lib/devWallet';
 
 interface DevWalletProviderProps {
@@ -48,8 +49,8 @@ const devAdapterStub = {
     throw new Error('DevWallet: sendTransaction not supported');
   },
   signMessage: async (msg: Uint8Array) => devSignMessage(msg),
-  signTransaction: undefined,
-  signAllTransactions: undefined,
+  signTransaction: async (tx: Transaction | VersionedTransaction) => devSignTransaction(tx),
+  signAllTransactions: async (txs: (Transaction | VersionedTransaction)[]) => txs.map((tx) => devSignTransaction(tx)),
 } as unknown as Adapter;
 
 const devWalletDef = {
@@ -59,20 +60,25 @@ const devWalletDef = {
 
 export const DevWalletProvider = ({ children }: DevWalletProviderProps) => {
   const autoConnectedRef = useRef(false);
+  const showDebugBar =
+    DEV_WALLET_ENABLED &&
+    typeof window !== 'undefined' &&
+    (new URLSearchParams(window.location.search).get('devWalletBar') === '1' ||
+      window.localStorage?.getItem('ip_show_dev_wallet_bar') === 'true');
 
   // Auto-trigger JWT auth flow on mount (non-blocking)
   useEffect(() => {
     if (autoConnectedRef.current) return;
     autoConnectedRef.current = true;
 
+    // Clear immediately so a fast click after ?wallet= switch cannot reuse the previous wallet's token.
+    try {
+      sessionStorage.removeItem('ip_auth_jwt');
+    } catch {}
+
     // Small delay to let React tree settle before triggering auth
     const timer = setTimeout(async () => {
       try {
-        // Clear any stale JWT from a previous wallet — each wallet address needs its own token
-        try {
-          sessionStorage.removeItem('ip_auth_jwt');
-        } catch {}
-
         const { obtainJwt, setAuthWallet } = await import('@/components/prism/shared');
         setAuthWallet({
           publicKey: DEV_PUBLIC_KEY,
@@ -98,6 +104,17 @@ export const DevWalletProvider = ({ children }: DevWalletProviderProps) => {
     return devSignMessage(msg);
   }, []);
 
+  const signTransaction = useCallback(async <T extends Transaction | VersionedTransaction>(tx: T): Promise<T> => {
+    return devSignTransaction(tx);
+  }, []);
+
+  const signAllTransactions = useCallback(
+    async <T extends Transaction | VersionedTransaction>(txs: T[]): Promise<T[]> => {
+      return txs.map((tx) => devSignTransaction(tx));
+    },
+    [],
+  );
+
   const sendTransaction = useCallback(
     async (_tx: Transaction | VersionedTransaction, _conn: Connection, _opts?: SendOptions) => {
       throw new WalletNotConnectedError();
@@ -120,18 +137,18 @@ export const DevWalletProvider = ({ children }: DevWalletProviderProps) => {
       connect: noop,
       disconnect: noop,
       sendTransaction,
-      signTransaction: undefined,
-      signAllTransactions: undefined,
+      signTransaction,
+      signAllTransactions,
       signMessage,
       signIn: undefined,
     }),
-    [signMessage, sendTransaction, noop],
+    [signMessage, signTransaction, signAllTransactions, sendTransaction, noop],
   );
 
   return (
     <WalletContext.Provider value={contextValue as Parameters<typeof WalletContext.Provider>[0]['value']}>
       {children}
-      {DEV_WALLET_ENABLED && (
+      {showDebugBar && (
         <div className="fixed bottom-2 right-2 z-[9999] bg-black/80 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-2 font-mono">
           <span>DEV #{DEV_WALLET_INDEX + 1}</span>
           <span className="text-white/50">{DEV_PUBLIC_KEY.toBase58().slice(0, 8)}...</span>

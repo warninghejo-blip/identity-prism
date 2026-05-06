@@ -141,8 +141,15 @@ export default function InboxPage() {
         {/* Header */}
         <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-white/[0.06]">
           <button
-            onClick={() => navigate('/app', { replace: true })}
+            onClick={() =>
+              navigate(address ? `/app?address=${encodeURIComponent(address)}` : '/app', {
+                replace: true,
+                state: { fromSubPage: true },
+              })
+            }
             className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
+            aria-label="Back"
+            title="Back"
           >
             <ArrowLeft className="w-4 h-4 text-white/50" />
           </button>

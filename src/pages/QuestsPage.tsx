@@ -35,10 +35,17 @@ import { getCompletedQuests } from '@/lib/textQuests';
 type QuestTab = 'daily' | 'weekly' | 'milestones';
 
 const TABS: { id: QuestTab; label: string; icon: string }[] = [
-  { id: 'daily', label: 'Daily', icon: '☀️' },
-  { id: 'weekly', label: 'Weekly', icon: '📅' },
-  { id: 'milestones', label: 'Milestones', icon: '⭐' },
+  { id: 'daily', label: 'Daily', icon: '/icons/tabs/quest_tab_daily.svg' },
+  { id: 'weekly', label: 'Weekly', icon: '/icons/tabs/quest_tab_weekly.svg' },
+  { id: 'milestones', label: 'Milestones', icon: '/icons/tabs/quest_tab_milestones.svg' },
 ];
+
+function IconAsset({ icon, className = 'w-6 h-6' }: { icon: string; className?: string }) {
+  if (icon.startsWith('/')) {
+    return <img src={icon} alt="" className={`${className} object-contain shrink-0`} loading="lazy" />;
+  }
+  return <span className="text-2xl">{icon}</span>;
+}
 
 function QuestCard({
   quest,
@@ -51,7 +58,10 @@ function QuestCard({
   onClaim: () => void;
   claiming: boolean;
 }) {
-  const pct = quest.target > 0 ? Math.min(100, (progress.current / quest.target) * 100) : 0;
+  const current = Number.isFinite(Number(progress.current)) ? Math.max(0, Number(progress.current)) : 0;
+  const target = Number.isFinite(Number(quest.target)) ? Math.max(0, Number(quest.target)) : 0;
+  const reward = Number.isFinite(Number(quest.reward)) ? Math.max(0, Number(quest.reward)) : 0;
+  const pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
   const isComplete = progress.completed;
   const isClaimed = Boolean(progress.claimedAt);
 
@@ -66,7 +76,7 @@ function QuestCard({
       }`}
     >
       <div className="flex items-start gap-3">
-        <span className="text-2xl">{quest.icon}</span>
+        <IconAsset icon={quest.icon} className="w-10 h-10" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <h3 className="text-white font-bold text-sm">{quest.name}</h3>
@@ -87,7 +97,7 @@ function QuestCard({
                 />
               </div>
               <span className="text-white/50 text-[10px] font-mono whitespace-nowrap">
-                {progress.current}/{quest.target}
+                {current}/{target}
               </span>
             </div>
           )}
@@ -109,7 +119,7 @@ function QuestCard({
             </Button>
           ) : (
             <div className="text-right">
-              <p className="text-cyan-300 font-bold text-sm font-mono">+{quest.reward}</p>
+              <p className="text-cyan-300 font-bold text-sm font-mono">+{reward}</p>
               <p className="text-white/50 text-[9px]">XP</p>
             </div>
           )}
@@ -279,7 +289,7 @@ export default function QuestsPage() {
               </span>
             )}
             <div className="flex items-center gap-1.5">
-              <span className="text-lg">🪙</span>
+              <img src="/textures/powerups/powerup_coin.png" alt="" className="w-5 h-5 object-contain" loading="lazy" />
               <span className="text-amber-300 font-bold font-mono">{balance?.balance ?? 0}</span>
             </div>
           </div>
@@ -291,6 +301,11 @@ export default function QuestsPage() {
         {walletAddress &&
           (() => {
             const { xp, rank, progress, next } = rangerProgress;
+            const safeXp = Number.isFinite(Number(xp)) ? Math.max(0, Math.floor(Number(xp))) : 0;
+            const safeRankProgress = Number.isFinite(Number(progress)) ? Math.min(1, Math.max(0, Number(progress))) : 0;
+            const safeXpNeeded = Number.isFinite(Number(next?.xpNeeded))
+              ? Math.max(0, Math.floor(Number(next?.xpNeeded)))
+              : 0;
             return (
               <div className="mb-5 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <div className="flex items-center justify-between">
@@ -307,19 +322,19 @@ export default function QuestsPage() {
                     />
                     <div>
                       <span className={`text-sm font-bold ${rank.color}`}>{rank.name}</span>
-                      <span className="text-white/50 text-[10px] ml-2">{xp} XP</span>
+                      <span className="text-white/50 text-[10px] ml-2">{safeXp} XP</span>
                     </div>
                   </div>
                   {next && (
                     <span className="text-white/50 text-[10px]">
-                      {next.xpNeeded} XP to {next.rank.name}
+                      {safeXpNeeded} XP to {next.rank.name}
                     </span>
                   )}
                 </div>
                 <div className="mt-2 h-1.5 bg-white/5 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-purple-500 to-cyan-400 transition-all"
-                    style={{ width: `${progress * 100}%` }}
+                    style={{ width: `${safeRankProgress * 100}%` }}
                   />
                 </div>
                 {rank.perks.length > 0 && (
@@ -338,7 +353,10 @@ export default function QuestsPage() {
         {/* Title + streak */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-black">🎯 Daily Quests</h1>
+            <h1 className="flex items-center gap-2 text-xl font-black">
+              <IconAsset icon="/icons/quests/quest_explore.png" className="w-8 h-8" />
+              Daily Quests
+            </h1>
             <p className="text-white/50 text-xs mt-1">Complete challenges, earn Coins</p>
           </div>
           <div className="text-right">
@@ -360,7 +378,7 @@ export default function QuestsPage() {
                 activeTab === tab.id ? 'bg-white/10 text-white' : 'text-white/30 hover:text-white/50'
               }`}
             >
-              <span>{tab.icon}</span>
+              <IconAsset icon={tab.icon} className="w-5 h-5" />
               {tab.label}
             </button>
           ))}

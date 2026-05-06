@@ -440,7 +440,10 @@ export function getCachedJwt(address: string): string | null {
     const raw = sessionStorage.getItem('ip_auth_jwt');
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { token: string; address: string; expiresAt: number };
-    if (parsed.address !== address) return null;
+    if (parsed.address !== address) {
+      sessionStorage.removeItem('ip_auth_jwt');
+      return null;
+    }
     if (parsed.expiresAt > Date.now() + 60_000) return parsed.token;
     sessionStorage.removeItem('ip_auth_jwt');
   } catch {
@@ -570,9 +573,12 @@ export function setAuthWallet(w: AuthWalletRef | null): void {
 
 /** Try to get a valid JWT, auto-obtaining if wallet is available. */
 export async function ensureJwt(): Promise<string | null> {
-  const existing = getSessionJwt();
-  if (existing) return existing;
   if (!_authWallet) return null;
+  const address = _authWallet.publicKey?.toBase58();
+  if (address) {
+    const existing = getCachedJwt(address);
+    if (existing) return existing;
+  }
   return obtainJwt(_authWallet);
 }
 

@@ -13,7 +13,7 @@ import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { getPrismBalance, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
-import { getApiBase } from '@/components/prism/shared';
+import { getApiBase, obtainJwt, setAuthWallet } from '@/components/prism/shared';
 
 // ── Buy Coins Section ──
 
@@ -43,8 +43,15 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
   }, [walletAddress]);
 
   const handleBuy = useCallback(async () => {
-    if (selectedIdx === null || buyingIdx !== null || !walletAddress || !wallet.publicKey || !wallet.signTransaction)
+    if (selectedIdx === null || buyingIdx !== null) return;
+    if (!walletAddress || !wallet.publicKey) {
+      toast.error('Connect wallet first');
       return;
+    }
+    if (!wallet.signTransaction) {
+      toast.error('Wallet does not support transaction signing');
+      return;
+    }
     const pkg = COIN_PACKAGES[selectedIdx];
     setBuyingIdx(selectedIdx);
 
@@ -56,8 +63,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
       await Promise.race([
         timeout,
         (async () => {
-          const { ensureJwt } = await import('@/components/prism/shared');
-          const jwt = await ensureJwt();
+          const jwt = await obtainJwt(wallet);
           if (!jwt) {
             toast.error('Authentication required');
             setBuyingIdx(null);
@@ -227,9 +233,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                   : 'text-white/40 hover:text-white/60'
               }`}
             >
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${payWith === 'sol' ? 'bg-white/60' : 'bg-purple-500/50'}`}
-              />
+              <img src="/textures/Solana.png" alt="" className="w-4 h-4 object-contain shrink-0" loading="lazy" />
               SOL
             </button>
             <button
@@ -241,9 +245,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                   : 'text-white/40 hover:text-white/60'
               }`}
             >
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${payWith === 'skr' ? 'bg-white/60' : 'bg-amber-500/50'}`}
-              />
+              <img src="/tokens/skr-icon.png" alt="" className="w-4 h-4 object-contain shrink-0" loading="lazy" />
               SKR
             </button>
           </div>
@@ -392,7 +394,7 @@ const VAULT_TIERS = [
     boost: 5,
     color: '#cd7f32',
     glow: 'rgba(205,127,50,0.25)',
-    icon: '🥉',
+    icon: '/icons/tiers/tier_bronze.png',
   },
   {
     id: 'silver' as const,
@@ -403,7 +405,7 @@ const VAULT_TIERS = [
     boost: 10,
     color: '#c0c0c0',
     glow: 'rgba(192,192,192,0.2)',
-    icon: '🥈',
+    icon: '/icons/tiers/tier_silver.png',
   },
   {
     id: 'gold' as const,
@@ -414,7 +416,7 @@ const VAULT_TIERS = [
     boost: 15,
     color: '#ffd700',
     glow: 'rgba(255,215,0,0.25)',
-    icon: '🥇',
+    icon: '/icons/tiers/tier_gold.png',
   },
 ];
 
@@ -449,6 +451,10 @@ function PrismVaultSection({
   const [showUnstakeWarning, setShowUnstakeWarning] = useState(false);
   const [showStakeConfirm, setShowStakeConfirm] = useState(false);
 
+  useEffect(() => {
+    setAuthWallet(wallet);
+  }, [wallet]);
+
   const tier = VAULT_TIERS.find((t) => t.id === selectedTier)!;
 
   useEffect(() => {
@@ -479,10 +485,7 @@ function PrismVaultSection({
       .finally(() => setLoadingStatus(false));
   }, [walletAddress]);
 
-  const getJwt = async () => {
-    const { ensureJwt } = await import('@/components/prism/shared');
-    return ensureJwt();
-  };
+  const getJwt = useCallback(() => obtainJwt(wallet), [wallet]);
 
   const handleStake = useCallback(async () => {
     const amount = Number(stakeAmount);
@@ -522,7 +525,7 @@ function PrismVaultSection({
     } finally {
       setStaking(false);
     }
-  }, [stakeAmount, tier, balance, walletAddress, selectedTier, lockDays, onBalanceChange, wallet]);
+  }, [stakeAmount, tier, balance, walletAddress, selectedTier, lockDays, onBalanceChange, wallet, getJwt]);
 
   const handleClaim = useCallback(async () => {
     if (!walletAddress) return;
@@ -549,7 +552,7 @@ function PrismVaultSection({
     } finally {
       setClaiming(false);
     }
-  }, [walletAddress, onBalanceChange, wallet]);
+  }, [walletAddress, onBalanceChange, wallet, getJwt]);
 
   const handleUnstake = useCallback(async () => {
     if (!walletAddress) return;
@@ -581,7 +584,7 @@ function PrismVaultSection({
     } finally {
       setUnstaking(false);
     }
-  }, [walletAddress, onBalanceChange, wallet]);
+  }, [walletAddress, onBalanceChange, wallet, getJwt]);
 
   const stakedTierInfo = vaultStatus?.tier ? VAULT_TIERS.find((t) => t.id === vaultStatus.tier) : null;
   const isLocked = vaultStatus?.unlocksAt ? Date.now() < vaultStatus.unlocksAt : false;
@@ -623,7 +626,12 @@ function PrismVaultSection({
                   border: `1px solid ${stakedTierInfo?.color ?? '#fbbf24'}25`,
                 }}
               >
-                {stakedTierInfo?.icon ?? '🏆'}
+                <img
+                  src={stakedTierInfo?.icon ?? '/icons/tiers/tier_gold.png'}
+                  alt=""
+                  className="w-9 h-9 object-contain"
+                  loading="lazy"
+                />
               </div>
               <div>
                 <p className="text-white font-bold text-sm">{stakedTierInfo?.label ?? vaultStatus.tier} Vault</p>
@@ -766,7 +774,7 @@ function PrismVaultSection({
                     boxShadow: active ? `0 0 20px ${t.glow}` : 'none',
                   }}
                 >
-                  <div className="text-2xl mb-2">{t.icon}</div>
+                  <img src={t.icon} alt="" className="w-12 h-12 mx-auto mb-2 object-contain" loading="lazy" />
                   <p className="font-bold text-xs mb-2" style={{ color: active ? t.color : 'rgba(255,255,255,0.6)' }}>
                     {t.label}
                   </p>
@@ -998,7 +1006,7 @@ export default function PrismVault() {
           <div className="flex-1" />
           {balance && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.06]">
-              <Coins className="w-3.5 h-3.5 text-amber-400" />
+              <img src="/tokens/prism-icon.png" alt="" className="w-4 h-4 object-contain" loading="lazy" />
               <span className="text-xs font-bold text-white/70">{balance.balance.toLocaleString()}</span>
             </div>
           )}

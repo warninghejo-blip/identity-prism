@@ -22,6 +22,28 @@ const getGameSessionApiBase = (): string | null => {
   return null;
 };
 
+const getCachedGameJwt = (walletAddress?: string): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem('ip_auth_jwt');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { token?: string; address?: string; expiresAt?: number };
+    const expected = walletAddress?.trim();
+    if (expected && parsed.address && parsed.address !== expected) {
+      sessionStorage.removeItem('ip_auth_jwt');
+      return null;
+    }
+    if (!parsed.token || !parsed.expiresAt || parsed.expiresAt <= Date.now() + 60_000) {
+      sessionStorage.removeItem('ip_auth_jwt');
+      return null;
+    }
+    return parsed.token;
+  } catch {
+    sessionStorage.removeItem('ip_auth_jwt');
+    return null;
+  }
+};
+
 export interface MagicBlockConfig {
   rpcUrl: string;
   wsUrl: string;
@@ -59,6 +81,7 @@ export interface GameSessionProof {
     slotFound: boolean;
     seedMatchesSlot: boolean;
     slotBlockhash: string | null;
+    slotBlockTimeMs?: number | null;
     reason: string;
   };
   createdAt: string;
@@ -172,23 +195,15 @@ export async function verifyGameSessionSeed(seed: string, slot?: number): Promis
 /**
  * Register completed run on backend to get verifiable session proof id/hash.
  */
-export async function registerGameSessionProof(
-  payload: RegisterGameSessionPayload,
-): Promise<GameSessionProof | null> {
+export async function registerGameSessionProof(payload: RegisterGameSessionPayload): Promise<GameSessionProof | null> {
   const base = getGameSessionApiBase();
   if (!base) return null;
 
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 8000);
-  // Build headers — include JWT if available (server requires auth)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  try {
-    const raw = sessionStorage.getItem('ip_auth_jwt');
-    if (raw) {
-      const parsed = JSON.parse(raw) as { token: string; expiresAt: number };
-      if (parsed.expiresAt > Date.now() + 60_000) headers['Authorization'] = `Bearer ${parsed.token}`;
-    }
-  } catch { /* ignore */ }
+  const jwt = getCachedGameJwt(payload.walletAddress);
+  if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
   const res = await fetch(`${base}/api/game/session`, {
     method: 'POST',
     headers,

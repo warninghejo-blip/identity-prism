@@ -35,6 +35,9 @@ import {
   Target,
   Coins,
   RotateCcw,
+  Flag,
+  Send,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PageShell from '@/components/PageShell';
@@ -44,17 +47,29 @@ import {
   fetchWalletPreview,
   formatWalletAge,
   ensureJwt,
+  getApiBase,
+  setAuthWallet,
   type SybilVerdictSummary,
   type WalletPreview,
 } from '@/components/prism/shared';
 import { earnPrism } from '@/lib/prismCoin';
 import { toast } from 'sonner';
-import { RANGER_RANKS } from '@/lib/rangerRanks';
 import { getProgramLabel, PROGRAM_LABELS } from '@/lib/solanaPrograms';
 
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
 const SCAN_HISTORY_KEY = 'prism_scan_history_v1';
-const BASE = () => (typeof window !== 'undefined' ? window.location.origin : '');
+const BASE = () => getApiBase();
+const SYBIL_FETCH_TIMEOUT_MS = 10_000;
+
+async function fetchJsonWithTimeout(url: string, init: RequestInit = {}, timeoutMs = SYBIL_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 /* ── Scan History (with verdict) ── */
 interface ScanHistoryEntry {
@@ -168,6 +183,29 @@ const VERDICT_DATA_QUALITY_LABELS: Record<SybilVerdictSummary['dataQuality'], st
   rich: 'rich history',
 };
 
+function createPendingWalletPreview(address: string): WalletPreview {
+  return {
+    address,
+    score: 0,
+    tier: 'mercury',
+    badges: [],
+    solBalance: 0,
+    txCount: 0,
+    walletAgeDays: 0,
+    tokenCount: 0,
+    nftCount: 0,
+    trustGrade: null,
+    trustScore: null,
+    riskLevel: null,
+    sybilVerdict: null,
+    topPrograms: [],
+    compositeScore: 0,
+    compositeTier: 'mercury',
+    compositeBadgeCount: 0,
+    compositeBreakdown: { onchain: 0, sybilTrust: 0, humanProof: 0, social: 0, engagement: 0 },
+  };
+}
+
 function resolveAnalysisVerdict(data: SybilAnalysis): SybilVerdictSummary {
   if (data.verdict) return data.verdict;
 
@@ -203,39 +241,20 @@ function resolveAnalysisVerdict(data: SybilAnalysis): SybilVerdictSummary {
     };
   }
 
-  if (data.trustScore < 50) {
-    return {
-      key: 'probable_sybil',
-      label: 'Probable Sybil',
-      summary:
-        'This scan uses the legacy high-risk threshold, so it still takes the bounty path until a fresh verdict is available.',
-      confidence: 'medium',
-      confidenceScore: 60,
-      basis: 'behavioral',
-      dataQuality,
-      networkConfirmed: false,
-      legacySybilFlag: true,
-      bountyEligible: true,
-      rewardPath: 'sybil_hunt',
-      reasons: ['Legacy trust threshold marked this wallet as high risk'],
-      evidence: baseEvidence,
-    };
-  }
-
-  if (data.riskScore >= 30) {
+  if (data.trustScore < 50 || data.riskScore >= 30) {
     return {
       key: 'suspicious',
       label: 'Suspicious',
-      summary: 'Risk is elevated, but this cached scan predates the richer verdict model.',
+      summary: 'Risk is elevated, but a server verdict is required before paying a sybil bounty.',
       confidence: 'medium',
       confidenceScore: 55,
       basis: 'behavioral',
       dataQuality,
       networkConfirmed: false,
-      legacySybilFlag: false,
+      legacySybilFlag: data.trustScore < 50,
       bountyEligible: false,
       rewardPath: 'scan_wallet',
-      reasons: ['A fresh scan is needed to separate watchlist risk from a confirmed sybil call'],
+      reasons: ['A fresh server verdict is needed to separate watchlist risk from a confirmed sybil call'],
       evidence: baseEvidence,
     };
   }
@@ -549,8 +568,12 @@ function ScanningSequence({ targetAddress, walletAddress }: { targetAddress: str
 
 export default function PrismScanner() {
   const navigate = useNavigate();
-  const { publicKey } = useWallet();
+  const wallet = useWallet();
+  const { publicKey } = wallet;
   const myAddress = publicKey?.toBase58() || '';
+  useEffect(() => {
+    setAuthWallet(wallet);
+  }, [wallet]);
   useEffect(() => {
     fadeOutTransition();
   }, []);
@@ -588,7 +611,7 @@ export default function PrismScanner() {
     { address: string; source: string; parentRisk?: number; parent?: string }[]
   >([]);
   useEffect(() => {
-    fetch(`${BASE()}/api/sybil/suggested-targets?limit=6`)
+    fetchJsonWithTimeout(`${BASE()}/api/sybil/suggested-targets?limit=6`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d?.targets) setSuggestedTargets(d.targets);
@@ -605,7 +628,7 @@ export default function PrismScanner() {
     }
     setSybilLoading(true);
     try {
-      const r = await fetch(`${BASE()}/api/sybil/analysis?address=${addr}`);
+      const r = await fetchJsonWithTimeout(`${BASE()}/api/sybil/analysis?address=${encodeURIComponent(addr)}`);
       if (r.status === 429 && cached) {
         setSybilData(cached.data);
         processHuntVerdict(cached.data, addr);
@@ -623,7 +646,7 @@ export default function PrismScanner() {
       processHuntVerdict(data, addr);
     } catch {
       setSybilData(null);
-      setError('Network error during analysis');
+      setError('Network error or timeout during analysis');
     } finally {
       setSybilLoading(false);
     }
@@ -667,12 +690,25 @@ export default function PrismScanner() {
   const handleFeedbackSubmit = useCallback(async () => {
     if (!result?.address || !huntVerdict) return;
     try {
-      await fetch(`${BASE()}/api/sybil/feedback`, {
+      const jwt = await ensureJwt();
+      if (!jwt) {
+        toast('Connect wallet to submit feedback');
+        return;
+      }
+      const res = await fetchJsonWithTimeout(`${BASE()}/api/sybil/feedback`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: result.address, verdict: huntVerdict.key, feedback: feedbackText.trim() }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({
+          target_address: result.address,
+          report_type: 'false_positive',
+          notes: `Verdict: ${huntVerdict.key}. ${feedbackText.trim()}`.slice(0, 1000),
+        }),
       });
-    } catch {}
+      if (!res.ok) throw new Error('Feedback rejected');
+    } catch {
+      toast('Feedback failed, try again');
+      return;
+    }
     toast('Thanks, flagged for review');
     setShowFeedbackModal(false);
     setFeedbackText('');
@@ -696,21 +732,27 @@ export default function PrismScanner() {
       // Ensure server-side sybil cache is warm before claiming earn reward.
       // Server requires a recent analysis (1h TTL) to approve scan_wallet/sybil_hunt.
       // If server restarted, its in-memory cache is gone even if client has cached data.
-      void fetch(`${BASE()}/api/sybil/analysis?address=${addr}`)
+      void fetchJsonWithTimeout(`${BASE()}/api/sybil/analysis?address=${encodeURIComponent(addr)}`)
+        .then((res) => {
+          if (!res?.ok) return null;
+          return res;
+        })
         .catch(() => null)
-        .then(() =>
-          earnPrism(
-            myAddress,
-            rewardPath,
-            undefined,
-            rewardPath === 'sybil_hunt'
-              ? `Sybil bounty: ${addr.slice(0, 8)}...`
-              : verdict.key === 'clean'
-                ? `Cleared wallet: ${addr.slice(0, 8)}...`
-                : `Intel scan: ${addr.slice(0, 8)}...`,
-            undefined,
-            { scanTarget: addr },
-          ),
+        .then((warmRes) =>
+          warmRes
+            ? earnPrism(
+                myAddress,
+                rewardPath,
+                undefined,
+                rewardPath === 'sybil_hunt'
+                  ? `Sybil bounty: ${addr.slice(0, 8)}...`
+                  : verdict.key === 'clean'
+                    ? `Cleared wallet: ${addr.slice(0, 8)}...`
+                    : `Intel scan: ${addr.slice(0, 8)}...`,
+                undefined,
+                { scanTarget: addr },
+              )
+            : null,
         )
         .then((reward) => {
           if (!reward || reward.earned <= 0) return;
@@ -729,7 +771,7 @@ export default function PrismScanner() {
 
   const fetchFunding = useCallback(async (addr: string) => {
     try {
-      const r = await fetch(`${BASE()}/api/sybil/funding-sources?address=${addr}`);
+      const r = await fetchJsonWithTimeout(`${BASE()}/api/sybil/funding-sources?address=${encodeURIComponent(addr)}`);
       if (r.ok) {
         const d = await r.json();
         setFundingSources(d.sources || []);
@@ -746,23 +788,25 @@ export default function PrismScanner() {
       }
       setLoading(true);
       setError('');
-      setResult(null);
+      setResult(createPendingWalletPreview(addr));
       setSybilData(null);
       setFundingSources([]);
       setHuntVerdict(null);
       setHuntCoinsEarned(0);
 
-      const data = await fetchWalletPreview(addr);
+      const previewPromise = fetchWalletPreview(addr);
+      const sybilPromise = fetchSybil(addr);
+      const data = await previewPromise;
       if (!data) {
         setLoading(false);
+        setResult(null);
         setError('Could not load wallet data');
         return;
       }
       setResult(data);
       addRecentWallet(addr);
 
-      // Sequential: sybil first (caches funding on server), then funding from cache
-      await fetchSybil(addr);
+      await sybilPromise;
       setLoading(false);
       fetchFunding(addr);
 
@@ -778,11 +822,35 @@ export default function PrismScanner() {
   );
 
   const HUNT_RANKS = [
-    { name: 'Recruit', min: 0, icon: '🔰', color: 'text-white/40', perk: '' },
-    { name: 'Tracker', min: 3, icon: '🎯', color: 'text-green-400', perk: '+10 coins per sybil' },
-    { name: 'Specialist', min: 10, icon: '⚡', color: 'text-blue-400', perk: '+20 coins per sybil' },
-    { name: 'Veteran', min: 20, icon: '🔥', color: 'text-purple-400', perk: '+30 coins, 2× quiz reward' },
-    { name: 'Apex Hunter', min: 50, icon: '💀', color: 'text-amber-400', perk: '+50 coins, 3× quiz reward' },
+    { name: 'Recruit', min: 0, icon: '/icons/hunt/hunt_recruit.png', color: 'text-white/40', perk: '' },
+    {
+      name: 'Tracker',
+      min: 3,
+      icon: '/icons/hunt/hunt_tracker.png',
+      color: 'text-green-400',
+      perk: '+10 coins per sybil',
+    },
+    {
+      name: 'Specialist',
+      min: 10,
+      icon: '/icons/hunt/hunt_specialist.png',
+      color: 'text-blue-400',
+      perk: '+20 coins per sybil',
+    },
+    {
+      name: 'Veteran',
+      min: 20,
+      icon: '/icons/hunt/hunt_veteran.png',
+      color: 'text-purple-400',
+      perk: '+30 coins, 2× quiz reward',
+    },
+    {
+      name: 'Apex Hunter',
+      min: 50,
+      icon: '/icons/hunt/hunt_apex.png',
+      color: 'text-amber-400',
+      perk: '+50 coins, 3× quiz reward',
+    },
   ];
   const currentRankIdx = HUNT_RANKS.reduce((best, r, i) => (huntStats.sybilsCaught >= r.min ? i : best), 0);
   const huntRankData = HUNT_RANKS[currentRankIdx];
@@ -811,15 +879,7 @@ export default function PrismScanner() {
         {(huntStats.totalHunts > 0 || myAddress) && (
           <div className="rounded-2xl bg-gradient-to-r from-amber-500/[0.06] to-red-500/[0.04] border border-amber-500/[0.1] p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div>
-                {RANGER_RANKS[currentRankIdx] && (
-                  <img
-                    src={RANGER_RANKS[currentRankIdx].image}
-                    alt={RANGER_RANKS[currentRankIdx].name}
-                    className="w-10 h-10 object-contain"
-                  />
-                )}
-              </div>
+              <img src={huntRankData.icon} alt="" className="w-10 h-10 object-contain shrink-0" loading="lazy" />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className={`text-sm font-black ${huntRankData.color}`}>{huntRankData.name}</span>
@@ -989,64 +1049,70 @@ export default function PrismScanner() {
 
             return (
               <div
-                className={`rounded-xl border p-4 text-center transition-all duration-500 ${
+                className={`rounded-2xl border p-4 text-left shadow-lg shadow-black/20 transition-all duration-500 ${
                   showVerdictAnim ? 'animate-in fade-in zoom-in-95 duration-500' : ''
                 } ${verdictTheme.panelClass}`}
               >
-                <div className="flex items-center justify-center gap-2 mb-1">
+                <div className="flex items-start gap-2.5 mb-2">
                   {isBounty ? (
-                    <AlertTriangle className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                    <AlertTriangle className={`w-5 h-5 mt-0.5 shrink-0 ${verdictTheme.titleClass}`} />
                   ) : isClean ? (
-                    <Shield className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                    <Shield className={`w-5 h-5 mt-0.5 shrink-0 ${verdictTheme.titleClass}`} />
                   ) : isUnknown ? (
-                    <Clock className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                    <Clock className={`w-5 h-5 mt-0.5 shrink-0 ${verdictTheme.titleClass}`} />
                   ) : (
-                    <Target className={`w-5 h-5 ${verdictTheme.titleClass}`} />
+                    <Target className={`w-5 h-5 mt-0.5 shrink-0 ${verdictTheme.titleClass}`} />
                   )}
-                  <span className={`text-lg font-black tracking-wide ${verdictTheme.titleClass}`}>
-                    {huntVerdict.label.toUpperCase()}
-                  </span>
-                  {isBounty && <AlertTriangle className={`w-5 h-5 ${verdictTheme.titleClass}`} />}
+                  <div className="min-w-0 flex-1">
+                    <span
+                      className={`block text-base font-black leading-tight tracking-wide ${verdictTheme.titleClass}`}
+                    >
+                      {huntVerdict.label.toUpperCase()}
+                    </span>
+                    <p className={`text-xs leading-relaxed mt-1 ${verdictTheme.summaryClass}`}>
+                      Trust {sybilData?.trustScore ?? '?'}/100 · {huntVerdict.summary}
+                    </p>
+                  </div>
                 </div>
-                <p className={`text-xs mb-2 ${verdictTheme.summaryClass}`}>
-                  Trust {sybilData?.trustScore ?? '?'}/100 · {huntVerdict.summary}
-                </p>
-                <div className="flex flex-wrap items-center justify-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <span
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
+                    className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
                   >
                     {huntVerdict.label}
                   </span>
                   <span
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                    className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
                   >
                     {formatConfidence(huntVerdict.confidence)}
                   </span>
                   <span
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                    className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
                   >
                     {VERDICT_DATA_QUALITY_LABELS[huntVerdict.dataQuality]}
                   </span>
                 </div>
                 <div
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg mt-3 ${verdictTheme.rewardClass}`}
+                  className={`inline-flex max-w-full items-center gap-1.5 px-3 py-1.5 rounded-full mt-3 ${verdictTheme.rewardClass}`}
                 >
                   {isBounty ? (
                     <Trophy className="w-3.5 h-3.5 text-amber-400" />
                   ) : (
                     <Coins className="w-3.5 h-3.5 text-white/50" />
                   )}
-                  <span className="text-sm font-bold">
+                  <span className="text-sm font-bold truncate">
                     +{huntCoinsEarned} Coins {isBounty ? 'Bounty' : isClean ? '(clear scan)' : '(intel scan)'}
                   </span>
                 </div>
                 {['probable_sybil', 'confirmed_sybil', 'suspicious'].includes(huntVerdict.key) && (
-                  <button
-                    onClick={() => setShowFeedbackModal(true)}
-                    className="mt-2 text-[10px] text-white/20 hover:text-white/40 underline underline-offset-2"
-                  >
-                    Report false flag
-                  </button>
+                  <div className="mt-3 border-t border-white/[0.06] pt-3">
+                    <button
+                      onClick={() => setShowFeedbackModal(true)}
+                      className="inline-flex min-h-10 items-center gap-2 rounded-full border border-amber-300/20 bg-amber-300/[0.08] px-3.5 py-2 text-xs font-bold text-amber-100/80 transition-colors hover:border-amber-200/35 hover:bg-amber-300/[0.13] hover:text-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/35"
+                    >
+                      <Flag className="h-3.5 w-3.5" />
+                      <span>Report false flag</span>
+                    </button>
+                  </div>
                 )}
               </div>
             );
@@ -1117,15 +1183,15 @@ export default function PrismScanner() {
                           </span>
                           {sybilData && (
                             <span
-                              className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${riskScore >= 50 ? 'bg-red-500/15 text-red-400' : riskScore >= 20 ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${riskScore >= 50 ? 'bg-red-500/15 text-red-400' : riskScore >= 20 ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}
                             >
                               Risk {riskScore}
                             </span>
                           )}
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${verdictTheme.badgeClass}`}>
+                          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${verdictTheme.badgeClass}`}>
                             {verdict.label}
                           </span>
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${verdictTheme.chipClass}`}>
+                          <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${verdictTheme.chipClass}`}>
                             {formatConfidence(verdict.confidence)}
                           </span>
                           {sybilData && (
@@ -1175,7 +1241,7 @@ export default function PrismScanner() {
                       })()}
 
                     {/* Key Metrics Grid */}
-                    <div className="grid grid-cols-3 gap-2 mt-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
                       {[
                         {
                           label: 'Age',
@@ -1213,10 +1279,10 @@ export default function PrismScanner() {
                       ].map((m) => (
                         <div
                           key={m.label}
-                          className="flex justify-between items-center px-2 py-1 rounded-xl bg-white/[0.02]"
+                          className="min-h-12 rounded-xl bg-white/[0.025] border border-white/[0.04] px-2.5 py-2"
                         >
-                          <span className="text-[10px] text-white/25">{m.label}</span>
-                          <span className={`text-[11px] font-mono font-bold ${m.color}`}>{m.value}</span>
+                          <span className="block text-[9px] uppercase tracking-wide text-white/25">{m.label}</span>
+                          <span className={`block truncate text-[12px] font-mono font-bold ${m.color}`}>{m.value}</span>
                         </div>
                       ))}
                     </div>
@@ -1232,7 +1298,7 @@ export default function PrismScanner() {
                           <p className="text-[9px] text-white/20 uppercase tracking-wider mb-1.5 font-bold">
                             Primary Funding
                           </p>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <div
                               className="w-2 h-2 rounded-full shrink-0"
                               style={{
@@ -1244,15 +1310,15 @@ export default function PrismScanner() {
                                       : '#ef4444',
                               }}
                             />
-                            <span className="text-xs text-white/50 font-mono">
+                            <span className="min-w-0 flex-1 text-xs text-white/50 font-mono truncate">
                               {primarySrc.label ||
                                 `${primarySrc.address.slice(0, 6)}...${primarySrc.address.slice(-4)}`}
                             </span>
-                            <span className="text-[10px] text-white/25 font-mono ml-auto">
+                            <span className="text-[10px] text-white/25 font-mono ml-auto whitespace-nowrap">
                               {primarySrc.totalSolReceived.toFixed(2)}◎ ({primarySrc.percentage.toFixed(0)}%)
                             </span>
                             <span
-                              className={`text-[9px] font-bold ${primarySrc.type === 'cex' ? 'text-emerald-400/60' : 'text-red-400/50'}`}
+                              className={`rounded-full border border-white/[0.06] px-2 py-0.5 text-[9px] font-bold ${primarySrc.type === 'cex' ? 'text-emerald-400/60' : 'text-red-400/50'}`}
                             >
                               {primarySrc.type === 'cex'
                                 ? 'EXCHANGE'
@@ -1405,15 +1471,7 @@ export default function PrismScanner() {
                         key={rank.name}
                         className={`flex items-center gap-2.5 px-3 py-2 rounded-xl transition-colors ${isCurrent ? 'bg-amber-400/[0.08] border border-amber-400/20' : unlocked ? 'bg-white/[0.02]' : 'opacity-40'}`}
                       >
-                        <div className="shrink-0">
-                          {RANGER_RANKS[i] && (
-                            <img
-                              src={RANGER_RANKS[i].image}
-                              alt={RANGER_RANKS[i].name}
-                              className="w-7 h-7 object-contain"
-                            />
-                          )}
-                        </div>
+                        <img src={rank.icon} alt="" className="w-7 h-7 object-contain shrink-0" loading="lazy" />
                         <div className="flex-1 min-w-0">
                           <span className={`text-[11px] font-bold ${unlocked ? rank.color : 'text-white/20'}`}>
                             {rank.name}
@@ -1433,17 +1491,33 @@ export default function PrismScanner() {
 
       {showFeedbackModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-md"
           onClick={() => setShowFeedbackModal(false)}
         >
           <div
-            className="bg-[#0a0a14] border border-white/10 rounded-2xl p-5 w-80 mx-4"
+            className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0b0d16] p-4 shadow-2xl shadow-black/50"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-sm font-bold text-white/80 mb-1">Report False Flag</h3>
-            <p className="text-[10px] text-white/30 mb-3">Help us improve. Why do you think this verdict is wrong?</p>
+            <div className="mb-4 flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-400/15 bg-amber-400/[0.08] text-amber-300">
+                <Flag className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-bold text-white/85">Report false flag</h3>
+                <p className="mt-1 text-xs leading-relaxed text-white/40">
+                  Tell us why this wallet should not be treated as sybil-linked.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowFeedbackModal(false)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/35 transition-colors hover:bg-white/[0.06] hover:text-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/40"
+                aria-label="Close false flag report"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
             <textarea
-              className="w-full bg-white/[0.04] border border-white/10 rounded-xl text-xs text-white/70 p-2.5 h-24 resize-none focus:outline-none focus:border-cyan-500/30"
+              className="h-28 w-full resize-none rounded-xl border border-white/10 bg-white/[0.045] p-3 text-sm leading-relaxed text-white/75 placeholder:text-white/25 focus:border-cyan-400/35 focus:outline-none focus:ring-2 focus:ring-cyan-400/15"
               placeholder="Describe why this verdict seems incorrect..."
               value={feedbackText}
               onChange={(e) => setFeedbackText(e.target.value)}
@@ -1451,15 +1525,16 @@ export default function PrismScanner() {
             <div className="flex gap-2 mt-3">
               <button
                 onClick={() => setShowFeedbackModal(false)}
-                className="flex-1 py-2 rounded-xl text-xs text-white/30 border border-white/[0.08] hover:bg-white/[0.04]"
+                className="min-h-10 flex-1 rounded-xl border border-white/[0.08] px-3 py-2 text-sm font-semibold text-white/45 transition-colors hover:bg-white/[0.05] hover:text-white/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
               >
                 Cancel
               </button>
               <button
                 onClick={handleFeedbackSubmit}
                 disabled={!feedbackText.trim()}
-                className="flex-1 py-2 rounded-xl text-xs font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-cyan-400/25 bg-cyan-400/[0.12] px-3 py-2 text-sm font-bold text-cyan-100 transition-colors hover:bg-cyan-400/[0.18] disabled:cursor-not-allowed disabled:border-white/[0.06] disabled:bg-white/[0.03] disabled:text-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/35"
               >
+                <Send className="h-3.5 w-3.5" />
                 Submit
               </button>
             </div>
@@ -1567,7 +1642,7 @@ function SybilReportPanel({
     <div className="space-y-3">
       {/* Header: gauge + radar */}
       <div className="glass-card p-4">
-        <div className="flex items-start gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-start gap-4">
           {/* Trust gauge */}
           <div className="flex-shrink-0">
             <svg width="76" height="76" viewBox="0 0 76 76">
@@ -1602,7 +1677,7 @@ function SybilReportPanel({
           </div>
 
           {/* Radar chart (SVG spider) */}
-          <div className="flex-1 flex justify-center">
+          <div className="flex-1 flex justify-center overflow-hidden">
             <svg width="130" height="130" viewBox="0 0 130 130">
               {/* Grid rings */}
               {[0.33, 0.66, 1].map((r) => (
@@ -1675,52 +1750,52 @@ function SybilReportPanel({
 
         {/* Risk summary */}
         <div className="mt-3 pt-3 border-t border-white/[0.06]">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-bold" style={{ color: riskColor }}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-bold leading-tight" style={{ color: riskColor }}>
               Risk: {data.riskScore}/100 — {data.riskLevel.toUpperCase()}
             </span>
-            <span className="text-xs text-white/25">
+            <span className="shrink-0 rounded-full bg-white/[0.03] px-2 py-1 text-xs text-white/35">
               {flagged.length}/{data.signals.length} flagged
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5 mt-2">
             {metrics.hasSolDomain && (
-              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20">
                 <CheckCircle className="w-3 h-3 inline mr-0.5" />
                 .sol
               </span>
             )}
             {Array.isArray(metrics.defiCategories) &&
               (metrics.defiCategories as string[]).map((c) => (
-                <span key={c} className="px-2 py-0.5 rounded-lg text-[10px] font-bold text-cyan-400/60 bg-cyan-400/5">
+                <span key={c} className="px-2 py-0.5 rounded-full text-[10px] font-bold text-cyan-400/60 bg-cyan-400/5">
                   {c}
                 </span>
               ))}
             {Number(metrics.trustBonus) > 0 && (
-              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-400 bg-emerald-400/5">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-emerald-400 bg-emerald-400/5">
                 bonus -{String(metrics.trustBonus)}
               </span>
             )}
           </div>
-          <div className={`mt-3 rounded-xl border p-3 ${verdictTheme.panelClass}`}>
+          <div className={`mt-3 rounded-2xl border p-3 ${verdictTheme.panelClass}`}>
             <div className="flex flex-wrap items-center gap-2">
               <span
-                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
               >
                 {verdict.label}
               </span>
               <span
-                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
               >
                 {formatConfidence(verdict.confidence)}
               </span>
               <span
-                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
               >
                 {VERDICT_DATA_QUALITY_LABELS[verdict.dataQuality]}
               </span>
               <span
-                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
               >
                 {verdict.rewardPath === 'sybil_hunt'
                   ? 'bounty path'
@@ -1733,9 +1808,9 @@ function SybilReportPanel({
             {verdict.reasons.length > 0 && (
               <div className="mt-2 space-y-1">
                 {verdict.reasons.slice(0, 3).map((reason) => (
-                  <div key={reason} className="flex items-start gap-2 text-[11px] text-white/55">
-                    <span className="mt-0.5 text-white/20">•</span>
-                    <span>{reason}</span>
+                  <div key={reason} className="flex items-start gap-2 text-[11px] leading-relaxed text-white/55">
+                    <span className="mt-0.5 shrink-0 text-white/20">•</span>
+                    <span className="min-w-0">{reason}</span>
                   </div>
                 ))}
               </div>
@@ -1757,11 +1832,11 @@ function SybilReportPanel({
               <span style={{ color: cat.color }}>{cat.icon}</span>
               <span className="text-xs font-bold text-white/60 flex-1">{cat.label}</span>
               {catFlagged > 0 ? (
-                <span className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold bg-red-500/15 text-red-400">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/15 text-red-400">
                   {catFlagged} flagged
                 </span>
               ) : (
-                <span className="px-1.5 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/10 text-emerald-400">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400">
                   clean
                 </span>
               )}
@@ -1788,16 +1863,18 @@ function SybilReportPanel({
                       <CheckCircle className="w-3.5 h-3.5 text-emerald-400/50 mt-0.5 flex-shrink-0" />
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-bold ${sig.detected ? 'text-white/80' : 'text-white/40'}`}>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span
+                          className={`min-w-0 text-xs font-bold leading-tight ${sig.detected ? 'text-white/80' : 'text-white/40'}`}
+                        >
                           {sig.name}
                         </span>
-                        <span className="text-[10px] text-white/20 font-mono">{sig.value}</span>
+                        <span className="max-w-full truncate text-[10px] text-white/20 font-mono">{sig.value}</span>
                         {sig.detected && (
-                          <span className="text-[10px] text-red-400/60 font-mono ml-auto">+{sig.weight}</span>
+                          <span className="ml-auto shrink-0 text-[10px] text-red-400/60 font-mono">+{sig.weight}</span>
                         )}
                       </div>
-                      <p className="text-[11px] text-white/25 mt-0.5">{sig.description}</p>
+                      <p className="text-[11px] leading-relaxed text-white/25 mt-0.5">{sig.description}</p>
                     </div>
                   </div>
                 ))}
@@ -1880,7 +1957,10 @@ function SybilReportPanel({
           </p>
           <div className="space-y-1.5">
             {fundingSources.slice(0, 6).map((s) => (
-              <div key={s.address} className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-white/[0.03]">
+              <div
+                key={s.address}
+                className="grid grid-cols-[auto_minmax(0,1fr)] sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 py-2 px-2 rounded-xl hover:bg-white/[0.03]"
+              >
                 <div
                   className="w-2 h-2 rounded-full"
                   style={{ background: s.percentage > 50 ? '#ef4444' : s.percentage > 20 ? '#f97316' : '#22c55e' }}
@@ -1888,10 +1968,12 @@ function SybilReportPanel({
                 <span className="text-xs font-mono text-white/40 truncate flex-1">
                   {s.label || `${s.address.slice(0, 4)}...${s.address.slice(-4)}`}
                 </span>
-                <span className="text-xs font-bold text-white/50 tabular-nums">
+                <span className="col-start-2 sm:col-start-auto text-xs font-bold text-white/50 tabular-nums whitespace-nowrap">
                   {s.totalSolReceived.toFixed(2)} SOL
                 </span>
-                <span className="text-[10px] text-white/25 w-8 text-right">{s.percentage}%</span>
+                <span className="text-[10px] text-white/25 sm:w-8 sm:text-right whitespace-nowrap">
+                  {s.percentage}%
+                </span>
               </div>
             ))}
           </div>

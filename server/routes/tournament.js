@@ -27,6 +27,7 @@ function registerTournamentRoute(ctx) {
       saveTournament,
       completedTournaments,
     },
+    pushNotification,
   } = ctx;
 
   return async function handleTournamentRoute(req, res, url, pathname) {
@@ -107,6 +108,12 @@ function registerTournamentRoute(ctx) {
       addCoinSpent(addr, fee);
       tournament.prizePool += net;
       saveTournament();
+      pushNotification(
+        addr,
+        'tournament_result',
+        `Joined ${tier} tournament — ${fee} coins entry`,
+        { tier, entryFee: fee, prizePool: tournament.prizePool },
+      );
       respondJson(res, 200, { success: true, tier, prizePool: tournament.prizePool, newBalance: bal - fee, burned: burnAmt });
       return true;
     }

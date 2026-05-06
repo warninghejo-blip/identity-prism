@@ -11,10 +11,10 @@ function registerArenaRoute(ctx) {
     addCoinEarned,
     addCoinSpent,
     pushNotification,
-  } = wallet;
-  const {
     prismTransactions,
     savePrismDataDebounced: debouncedSavePrism,
+  } = wallet;
+  const {
     refundCoinSpent,
     totalBurned,
   } = economy;
@@ -88,6 +88,24 @@ function registerArenaRoute(ctx) {
           }
         }
 
+        if (challenges.length >= 10000) {
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          for (let i = challenges.length - 1; i >= 0; i -= 1) {
+            const challengeAtIndex = challenges[i];
+            if (
+              (challengeAtIndex.status === 'completed' ||
+                challengeAtIndex.status === 'expired' ||
+                challengeAtIndex.status === 'cancelled') &&
+              challengeAtIndex.createdAt < cutoff
+            ) {
+              challenges.splice(i, 1);
+            }
+          }
+          if (challenges.length >= 10000) {
+            return respondJson(res, 429, { error: 'Too many active challenges' });
+          }
+        }
+
         const creatorBal = getCoinBalance(creator);
         if (creatorBal < stake) {
           return respondJson(res, 400, {
@@ -130,24 +148,6 @@ function registerArenaRoute(ctx) {
           acceptedAt: null,
           completedAt: null,
         };
-
-        if (challenges.length >= 10000) {
-          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-          for (let i = challenges.length - 1; i >= 0; i -= 1) {
-            const challengeAtIndex = challenges[i];
-            if (
-              (challengeAtIndex.status === 'completed' ||
-                challengeAtIndex.status === 'expired' ||
-                challengeAtIndex.status === 'cancelled') &&
-              challengeAtIndex.createdAt < cutoff
-            ) {
-              challenges.splice(i, 1);
-            }
-          }
-          if (challenges.length >= 10000) {
-            return respondJson(res, 429, { error: 'Too many active challenges' });
-          }
-        }
 
         challenges.push(challenge);
         saveChallenges();
@@ -299,7 +299,14 @@ function registerArenaRoute(ctx) {
         if (challenge.expiresAt && Date.now() > challenge.expiresAt) {
           return respondJson(res, 409, { error: 'Challenge has expired' });
         }
-        if (challenge.status !== 'open' && !(challenge.status === 'playing' && !challenge.opponent)) {
+        const canAcceptOpenChallenge = challenge.status === 'open';
+        const canAcceptOpenGameAfterCreatorPlayed = challenge.status === 'playing' && !challenge.opponent;
+        const canAcceptDirectGameAfterCreatorPlayed =
+          challenge.type === 'game' &&
+          challenge.status === 'playing' &&
+          challenge.opponent === acceptor &&
+          !challenge.acceptedAt;
+        if (!canAcceptOpenChallenge && !canAcceptOpenGameAfterCreatorPlayed && !canAcceptDirectGameAfterCreatorPlayed) {
           return respondJson(res, 409, { error: 'Challenge no longer available' });
         }
         if (challenge.type === 'game' && challenge.creatorScore === null) {
@@ -469,6 +476,9 @@ function registerArenaRoute(ctx) {
         }
 
         const noProofMax = 30;
+        if (challenge.stakeAmount > 0 && !gameSessionId) {
+          return respondJson(res, 400, { error: 'Verified game session required for paid challenges' });
+        }
         if (gameSessionId) {
           const challengeSession = gameSessionProofs.get(gameSessionId);
           if (!challengeSession || !challengeSession.verified) {
@@ -488,6 +498,9 @@ function registerArenaRoute(ctx) {
             if (challengeSession.usedForChallenge && challengeSession.usedForChallenge.challengeId !== challengeId) {
               return respondJson(res, 400, { error: 'Game session already used for another challenge' });
             }
+            if (Number(challengeSession.coinsCredited) > 0) {
+              return respondJson(res, 400, { error: 'Game session already used for coin earnings' });
+            }
           }
         } else if (scoreNum > noProofMax) {
           return respondJson(res, 400, { error: 'Game session required for this score' });
@@ -500,14 +513,6 @@ function registerArenaRoute(ctx) {
         }
         globalThis._pendingSubmits.add(submitKey);
 
-        if (gameSessionId) {
-          const challengeSession = gameSessionProofs.get(gameSessionId);
-          if (challengeSession) {
-            challengeSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
-            persistGameSessionProofs();
-          }
-        }
-
         if (submitter === challenge.creator) {
           if (challenge.creatorScore !== null) {
             globalThis._pendingSubmits.delete(submitKey);
@@ -515,6 +520,10 @@ function registerArenaRoute(ctx) {
           }
           challenge.creatorScore = scoreNum;
         } else if (submitter === challenge.opponent) {
+          if (!challenge.acceptedAt) {
+            globalThis._pendingSubmits.delete(submitKey);
+            return respondJson(res, 400, { error: 'Challenge must be accepted before opponent submits a score' });
+          }
           if (challenge.opponentScore !== null) {
             globalThis._pendingSubmits.delete(submitKey);
             return respondJson(res, 400, { error: 'Score already submitted' });
@@ -525,6 +534,14 @@ function registerArenaRoute(ctx) {
           return respondJson(res, 403, { error: 'You are not a participant in this challenge' });
         }
 
+        if (gameSessionId) {
+          const challengeSession = gameSessionProofs.get(gameSessionId);
+          if (challengeSession) {
+            challengeSession.usedForChallenge = { challengeId, submitter, at: Date.now() };
+            persistGameSessionProofs();
+          }
+        }
+
         if (challenge.creatorScore !== null && challenge.opponentScore !== null) {
           const totalPot = challenge.stakeAmount * 2;
           const winnerPrize = Math.floor(totalPot * 0.95);
@@ -533,9 +550,31 @@ function registerArenaRoute(ctx) {
           if (challenge.creatorScore > challenge.opponentScore) {
             challenge.winner = challenge.creator;
             recordChallengeWin(challenge.creator, winnerPrize);
+            pushNotification(challenge.creator, 'challenge_win', `You won the challenge: +${winnerPrize} Coins`, {
+              challengeId,
+              payout: winnerPrize,
+              gameMode: challenge.gameMode,
+            });
+            if (challenge.opponent) {
+              pushNotification(challenge.opponent, 'challenge_loss', `Challenge lost: ${challenge.creatorScore} vs ${challenge.opponentScore}`, {
+                challengeId,
+                gameMode: challenge.gameMode,
+              });
+            }
           } else if (challenge.opponentScore > challenge.creatorScore) {
             challenge.winner = challenge.opponent;
             recordChallengeWin(challenge.opponent, winnerPrize);
+            if (challenge.opponent) {
+              pushNotification(challenge.opponent, 'challenge_win', `You won the challenge: +${winnerPrize} Coins`, {
+                challengeId,
+                payout: winnerPrize,
+                gameMode: challenge.gameMode,
+              });
+            }
+            pushNotification(challenge.creator, 'challenge_loss', `Challenge lost: ${challenge.creatorScore} vs ${challenge.opponentScore}`, {
+              challengeId,
+              gameMode: challenge.gameMode,
+            });
           } else {
             challenge.winner = null;
             setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
@@ -543,6 +582,16 @@ function registerArenaRoute(ctx) {
             if (challenge.opponent) {
               setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
               refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+            }
+            pushNotification(challenge.creator, 'challenge_expired', `Challenge tied: stakes refunded`, {
+              challengeId,
+              gameMode: challenge.gameMode,
+            });
+            if (challenge.opponent) {
+              pushNotification(challenge.opponent, 'challenge_expired', `Challenge tied: stakes refunded`, {
+                challengeId,
+                gameMode: challenge.gameMode,
+              });
             }
           }
 

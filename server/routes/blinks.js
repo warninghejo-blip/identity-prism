@@ -677,17 +677,17 @@ function registerBlinksRoute(ctx) {
         payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId.trim() : '';
         const requestId = payloadRequestId || fallbackRequestId;
         if (!collectionAuthoritySecret) {
-          respondJson(res, 500, { error: 'COLLECTION_AUTHORITY_SECRET is not configured', requestId });
+          respondJson(res, 503, { error: 'COLLECTION_AUTHORITY_SECRET is not configured', requestId });
           return true;
         }
         if (!treasuryAddress) {
-          respondJson(res, 500, { error: 'TREASURY_ADDRESS is not configured', requestId });
+          respondJson(res, 503, { error: 'TREASURY_ADDRESS is not configured', requestId });
           return true;
         }
 
         const collectionSecret = parseSecretKey(collectionAuthoritySecret);
         if (!collectionSecret) {
-          respondJson(res, 500, { error: 'Invalid collection authority secret', requestId });
+          respondJson(res, 503, { error: 'Invalid collection authority secret', requestId });
           return true;
         }
 
@@ -710,6 +710,7 @@ function registerBlinksRoute(ctx) {
         const burnSignature = typeof payload?.burnSignature === 'string' ? payload.burnSignature.trim() : '';
         const burnAssetId = typeof payload?.burnAssetId === 'string' ? payload.burnAssetId.trim() : '';
         const paymentToken = String(payload?.paymentToken ?? '').trim().toUpperCase() === 'SKR' ? 'SKR' : 'SOL';
+        const paidWithCoins = Boolean(payload?.paidWithCoins);
         const signedTransaction = typeof payload?.signedTransaction === 'string' ? payload.signedTransaction.trim() : '';
 
         if (signedTransaction && !payloadRequestId) {
@@ -951,6 +952,26 @@ function registerBlinksRoute(ctx) {
         }).setFeePayer(payerSigner);
 
         const paymentInstructions = [];
+        let coinsPaymentReserved = false;
+        if (!isFinalize && paidWithCoins && !adminMode) {
+          if (!payloadRequestId) {
+            respondJson(res, 400, { error: 'coins payment requires reservation requestId', requestId });
+            return true;
+          }
+          const reservationKey = `mintres_${requestId}`;
+          const reservation = globalThis._mintReservations?.get(reservationKey);
+          const reservationAge = reservation ? Date.now() - reservation.createdAt : Infinity;
+          if (
+            !reservation ||
+            reservation.status !== 'reserved' ||
+            reservation.wallet !== jwtAuth.address ||
+            reservationAge > 10 * 60 * 1000
+          ) {
+            respondJson(res, 400, { error: 'Coins reservation expired or missing', requestId });
+            return true;
+          }
+          coinsPaymentReserved = true;
+        }
         // FIX 1: remint requires verified on-chain burn — fail closed on ANY mismatch
         let remintPaymentSkipped = false;
         if (remintMode) {
@@ -1025,7 +1046,7 @@ function registerBlinksRoute(ctx) {
         }
         if (remintPaymentSkipped) {
           // payment already skipped — no-op, fall through to build instructions
-        } else if (!adminMode) {
+        } else if (!adminMode && !coinsPaymentReserved) {
           if (paymentToken === 'SKR') {
             const skrMintKey = parsePublicKey(skrMint, 'SKR_MINT');
             if (!skrMintKey) {

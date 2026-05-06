@@ -727,10 +727,10 @@ export const CATEGORY_LABELS: Record<ForgeCategory, string> = {
 };
 
 export const CATEGORY_ICONS: Record<ForgeCategory, string> = {
-  frame: '🖼️',
-  aura: '✨',
-  ship_skin: '🚀',
-  title: '🏷️',
+  frame: '/icons/forge/forge_frame.png',
+  aura: '/icons/forge/forge_aura.png',
+  ship_skin: '/icons/forge/forge_ship.png',
+  title: '/icons/forge/forge_title.png',
 };
 
 // ── Loadout persistence ──

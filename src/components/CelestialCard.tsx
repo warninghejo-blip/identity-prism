@@ -1082,12 +1082,20 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                           return catData;
                         })().map(({ cat, badges: catBadges, activeCount }) => {
                           const catMeta: Record<BadgeCategory, { icon: string; label: string; color: string }> = {
-                            onchain: { icon: '\u26D3\uFE0F', label: 'ON-CHAIN', color: '#d4a04a' },
-                            sybilTrust: { icon: '\uD83D\uDEE1\uFE0F', label: 'SYBIL TRUST', color: '#4ac8e8' },
-                            humanProof: { icon: '\uD83C\uDFAE', label: 'HUMAN PROOF', color: '#a855f7' },
-                            identityPrism: { icon: '\u25C8', label: 'IDENTITY PRISM', color: '#34d399' },
-                            social: { icon: '\uD83E\uDD1D', label: 'SOCIAL', color: '#ef4444' },
-                            engagement: { icon: '\u26A1', label: 'ENGAGEMENT', color: '#94a3b8' },
+                            onchain: { icon: '/textures/Solana.png', label: 'ON-CHAIN', color: '#d4a04a' },
+                            sybilTrust: {
+                              icon: '/icons/hunt/hunt_tracker.png',
+                              label: 'SYBIL TRUST',
+                              color: '#4ac8e8',
+                            },
+                            humanProof: { icon: '/badges/verified_human.png', label: 'HUMAN PROOF', color: '#a855f7' },
+                            identityPrism: {
+                              icon: '/tokens/prism-icon.png',
+                              label: 'IDENTITY PRISM',
+                              color: '#34d399',
+                            },
+                            social: { icon: '/badges/debate_king.png', label: 'SOCIAL', color: '#ef4444' },
+                            engagement: { icon: '/icons/stats/stat_speed.svg', label: 'ENGAGEMENT', color: '#94a3b8' },
                           };
                           const meta = catMeta[cat];
                           return (
@@ -1097,7 +1105,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                                   className="text-[10px] uppercase tracking-wider font-bold flex items-center gap-1.5"
                                   style={{ color: `${meta.color}cc` }}
                                 >
-                                  <span>{meta.icon}</span>
+                                  <img src={meta.icon} alt="" className="w-4 h-4 object-contain" loading="lazy" />
                                   <span>{meta.label}</span>
                                 </span>
                                 <span className="text-[10px] font-mono" style={{ color: `${meta.color}66` }}>

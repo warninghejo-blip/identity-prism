@@ -39,6 +39,15 @@ export interface QuestState {
 
 // ── Quest Catalog ──
 
+const QUEST_ICONS = {
+  identity: '/icons/quests/quest_identity.png',
+  game: '/icons/quests/quest_game.png',
+  burn: '/icons/quests/quest_burn.png',
+  explore: '/icons/quests/quest_explore.png',
+  shop: '/icons/quests/quest_shop.png',
+  arena: '/icons/quests/quest_arena.png',
+} as const;
+
 export const DAILY_QUESTS: Quest[] = [
   {
     id: 'daily_scan',
@@ -48,7 +57,7 @@ export const DAILY_QUESTS: Quest[] = [
     frequency: 'daily',
     reward: 15,
     target: 1,
-    icon: '🔬',
+    icon: QUEST_ICONS.identity,
   },
   {
     id: 'daily_game',
@@ -58,7 +67,7 @@ export const DAILY_QUESTS: Quest[] = [
     frequency: 'daily',
     reward: 30,
     target: 1,
-    icon: '🎮',
+    icon: QUEST_ICONS.game,
   },
   {
     id: 'daily_burn',
@@ -68,7 +77,7 @@ export const DAILY_QUESTS: Quest[] = [
     frequency: 'daily',
     reward: 25,
     target: 1,
-    icon: '🔥',
+    icon: QUEST_ICONS.burn,
   },
   {
     id: 'daily_explore',
@@ -78,7 +87,7 @@ export const DAILY_QUESTS: Quest[] = [
     frequency: 'daily',
     reward: 15,
     target: 1,
-    icon: '🎯',
+    icon: QUEST_ICONS.explore,
   },
   {
     id: 'daily_highscore',
@@ -88,7 +97,7 @@ export const DAILY_QUESTS: Quest[] = [
     frequency: 'daily',
     reward: 50,
     target: 1,
-    icon: '🏆',
+    icon: QUEST_ICONS.game,
   },
 ];
 
@@ -101,7 +110,7 @@ export const WEEKLY_QUESTS: Quest[] = [
     frequency: 'weekly',
     reward: 150,
     target: 5,
-    icon: '🕳️',
+    icon: QUEST_ICONS.burn,
   },
   {
     id: 'weekly_games5',
@@ -111,7 +120,7 @@ export const WEEKLY_QUESTS: Quest[] = [
     frequency: 'weekly',
     reward: 120,
     target: 5,
-    icon: '🏃',
+    icon: QUEST_ICONS.game,
   },
   {
     id: 'weekly_arena',
@@ -121,7 +130,7 @@ export const WEEKLY_QUESTS: Quest[] = [
     frequency: 'weekly',
     reward: 100,
     target: 3,
-    icon: '⚔️',
+    icon: QUEST_ICONS.arena,
   },
   {
     id: 'weekly_streak',
@@ -131,7 +140,7 @@ export const WEEKLY_QUESTS: Quest[] = [
     frequency: 'weekly',
     reward: 200,
     target: 5,
-    icon: '🔥',
+    icon: QUEST_ICONS.identity,
   },
   {
     id: 'weekly_forge',
@@ -141,7 +150,7 @@ export const WEEKLY_QUESTS: Quest[] = [
     frequency: 'weekly',
     reward: 100,
     target: 1,
-    icon: '🛒',
+    icon: QUEST_ICONS.shop,
   },
 ];
 
@@ -154,7 +163,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 50,
     target: 1,
-    icon: '🌟',
+    icon: QUEST_ICONS.identity,
   },
   {
     id: 'ot_first_mint',
@@ -164,7 +173,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 250,
     target: 1,
-    icon: '💎',
+    icon: QUEST_ICONS.identity,
   },
   {
     id: 'ot_first_burn',
@@ -174,7 +183,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 50,
     target: 1,
-    icon: '🕳️',
+    icon: QUEST_ICONS.burn,
   },
   {
     id: 'ot_first_game',
@@ -184,7 +193,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 75,
     target: 1,
-    icon: '🎮',
+    icon: QUEST_ICONS.game,
   },
   {
     id: 'ot_reach_sun',
@@ -194,7 +203,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 500,
     target: 1,
-    icon: '☀️',
+    icon: QUEST_ICONS.identity,
   },
   {
     id: 'ot_burn100',
@@ -204,7 +213,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 300,
     target: 100,
-    icon: '🌀',
+    icon: QUEST_ICONS.burn,
   },
   {
     id: 'ot_score1000',
@@ -214,7 +223,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 150,
     target: 1000,
-    icon: '🏅',
+    icon: QUEST_ICONS.game,
   },
   {
     id: 'ot_forge5',
@@ -224,7 +233,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 200,
     target: 5,
-    icon: '🗃️',
+    icon: QUEST_ICONS.explore,
   },
   {
     id: 'ot_arena_wins',
@@ -234,7 +243,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 200,
     target: 10,
-    icon: '🏆',
+    icon: QUEST_ICONS.game,
   },
   {
     id: 'ot_text_quest',
@@ -244,7 +253,7 @@ export const ONE_TIME_QUESTS: Quest[] = [
     frequency: 'one_time',
     reward: 100,
     target: 1,
-    icon: '📖',
+    icon: QUEST_ICONS.explore,
   },
 ];
 
@@ -279,6 +288,11 @@ export function getQuestState(address: string): QuestState {
       const state: QuestState = JSON.parse(raw);
       // Migrate: add totalXPEarned if missing
       if (state.totalXPEarned == null) state.totalXPEarned = 0;
+      // Guard: migrate old format without progress array
+      if (!Array.isArray(state.progress)) state.progress = [];
+      // Guard: migrate old format without reset timestamps
+      if (!state.dailyResetAt) state.dailyResetAt = getNextDailyReset();
+      if (!state.weeklyResetAt) state.weeklyResetAt = getNextWeeklyReset();
       // Check resets
       const now = new Date().toISOString();
       let needsSave = false;

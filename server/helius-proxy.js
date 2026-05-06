@@ -1152,14 +1152,23 @@ const computeSybilHuntReward = (nextCatchCount) => {
 const getRecentSybilAnalysis = (targetAddress) => {
   if (!targetAddress) return null;
   const now = Date.now();
-  const cached = sybilCache.get(targetAddress);
-  if (cached?.analysis && now - cached.cachedAt < SCAN_ANALYSIS_TTL_MS) {
+  const cached = loadSybilCacheEntry(targetAddress);
+  const cachedAt = Number(cached?.cachedAt) || Number(cached?.computedAt) || 0;
+  const ttlExpiresAt = Number(cached?.ttlExpiresAt) || 0;
+  if (cached?.analysis && ((ttlExpiresAt && now < ttlExpiresAt) || now - cachedAt < SCAN_ANALYSIS_TTL_MS)) {
     return cached.analysis;
   }
   const walletEntry = walletDatabase.get(targetAddress);
   const sybil = walletEntry?.sybil;
-  const updatedAt = Date.parse(String(sybil?.updatedAt || ''));
-  if (sybil && Number.isFinite(updatedAt) && now - updatedAt < SCAN_ANALYSIS_TTL_MS) {
+  const updatedAt =
+    Date.parse(String(sybil?.updatedAt || sybil?.timestamp || '')) ||
+    Number(sybil?.scanMeta?.computedAt || 0);
+  const sybilTtlExpiresAt = Number(sybil?.scanMeta?.ttlExpiresAt || 0);
+  if (
+    sybil &&
+    Number.isFinite(updatedAt) &&
+    ((sybilTtlExpiresAt && now < sybilTtlExpiresAt) || now - updatedAt < SCAN_ANALYSIS_TTL_MS)
+  ) {
     return sybil;
   }
   return null;
@@ -1733,6 +1742,9 @@ const normalizeStoredGameSessionEntry = (raw) => {
         typeof raw?.verification?.slotBlockhash === 'string' && raw.verification.slotBlockhash.trim()
           ? raw.verification.slotBlockhash.trim()
           : null,
+      slotBlockTimeMs: Number.isFinite(Number(raw?.verification?.slotBlockTimeMs))
+        ? Math.floor(Number(raw.verification.slotBlockTimeMs))
+        : null,
       reason:
         typeof raw?.verification?.reason === 'string' && raw.verification.reason.trim()
           ? raw.verification.reason.trim()
@@ -2839,6 +2851,7 @@ const verifyMagicBlockSeedSlot = async (seed, slot) => {
     slotFound: false,
     seedMatchesSlot: false,
     slotBlockhash: null,
+    slotBlockTimeMs: null,
     reason: 'unverified',
   };
 
@@ -2862,11 +2875,15 @@ const verifyMagicBlockSeedSlot = async (seed, slot) => {
     const blockhash = typeof block?.blockhash === 'string' ? block.blockhash : '';
     verification.slotFound = Boolean(blockhash);
     verification.slotBlockhash = blockhash || null;
+    verification.slotBlockTimeMs = Number.isFinite(Number(block?.blockTime))
+      ? Math.floor(Number(block.blockTime) * 1000)
+      : null;
     verification.seedMatchesSlot = Boolean(blockhash) && blockhash === seed;
   } catch {
     verification.slotFound = false;
     verification.seedMatchesSlot = false;
     verification.slotBlockhash = null;
+    verification.slotBlockTimeMs = null;
   }
 
   if (!verification.rpcHealthy && !verification.slotFound) {
@@ -2921,7 +2938,11 @@ const normalizeGameSessionPayload = (payload) => {
   if (startedAtMs > now + CLOCK_SKEW_MS || endedAtMs > now + CLOCK_SKEW_MS) {
     throw new Error('session timestamps are in the future');
   }
-  const MAX_SESSION_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const MAX_SESSION_AGE_MS = 20 * 60 * 1000;
+  if (startedAtMs < now - MAX_SESSION_AGE_MS || endedAtMs < now - MAX_SESSION_AGE_MS) {
+    throw new Error('session timestamps are too old');
+  }
+  const MAX_SESSION_DURATION_MS = 15 * 60 * 1000;
   if (endedAtMs - startedAtMs > MAX_SESSION_DURATION_MS) {
     throw new Error('session duration exceeds maximum');
   }
@@ -3163,8 +3184,13 @@ const computeSkrQuote = (solUsd, skrUsd) => {
 };
 
 const getSkrQuote = async () => {
-  const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
-  return computeSkrQuote(solUsd, skrUsd);
+  try {
+    const [solUsd, skrUsd] = await Promise.all([getCachedSolPriceUsd(), getCachedSkrPriceUsd()]);
+    return computeSkrQuote(solUsd, skrUsd);
+  } catch (error) {
+    console.warn('[market] mint quote unavailable:', error?.message || error);
+    return null;
+  }
 };
 
 const fetchAssetsByOwner = async (rpcUrls, owner) => {
@@ -4895,6 +4921,7 @@ function getTournamentBasePrizes(tier, participantCount = 0) {
   const basePrizes = TOURNAMENT_BASE_PRIZES[tier] || [];
   const scaling = TOURNAMENT_BASE_PRIZE_SCALING[tier] || { targetParticipants: basePrizes.length || 1, minScale: 0.25 };
   const joined = Math.max(0, Math.floor(Number(participantCount) || 0));
+  if (joined < 2) return basePrizes.map(() => 0);
   const eligiblePlaces = Math.min(basePrizes.length, joined);
   if (eligiblePlaces <= 0) return basePrizes.map(() => 0);
   const normalized = Math.sqrt(Math.min(1, joined / Math.max(1, scaling.targetParticipants)));
@@ -4940,17 +4967,17 @@ function finalizeTournamentTier(tier) {
   let totalPaid = 0;
   const basePrizes = getTournamentBasePrizes(tier, Object.keys(t.entries || {}).length);
   for (let i = 0; i < maxWinners; i++) {
-    // Pool share: 1st gets remainder to avoid rounding loss
-    const poolPrize = i === 0
-      ? pool - shares.slice(1, maxWinners).reduce((acc, s) => acc + Math.floor(pool * s), 0)
-      : Math.floor(pool * shares[i]);
+    const poolPrize = Math.floor(pool * shares[i]);
     // Base prize from platform (per place)
     const basePrize = basePrizes[i] || 0;
     const totalPrize = poolPrize + basePrize;
+    const walletUpdates = {};
     if (totalPrize > 0) {
       const cur = getCoinBalance(sorted[i].address);
-      setCoinBalance(sorted[i].address, cur + totalPrize);
+      const newBalance = cur + totalPrize;
+      setCoinBalance(sorted[i].address, newBalance);
       addCoinEarned(sorted[i].address, totalPrize);
+      walletUpdates.coins = newBalance;
       totalPaid += poolPrize; // only track pool portion for burn calc
     }
     // Award XP for placement
@@ -4958,10 +4985,10 @@ function finalizeTournamentTier(tier) {
     const xpAmount = xpRewards[i] || 0;
     if (xpAmount > 0) {
       const wEntry = walletDatabase.get(sorted[i].address);
-      if (wEntry) {
-        wEntry.tournamentXP = (wEntry.tournamentXP || 0) + xpAmount;
-        walletDatabase.set(sorted[i].address, wEntry);
-      }
+      walletUpdates.tournamentXP = ((wEntry?.tournamentXP || 0) + xpAmount);
+    }
+    if (Object.keys(walletUpdates).length > 0) {
+      updateWalletEntry(sorted[i].address, walletUpdates);
     }
     winners.push({ address: sorted[i].address, score: sorted[i].score, prize: totalPrize, poolPrize, basePrize, place: i + 1, xp: xpAmount });
     if (totalPrize > 0) {
@@ -5427,6 +5454,7 @@ const ctx = createContext({
   weeklyRewards: WEEKLY_REWARDS,
   weeklyXpRewards: WEEKLY_XP_REWARDS,
   checkTournaments,
+  getTournamentBasePrizes,
   refundCoinSpent,
   backfillCompositeScores,
 });

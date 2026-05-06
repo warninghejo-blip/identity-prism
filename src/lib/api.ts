@@ -4,8 +4,9 @@
  */
 
 import { getSessionJwt } from '@/components/prism/shared';
+import { getHeliusProxyUrl } from '@/constants';
 
-const BASE = import.meta.env.VITE_HELIUS_PROXY_URL || '';
+const getBase = () => getHeliusProxyUrl() || '';
 
 // New APK uses /api/v2/ for all breaking endpoints (old APK ≤1.0.32 uses /api/)
 const API_V2 = '/api/v2';
@@ -26,7 +27,7 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 async function apiFetch<T = unknown>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${getBase()}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...getAuthHeaders(),

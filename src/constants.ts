@@ -8,15 +8,17 @@ const UPDATE_AUTHORITY = (import.meta.env.VITE_UPDATE_AUTHORITY ?? '').trim();
 const CNFT_MINT_URL = (import.meta.env.VITE_CNFT_MINT_URL ?? '').trim();
 const normalizeProxyUrl = (url: string) => url.replace(/\/+$/, '');
 const isLocalDevHost = (host: string) => /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(host);
-
-export const getHeliusProxyUrl = () => {
+const getLocalDevOrigin = () => {
   if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.origin) {
     const devHost = window.location.hostname ?? '';
-    if (isLocalDevHost(devHost)) {
-      // In local dev, force same-origin so local proxy (/api, /rpc) is used without CORS.
-      return normalizeProxyUrl(window.location.origin);
-    }
+    if (isLocalDevHost(devHost)) return normalizeProxyUrl(window.location.origin);
   }
+  return null;
+};
+
+export const getHeliusProxyUrl = () => {
+  const localDevOrigin = getLocalDevOrigin();
+  if (localDevOrigin) return localDevOrigin;
   if (HELIUS_PROXY_URL) return normalizeProxyUrl(HELIUS_PROXY_URL);
   if (APP_BASE_URL) return normalizeProxyUrl(APP_BASE_URL);
   if (typeof window !== 'undefined' && window.location?.origin) {
@@ -24,7 +26,8 @@ export const getHeliusProxyUrl = () => {
   }
   return null;
 };
-export const getMetadataBaseUrl = () => (METADATA_BASE_URL ? normalizeProxyUrl(METADATA_BASE_URL) : null);
+export const getMetadataBaseUrl = () =>
+  getLocalDevOrigin() ?? (METADATA_BASE_URL ? normalizeProxyUrl(METADATA_BASE_URL) : null);
 export const getMetadataImageUrl = () => {
   if (METADATA_IMAGE_URL) return METADATA_IMAGE_URL;
   const baseUrl = getMetadataBaseUrl();
@@ -34,7 +37,7 @@ export const getAppBaseUrl = () => (APP_BASE_URL ? normalizeProxyUrl(APP_BASE_UR
 export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : null);
 export const getCollectionVerifyUrl = () => (COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null);
 export const getUpdateAuthorityAddress = () => (UPDATE_AUTHORITY ? UPDATE_AUTHORITY : null);
-export const getCnftMintUrl = () => (CNFT_MINT_URL ? normalizeProxyUrl(CNFT_MINT_URL) : null);
+export const getCnftMintUrl = () => getLocalDevOrigin() ?? (CNFT_MINT_URL ? normalizeProxyUrl(CNFT_MINT_URL) : null);
 
 export const getHeliusRpcUrl = (_seed?: string) => {
   const proxyUrl = getHeliusProxyUrl();

@@ -11,6 +11,9 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Enable WebView remote debugging in staging builds (BUILD_TYPE set by gradle)
+        WebView.setWebContentsDebuggingEnabled(true);
+
         // Disable Android WebView force-dark mode — it darkens the entire card/UI
         WebView webView = getBridge().getWebView();
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {

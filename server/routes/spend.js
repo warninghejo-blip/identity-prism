@@ -58,6 +58,10 @@ function registerSpendRoute(ctx) {
         if (forgeState.modules.some((entry) => entry.moduleId === moduleId)) {
           return respondJson(res, 400, { error: 'Forge module already owned' });
         }
+        const rangerSnapshot = getServerRangerSnapshot(address, walletEntry);
+        if (!meetsForgeRequiredRank(rangerSnapshot.rank, moduleDef.requiredRank)) {
+          return respondJson(res, 400, { error: `Requires ${moduleDef.requiredRank} rank` });
+        }
         forgeState.modules = mergeForgeEntries(forgeState.modules, [{ moduleId, purchasedAt: purchaseTimestamp }], 'moduleId');
       } else if (sanitizedSource.startsWith('forge_')) {
         const itemDef = forgeItemMap.get(itemId);

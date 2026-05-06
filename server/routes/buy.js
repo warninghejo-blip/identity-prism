@@ -47,20 +47,6 @@ function registerBuyRoute(ctx) {
   return async function handleBuyRoute(req, res, url, pathname) {
     if (!pathname.startsWith('/api/prism/buy')) return false;
 
-    if (!globalThis._buyTxCleanupCounter) globalThis._buyTxCleanupCounter = 0;
-    if (++globalThis._buyTxCleanupCounter % 1000 === 0) {
-      const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-      for (const [sig, ts] of usedBuyTxSignatures) {
-        if (ts < cutoff) usedBuyTxSignatures.delete(sig);
-      }
-      const txTmp = `${buyUsedTxFile}.tmp`;
-      const txObj = {};
-      for (const [key, value] of usedBuyTxSignatures) txObj[key] = value;
-      fs.promises.writeFile(txTmp, JSON.stringify(txObj), 'utf8')
-        .then(() => fs.promises.rename(txTmp, buyUsedTxFile))
-        .catch(() => {});
-    }
-
     if (pathname === '/api/prism/buy/status' && req.method === 'GET') {
       if (!ipRateLimit('buy_status', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
       const address = url.searchParams.get('address');

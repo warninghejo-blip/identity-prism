@@ -39,7 +39,7 @@ import { trackChallengeCreate, trackChallengeAccept } from '@/lib/analytics';
 import {
   getApiBase,
   getCachedJwt,
-  ensureJwt,
+  obtainJwt,
   setAuthWallet,
   isServerAvailable,
   MiniPlanet,
@@ -179,7 +179,7 @@ export default function PrismArena() {
     fadeOutTransition();
   }, []);
 
-  // Register wallet for ensureJwt() — needed for JWT auth on this page
+  // Register wallet for shared JWT auth on this page.
   useEffect(() => {
     setAuthWallet(wallet);
   }, [wallet]);
@@ -295,7 +295,7 @@ export default function PrismArena() {
     if (!(await isServerAvailable(base))) return;
     setLoadingMine(true);
     try {
-      const jwt = await ensureJwt();
+      const jwt = await obtainJwt(wallet);
       const headers: Record<string, string> = {};
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       let res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, { headers });
@@ -304,7 +304,7 @@ export default function PrismArena() {
         try {
           sessionStorage.removeItem('ip_auth_jwt');
         } catch {}
-        const freshJwt = await ensureJwt();
+        const freshJwt = await obtainJwt(wallet);
         if (freshJwt) {
           res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, {
             headers: { Authorization: `Bearer ${freshJwt}` },
@@ -444,7 +444,7 @@ export default function PrismArena() {
     try {
       let jwt = getCachedJwt(myAddress);
       if (!jwt) {
-        jwt = await ensureJwt();
+        jwt = await obtainJwt(wallet);
         if (!jwt) {
           toast.error('Please sign the message to authenticate');
           return;
@@ -538,7 +538,7 @@ export default function PrismArena() {
       try {
         let jwt = getCachedJwt(myAddress);
         if (!jwt) {
-          jwt = await ensureJwt();
+          jwt = await obtainJwt(wallet);
           if (!jwt) {
             toast.error('Please sign the message to authenticate');
             return;
@@ -616,7 +616,7 @@ export default function PrismArena() {
       try {
         let jwt = getCachedJwt(myAddress);
         if (!jwt) {
-          jwt = await ensureJwt();
+          jwt = await obtainJwt(wallet);
           if (!jwt) {
             toast.error('Please sign the message to authenticate');
             setCancellingId(null);

@@ -56,7 +56,13 @@ import {
 } from '@/lib/forgeItems';
 import { computeShipStats, getEquipmentBonusLines, SKIN_RARITY_BONUS, type ShipStats } from '@/lib/shipStats';
 import { gatherXPSourcesMerged, computeRangerXP, getRangerRank } from '@/lib/rangerRanks';
-import { fetchWalletPreview, getCachedWalletPreview, type WalletPreview } from '@/components/prism/shared';
+import {
+  fetchWalletPreview,
+  getCachedWalletPreview,
+  obtainJwt,
+  setAuthWallet,
+  type WalletPreview,
+} from '@/components/prism/shared';
 import { getPrismBalance, spendPrism, type PrismBalance } from '@/lib/prismCoin';
 import { getApiBase } from '@/components/prism/shared';
 import { getQuestProgress, getQuestState } from '@/lib/prismQuests';
@@ -92,13 +98,20 @@ const STAT_THRESHOLDS: Record<string, { at: number; label: string; effect: strin
 };
 
 const SHOP_FILTERS: { id: ShopFilter; label: string; icon: string }[] = [
-  { id: 'all', label: 'All', icon: '🛒' },
+  { id: 'all', label: 'All', icon: '/hub/shop.png' },
   { id: 'frame', label: 'Frames', icon: CATEGORY_ICONS.frame },
   { id: 'aura', label: 'Auras', icon: CATEGORY_ICONS.aura },
   { id: 'ship_skin', label: 'Ships', icon: CATEGORY_ICONS.ship_skin },
   { id: 'title', label: 'Titles', icon: CATEGORY_ICONS.title },
-  { id: 'module', label: 'Modules', icon: '🔧' },
+  { id: 'module', label: 'Modules', icon: '/textures/modules/mod_speed_1.png' },
 ];
+
+function AssetIcon({ icon, className = 'w-4 h-4' }: { icon: string; className?: string }) {
+  if (icon.startsWith('/')) {
+    return <img src={icon} alt="" className={`${className} shrink-0 object-contain`} loading="lazy" />;
+  }
+  return <span className="text-sm">{icon}</span>;
+}
 
 // ── Visual Preview Renderers ──
 
@@ -331,7 +344,9 @@ function ItemCard({
           >
             {item.rarity}
           </span>
-          <span className="text-sm opacity-60">{CATEGORY_ICONS[item.category]}</span>
+          <span className="opacity-70">
+            <AssetIcon icon={CATEGORY_ICONS[item.category]} className="w-4 h-4" />
+          </span>
         </div>
 
         {/* Preview */}
@@ -465,12 +480,32 @@ function ItemCard({
 // ── Main Component ──
 export default function StellarForge() {
   const navigate = useNavigate();
-  const { publicKey } = useWallet();
+  const wallet = useWallet();
+  const { publicKey } = wallet;
   const walletAddress = publicKey?.toBase58() || '';
 
   useEffect(() => {
     fadeOutTransition();
   }, []);
+
+  useEffect(() => {
+    setAuthWallet(wallet);
+  }, [wallet]);
+
+  const syncLoadoutNow = useCallback(
+    async (nextLoadout: ForgeLoadout) => {
+      const jwt = await obtainJwt(wallet);
+      if (!jwt) return false;
+      const base = getApiBase();
+      const res = await fetch(`${base}/api/user-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ loadout: nextLoadout }),
+      });
+      return res.ok;
+    },
+    [wallet],
+  );
 
   const [walletPreview, setWalletPreview] = useState<WalletPreview | null>(() =>
     walletAddress ? getCachedWalletPreview(walletAddress) : null,
@@ -564,7 +599,43 @@ export default function StellarForge() {
     fetch(`${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d?.mint?.minted && !cancelled) setHasIdentityCard(true);
+        if (!d || cancelled) return;
+        if (d?.mint?.minted) setHasIdentityCard(true);
+
+        const serverLoadout = d?.userData?.loadout;
+        const forgeState = d?.forgeState;
+        const restoredLoadout =
+          serverLoadout && typeof serverLoadout === 'object'
+            ? {
+                ...getLocalLoadout(walletAddress),
+                ...serverLoadout,
+                address: walletAddress,
+                ownedItems: Array.isArray(serverLoadout.ownedItems) ? serverLoadout.ownedItems : [],
+                ownedModules: Array.isArray(serverLoadout.ownedModules) ? serverLoadout.ownedModules : [],
+                installedModules:
+                  serverLoadout.installedModules && typeof serverLoadout.installedModules === 'object'
+                    ? serverLoadout.installedModules
+                    : {},
+              }
+            : forgeState && typeof forgeState === 'object'
+              ? {
+                  ...getLocalLoadout(walletAddress),
+                  ownedItems: Array.isArray(forgeState.items)
+                    ? forgeState.items.map((entry: { itemId: string; purchasedAt?: string }) => ({
+                        itemId: entry.itemId,
+                        purchasedAt: entry.purchasedAt || new Date().toISOString(),
+                        equipped: false,
+                      }))
+                    : [],
+                  ownedModules: Array.isArray(forgeState.modules)
+                    ? forgeState.modules.map((entry: { moduleId: string }) => entry.moduleId).filter(Boolean)
+                    : [],
+                }
+              : null;
+        if (restoredLoadout) {
+          saveLocalLoadout(restoredLoadout);
+          setLoadout(restoredLoadout);
+        }
       })
       .catch(() => {});
     return () => {
@@ -641,6 +712,7 @@ export default function StellarForge() {
           return;
         }
         saveLocalLoadout(newLoadout);
+        syncLoadoutNow(newLoadout).catch(() => {});
         setLoadout(newLoadout);
         setBalance(result.balance);
         trackForgePurchase(item.name, item.price);
@@ -660,7 +732,7 @@ export default function StellarForge() {
         setPurchasing(null);
       }
     },
-    [walletAddress, loadout, balance, purchasing, rangerRank, isUnlockRequirementMet],
+    [walletAddress, loadout, balance, purchasing, rangerRank, isUnlockRequirementMet, syncLoadoutNow],
   );
 
   const handleEquip = useCallback(
@@ -668,10 +740,11 @@ export default function StellarForge() {
       if (!loadout) return;
       const newLoadout = equipItem(loadout, item.id);
       saveLocalLoadout(newLoadout);
+      syncLoadoutNow(newLoadout).catch(() => {});
       setLoadout(newLoadout);
       toast.success(`Equipped ${item.name}`);
     },
-    [loadout],
+    [loadout, syncLoadoutNow],
   );
 
   const handleUnequip = useCallback(
@@ -679,6 +752,7 @@ export default function StellarForge() {
       if (!loadout) return;
       const newLoadout = unequipItem(loadout, category);
       saveLocalLoadout(newLoadout);
+      syncLoadoutNow(newLoadout).catch(() => {});
       setLoadout(newLoadout);
       const labels: Record<ForgeCategory, string> = {
         frame: 'Frame',
@@ -688,7 +762,7 @@ export default function StellarForge() {
       };
       toast.success(`Unequipped ${labels[category]}`);
     },
-    [loadout],
+    [loadout, syncLoadoutNow],
   );
 
   const handlePurchaseModule = useCallback(
@@ -719,6 +793,7 @@ export default function StellarForge() {
           return;
         }
         saveLocalLoadout(newLoadout);
+        syncLoadoutNow(newLoadout).catch(() => {});
         setLoadout(newLoadout);
         setBalance(result.balance);
         toast.success(`Purchased ${mod.name}!`, { description: 'Install it on a ship from your inventory.' });
@@ -728,7 +803,7 @@ export default function StellarForge() {
         setInstallingModule(false);
       }
     },
-    [loadout, balance, walletAddress],
+    [loadout, balance, walletAddress, rangerRank, syncLoadoutNow],
   );
 
   const handleInstallModule = useCallback(
@@ -770,12 +845,13 @@ export default function StellarForge() {
         return;
       }
       saveLocalLoadout(newLoadout);
+      syncLoadoutNow(newLoadout).catch(() => {});
       setLoadout(newLoadout);
       setConfirmModule(null);
       setModuleModal(null);
       toast.success(`Installed ${mod.name}!`, { description: 'Module can be uninstalled later.' });
     },
-    [loadout, walletAddress, installingModule, hasIdentityCard],
+    [loadout, walletAddress, installingModule, hasIdentityCard, syncLoadoutNow],
   );
 
   const isOwned = useCallback((id: string) => loadout?.ownedItems.some((o) => o.itemId === id) ?? false, [loadout]);
@@ -889,8 +965,8 @@ export default function StellarForge() {
         >
           <div className="max-w-2xl mx-auto px-3 flex gap-1 py-1.5">
             {[
-              { id: 'shop' as TopTab, label: 'Armory', icon: '🛡️' },
-              { id: 'inventory' as TopTab, label: 'Inventory', icon: '📦' },
+              { id: 'shop' as TopTab, label: 'Armory', icon: '/hub/shop.png' },
+              { id: 'inventory' as TopTab, label: 'Inventory', icon: '/icons/forge/forge_ship.png' },
             ].map((t) => (
               <button
                 key={t.id}
@@ -910,7 +986,7 @@ export default function StellarForge() {
                       }
                 }
               >
-                <span className="text-sm">{t.icon}</span> {t.label}
+                <AssetIcon icon={t.icon} className="w-4 h-4" /> {t.label}
               </button>
             ))}
           </div>
@@ -931,7 +1007,7 @@ export default function StellarForge() {
               {/* Buy Coins & Staking → moved to /vault page */}
 
               {/* Category filters — glass pills */}
-              <div className="flex items-center gap-2 mb-5 overflow-x-auto scrollbar-hide pb-1">
+              <div className="flex flex-wrap items-center gap-2 mb-5 pb-1">
                 {SHOP_FILTERS.map((f) => (
                   <button
                     key={f.id}
@@ -952,10 +1028,10 @@ export default function StellarForge() {
                           }
                     }
                   >
-                    <span>{f.icon}</span> {f.label}
+                    <AssetIcon icon={f.icon} className="w-4 h-4" /> {f.label}
                   </button>
                 ))}
-                <div className="ml-auto shrink-0">
+                <div className="shrink-0">
                   <button
                     onClick={() => setShowOnlyAvailable((prev) => !prev)}
                     className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all whitespace-nowrap ${
@@ -990,7 +1066,7 @@ export default function StellarForge() {
                     return (
                       <div key={cat} className="mb-6">
                         <div className="flex items-center gap-2 mb-3 px-1">
-                          <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
+                          <AssetIcon icon={CATEGORY_ICONS[cat]} className="w-4 h-4" />
                           <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">
                             {CATEGORY_LABELS[cat]}
                           </span>
@@ -1023,7 +1099,7 @@ export default function StellarForge() {
                     return (
                       <div className="mb-6">
                         <div className="flex items-center gap-2 mb-3 px-1">
-                          <span className="text-sm">🔧</span>
+                          <AssetIcon icon="/textures/modules/mod_speed_1.png" className="w-4 h-4" />
                           <span className="text-white/40 text-[11px] font-bold uppercase tracking-widest">Modules</span>
                           <div className="flex-1 h-px bg-white/[0.06]" />
                         </div>
@@ -1265,6 +1341,7 @@ export default function StellarForge() {
                 const updated = uninstallModule(loadout, displayShipId, moduleId);
                 if (updated) {
                   saveLocalLoadout(updated);
+                  syncLoadoutNow(updated).catch(() => {});
                   setLoadout(updated);
                   const mod = getModuleById(moduleId);
                   toast.success(`Removed ${mod?.name ?? 'module'}`);
@@ -1274,6 +1351,7 @@ export default function StellarForge() {
               const handleSwitchShip = (shipId: string) => {
                 const updated = equipItem(loadout, shipId);
                 saveLocalLoadout(updated);
+                syncLoadoutNow(updated).catch(() => {});
                 setLoadout(updated);
                 const ship = getItemById(shipId);
                 toast.success(`Switched to ${ship?.name ?? 'ship'}`);
@@ -1308,7 +1386,7 @@ export default function StellarForge() {
                       return (
                         <div key={cat}>
                           <div className="flex items-center gap-2 mb-2">
-                            <span className="text-sm">{CATEGORY_ICONS[cat]}</span>
+                            <AssetIcon icon={CATEGORY_ICONS[cat]} className="w-4 h-4" />
                             <span className="text-[11px] font-bold text-white/50 uppercase tracking-wider">
                               {CATEGORY_LABELS[cat]}s
                             </span>
@@ -1381,7 +1459,8 @@ export default function StellarForge() {
                   {/* ── Ship Bay ── */}
                   <div className="space-y-4">
                     <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
-                      🚀 Ship Bay
+                      <AssetIcon icon="/icons/forge/forge_ship.png" className="w-4 h-4" />
+                      Ship Bay
                     </h3>
 
                     {/* Ship Grid — horizontal scroll */}
