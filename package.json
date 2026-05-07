@@ -120,17 +120,17 @@
     "protobufjs": "^7.5.5",
     "uuid": "^11.1.1"
   },
-  "description": "**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID",
+  "description": "Identity Prism: Solana reputation passport, sybil hunt, games, quests, arena, tournaments, and wallet utility layer.",
   "main": "download-assets.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/warninghejo-blip/solapp.git"
+    "url": "git+https://github.com/warninghejo-blip/identity-prism.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/warninghejo-blip/solapp/issues"
+    "url": "https://github.com/warninghejo-blip/identity-prism/issues"
   },
-  "homepage": "https://github.com/warninghejo-blip/solapp#readme"
+  "homepage": "https://github.com/warninghejo-blip/identity-prism#readme"
 }
