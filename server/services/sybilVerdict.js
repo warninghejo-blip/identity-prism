@@ -130,7 +130,7 @@ export function getCompositeTrustProfile({ verdict = null, trustScore = 0, recov
   const rule = COMPOSITE_TRUST_RULES[verdictKey] || COMPOSITE_TRUST_RULES.legacy;
   const baseCompositeTrust = rule.useRaw
     ? rawTrustScore
-    : clamp(rawTrustScore, rule.floor, rule.ceil);
+    : clamp(rawTrustScore, 0, rule.ceil);
   const requestedRecoveryBonus = Math.max(0, toNumber(recoveryBonus));
   const appliedRecoveryBonus = Math.min(rule.recoveryCap, requestedRecoveryBonus);
   const effectiveTrust = clamp(baseCompositeTrust + appliedRecoveryBonus, 0, 100);

@@ -5,7 +5,8 @@ import { CustomWalletProvider } from './components/CustomWalletProvider';
 import { DebugWallet } from './components/DebugWallet';
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
-import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
+import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
+import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
 import {
   SolanaMobileWalletAdapter,
   createDefaultAddressSelector,
@@ -178,11 +179,7 @@ const router = createBrowserRouter(
         { path: 'leaderboard', element: lazyRoute(<Leaderboard />) },
         {
           path: 'recovery',
-          element: lazyRoute(
-            <WalletRequired>
-              <TrustRecovery />
-            </WalletRequired>,
-          ),
+          element: lazyRoute(<TrustRecovery />),
         },
         {
           path: 'text-quest',

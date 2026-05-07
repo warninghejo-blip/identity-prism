@@ -70,6 +70,7 @@ const makeJwt = (address: string) =>
 
 const seedWorkspace = () => {
   const now = new Date().toISOString();
+  const nowMs = Date.now();
 
   writeJson(path.join(metadataDir, 'wallet-database.json'), {
     version: 1,
@@ -165,7 +166,25 @@ const seedWorkspace = () => {
   });
 
   writeJson(path.join(workspaceDir, 'tournament_data.json'), {
-    active: { daily: null, weekly: null, monthly: null },
+    active: {
+      daily: {
+        id: 't_daily_finished_fixture',
+        tier: 'daily',
+        mode: 'orbit',
+        entryFee: 1000,
+        prizePool: 1800,
+        startTime: nowMs - 86_400_000,
+        endTime: nowMs - 1_000,
+        entries: {
+          [ADDRESSES.jwt]: { score: 500, submittedAt: now },
+          [ADDRESSES.known]: { score: 120, submittedAt: now },
+        },
+        status: 'active',
+        label: 'Daily',
+      },
+      weekly: null,
+      monthly: null,
+    },
     history: [],
     modeIndex: 0,
   });
@@ -390,12 +409,34 @@ describe.sequential('route integration tests', () => {
 
   // ── Tournament with JWT ───────────────────────────────────────────────────
 
-  it('POST /api/tournament/join with valid JWT returns structured error (no active tournament)', async () => {
+  it('finalizing an ended tournament pays winner and creates inbox notification', async () => {
+    const token = makeJwt(ADDRESSES.jwt);
+    const beforeBalance = await getJson(`/api/prism/balance?address=${ADDRESSES.jwt}`);
+    expect(beforeBalance.status).toBe(200);
+    const beforeAmount = (beforeBalance.body as Record<string, number>).balance;
+
+    const active = await getJson('/api/tournament/active', token);
+    expect(active.status).toBe(200);
+
+    const afterBalance = await getJson(`/api/prism/balance?address=${ADDRESSES.jwt}`);
+    expect(afterBalance.status).toBe(200);
+    const afterAmount = (afterBalance.body as Record<string, number>).balance;
+    expect(afterAmount).toBeGreaterThan(beforeAmount);
+
+    const inbox = await getJson('/api/notifications', token);
+    expect(inbox.status).toBe(200);
+    const notifications = (inbox.body as { notifications: Array<Record<string, unknown>> }).notifications;
+    const payout = notifications.find((notification) => notification.type === 'tournament_result');
+    expect(payout).toBeTruthy();
+    expect(payout?.message).toContain('daily tournament ended');
+    expect(payout?.meta).toMatchObject({ tier: 'daily', placement: 1 });
+    expect((payout?.meta as Record<string, number>).prize).toBeGreaterThan(0);
+  });
+
+  it('POST /api/tournament/join with valid JWT returns structured response', async () => {
     const token = makeJwt(ADDRESSES.jwt);
     const res = await postJson('/api/tournament/join', { tier: 'daily' }, token);
-    // No active tournament seeded → should return structured error
     expect([200, 400, 404, 409]).toContain(res.status);
-    // Either success or error — both should be structured JSON
     expect(typeof res.body).toBe('object');
   });
 

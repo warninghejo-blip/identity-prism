@@ -204,16 +204,16 @@ describe('deriveSybilVerdictFromAnalysis', () => {
 });
 
 describe('getCompositeTrustProfile', () => {
-  it('keeps unknown wallets neutral in composite without granting clean-wallet badges', () => {
+  it('keeps unknown wallets capped without granting free trust or clean-wallet badges', () => {
     const profile = getCompositeTrustProfile({
       verdict: { key: 'unknown', label: 'Unknown / Thin Data' },
       trustScore: 12,
       recoveryBonus: 25,
     });
 
-    expect(profile.baseCompositeTrust).toBe(50);
+    expect(profile.baseCompositeTrust).toBe(12);
     expect(profile.recoveryBonus).toBe(10);
-    expect(profile.effectiveTrust).toBe(60);
+    expect(profile.effectiveTrust).toBe(22);
     expect(profile.allowBadges).toBe(false);
   });
 

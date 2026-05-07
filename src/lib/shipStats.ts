@@ -75,6 +75,29 @@ export const FRAME_BONUSES: Record<string, Partial<CompositeBreakdown>> = {
   singularity: { engagement: 18, onchain: 25, sybilTrust: 15 },
 };
 
+const COMPOSITE_MAXIMA: CompositeBreakdown = {
+  onchain: 400,
+  sybilTrust: 250,
+  humanProof: 150,
+  social: 100,
+  engagement: 100,
+};
+
+function clampCompositeValue(value: number | undefined, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(max, Math.max(0, Math.round(value)));
+}
+
+export function normalizeCompositeBreakdown(bd: CompositeBreakdown): CompositeBreakdown {
+  return {
+    onchain: clampCompositeValue(bd.onchain, COMPOSITE_MAXIMA.onchain),
+    sybilTrust: clampCompositeValue(bd.sybilTrust, COMPOSITE_MAXIMA.sybilTrust),
+    humanProof: clampCompositeValue(bd.humanProof, COMPOSITE_MAXIMA.humanProof),
+    social: clampCompositeValue(bd.social, COMPOSITE_MAXIMA.social),
+    engagement: clampCompositeValue(bd.engagement, COMPOSITE_MAXIMA.engagement),
+  };
+}
+
 // ── Aura Bonuses ──
 
 // ── Title Bonuses (flat, luck-focused) ──
@@ -173,17 +196,18 @@ interface ForgeLoadoutLike {
 
 /** Apply frame bonus to composite breakdown (before stat derivation). */
 export function applyFrameToBreakdown(bd: CompositeBreakdown, loadout: ForgeLoadoutLike | null): CompositeBreakdown {
-  if (!loadout?.equippedFrame) return bd;
+  const normalized = normalizeCompositeBreakdown(bd);
+  if (!loadout?.equippedFrame) return normalized;
   const key = loadout.equippedFrame.replace('frame_', '');
   const bonus = FRAME_BONUSES[key];
-  if (!bonus) return bd;
-  return {
-    onchain: (bd.onchain || 0) + (bonus.onchain || 0),
-    sybilTrust: (bd.sybilTrust || 0) + (bonus.sybilTrust || 0),
-    humanProof: (bd.humanProof || 0) + (bonus.humanProof || 0),
-    social: (bd.social || 0) + (bonus.social || 0),
-    engagement: (bd.engagement || 0) + (bonus.engagement || 0),
-  };
+  if (!bonus) return normalized;
+  return normalizeCompositeBreakdown({
+    onchain: normalized.onchain + (bonus.onchain || 0),
+    sybilTrust: normalized.sybilTrust + (bonus.sybilTrust || 0),
+    humanProof: normalized.humanProof + (bonus.humanProof || 0),
+    social: normalized.social + (bonus.social || 0),
+    engagement: normalized.engagement + (bonus.engagement || 0),
+  });
 }
 
 function deriveBaseStatsFromBreakdown(bd: CompositeBreakdown): ShipStats {

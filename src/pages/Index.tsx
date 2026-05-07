@@ -1674,13 +1674,10 @@ const Index = () => {
             walletAddress={activeAddress}
             prismBalance={prismBalance}
             onNavigateToCard={() => {
-              // Standardize navigation effect
-              startFadeTransition(() => {
-                setCurtainOpen(true);
-                setCurtainDone(true);
-                setViewState('ready');
-                fadeOutTransition(100);
-              });
+              setCurtainOpen(true);
+              setCurtainDone(true);
+              setViewState('ready');
+              fadeOutTransition(0);
             }}
             onDisconnect={handleDisconnect}
             identityScore={walletData.score}

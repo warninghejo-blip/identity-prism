@@ -1,10 +1,11 @@
 /**
- * Trust Recovery — prove you're human, improve your trust score.
+ * Trust Recovery — prove you're human, improve the Sybil Trust scale.
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import {
   ArrowLeft,
   Shield,
@@ -86,8 +87,10 @@ function GradeLabel({ score }: { score: number }) {
 
 export default function TrustRecovery() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { publicKey } = useWallet();
-  const address = publicKey?.toBase58() || '';
+  const queryAddress = searchParams.get('address')?.trim() || '';
+  const address = queryAddress || publicKey?.toBase58() || '';
   useEffect(() => {
     fadeOutTransition();
   }, []);
@@ -115,7 +118,8 @@ export default function TrustRecovery() {
       <PageShell>
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
           <Lock className="w-12 h-12 text-white/10" />
-          <p className="text-white/30 text-sm">Connect wallet to access Trust Recovery</p>
+          <p className="text-white/30 text-sm">Open a wallet scan or connect wallet to view Trust Recovery</p>
+          <WalletMultiButton />
         </div>
       </PageShell>
     );
@@ -140,7 +144,7 @@ export default function TrustRecovery() {
             <h1 className="text-lg font-bold text-white/90 flex items-center gap-2">
               <Shield className="w-5 h-5 text-cyan-400" /> Trust Recovery
             </h1>
-            <p className="text-xs text-white/30">Prove you're human, improve your score</p>
+            <p className="text-xs text-white/30">Build activity proof for the Sybil Trust scale</p>
           </div>
           <button
             onClick={() => {
@@ -197,8 +201,8 @@ export default function TrustRecovery() {
               </div>
 
               <p className="text-xs text-white/40 leading-relaxed">
-                Your trust score improves as you use the app. Play games, complete quests, hunt sybils, and win
-                challenges to prove you're human.
+                Sybil Trust improves as you use the app. Play games, complete quests, hunt sybils, and win challenges to
+                prove you're human.
               </p>
 
               {/* Activity progress bar */}

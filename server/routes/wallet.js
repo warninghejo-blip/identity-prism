@@ -181,10 +181,14 @@ function registerWalletRoute(ctx) {
       if (address) {
         const wallet = walletDatabase.get(address);
         if (!wallet) return respondJson(res, 404, { error: 'Wallet not found' });
+        const compositeScore = Number(wallet.composite?.compositeScore);
+        const compositeTier = typeof wallet.composite?.compositeTier === 'string' ? wallet.composite.compositeTier : '';
+        const publicScore = Number.isFinite(compositeScore) ? compositeScore : (wallet.score || 0);
+        const publicTier = compositeTier || wallet.tier || 'mercury';
         const publicData = {
           address,
-          tier: wallet.tier || 'mercury',
-          score: wallet.score || 0,
+          tier: publicTier,
+          score: publicScore,
           badges: wallet.badges || [],
           composite: wallet.composite ? { compositeScore: wallet.composite.compositeScore, compositeTier: wallet.composite.compositeTier, breakdown: wallet.composite.breakdown, details: wallet.composite.details || null } : null,
           scoreBreakdown: wallet.scoreBreakdown || null,

@@ -19,7 +19,7 @@ function calculateCompositeScore(input) {
     onchainScore = 0, trustScore = 0, riskScore = 0,
     walletAgeDays = 0, txCount = 0, nftCount = 0, solBalance = 0, defiProtoCount = 0,
     gameScores = [], gameTypes = new Set(), achievementCount = 0,
-    challengesWon = 0, constellationExplored = 0, compareCount = 0,
+    challengesWon = 0, challengesPlayed = 0, uniqueOpponents = 0, tournamentsPlayed = 0, communityReviews = 0,
     questsCompleted = 0, streakDays = 0, scanCount = 0,
     hasSeeker = false, hasPreorder = false, hasCombo = false, sybilVerdict = null, scoreBreakdown = null,
   } = input;
@@ -56,9 +56,7 @@ function calculateCompositeScore(input) {
   const humanBadgeBonus = (badge_gameMaster ? 10 : 0) + (badge_achievementHunter ? 10 : 0) + (badge_highScorer ? 10 : 0);
 
   const badge_arenaChampion = challengesWon >= 5;
-  const badge_topHunter = (scanCount || 0) >= 20;
-  const badge_questMaster = (questsCompleted || 0) >= 15;
-  const socialBadgeBonus = (badge_arenaChampion ? 8 : 0) + (badge_topHunter ? 8 : 0) + (badge_questMaster ? 8 : 0);
+  const socialBadgeBonus = badge_arenaChampion ? 10 : 0;
 
   const badge_questHunter = questsCompleted >= 10;
   const badge_streakLord = streakDays >= 7;
@@ -76,11 +74,13 @@ function calculateCompositeScore(input) {
   const achievementPts = Math.min(40, achievementCount * 5);
   const humanProof = Math.min(150, gameScoreTotal + gameDiversity + achievementPts + humanBadgeBonus);
 
-  const challengePts = Math.min(32, challengesWon * 4);
-  const constellationPts = Math.min(28, constellationExplored * 2);
-  const socialScanPts = Math.min(28, scanCount > 0 ? Math.round(Math.log2(1 + scanCount) * 4) : 0);
-  const comparePts = Math.min(16, compareCount * 2);
-  const social = Math.min(100, challengePts + Math.max(constellationPts, socialScanPts) + comparePts + socialBadgeBonus);
+  const arenaWinPts = Math.min(30, challengesWon * 3);
+  const arenaActivityPts = Math.min(20, challengesPlayed * 2);
+  const opponentPts = Math.min(20, uniqueOpponents * 4);
+  const tournamentPts = Math.min(20, tournamentsPlayed * 10);
+  const communityPts = Math.min(20, communityReviews * 5);
+  const socialBase = arenaWinPts + arenaActivityPts + opponentPts + tournamentPts + communityPts;
+  const social = Math.min(100, socialBase + socialBadgeBonus);
 
   const questPts = Math.min(40, questsCompleted * 2);
   const streakPts = Math.min(22, streakDays * 2);
@@ -112,7 +112,19 @@ function calculateCompositeScore(input) {
         recoveryBreakdown: recovery,
       },
       humanProof: { gameScoreTotal, gameDiversity, achievementPts, achievementCount, gameTypesCount, badgeBonus: humanBadgeBonus },
-      social: { challengesWon, challengePts, scanCount, scanPts: socialScanPts, questsCompleted, questPts: Math.min(16, Math.floor((questsCompleted || 0) * 1.1)), badgeBonus: socialBadgeBonus },
+      social: {
+        challengesWon,
+        challengesPlayed,
+        uniqueOpponents,
+        tournamentsPlayed,
+        communityReviews,
+        arenaWinPts,
+        arenaActivityPts,
+        opponentPts,
+        tournamentPts,
+        communityPts,
+        badgeBonus: socialBadgeBonus,
+      },
       engagement: { questsCompleted, questPts, streakDays, streakPts, scanCount, scanPts, badgeBonus: engagementBadgeBonus },
     },
   };

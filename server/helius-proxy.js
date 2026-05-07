@@ -1108,7 +1108,10 @@ const hasCoreCollectionAsset = async (address, options = {}) => {
 };
 
 const getIdentityHolderPerks = async (address, options = {}) =>
-  buildIdentityHolderPerks(await hasCoreCollectionAsset(address, options), FREE_REVIVES_PER_DAY);
+  buildIdentityHolderPerks(
+    mintedAddresses.has(address) || await hasCoreCollectionAsset(address, options),
+    FREE_REVIVES_PER_DAY,
+  );
 
 const SCAN_ANALYSIS_TTL_MS = 60 * 60 * 1000;
 const CLEAN_SCAN_REWARD_COOLDOWN_MS = 60 * 60 * 1000;
@@ -5177,6 +5180,7 @@ const {
   leaderboardEntries,
   achievementData,
   challenges,
+  appDb,
   getRecentSybilAnalysis,
   getSybilVerdict,
   getSybilQuickVerdict,

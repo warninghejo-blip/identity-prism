@@ -10,6 +10,7 @@ function createReputationBuilderService({
   leaderboardEntries,
   achievementData,
   challenges,
+  appDb,
   getRecentSybilAnalysis,
   getSybilVerdict,
   getSybilQuickVerdict,
@@ -45,6 +46,44 @@ function createReputationBuilderService({
       }
     }
     return seen.size;
+  }
+
+  function getCommunityReviewCount(address) {
+    if (!appDb?.prepare) return 0;
+    try {
+      const row = appDb.prepare(
+        'SELECT COUNT(*) AS count FROM sybil_feedback WHERE reported_by = ? AND (admin_verified IS NULL OR admin_verified = 1)',
+      ).get(address);
+      return Math.max(0, Number(row?.count) || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  function getSocialActivitySummary(address) {
+    let challengesWon = 0;
+    let challengesPlayed = 0;
+    const opponents = new Set();
+
+    for (const challenge of challenges || []) {
+      if (!challenge || challenge.status !== 'completed') continue;
+      const isCreator = challenge.creator === address;
+      const isOpponent = challenge.opponent === address;
+      if (!isCreator && !isOpponent) continue;
+
+      challengesPlayed += 1;
+      if (challenge.winner === address) challengesWon += 1;
+      const opponent = isCreator ? challenge.opponent : challenge.creator;
+      if (opponent) opponents.add(opponent);
+    }
+
+    return {
+      challengesWon,
+      challengesPlayed,
+      uniqueOpponents: opponents.size,
+      tournamentsPlayed: getTournamentParticipationCount(address),
+      communityReviews: getCommunityReviewCount(address),
+    };
   }
 
   function formatRangerRankLabel(rankId) {
@@ -170,8 +209,6 @@ function createReputationBuilderService({
       onchainScore = 400;
     }
     const trustScore = walletEntry.sybil?.trustScore || 0;
-    const socialStats = walletEntry.socialStats || {};
-
     const playerEntries = leaderboardEntries.filter((entry) => entry.address === address);
     const gameScores = playerEntries.map((entry) => entry.score || 0);
     const gameTypes = new Set(playerEntries.map((entry) => entry.gameType || 'orbit'));
@@ -193,7 +230,7 @@ function createReputationBuilderService({
     const stats = walletEntry.stats || {};
     const sybil = walletEntry.sybil || {};
     const sybilVerdict = sybil.verdict || (sybil.verdictKey ? getSybilQuickVerdict(sybil) : null);
-    const challengesWon = challenges.filter((challenge) => challenge.status === 'completed' && challenge.winner === address).length;
+    const socialActivity = getSocialActivitySummary(address);
 
     return {
       onchainScore,
@@ -209,9 +246,7 @@ function createReputationBuilderService({
       gameScores,
       gameTypes,
       achievementCount,
-      challengesWon,
-      constellationExplored: socialStats.constellationExplored || 0,
-      compareCount: socialStats.compareCount || 0,
+      ...socialActivity,
       questsCompleted,
       streakDays,
       scanCount: walletEntry.scanCount || 0,
@@ -225,7 +260,7 @@ function createReputationBuilderService({
         questsCompleted,
         streakDays,
         scanCount: walletEntry.scanCount || 0,
-        challengesWon,
+        challengesWon: socialActivity.challengesWon,
         totalCoinsEarned: getCoinBalance(address),
       }),
     };

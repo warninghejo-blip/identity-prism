@@ -576,7 +576,7 @@ function registerGameRoute(ctx) {
         respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
         return true;
       }
-      const eligible = await hasCoreCollectionAsset(addr);
+      const eligible = mintedAddresses.has(addr) || await hasCoreCollectionAsset(addr);
       if (!eligible) {
         respondJson(res, 200, { address: addr, mode, left: 0, max: freeRevivesPerDay, eligible: false });
         return true;
@@ -603,7 +603,7 @@ function registerGameRoute(ctx) {
           respondJson(res, 400, { error: 'mode must be orbit, destroyer, or gravity' });
           return true;
         }
-        const eligible = await hasCoreCollectionAsset(addr);
+        const eligible = mintedAddresses.has(addr) || await hasCoreCollectionAsset(addr);
         if (!eligible) {
           respondJson(res, 403, { error: 'Identity Prism holder perk required for free revives', left: 0, max: freeRevivesPerDay });
           return true;

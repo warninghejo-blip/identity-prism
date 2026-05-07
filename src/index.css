@@ -607,7 +607,6 @@ body:has(.page-shell) #root > * {
   transition: transform 0.25s cubic-bezier(.4,0,.2,1), filter 0.25s ease, opacity 0.25s ease;
 }
 
-.front-badges .badge-icon-wrap.active .badge-icon,
 @media (hover: hover) {
   .front-badges .badge-icon-wrap:hover .badge-icon {
     transform: scale(1.35);

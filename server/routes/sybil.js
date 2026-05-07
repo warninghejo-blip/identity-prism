@@ -386,7 +386,7 @@ function registerSybilRoute(ctx) {
   }
 
   if (pathname === '/api/recovery/status' && req.method === 'GET') {
-    if (!ipRateLimit('recovery_status', getClientIp(req), 5, 60000)) {
+    if (!ipRateLimit('recovery_status', getClientIp(req), 30, 60000)) {
       return respondJson(res, 429, { error: 'Rate limited' });
     }
     const address = url.searchParams.get('address');

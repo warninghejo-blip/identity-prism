@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   XCircle,
   ArrowDownLeft,
+  ArrowRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -23,6 +24,7 @@ import type { WalletData, WalletTraits, PlanetTier } from '@/hooks/useWalletData
 import { getRandomFunnyFact } from '@/utils/funnyFacts';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
+import TrustGradeBadge from '@/components/TrustGradeBadge';
 import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
 import { getBoostedCompositeScore } from '@/lib/shipStats';
@@ -112,6 +114,15 @@ const deriveRiskLevel = (riskScore: number) =>
         : riskScore >= 10
           ? 'low'
           : 'clean';
+
+const getTrustStatusLabel = (risk: SybilCardRisk) => {
+  const txCount = risk.metrics?.txCount ?? 0;
+  if (risk.trustScore <= 10 && txCount === 0) return 'Thin wallet';
+  if (risk.trustScore < 40) return 'Needs activity proof';
+  if (risk.trustScore < 60) return 'Limited trust';
+  if (risk.trustScore < 80) return 'Building trust';
+  return 'Looks organic';
+};
 
 interface CelestialCardProps {
   data: WalletData;
@@ -643,46 +654,19 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
 
             {/* Header */}
             <div data-suck="header" className="relative z-20 pt-8 px-7 flex flex-col items-center text-center gap-1">
-              {/* Sybil risk pill badge */}
+              {/* Trust grade badge */}
               {dossierRisk &&
                 !isCapture &&
                 (() => {
                   const ts = dossierRisk.trustScore;
                   const grade = dossierRisk.trustGrade;
-                  const color =
-                    ts >= 80
-                      ? '#22c55e'
-                      : ts >= 60
-                        ? '#3b82f6'
-                        : ts >= 40
-                          ? '#eab308'
-                          : ts >= 20
-                            ? '#f97316'
-                            : '#ef4444';
                   return (
-                    <div
-                      className="capture-hidden absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-bold backdrop-blur-md border transition-all"
-                      style={{
-                        borderColor: `${color}40`,
-                        background: `${color}18`,
-                        color,
-                      }}
-                      title={`Trust Score: ${ts}/100 (Grade ${grade})`}
-                    >
-                      <svg
-                        width="10"
-                        height="10"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                      </svg>
-                      <span>{grade}</span>
-                    </div>
+                    <TrustGradeBadge
+                      grade={grade}
+                      score={ts}
+                      size="xs"
+                      className="capture-hidden absolute top-3 left-3"
+                    />
                   );
                 })()}
               <button
@@ -1084,18 +1068,18 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                           const catMeta: Record<BadgeCategory, { icon: string; label: string; color: string }> = {
                             onchain: { icon: '/textures/Solana.png', label: 'ON-CHAIN', color: '#d4a04a' },
                             sybilTrust: {
-                              icon: '/icons/hunt/hunt_tracker.png',
-                              label: 'SYBIL TRUST',
+                              icon: '/icons/trust/trust-grade-unknown.png',
+                              label: 'TRUST',
                               color: '#4ac8e8',
                             },
-                            humanProof: { icon: '/badges/verified_human.png', label: 'HUMAN PROOF', color: '#a855f7' },
+                            humanProof: { icon: '/hub/league.png', label: 'GAMES', color: '#34d399' },
                             identityPrism: {
                               icon: '/tokens/prism-icon.png',
                               label: 'IDENTITY PRISM',
                               color: '#34d399',
                             },
-                            social: { icon: '/badges/debate_king.png', label: 'SOCIAL', color: '#ef4444' },
-                            engagement: { icon: '/icons/stats/stat_speed.svg', label: 'ENGAGEMENT', color: '#94a3b8' },
+                            social: { icon: '/hub/arena.png', label: 'SOCIAL', color: '#ef4444' },
+                            engagement: { icon: '/hub/quests.png', label: 'ENGAGEMENT', color: '#f472b6' },
                           };
                           const meta = catMeta[cat];
                           return (
@@ -1169,13 +1153,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                       </div>
                     ) : (
                       <div className="space-y-3 pb-2">
-                        {(!hasFullSybilAnalysis || isFundingLoading) && (
-                          <div className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.05] px-3 py-2 text-[10px] text-cyan-100/70">
-                            {hasFullSybilAnalysis
-                              ? 'Funding sources are still syncing in the background.'
-                              : 'Showing the preloaded trust snapshot while the deep scan finishes.'}
-                          </div>
-                        )}
                         {/* Trust Overview */}
                         <div className="rounded-xl border border-amber-500/15 bg-gradient-to-br from-amber-900/10 to-orange-900/10 p-3">
                           <div className="flex items-center justify-between mb-2">
@@ -1185,55 +1162,54 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               ) : (
                                 <ShieldAlert className="w-3 h-3" />
                               )}
-                              Trust Assessment
+                              Trust
                             </span>
-                            <span
-                              className="text-xs font-bold px-2 py-0.5 rounded-full"
-                              style={{
-                                background:
-                                  dossierRisk.trustScore >= 80
-                                    ? 'rgba(34,197,94,0.2)'
-                                    : dossierRisk.trustScore >= 60
-                                      ? 'rgba(59,130,246,0.2)'
-                                      : dossierRisk.trustScore >= 40
-                                        ? 'rgba(234,179,8,0.2)'
-                                        : 'rgba(239,68,68,0.2)',
-                                color:
-                                  dossierRisk.trustScore >= 80
-                                    ? '#4ade80'
-                                    : dossierRisk.trustScore >= 60
-                                      ? '#60a5fa'
-                                      : dossierRisk.trustScore >= 40
-                                        ? '#facc15'
-                                        : '#f87171',
-                              }}
-                            >
-                              {dossierRisk.trustGrade} · {dossierRisk.trustScore}
-                            </span>
+                            <TrustGradeBadge grade={dossierRisk.trustGrade} score={dossierRisk.trustScore} size="sm" />
                           </div>
-                          <div className="flex gap-3">
-                            <div className="flex-1">
-                              <div className="text-[10px] text-white/30 mb-1">Risk Score</div>
-                              <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all"
-                                  style={{
-                                    width: `${dossierRisk.riskScore}%`,
-                                    background:
-                                      dossierRisk.riskScore < 30
-                                        ? '#4ade80'
-                                        : dossierRisk.riskScore < 60
-                                          ? '#facc15'
-                                          : '#f87171',
-                                  }}
-                                />
+                          <div className="rounded-lg border border-white/[0.06] bg-white/[0.035] px-3 py-2.5">
+                            <div className="flex items-end justify-between gap-3">
+                              <div>
+                                <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-white/30">
+                                  Wallet Trust
+                                </div>
+                                <div className="mt-1 font-mono text-2xl font-black tabular-nums text-white/90">
+                                  {dossierRisk.trustScore}
+                                  <span className="text-xs text-white/25">/100</span>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[9px] font-black uppercase tracking-[0.14em] text-amber-200/75">
+                                  Grade {dossierRisk.trustGrade}
+                                </div>
+                                <div className="mt-1 text-[10px] text-white/45">{getTrustStatusLabel(dossierRisk)}</div>
                               </div>
                             </div>
-                            <div className="text-right">
-                              <span className="text-lg font-bold text-white/80">{dossierRisk.riskScore}</span>
-                              <span className="text-[9px] text-white/20">/100</span>
+                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+                              <div
+                                className="h-full rounded-full transition-all"
+                                style={{
+                                  width: `${dossierRisk.trustScore}%`,
+                                  background:
+                                    dossierRisk.trustScore >= 80
+                                      ? '#4ade80'
+                                      : dossierRisk.trustScore >= 60
+                                        ? '#60a5fa'
+                                        : dossierRisk.trustScore >= 40
+                                          ? '#facc15'
+                                          : '#f87171',
+                                }}
+                              />
                             </div>
                           </div>
+                          {dossierRisk.trustScore < 80 && (
+                            <Link
+                              to={`/recovery?address=${encodeURIComponent(address)}`}
+                              className="mt-2 inline-flex items-center gap-1 rounded-md text-[9px] font-black uppercase tracking-[0.1em] text-amber-200/75 transition-colors hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/40"
+                            >
+                              Recovery plan
+                              <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                            </Link>
+                          )}
                         </div>
 
                         {/* Trust Breakdown */}
@@ -1259,22 +1235,23 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               totalBehav === 0 ? 75 : Math.round(75 * (1 - detectedBehav / totalBehav)),
                             );
                             const social = sigs.find((s) => s.id === 'social_verify')?.detected === false ? 25 : 15;
-                            const total = onchain + behavioral + social;
                             return (
                               <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 space-y-3">
                                 <div className="flex items-center justify-between">
                                   <span className="text-[9px] uppercase tracking-[0.15em] text-white/30 font-bold">
-                                    Trust Breakdown
+                                    Trust Signals
                                   </span>
-                                  <span className="text-[10px] font-mono text-white/65">{total}/250</span>
+                                  <span className="text-[10px] font-mono text-white/45">
+                                    {getTrustStatusLabel(dossierRisk)}
+                                  </span>
                                 </div>
                                 <div className="space-y-2 pl-3 border-l border-white/[0.08]">
                                   {[
-                                    { label: 'On-chain', value: onchain, max: 150, color: '#60a5fa' },
-                                    { label: 'Behavioral', value: behavioral, max: 75, color: '#f59e0b' },
-                                    { label: 'Social', value: social, max: 25, color: '#4ade80' },
+                                    { label: 'On-chain history', value: onchain, max: 150, color: '#60a5fa' },
+                                    { label: 'Behavior pattern', value: behavioral, max: 75, color: '#f59e0b' },
+                                    { label: 'Identity proof', value: social, max: 25, color: '#4ade80' },
                                   ].map((row) => (
-                                    <div key={row.label} className="grid grid-cols-[72px_1fr_auto] items-center gap-2">
+                                    <div key={row.label} className="grid grid-cols-[96px_1fr] items-center gap-2">
                                       <span className="text-[10px] text-white/45">{row.label}</span>
                                       <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
                                         <div
@@ -1282,9 +1259,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                                           style={{ width: `${(row.value / row.max) * 100}%`, background: row.color }}
                                         />
                                       </div>
-                                      <span className="text-[10px] font-mono text-white/65">
-                                        {row.value}/{row.max}
-                                      </span>
                                     </div>
                                   ))}
                                 </div>
@@ -1381,16 +1355,6 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               )}
                             </div>
                           </div>
-                        )}
-
-                        {/* Trust Recovery link */}
-                        {dossierRisk.trustScore < 80 && (
-                          <Link
-                            to="/recovery"
-                            className="block w-full py-2 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/[0.12] text-cyan-300/70 text-xs font-bold hover:bg-cyan-500/[0.12] transition-colors text-center"
-                          >
-                            Improve Trust Score →
-                          </Link>
                         )}
 
                         {/* Signals by category */}
@@ -1511,7 +1475,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         )}
 
                         {/* Funding Sources */}
-                        {(fundingSources.length > 0 || isFundingLoading) && (
+                        {fundingSources.length > 0 && (
                           <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
                             <div className="flex items-center gap-1.5 mb-2">
                               <ArrowDownLeft className="w-3 h-3 text-blue-400/50" />
@@ -1520,48 +1484,36 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                               </span>
                             </div>
                             <div className="space-y-1.5">
-                              {fundingSources.length === 0 ? (
-                                <div className="text-[10px] text-white/30">Tracing inbound funding paths...</div>
-                              ) : (
-                                fundingSources.slice(0, 8).map((src, i) => (
-                                  <div key={i} className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.01]">
-                                    <div
-                                      className="w-1.5 h-1.5 rounded-full shrink-0"
-                                      style={{
-                                        background:
-                                          src.type === 'cex'
-                                            ? '#4ade80'
-                                            : src.type === 'bridge'
-                                              ? '#60a5fa'
-                                              : '#94a3b8',
-                                      }}
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-[10px] font-semibold text-white/60 truncate">
-                                          {src.label || `${src.address.slice(0, 4)}...${src.address.slice(-4)}`}
-                                        </span>
-                                        <span className="text-[9px] text-white/40 font-mono shrink-0 ml-1">
-                                          {src.totalSolReceived.toFixed(1)} SOL
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center justify-between mt-0.5">
-                                        <span className="text-[9px] text-white/20">
-                                          {src.type === 'cex'
-                                            ? 'Exchange'
-                                            : src.type === 'bridge'
-                                              ? 'Bridge'
-                                              : 'Wallet'}{' '}
-                                          · {src.transactionCount} txs
-                                        </span>
-                                        <span className="text-[9px] text-white/20 font-mono">
-                                          {src.percentage.toFixed(0)}%
-                                        </span>
-                                      </div>
+                              {fundingSources.slice(0, 8).map((src, i) => (
+                                <div key={i} className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.01]">
+                                  <div
+                                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                                    style={{
+                                      background:
+                                        src.type === 'cex' ? '#4ade80' : src.type === 'bridge' ? '#60a5fa' : '#94a3b8',
+                                    }}
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-semibold text-white/60 truncate">
+                                        {src.label || `${src.address.slice(0, 4)}...${src.address.slice(-4)}`}
+                                      </span>
+                                      <span className="text-[9px] text-white/40 font-mono shrink-0 ml-1">
+                                        {src.totalSolReceived.toFixed(1)} SOL
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between mt-0.5">
+                                      <span className="text-[9px] text-white/20">
+                                        {src.type === 'cex' ? 'Exchange' : src.type === 'bridge' ? 'Bridge' : 'Wallet'}{' '}
+                                        · {src.transactionCount} txs
+                                      </span>
+                                      <span className="text-[9px] text-white/20 font-mono">
+                                        {src.percentage.toFixed(0)}%
+                                      </span>
                                     </div>
                                   </div>
-                                ))
-                              )}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         )}
@@ -1661,8 +1613,8 @@ const BADGE_TEXTURES: Record<BadgeKey, string> = {
   visionary: '/badges/visionary.png',
   binary: '/badges/binary.png',
   arena_champion: '/badges/arena_champion.png',
-  top_hunter: '/badges/quest_hunter.png',
-  quest_master: '/badges/explorer.png',
+  top_hunter: '/badges/debate_king.png',
+  quest_master: '/badges/quest_hunter.png',
   quest_hunter: '/badges/quest_hunter.png',
   streak_lord: '/badges/streak_lord.png',
   explorer: '/badges/explorer.png',
@@ -1724,7 +1676,7 @@ function getBadgeItems(
       description: 'Weaves liquidity across multiple dimensions.',
       category: 'onchain',
     },
-    // SYBIL TRUST (3)
+    // TRUST (3)
     {
       key: 'verified_human',
       label: 'Verified Human',
@@ -1749,7 +1701,7 @@ function getBadgeItems(
       description: 'The chain itself vouches for this one.',
       category: 'sybilTrust',
     },
-    // HUMAN PROOF (3)
+    // GAMES (3)
     {
       key: 'game_master',
       label: 'Game Master',
@@ -1799,7 +1751,7 @@ function getBadgeItems(
       description: 'Two stars in perfect orbit. A rare celestial anomaly.',
       category: 'identityPrism',
     },
-    // SOCIAL (3)
+    // SOCIAL
     {
       key: 'arena_champion',
       label: 'Arena Champion',
@@ -1810,10 +1762,10 @@ function getBadgeItems(
     },
     {
       key: 'top_hunter',
-      label: 'Top Hunter',
-      isActive: (details?.engagement.scanCount ?? 0) >= 20,
+      label: 'Sybil Hunter',
+      isActive: (details?.social.communityReviews ?? 0) >= 5,
       texture: BADGE_TEXTURES.top_hunter,
-      description: '20+ wallet scans completed.',
+      description: 'Filed enough Sybil Hunt reviews to move the community signal.',
       category: 'social',
     },
     {
@@ -1822,9 +1774,9 @@ function getBadgeItems(
       isActive: (details?.engagement.questsCompleted ?? 0) >= 15,
       texture: BADGE_TEXTURES.quest_master,
       description: 'Complete 15+ quests.',
-      category: 'social',
+      category: 'engagement',
     },
-    // ENGAGEMENT (3)
+    // ENGAGEMENT
     {
       key: 'quest_hunter',
       label: 'Quest Hunter',

@@ -1,8 +1,7 @@
 /**
- * CompositeScoreBreakdown — 5 horizontal progress bars with expandable detail rows.
- * On-chain and Sybil details shown inline when bars are expanded.
+ * CompositeScoreBreakdown — 5 horizontal progress bars with expandable final score context.
  */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { ScoreDetails } from '@/hooks/useCompositeScore';
 
@@ -19,332 +18,50 @@ interface BreakdownProps {
 }
 
 type BarKey = 'onchain' | 'sybilTrust' | 'humanProof' | 'social' | 'engagement';
+type SummaryFactor = { label: string; value: string; hint?: string };
 
-const BARS: { key: BarKey; label: string; max: number; color: string; icon: string; tooltip: string }[] = [
+const BARS: { key: BarKey; label: string; max: number; color: string; iconSrc: string; tooltip: string }[] = [
   {
     key: 'onchain',
     label: 'On-Chain',
     max: 400,
     color: '#22d3ee',
-    icon: '\u{1F517}',
+    iconSrc: '/textures/Solana.png',
     tooltip: 'SOL balance, wallet age, transactions, NFTs, DeFi activity, badges & collection.',
   },
   {
     key: 'sybilTrust',
-    label: 'Sybil Trust',
+    label: 'Trust',
     max: 250,
     color: '#a78bfa',
-    icon: '\u{1F6E1}\uFE0F',
-    tooltip: 'Wallet authenticity score. Low sybil risk = high trust.',
+    iconSrc: '/icons/trust/trust-grade-unknown.png',
+    tooltip: 'Final trust component used in the Identity Score.',
   },
   {
     key: 'humanProof',
-    label: 'Human Proof',
+    label: 'Games',
     max: 150,
     color: '#34d399',
-    icon: '\u{1F3AE}',
-    tooltip: 'Play games, unlock achievements, try different game types.',
+    iconSrc: '/hub/league.png',
+    tooltip: 'League game scores, achievements, and mode variety.',
   },
   {
     key: 'social',
     label: 'Social',
     max: 100,
-    color: '#fb923c',
-    icon: '\u{1F465}',
-    tooltip: 'Win challenges, scan wallets, complete quests.',
+    color: '#ef4444',
+    iconSrc: '/hub/arena.png',
+    tooltip: 'Arena opponents, challenge participation, tournaments, and community reviews.',
   },
   {
     key: 'engagement',
     label: 'Engagement',
     max: 100,
     color: '#f472b6',
-    icon: '\u26A1',
-    tooltip: 'Complete quests, maintain streaks, scan wallets.',
+    iconSrc: '/hub/quests.png',
+    tooltip: 'Personal app activity: quests, streaks, and scans.',
   },
 ];
-
-function DetailRow({
-  label,
-  raw,
-  pts,
-  max,
-  color,
-}: {
-  label: string;
-  raw: string;
-  pts: number;
-  max?: number;
-  color: string;
-}) {
-  return (
-    <div className="flex items-center justify-between text-[9px] py-0.5">
-      <span className="text-white/40">{label}</span>
-      <span className="text-white/30 font-mono">
-        {raw && (
-          <>
-            <span className="text-white/20">{raw}</span>
-            {' \u2192 '}
-          </>
-        )}
-        <span style={{ color }}>{pts}</span>
-        {max != null && <span className="text-white/15">/{max}</span>}
-      </span>
-    </div>
-  );
-}
-
-function ExpandedDetails({ barKey, details, color }: { barKey: BarKey; details: ScoreDetails; color: string }) {
-  try {
-    switch (barKey) {
-      case 'onchain': {
-        const d = details?.onchain;
-        if (!d)
-          return (
-            <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5">
-              <span className="text-[8px] text-white/20">Scan wallet to see on-chain breakdown</span>
-            </div>
-          );
-        const sb = d.scoreBreakdown;
-        const cappedScore = Math.min(d.identityScore ?? 0, 400);
-        const rows: { label: string; raw: string; pts: number; max: number }[] = [];
-        if (sb && typeof sb === 'object') {
-          if (sb.solBalance && typeof sb.solBalance.pts === 'number')
-            rows.push({
-              label: 'SOL Balance',
-              raw: `${sb.solBalance.raw ?? 0} SOL`,
-              pts: sb.solBalance.pts,
-              max: sb.solBalance.max ?? 40,
-            });
-          if (sb.walletAge && typeof sb.walletAge.pts === 'number')
-            rows.push({
-              label: 'Wallet Age',
-              raw: `${sb.walletAge.raw ?? 0} days`,
-              pts: sb.walletAge.pts,
-              max: sb.walletAge.max ?? 100,
-            });
-          if (sb.transactions && typeof sb.transactions.pts === 'number')
-            rows.push({
-              label: 'Transactions',
-              raw: `${sb.transactions.raw ?? 0}`,
-              pts: sb.transactions.pts,
-              max: sb.transactions.max ?? 80,
-            });
-          if (sb.nfts && typeof sb.nfts.pts === 'number')
-            rows.push({ label: 'NFTs', raw: `${sb.nfts.raw ?? 0}`, pts: sb.nfts.pts, max: sb.nfts.max ?? 32 });
-          if (sb.defiActivity && typeof sb.defiActivity.pts === 'number')
-            rows.push({
-              label: 'DeFi Activity',
-              raw: `${(sb.defiActivity as Record<string, unknown>).swaps ?? 0} swaps, ${(sb.defiActivity as Record<string, unknown>).protocols ?? 0} proto`,
-              pts: sb.defiActivity.pts,
-              max: sb.defiActivity.max ?? 30,
-            });
-          if (sb.badges && sb.badges.pts > 0)
-            rows.push({
-              label: `Badges (${sb.badges.items?.join(', ') || ''})`,
-              raw: '',
-              pts: sb.badges.pts,
-              max: sb.badges.max ?? 68,
-            });
-          if (sb.collection && sb.collection.pts > 0)
-            rows.push({
-              label: `Collection (${sb.collection.items?.join(', ') || ''})`,
-              raw: '',
-              pts: sb.collection.pts,
-              max: sb.collection.max ?? 50,
-            });
-        }
-        return (
-          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
-            {rows.length > 0 ? (
-              <>
-                {rows.map((r) => (
-                  <DetailRow key={r.label} label={r.label} raw={r.raw} pts={r.pts} max={r.max} color={color} />
-                ))}
-                <div className="flex justify-end text-[9px] font-mono pt-0.5 border-t border-white/5">
-                  <span style={{ color }}>On-Chain: {cappedScore}/400</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <DetailRow label="Identity Score" raw="" pts={cappedScore} max={400} color={color} />
-                {d.hasSeeker && <DetailRow label="Seeker NFT" raw="owned" pts={20} max={20} color={color} />}
-                {d.hasPreorder && <DetailRow label="Visionary NFT" raw="owned" pts={15} max={15} color={color} />}
-                {d.hasCombo && <DetailRow label="Binary Sun Combo" raw="both NFTs" pts={15} max={15} color={color} />}
-              </>
-            )}
-          </div>
-        );
-      }
-      case 'sybilTrust': {
-        const d = details?.sybilTrust;
-        if (!d) return null;
-        const rawTrust = typeof d.rawTrustScore === 'number' ? d.rawTrustScore : (d.trustScore ?? 0);
-        const baseCompositeTrust =
-          typeof d.baseCompositeTrust === 'number'
-            ? d.baseCompositeTrust
-            : Math.max(
-                0,
-                (typeof d.effectiveTrust === 'number' ? d.effectiveTrust : (d.adjustedTrust ?? rawTrust)) -
-                  (d.recoveryBonus ?? 0),
-              );
-        const effectiveTrust =
-          typeof d.effectiveTrust === 'number'
-            ? d.effectiveTrust
-            : typeof d.adjustedTrust === 'number'
-              ? d.adjustedTrust
-              : rawTrust;
-        const rawPts = Math.min(250, Math.round((rawTrust / 100) * 250));
-        const basePts = Math.min(250, Math.round((baseCompositeTrust / 100) * 250));
-        const effectiveBasePts = Math.min(250, Math.round((effectiveTrust / 100) * 250));
-        const badgeBonus = d.badgeBonus ?? 0;
-        const finalPts = Math.min(250, Math.max(0, effectiveBasePts + badgeBonus));
-        return (
-          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
-            <DetailRow label="Raw Detector Trust" raw={`${rawTrust}/100`} pts={rawPts} max={250} color={color} />
-            {d.verdictLabel && (
-              <DetailRow
-                label={`Verdict Base (${d.verdictLabel})`}
-                raw={`${baseCompositeTrust}/100`}
-                pts={basePts}
-                max={250}
-                color={color}
-              />
-            )}
-            <DetailRow
-              label="Recovery Bonus"
-              raw={
-                typeof d.recoveryBonus === 'number'
-                  ? `+${d.recoveryBonus}${typeof d.recoveryCap === 'number' ? ` (cap ${d.recoveryCap})` : ''}`
-                  : ''
-              }
-              pts={d.recoveryBonus ?? 0}
-              max={typeof d.recoveryCap === 'number' ? d.recoveryCap : 25}
-              color={color}
-            />
-            <DetailRow
-              label="Effective Trust"
-              raw={`${effectiveTrust}/100`}
-              pts={effectiveBasePts}
-              max={250}
-              color={color}
-            />
-            <DetailRow label="Badge Bonus" raw="" pts={badgeBonus} max={30} color={color} />
-            <div className="flex justify-end text-[9px] font-mono pt-0.5 border-t border-white/5">
-              <span style={{ color }}>Sybil Trust: {finalPts}/250</span>
-            </div>
-            {finalPts < 100 && (
-              <Link to="/recovery" className="text-xs text-amber-400 hover:underline">
-                Tips to improve →
-              </Link>
-            )}
-          </div>
-        );
-      }
-      case 'humanProof': {
-        const d = details?.humanProof;
-        if (!d)
-          return (
-            <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5">
-              <span className="text-[8px] text-white/20">No game data yet</span>
-            </div>
-          );
-        return (
-          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
-            <DetailRow
-              label="Game Scores"
-              raw={`${d.gameTypesCount ?? 0} types`}
-              pts={d.gameScoreTotal ?? 0}
-              max={80}
-              color={color}
-            />
-            <DetailRow
-              label="Game Diversity"
-              raw={`${d.gameTypesCount ?? 0} types`}
-              pts={d.gameDiversity ?? 0}
-              max={30}
-              color={color}
-            />
-            <DetailRow
-              label="Achievements"
-              raw={`${d.achievementCount ?? 0} unlocked`}
-              pts={d.achievementPts ?? 0}
-              max={40}
-              color={color}
-            />
-            {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={30} color={color} />}
-          </div>
-        );
-      }
-      case 'social': {
-        const d = details?.social;
-        if (!d)
-          return (
-            <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5">
-              <span className="text-[8px] text-white/20">No social data yet</span>
-            </div>
-          );
-        return (
-          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
-            <DetailRow
-              label="Challenges Won"
-              raw={`${d.challengesWon ?? 0}`}
-              pts={d.challengePts ?? 0}
-              max={32}
-              color={color}
-            />
-            <DetailRow
-              label="Scans Done"
-              raw={`${details?.social?.scanCount ?? details?.engagement?.scanCount ?? 0}`}
-              pts={details?.social?.scanPts ?? details?.engagement?.scanPts ?? 0}
-              max={28}
-              color={color}
-            />
-            <DetailRow
-              label="Quests Done"
-              raw={`${d.questsCompleted ?? details?.engagement?.questsCompleted ?? 0}`}
-              pts={d.questPts ?? 0}
-              max={16}
-              color={color}
-            />
-            {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={24} color={color} />}
-          </div>
-        );
-      }
-      case 'engagement': {
-        const d = details?.engagement;
-        if (!d)
-          return (
-            <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5">
-              <span className="text-[8px] text-white/20">No engagement data yet</span>
-            </div>
-          );
-        return (
-          <div className="mt-1.5 mx-1 border-t border-white/5 pt-1.5 space-y-0.5">
-            <DetailRow
-              label="Quests"
-              raw={`${d.questsCompleted ?? 0} done`}
-              pts={d.questPts ?? 0}
-              max={40}
-              color={color}
-            />
-            <DetailRow label="Streak" raw={`${d.streakDays ?? 0} days`} pts={d.streakPts ?? 0} max={22} color={color} />
-            <DetailRow label="Scans" raw={`${d.scanCount ?? 0}`} pts={d.scanPts ?? 0} max={14} color={color} />
-            {<DetailRow label="Badge Bonus" raw="" pts={d.badgeBonus ?? 0} max={24} color={color} />}
-          </div>
-        );
-      }
-      default:
-        return null;
-    }
-  } catch (err) {
-    console.error('[CompositeBreakdown] ExpandedDetails crash:', barKey, err);
-    return (
-      <div className="mt-1.5 mx-1 border-t border-red-500/20 pt-1.5">
-        <span className="text-[8px] text-red-400">Error loading {barKey} details</span>
-      </div>
-    );
-  }
-}
 
 function InfoTooltip({ text, color }: { text: string; color: string }) {
   return (
@@ -362,6 +79,392 @@ function InfoTooltip({ text, color }: { text: string; color: string }) {
   );
 }
 
+function SummaryPanel({
+  title,
+  value,
+  max,
+  status,
+  description,
+  factors,
+  color,
+  action,
+}: {
+  title: string;
+  value: number;
+  max: number;
+  status: string;
+  description: string;
+  factors: SummaryFactor[];
+  color: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="mt-1.5 mx-1 border-t border-white/5 pt-2">
+      <div className="mb-1.5 flex items-center justify-between gap-3 px-1">
+        <div className="min-w-0 truncate text-[8px] font-black uppercase tracking-[0.14em]" style={{ color }}>
+          {title}
+        </div>
+        <div className="shrink-0 text-right font-mono text-[10px] font-black tabular-nums text-white/55">
+          <span style={{ color }}>{value}</span>
+          <span className="text-white/20">/{max}</span>
+          <span className="mx-1 text-white/15">·</span>
+          <span className="text-white/35">{status}</span>
+        </div>
+      </div>
+      <div className="rounded-2xl border border-white/[0.045] bg-black/[0.14] px-2 py-2 shadow-inner shadow-black/20">
+        <p className="mb-1.5 px-0.5 text-[8.5px] leading-snug text-white/32">{description}</p>
+        {factors.length > 0 && (
+          <div className="space-y-1.5">
+            {factors.map((factor) => (
+              <div
+                key={factor.label}
+                className="flex min-h-7 items-center justify-between gap-3 rounded-xl bg-white/[0.025] px-2.5 py-1.5"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-[8px] font-bold uppercase tracking-[0.1em] text-white/32">
+                    {factor.label}
+                  </div>
+                  {factor.hint && (
+                    <div className="mt-0.5 truncate font-mono text-[8px] text-white/20">{factor.hint}</div>
+                  )}
+                </div>
+                <div className="shrink-0 truncate text-right font-mono text-[10px] font-semibold text-white/65">
+                  {factor.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {action && <div className="pt-1.5">{action}</div>}
+      </div>
+    </div>
+  );
+}
+
+function scoreStatus(value: number, max: number) {
+  const pct = max > 0 ? value / max : 0;
+  if (pct >= 0.8) return 'Strong';
+  if (pct >= 0.55) return 'Good';
+  if (pct >= 0.3) return 'Limited';
+  if (value > 0) return 'Thin';
+  return 'Empty';
+}
+
+function formatCount(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '0';
+}
+
+function formatPts(pts: unknown, max?: unknown) {
+  const safePts = typeof pts === 'number' && Number.isFinite(pts) ? Math.max(0, Math.round(pts)) : 0;
+  const safeMax = typeof max === 'number' && Number.isFinite(max) ? Math.max(0, Math.round(max)) : null;
+  return safeMax != null ? `${safePts}/${safeMax}` : String(safePts);
+}
+
+function scoredFactor(label: string, hint: string, pts: unknown, max: unknown): SummaryFactor & { pts: number } {
+  const safePts = typeof pts === 'number' && Number.isFinite(pts) ? Math.max(0, Math.round(pts)) : 0;
+  const safeMax = typeof max === 'number' && Number.isFinite(max) ? Math.max(0, Math.round(max)) : 0;
+  return { label, hint, pts: safePts, value: formatPts(safePts, safeMax) };
+}
+
+function cappedFactors(rows: Array<SummaryFactor & { pts: number }>, cap: number): SummaryFactor[] {
+  let remaining = Math.max(0, cap);
+  return rows.map((row) => {
+    const counted = Math.min(row.pts, remaining);
+    remaining -= counted;
+    const maxMatch = row.value.match(/\/(\d+)$/);
+    const max = maxMatch ? Number(maxMatch[1]) : row.pts;
+    return {
+      label: row.label,
+      hint: counted < row.pts ? `${row.hint} · capped from ${row.pts}` : row.hint,
+      value: formatPts(counted, max),
+    };
+  });
+}
+
+function frameBonusFactor(finalValue: number, baseValue: number): SummaryFactor[] {
+  const bonusPts = Math.max(0, Math.round(finalValue - baseValue));
+  return bonusPts > 0 ? [{ label: 'Card Frame', hint: 'Equipped visual frame', value: `+${bonusPts}` }] : [];
+}
+
+function sumPoints(rows: Array<{ pts?: unknown }>) {
+  return rows.reduce(
+    (total, row) => total + (typeof row.pts === 'number' && Number.isFinite(row.pts) ? row.pts : 0),
+    0,
+  );
+}
+
+function TrustContext({
+  details,
+  finalValue,
+  color,
+}: {
+  details: ScoreDetails['sybilTrust'] | undefined;
+  finalValue: number;
+  color: string;
+}) {
+  if (!details) return null;
+  const walletTrust =
+    typeof details.effectiveTrust === 'number'
+      ? details.effectiveTrust
+      : typeof details.adjustedTrust === 'number'
+        ? details.adjustedTrust
+        : (details.trustScore ?? 0);
+  const rawTrust = typeof details.rawTrustScore === 'number' ? details.rawTrustScore : (details.trustScore ?? 0);
+  const baseTrust = typeof details.baseCompositeTrust === 'number' ? details.baseCompositeTrust : rawTrust;
+  const recoveryBonus = typeof details.recoveryBonus === 'number' ? details.recoveryBonus : 0;
+  const badgeBonus = typeof details.badgeBonus === 'number' ? details.badgeBonus : 0;
+  const baseTrustImpact = Math.max(0, Math.round((baseTrust / 100) * 250));
+  const recoveryImpact = Math.max(0, Math.round(((walletTrust - baseTrust) / 100) * 250));
+  const badgeImpact = Math.max(0, badgeBonus);
+  const baseImpact = Math.min(250, baseTrustImpact + recoveryImpact + badgeImpact);
+  const status =
+    details.verdictLabel ||
+    (walletTrust >= 80 ? 'Looks organic' : walletTrust >= 50 ? 'Building trust' : 'Needs proof');
+  const needsRecovery = walletTrust < 80;
+
+  return (
+    <SummaryPanel
+      title="Trust"
+      value={finalValue}
+      max={250}
+      status={status}
+      description="Only score-point rows below are added. Raw trust stays in hints so it is not counted twice."
+      factors={[
+        {
+          label: 'Verdict Trust',
+          hint: `Raw ${Math.round(rawTrust)}/100 · ${status}`,
+          value: formatPts(baseTrustImpact, 250),
+        },
+        {
+          label: 'Recovery Impact',
+          hint: recoveryBonus > 0 ? `+${recoveryBonus}/100 trust converted to score` : 'No recovery boost',
+          value: formatPts(recoveryImpact, 250),
+        },
+        ...(badgeImpact > 0
+          ? [{ label: 'Trust Badges', hint: 'Verified trust badges', value: formatPts(badgeImpact, 250) }]
+          : []),
+        ...frameBonusFactor(finalValue, baseImpact),
+      ]}
+      color={color}
+      action={
+        needsRecovery ? (
+          <Link
+            to="/recovery"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex h-6 items-center rounded-md border border-amber-400/15 bg-amber-400/[0.06] px-2 text-[9px] font-black uppercase tracking-[0.08em] text-amber-300/80 hover:border-amber-300/25 hover:bg-amber-300/[0.10] hover:text-amber-200"
+          >
+            Recovery plan →
+          </Link>
+        ) : undefined
+      }
+    />
+  );
+}
+
+function ExpandedDetails({
+  barKey,
+  details,
+  color,
+  finalValue,
+}: {
+  barKey: BarKey;
+  details: ScoreDetails;
+  color: string;
+  finalValue: number;
+}) {
+  try {
+    switch (barKey) {
+      case 'sybilTrust':
+        return <TrustContext details={details?.sybilTrust} finalValue={finalValue} color={color} />;
+      case 'onchain': {
+        const d = details?.onchain;
+        if (!d) return null;
+        const sb = d.scoreBreakdown;
+        const defi = sb?.defiActivity as Record<string, unknown> | undefined;
+        const rows = [
+          {
+            label: 'SOL Balance',
+            hint: `${formatCount(sb?.solBalance?.raw)} SOL`,
+            value: formatPts(sb?.solBalance?.pts, sb?.solBalance?.max),
+            pts: sb?.solBalance?.pts,
+          },
+          {
+            label: 'Wallet Age',
+            hint: `${formatCount(sb?.walletAge?.raw)} days`,
+            value: formatPts(sb?.walletAge?.pts, sb?.walletAge?.max),
+            pts: sb?.walletAge?.pts,
+          },
+          {
+            label: 'Transactions',
+            hint: formatCount(sb?.transactions?.raw),
+            value: formatPts(sb?.transactions?.pts, sb?.transactions?.max),
+            pts: sb?.transactions?.pts,
+          },
+          {
+            label: 'NFTs',
+            hint: formatCount(sb?.nfts?.raw),
+            value: formatPts(sb?.nfts?.pts, sb?.nfts?.max),
+            pts: sb?.nfts?.pts,
+          },
+          {
+            label: 'DeFi Activity',
+            hint: `${formatCount(defi?.swaps)} swaps · ${formatCount(defi?.protocols)} protocols`,
+            value: formatPts(sb?.defiActivity?.pts, sb?.defiActivity?.max),
+            pts: sb?.defiActivity?.pts,
+          },
+          {
+            label: 'Badges',
+            hint: (sb?.badges?.items || []).join(', ') || 'None',
+            value: formatPts(sb?.badges?.pts, sb?.badges?.max),
+            pts: sb?.badges?.pts,
+          },
+          {
+            label: 'Collection',
+            hint: (sb?.collection?.items || []).join(', ') || 'None',
+            value: formatPts(sb?.collection?.pts, sb?.collection?.max),
+            pts: sb?.collection?.pts,
+          },
+        ];
+        const basePts = Math.round(sumPoints(rows));
+        return (
+          <SummaryPanel
+            title="On-Chain"
+            value={finalValue}
+            max={400}
+            status={scoreStatus(finalValue, 400)}
+            description="SOL, age, transaction history, NFTs, DeFi, badges and collection points."
+            factors={[
+              ...rows.map(({ label, hint, value }) => ({ label, hint, value })),
+              ...frameBonusFactor(finalValue, basePts),
+            ]}
+            color={color}
+          />
+        );
+      }
+      case 'humanProof': {
+        const d = details?.humanProof;
+        if (!d) return null;
+        return (
+          <SummaryPanel
+            title="Games"
+            value={finalValue}
+            max={150}
+            status={scoreStatus(finalValue, 150)}
+            description="League results only: scores, played modes and unlocked game achievements."
+            factors={[
+              {
+                label: 'Game Scores',
+                hint: `${formatCount(d.gameTypesCount)} modes`,
+                value: formatPts(d.gameScoreTotal, 80),
+              },
+              {
+                label: 'Mode Diversity',
+                hint: `${formatCount(d.gameTypesCount)} modes`,
+                value: formatPts(d.gameDiversity, 30),
+              },
+              {
+                label: 'Achievements',
+                hint: `${formatCount(d.achievementCount)} unlocked`,
+                value: formatPts(d.achievementPts, 40),
+              },
+              {
+                label: 'Game Badges',
+                hint: (d.badgeBonus ?? 0) > 0 ? 'Game badge active' : 'None',
+                value: formatPts(d.badgeBonus, 30),
+              },
+              ...frameBonusFactor(
+                finalValue,
+                sumPoints([
+                  { pts: d.gameScoreTotal },
+                  { pts: d.gameDiversity },
+                  { pts: d.achievementPts },
+                  { pts: d.badgeBonus },
+                ]),
+              ),
+            ]}
+            color={color}
+          />
+        );
+      }
+      case 'social': {
+        const d = details?.social;
+        if (!d) return null;
+        const socialRows = cappedFactors(
+          [
+            scoredFactor('Arena Wins', `${formatCount(d.challengesWon)} wins`, d.arenaWinPts ?? d.challengePts, 30),
+            scoredFactor('Arena Matches', `${formatCount(d.challengesPlayed)} completed`, d.arenaActivityPts, 20),
+            scoredFactor('Opponents', `${formatCount(d.uniqueOpponents)} wallets`, d.opponentPts, 20),
+            scoredFactor('Tournaments', `${formatCount(d.tournamentsPlayed)} joined`, d.tournamentPts, 20),
+            scoredFactor('Community Reviews', `${formatCount(d.communityReviews)} reports`, d.communityPts, 20),
+            scoredFactor('Arena Badge', (d.badgeBonus ?? 0) > 0 ? 'Arena badge active' : 'None', d.badgeBonus, 10),
+          ],
+          100,
+        );
+        return (
+          <SummaryPanel
+            title="Social"
+            value={finalValue}
+            max={100}
+            status={scoreStatus(finalValue, 100)}
+            description="Interaction with other participants: Arena matches, opponents, tournaments and Sybil Hunt reviews."
+            factors={[
+              ...socialRows,
+              ...frameBonusFactor(
+                finalValue,
+                Math.min(
+                  100,
+                  sumPoints([
+                    { pts: d.arenaWinPts ?? d.challengePts },
+                    { pts: d.arenaActivityPts },
+                    { pts: d.opponentPts },
+                    { pts: d.tournamentPts },
+                    { pts: d.communityPts },
+                    { pts: d.badgeBonus },
+                  ]),
+                ),
+              ),
+            ]}
+            color={color}
+          />
+        );
+      }
+      case 'engagement': {
+        const d = details?.engagement;
+        if (!d) return null;
+        return (
+          <SummaryPanel
+            title="Engagement"
+            value={finalValue}
+            max={100}
+            status={scoreStatus(finalValue, 100)}
+            description="Personal product activity only: quests, scan usage and streak consistency."
+            factors={[
+              { label: 'Quests', hint: `${formatCount(d.questsCompleted)} done`, value: formatPts(d.questPts, 40) },
+              { label: 'Streak', hint: `${formatCount(d.streakDays)} days`, value: formatPts(d.streakPts, 22) },
+              { label: 'Scans', hint: formatCount(d.scanCount), value: formatPts(d.scanPts, 14) },
+              {
+                label: 'Activity Badges',
+                hint: (d.badgeBonus ?? 0) > 0 ? 'Activity badge active' : 'None',
+                value: formatPts(d.badgeBonus, 24),
+              },
+              ...frameBonusFactor(
+                finalValue,
+                sumPoints([{ pts: d.questPts }, { pts: d.streakPts }, { pts: d.scanPts }, { pts: d.badgeBonus }]),
+              ),
+            ]}
+            color={color}
+          />
+        );
+      }
+      default:
+        return null;
+    }
+  } catch (err) {
+    console.error('[CompositeBreakdown] ExpandedDetails crash:', barKey, err);
+    return null;
+  }
+}
+
 export default function CompositeScoreBreakdown({ breakdown, details, compact = false }: BreakdownProps) {
   const [expandedBar, setExpandedBar] = useState<BarKey | null>(null);
   const canExpand = Boolean(details);
@@ -371,40 +474,56 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
       {BARS.map((bar) => {
         const value = breakdown[bar.key] || 0;
         const pct = Math.min(100, (value / bar.max) * 100);
+        const finalValue = Math.min(value, bar.max);
         const isExpanded = expandedBar === bar.key;
 
         return (
-          <div
-            key={bar.key}
-            className={canExpand ? 'cursor-pointer' : ''}
-            onClick={() => canExpand && setExpandedBar(isExpanded ? null : bar.key)}
-          >
-            <div className={`flex justify-between items-center ${compact ? 'text-[10px]' : 'text-xs'} mb-1`}>
-              <span className="text-white/60 flex items-center gap-1">
-                {canExpand && (
-                  <span
-                    className={`text-white/20 text-[8px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                  >
-                    {'\u25BE'}
-                  </span>
-                )}
-                <span>{bar.icon}</span>
-                <span>{bar.label}</span>
-              </span>
-              <span className="flex items-center gap-1">
-                <InfoTooltip text={bar.tooltip} color={bar.color} />
-                <span style={{ color: bar.color }} className="font-mono">
-                  {Math.min(value, bar.max)}/{bar.max}
+          <div key={bar.key}>
+            <button
+              type="button"
+              data-testid={`score-row-${bar.key}`}
+              aria-expanded={isExpanded}
+              disabled={!canExpand}
+              className={`w-full text-left ${canExpand ? 'cursor-pointer' : 'cursor-default'}`}
+              onClick={() => canExpand && setExpandedBar(isExpanded ? null : bar.key)}
+            >
+              <div className={`flex justify-between items-center ${compact ? 'text-[10px]' : 'text-xs'} mb-1`}>
+                <span className="text-white/60 flex items-center gap-1">
+                  {canExpand && (
+                    <span
+                      className={`text-white/20 text-[8px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                    >
+                      {'\u25BE'}
+                    </span>
+                  )}
+                  <img
+                    src={bar.iconSrc}
+                    alt=""
+                    aria-hidden="true"
+                    className={`${compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} shrink-0 object-contain`}
+                    loading="lazy"
+                    draggable={false}
+                    style={{ filter: `drop-shadow(0 0 5px ${bar.color}66)` }}
+                  />
+                  <span>{bar.label}</span>
                 </span>
-              </span>
-            </div>
-            <div className={`${compact ? 'h-1.5' : 'h-2'} bg-white/10 rounded-full overflow-hidden`}>
-              <div
-                className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${pct}%`, backgroundColor: bar.color }}
-              />
-            </div>
-            {isExpanded && details && <ExpandedDetails barKey={bar.key} details={details} color={bar.color} />}
+                <span className="flex items-center gap-1">
+                  <InfoTooltip text={bar.tooltip} color={bar.color} />
+                  <span style={{ color: bar.color }} className="font-mono">
+                    {finalValue}/{bar.max}
+                  </span>
+                </span>
+              </div>
+              <div className={`${compact ? 'h-1.5' : 'h-2'} bg-white/10 rounded-full overflow-hidden`}>
+                <div
+                  className="h-full rounded-full transition-all duration-700"
+                  style={{ width: `${pct}%`, backgroundColor: bar.color }}
+                />
+              </div>
+            </button>
+            {isExpanded && details && (
+              <ExpandedDetails barKey={bar.key} details={details} color={bar.color} finalValue={finalValue} />
+            )}
           </div>
         );
       })}

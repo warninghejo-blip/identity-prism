@@ -3,35 +3,21 @@
  * 3D rotating glass prism background + Glassmorphism Bento Box navigation grid.
  * Mini Identity Passport replaces the old "My Card" button.
  */
-import { useRef, useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { startFadeTransition } from '@/lib/fadeTransition';
 import { getHeliusProxyUrl } from '@/constants';
 import { getTierIcon } from '@/lib/constants/tierColors';
-import { toast } from 'sonner';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { getBoostedCompositeScore } from '@/lib/shipStats';
 import { fetchSybilAnalysis } from '@/components/prism/shared';
+import TrustGradeBadge from '@/components/TrustGradeBadge';
 import type { PlanetTier } from '@/hooks/useWalletData';
-import {
-  Trophy,
-  Flame,
-  Store,
-  Swords,
-  Medal,
-  ScrollText,
-  ArrowRight,
-  Shield,
-  Eye,
-  Search,
-  Zap,
-  LogOut,
-  Bell,
-} from 'lucide-react';
+import { ArrowRight, Eye, Zap, LogOut, Bell, ChevronDown } from 'lucide-react';
 import { useRangerProgress } from '@/hooks/useRangerProgress';
 
 /* ── Tier color map ── */
@@ -46,21 +32,6 @@ const TIER_COLORS: Record<string, { text: string; glow: string; bg: string }> = 
   jupiter: { text: '#fb923c', glow: 'rgba(251,146,60,0.3)', bg: 'from-orange-500/20 to-orange-600/20' },
   sun: { text: '#fde047', glow: 'rgba(253,224,71,0.4)', bg: 'from-yellow-500/20 to-yellow-600/20' },
   binary_sun: { text: '#f0abfc', glow: 'rgba(240,171,252,0.4)', bg: 'from-fuchsia-500/20 to-fuchsia-600/20' },
-};
-
-const SYBIL_GRADE_COLORS: Record<string, string> = {
-  'A+': '#22c55e',
-  A: '#22c55e',
-  'A-': '#4ade80',
-  'B+': '#86efac',
-  B: '#facc15',
-  'B-': '#fbbf24',
-  'C+': '#fb923c',
-  C: '#f97316',
-  'C-': '#ef4444',
-  D: '#ef4444',
-  F: '#dc2626',
-  'N/A': '#64748b',
 };
 
 /* ── Props ── */
@@ -179,54 +150,57 @@ const MODULES: ModuleDef[] = [
 /* ── NavCard component — large icon + label below, no frame ── */
 function NavCard({
   label,
-  desc,
-  icon,
   iconName,
   colorClass,
-  delay,
   route,
 }: {
   label: string;
-  desc: string;
-  icon: ReactNode;
   iconName: string;
   colorClass: string;
-  delay: number;
   route: string;
 }) {
-  const navigate = useNavigate();
-  const handleActivate = () => {
-    trackInternalNavigation();
-    navigate(route);
-  };
-
   return (
-    <motion.button
-      type="button"
-      aria-label={label}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.25, delay }}
-      onClick={handleActivate}
-      className="group flex min-h-[96px] w-full flex-col items-center justify-center gap-1.5 cursor-pointer pointer-events-auto active:scale-90 transition-transform overflow-visible rounded-lg bg-transparent p-0 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
-    >
-      <div className="relative">
-        <HubIcon name={iconName} size={64} />
-        <div
-          className={`absolute -inset-3 bg-gradient-to-br ${colorClass} rounded-full blur-xl opacity-0 group-hover:opacity-25 transition-opacity duration-500 -z-10`}
-        />
-      </div>
-      <span className="text-[10px] font-bold text-white/50 group-hover:text-white/80 transition-colors text-center leading-tight tracking-wide">
-        {label}
-      </span>
-    </motion.button>
+    <motion.div variants={hubItemVariants} className="pointer-events-auto">
+      <a
+        href={route}
+        onClick={trackInternalNavigation}
+        aria-label={label}
+        className="group flex min-h-[96px] w-full flex-col items-center justify-center gap-1.5 cursor-pointer pointer-events-auto active:scale-90 transition-transform overflow-visible rounded-lg bg-transparent p-0 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+      >
+        <div className="relative">
+          <HubIcon name={iconName} size={64} />
+          <div
+            className={`absolute -inset-3 bg-gradient-to-br ${colorClass} rounded-full blur-xl opacity-0 group-hover:opacity-25 transition-opacity duration-500 -z-10`}
+          />
+        </div>
+        <span className="text-[10px] font-bold text-white/50 group-hover:text-white/80 transition-colors text-center leading-tight tracking-wide">
+          {label}
+        </span>
+      </a>
+    </motion.div>
   );
 }
 
-/* ── Truncate address ── */
-function truncAddr(a: string) {
-  return a.length > 8 ? `${a.slice(0, 4)}...${a.slice(-4)}` : a;
-}
+const hubContentVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      delayChildren: 0.06,
+      staggerChildren: 0.035,
+    },
+  },
+};
+
+const hubItemVariants = {
+  hidden: { opacity: 0, y: 10, filter: 'blur(8px)' },
+  show: {
+    opacity: 1,
+    y: 0,
+    filter: 'blur(0px)',
+    transition: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
+  },
+};
 
 /* ── Mini Identity Passport (Premium Redesign) ── */
 
@@ -254,7 +228,6 @@ function MiniPassport({
   breakdown?: { onchain: number; sybilTrust: number; humanProof: number; social: number; engagement: number } | null;
 }) {
   const tierColor = TIER_COLORS[tier] ?? TIER_COLORS.mercury;
-  const gradeColor = SYBIL_GRADE_COLORS[sybilGrade ?? 'N/A'] ?? '#64748b';
   const rangerProgress = useRangerProgress(walletAddress);
   const tierLabel = tier === 'binary_sun' ? 'BINARY SUN' : tier.toUpperCase();
   const docNo = walletAddress.slice(0, 8).toUpperCase();
@@ -276,18 +249,11 @@ function MiniPassport({
   const strokeDashMobile = circMobile * pct;
 
   return (
-    <motion.div
-      role="button"
-      tabIndex={0}
+    <motion.button
+      type="button"
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onClick();
-        }
-      }}
       className="passport-holo-shimmer relative w-full rounded-2xl overflow-hidden bg-gradient-to-br from-white/[0.06] via-white/[0.03] to-white/[0.01] backdrop-blur-xl border border-white/[0.1] cursor-pointer hover:bg-white/[0.08] transition-all duration-500 hover:border-white/[0.2] text-left pointer-events-auto group focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
     >
       <div
@@ -342,12 +308,7 @@ function MiniPassport({
                 >
                   {tierLabel}
                 </span>
-                <div className="flex items-center gap-0.5">
-                  <Shield size={8} style={{ color: gradeColor, opacity: 0.6 }} />
-                  <span className="text-[8px] font-bold" style={{ color: gradeColor, opacity: 0.7 }}>
-                    {sybilGrade ?? '...'}
-                  </span>
-                </div>
+                {sybilGrade && <TrustGradeBadge grade={sybilGrade} size="xs" />}
               </div>
               {/* Coins */}
               <div className="flex items-center gap-1">
@@ -395,15 +356,6 @@ function MiniPassport({
             <span className="text-[8px] text-white/20 font-mono">
               {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
             </span>
-            {sybilGrade && ['D', 'F'].includes(sybilGrade) && (
-              <Link
-                to="/recovery"
-                onClick={(event) => event.stopPropagation()}
-                className="mt-1 inline-flex text-[9px] font-bold text-amber-400 hover:text-amber-300 underline"
-              >
-                Improve Score →
-              </Link>
-            )}
           </div>
         </div>
 
@@ -412,14 +364,21 @@ function MiniPassport({
           <div className="mt-2.5 grid grid-cols-5 gap-1.5">
             {(
               [
-                { key: 'onchain', label: 'On-Chain', color: '#22d3ee', max: 400 },
-                { key: 'sybilTrust', label: 'Trust', color: '#a78bfa', max: 250 },
-                { key: 'humanProof', label: 'Human', color: '#34d399', max: 150 },
-                { key: 'social', label: 'Social', color: '#fb923c', max: 100 },
-                { key: 'engagement', label: 'Activity', color: '#f472b6', max: 100 },
+                { key: 'onchain', label: 'On-Chain', icon: '/textures/Solana.png', color: '#22d3ee', max: 400 },
+                {
+                  key: 'sybilTrust',
+                  label: 'Trust',
+                  icon: '/icons/trust/trust-grade-unknown.png',
+                  color: '#a78bfa',
+                  max: 250,
+                },
+                { key: 'humanProof', label: 'Games', icon: '/hub/league.png', color: '#34d399', max: 150 },
+                { key: 'social', label: 'Social', icon: '/hub/arena.png', color: '#ef4444', max: 100 },
+                { key: 'engagement', label: 'Engage', icon: '/hub/quests.png', color: '#f472b6', max: 100 },
               ] as const
-            ).map(({ key, label, color, max }) => {
-              const val = breakdown[key] ?? 0;
+            ).map(({ key, label, icon, color, max }) => {
+              const rawValue = breakdown[key] ?? 0;
+              const val = Math.max(0, Math.min(max, Math.round(rawValue)));
               const pctBar = Math.min(val / max, 1) * 100;
               return (
                 <div key={key} className="flex flex-col items-center gap-0.5">
@@ -429,7 +388,18 @@ function MiniPassport({
                       style={{ width: `${pctBar}%`, background: `linear-gradient(90deg, ${color}60, ${color})` }}
                     />
                   </div>
-                  <span className="text-[6px] font-bold uppercase tracking-wide" style={{ color: `${color}80` }}>
+                  <span
+                    className="flex h-3 items-center justify-center gap-0.5 text-[6px] font-bold uppercase tracking-wide"
+                    style={{ color: `${color}80` }}
+                  >
+                    <img
+                      src={icon}
+                      alt=""
+                      aria-hidden="true"
+                      className="h-2 w-2 shrink-0 object-contain"
+                      loading="lazy"
+                      draggable={false}
+                    />
                     {label}
                   </span>
                 </div>
@@ -584,24 +554,7 @@ function MiniPassport({
 
         {/* Stats row: Grade / Coins / Boost */}
         <div className="flex items-center justify-center gap-3 mb-3">
-          <div
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
-            style={{ background: `${gradeColor}10`, border: `1px solid ${gradeColor}20` }}
-          >
-            <Shield size={11} style={{ color: gradeColor }} />
-            <span className="text-[11px] font-black" style={{ color: gradeColor }}>
-              {sybilGrade ?? '...'}
-            </span>
-          </div>
-          {sybilGrade && ['D', 'F'].includes(sybilGrade) && (
-            <Link
-              to="/recovery"
-              onClick={(event) => event.stopPropagation()}
-              className="text-xs text-amber-400 hover:text-amber-300 underline"
-            >
-              Improve Score →
-            </Link>
-          )}
+          <TrustGradeBadge grade={sybilGrade} size="xs" />
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl"
             style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.15)' }}
@@ -662,7 +615,7 @@ function MiniPassport({
           <div className="text-[8px] font-mono text-white/[0.1] tracking-[0.06em] truncate select-none">{mrz}</div>
         </div>
       </div>
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -747,6 +700,7 @@ export default function CosmicHub({
   const passportTier = hasCompositePassport ? compositeData.tier : (planetTier ?? 'mercury');
   const passportBreakdown = hasCompositePassport ? boostedComposite.breakdown : fallbackPassportBreakdown;
   const passportMaxScore = hasCompositePassport ? 1000 : 400;
+  const addressQuery = walletAddress ? `?address=${encodeURIComponent(walletAddress)}` : '';
 
   // Poll unread notification count
   useEffect(() => {
@@ -830,16 +784,14 @@ export default function CosmicHub({
             <span className="text-xs lg:text-sm font-bold tracking-wider text-white/90">IDENTITY PRISM</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[9px] lg:text-[10px] text-white/40 font-medium tracking-wide">ONLINE</span>
             <Link
-              to="/inbox"
+              to={`/inbox${addressQuery}`}
               onClick={trackInternalNavigation}
               aria-label={unreadCount > 0 ? `${unreadCount > 9 ? '9+' : unreadCount} notifications` : 'Notifications'}
               title="Notifications"
-              className="relative p-2 flex items-center justify-center"
+              className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.06] transition-colors hover:border-cyan-400/25 hover:bg-cyan-400/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
             >
-              <Bell className="w-5 h-5 text-white/40 hover:text-white/60 transition-colors" />
+              <Bell className="h-4 w-4 text-white/45 transition-colors" />
               {unreadCount > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center">
                   {unreadCount > 9 ? '9+' : unreadCount}
@@ -849,11 +801,11 @@ export default function CosmicHub({
             {onDisconnect && (
               <button
                 onClick={onDisconnect}
-                className="ml-1 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-white/[0.06] hover:bg-red-500/20 border border-white/[0.08] hover:border-red-500/30 transition-colors group focus-visible:ring-2 focus-visible:ring-cyan-400/50 focus-visible:outline-none"
+                className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.06] transition-colors hover:border-red-500/30 hover:bg-red-500/20 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
                 title="Disconnect wallet"
                 aria-label="Disconnect wallet"
               >
-                <LogOut className="w-3.5 h-3.5 text-white/40 group-hover:text-red-400 transition-colors" />
+                <LogOut className="h-4 w-4 text-white/45 transition-colors group-hover:text-red-400" />
               </button>
             )}
           </div>
@@ -874,14 +826,14 @@ export default function CosmicHub({
         )}
 
         {/* Main Content — mobile: vertical stack, desktop: side-by-side */}
-        <div className="flex-1 w-full max-w-5xl mx-auto px-4 lg:px-5 pt-2 pb-6 lg:pb-8 flex flex-col lg:flex-row gap-2 lg:gap-6 items-start lg:justify-center">
+        <motion.div
+          variants={hubContentVariants}
+          initial="hidden"
+          animate="show"
+          className="flex-1 w-full max-w-5xl mx-auto px-4 lg:px-5 pt-2 pb-6 lg:pb-8 flex flex-col lg:flex-row gap-2 lg:gap-6 items-start lg:justify-center"
+        >
           {/* Passport — top on mobile, left sidebar on desktop */}
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, delay: 0.05 }}
-            className="w-full lg:w-72 flex-shrink-0"
-          >
+          <motion.div variants={hubItemVariants} className="w-full lg:w-72 flex-shrink-0">
             {hasIdentity ? (
               <MiniPassport
                 walletAddress={walletAddress}
@@ -892,7 +844,7 @@ export default function CosmicHub({
                 onClick={onNavigateToCard}
                 maxScore={passportMaxScore}
                 onBuyCoins={() => {
-                  startFadeTransition(() => navigate('/vault'));
+                  startFadeTransition(() => navigate(`/vault${addressQuery}`));
                 }}
                 boostRate={boostRate}
                 breakdown={passportBreakdown}
@@ -903,21 +855,21 @@ export default function CosmicHub({
           </motion.div>
 
           {/* Navigation Grid — 4 cols icon grid, tight */}
-          <div className="w-full lg:flex-1 grid grid-cols-4 gap-y-3 gap-x-0">
-            {MODULES.map((m, i) => (
+          <motion.div
+            className="w-full lg:flex-1 grid grid-cols-4 gap-y-3 gap-x-0 pointer-events-auto"
+            variants={hubContentVariants}
+          >
+            {MODULES.map((m) => (
               <NavCard
                 key={m.id}
                 label={m.label}
-                desc={m.desc}
-                icon={m.icon}
                 iconName={m.iconName}
                 colorClass={m.colorClass}
-                delay={0.1 + i * 0.03}
-                route={m.route}
+                route={`${m.route}${addressQuery}`}
               />
             ))}
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
 
         {/* Daily Limits Table */}
         {walletAddress && <DailyLimitsTable address={walletAddress} />}
@@ -928,12 +880,15 @@ export default function CosmicHub({
 
 /* ── Daily Limits Table ── */
 function DailyLimitsTable({ address }: { address: string }) {
+  const [expanded, setExpanded] = useState(false);
   const [data, setData] = useState<{
     game: { earned: number; cap: number };
     hunt: { earned: number; cap: number };
     scan: { earned: number; cap: number };
     quiz: { earned: number; cap: number };
     nonGame: { earned: number; cap: number };
+    blackHole?: { earned: number; cap: number };
+    blackHoleCap?: number;
   } | null>(null);
 
   useEffect(() => {
@@ -950,55 +905,114 @@ function DailyLimitsTable({ address }: { address: string }) {
   const fmt = (n: number | null | undefined) => (n != null ? n.toLocaleString() : '—');
 
   // Static caps as fallback
-  const game = data?.game ?? { earned: 0, cap: 2000 };
+  const game = data?.game ?? { earned: 0, cap: 1000 };
   const scan = data?.scan ?? { earned: 0, cap: 100 };
   const hunt = data?.hunt ?? { earned: 0, cap: 500 };
   const quiz = data?.quiz ?? { earned: 0, cap: 500 };
-  const nonGame = data?.nonGame ?? { earned: 0, cap: 1500 };
+  const nonGame = data?.nonGame ?? { earned: 0, cap: 750 };
+  const blackHole = data?.blackHole ?? { earned: 0, cap: data?.blackHoleCap ?? 500 };
 
-  // Black Hole cap is not tracked by the endpoint — static
-  const bhCap = 500;
-
-  const gameRow = { label: 'Games', earned: game.earned, cap: game.cap };
-  const nonGameRow = { label: 'Non-game total', earned: nonGame.earned, cap: nonGame.cap };
+  const nonGameRemaining = Math.max(0, nonGame.cap - nonGame.earned);
+  const gameRow = { label: 'Game rewards', earned: game.earned, cap: game.cap };
+  const nonGameRow = { label: 'Non-game pool', earned: nonGame.earned, cap: nonGame.cap };
   const subRows: { label: string; earned: number; cap: number }[] = [
     { label: 'Scans', earned: scan.earned, cap: scan.cap },
     { label: 'Sybil Hunt', earned: hunt.earned, cap: hunt.cap },
     { label: 'Quiz', earned: quiz.earned, cap: quiz.cap },
-    { label: 'Black Hole', earned: 0, cap: bhCap },
+    { label: 'Black Hole', earned: blackHole.earned, cap: blackHole.cap },
   ];
 
   const colorMap: Record<string, string> = {
-    Games: '#22d3ee',
-    'Non-game total': '#a78bfa',
+    'Game rewards': '#22d3ee',
+    'Non-game pool': '#a78bfa',
     Scans: '#34d399',
     'Sybil Hunt': '#f87171',
     Quiz: '#c084fc',
     'Black Hole': '#fb923c',
   };
 
-  const renderRow = (r: { label: string; earned: number; cap: number }, variant: 'main' | 'header' | 'sub') => {
+  const getLimitState = (r: { earned: number; cap: number }, fallback: string) => {
     const ratio = r.cap > 0 ? r.earned / r.cap : 0;
     const atLimit = ratio >= 1;
     const nearLimit = !atLimit && ratio >= 0.8;
-    const barColor = atLimit ? '#f87171' : nearLimit ? '#fbbf24' : (colorMap[r.label] ?? '#22d3ee');
-    const earnColor = atLimit ? 'text-red-400' : nearLimit ? 'text-amber-400' : 'text-white';
-    const labelClass =
-      variant === 'header' ? 'text-white/80 font-semibold' : variant === 'sub' ? 'text-white/55 pl-3' : 'text-white/70';
     const pct = Math.min(100, ratio * 100);
+    return {
+      ratio,
+      pct,
+      barColor: atLimit ? '#f87171' : nearLimit ? '#fbbf24' : fallback,
+      valueClass: atLimit ? 'text-red-300' : nearLimit ? 'text-amber-300' : 'text-white/85',
+      status: atLimit ? 'FULL' : nearLimit ? 'NEAR' : 'OK',
+    };
+  };
+
+  const renderSourceRow = (r: { label: string; earned: number; cap: number }) => {
+    const state = getLimitState(r, colorMap[r.label] ?? '#22d3ee');
+    const sourceRemaining = Math.max(0, r.cap - r.earned);
+    const effectiveRemaining = Math.min(sourceRemaining, nonGameRemaining);
     return (
-      <div key={r.label} className="mb-1.5">
-        <div className="flex justify-between items-center text-[10px]">
-          <span className={labelClass}>{r.label}</span>
-          <span className="font-mono flex items-center gap-1.5">
-            <span className={earnColor}>{fmt(r.earned)}</span>
-            <span className="text-white/40">/ {fmt(r.cap)}</span>
+      <div key={r.label} className="border-l border-white/[0.08] pl-2.5 py-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate text-[9px] font-semibold text-white/58">{r.label}</span>
+          <span className="shrink-0 font-mono text-[9px] tabular-nums">
+            <span className={state.valueClass}>{fmt(r.earned)}</span>
+            <span className="text-white/28">/{fmt(r.cap)}</span>
           </span>
         </div>
-        <div className="w-full bg-white/[0.06] rounded-full h-[5px] mt-1 overflow-hidden">
+        <div className="mt-0.5 flex items-center gap-2">
+          <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${state.pct}%`,
+                background: `linear-gradient(90deg, ${state.barColor}66, ${state.barColor})`,
+              }}
+            />
+          </div>
+          <span className="shrink-0 font-mono text-[7px] text-white/38">left {fmt(effectiveRemaining)}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCompactPill = (label: string, row: { earned: number; cap: number }) => {
+    const state = getLimitState(row, '#22d3ee');
+
+    return (
+      <span className="inline-flex min-w-0 items-baseline gap-1 rounded-md bg-white/[0.035] px-1.5 py-0.5">
+        <span className="text-[8px] font-bold uppercase tracking-[0.1em] text-white/42">{label}</span>
+        <span className={`font-mono text-[10px] font-bold tabular-nums ${state.valueClass}`}>
+          {fmt(row.earned)}
+          <span className="text-white/25">/{fmt(row.cap)}</span>
+        </span>
+      </span>
+    );
+  };
+
+  const renderSummaryCard = (label: string, caption: string, row: { earned: number; cap: number }, color: string) => {
+    const state = getLimitState(row, color);
+    const remaining = Math.max(0, row.cap - row.earned);
+    return (
+      <div className="py-1">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-[9px] font-bold uppercase tracking-[0.1em] text-white/68">{label}</div>
+            <div className="truncate text-[7px] font-semibold uppercase tracking-[0.08em] text-white/28">{caption}</div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className={`font-mono text-[10px] font-black tabular-nums ${state.valueClass}`}>
+              {fmt(row.earned)}
+              <span className="text-[9px] text-white/28">/{fmt(row.cap)}</span>
+            </div>
+            <div className="font-mono text-[7px] text-white/36">left {fmt(remaining)}</div>
+          </div>
+        </div>
+        <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-white/[0.07]">
           <div
             className="h-full rounded-full transition-all duration-500"
-            style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${barColor}60, ${barColor})` }}
+            style={{
+              width: `${state.pct}%`,
+              background: `linear-gradient(90deg, ${state.barColor}66, ${state.barColor})`,
+            }}
           />
         </div>
       </div>
@@ -1009,16 +1023,72 @@ function DailyLimitsTable({ address }: { address: string }) {
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay: 0.35 }}
-      className="bg-white/[0.02] rounded-xl p-3 mx-4 mt-3 mb-2 pointer-events-auto"
+      transition={{ duration: 0.2 }}
+      className="relative mx-4 mt-2 mb-2 overflow-hidden rounded-xl border border-white/[0.1] bg-[#0b1020]/86 shadow-[0_12px_28px_rgba(0,0,0,0.28)] backdrop-blur-xl pointer-events-auto"
     >
-      <p className="text-[10px] font-bold text-white/50 mb-2.5 uppercase tracking-[0.12em]">Daily Limits</p>
-      <div>
-        {renderRow(gameRow, 'header')}
-        <div className="my-2 border-t border-white/[0.08]" />
-        {renderRow(nonGameRow, 'header')}
-        {subRows.map((r) => renderRow(r, 'sub'))}
-      </div>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="daily-limits-details"
+            initial={{ height: 0, opacity: 0, y: 8 }}
+            animate={{ height: 'auto', opacity: 1, y: 0 }}
+            exit={{ height: 0, opacity: 0, y: 8 }}
+            transition={{ duration: 0.22 }}
+            className="overflow-hidden"
+          >
+            <div className="border-b border-white/[0.07] bg-white/[0.025]">
+              <button
+                type="button"
+                data-testid="daily-limits-collapse-top"
+                onClick={() => setExpanded(false)}
+                className="flex h-8 w-full items-center justify-between gap-3 border-b border-white/[0.055] px-3 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/40"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.65)]" />
+                  <span className="truncate text-[9px] font-black uppercase tracking-[0.12em] text-white/78">
+                    Daily Limits
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="font-mono text-[8px] font-bold text-violet-200/75">
+                    pool left {fmt(nonGameRemaining)}
+                  </span>
+                  <ChevronDown size={15} className="text-white/42" />
+                </span>
+              </button>
+              <div className="px-3 pt-1.5">
+                {renderSummaryCard('Game rewards', 'all game modes', gameRow, colorMap['Game rewards'])}
+                <div className="my-0.5 border-t border-white/[0.06]" />
+                {renderSummaryCard('Non-game pool', 'shared daily cap', nonGameRow, colorMap['Non-game pool'])}
+              </div>
+              <div className="px-3 pb-1.5">{subRows.map((r) => renderSourceRow(r))}</div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {!expanded && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          data-testid="daily-limits-toggle"
+          onClick={() => setExpanded(true)}
+          className="flex min-h-10 w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/40"
+        >
+          <span className="flex min-w-0 flex-1 items-center justify-between gap-3">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.65)]" />
+              <span className="truncate text-[9px] font-black uppercase tracking-[0.12em] text-white/78">
+                Daily Limits
+              </span>
+            </span>
+            <span className="flex min-w-0 shrink-0 flex-wrap justify-end gap-x-2.5 gap-y-0.5">
+              {renderCompactPill('Games', gameRow)}
+              {renderCompactPill('Pool', nonGameRow)}
+            </span>
+          </span>
+          <ChevronDown size={16} className="shrink-0 rotate-180 text-white/35 transition-transform duration-200" />
+        </button>
+      )}
     </motion.div>
   );
 }

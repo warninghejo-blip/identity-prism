@@ -843,6 +843,27 @@ const BlackHole = () => {
         setCommissionRate(resolvedCommissionRate);
         setHolderCommissionRate(resolvedHolderCommissionRate);
         setStandardCommissionRate(resolvedStandardCommissionRate);
+      } else {
+        try {
+          const perks = await api.getIdentityPerks(targetOwner.toBase58());
+          const ownsCard = Boolean(perks?.hasIdentityPrism);
+          const resolvedCommissionRate =
+            parseNumber(perks?.blackHoleCommissionRate) ??
+            (ownsCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT);
+          const resolvedHolderCommissionRate =
+            parseNumber(perks?.holderBlackHoleCommissionRate) ?? COMMISSION_RATE_MINTED;
+          const resolvedStandardCommissionRate =
+            parseNumber(perks?.standardBlackHoleCommissionRate) ?? COMMISSION_RATE_DEFAULT;
+          setHasMintedCard(ownsCard);
+          setCommissionRate(resolvedCommissionRate);
+          setHolderCommissionRate(resolvedHolderCommissionRate);
+          setStandardCommissionRate(resolvedStandardCommissionRate);
+        } catch {
+          setHasMintedCard(false);
+          setCommissionRate(COMMISSION_RATE_DEFAULT);
+          setHolderCommissionRate(COMMISSION_RATE_MINTED);
+          setStandardCommissionRate(COMMISSION_RATE_DEFAULT);
+        }
       }
 
       // Tokens without Helius DAS price data are treated as zero-value dust

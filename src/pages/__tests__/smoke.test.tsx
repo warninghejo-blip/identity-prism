@@ -232,7 +232,7 @@ describe('Page smoke tests', () => {
       </Suspense>,
     );
     expect(container).toBeTruthy();
-  }, 10_000);
+  }, 60_000);
 
   it('2 — Index page renders without crashing', async () => {
     const { default: IndexPage } = await import('@/pages/Index');

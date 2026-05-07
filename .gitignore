@@ -11,6 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
+.agents/
+.claude/
+.superstack/
+AGENTS.md
+tmp/
 
 # Secrets & credentials
 .env
@@ -62,6 +67,7 @@ game_session_proofs.json
 temp/
 homepage/
 DEMO*.mp4
+docs/TOTAL_AUDIT_*.md
 demo_frames/
 demo_temp/
 edit_demo*.py
@@ -91,6 +97,14 @@ dapp-store/files/*.apk
 deploy_bundle.tar.gz
 deploy_dist.tar.gz
 deploy_full.sh
+*.zip
+videos/
+assets/
+phav.png
+home/
+pitch/
+publishing/
+prism-brand-kit/
 
 # Raw achievement images (only public/achievements/ is needed)
 game_achive/
@@ -114,6 +128,8 @@ gh_token*
 # Misc sensitive
 .env.scraper
 twitter-bot-python/.env.server
+twitter-bot/
+twitter-bot-python/
 
 # Editor directories and files
 .vscode/*

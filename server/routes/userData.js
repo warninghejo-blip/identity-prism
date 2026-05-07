@@ -39,7 +39,7 @@ function registerUserDataRoute(ctx) {
 
   return async function handleUserDataRoute(req, res, url, pathname) {
     if (pathname === '/api/identity/perks' && req.method === 'GET') {
-      if (!ipRateLimit('identity_perks_get', getClientIp(req), 30, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
+      if (!ipRateLimit('identity_perks_get', getClientIp(req), 120, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
       const addr = url.searchParams.get('address') || '';
       if (!addr || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) {
         respondJson(res, 400, { error: 'valid address required' });

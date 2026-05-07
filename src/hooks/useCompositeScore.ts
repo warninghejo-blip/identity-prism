@@ -64,11 +64,16 @@ export interface ScoreDetails {
   };
   social: {
     challengesWon: number;
-    challengePts: number;
-    constellationExplored: number;
-    constellationPts: number;
-    compareCount: number;
-    comparePts: number;
+    challengesPlayed?: number;
+    uniqueOpponents?: number;
+    tournamentsPlayed?: number;
+    communityReviews?: number;
+    challengePts?: number;
+    arenaWinPts?: number;
+    arenaActivityPts?: number;
+    opponentPts?: number;
+    tournamentPts?: number;
+    communityPts?: number;
     badgeBonus?: number;
   };
   engagement: {
