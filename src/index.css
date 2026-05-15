@@ -23,8 +23,18 @@
     letter-spacing: 0.02em;
     min-height: 100vh;
     margin: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     -webkit-tap-highlight-color: transparent;
+  }
+  html {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+  #root {
+    min-height: 100vh;
+    overflow-x: hidden;
   }
 
   /* ── Global button UX ── */
