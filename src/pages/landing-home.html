@@ -1,0 +1,527 @@
+<!-- Scroll storytelling rail -->
+<div class="scroll-rail" id="scroll-rail">
+  <div class="dot active" data-l="Hero" data-target="hero"></div>
+  <div class="dot" data-l="Problem" data-target="problem"></div>
+  <div class="dot" data-l="Solution" data-target="solution"></div>
+  <div class="dot" data-l="Filter" data-target="sybil-catch"></div>
+  <div class="dot" data-l="Badges" data-target="badges"></div>
+  <div class="dot" data-l="Tiers" data-target="tiers"></div>
+  <div class="dot" data-l="Ranks" data-target="ranks"></div>
+  <div class="dot" data-l="Games" data-target="games"></div>
+  <div class="dot" data-l="Hub" data-target="ecosystem"></div>
+  <div class="dot" data-l="Launch" data-target="cta"></div>
+</div>
+
+<!-- Header -->
+
+
+<!-- HERO with celestial card demo -->
+<section id="hero">
+  <div class="container">
+    <div class="hero-wrap">
+      <div class="hero-left">
+        <div class="hero-eyebrow">Solana · On-Chain Identity Protocol</div>
+        <h1 class="hero-title">
+          <span class="l1">Your reputation,</span>
+          <span class="l2">earned not bought.</span>
+        </h1>
+        <p class="hero-desc">A decentralized identity protocol where <strong>real humans rise</strong> through gameplay, on-chain history, and verified humanity — and <strong>sybils get caught</strong> by the very games they try to farm.</p>
+        <div class="hero-ctas">
+          <a href="#cta" class="btn btn-primary lg">Launch App</a>
+          <a href="#solution" class="btn btn-ghost lg">How it works →</a>
+        </div>
+        <div class="hero-stats">
+          <div class="hero-stat"><div class="n">1,000</div><div class="l">Max Score</div></div>
+          <div class="hero-stat"><div class="n">10</div><div class="l">Composite Tiers</div></div>
+          <div class="hero-stat"><div class="n">20</div><div class="l">On-Chain Badges</div></div>
+          <div class="hero-stat"><div class="n">3+</div><div class="l">Skill Games</div></div>
+        </div>
+      </div>
+
+      <!-- Celestial Card 1:1 demo -->
+      <div class="hero-right">
+        <div class="cc-stage">
+          <div class="cc-card">
+            <div class="cc-head">
+              <div class="cc-addr">7xK…Yp3F</div>
+              <div class="cc-tier-pill">Saturn · Ringed Royalty</div>
+            </div>
+            <div class="cc-planet-zone">
+              <div class="cc-planet">
+                <div class="cc-ring"></div>
+                <div class="cc-ring r2"></div>
+                <img src="/textures/tiers/saturn.png" alt="">
+              </div>
+            </div>
+            <div class="cc-info">
+              <div class="cc-name">SATURN</div>
+              <div class="cc-rank-line">Composite Tier · Score-Based</div>
+              <div class="cc-score-wrap">
+                <div class="cc-score-label">Composite Score</div>
+                <div class="cc-score-big">774<sub>/1000</sub></div>
+                <div class="cc-progress"><div class="cc-progress-fill"></div></div>
+                <div class="cc-progress-tag">26 PTS to Jupiter →</div>
+              </div>
+            </div>
+            <div class="cc-badges">
+              <div class="cc-bdg" style="--cc-bdg-c:rgba(212,160,74,.35)"><img src="/badges/veteran.png" alt=""></div>
+              <div class="cc-bdg" style="--cc-bdg-c:rgba(74,200,232,.35)"><img src="/badges/verified_human.png" alt=""></div>
+              <div class="cc-bdg" style="--cc-bdg-c:rgba(52,211,153,.35)"><img src="/badges/game_master.png" alt=""></div>
+              <div class="cc-bdg" style="--cc-bdg-c:rgba(167,139,250,.35)"><img src="/badges/seeker.png" alt=""></div>
+              <div class="cc-bdg" style="--cc-bdg-c:rgba(239,68,68,.35)"><img src="/badges/arena_champion.png" alt=""></div>
+            </div>
+            <div class="cc-foot">
+              <div class="cc-foot-stat"><span class="k">Ranger Rank</span><span class="v">CAPTAIN</span></div>
+              <div class="cc-foot-stat"><span class="k">XP</span><span class="v">12,480</span></div>
+              <div class="cc-foot-stat"><span class="k">Trust</span><span class="v">A+</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— The Problem —</div></div>
+
+<!-- PROBLEM -->
+<section id="problem">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag warn">Web3 is broken</div>
+      <h2 class="sec-title">One human.<br>Ten thousand wallets.</h2>
+      <p class="sec-sub">Every airdrop, governance vote, and "fair launch" gets drained by sybil farms. Real users lose. Protocols lose. Web3 loses trust.</p>
+    </div>
+
+    <div class="problem-wrap">
+      <div class="prob-cards reveal-stagger">
+        <div class="prob-card"><div class="prob-num">01</div><div><h4>Airdrops captured by farms</h4><p>A single operator runs 10,000 wallets through every quest, claims everything, dumps it the moment vesting unlocks.</p></div></div>
+        <div class="prob-card"><div class="prob-num">02</div><div><h4>Governance is captured</h4><p>DAO votes are decided by whoever can spin up the most addresses cheapest — not by the actual community.</p></div></div>
+        <div class="prob-card"><div class="prob-num">03</div><div><h4>KYC kills web3</h4><p>The only "solution" the industry knows is uploading your passport. That's not decentralization — that's surveillance with extra steps.</p></div></div>
+        <div class="prob-card"><div class="prob-num">04</div><div><h4>Reputation has no portability</h4><p>Your history on one protocol means nothing on the next. Every project re-invents the wheel and gets farmed all over again.</p></div></div>
+      </div>
+
+      <div class="sybil-stage reveal">
+        <canvas id="sybil-canvas"></canvas>
+        <div class="sybil-stats">
+          <div>Cluster · <span id="syb-n">247</span> nodes</div>
+          <div class="live">Live detection</div>
+        </div>
+        <div class="sybil-readout">
+          ‹ funding-source: <span>shared</span><br>
+          ‹ tx-timing: <span>identical ±2.3s</span><br>
+          ‹ behavior: <span>scripted</span><br>
+          ‹ verdict: <b style="color:#f87171">SYBIL CLUSTER</b>
+        </div>
+        <div class="sybil-label">Real-time on-chain pattern analysis</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— The Solution —</div></div>
+
+<!-- SOLUTION -->
+<section id="solution">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag">The transformation</div>
+      <h2 class="sec-title">From wallet<br>to identity.</h2>
+      <p class="sec-sub">An anonymous address becomes a portable, sybil-resistant reputation profile — without giving up custody, privacy, or sovereignty.</p>
+    </div>
+
+    <div class="sol-grid">
+      <div class="sol-stage reveal">
+        <div class="sol-row">
+          <div class="sol-side">
+            <div class="sol-icon-frame from">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7h18a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V8a1 1 0 011-1z"/>
+                <path d="M3 7l3-4h12l3 4"/>
+                <circle cx="17" cy="13" r="1.5" fill="currentColor"/>
+              </svg>
+            </div>
+            <h5>Before</h5>
+            <div class="label">Anonymous Wallet</div>
+            <div class="desc">A string of characters with zero context.</div>
+          </div>
+          <div class="sol-arrow">
+            <div class="sol-arrow-line"></div>
+            <div class="sol-arrow-tip">Identity Prism</div>
+            <div class="sol-arrow-line"></div>
+          </div>
+          <div class="sol-side">
+            <div class="sol-icon-frame to">
+              <img src="/phav.png" alt="" style="width:64px;height:64px;filter:drop-shadow(0 0 16px rgba(167,139,250,.6))">
+            </div>
+            <h5>After</h5>
+            <div class="label">Cosmic Identity</div>
+            <div class="desc">A scored, badged, portable reputation.</div>
+          </div>
+        </div>
+        <div class="sol-pipeline">
+          <div class="step"><div class="dot"></div>Connect</div><div class="sep">/</div>
+          <div class="step"><div class="dot"></div>Analyze</div><div class="sep">/</div>
+          <div class="step"><div class="dot"></div>Play</div><div class="sep">/</div>
+          <div class="step"><div class="dot"></div>Earn</div>
+        </div>
+      </div>
+
+      <div class="sol-text reveal">
+        <h3>Connect once. <em>Carry your reputation everywhere.</em></h3>
+        <p>The Prism reads your wallet's full on-chain story — every transaction, every token, every protocol. It analyzes patterns, awards badges, calculates a score, and assigns you a tier among the planets.</p>
+        <p>Then you <strong>play</strong>. Skill-based games keep your score alive and growing — and surface bots automatically.</p>
+        <div class="sol-checks">
+          <div class="sol-check"><div class="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><span><b>Non-custodial.</b> We never hold your keys, your tokens, or your data.</span></div>
+          <div class="sol-check"><div class="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><span><b>Zero KYC.</b> No passport, no selfie — humanity proven through behavior.</span></div>
+          <div class="sol-check"><div class="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><span><b>Portable.</b> Your score works across any Solana protocol that integrates Prism.</span></div>
+          <div class="sol-check"><div class="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div><span><b>Earned, not bought.</b> Score can't be transferred, sold, or faked — only proven.</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— Anti-Sybil Engine —</div></div>
+
+<!-- SYBIL CATCH -->
+<section id="sybil-catch">
+  <div class="container">
+    <div class="sec-head sc-hero reveal">
+      <div class="sec-tag">The core mechanic</div>
+      <h3><span class="red">Sybils get caught.</span><br><span class="green">Humans get cleared.</span></h3>
+      <p>Anti-sybil isn't a one-time scan — it's a continuous filter. Real humans recover their reputation through skill. Bots can't. That's the whole protocol.</p>
+    </div>
+    <div class="sc-flow">
+      <div class="sc-track bad reveal">
+        <div class="sc-track-head">
+          <div class="sc-track-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/></svg></div>
+          <div><h4>The Sybil Path</h4><div class="sub">Bot · Farm · Multi-account</div></div>
+        </div>
+        <div class="sc-steps">
+          <div class="sc-step"><div class="sc-step-n">01</div><div class="sc-step-content"><b>Connects 10,000 wallets</b><span>Operator runs the same scripted on-chain history across a farm.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">02</div><div class="sc-step-content"><b>Pattern flagged</b><span>The Prism detects shared funding sources, identical timing, copy-paste behavior.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">03</div><div class="sc-step-content"><b>Forced into games</b><span>Score drops. To recover, the wallet must prove it can play — react, aim, survive in real time.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">04</div><div class="sc-step-content"><b>Game performance fails</b><span>Bots can't ace skill games at scale. Cluster scores collapse together.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">05</div><div class="sc-step-content"><b>Permanently filtered</b><span>Whole cluster falls into the Black Hole. Excluded from drops.</span></div></div>
+        </div>
+        <div class="sc-result"><div class="sc-result-tag">Outcome</div>Cluster eliminated · Drops protected · Trust restored</div>
+      </div>
+      <div class="sc-track good reveal">
+        <div class="sc-track-head">
+          <div class="sc-track-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/></svg></div>
+          <div><h4>The Human Path</h4><div class="sub">Real player · Earned reputation</div></div>
+        </div>
+        <div class="sc-steps">
+          <div class="sc-step"><div class="sc-step-n">01</div><div class="sc-step-content"><b>Connects one wallet</b><span>Real history. Real transactions. Real time spent on Solana.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">02</div><div class="sc-step-content"><b>Initial scan</b><span>The Prism reads the full on-chain story and assigns a starting score and tier.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">03</div><div class="sc-step-content"><b>Plays the games</b><span>Orbit Survival, Gravity Runner, Cosmic Wars — skill-based, time-based, replayable.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">04</div><div class="sc-step-content"><b>Score grows</b><span>Performance lifts the score. Streaks unlock badges. Tier rises through the planets.</span></div></div>
+          <div class="sc-step"><div class="sc-step-n">05</div><div class="sc-step-content"><b>Reputation cleared</b><span>Verified human. Eligible for drops, governance, and gated experiences across the ecosystem.</span></div></div>
+        </div>
+        <div class="sc-result"><div class="sc-result-tag">Outcome</div>Verified human · Reputation portable · Earned, not bought</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— On-Chain Badges —</div></div>
+
+<!-- BADGES — match dapp categories exactly -->
+<section id="badges">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag">20 on-chain badges</div>
+      <h2 class="sec-title">Proof of you,<br>signed by the chain.</h2>
+      <p class="sec-sub">Badges are auto-awarded by reading your wallet's on-chain history, game performance, and community contribution. Six categories — each a different shade of trust.</p>
+    </div>
+
+    <div class="badges-cats">
+
+      <!-- ON-CHAIN (gold) -->
+      <div class="badge-cat reveal">
+        <div class="badge-cat-head">
+          <div class="badge-cat-title">
+            <div class="pip" style="background:#d4a04a;box-shadow:0 0 8px #d4a04a"></div>
+            <h4>On-Chain</h4><span class="meta">· Wallet history &amp; activity</span>
+          </div>
+          <div class="badge-cat-count">5 Badges</div>
+        </div>
+        <div class="badges-row reveal-stagger" style="--cat-c1:#d4a04a;--cat-c2:#7c5a1a;--cat-glow:rgba(212,160,74,.4);--cat-bg:linear-gradient(160deg,rgba(124,90,26,.4),rgba(124,90,26,.12));--cat-border:rgba(212,160,74,.25);--cat-border-hover:rgba(212,160,74,.6)">
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/early_adopter.png" alt=""></div><div class="name">Early Bird</div><div class="desc">Wallet ≥ 1 year</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/veteran.png" alt=""></div><div class="name">Veteran</div><div class="desc">2yrs &amp; 1K+ tx</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/whale.png" alt=""></div><div class="name">Whale</div><div class="desc">≥ 50 SOL</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/nft_collector.png" alt=""></div><div class="name">NFT Collector</div><div class="desc">≥ 10 NFTs</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/defi_architect.png" alt=""></div><div class="name">DeFi Architect</div><div class="desc">3+ protocols</div></div>
+        </div>
+      </div>
+
+      <!-- TRUST (cyan) -->
+      <div class="badge-cat reveal">
+        <div class="badge-cat-head">
+          <div class="badge-cat-title">
+            <div class="pip" style="background:#4ac8e8;box-shadow:0 0 8px #4ac8e8"></div>
+            <h4>Trust</h4><span class="meta">· Sybil-resistance &amp; integrity</span>
+          </div>
+          <div class="badge-cat-count">3 Badges</div>
+        </div>
+        <div class="badges-row reveal-stagger" style="--cat-c1:#4ac8e8;--cat-c2:#0e7490;--cat-glow:rgba(74,200,232,.4);--cat-bg:linear-gradient(160deg,rgba(22,78,99,.4),rgba(22,78,99,.12));--cat-border:rgba(74,200,232,.25);--cat-border-hover:rgba(74,200,232,.6)">
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/verified_human.png" alt=""></div><div class="name">Verified Human</div><div class="desc">Trust ≥ 80</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/clean_record.png" alt=""></div><div class="name">Clean Record</div><div class="desc">Risk &lt; 10</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/trust_pillar.png" alt=""></div><div class="name">Trust Pillar</div><div class="desc">Trust ≥ 95</div></div>
+        </div>
+      </div>
+
+      <!-- GAMES (green) -->
+      <div class="badge-cat reveal">
+        <div class="badge-cat-head">
+          <div class="badge-cat-title">
+            <div class="pip" style="background:#34d399;box-shadow:0 0 8px #34d399"></div>
+            <h4>Games</h4><span class="meta">· Skill proven in real-time</span>
+          </div>
+          <div class="badge-cat-count">3 Badges</div>
+        </div>
+        <div class="badges-row reveal-stagger" style="--cat-c1:#34d399;--cat-c2:#065f46;--cat-glow:rgba(52,211,153,.4);--cat-bg:linear-gradient(160deg,rgba(6,95,70,.4),rgba(6,95,70,.12));--cat-border:rgba(52,211,153,.25);--cat-border-hover:rgba(52,211,153,.6)">
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/game_master.png" alt=""></div><div class="name">Game Master</div><div class="desc">3+ game types</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/achievement_hunter.png" alt=""></div><div class="name">Achievement Hunter</div><div class="desc">10+ achievements</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/high_scorer.png" alt=""></div><div class="name">High Scorer</div><div class="desc">Score ≥ 40</div></div>
+        </div>
+      </div>
+
+      <!-- IDENTITY PRISM (purple) -->
+      <div class="badge-cat reveal">
+        <div class="badge-cat-head">
+          <div class="badge-cat-title">
+            <div class="pip" style="background:#a78bfa;box-shadow:0 0 8px #a78bfa"></div>
+            <h4>Identity Prism</h4><span class="meta">· Native holders &amp; OGs</span>
+          </div>
+          <div class="badge-cat-count">3 Badges</div>
+        </div>
+        <div class="badges-row reveal-stagger" style="--cat-c1:#a78bfa;--cat-c2:#6d28d9;--cat-glow:rgba(167,139,250,.4);--cat-bg:linear-gradient(160deg,rgba(88,28,135,.4),rgba(88,28,135,.12));--cat-border:rgba(167,139,250,.25);--cat-border-hover:rgba(167,139,250,.6)">
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/seeker.png" alt=""></div><div class="name">Seeker of Truth</div><div class="desc">Holds Seeker NFT</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/visionary.png" alt=""></div><div class="name">Visionary</div><div class="desc">Pre-launch believer</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/binary.png" alt=""></div><div class="name">Binary Sun</div><div class="desc">Dual-star combo</div></div>
+        </div>
+      </div>
+
+      <!-- SOCIAL (red) -->
+      <div class="badge-cat reveal">
+        <div class="badge-cat-head">
+          <div class="badge-cat-title">
+            <div class="pip" style="background:#ef4444;box-shadow:0 0 8px #ef4444"></div>
+            <h4>Social</h4><span class="meta">· PvP &amp; community signal</span>
+          </div>
+          <div class="badge-cat-count">2 Badges</div>
+        </div>
+        <div class="badges-row reveal-stagger" style="--cat-c1:#ef4444;--cat-c2:#991b1b;--cat-glow:rgba(239,68,68,.4);--cat-bg:linear-gradient(160deg,rgba(127,29,29,.4),rgba(127,29,29,.12));--cat-border:rgba(239,68,68,.25);--cat-border-hover:rgba(239,68,68,.6)">
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/arena_champion.png" alt=""></div><div class="name">Arena Champion</div><div class="desc">5+ duels won</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/debate_king.png" alt=""></div><div class="name">Sybil Hunter</div><div class="desc">5+ community reviews</div></div>
+        </div>
+      </div>
+
+      <!-- ENGAGEMENT (pink) -->
+      <div class="badge-cat reveal">
+        <div class="badge-cat-head">
+          <div class="badge-cat-title">
+            <div class="pip" style="background:#f472b6;box-shadow:0 0 8px #f472b6"></div>
+            <h4>Engagement</h4><span class="meta">· Quests, streaks &amp; exploration</span>
+          </div>
+          <div class="badge-cat-count">4 Badges</div>
+        </div>
+        <div class="badges-row reveal-stagger" style="--cat-c1:#f472b6;--cat-c2:#9d174d;--cat-glow:rgba(244,114,182,.4);--cat-bg:linear-gradient(160deg,rgba(131,24,67,.4),rgba(131,24,67,.12));--cat-border:rgba(244,114,182,.25);--cat-border-hover:rgba(244,114,182,.6)">
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/quest_hunter.png" alt=""></div><div class="name">Quest Master</div><div class="desc">15+ quests done</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/quest_hunter.png" alt=""></div><div class="name">Quest Hunter</div><div class="desc">10+ quests done</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/streak_lord.png" alt=""></div><div class="name">Streak Lord</div><div class="desc">7-day streak</div></div>
+          <div class="badge-card"><div class="img-wrap"><img src="/badges/explorer.png" alt=""></div><div class="name">Explorer</div><div class="desc">20+ wallet scans</div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— Composite Tier System —</div></div>
+
+<!-- TIERS — correct thresholds, no spinning planets -->
+<section id="tiers">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag">From Mercury to Binary Sun</div>
+      <h2 class="sec-title">Ten planets.<br>Score-based.</h2>
+      <p class="sec-sub">Your composite score lands you on one of ten planets. Score caps at 1,000 — Binary Sun is the absolute pinnacle of on-chain reputation.</p>
+    </div>
+
+    <div class="tier-meter reveal">
+      <div class="tier-meter-label"><b>Composite Score</b> · 0 — 1,000</div>
+      <div class="tier-bar"></div>
+      <div class="tier-scale"><span>0</span><span>220</span><span>480</span><span>700</span><span>880</span><span>1000</span></div>
+    </div>
+
+    <div class="tiers-grid reveal-stagger">
+      <div class="tier-card" style="--tier-c:#b4a995"><div class="planet"><img src="/textures/tiers/mercury.png" alt=""></div><div class="tname">Mercury</div><div class="trange">0 — 99</div></div>
+      <div class="tier-card" style="--tier-c:#ff6b4a"><div class="planet"><img src="/textures/tiers/mars.png" alt=""></div><div class="tname">Mars</div><div class="trange">100 — 219</div></div>
+      <div class="tier-card" style="--tier-c:#ffd166"><div class="planet"><img src="/textures/tiers/venus.png" alt=""></div><div class="tname">Venus</div><div class="trange">220 — 349</div></div>
+      <div class="tier-card" style="--tier-c:#5fa8ff"><div class="planet"><img src="/textures/tiers/earth.png" alt=""></div><div class="tname">Earth</div><div class="trange">350 — 479</div></div>
+      <div class="tier-card" style="--tier-c:#4cc9f0"><div class="planet"><img src="/textures/tiers/neptune.png" alt=""></div><div class="tname">Neptune</div><div class="trange">480 — 599</div></div>
+      <div class="tier-card" style="--tier-c:#80edff"><div class="planet"><img src="/textures/tiers/uranus.png" alt=""></div><div class="tname">Uranus</div><div class="trange">600 — 699</div></div>
+      <div class="tier-card" style="--tier-c:#fcbf49"><div class="planet"><img src="/textures/tiers/saturn.png" alt=""></div><div class="tname">Saturn</div><div class="trange">700 — 799</div></div>
+      <div class="tier-card" style="--tier-c:#f4a261"><div class="planet"><img src="/textures/tiers/jupiter.png" alt=""></div><div class="tname">Jupiter</div><div class="trange">800 — 879</div></div>
+      <div class="tier-card" style="--tier-c:#ffdd99"><div class="planet"><img src="/textures/tiers/sun.png" alt=""></div><div class="tname">Sun</div><div class="trange">880 — 949</div></div>
+      <div class="tier-card" style="--tier-c:#fffbe6"><div class="planet"><img src="/textures/tiers/binary_sun.png" alt=""></div><div class="tname">Binary Sun</div><div class="trange">950 — 1000</div></div>
+    </div>
+
+    <div class="tiers-formula reveal">
+      <h4>Composite Score · <b>Five Pillars</b></h4>
+      <div class="formula-row">
+        <div class="formula-cell"><div class="pct">25%</div><div class="lab">On-Chain</div></div>
+        <div class="formula-cell"><div class="pct">25%</div><div class="lab">DeFi</div></div>
+        <div class="formula-cell"><div class="pct">20%</div><div class="lab">Trust</div></div>
+        <div class="formula-cell"><div class="pct">20%</div><div class="lab">Games</div></div>
+        <div class="formula-cell"><div class="pct">10%</div><div class="lab">Social</div></div>
+      </div>
+      <div class="formula-eq">on-chain × 0.25 + defi × 0.25 + trust × 0.20 + games × 0.20 + social × 0.10 = <span class="out">score / 1000</span></div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— Planet Reborn —</div></div>
+
+<!-- EXPLODE / REBORN ANIMATION -->
+<section id="explode">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag">Score is alive</div>
+      <h2 class="sec-title">Tiers explode.<br>Tiers reform.</h2>
+      <p class="sec-sub">Your tier isn't static. As your score climbs, planets shatter and reassemble into the next world. Every tier change is on-chain — and visually unmistakable.</p>
+    </div>
+    <div class="explode-stage reveal">
+      <div class="explode-ring r1"></div>
+      <div class="explode-ring r2"></div>
+      <div class="explode-ring r3"></div>
+      <div class="explode-planet"><img src="/textures/tiers/saturn.png" alt=""></div>
+      <div class="explode-shard"></div><div class="explode-shard"></div><div class="explode-shard"></div>
+      <div class="explode-shard"></div><div class="explode-shard"></div><div class="explode-shard"></div>
+      <div class="explode-shard"></div><div class="explode-shard"></div><div class="explode-shard"></div>
+      <div class="explode-shard"></div><div class="explode-shard"></div><div class="explode-shard"></div>
+      <div class="explode-label">Saturn (774) → <b>Jupiter (800)</b> · score threshold crossed</div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— Ranger Ranks (XP-Based) —</div></div>
+
+<!-- RANGER RANKS — separate metric -->
+<section id="ranks">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag">Earned through play</div>
+      <h2 class="sec-title">Ranger Ranks.<br>The XP track.</h2>
+      <p class="sec-sub">Different from your composite tier — Ranger Rank is an XP-based progression you earn by playing games and clearing quests. Unlocks gear, module slots, and exclusive content.</p>
+    </div>
+
+    <div class="ranks-intro reveal">
+      <div class="ranks-vs">
+        <h4>· Two Metrics ·</h4>
+        <div class="ranks-vs-row">
+          <span class="badge t">Composite</span>
+          <div><b>Score 0 – 1000</b><span>Mercury → Binary Sun. Built from on-chain history, DeFi, trust, games &amp; social. Powers your tier and ship stats.</span></div>
+        </div>
+        <div class="ranks-vs-row">
+          <span class="badge r">Ranger</span>
+          <div><b>XP 0 – 50,000+</b><span>Cadet → Legend. Earned by playing games and completing quests. Unlocks gear, module slots &amp; ranked content.</span></div>
+        </div>
+      </div>
+      <div class="ranks-vs" style="border-color:rgba(96,165,250,.18);background:linear-gradient(135deg,rgba(96,165,250,.05),rgba(34,211,238,.03))">
+        <h4 style="color:#60a5fa">· XP Sources ·</h4>
+        <div class="ranks-vs-row"><span class="badge r">Games</span><div><b>~70% of XP</b><span>Skill-based play in Prism League — Orbit, Gravity, Cosmic Wars.</span></div></div>
+        <div class="ranks-vs-row"><span class="badge r">Quests</span><div><b>~20% of XP</b><span>Daily &amp; weekly cosmic quests; lore-locked adventures.</span></div></div>
+        <div class="ranks-vs-row"><span class="badge r">Other</span><div><b>~10% of XP</b><span>Achievements, streaks, social contributions.</span></div></div>
+      </div>
+    </div>
+
+    <div class="ranks-grid reveal-stagger">
+      <div class="rank-card" style="--rk-c:#9ca3af"><div class="badge-img"><img src="/textures/ranks/rank_cadet.png" alt=""></div><div class="rname">Cadet</div><div class="rxp">0 XP</div><div class="rperk">Starting rank · base gear</div></div>
+      <div class="rank-card" style="--rk-c:#60a5fa"><div class="badge-img"><img src="/textures/ranks/rank_pilot.png" alt=""></div><div class="rname">Pilot</div><div class="rxp">1,500 XP</div><div class="rperk">Unlock text quests</div></div>
+      <div class="rank-card" style="--rk-c:#fbbf24"><div class="badge-img"><img src="/textures/ranks/rank_captain.png" alt=""></div><div class="rname">Captain</div><div class="rxp">8,000 XP</div><div class="rperk">Yellow module slots</div></div>
+      <div class="rank-card" style="--rk-c:#a78bfa"><div class="badge-img"><img src="/textures/ranks/rank_ace.png" alt=""></div><div class="rname">Ace</div><div class="rxp">25,000 XP</div><div class="rperk">Red module slots</div></div>
+      <div class="rank-card" style="--rk-c:#fde047"><div class="badge-img"><img src="/textures/ranks/rank_legend.png" alt=""></div><div class="rname">Legend</div><div class="rxp">50,000+ XP</div><div class="rperk">Mastery — all systems</div></div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— Prism League · Skill Games —</div></div>
+
+<!-- GAMES -->
+<section id="games">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag">Prism League</div>
+      <h2 class="sec-title">Skill is the proof.<br>Bots can't fake it.</h2>
+      <p class="sec-sub">Real-time, reaction-based games. Real humans get high scores. Bots burn out. Every session is an on-chain attestation of your humanity — and the primary source of Ranger XP.</p>
+    </div>
+    <div class="games-grid reveal-stagger">
+      <div class="game-card"><img src="/games/orbit_cover.png" alt="" class="cover"><div class="veil"></div><div class="body"><div class="pill">Live · Solo</div><h3>Orbit Survival</h3><p class="gdesc">Navigate asteroid fields. Reflexes &amp; reaction time scored in real-time.</p><div class="stats"><div class="stat"><b>Solo</b></div><div class="stat"><b>Realtime</b></div><div class="stat"><b>+25 XP</b></div></div></div></div>
+      <div class="game-card"><img src="/games/gravity_cover.png" alt="" class="cover"><div class="veil"></div><div class="body"><div class="pill">Live · Solo</div><h3>Gravity Runner</h3><p class="gdesc">Physics-driven obstacle course. Pure motor skill — impossible to script.</p><div class="stats"><div class="stat"><b>Solo</b></div><div class="stat"><b>Physics</b></div><div class="stat"><b>+30 XP</b></div></div></div></div>
+      <div class="game-card"><img src="/games/wars_cover.png" alt="" class="cover"><div class="veil"></div><div class="body"><div class="pill">Live · Arena</div><h3>Cosmic Wars</h3><p class="gdesc">Wallet-vs-wallet PvP arena. Combat as score-multiplier.</p><div class="stats"><div class="stat"><b>PvP</b></div><div class="stat"><b>1v1</b></div><div class="stat"><b>+50 XP</b></div></div></div></div>
+      <div class="game-card"><img src="/games/quest_cover.png" alt="" class="cover"><div class="veil"></div><div class="body"><div class="pill">Live · Adventure</div><h3>Cosmic Quests</h3><p class="gdesc">Narrative-driven mission chains. Lore-locked badges &amp; XP rewards.</p><div class="stats"><div class="stat"><b>Story</b></div><div class="stat"><b>Daily</b></div><div class="stat"><b>+40 XP</b></div></div></div></div>
+      <div class="game-card"><img src="/games/wars_cover.png" alt="" class="cover" style="filter:hue-rotate(40deg) brightness(.8)"><div class="veil"></div><div class="body"><div class="pill">Live · Tournament</div><h3>Prism Cup</h3><p class="gdesc">Seasonal bracket tournaments. Real prize pools, on-chain payouts.</p><div class="stats"><div class="stat"><b>Tournament</b></div><div class="stat"><b>Seasonal</b></div><div class="stat"><b>+100 XP</b></div></div></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— Ecosystem · Hub Modules —</div></div>
+
+<!-- ECOSYSTEM — Stellar Mining & Constellation removed -->
+<section id="ecosystem">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="sec-tag">Hub modules</div>
+      <h2 class="sec-title">An entire universe<br>around your identity.</h2>
+      <p class="sec-sub">The Prism isn't a single page — it's a full hub of modules built around your reputation. Forge cosmetics. Lock vault stakes. Burn dust in the Black Hole. Fight in the Arena.</p>
+    </div>
+    <div class="eco-grid reveal-stagger">
+      <div class="eco-card eco-c-scanner"><span class="eco-tag">Core</span><div class="eco-icon"><img src="/hub/scanner.png" alt=""></div><h3>Prism Scanner</h3><p>Analyze any Solana wallet. Composite score, full badge list, tier, age, behavior signals — all in one scan.</p><div class="eco-feats"><div class="eco-feat">Public &amp; private scans</div><div class="eco-feat">Snapshot history</div><div class="eco-feat">Compare wallets</div></div></div>
+      <div class="eco-card eco-c-forge"><span class="eco-tag">Cosmetics</span><div class="eco-icon"><img src="/hub/shop.png" alt=""></div><h3>Stellar Forge</h3><p>Craft ship skins, frames, auras, and titles. Equip them on your identity card or your in-game ship. Rank-gated.</p><div class="eco-feats"><div class="eco-feat">100+ cosmetic items</div><div class="eco-feat">Ship stat boosts</div><div class="eco-feat">Tradeable as NFTs</div></div></div>
+      <div class="eco-card eco-c-vault"><span class="eco-tag">Staking</span><div class="eco-icon"><img src="/hub/vault.png" alt=""></div><h3>Cosmic Vault</h3><p>Lock coins for 1 week — 6 months. Yield from 1× to 4× multiplier based on tier &amp; lock duration.</p><div class="eco-feats"><div class="eco-feat">Up to 4× multiplier</div><div class="eco-feat">Tier-boosted APY</div><div class="eco-feat">Compound on unlock</div></div></div>
+      <div class="eco-card eco-c-blackhole"><span class="eco-tag">Burn</span><div class="eco-icon"><img src="/hub/blackhole.png" alt=""></div><h3>Black Hole</h3><p>Burn dust tokens &amp; abandoned NFTs. Reclaim SOL rent. 15% of every tournament fee burns here.</p><div class="eco-feats"><div class="eco-feat">Reclaim SOL rent</div><div class="eco-feat">Deflationary burn</div><div class="eco-feat">Tournament fee sink</div></div></div>
+      <div class="eco-card eco-c-arena"><span class="eco-tag">PvP</span><div class="eco-icon"><img src="/hub/arena.png" alt=""></div><h3>Wallet Arena</h3><p>1v1 wallet duels — score-vs-score brackets with real prize pools. Climb the ranks; win the season.</p><div class="eco-feats"><div class="eco-feat">Live brackets</div><div class="eco-feat">Seasonal champions</div><div class="eco-feat">On-chain payouts</div></div></div>
+      <div class="eco-card eco-c-quests"><span class="eco-tag">Adventure</span><div class="eco-icon"><img src="/hub/quests.png" alt=""></div><h3>Cosmic Quests</h3><p>Daily &amp; weekly missions. Lore-locked adventure chains. The main path from Cadet to Pilot.</p><div class="eco-feats"><div class="eco-feat">Daily refresh</div><div class="eco-feat">Streak rewards</div><div class="eco-feat">Lore-locked badges</div></div></div>
+      <div class="eco-card eco-c-leader"><span class="eco-tag">Compete</span><div class="eco-icon"><img src="/hub/leaderboard.png" alt=""></div><h3>Leaderboards</h3><p>Global rankings across every game, every badge category, every tier. Friends list &amp; rivals.</p><div class="eco-feats"><div class="eco-feat">Global &amp; friends</div><div class="eco-feat">Per-game boards</div><div class="eco-feat">Seasonal resets</div></div></div>
+      <div class="eco-card eco-c-league"><span class="eco-tag">Skill</span><div class="eco-icon"><img src="/hub/league.png" alt=""></div><h3>Prism League</h3><p>The home of all skill games. Orbit Survival, Gravity Runner, Cosmic Wars &amp; Cosmic Quests in active rotation.</p><div class="eco-feats"><div class="eco-feat">4+ live games</div><div class="eco-feat">Active rotation</div><div class="eco-feat">XP attestation</div></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="sec-divider"><div class="ribbon">— Get Started —</div></div>
+
+<!-- CTA -->
+<section id="cta">
+  <div class="container cta">
+    <div class="cta-orb reveal-zoom"></div>
+    <h2 class="reveal grad-cyan">Your reputation<br>starts now.</h2>
+    <p class="cta-sub reveal">Connect your wallet. See your tier. Play the games. Carry your reputation across the entire Solana ecosystem.</p>
+    <div class="cta-actions reveal">
+      <a href="/app" class="btn btn-primary lg">Launch the App</a>
+      <a href="#solution" class="btn btn-ghost lg">Read the Whitepaper</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <img src="/phav.png" alt="">
+        <h5>IDENTITY PRISM</h5>
+        <p>The sybil-resistant identity layer for Solana. Reputation earned through behavior &amp; skill, never bought, never sold.</p>
+      </div>
+      <div class="foot-col"><h6>Protocol</h6><a href="#solution">How it works</a><a href="#badges">Badges</a><a href="#tiers">Composite tiers</a><a href="#ranks">Ranger ranks</a><a href="#games">Prism League</a><a href="#ecosystem">Hub modules</a></div>
+      <div class="foot-col"><h6>Resources</h6><a href="/app">Launch app</a><a href="#">Whitepaper</a><a href="#">API docs</a><a href="#">GitHub</a><a href="#">Brand assets</a></div>
+      <div class="foot-col"><h6>Legal</h6><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms of Use</a><a href="/cookies.html">Cookie Policy</a><a href="/disclaimer.html">Disclaimer</a></div>
+    </div>
+    <div class="foot-bottom">
+      <div>© 2026 Identity Prism · All rights reserved</div>
+      <div>Built on Solana · Powered by MagicBlock</div>
+    </div>
+  </div>
+</footer>

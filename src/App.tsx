@@ -1,9 +1,12 @@
-import React, { useEffect } from "react";
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Outlet, useLocation } from "react-router-dom";
+import React, { useEffect } from 'react';
+import { Toaster } from '@/components/ui/toaster';
+import { Toaster as Sonner } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Outlet, useLocation } from 'react-router-dom';
+import { cleanupOverlays } from '@/lib/safeNavigate';
+import { trackPageView } from '@/lib/analytics';
+import { useChallengeNotifier } from '@/lib/useChallengeNotifier';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,30 +21,44 @@ const queryClient = new QueryClient({
 
 const App = () => {
   const location = useLocation();
+  useChallengeNotifier();
 
-  // Dismiss HTML preloader for non-Index routes (verify, compare, home, preview).
-  // Index.tsx has its own sophisticated preloader dismissal with curtain animations,
-  // so we only auto-dismiss for other child routes.
+  // Dismiss HTML preloader and stale overlays on route change.
+  // Index.tsx has its own preloader dismissal — cleanupOverlays handles
+  // app-preloader removal for all other routes.
   useEffect(() => {
-    const isIndexRoute = location.pathname === '/' || location.pathname.startsWith('/app') || location.pathname === '/share';
-    if (isIndexRoute) return; // Index.tsx handles its own preloader
-    const el = document.getElementById('app-preloader');
-    if (el) el.remove();
+    document.body.dataset.ipMounted = '1';
+    const preloader = document.getElementById('app-preloader');
+    if (preloader) {
+      preloader.remove();
+    }
+  }, []);
+
+  useEffect(() => {
+    const isIndexRoute =
+      location.pathname === '/' || location.pathname.startsWith('/app') || location.pathname === '/share';
+    if (!isIndexRoute) {
+      cleanupOverlays();
+    }
+    trackPageView(location.pathname);
   }, [location.pathname]);
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <div className="min-h-screen bg-[#050505] text-white selection:bg-cyan-500/30">
-          <Outlet />
+          {/* Skip-to-content link for keyboard users */}
+          <a
+            href="#root-content"
+            className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[9999] focus:px-4 focus:py-2 focus:rounded-lg focus:bg-cyan-500 focus:text-black focus:font-bold focus:text-sm"
+          >
+            Skip to content
+          </a>
+          <main id="root-content">
+            <Outlet />
+          </main>
           <Toaster />
-          <Sonner
-            position="bottom-center"
-            expand={false}
-            closeButton
-            offset={{ bottom: 16 }}
-            mobileOffset={{ bottom: 12, left: 16, right: 16 }}
-          />
+          <Sonner position="top-center" expand={false} closeButton richColors offset={64} />
         </div>
       </TooltipProvider>
     </QueryClientProvider>

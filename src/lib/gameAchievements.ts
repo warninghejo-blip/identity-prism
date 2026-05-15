@@ -36,7 +36,10 @@ export interface PlayerStats {
   lastPlayed: string;
 }
 
-export const ACHIEVEMENT_DEFS: Omit<Achievement, 'unlocked' | 'unlockedAt' | 'mintTxSignature'>[] = [
+export const ACHIEVEMENT_DEFS: Omit<
+  Achievement,
+  'unlocked' | 'unlockedAt' | 'claimed' | 'claimedAt' | 'mintTxSignature'
+>[] = [
   {
     id: 'first_orbit',
     name: 'First Orbit',
@@ -147,7 +150,14 @@ export function updatePlayerStats(score: number): PlayerStats {
   stats.lastPlayed = new Date().toISOString();
   try {
     localStorage.setItem(STATS_KEY, JSON.stringify(stats));
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
+  import('@/lib/userDataSync')
+    .then(({ syncToServer }) => {
+      syncToServer({ gameStats: { [STATS_KEY]: stats } });
+    })
+    .catch(() => {});
   return stats;
 }
 
@@ -156,7 +166,9 @@ export function getAchievements(): Achievement[] {
   try {
     const raw = localStorage.getItem(ACHIEVEMENTS_KEY);
     if (raw) stored = JSON.parse(raw) as Partial<Achievement>[];
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
   return ACHIEVEMENT_DEFS.map((def) => {
     const saved = stored.find((s) => s.id === def.id);
     return {
@@ -173,7 +185,9 @@ export function getAchievements(): Achievement[] {
 function saveAchievements(achievements: Achievement[]) {
   try {
     localStorage.setItem(ACHIEVEMENTS_KEY, JSON.stringify(achievements));
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
 }
 
 /**

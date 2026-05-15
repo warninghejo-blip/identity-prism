@@ -1,10 +1,5 @@
 import { WalletContextState } from '@solana/wallet-adapter-react';
-import {
-  Connection,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-  Transaction,
-} from '@solana/web3.js';
+import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   createTransferInstruction,
@@ -12,13 +7,8 @@ import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-} from '@solana/spl-token';
-import {
-  SEEKER_TOKEN,
-  TREASURY_ADDRESS,
-  getHeliusRpcUrl,
-  getHeliusProxyHeaders,
-} from '@/constants';
+} from '@/lib/solanaToken';
+import { SEEKER_TOKEN, TREASURY_ADDRESS, getHeliusRpcUrl, getHeliusProxyHeaders } from '@/constants';
 
 const REVIVE_SKR_AMOUNT = 5;
 const MIN_SOL_FOR_FEE = 0.003;
@@ -36,10 +26,8 @@ export interface ReviveResult {
   error?: ReviveError;
 }
 
-export async function payForRevive(
-  wallet: WalletContextState,
-): Promise<ReviveResult> {
-  if (!wallet.publicKey || !wallet.signTransaction) {
+export async function payForRevive(wallet: WalletContextState): Promise<ReviveResult> {
+  if (!wallet.publicKey || (!wallet.signTransaction && !wallet.sendTransaction)) {
     return { success: false, error: { code: 'UNKNOWN', message: 'Wallet not connected' } };
   }
 
@@ -114,17 +102,22 @@ export async function payForRevive(
   try {
     const info = await connection.getAccountInfo(destAta);
     destAtaExists = info !== null;
-  } catch { /* assume missing */ }
+  } catch {
+    /* assume missing */
+  }
   if (!destAtaExists) {
     tx.add(
       createAssociatedTokenAccountIdempotentInstruction(
-        payer, destAta, treasury, skrMint, tokenProgramId, ASSOCIATED_TOKEN_PROGRAM_ID,
+        payer,
+        destAta,
+        treasury,
+        skrMint,
+        tokenProgramId,
+        ASSOCIATED_TOKEN_PROGRAM_ID,
       ),
     );
   }
-  tx.add(
-    createTransferInstruction(sourceAta, destAta, payer, amount, [], tokenProgramId),
-  );
+  tx.add(createTransferInstruction(sourceAta, destAta, payer, amount, [], tokenProgramId));
 
   // 4. Simulate before prompting user to sign (dApp Store requirement)
   try {
@@ -159,15 +152,23 @@ export async function payForRevive(
 
   // 6. Sign and send (with timeout)
   try {
-    const signPromise = wallet.signTransaction!(tx);
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('USER_REJECTED: Signing timed out')), 120_000)
+      setTimeout(() => reject(new Error('USER_REJECTED: Signing timed out')), 120_000),
     );
-    const signed = await Promise.race([signPromise, timeoutPromise]);
-    const sig = await connection.sendRawTransaction(
-      signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-      { skipPreflight: true },
-    );
+    const sendOptions = { skipPreflight: true, preflightCommitment: 'confirmed' as const };
+    let sig: string;
+    if (wallet.signTransaction) {
+      const signPromise = wallet.signTransaction(tx);
+      const signed = await Promise.race([signPromise, timeoutPromise]);
+      sig = await connection.sendRawTransaction(
+        signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+        { skipPreflight: true },
+      );
+    } else if (wallet.sendTransaction) {
+      sig = (await Promise.race([wallet.sendTransaction(tx, connection, sendOptions), timeoutPromise])) as string;
+    } else {
+      return { success: false, error: { code: 'UNKNOWN', message: 'Wallet not connected' } };
+    }
     const start = Date.now();
     while (Date.now() - start < 30000) {
       const status = await connection.getSignatureStatuses([sig], { searchTransactionHistory: true });
@@ -178,7 +179,7 @@ export async function payForRevive(
       if (s?.confirmationStatus === 'confirmed' || s?.confirmationStatus === 'finalized') {
         return { success: true, signature: sig };
       }
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 1500));
     }
     return { success: true, signature: sig };
   } catch (err) {

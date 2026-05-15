@@ -23,7 +23,11 @@ export default defineConfig(({ mode }) => {
   return {
   server: {
     host: "::",
-    port: 8080,
+    port: 7474,
+    headers: {
+      // Required for Firebase signInWithPopup — prevents false popup-closed detection
+      'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+    },
     proxy: {
       "/api": {
         target: apiProxyTarget,
@@ -41,6 +45,11 @@ export default defineConfig(({ mode }) => {
         secure: false,
       },
       "/metadata": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+      "/mint-cnft": {
         target: apiProxyTarget,
         changeOrigin: true,
         secure: false,
@@ -67,16 +76,21 @@ export default defineConfig(({ mode }) => {
     },
   },
   build: {
+    sourcemap: false,
     modulePreload: { polyfill: true },
-    cssCodeSplit: false,
+    cssCodeSplit: true,
     target: 'es2020',
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            // React core — tiny critical-path chunk (~150KB), loaded by bootstrapper
             if (/\/react\/|\/react-dom\/|\/scheduler\/|\/buffer\//.test(id)) return 'vendor-react';
-            if (/three|@react-three|postprocessing|framer-motion/.test(id)) return 'vendor-three';
+            // Three.js core (biggest chunk)
+            if (/\/three\//.test(id)) return 'vendor-three';
+            // Three.js addons (react-three-fiber, drei, postprocessing) — separate for better caching
+            if (/@react-three|postprocessing/.test(id)) return 'vendor-three-addons';
+            // framer-motion — used broadly, own chunk
+            if (/framer-motion/.test(id)) return 'vendor-motion';
             if (/@metaplex-foundation/.test(id)) return; // stays with lazy mintIdentityPrism
             if (/@solana|@solana-mobile|bn\.js|borsh|bs58|buffer-layout|superstruct/.test(id)) return 'vendor-solana';
             if (/@radix-ui|lucide-react|@tanstack/.test(id)) return 'vendor-ui';

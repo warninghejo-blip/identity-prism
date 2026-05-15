@@ -36,7 +36,10 @@ export interface DefenderStats {
   lastPlayed: string;
 }
 
-export const DEFENDER_ACHIEVEMENT_DEFS: Omit<DefenderAchievement, 'unlocked' | 'unlockedAt' | 'claimed' | 'claimedAt'>[] = [
+export const DEFENDER_ACHIEVEMENT_DEFS: Omit<
+  DefenderAchievement,
+  'unlocked' | 'unlockedAt' | 'claimed' | 'claimedAt'
+>[] = [
   {
     id: 'def_outer_rim',
     name: 'Outer Rim',
@@ -148,7 +151,14 @@ export function updateDefenderStats(score: number, levelReached: number, kills: 
   stats.lastPlayed = new Date().toISOString();
   try {
     localStorage.setItem(STATS_KEY, JSON.stringify(stats));
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
+  import('@/lib/userDataSync')
+    .then(({ syncToServer }) => {
+      syncToServer({ gameStats: { [STATS_KEY]: stats } });
+    })
+    .catch(() => {});
   return stats;
 }
 
@@ -157,7 +167,9 @@ export function getDefenderAchievements(): DefenderAchievement[] {
   try {
     const raw = localStorage.getItem(ACHIEVEMENTS_KEY);
     if (raw) stored = JSON.parse(raw) as Partial<DefenderAchievement>[];
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
   return DEFENDER_ACHIEVEMENT_DEFS.map((def) => {
     const saved = stored.find((s) => s.id === def.id);
     return {
@@ -173,13 +185,23 @@ export function getDefenderAchievements(): DefenderAchievement[] {
 function saveDefenderAchievements(achievements: DefenderAchievement[]) {
   try {
     localStorage.setItem(ACHIEVEMENTS_KEY, JSON.stringify(achievements));
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
 }
 
-export function checkDefenderAchievements(score: number, levelReached: number): { newlyUnlocked: DefenderAchievement[]; all: DefenderAchievement[] } {
+export function checkDefenderAchievements(
+  score: number,
+  levelReached: number,
+): { newlyUnlocked: DefenderAchievement[]; all: DefenderAchievement[] } {
   const stats = getDefenderStats();
   const achievements = getDefenderAchievements();
   const newlyUnlocked: DefenderAchievement[] = [];
+
+  // Use the higher of passed params vs stored stats so achievements unlock
+  // even if stats haven't been persisted yet for the current game session
+  const effectiveBestScore = Math.max(score, stats.bestScore);
+  const effectiveBestLevel = Math.max(levelReached, stats.bestLevel);
 
   for (const ach of achievements) {
     if (ach.unlocked) continue;
@@ -187,7 +209,7 @@ export function checkDefenderAchievements(score: number, levelReached: number): 
     let met = false;
     switch (ach.thresholdType) {
       case 'level_reached':
-        met = stats.bestLevel >= ach.threshold;
+        met = effectiveBestLevel >= ach.threshold;
         break;
       case 'games_played':
         met = stats.gamesPlayed >= ach.threshold;
@@ -196,7 +218,7 @@ export function checkDefenderAchievements(score: number, levelReached: number): 
         met = stats.totalKills >= ach.threshold;
         break;
       case 'best_score':
-        met = stats.bestScore >= ach.threshold;
+        met = effectiveBestScore >= ach.threshold;
         break;
     }
 

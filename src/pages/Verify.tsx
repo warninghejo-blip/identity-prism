@@ -1,6 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getHeliusRpcUrl } from '@/constants';
+import { goBack } from '@/lib/safeNavigate';
+import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
+import { getTierIcon, TIER_HEX } from '@/lib/constants/tierColors';
 
 interface AttestationData {
   protocol: string;
@@ -15,34 +18,6 @@ interface AttestationData {
   ts: string;
 }
 
-const TIER_COLORS: Record<string, string> = {
-  mercury: '#8B8B8B',
-  venus: '#E8CDA0',
-  earth: '#4B9CD3',
-  mars: '#C1440E',
-  jupiter: '#C88B3A',
-  saturn: '#E8D191',
-  uranus: '#73C2FB',
-  neptune: '#3F54BE',
-  sun: '#FFD700',
-  'binary sun': '#22D3EE',
-  binary_sun: '#22D3EE',
-};
-
-const TIER_EMOJI: Record<string, string> = {
-  mercury: '☿️',
-  venus: '♀️',
-  earth: '🌍',
-  mars: '♂️',
-  jupiter: '♃',
-  saturn: '🪐',
-  uranus: '⛢',
-  neptune: '♆',
-  sun: '☀️',
-  'binary sun': '🌟',
-  binary_sun: '🌟',
-};
-
 type VerifyState =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -50,9 +25,14 @@ type VerifyState =
   | { status: 'error'; message: string };
 
 const Verify: React.FC = () => {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [state, setState] = useState<VerifyState>({ status: 'idle' });
   const [inputSig, setInputSig] = useState(searchParams.get('tx') || searchParams.get('sig') || '');
+
+  useEffect(() => {
+    fadeOutTransition();
+  }, []);
 
   const verify = useCallback(async (signature: string) => {
     if (!signature.trim()) return;
@@ -79,9 +59,7 @@ const Verify: React.FC = () => {
 
       // Find Memo instruction
       const MEMO_PROGRAM = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
-      const memoIx = instructions.find(
-        (ix: any) => ix.programId === MEMO_PROGRAM || ix.program === 'spl-memo'
-      );
+      const memoIx = instructions.find((ix: any) => ix.programId === MEMO_PROGRAM || ix.program === 'spl-memo');
 
       if (!memoIx) throw new Error('No Memo instruction found in this transaction. This is not an attestation.');
 
@@ -113,7 +91,7 @@ const Verify: React.FC = () => {
         version: parsed.version || 1,
         wallet: parsed.wallet || '',
         score: parsed.score || 0,
-        maxScore: parsed.maxScore || 1400,
+        maxScore: parsed.maxScore || 400,
         tier: parsed.tier || 'unknown',
         badges: parsed.badges || [],
         stats: parsed.stats || {},
@@ -149,31 +127,37 @@ const Verify: React.FC = () => {
     }
   };
 
-  const tierColor = state.status === 'success' ? (TIER_COLORS[state.data.tier.toLowerCase()] || '#888') : '#888';
-  const tierEmoji = state.status === 'success' ? (TIER_EMOJI[state.data.tier.toLowerCase()] || '🔮') : '';
+  const tierColor =
+    state.status === 'success' ? TIER_HEX[state.data.tier.toLowerCase().replace(' ', '_')] || '#888' : '#888';
+  const tierIconSrc = state.status === 'success' ? getTierIcon(state.data.tier.toLowerCase()) : '';
 
   const formatDate = (ts: string | number | null) => {
     if (!ts) return 'Unknown';
     const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
     return d.toLocaleString('en-US', {
-      year: 'numeric', month: 'long', day: 'numeric',
-      hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short',
     });
   };
 
   return (
     <div className="verify-page-scroll relative z-10 min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
       {/* Header */}
-      <Link to="/" className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity">
-        <img src="/assets/icon.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />
+      <button
+        onClick={() => startFadeTransition(() => goBack(navigate))}
+        className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity"
+      >
+        <img src="/phav.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />
         <span className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
           Identity Prism
         </span>
-      </Link>
+      </button>
 
-      <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-center mb-2">
-        Verify On-Chain Attestation
-      </h1>
+      <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-center mb-2">Verify On-Chain Attestation</h1>
       <p className="text-gray-400 text-center mb-6 sm:mb-8 max-w-lg text-sm sm:text-base">
         Enter a Solana transaction signature to verify an Identity Prism reputation attestation recorded on-chain.
       </p>
@@ -196,12 +180,22 @@ const Verify: React.FC = () => {
             {state.status === 'loading' ? (
               <span className="flex items-center justify-center gap-2">
                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="none"
+                  />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
                 Verifying
               </span>
-            ) : 'Verify'}
+            ) : (
+              'Verify'
+            )}
           </button>
         </div>
       </form>
@@ -229,7 +223,8 @@ const Verify: React.FC = () => {
               <h2 className="text-xl font-bold text-emerald-400">Attestation Verified</h2>
             </div>
             <p className="text-emerald-300/70 text-sm">
-              This reputation score was permanently recorded on the Solana blockchain and co-signed by the Identity Prism authority.
+              This reputation score was permanently recorded on the Solana blockchain and co-signed by the Identity
+              Prism authority.
             </p>
           </div>
 
@@ -248,8 +243,18 @@ const Verify: React.FC = () => {
               <div className="sm:text-right">
                 <p className="text-gray-400 text-sm mb-1">Tier</p>
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl sm:text-3xl">{tierEmoji}</span>
-                  <span className="text-xl sm:text-2xl font-bold uppercase truncate max-w-[200px]" style={{ color: tierColor }}>
+                  {tierIconSrc && (
+                    <img
+                      src={tierIconSrc}
+                      alt={state.data.tier}
+                      className="w-8 h-8 sm:w-10 sm:h-10 object-contain"
+                      style={{ filter: `drop-shadow(0 0 6px ${tierColor}80)` }}
+                    />
+                  )}
+                  <span
+                    className="text-xl sm:text-2xl font-bold uppercase truncate max-w-[200px]"
+                    style={{ color: tierColor }}
+                  >
                     {state.data.tier.replace(/_/g, ' ')}
                   </span>
                 </div>
@@ -363,10 +368,18 @@ const Verify: React.FC = () => {
             <span className="text-5xl mb-4 block">🔍</span>
             <h3 className="text-lg font-semibold mb-2">How it works</h3>
             <div className="text-gray-400 text-sm space-y-2 text-left max-w-md mx-auto">
-              <p><strong>1.</strong> A user attests their reputation via Identity Prism Blink or API</p>
-              <p><strong>2.</strong> The score, tier, and badges are written on-chain using the Solana Memo program</p>
-              <p><strong>3.</strong> The transaction is co-signed by our authority keypair</p>
-              <p><strong>4.</strong> Paste the transaction signature above to verify the attestation</p>
+              <p>
+                <strong>1.</strong> A user attests their reputation via Identity Prism Blink or API
+              </p>
+              <p>
+                <strong>2.</strong> The score, tier, and badges are written on-chain using the Solana Memo program
+              </p>
+              <p>
+                <strong>3.</strong> The transaction is co-signed by our authority keypair
+              </p>
+              <p>
+                <strong>4.</strong> Paste the transaction signature above to verify the attestation
+              </p>
             </div>
           </div>
         </div>

@@ -1,22 +1,22 @@
-import { 
-  Vector3, 
-  MathUtils, 
-  PerspectiveCamera, 
-  EventDispatcher, 
-  DoubleSide, 
-  AdditiveBlending, 
-  Color, 
-  FrontSide, 
-  NormalBlending, 
-  Points, 
-  Mesh, 
-  Group, 
-  LineSegments, 
-  CanvasTexture, 
+import {
+  Vector3,
+  MathUtils,
+  PerspectiveCamera,
+  EventDispatcher,
+  DoubleSide,
+  AdditiveBlending,
+  Color,
+  FrontSide,
+  NormalBlending,
+  Points,
+  Mesh,
+  Group,
+  LineSegments,
+  CanvasTexture,
   ACESFilmicToneMapping,
   Texture,
   Vector2,
-  BackSide
+  BackSide,
 } from 'three';
 import { useRef, useMemo, Suspense, useEffect, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -25,8 +25,13 @@ import { EffectComposer, Bloom, ChromaticAberration, Vignette, Noise } from '@re
 import { BlendFunction } from 'postprocessing';
 import { VISUAL_CONFIG } from '@/constants';
 import { SeekerSun } from './SeekerSun';
-import type { PlanetData, MoonData, SolarSystemData, SpaceDustConfig, NebulaConfig } from '@/lib/solarSystemGenerator';
-import { generatePlanetTextures, generateCloudTexture, generateMoonTexture, generateSolarSystem } from '@/lib/solarSystemGenerator';
+import type { PlanetData, MoonData, SpaceDustConfig, NebulaConfig } from '@/lib/solarSystemGenerator';
+import {
+  generatePlanetTextures,
+  generateCloudTexture,
+  generateMoonTexture,
+  generateSolarSystem,
+} from '@/lib/solarSystemGenerator';
 import type { WalletTraits } from '@/hooks/useWalletData';
 
 interface SolarSystemProps {
@@ -38,22 +43,22 @@ interface SolarSystemProps {
 // Create soft circular particle texture (fixes square particle bug)
 function createCircleTexture(): Texture {
   const canvas = document.createElement('canvas');
-  canvas.width = 64; 
+  canvas.width = 64;
   canvas.height = 64;
   const ctx = canvas.getContext('2d')!;
-  
+
   // Radial gradient for soft glow
   const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
   gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
   gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
   gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.2)');
   gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  
-  ctx.fillStyle = gradient; 
+
+  ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 64, 64);
-  
-  const tex = new CanvasTexture(canvas); 
-  tex.needsUpdate = true; 
+
+  const tex = new CanvasTexture(canvas);
+  tex.needsUpdate = true;
   return tex;
 }
 
@@ -111,7 +116,7 @@ function CinematicCamera({ isWarping, hasTraits }: { isWarping?: boolean; hasTra
         lookAtPos.current.set(0, 4, 0);
       }
     }
-    
+
     const timer = setTimeout(() => {
       setIsTransitioning(false);
     }, 4000);
@@ -136,16 +141,16 @@ function CinematicCamera({ isWarping, hasTraits }: { isWarping?: boolean; hasTra
     } else if (isTransitioning && !userInteracted.current) {
       camera.position.lerp(targetPos.current, 0.015); // Slower, smoother
       currentFov.current = MathUtils.lerp(currentFov.current, targetFov.current, 0.015);
-      
+
       if ('fov' in camera) {
         (camera as PerspectiveCamera).fov = currentFov.current;
       }
-      
+
       camera.lookAt(lookAtPos.current);
       camera.updateProjectionMatrix();
     }
   });
-  
+
   return null;
 }
 
@@ -154,11 +159,11 @@ function OrbitPath({ radius, color }: { radius: number; color: string }) {
   return (
     <mesh rotation={[Math.PI / 2, 0, 0]} renderOrder={1}>
       <ringGeometry args={[radius - 0.008, radius + 0.008, 128]} />
-      <meshBasicMaterial 
-        color={color} 
-        transparent 
-        opacity={0.025} 
-        side={DoubleSide} 
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={0.025}
+        side={DoubleSide}
         blending={AdditiveBlending}
         depthWrite={false}
       />
@@ -169,12 +174,12 @@ function OrbitPath({ radius, color }: { radius: number; color: string }) {
 // Moon component with crater texture
 function Moon({ moon }: { moon: MoonData }) {
   const ref = useRef<Mesh>(null);
-  
+
   const craterTexture = useMemo(() => {
     const seed = parseInt(moon.id.replace(/\D/g, '')) || 12345;
     return generateMoonTexture(seed);
   }, [moon.id]);
-  
+
   useFrame((state) => {
     if (ref.current) {
       // 80% slower orbital motion
@@ -185,16 +190,16 @@ function Moon({ moon }: { moon: MoonData }) {
       ref.current.rotation.y += 0.001;
     }
   });
-  
+
   return (
     <mesh ref={ref}>
       <sphereGeometry args={[moon.size, 32, 32]} />
-      <meshPhysicalMaterial 
-        color="#8b8b8b" 
+      <meshPhysicalMaterial
+        color="#8b8b8b"
         map={craterTexture}
         bumpMap={craterTexture}
         bumpScale={0.02}
-        roughness={0.95} 
+        roughness={0.95}
         metalness={0.05}
         depthWrite={true}
       />
@@ -211,13 +216,13 @@ interface CloudLayerProps {
 function CloudLayer({ planetSize, seed }: CloudLayerProps) {
   const cloudRef = useRef<Mesh>(null);
   const cloudTexture = useMemo(() => generateCloudTexture(seed), [seed]);
-  
+
   useFrame((state, delta) => {
     if (cloudRef.current) {
       cloudRef.current.rotation.y += delta * 0.006; // 80% slower
     }
   });
-  
+
   return (
     <mesh ref={cloudRef} scale={1.03}>
       <sphereGeometry args={[planetSize, 64, 64]} />
@@ -237,13 +242,13 @@ function CloudLayer({ planetSize, seed }: CloudLayerProps) {
 function PlanetRing({ planetSize }: { planetSize: number }) {
   const pointsRef = useRef<Points>(null);
   const circleTex = useMemo(() => createCircleTexture(), []);
-  
+
   const { positions, colors, count } = useMemo(() => {
     const particleCount = 6000;
     const pos = new Float32Array(particleCount * 3);
     const col = new Float32Array(particleCount * 3);
     const color = new Color('#ffffff');
-    
+
     for (let i = 0; i < particleCount; i++) {
       const i3 = i * 3;
       const angle = Math.random() * Math.PI * 2;
@@ -251,7 +256,7 @@ function PlanetRing({ planetSize }: { planetSize: number }) {
       pos[i3] = Math.cos(angle) * dist;
       pos[i3 + 1] = (Math.random() - 0.5) * 0.015;
       pos[i3 + 2] = Math.sin(angle) * dist;
-      
+
       const brightness = 0.4 + Math.random() * 0.6;
       col[i3] = color.r * brightness;
       col[i3 + 1] = color.g * brightness;
@@ -287,15 +292,20 @@ function PlanetRing({ planetSize }: { planetSize: number }) {
 }
 
 // Animated satellite orbiting a planet
-function Satellite({ planetSize, orbitRadius, speed, seed }: { 
-  planetSize: number; 
+function Satellite({
+  planetSize: _planetSize,
+  orbitRadius,
+  speed,
+  seed,
+}: {
+  planetSize: number;
   orbitRadius: number;
   speed: number;
   seed: number;
 }) {
   const ref = useRef<Mesh>(null);
   const initialAngle = useMemo(() => seed * 0.01, [seed]);
-  
+
   useFrame((state) => {
     if (ref.current) {
       const angle = initialAngle + state.clock.elapsedTime * speed;
@@ -304,13 +314,13 @@ function Satellite({ planetSize, orbitRadius, speed, seed }: {
       ref.current.rotation.y += 0.01;
     }
   });
-  
+
   return (
     <mesh ref={ref}>
       <boxGeometry args={[0.02, 0.01, 0.015]} />
-      <meshStandardMaterial 
-        color="#88ccff" 
-        emissive="#4488ff" 
+      <meshStandardMaterial
+        color="#88ccff"
+        emissive="#4488ff"
         emissiveIntensity={0.5}
         metalness={0.8}
         roughness={0.2}
@@ -320,9 +330,17 @@ function Satellite({ planetSize, orbitRadius, speed, seed }: {
 }
 
 // Asteroid belt component - low-poly rocky debris
-function AsteroidBelt({ innerRadius, outerRadius, count }: { innerRadius: number; outerRadius: number; count: number }) {
+function AsteroidBelt({
+  innerRadius,
+  outerRadius,
+  count,
+}: {
+  innerRadius: number;
+  outerRadius: number;
+  count: number;
+}) {
   const asteroidRefs = useRef<Group>(null);
-  
+
   const asteroids = useMemo(() => {
     const items = [];
     for (let i = 0; i < count; i++) {
@@ -331,16 +349,16 @@ function AsteroidBelt({ innerRadius, outerRadius, count }: { innerRadius: number
       const size = 0.02 + Math.random() * 0.08;
       const rotSpeed = (Math.random() - 0.5) * 0.02;
       const orbitSpeed = (0.02 + Math.random() * 0.02) * 0.2; // 80% slower
-      items.push({ 
-        id: i, 
-        x: Math.cos(angle) * radius, 
-        z: Math.sin(angle) * radius, 
+      items.push({
+        id: i,
+        x: Math.cos(angle) * radius,
+        z: Math.sin(angle) * radius,
         y: (Math.random() - 0.5) * 2,
-        size, 
+        size,
         rotSpeed,
         orbitSpeed,
         angle,
-        radius
+        radius,
       });
     }
     return items;
@@ -365,9 +383,9 @@ function AsteroidBelt({ innerRadius, outerRadius, count }: { innerRadius: number
       {asteroids.map((a) => (
         <mesh key={a.id} position={[a.x, a.y, a.z]}>
           <dodecahedronGeometry args={[a.size, 0]} />
-          <meshStandardMaterial 
-            color="#4a4a4a" 
-            roughness={0.95} 
+          <meshStandardMaterial
+            color="#4a4a4a"
+            roughness={0.95}
             metalness={0.1}
             transparent={false}
             depthWrite={true}
@@ -379,31 +397,36 @@ function AsteroidBelt({ innerRadius, outerRadius, count }: { innerRadius: number
 }
 
 // Space rocket/probe flying between planets
-function SpaceRocket({ startRadius, endRadius, speed, seed }: { 
-  startRadius: number; 
-  endRadius: number; 
+function SpaceRocket({
+  startRadius,
+  endRadius,
+  speed,
+  seed,
+}: {
+  startRadius: number;
+  endRadius: number;
   speed: number;
   seed: number;
 }) {
   const rocketRef = useRef<Group>(null);
   const startAngle = useMemo(() => seed * 0.1, [seed]);
-  
+
   useFrame((state) => {
     if (rocketRef.current) {
       const time = state.clock.elapsedTime * speed * 0.2; // 80% slower
       const progress = (Math.sin(time + startAngle) + 1) / 2;
       const radius = startRadius + progress * (endRadius - startRadius);
       const angle = time * 0.3 + startAngle;
-      
+
       rocketRef.current.position.x = Math.cos(angle) * radius;
       rocketRef.current.position.z = Math.sin(angle) * radius;
       rocketRef.current.position.y = Math.sin(time * 2) * 0.5;
-      
+
       // Point in direction of travel
       rocketRef.current.rotation.y = -angle + Math.PI / 2;
     }
   });
-  
+
   return (
     <group ref={rocketRef}>
       {/* Rocket body */}
@@ -430,20 +453,19 @@ function Planet({ planet, orbitColor }: { planet: PlanetData; orbitColor: string
   const groupRef = useRef<Group>(null);
   const meshRef = useRef<Mesh>(null);
   const atmosphereRef = useRef<Mesh>(null);
-  const textures = useMemo(() => generatePlanetTextures(planet.surface, planet.materialSeed), [planet.surface, planet.materialSeed]);
-  
+  const textures = useMemo(
+    () => generatePlanetTextures(planet.surface, planet.materialSeed),
+    [planet.surface, planet.materialSeed],
+  );
+
   // Determine if this is an active/inhabited world
   const isInhabited = planet.type.name === 'terrestrial';
-  
+
   useFrame((state, delta) => {
     if (groupRef.current) {
       // 80% slower orbital motion
       const angle = planet.initialAngle + state.clock.elapsedTime * VISUAL_CONFIG.ANIMATION.PLANET_ORBIT * 0.2;
-      groupRef.current.position.set(
-        Math.cos(angle) * planet.orbitRadius, 
-        0, 
-        Math.sin(angle) * planet.orbitRadius
-      );
+      groupRef.current.position.set(Math.cos(angle) * planet.orbitRadius, 0, Math.sin(angle) * planet.orbitRadius);
     }
     if (meshRef.current) {
       meshRef.current.rotation.y += delta * 0.015; // 80% slower rotation
@@ -452,7 +474,7 @@ function Planet({ planet, orbitColor }: { planet: PlanetData; orbitColor: string
       atmosphereRef.current.rotation.y += delta * 0.02;
     }
   });
-  
+
   return (
     <>
       <OrbitPath radius={planet.orbitRadius} color={orbitColor} />
@@ -476,7 +498,7 @@ function Planet({ planet, orbitColor }: { planet: PlanetData; orbitColor: string
             depthTest={true}
           />
         </mesh>
-        
+
         {/* Subtle atmosphere glow - rendered after planet */}
         <mesh ref={atmosphereRef} scale={1.035} renderOrder={11}>
           <sphereGeometry args={[planet.size, 48, 48]} />
@@ -493,21 +515,29 @@ function Planet({ planet, orbitColor }: { planet: PlanetData; orbitColor: string
         </mesh>
 
         {/* Cloud layer for terrestrial worlds */}
-        {planet.type.name === 'terrestrial' && (
-          <CloudLayer planetSize={planet.size} seed={planet.materialSeed} />
-        )}
-        
+        {planet.type.name === 'terrestrial' && <CloudLayer planetSize={planet.size} seed={planet.materialSeed} />}
+
         {/* Ring system */}
         {planet.hasRing && <PlanetRing planetSize={planet.size} />}
-        
+
         {/* Satellites for inhabited worlds */}
         {isInhabited && (
           <>
-            <Satellite planetSize={planet.size} orbitRadius={planet.size * 1.8} speed={0.3} seed={planet.materialSeed} />
-            <Satellite planetSize={planet.size} orbitRadius={planet.size * 2.2} speed={-0.2} seed={planet.materialSeed + 100} />
+            <Satellite
+              planetSize={planet.size}
+              orbitRadius={planet.size * 1.8}
+              speed={0.3}
+              seed={planet.materialSeed}
+            />
+            <Satellite
+              planetSize={planet.size}
+              orbitRadius={planet.size * 2.2}
+              speed={-0.2}
+              seed={planet.materialSeed + 100}
+            />
           </>
         )}
-        
+
         {/* Moons */}
         {planet.moons.map((m: MoonData) => (
           <Moon key={m.id} moon={m} />
@@ -521,26 +551,26 @@ function Planet({ planet, orbitColor }: { planet: PlanetData; orbitColor: string
 function SpaceDust({ config }: { config: SpaceDustConfig }) {
   const pointsRef = useRef<Points>(null);
   const circleTex = useMemo(() => createCircleTexture(), []);
-  
+
   const { positions, colors, count } = useMemo(() => {
     const targetCount = Math.min(config.particleCount, 2500);
     const pos = new Float32Array(targetCount * 3);
     const col = new Float32Array(targetCount * 3);
     const palette = ['#ffffff', '#e8f4ff', '#d0eaff'];
-    
+
     for (let i = 0; i < targetCount; i++) {
       const i3 = i * 3;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       const r = 8 + Math.random() * config.spreadRadius * 1.2;
-      
+
       pos[i3] = r * Math.sin(phi) * Math.cos(theta);
       pos[i3 + 1] = (Math.random() - 0.5) * 3; // Slight vertical spread
       pos[i3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-      
+
       const swatch = new Color(palette[Math.floor(Math.random() * palette.length)]);
-      col[i3] = swatch.r; 
-      col[i3 + 1] = swatch.g; 
+      col[i3] = swatch.r;
+      col[i3 + 1] = swatch.g;
       col[i3 + 2] = swatch.b;
     }
     return { positions: pos, colors: col, count: targetCount };
@@ -576,15 +606,19 @@ function SpaceDust({ config }: { config: SpaceDustConfig }) {
 function HyperjumpLines() {
   const lineRef = useRef<LineSegments>(null);
   const count = 1200;
-  
+
   const { positions } = useMemo(() => {
     const pos = new Float32Array(count * 6);
     for (let i = 0; i < count; i++) {
       const x = (Math.random() - 0.5) * 200;
       const y = (Math.random() - 0.5) * 200;
       const z = (Math.random() - 0.5) * 600;
-      pos[i * 6] = x; pos[i * 6 + 1] = y; pos[i * 6 + 2] = z;
-      pos[i * 6 + 3] = x; pos[i * 6 + 4] = y; pos[i * 6 + 5] = z - 50;
+      pos[i * 6] = x;
+      pos[i * 6 + 1] = y;
+      pos[i * 6 + 2] = z;
+      pos[i * 6 + 3] = x;
+      pos[i * 6 + 4] = y;
+      pos[i * 6 + 5] = z - 50;
     }
     return { positions: pos };
   }, []);
@@ -593,13 +627,18 @@ function HyperjumpLines() {
     if (lineRef.current) {
       const arr = lineRef.current.geometry.attributes.position.array as Float32Array;
       for (let i = 0; i < count; i++) {
-        arr[i * 6 + 2] += 45; arr[i * 6 + 5] += 45;
-        arr[i * 6 + 5] = arr[i * 6 + 2] - 120; 
+        arr[i * 6 + 2] += 45;
+        arr[i * 6 + 5] += 45;
+        arr[i * 6 + 5] = arr[i * 6 + 2] - 120;
         if (arr[i * 6 + 2] > 300) {
-          const x = (Math.random() - 0.5) * 200; const y = (Math.random() - 0.5) * 200;
-          arr[i * 6] = x; arr[i * 6 + 3] = x;
-          arr[i * 6 + 1] = y; arr[i * 6 + 4] = y;
-          arr[i * 6 + 2] = -300; arr[i * 6 + 5] = -420;
+          const x = (Math.random() - 0.5) * 200;
+          const y = (Math.random() - 0.5) * 200;
+          arr[i * 6] = x;
+          arr[i * 6 + 3] = x;
+          arr[i * 6 + 1] = y;
+          arr[i * 6 + 4] = y;
+          arr[i * 6 + 2] = -300;
+          arr[i * 6 + 5] = -420;
         }
       }
       lineRef.current.geometry.attributes.position.needsUpdate = true;
@@ -620,14 +659,14 @@ function HyperjumpLines() {
 function Nebula({ config }: { config?: NebulaConfig }) {
   const nebulaRef = useRef<Points>(null);
   const circleTex = useMemo(() => createCircleTexture(), []);
-  
+
   const { positions, colors, count } = useMemo(() => {
     if (!config) return { positions: new Float32Array(0), colors: new Float32Array(0), count: 0 };
     const pointCount = 3000;
     const pos = new Float32Array(pointCount * 3);
     const col = new Float32Array(pointCount * 3);
     const palette = ['#ffffff', '#f0faff', '#e0f0ff'];
-    
+
     for (let i = 0; i < pointCount; i++) {
       const i3 = i * 3;
       const radius = config.radius * (0.4 + Math.random() * 0.6);
@@ -674,16 +713,19 @@ function Nebula({ config }: { config?: NebulaConfig }) {
 
 // Main scene composition
 function SolarSystemScene({ traits, walletAddress, isWarping }: SolarSystemProps) {
-  const systemData = useMemo(() => traits ? generateSolarSystem(traits, walletAddress) : null, [traits, walletAddress]);
+  const systemData = useMemo(
+    () => (traits ? generateSolarSystem(traits, walletAddress) : null),
+    [traits, walletAddress],
+  );
   const hasTraits = !!traits;
 
   // Calculate asteroid belt position based on outermost planet
   const asteroidBeltRadius = useMemo(() => {
     if (!systemData || systemData.planets.length === 0) return { inner: 35, outer: 45 };
     const outerPlanet = systemData.planets[systemData.planets.length - 1];
-    return { 
-      inner: outerPlanet.orbitRadius + 3, 
-      outer: outerPlanet.orbitRadius + 8 
+    return {
+      inner: outerPlanet.orbitRadius + 3,
+      outer: outerPlanet.orbitRadius + 8,
     };
   }, [systemData]);
 
@@ -694,76 +736,70 @@ function SolarSystemScene({ traits, walletAddress, isWarping }: SolarSystemProps
     <>
       <CinematicCamera isWarping={isWarping} hasTraits={hasTraits} />
       <ambientLight intensity={0.04} />
-      {isWarping ? <HyperjumpLines /> : systemData && (
-        <>
-          <Nebula config={systemData.nebula} />
-          <SeekerSun 
-            profile={systemData.stellarProfile} 
-            walletSeed={walletAddress} 
-            rarityTier={systemData.rarityTier}
-          />
-          {systemData.planets.map((p: PlanetData) => (
-            <Planet key={p.id} planet={p} orbitColor={systemData.orbitColor} />
-          ))}
-          
-          {/* Asteroid belt for active wallets */}
-          {traits && traits.txCount > 100 && (
-            <AsteroidBelt 
-              innerRadius={asteroidBeltRadius.inner} 
-              outerRadius={asteroidBeltRadius.outer} 
-              count={Math.min(80, Math.floor(traits.txCount / 50))} 
+      {isWarping ? (
+        <HyperjumpLines />
+      ) : (
+        systemData && (
+          <>
+            <Nebula config={systemData.nebula} />
+            <SeekerSun
+              profile={systemData.stellarProfile}
+              walletSeed={walletAddress}
+              rarityTier={systemData.rarityTier}
             />
-          )}
-          
-          {/* Space rockets for highly active wallets */}
-          {showRockets && systemData.planets.length >= 2 && (
-            <>
-              <SpaceRocket 
-                startRadius={systemData.planets[0].orbitRadius} 
-                endRadius={systemData.planets[Math.min(2, systemData.planets.length - 1)].orbitRadius} 
-                speed={0.5} 
-                seed={1} 
+            {systemData.planets.map((p: PlanetData) => (
+              <Planet key={p.id} planet={p} orbitColor={systemData.orbitColor} />
+            ))}
+
+            {/* Asteroid belt for active wallets */}
+            {traits && traits.txCount > 100 && (
+              <AsteroidBelt
+                innerRadius={asteroidBeltRadius.inner}
+                outerRadius={asteroidBeltRadius.outer}
+                count={Math.min(80, Math.floor(traits.txCount / 50))}
               />
-              {traits.txCount > 1000 && (
-                <SpaceRocket 
-                  startRadius={systemData.planets[1].orbitRadius} 
-                  endRadius={systemData.planets[Math.min(4, systemData.planets.length - 1)].orbitRadius} 
-                  speed={0.3} 
-                  seed={42} 
+            )}
+
+            {/* Space rockets for highly active wallets */}
+            {showRockets && systemData.planets.length >= 2 && (
+              <>
+                <SpaceRocket
+                  startRadius={systemData.planets[0].orbitRadius}
+                  endRadius={systemData.planets[Math.min(2, systemData.planets.length - 1)].orbitRadius}
+                  speed={0.5}
+                  seed={1}
                 />
-              )}
-            </>
-          )}
-          
-          <SpaceDust config={systemData.spaceDust} />
-          <OrbitControls 
-            makeDefault 
-            enablePan={false} 
-            enableZoom={true} 
-            minDistance={10} 
-            maxDistance={150} 
-            dampingFactor={0.03} 
-            enableDamping 
-            rotateSpeed={0.3}
-            target={[0, 5, 0]}
-          />
-        </>
+                {traits.txCount > 1000 && (
+                  <SpaceRocket
+                    startRadius={systemData.planets[1].orbitRadius}
+                    endRadius={systemData.planets[Math.min(4, systemData.planets.length - 1)].orbitRadius}
+                    speed={0.3}
+                    seed={42}
+                  />
+                )}
+              </>
+            )}
+
+            <SpaceDust config={systemData.spaceDust} />
+            <OrbitControls
+              makeDefault
+              enablePan={false}
+              enableZoom={true}
+              minDistance={10}
+              maxDistance={150}
+              dampingFactor={0.03}
+              enableDamping
+              rotateSpeed={0.3}
+              target={[0, 5, 0]}
+            />
+          </>
+        )
       )}
 
       {/* Optimized post-processing for mobile - Professional Bloom settings */}
       <EffectComposer multisampling={0}>
-        <Bloom 
-          intensity={2.0}
-          radius={0.4}
-          luminanceThreshold={0.8}
-          luminanceSmoothing={0.9}
-          mipmapBlur 
-        />
-        <ChromaticAberration 
-          offset={new Vector2(0.0003, 0.0003)} 
-          radialModulation 
-          modulationOffset={0.95} 
-        />
+        <Bloom intensity={2.0} radius={0.4} luminanceThreshold={0.8} luminanceSmoothing={0.9} mipmapBlur />
+        <ChromaticAberration offset={new Vector2(0.0003, 0.0003)} radialModulation modulationOffset={0.95} />
         <Vignette darkness={0.5} offset={0.3} />
         <Noise opacity={0.012} blendFunction={BlendFunction.SOFT_LIGHT} />
       </EffectComposer>
@@ -773,14 +809,14 @@ function SolarSystemScene({ traits, walletAddress, isWarping }: SolarSystemProps
 
 // Exported component with Canvas setup
 export function SolarSystem({ traits, walletAddress, isWarping }: SolarSystemProps) {
-  const isConnected = walletAddress && walletAddress !== '0xDemo...Wallet';
-  
+  const isConnected = Boolean(walletAddress);
+
   return (
     <div className="w-full h-full absolute inset-0 bg-black">
-      <Canvas 
-        camera={{ position: [0, 0, 150], fov: 60, far: 2000 }} 
-        gl={{ 
-          antialias: true, 
+      <Canvas
+        camera={{ position: [0, 0, 150], fov: 60, far: 2000 }}
+        gl={{
+          antialias: true,
           toneMapping: ACESFilmicToneMapping,
           toneMappingExposure: 1.0,
         }}

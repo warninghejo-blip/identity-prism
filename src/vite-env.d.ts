@@ -7,6 +7,11 @@ interface ImportMetaEnv {
   readonly VITE_METADATA_BASE_URL?: string;
   readonly VITE_METADATA_IMAGE_URL?: string;
   readonly VITE_APP_BASE_URL?: string;
+  readonly VITE_COLLECTION_MINT?: string;
+  readonly VITE_UPDATE_AUTHORITY?: string;
+  readonly VITE_COLLECTION_VERIFY_URL?: string;
+  readonly VITE_CNFT_MINT_URL?: string;
+  readonly VITE_TAPESTRY_API_KEY?: string;
 }
 
 interface ImportMeta {

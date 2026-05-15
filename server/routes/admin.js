@@ -1,0 +1,340 @@
+// Admin API routes
+// Required env var: ADMIN_KEY — must match X-Admin-Key header.
+// If ADMIN_KEY is not set, all admin endpoints return 501 "Admin API not configured".
+
+import { statSync } from 'fs';
+import crypto from 'node:crypto';
+import { appDb, APP_DB_PATH } from '../services/appDb.js';
+
+// FIX 5: removed inline checkAdminKey (duplicated ctx.core.requireAdminKey with its own
+// crypto.timingSafeEqual). Now using ctx.core.requireAdminKey everywhere for consistency.
+
+export function registerAdminRoute(ctx) {
+  const {
+    core: { ipRateLimit, getClientIp, respondJson, readBody, requireAdminKey, normalizePubkey },
+    wallet: { getCoinBalance, setCoinBalance, updateWalletEntry },
+  } = ctx;
+
+  // FIX 5: alias — all former checkAdminKey call-sites now use requireAdminKey from ctx.core.
+  const checkAdminKey = requireAdminKey;
+
+  return async function handleAdminRoute(req, res, url, pathname) {
+    // ── GET /api/admin/sybil/feedback ──────────────────────────────────────
+    if (pathname === '/api/admin/sybil/feedback' && req.method === 'GET') {
+      if (!ipRateLimit('admin_feedback', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      const status = url.searchParams.get('status') ?? 'pending';
+      const limit  = Math.min(parseInt(url.searchParams.get('limit')  ?? '50', 10) || 50, 200);
+      const offset = Math.max(parseInt(url.searchParams.get('offset') ?? '0',  10) || 0, 0);
+
+      let whereClause;
+      if (status === 'pending')  whereClause = 'WHERE admin_verified IS NULL';
+      else if (status === 'verified')  whereClause = 'WHERE admin_verified = 1';
+      else if (status === 'rejected')  whereClause = 'WHERE admin_verified = 0';
+      else                             whereClause = '';
+
+      try {
+        const { total } = appDb.prepare(
+          `SELECT COUNT(*) AS total FROM sybil_feedback ${whereClause}`
+        ).get();
+
+        const reports = appDb.prepare(
+          `SELECT id, target_address, reported_by, report_type, admin_verified, reported_at, notes
+           FROM sybil_feedback ${whereClause}
+           ORDER BY reported_at DESC
+           LIMIT ? OFFSET ?`
+        ).all(limit, offset);
+
+        respondJson(res, 200, { reports, total });
+      } catch (err) {
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    // ── POST /api/admin/sybil/feedback/:id/verify ─────────────────────────
+    const verifyMatch = pathname.match(/^\/api\/admin\/sybil\/feedback\/(\d+)\/verify$/);
+    if (verifyMatch && req.method === 'POST') {
+      if (!ipRateLimit('admin_feedback_verify', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      const id = parseInt(verifyMatch[1], 10);
+
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        respondJson(res, 400, { error: 'Invalid JSON body' });
+        return true;
+      }
+
+      if (typeof body.verified !== 'boolean') {
+        respondJson(res, 400, { error: 'verified must be boolean' });
+        return true;
+      }
+
+      try {
+        const result = appDb.prepare(
+          'UPDATE sybil_feedback SET admin_verified = ? WHERE id = ?'
+        ).run(body.verified ? 1 : 0, id);
+
+        if (result.changes === 0) {
+          respondJson(res, 404, { error: 'Feedback report not found' });
+        } else {
+          respondJson(res, 200, { ok: true, id, admin_verified: body.verified ? 1 : 0 });
+        }
+      } catch (err) {
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    // ── GET /api/admin/sybil/stats ─────────────────────────────────────────
+    if (pathname === '/api/admin/sybil/stats' && req.method === 'GET') {
+      if (!ipRateLimit('admin_stats', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      try {
+        const { totalVerdicts } = appDb.prepare(
+          'SELECT COUNT(*) AS totalVerdicts FROM sybil_verdicts'
+        ).get();
+
+        const riskRows = appDb.prepare(
+          'SELECT risk_level, COUNT(*) AS cnt FROM sybil_verdicts GROUP BY risk_level'
+        ).all();
+        const riskDistribution = { low: 0, medium: 0, high: 0 };
+        for (const row of riskRows) {
+          if (row.risk_level in riskDistribution) riskDistribution[row.risk_level] = row.cnt;
+        }
+
+        const since24h = Date.now() - 24 * 60 * 60 * 1000;
+        const { newScans } = appDb.prepare(
+          'SELECT COUNT(*) AS newScans FROM sybil_verdicts WHERE computed_at > ? AND scan_version = 1'
+        ).get(since24h);
+        const { incrementalRescans } = appDb.prepare(
+          'SELECT COUNT(*) AS incrementalRescans FROM sybil_verdicts WHERE computed_at > ? AND scan_version > 1'
+        ).get(since24h);
+        const { falsePositivesReported } = appDb.prepare(
+          'SELECT COUNT(*) AS falsePositivesReported FROM sybil_feedback WHERE reported_at > ?'
+        ).get(since24h);
+
+        const { totalClusters } = appDb.prepare(
+          'SELECT COUNT(*) AS totalClusters FROM sybil_clusters'
+        ).get();
+        const methodRows = appDb.prepare(
+          'SELECT detection_method, COUNT(*) AS cnt FROM sybil_clusters GROUP BY detection_method'
+        ).all();
+        const byMethod = {};
+        for (const row of methodRows) byMethod[row.detection_method] = row.cnt;
+
+        const { temporalCohorts } = appDb.prepare(
+          'SELECT COUNT(*) AS temporalCohorts FROM sybil_temporal_cohorts'
+        ).get();
+
+        const { fundingEdges } = appDb.prepare(
+          'SELECT COUNT(*) AS fundingEdges FROM sybil_funding_edges'
+        ).get();
+
+        let sqliteSize = 'unknown';
+        try {
+          const stat = statSync(APP_DB_PATH);
+          sqliteSize = (stat.size / (1024 * 1024)).toFixed(2) + ' MB';
+        } catch { /* ignore */ }
+
+        const lastCluster = appDb.prepare(
+          "SELECT MAX(detected_at) AS last FROM sybil_clusters WHERE detection_method = 'louvain'"
+        ).get();
+        const lastLouvainRun = lastCluster?.last ? new Date(lastCluster.last).toISOString() : null;
+
+        const inMemory = ctx.sybilCache ? ctx.sybilCache.size : 0;
+
+        respondJson(res, 200, {
+          totalVerdicts,
+          riskDistribution,
+          last24h: { newScans, incrementalRescans, falsePositivesReported },
+          clusters: { total: totalClusters, byMethod },
+          temporalCohorts,
+          fundingEdges,
+          cacheStats: { inMemory, sqliteHits: 'TBD' },
+          sqliteSize,
+          lastLouvainRun,
+        });
+      } catch (err) {
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    // ── POST /api/admin/api-keys ───────────────────────────────────────────
+    if (pathname === '/api/admin/api-keys' && req.method === 'POST') {
+      if (!ipRateLimit('admin_api_keys', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        respondJson(res, 400, { error: 'Invalid JSON body' });
+        return true;
+      }
+
+      const { owner_name, contact_email, tier, notes } = body || {};
+      const validTiers = new Set(['free', 'pro', 'enterprise']);
+      if (!tier || !validTiers.has(tier)) {
+        respondJson(res, 400, { error: 'tier must be one of: free, pro, enterprise' });
+        return true;
+      }
+
+      const key = crypto.randomUUID();
+      const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+      try {
+        appDb.prepare(
+          'INSERT INTO api_keys (key_hash, owner_name, contact_email, tier, created_at, notes) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(keyHash, owner_name ?? null, contact_email ?? null, tier, Date.now(), notes ?? null);
+        // Return raw key only once — it is never stored
+        respondJson(res, 201, { key, owner_name: owner_name ?? null, tier });
+      } catch (err) {
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    // ── GET /api/admin/api-keys ────────────────────────────────────────────
+    if (pathname === '/api/admin/api-keys' && req.method === 'GET') {
+      if (!ipRateLimit('admin_api_keys', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10) || 50, 200);
+      const today = new Date().toISOString().slice(0, 10);
+
+      try {
+        const rows = appDb.prepare(`
+          SELECT ak.key_hash, ak.owner_name, ak.contact_email, ak.tier,
+                 ak.created_at, ak.revoked_at, ak.last_used_at, ak.notes,
+                 COALESCE(aku.count, 0) AS today_count
+          FROM api_keys ak
+          LEFT JOIN api_key_usage aku ON aku.key_hash = ak.key_hash AND aku.day = ?
+          ORDER BY ak.created_at DESC
+          LIMIT ?
+        `).all(today, limit);
+        respondJson(res, 200, { keys: rows });
+      } catch (err) {
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    // ── POST /api/admin/api-keys/:key/revoke ──────────────────────────────
+    const revokeMatch = pathname.match(/^\/api\/admin\/api-keys\/([^/]+)\/revoke$/);
+    if (revokeMatch && req.method === 'POST') {
+      if (!ipRateLimit('admin_api_keys', getClientIp(req), 20, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!checkAdminKey(req, res)) return true;
+
+      // URL param is the key_hash (as returned by GET /api/admin/api-keys)
+      const targetKeyHash = revokeMatch[1];
+      try {
+        const result = appDb.prepare(
+          'UPDATE api_keys SET revoked_at = ? WHERE key_hash = ? AND revoked_at IS NULL'
+        ).run(Date.now(), targetKeyHash);
+        if (result.changes === 0) {
+          respondJson(res, 404, { error: 'API key not found or already revoked' });
+        } else {
+          respondJson(res, 200, { ok: true, key_hash: targetKeyHash });
+        }
+      } catch (err) {
+        console.error('[admin] Database error:', err);
+        respondJson(res, 500, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    if (pathname === '/api/admin/set-coins' && req.method === 'POST') {
+      // FIX 4: rate limit, input validation, no error leakage.
+      if (!ipRateLimit('admin_set_coins', getClientIp(req), 30, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!requireAdminKey(req, res)) return true;
+      try {
+        const { address, coins } = JSON.parse(await readBody(req));
+        if (!address || typeof coins !== 'number') return respondJson(res, 400, { error: 'address and coins (number) required' });
+        if (!normalizePubkey(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
+        if (!Number.isInteger(coins) || coins < 0 || coins > 1_000_000_000) {
+          return respondJson(res, 400, { error: 'coins must be an integer between 0 and 1,000,000,000' });
+        }
+        setCoinBalance(address, coins);
+        respondJson(res, 200, { ok: true, address, balance: getCoinBalance(address) });
+      } catch (error) {
+        console.error('[admin] set-coins error:', error);
+        respondJson(res, 400, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    if (pathname === '/api/admin/set-wallet' && req.method === 'POST') {
+      // FIX 4: rate limit, input validation, no error leakage.
+      if (!ipRateLimit('admin_set_wallet', getClientIp(req), 30, 60000)) {
+        respondJson(res, 429, { error: 'Too many requests' });
+        return true;
+      }
+      if (!requireAdminKey(req, res)) return true;
+      try {
+        const { address, data } = JSON.parse(await readBody(req));
+        if (!address || !data || typeof data !== 'object') return respondJson(res, 400, { error: 'address and data (object) required' });
+        if (!normalizePubkey(address)) return respondJson(res, 400, { error: 'Invalid Solana address' });
+        if (typeof data.coins === 'number' && (!Number.isInteger(data.coins) || data.coins < 0 || data.coins > 1_000_000_000)) {
+          return respondJson(res, 400, { error: 'coins must be an integer between 0 and 1,000,000,000' });
+        }
+        // Security: allowlist of admin-settable fields; block all internal fields (starting with _)
+        const ADMIN_SETTABLE_FIELDS = new Set([
+          'coins', 'coinBalance', 'score', 'tier', 'badges',
+          'displayName', 'avatar', 'bio', 'socialLinks',
+          'suspended', 'flagged', 'notes',
+          'scanCount', 'firstSeenAt', 'lastSeenAt', 'source',
+        ]);
+        const sanitizedData = {};
+        for (const [key, value] of Object.entries(data)) {
+          if (ADMIN_SETTABLE_FIELDS.has(key)) {
+            sanitizedData[key] = value;
+          }
+        }
+        if (Object.keys(sanitizedData).length === 0) {
+          return respondJson(res, 400, { error: 'No valid fields to update' });
+        }
+        updateWalletEntry(address, sanitizedData);
+        if (typeof sanitizedData.coins === 'number') setCoinBalance(address, sanitizedData.coins);
+        respondJson(res, 200, { ok: true, address, updatedFields: Object.keys(sanitizedData) });
+      } catch (error) {
+        console.error('[admin] set-wallet error:', error);
+        respondJson(res, 400, { error: 'Internal error' });
+      }
+      return true;
+    }
+
+    return false;
+  };
+}
