@@ -393,23 +393,17 @@ export const CustomWalletProvider = ({
     nativeRestoreAllowed,
   ]);
 
-  // Handle Unload — clear persisted wallet name so next fresh open won't auto-reconnect to ghost adapter
+  // Preserve wallet selection across reloads/navigation. Explicit Disconnect is the
+  // only path that should clear wallet session state.
   useEffect(() => {
     if (isNativePlatform) return;
 
     const handleBeforeUnload = () => {
       isUnloadingRef.current = true;
-      try {
-        localStorage.removeItem(localStorageKey);
-      } catch {}
     };
-    // pagehide fires on iOS/Android when app is actually closed (not just minimized)
     const handlePageHide = (e: PageTransitionEvent) => {
       if (!e.persisted) {
         isUnloadingRef.current = true;
-        try {
-          localStorage.removeItem(localStorageKey);
-        } catch {}
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);

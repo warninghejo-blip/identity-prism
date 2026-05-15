@@ -113,7 +113,7 @@ export default function SybilHunt() {
                   <img src="/landing/textures/ranks/rank_cadet.png" alt="" style={{ width: 88 }} />
                   <div className="recruit-stat"><b>0</b><span>hunts</span></div>
                   <div className="recruit-stat"><b style={{ color: '#f87171' }}>0</b><span>caught</span></div>
-                  <div className="recruit-stat"><b>Nest-Tracker</b><span>next rank</span></div>
+                  <div className="recruit-stat"><b>Tracker</b><span>next rank</span></div>
                   <div className="recruit-stat"><b>0</b><span>/3 sybils</span></div>
                   <div className="limit-track recruit-progress"><span style={{ '--pct': '0%', background: 'linear-gradient(90deg,#f5a623,#ef4444)' } as React.CSSProperties} /></div>
                   <strong style={{ color: '#d7a72d', fontSize: 26 }}>⊕ 0</strong>
