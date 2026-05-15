@@ -5,14 +5,18 @@ import {
   AlertTriangle,
   ArrowRight,
   BadgeCheck,
+  Bell,
   CircleCheck,
   Flame,
   Gamepad2,
   Loader2,
   Radar,
+  RotateCw,
   Search,
+  Shield,
   ShieldCheck,
   Sparkles,
+  Star,
   Trophy,
   Wallet,
   Zap,
@@ -251,21 +255,23 @@ function BlackHoleFeature() {
   }, []);
 
   const tokens = [
-    ['BitX Rune', '12,490', '+0.0017 SOL', 'Burn'],
-    ['Sarosism NFT', '1', '+0.0020 SOL', 'Close'],
-    ['woofer', '840,000', '+0.0011 SOL', 'Swap'],
-    ['Hawk Tuah', '77', '+0.0014 SOL', 'Burn'],
+    { tone: 'cyan', name: 'BitX Runes DEX', tag: 'TKN', symbol: 'BitX', address: 'EJAE...tJeH', balance: '100', value: '0.001368 SOL', returns: '+0.0005', status: 'quarantine' },
+    { tone: 'orange', name: 'woofer', tag: 'TKN', symbol: 'woofer', address: 'i75X...D3QC', balance: '87.8K', value: '0.000926 SOL', returns: '+0.0009', status: 'quarantine' },
+    { tone: 'orange', name: 'PONKE', tag: 'TKN', symbol: 'PONKE', address: '5z3E...mrRC', balance: '1.27', value: '0.000562 SOL', returns: '+0.0013', status: 'quarantine' },
+    { tone: 'yellow', name: 'Goateus Maximus', tag: 'TKN', symbol: 'GOAT', address: '9k2m...3RFa', balance: '412', value: '0.000418 SOL', returns: '+0.0007', status: 'quarantine' },
+    { tone: 'purple', name: 'Sarosism', tag: 'NFT ME', symbol: 'SARO', address: '7Pn3...kQbX', balance: '1', value: '0.0023 SOL', returns: '+0.0018', status: 'protected' },
   ];
 
   return (
     <section className="section landing-section blackhole-feature" data-section-id="blackhole" id="blackhole">
-      <div className="landing-container">
-        <SectionHead eyebrow="Black Hole" tone="red" title="Feed the void. Reclaim your SOL." copy="The cleanup surface from the APK, adapted for wide screens: scan, protect valuable assets, burn spam, close empty accounts, and preview net SOL before execution." />
-        <div className="blackhole-grid">
-          <div className="blackhole-orbit reveal" ref={wrapRef}>
-            <h3>BLACK HOLE</h3>
-            <p>FEED THE VOID · RECLAIM YOUR SOL</p>
-            <div className="event-horizon" aria-hidden="true">
+      <div className="landing-container blackhole-v2-container">
+        <div className="blackhole-v2-hero reveal" ref={wrapRef}>
+          <Link to="/" className="landing-btn ghost bh-back">BACK TO HUB</Link>
+          <div className="bh-beam" aria-hidden="true"><span /></div>
+          <h2>BLACK HOLE</h2>
+          <p>Recover rent from dust. Swap what still has value. Protected assets stay untouched.</p>
+          <div className="blackhole-sphere-wrap">
+            <div className="event-horizon apk" aria-hidden="true">
               <span className="polar-jet top" />
               <span className="polar-jet bottom" />
               <span className="accretion ring-a" />
@@ -274,48 +280,96 @@ function BlackHoleFeature() {
               <span className="void-disc" />
             </div>
           </div>
-          <div className="blackhole-console glass-card reveal-stagger">
-            <div className="contamination">
-              <div>
-                <span>Contamination</span>
-                <b>MODERATE</b>
-              </div>
-              <strong>47%</strong>
-              <div className="meter"><span style={{ width: '47%' }} /></div>
-            </div>
-            <div className="bh-stats">
-              {[
-                ['Scanned', '86', ''],
-                ['Shielded', '41', 'green'],
-                ['Caution', '14', 'gold'],
-                ['Threats', '31', 'red'],
-              ].map(([label, value, tone]) => (
-                <div key={label} className={tone}>
-                  <span>{label}</span>
-                  <b>{value}</b>
-                </div>
-              ))}
-            </div>
-            <div className="token-table">
-              {tokens.map(([asset, bal, ret, status]) => (
-                <div key={asset}>
-                  <span className="asset"><Flame aria-hidden="true" /> {asset}</span>
-                  <span>{bal}</span>
-                  <span className="green">{ret}</span>
-                  <span className="status">{status}</span>
-                </div>
-              ))}
-            </div>
-            <div className="manifest">
-              <div><span>Resolved</span><b>4 assets</b></div>
-              <div><span>Swap</span><b>1</b></div>
-              <div><span>Burn</span><b>2</b></div>
-              <div><span>Close</span><b>1</b></div>
-              <div><span>Net SOL</span><b>+0.0062</b></div>
-              <div><span>Commission</span><b>0.0009</b></div>
-              <Link to="/blackhole" className="landing-btn primary full">EXECUTE CLEANUP</Link>
-            </div>
+          <div className="bh-found-toast"><CircleCheck aria-hidden="true" />Found 86 token accounts</div>
+        </div>
+
+        <div className="bh-mode-panel reveal">
+          <div className="bh-tabs" role="tablist" aria-label="Black Hole mode">
+            <button type="button" className="active">READ-ONLY SCAN</button>
+            <button type="button"><span />ACTIVE MISSION</button>
           </div>
+          <p>Black Hole separated protected assets, caution assets, and cleanup candidates. Nothing moves until the connected wallet signs.</p>
+          <div className="bh-holder"><Shield aria-hidden="true" /> <b>ID Holder</b> — salvage fee: <strong>2%</strong> (vs 10% standard)</div>
+        </div>
+
+        <div className="bh-contamination glass-card reveal">
+          <div className="bh-contamination-head">
+            <span>CONTAMINATION LEVEL</span>
+            <b>HIGH</b>
+          </div>
+          <div className="bh-contamination-meter"><span /></div>
+          <div className="bh-contamination-foot">
+            <span>44% contaminated</span>
+            <span>38 threats / 86 total</span>
+          </div>
+        </div>
+
+        <div className="bh-stats apk reveal-stagger">
+          {[
+            [Search, '86', 'SCANNED', 'scanned'],
+            [Shield, '34', 'SHIELDED', 'shielded'],
+            [AlertTriangle, '14', 'CAUTION', 'caution'],
+            [Flame, '38', 'THREATS', 'threats'],
+          ].map(([Icon, value, label, tone]) => (
+            <div key={String(label)} className={String(tone)}>
+              <Icon aria-hidden="true" />
+              <b>{String(value)}</b>
+              <span>{String(label)}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="bh-salvage glass-card reveal">
+          <div>
+            <span>SALVAGE REWARD</span>
+            <b>~0.0775 SOL</b>
+            <small>$6.89</small>
+          </div>
+          <Flame aria-hidden="true" />
+          <p>Read-only scan only; connect the matching wallet before any asset can move.</p>
+        </div>
+
+        <div className="bh-notice reveal"><AlertTriangle aria-hidden="true" />1 asset have no metadata image — no generated icons.</div>
+
+        <div className="bh-controls reveal">
+          <button type="button" className="landing-btn ghost"><RotateCw aria-hidden="true" />Re-scan</button>
+          <div>
+            <button type="button" className="active">All</button>
+            <button type="button">NFTs</button>
+            <button type="button">Tokens</button>
+          </div>
+          <label><input type="checkbox" /> Show all</label>
+        </div>
+
+        <div className="bh-token-table glass-card reveal">
+          <div className="bh-token-head">
+            <span></span><span>Asset</span><span>Balance</span><span>Value ↓</span><span>Return</span><span>Status</span>
+          </div>
+          {tokens.map((token, index) => (
+            <div className="bh-token-row" key={token.name}>
+              <label aria-label={`Select ${token.name}`}><input type="checkbox" defaultChecked={index < 3} /></label>
+              <div className="bh-asset-cell">
+                <span className={`bh-thumb ${token.tone}`}><em>{token.symbol.slice(0, 2)}</em></span>
+                <div>
+                  <b>{token.name}</b>
+                  <i>{token.tag}</i>
+                  <small>{token.symbol} · {token.address}</small>
+                </div>
+              </div>
+              <span>{token.balance}</span>
+              <span>{token.value}</span>
+              <strong>{token.returns}</strong>
+              <div className={`bh-status ${token.status}`}>
+                {token.status === 'protected' ? <Shield aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
+                <div><b>{token.status === 'protected' ? 'Protected' : 'Quarantine'}</b><small>{token.status === 'protected' ? 'Blue-chip collection' : 'Manual review required'}</small></div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="bh-bulk glass-card reveal">
+          <span>3 assets selected — Net SOL recovery: <b>~0.0027 SOL</b></span>
+          <Link to="/blackhole" className="landing-btn primary">EXECUTE CLEANUP <ArrowRight aria-hidden="true" /></Link>
         </div>
       </div>
     </section>
@@ -323,66 +377,112 @@ function BlackHoleFeature() {
 }
 
 function IdentityFeature() {
-  const [tab, setTab] = useState<'stats' | 'badges' | 'intel'>('stats');
-  const stats = [
-    ['SOL Balance', '14.72'],
-    ['Wallet Age', '914d'],
-    ['TX Count', '4,280'],
-    ['NFTs Held', '24'],
-    ['Activity Idx', '86'],
-    ['Dormancy', '1d'],
+  const [openCard, setOpenCard] = useState(false);
+  const statBars = [
+    ['ON-CHAIN', '72%', 'cyan'],
+    ['TRUST', '84%', 'violet'],
+    ['GAMES', '91%', 'green'],
+    ['SOCIAL', '48%', 'pink'],
+    ['ENGAGE', '79%', 'purple'],
   ];
-  const intel = [
-    ['trustScore', '82'],
-    ['riskLevel', 'low'],
-    ['walletAge', '914d'],
-    ['flowRatio', '1.18'],
-    ['dustRatio', '7%'],
-    ['uniquePrograms', '63'],
-    ['clusterSimilarity', '12%'],
+  const hubItems = [
+    ['league.png', 'League'],
+    ['scanner.png', 'Sybil Hunt'],
+    ['arena.png', 'Arena'],
+    ['blackhole.png', 'Black Hole'],
+  ];
+  const fullBadges = [
+    ['achievement_hunter.png', 'Achievement Hunter'],
+    ['diamond_hands.png', 'Diamond Hands'],
+    ['blue_chip.png', 'Blue Chip'],
+    ['defi_architect.png', 'Defi Architect'],
+    ['game_master.png', 'Game Master'],
   ];
 
   return (
     <section className="section landing-section identity-feature" data-section-id="identity" id="identity">
-      <div className="landing-container">
-        <SectionHead eyebrow="Identity Card" title="A living card for reputation, badges, and intel." copy="Score 0-1000, tier drift to the next planet, wallet stats, badge proof, and sybil intelligence in the same presentation model as the app." />
-        <div className="identity-grid">
-          <div className="identity-card-stage reveal">
-            <Suspense fallback={<div className="landing-skeleton">Loading 3D card</div>}>
-              <CelestialCard data={mockWallet} captureMode captureView="front" />
-            </Suspense>
+      <div className="landing-container identity-v2-container">
+        <div className="identity-tier-hero reveal">
+          <span>TIER LEVEL</span>
+          <h2>URANUS</h2>
+          <button type="button" aria-label="Refresh identity card"><RotateCw aria-hidden="true" /></button>
+        </div>
+
+        <div className="identity-hub-card glass-card reveal">
+          <div className="identity-score-col">
+            <div className="score-ring" aria-label="Identity score 630">
+              <svg viewBox="0 0 180 180" aria-hidden="true">
+                <defs><linearGradient id="scoreRingGradient" x1="0" x2="1"><stop stopColor="#22d3ee" /><stop offset=".55" stopColor="#a78bfa" /><stop offset="1" stopColor="#f472b6" /></linearGradient></defs>
+                <circle cx="90" cy="90" r="76" />
+                <circle cx="90" cy="90" r="76" pathLength="100" />
+              </svg>
+              <b>630</b>
+              <span>SCORE</span>
+            </div>
+            <small>2psA...r49R</small>
           </div>
-          <div className="identity-panel glass-card reveal">
-            <div className="id-topline">
-              <span>Composite Score</span>
-              <b>740<small>/1000</small></b>
-              <em>Neptune · Grade A · next tier drift 74%</em>
-              <div className="score-fill"><span /></div>
+
+          <div className="identity-planet-col">
+            <PlanetCanvas tier="uranus" />
+            <BadgeCheck className="identity-a-mark" aria-hidden="true" />
+          </div>
+
+          <div className="identity-rank-col">
+            <div className="xp-line"><Star aria-hidden="true" /><b>95,357 XP</b></div>
+            <div className="bell-line"><Bell aria-hidden="true" /><span>8</span></div>
+            <div className="rank-badge">
+              <Shield aria-hidden="true" />
+              <b>Cadet</b>
+              <div><span /></div>
+              <small>1200 XP — Pilot</small>
             </div>
-            <div className="id-tabs" role="tablist" aria-label="Identity details">
-              {(['stats', 'badges', 'intel'] as const).map((item) => (
-                <button key={item} type="button" className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item.toUpperCase()}</button>
-              ))}
-            </div>
-            {tab === 'stats' && (
-              <div className="id-stat-grid">
-                {stats.map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}
-              </div>
-            )}
-            {tab === 'badges' && (
-              <div className="id-badge-list">
-                {badges.slice(0, 5).map(([src, label, copy]) => (
-                  <div key={src}><img src={`/landing/badges/${src}`} alt="" /><span>{label}</span><small>{copy}</small></div>
-                ))}
-              </div>
-            )}
-            {tab === 'intel' && (
-              <div className="intel-list">
-                {intel.map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}
-              </div>
-            )}
           </div>
         </div>
+
+        <div className="identity-stat-bars reveal-stagger">
+          {statBars.map(([label, value, tone]) => (
+            <div key={label} className={tone}>
+              <span>{label}</span>
+              <div><i style={{ width: value }} /></div>
+              <b>{value}</b>
+            </div>
+          ))}
+        </div>
+
+        <div className="identity-hub-icons reveal-stagger">
+          {hubItems.map(([src, label]) => (
+            <div key={label}>
+              <img src={`/landing/hub/${src}`} alt="" />
+              <b>{label}</b>
+            </div>
+          ))}
+        </div>
+
+        <div className="identity-reveal-row reveal">
+          <button type="button" className="landing-btn ghost" onClick={() => setOpenCard(true)}>REVEAL FULL CARD <ArrowRight aria-hidden="true" /></button>
+        </div>
+
+        {openCard && (
+          <div className="identity-modal" role="dialog" aria-modal="true" aria-label="Identity full card">
+            <button type="button" className="identity-modal-backdrop" aria-label="Close full card" onClick={() => setOpenCard(false)} />
+            <div className="identity-modal-card glass-card">
+              <div className="identity-modal-main">
+                <span>TIER LEVEL</span>
+                <h3>URANUS</h3>
+                <div className="identity-modal-planet"><PlanetCanvas tier="uranus" /></div>
+                <div className="identity-modal-badges">
+                  {fullBadges.map(([src, label]) => (
+                    <div key={src}><img src={`/landing/badges/${src}`} alt={label} /><b>{label}</b></div>
+                  ))}
+                </div>
+              </div>
+              <div className="identity-modal-actions">
+                <a href="https://x.com/intent/tweet?text=My%20Identity%20Prism%20tier%20is%20URANUS" target="_blank" rel="noreferrer" className="landing-btn ghost">SHARE ON X</a>
+                <button type="button" className="landing-btn ghost" onClick={() => setOpenCard(false)}>BACK</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -497,6 +597,13 @@ function LandingPage() {
   }, []);
 
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+
+  useEffect(() => {
+    const id = window.location.hash.replace('#', '');
+    if (!id) return;
+    const timer = window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'auto', block: 'start' }), 80);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const rankCards = useMemo(() => [
     ['rank_cadet.png', 'Cadet', '0 XP', '#9ca3af'],
