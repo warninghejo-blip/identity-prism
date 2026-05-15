@@ -58,7 +58,7 @@ const App = () => {
             <Outlet />
           </main>
           <Toaster />
-          <Sonner position="top-center" expand={false} closeButton richColors offset={64} />
+          <Sonner position="bottom-right" expand={false} closeButton richColors={false} offset={24} />
         </div>
       </TooltipProvider>
     </QueryClientProvider>

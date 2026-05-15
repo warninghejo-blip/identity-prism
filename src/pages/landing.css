@@ -19,6 +19,27 @@
 .landing-page *::before,
 .landing-page *::after { box-sizing: border-box; }
 
+.landing-page button,
+.landing-page input,
+.landing-page select,
+.landing-page textarea,
+.landing-page table,
+.landing-page [role="button"] {
+  border-radius: 14px;
+}
+
+.landing-page .glass-card,
+.landing-page .stat-card,
+.landing-page .tier-card,
+.landing-page .game-card,
+.landing-page .badge-card,
+.landing-page .track-card,
+.landing-page .rank-table,
+.landing-page .cta-panel,
+.landing-page .live-stat-tile {
+  border-radius: 20px;
+}
+
 .landing-stars {
   position: fixed;
   inset: 0;
@@ -375,7 +396,7 @@
 .cc-info small { font-size: 18px; color: rgba(255,255,255,.35); }
 .cc-progress {
   height: 5px;
-  border-radius: 4px;
+  border-radius: 14px;
   background: rgba(255,255,255,.06);
   overflow: hidden;
 }
@@ -398,7 +419,7 @@
   aspect-ratio: 1;
   object-fit: contain;
   padding: 6px;
-  border-radius: 8px;
+  border-radius: 14px;
   background: rgba(0,0,0,.35);
   border: 1px solid rgba(255,255,255,.08);
 }
@@ -689,7 +710,7 @@
   gap: 8px;
   align-items: center;
   padding: 11px;
-  border-radius: 12px;
+  border-radius: 14px;
   background: rgba(0,0,0,.22);
 }
 .token-table .asset { color: #fff; display: flex; gap: 8px; align-items: center; }
@@ -703,7 +724,7 @@
 }
 .manifest div {
   padding: 12px;
-  border-radius: 12px;
+  border-radius: 14px;
   background: rgba(255,255,255,.04);
 }
 .manifest b { display: block; font-family: "JetBrains Mono", monospace; }
@@ -1216,7 +1237,7 @@
   display: grid;
   place-items: end;
   padding: 3px;
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: inset 0 0 16px rgba(255,255,255,.16);
 }
 
@@ -1263,7 +1284,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 12px;
+  border-radius: 14px;
   justify-self: start;
 }
 
@@ -1913,12 +1934,69 @@
   top: 50%;
   width: 12px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: 14px;
   background: linear-gradient(180deg, var(--c-gold), var(--c-prism));
   transform: translate(-50%, -50%) rotate(var(--angle));
   animation: shard-fly 8s ease-in-out infinite;
   animation-delay: calc(var(--i) * -120ms);
 }
+
+.live-stats-section {
+  background:
+    radial-gradient(ellipse at 15% 20%, rgba(34, 211, 238, .08), transparent 38%),
+    radial-gradient(ellipse at 85% 75%, rgba(167, 139, 250, .08), transparent 42%);
+}
+
+.live-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.live-stat-tile {
+  min-height: 172px;
+  display: grid;
+  align-content: end;
+  gap: 10px;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.08);
+  background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.012));
+  box-shadow: 0 24px 90px rgba(0,0,0,.32);
+}
+
+.live-stat-tile::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  opacity: .5;
+  background: radial-gradient(circle at 18% 18%, var(--live-c), transparent 34%);
+}
+
+.live-stat-tile b,
+.live-stat-tile span {
+  position: relative;
+  z-index: 1;
+}
+
+.live-stat-tile b {
+  font: 900 clamp(32px, 5vw, 58px) "Orbitron", sans-serif;
+  color: var(--live-c);
+  text-shadow: 0 0 28px color-mix(in srgb, var(--live-c), transparent 55%);
+}
+
+.live-stat-tile span {
+  color: rgba(255,255,255,.56);
+  font: 800 11px "Orbitron", sans-serif;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+.live-stat-tile.cyan { --live-c: #22d3ee; }
+.live-stat-tile.violet { --live-c: #a78bfa; }
+.live-stat-tile.red { --live-c: #f87171; }
+.live-stat-tile.orange { --live-c: #fb923c; }
 
 .landing-footer {
   padding: 54px 0;
@@ -2005,7 +2083,8 @@
   .badges-grid { grid-template-columns: repeat(3, 1fr); }
   .tiers-grid { grid-template-columns: repeat(2, 1fr); }
   .games-grid,
-  .how-grid { grid-template-columns: 1fr; }
+  .how-grid,
+  .live-stats-grid { grid-template-columns: 1fr; }
   .rank-table,
   .ranks-grid { grid-template-columns: repeat(2, 1fr); }
 }
@@ -2026,6 +2105,7 @@
   .ranks-grid { grid-template-columns: 1fr 1fr; }
   .token-table div { grid-template-columns: 1fr; }
   .blackhole-orbit { min-height: 480px; }
+  .live-stats-grid { grid-template-columns: 1fr; }
   .identity-card-stage { min-height: 620px; }
   .landing-divider span { letter-spacing: .18em; }
   .landing-divider span::before,
