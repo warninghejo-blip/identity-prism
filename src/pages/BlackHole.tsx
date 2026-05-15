@@ -36,6 +36,7 @@ import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 // import { earnPrism, calculateBurnPrism } from '@/lib/prismCoin';
 import { ensureJwt, getApiBase, setAuthWallet } from '@/components/prism/shared';
 import { api, type IdentityPerkSnapshot } from '@/lib/api';
+import SiteHeader from '@/components/SiteHeader';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -2369,6 +2370,7 @@ const BlackHole = () => {
 
   return (
     <div className={`identity-shell blackhole-shell ${returning ? 'bh-returning' : ''}`}>
+      <SiteHeader />
       {/* Wormhole tunnel handles transition — no void overlay needed */}
       {/* Background layers */}
       <div className="absolute inset-0 background-base" style={{ background: 'transparent' }} />

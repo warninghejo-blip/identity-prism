@@ -117,6 +117,8 @@ const TrustRecovery = React.lazy(() => import('./pages/TrustRecovery'));
 const TextQuestPage = React.lazy(() => import('./pages/TextQuestPage'));
 // Landing pages
 const LandingPage = React.lazy(() => import('./pages/LandingPage'));
+const IdentityHub = React.lazy(() => import('./pages/IdentityHub'));
+const SybilHunt = React.lazy(() => import('./pages/SybilHunt'));
 const CardDemoPage = React.lazy(() => import('./pages/CardDemoPage'));
 const SybilCheckerPage = React.lazy(() => import('./pages/SybilCheckerPage'));
 
@@ -176,6 +178,8 @@ const router = createBrowserRouter(
         { path: 'app', element: <Index /> },
         { path: 'app/*', element: <Index /> },
         { path: 'landing', element: lazyRoute(<LandingPage />) },
+        { path: 'identity', element: lazyRoute(<IdentityHub />) },
+        { path: 'sybil-hunt', element: lazyRoute(<SybilHunt />) },
         { path: 'demo', element: lazyRoute(<CardDemoPage />) },
         { path: 'sybil-check', element: lazyRoute(<SybilCheckerPage />) },
         { path: 'home', element: lazyRoute(<HomePage />) },

@@ -2838,6 +2838,11 @@ body:has(.page-shell) #root > * {
   animation: bh-page-fade-in 0.6s ease-out both;
   background: linear-gradient(180deg, #050505 0%, #080812 30%, #0a0a18 50%, #080812 70%, #050505 100%);
 }
+
+.blackhole-shell .site-header {
+  position: sticky;
+  top: 0;
+}
 .blackhole-shell::-webkit-scrollbar { width: 0; height: 0; }
 
 .blackhole-shell::after {

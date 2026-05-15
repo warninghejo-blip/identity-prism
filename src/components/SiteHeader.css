@@ -1,0 +1,109 @@
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10000;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+  align-items: center;
+  gap: 20px;
+  padding: 12px clamp(16px, 4vw, 48px);
+  border-bottom: 1px solid rgba(78, 229, 213, 0.14);
+  background: rgba(5, 10, 26, 0.78);
+  backdrop-filter: blur(24px) saturate(140%);
+}
+
+.site-header__brand {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #f8fbff;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.site-header__brand img {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 16px rgba(78, 229, 213, 0.42));
+}
+
+.site-header__nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.site-header__nav a {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  color: rgba(241, 245, 249, 0.68);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.site-header__nav a:hover,
+.site-header__nav a:focus-visible {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  outline: none;
+}
+
+.site-header__nav a:focus-visible,
+.site-header__wallet .wallet-adapter-button:focus-visible {
+  box-shadow: 0 0 0 2px #4ee5d5, 0 0 0 5px rgba(78, 229, 213, 0.18);
+}
+
+.site-header__nav a.is-active {
+  color: #06111d;
+  background: linear-gradient(135deg, #4ee5d5, #8bd6ff);
+}
+
+.site-header__wallet {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.site-header__wallet .wallet-adapter-button {
+  min-height: 44px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(78, 229, 213, 0.95), rgba(139, 214, 255, 0.9));
+  color: #06111d;
+  font-weight: 900;
+}
+
+@media (max-width: 860px) {
+  .site-header {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+    gap: 10px;
+  }
+
+  .site-header__brand {
+    justify-content: center;
+  }
+
+  .site-header__nav {
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+
+  .site-header__wallet {
+    justify-content: center;
+  }
+}
