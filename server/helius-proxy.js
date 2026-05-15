@@ -108,6 +108,7 @@ import { registerWalletRoute } from './routes/wallet.js';
 import { registerAdminRoute } from './routes/admin.js';
 import { registerMetadataRoute } from './routes/metadata.js';
 import { registerSpendRoute } from './routes/spend.js';
+import { registerStatsRoute } from './routes/stats.js';
 import { registerSybilRoute } from './routes/sybil.js';
 import { registerUserDataRoute } from './routes/userData.js';
 import { registerUtilityRoute } from './routes/utility.js';
@@ -3836,6 +3837,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (await statsHandler(req, res, url, pathname)) {
+    return;
+  }
+
   // ═══ PRISM Buy Coins ═══
   if (await buyHandler(req, res, url, pathname)) {
     return;
@@ -5616,6 +5621,7 @@ const marketHandler = registerMarketRoute(ctx);
 const metadataHandler = registerMetadataRoute(ctx);
 const notificationsHandler = registerNotificationsRoute(ctx);
 const spendHandler = registerSpendRoute(ctx);
+const statsHandler = registerStatsRoute(ctx);
 const sybilHandler = registerSybilRoute(ctx);
 const leaderboardHandler = registerLeaderboardRoute(ctx);
 const discoveryHandler = registerDiscoveryRoute(ctx);

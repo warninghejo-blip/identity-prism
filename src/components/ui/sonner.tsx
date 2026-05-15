@@ -8,19 +8,22 @@ const Toaster = ({ ...props }: ToasterProps) => {
       theme="dark"
       className="toaster group"
       closeButton
+      position="bottom-right"
+      richColors={false}
       toastOptions={{
         style: {
-          background: 'rgba(8, 12, 24, 0.92)',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          border: '1px solid rgba(99, 179, 237, 0.15)',
-          borderRadius: '14px',
+          background: 'rgba(15, 23, 42, 0.95)',
+          backdropFilter: 'blur(20px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+          border: '1px solid rgba(34, 211, 238, 0.25)',
+          borderRadius: '16px',
           color: '#e2e8f0',
           boxShadow:
-            '0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.06), inset 0 1px 0 rgba(255,255,255,0.04)',
+            '0 10px 40px rgba(0,0,0,0.6), 0 0 30px rgba(34,211,238,0.15)',
           fontSize: '13px',
           padding: '12px 32px 12px 16px',
         },
+        className: 'ip-toast',
         classNames: {
           toast: 'group toast',
           description: '!text-slate-400',

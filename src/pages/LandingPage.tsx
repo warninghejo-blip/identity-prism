@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, CircleCheck, Flame, Gamepad2, ShieldCheck, Sparkles, Trophy, Wallet, Zap } from 'lucide-react';
+import { motion } from 'framer-motion';
 import SiteHeader from '@/components/SiteHeader';
 import type { PlanetTier } from '@/hooks/useWalletData';
+import { useGlobalStats } from '@/hooks/useGlobalStats';
 import { TIER_HEX, TIER_LABELS } from '@/lib/constants/tierColors';
 import './landing.css';
 
@@ -15,6 +17,7 @@ const sections = [
   ['games', 'Games'],
   ['ranks', 'Ranks'],
   ['explode', 'Finale'],
+  ['network-live', 'Network'],
   ['cta', 'CTA'],
   ['footer', 'Footer'],
 ] as const;
@@ -54,8 +57,41 @@ function SectionHead({ eyebrow, title, copy, tone = 'prism' }: { eyebrow: string
   );
 }
 
+function formatStat(value: number) {
+  return new Intl.NumberFormat('en-US', { notation: value >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value);
+}
+
+function StatTile({ label, value, color }: { label: string; value: number; color: 'cyan' | 'violet' | 'red' | 'orange' }) {
+  return (
+    <motion.div
+      className={`live-stat-tile ${color}`}
+      initial={{ opacity: 0, y: 18 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-80px' }}
+      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <motion.b
+        key={value}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28 }}
+      >
+        {formatStat(value)}
+      </motion.b>
+      <span>{label}</span>
+    </motion.div>
+  );
+}
+
 export default function LandingPage() {
+  const stats = useGlobalStats();
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const heroStats = [
+    [stats?.idsMinted ?? 0, 'Identities'],
+    [stats?.walletsScanned ?? 0, 'Wallets Scanned'],
+    [stats?.sybilsCaught ?? 0, 'Sybils Caught'],
+    [stats?.blackHoleOps ?? 0, 'Cleanups Done'],
+  ] as const;
 
   return (
     <div className="landing-page">
@@ -80,7 +116,12 @@ export default function LandingPage() {
                 <button type="button" className="landing-btn ghost" onClick={() => scrollTo('solution')}>See System</button>
               </div>
               <div className="hero-stats reveal-stagger in">
-                {['10,000+ Identities', '50,000 SOL Recovered', '1,200 Sybils Caught', '10 Tiers'].map((item) => <div key={item}><b>{item.split(' ')[0]}</b><span>{item.split(' ').slice(1).join(' ')}</span></div>)}
+                {heroStats.map(([value, label]) => (
+                  <div key={label}>
+                    <b>{formatStat(value)}</b>
+                    <span>{label}</span>
+                  </div>
+                ))}
               </div>
             </div>
             <div className="hero-card-preview reveal in">
@@ -194,6 +235,26 @@ export default function LandingPage() {
           </div>
         </section>
 
+        <SectionDivider label="Network Live" />
+        <section className="section landing-section live-stats-section" data-section-id="network-live" id="network-live">
+          <div className="landing-container">
+            <SectionHead
+              eyebrow="Network Live"
+              tone="green"
+              title="The protocol pulse is public."
+              copy="Identity mints, scans, sybil outcomes, cleanup operations, reports, and clusters update from the live backend."
+            />
+            <div className="live-stats-grid reveal-stagger in">
+              <StatTile label="Identities Minted" value={stats?.idsMinted ?? 0} color="cyan" />
+              <StatTile label="Wallets Scanned" value={stats?.walletsScanned ?? 0} color="violet" />
+              <StatTile label="Sybils Caught" value={stats?.sybilsCaught ?? 0} color="red" />
+              <StatTile label="Cleanups Done" value={stats?.blackHoleOps ?? 0} color="orange" />
+              <StatTile label="Reports Verified" value={stats?.sybilsReported ?? 0} color="cyan" />
+              <StatTile label="Clusters Mapped" value={stats?.clusters ?? 0} color="violet" />
+            </div>
+          </div>
+        </section>
+
         <section className="section landing-section cta-section" data-section-id="cta" id="cta">
           <div className="landing-container cta-panel">
             <Sparkles aria-hidden="true" />
@@ -204,7 +265,12 @@ export default function LandingPage() {
               <Link to="/sybil-hunt" className="landing-btn ghost">Start Sybil Hunt</Link>
             </div>
             <div className="hero-stats reveal-stagger in">
-              {['10,000+ identities minted', '50,000 SOL recovered', '1,200 sybils caught'].map((item) => <div key={item}><b>{item.split(' ')[0]}</b><span>{item.split(' ').slice(1).join(' ')}</span></div>)}
+              {heroStats.slice(0, 3).map(([value, label]) => (
+                <div key={label}>
+                  <b>{formatStat(value)}</b>
+                  <span>{label}</span>
+                </div>
+              ))}
             </div>
           </div>
         </section>

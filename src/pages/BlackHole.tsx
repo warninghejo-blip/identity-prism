@@ -167,6 +167,10 @@ interface RpcResponse<T> {
 
 const BLACKHOLE_RPC_TIMEOUT_MS = 18_000;
 const BLACKHOLE_AUX_TIMEOUT_MS = 7_000;
+const BLACKHOLE_METADATA_CACHE_KEY = 'identity-prism:blackhole-metadata:v2';
+const BLACKHOLE_METADATA_CACHE_TTL_MS = 60 * 60 * 1000;
+const BLACKHOLE_METADATA_BATCH_SIZE = 40;
+const BLACKHOLE_METADATA_MAX_CONCURRENT = 4;
 
 const parseJsonPayload = <T,>(data: unknown): T => {
   if (typeof data === 'string') return JSON.parse(data) as T;
@@ -488,6 +492,34 @@ type BlackHoleMetadataResponse = {
   assets?: Record<string, BlackHoleMetadataAsset>;
 };
 
+type CachedBlackHoleMetadata = {
+  timestamp: number;
+  assets: Record<string, BlackHoleMetadataAsset>;
+};
+
+const readBlackHoleMetadataCache = () => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(BLACKHOLE_METADATA_CACHE_KEY) || '{}') as CachedBlackHoleMetadata;
+    if (!parsed?.timestamp || Date.now() - parsed.timestamp > BLACKHOLE_METADATA_CACHE_TTL_MS) return {};
+    return parsed.assets && typeof parsed.assets === 'object' ? parsed.assets : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeBlackHoleMetadataCache = (assets: Record<string, BlackHoleMetadataAsset>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      BLACKHOLE_METADATA_CACHE_KEY,
+      JSON.stringify({ timestamp: Date.now(), assets } satisfies CachedBlackHoleMetadata),
+    );
+  } catch {
+    /* cache is opportunistic */
+  }
+};
+
 const fetchBlackHoleMetadataBatch = async (
   address: string,
   mints: string[],
@@ -519,16 +551,38 @@ const fetchBlackHoleMetadataBatch = async (
 };
 
 const fetchBlackHoleMetadata = async (address: string, mints: string[]): Promise<BlackHoleMetadataResponse> => {
+  const uniqueMints = [...new Set(mints.filter(Boolean))];
+  const cachedAssets = readBlackHoleMetadataCache();
   const assets: Record<string, BlackHoleMetadataAsset> = {};
-  for (let i = 0; i < mints.length; i += 24) {
-    const batch = mints.slice(i, i + 24);
-    try {
-      const response = await fetchBlackHoleMetadataBatch(address, batch);
-      Object.assign(assets, response.assets ?? {});
-    } catch (error) {
-      console.warn('[BlackHole] metadata batch skipped', error);
+  const missing: string[] = [];
+
+  uniqueMints.forEach((mint) => {
+    const cached = cachedAssets[mint];
+    if (cached) {
+      assets[mint] = cached;
+    } else {
+      missing.push(mint);
     }
+  });
+
+  const batches: string[][] = [];
+  for (let i = 0; i < missing.length; i += BLACKHOLE_METADATA_BATCH_SIZE) {
+    batches.push(missing.slice(i, i + BLACKHOLE_METADATA_BATCH_SIZE));
   }
+
+  for (let i = 0; i < batches.length; i += BLACKHOLE_METADATA_MAX_CONCURRENT) {
+    const slice = batches.slice(i, i + BLACKHOLE_METADATA_MAX_CONCURRENT);
+    const results = await Promise.allSettled(slice.map((batch) => fetchBlackHoleMetadataBatch(address, batch)));
+    results.forEach((result) => {
+      if (result.status === 'fulfilled') {
+        Object.assign(assets, result.value.assets ?? {});
+      } else {
+        console.warn('[BlackHole] metadata batch skipped', result.reason);
+      }
+    });
+  }
+
+  writeBlackHoleMetadataCache({ ...cachedAssets, ...assets });
   return { assets };
 };
 
@@ -681,7 +735,7 @@ function TokenAvatar({
   return (
     <div className={className}>
       {dataUrl ? (
-        <img src={dataUrl} alt={alt} className="blackhole-token-avatar__image" loading="eager" decoding="async" />
+        <img src={dataUrl} alt={alt} className="blackhole-token-avatar__image" loading="lazy" decoding="async" />
       ) : (
         <div className="blackhole-token-avatar__loading" aria-hidden="true" />
       )}
@@ -715,12 +769,50 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
   const prices = new Map<string, number>();
   if (mints.length === 0) return prices;
 
-  // 1) DexScreener — free, no auth, max ~30 addresses per request
+  // 1) Jupiter proxy — batched through our backend to avoid CORS/native transport quirks.
   try {
-    for (let i = 0; i < mints.length; i += 30) {
-      const batch = mints.slice(i, i + 30);
-      const url = `https://api.dexscreener.com/tokens/v1/solana/${batch.join(',')}`;
-      const data = await fetchJsonWithTimeout<any[]>(url, { timeoutMs: BLACKHOLE_AUX_TIMEOUT_MS });
+    const base = getApiBase();
+    const JUPITER_BATCH = 100;
+    const batches: string[][] = [];
+    for (let i = 0; i < mints.length; i += JUPITER_BATCH) {
+      batches.push(mints.slice(i, i + JUPITER_BATCH));
+    }
+    const results = await Promise.allSettled(
+      batches.map((batch) =>
+        fetchJsonWithTimeout<Record<string, any>>(
+          `${base}/api/market/jupiter-prices?ids=${encodeURIComponent(batch.join(','))}`,
+          { timeoutMs: BLACKHOLE_AUX_TIMEOUT_MS },
+        ),
+      ),
+    );
+    results.forEach((result) => {
+      if (result.status !== 'fulfilled') return;
+      const data = result.value?.data && typeof result.value.data === 'object' ? result.value.data : {};
+      Object.entries(data).forEach(([mint, entry]) => {
+        const price = parseNumber((entry as Record<string, unknown>)?.price);
+        if (price && price > 0) prices.set(mint, price);
+      });
+    });
+  } catch {
+    /* empty */
+  }
+
+  // 2) DexScreener — free, no auth, max ~30 addresses per request
+  try {
+    const remainingForDex = mints.filter((m) => !prices.has(m));
+    const batches: string[][] = [];
+    for (let i = 0; i < remainingForDex.length; i += 30) {
+      batches.push(remainingForDex.slice(i, i + 30));
+    }
+    const results = await Promise.allSettled(
+      batches.map((batch) => {
+        const url = `https://api.dexscreener.com/tokens/v1/solana/${batch.join(',')}`;
+        return fetchJsonWithTimeout<any[]>(url, { timeoutMs: BLACKHOLE_AUX_TIMEOUT_MS });
+      }),
+    );
+    results.forEach((result) => {
+      if (result.status !== 'fulfilled') return;
+      const data = result.value;
       if (Array.isArray(data)) {
         for (const pair of data) {
           const mint = pair.baseToken?.address;
@@ -730,12 +822,12 @@ const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>
           }
         }
       }
-    }
+    });
   } catch {
     /* empty */
   }
 
-  // 2) Raydium fallback for anything DexScreener missed
+  // 3) Raydium fallback for anything DexScreener missed
   const remaining = mints.filter((m) => !prices.has(m));
   if (remaining.length > 0) {
     try {
@@ -1919,8 +2011,8 @@ const BlackHole = () => {
     try {
       const initialWallet = publicKey.toBase58();
       const swapPlans = executablePlans.filter((plan) => plan.action === 'swap');
-      const burnPlans = executablePlans.filter((plan) => plan.action === 'burn');
-      const closePlans = executablePlans.filter((plan) => plan.action === 'close');
+      let burnPlans = executablePlans.filter((plan) => plan.action === 'burn');
+      let closePlans = executablePlans.filter((plan) => plan.action === 'close');
       const unsafeBurn = burnPlans.find(
         (plan) => plan.token.assetStatus === 'valuable' || (plan.token.valueSol ?? 0) > VALUE_THRESHOLD_SOL,
       );
@@ -1929,6 +2021,53 @@ const BlackHole = () => {
           `${unsafeBurn.token.name || unsafeBurn.token.symbol || unsafeBurn.token.mint.slice(0, 6)} has value and will not be burned`,
         );
       }
+
+      const validateTokenPlans = async (plans: ResolutionPlanItem[], mode: 'burn' | 'close') => {
+        const checks = await Promise.allSettled(
+          plans.map(async (plan) => {
+            const token = plan.token;
+            const account = await connection.getParsedAccountInfo(token.pubkey, 'confirmed');
+            const value = account.value;
+            if (!value) throw new Error('account no longer exists');
+            if (!value.owner.equals(token.programId)) throw new Error('token program changed');
+            const parsed = (value.data as any)?.parsed;
+            const info = parsed?.info;
+            if (!info) throw new Error('account is not parsed token data');
+            if (String(info.owner) !== initialWallet) throw new Error('wallet no longer owns token account');
+            if (String(info.mint) !== token.mint) throw new Error('mint changed');
+            const state = String(info.state ?? '').toLowerCase();
+            if (state === 'frozen') throw new Error('account is frozen');
+            const currentAmount = BigInt(info.tokenAmount?.amount ?? '0');
+            if (mode === 'burn' && currentAmount < token.amount) throw new Error('token amount changed');
+            if (mode === 'close' && currentAmount > 0n) throw new Error('non-empty account requires burn or swap first');
+            return plan;
+          }),
+        );
+        const valid: ResolutionPlanItem[] = [];
+        let rejected = 0;
+        checks.forEach((result, index) => {
+          if (result.status === 'fulfilled') valid.push(result.value);
+          else {
+            rejected += 1;
+            const token = plans[index].token;
+            console.warn('[BlackHole] skipping stale cleanup plan', {
+              mode,
+              account: token.pubkey.toBase58(),
+              mint: token.mint,
+              error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+            });
+          }
+        });
+        if (rejected > 0) {
+          toast.warning(`${rejected} stale asset${rejected === 1 ? '' : 's'} skipped`, {
+            description: 'Wallet inventory changed after scan. Re-scan after cleanup.',
+          });
+        }
+        return valid;
+      };
+
+      burnPlans = await validateTokenPlans(burnPlans, 'burn');
+      closePlans = await validateTokenPlans(closePlans, 'close');
       const estimatedNetSol = executablePlans.reduce((sum, plan) => sum + plan.estimatedNetSol, 0);
       const estimatedReward = estimateBlackHoleReward(
         executablePlans.filter((plan) => !plan.token.isNft).length,
@@ -1960,7 +2099,7 @@ const BlackHole = () => {
       const operationMap = new Map<string, ResolutionOperation>();
       const isTreasury = publicKey.toBase58() === TREASURY_ADDRESS;
       const createBatches = (plans: ResolutionPlanItem[], mode: 'burn' | 'close') => {
-        const perTx = mode === 'burn' ? 6 : 10;
+        const perTx = mode === 'burn' ? 2 : 8;
         const chunks: ResolutionPlanItem[][] = [];
         for (let i = 0; i < plans.length; i += perTx) {
           chunks.push(plans.slice(i, i + perTx));
@@ -2054,15 +2193,44 @@ const BlackHole = () => {
       const burnBatches = createBatches(burnPlans, 'burn');
       for (let index = 0; index < burnBatches.length; index += 1) {
         const batch = burnBatches[index];
-        const signature = await signAndSendLegacyTransaction(batch.tx, `Burn batch ${index + 1}/${burnBatches.length}`);
-        batch.chunk.forEach((plan) => {
-          operationMap.set(plan.token.pubkey.toBase58(), {
-            account: plan.token.pubkey.toBase58(),
-            mint: plan.token.mint,
-            action: 'burn',
-            closeSignature: signature,
+        try {
+          const signature = await signAndSendLegacyTransaction(batch.tx, `Burn batch ${index + 1}/${burnBatches.length}`);
+          batch.chunk.forEach((plan) => {
+            operationMap.set(plan.token.pubkey.toBase58(), {
+              account: plan.token.pubkey.toBase58(),
+              mint: plan.token.mint,
+              action: 'burn',
+              closeSignature: signature,
+            });
           });
-        });
+        } catch (batchError) {
+          console.warn('[BlackHole] burn batch failed, retrying individual assets', batchError);
+          for (let retryIndex = 0; retryIndex < batch.chunk.length; retryIndex += 1) {
+            const retryPlan = batch.chunk[retryIndex];
+            try {
+              const retryBatch = createBatches([retryPlan], 'burn')[0];
+              const signature = await signAndSendLegacyTransaction(
+                retryBatch.tx,
+                `Burn ${index + 1}.${retryIndex + 1}/${burnBatches.length}`,
+              );
+              operationMap.set(retryPlan.token.pubkey.toBase58(), {
+                account: retryPlan.token.pubkey.toBase58(),
+                mint: retryPlan.token.mint,
+                action: 'burn',
+                closeSignature: signature,
+              });
+            } catch (assetError) {
+              console.warn('[BlackHole] burn asset skipped after retry', {
+                account: retryPlan.token.pubkey.toBase58(),
+                mint: retryPlan.token.mint,
+                error: assetError instanceof Error ? assetError.message : String(assetError),
+              });
+              toast.warning('One burn asset was skipped', {
+                description: assetError instanceof Error ? assetError.message : retryPlan.token.mint,
+              });
+            }
+          }
+        }
       }
 
       const closeBatches = createBatches(closePlans, 'close');
@@ -2714,43 +2882,58 @@ const BlackHole = () => {
 
             {/* Resolution Manifest */}
             {canResolveScan && selectedTokens.size > 0 && (
-              <div className="bg-gradient-to-r from-red-950/30 to-zinc-900/40 border border-red-900/20 rounded-xl p-3 sm:p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <Flame className="w-3.5 h-3.5 text-red-400/60" />
-                  <span className="text-[10px] uppercase tracking-[0.12em] text-red-400/50 font-bold">
-                    Resolution Manifest
-                  </span>
+              <div className="manifest-card overflow-hidden rounded-[24px] border border-cyan-300/15 bg-slate-950/70 p-4 shadow-[0_24px_80px_rgba(0,0,0,0.45),0_0_55px_rgba(34,211,238,0.08)] backdrop-blur-xl sm:p-5">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Flame className="h-4 w-4 text-cyan-300" aria-hidden="true" />
+                      <span className="bg-gradient-to-r from-cyan-300 via-violet-300 to-fuchsia-300 bg-clip-text text-[12px] font-black uppercase tracking-[0.22em] text-transparent">
+                        Resolution Manifest
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Routes, burns, closures, and protected assets are staged before signature.
+                    </p>
+                  </div>
+                  {isPlanning && (
+                    <span className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-200">
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                      Analyzing
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-col gap-4">
-                  <div className="grid grid-cols-2 md:grid-cols-6 gap-2 sm:gap-4 text-center">
-                    <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Resolved</div>
-                      <div className="text-lg font-bold text-red-400 mt-1">{summary.totalAccounts}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Swap</div>
-                      <div className="text-lg font-bold text-cyan-300 mt-1">{summary.swapCount}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Burn</div>
-                      <div className="text-lg font-bold text-orange-300 mt-1">{summary.burnCount}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Close</div>
-                      <div className="text-lg font-bold text-zinc-200 mt-1">{summary.closeCount}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Skipped</div>
-                      <div className="text-lg font-bold text-zinc-500 mt-1">{summary.skippedCount}</div>
-                    </div>
-                    <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">Rent</div>
-                      <div className="text-lg font-bold font-mono text-zinc-200 mt-1">
-                        {parseFloat(summary.grossReclaim.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span>
+                  <div className="grid grid-cols-2 gap-2 text-center md:grid-cols-4 sm:gap-3">
+                    {[
+                      { label: 'Resolved', value: summary.totalAccounts, unit: 'assets', icon: Shield, tone: 'text-slate-200' },
+                      { label: 'Swap', value: summary.swapCount, unit: 'routed', icon: Coins, tone: 'text-cyan-300' },
+                      { label: 'Burn', value: summary.burnCount, unit: 'dust', icon: Flame, tone: 'text-orange-300' },
+                      { label: 'Close', value: summary.closeCount, unit: 'empties', icon: RefreshCw, tone: 'text-slate-200' },
+                      { label: 'Skipped', value: summary.skippedCount, unit: 'shielded', icon: Shield, tone: 'text-emerald-300' },
+                      {
+                        label: 'Rent',
+                        value: parseFloat(summary.grossReclaim.toFixed(4)),
+                        unit: 'SOL',
+                        icon: Coins,
+                        tone: 'text-slate-100',
+                      },
+                      {
+                        label: `Fee ${(commissionRate * 100).toFixed(0)}%`,
+                        value: `-${parseFloat(summary.commission.toFixed(4))}`,
+                        unit: 'SOL',
+                        icon: AlertTriangle,
+                        tone: 'text-slate-400',
+                      },
+                    ].map(({ label, value, unit, icon: Icon, tone }) => (
+                      <div key={label} className="rounded-[18px] border border-white/10 bg-white/[0.035] p-3">
+                        <Icon className="mx-auto mb-2 h-4 w-4 text-cyan-300/70" aria-hidden="true" />
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">{label}</div>
+                        <div className={`mt-1 font-mono text-lg font-black ${tone}`}>{value}</div>
+                        <div className="text-[10px] uppercase tracking-[0.12em] text-slate-600">{unit}</div>
                       </div>
-                    </div>
+                    ))}
                     {summary.totalValueLost > 0.001 && (
-                      <div className="bg-red-950/30 rounded-lg p-2">
+                      <div className="rounded-[18px] border border-red-400/20 bg-red-950/30 p-3">
                         <div className="text-[11px] text-red-400 uppercase tracking-wider flex items-center justify-center gap-1">
                           <AlertTriangle className="h-3 w-3" /> Value Lost
                         </div>
@@ -2764,49 +2947,40 @@ const BlackHole = () => {
                         )}
                       </div>
                     )}
-                    <div>
-                      <div className="text-[11px] text-zinc-500 uppercase tracking-wider">
-                        Fee ({(commissionRate * 100).toFixed(0)}%)
-                      </div>
-                      <div className="text-lg font-mono text-zinc-400 mt-1">
-                        -{parseFloat(summary.commission.toFixed(4))} <span className="text-xs text-zinc-500">SOL</span>
-                      </div>
-                    </div>
-                    <div className="bg-emerald-950/30 rounded-lg p-2">
-                      <div className="text-[11px] text-emerald-500 uppercase tracking-wider">Est. Return</div>
-                      <div className="text-xl font-black font-mono text-emerald-400 mt-1">
+                    <div className="col-span-2 rounded-[20px] border border-cyan-300/35 bg-cyan-400/10 p-4 shadow-[0_0_35px_rgba(34,211,238,0.16)] md:col-span-2">
+                      <div className="text-[11px] text-cyan-200 uppercase tracking-[0.18em]">Est. Return</div>
+                      <div className="mt-1 font-mono text-2xl font-black text-cyan-100">
                         ~{parseFloat(summary.netReturn.toFixed(4))} <span className="text-xs">SOL</span>
                       </div>
                       {solPriceUsd && (
-                        <div className="text-[11px] text-emerald-600">{formatUsd(summary.netReturn * solPriceUsd)}</div>
+                        <div className="text-[11px] text-cyan-200/70">{formatUsd(summary.netReturn * solPriceUsd)}</div>
                       )}
                     </div>
-                    <div className="bg-cyan-950/30 rounded-lg p-2">
-                      <div className="text-[11px] text-cyan-400 uppercase tracking-wider">Est. PRISM</div>
-                      <div className="text-xl font-black font-mono text-cyan-300 mt-1">~{summary.estimatedReward}</div>
-                      <div className="text-[11px] text-cyan-500/70">Reward is verified on-chain after cleanup</div>
+                    <div className="col-span-2 rounded-[20px] border border-amber-300/30 bg-amber-400/10 p-4 md:col-span-2">
+                      <div className="text-[11px] text-amber-200 uppercase tracking-[0.18em]">Est. PRISM</div>
+                      <div className="mt-1 font-mono text-2xl font-black text-amber-200">~{summary.estimatedReward}</div>
+                      <div className="text-[11px] text-amber-200/60">Verified on-chain after cleanup</div>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-800/60 bg-zinc-950/40 px-3 py-2 text-[11px] text-zinc-400">
-                    <span className="inline-flex items-center gap-1 text-cyan-300">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-cyan-200">
                       <Coins className="h-3.5 w-3.5" /> Swap if routed
                     </span>
-                    <span className="inline-flex items-center gap-1 text-orange-300">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-orange-300/20 bg-orange-300/10 px-3 py-1 text-orange-200">
                       <Flame className="h-3.5 w-3.5" /> Burn if optimal
                     </span>
-                    <span className="inline-flex items-center gap-1 text-zinc-300">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-slate-300/15 bg-slate-300/10 px-3 py-1 text-slate-200">
                       <RefreshCw className="h-3.5 w-3.5" /> Close empties
                     </span>
-                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-200">
                       <Shield className="h-3.5 w-3.5" /> Shield valuables
                     </span>
-                    {isPlanning && <span className="text-zinc-500">Analyzing live routes…</span>}
                   </div>
                   <div className="flex justify-center">
                     <Button
                       onClick={handleIncinerate}
                       disabled={isBurning || isPlanning || summary.totalAccounts === 0}
-                      className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-bold px-8 h-12 text-base shadow-lg shadow-red-900/30 transition-all duration-200"
+                      className="h-14 w-full rounded-full bg-gradient-to-r from-cyan-400 via-violet-500 to-fuchsia-500 px-8 text-base font-black text-slate-950 shadow-[0_16px_50px_rgba(167,139,250,0.32)] transition-all duration-200 hover:from-cyan-300 hover:via-violet-400 hover:to-fuchsia-400 disabled:opacity-50"
                     >
                       {isBurning ? (
                         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -2920,7 +3094,7 @@ const BlackHole = () => {
                       }
                       onCheckedChange={selectAll}
                       disabled={selectableVisibleTokens.length === 0}
-                      className="h-4 w-4 rounded-[4px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
+                      className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                     />
                   ) : (
                     <Shield className="h-3.5 w-3.5 text-zinc-700" aria-hidden="true" />
@@ -2988,7 +3162,7 @@ const BlackHole = () => {
                                 checked={selectedTokens.has(key)}
                                 onCheckedChange={() => toggleSelection(key)}
                                 disabled={!selectable}
-                                className="h-4 w-4 rounded-[4px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
+                                className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                               />
                            ) : (
                              <Shield className="h-3.5 w-3.5 text-zinc-500/80" aria-hidden="true" />
@@ -3085,7 +3259,7 @@ const BlackHole = () => {
                             }
                             onCheckedChange={selectAll}
                             disabled={selectableVisibleTokens.length === 0}
-                            className="h-4 w-4 rounded-[4px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
+                            className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                           />
                         ) : (
                           <Shield className="h-3.5 w-3.5 text-zinc-500/80" aria-hidden="true" />
@@ -3144,7 +3318,7 @@ const BlackHole = () => {
                                   checked={selectedTokens.has(key)}
                                   onCheckedChange={() => toggleSelection(key)}
                                   disabled={!selectable}
-                                  className="h-4 w-4 rounded-[4px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
+                                  className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                                 />
                               ) : (
                                 <Shield className="h-3.5 w-3.5 text-zinc-700" aria-hidden="true" />
