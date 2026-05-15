@@ -6,6 +6,7 @@ import { installMwaLoopbackPatch } from './lib/mwaLoopback';
 import * as Sentry from '@sentry/react';
 import AppShell from './AppShell';
 import './index.css';
+import '@solana/wallet-adapter-react-ui/styles.css';
 import './styles/wallet-adapter-local.css';
 
 const SENTRY_DSN_CLIENT = import.meta.env.VITE_SENTRY_DSN;
