@@ -3,90 +3,43 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-    <meta http-equiv="Pragma" content="no-cache" />
-    <meta http-equiv="Expires" content="0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src * 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src *; style-src * 'unsafe-inline';">
-    <title>Identity Prism - Solana Identity Card</title>
+    <title>Identity Prism - Sybil-Resistant Solana Identity</title>
     <meta
       name="description"
-      content="Identity Prism generates a shareable Solana identity card from your on-chain activity with cosmic visuals, traits, and stats."
+      content="Identity Prism is a sybil-resistant identity layer on Solana with wallet reputation, community sybil hunting, games, and Black Hole cleanup."
     />
-    <meta name="keywords" content="Solana, identity, wallet, NFT, on-chain, web3, crypto, profile" />
+    <meta name="keywords" content="Solana, identity, sybil, wallet reputation, Seeker, web3" />
     <meta name="author" content="Identity Prism" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#05070a" />
     <link rel="canonical" href="https://identityprism.xyz/" />
     <link rel="icon" type="image/png" href="/phav.png" />
     <link rel="apple-touch-icon" href="/phav.png" />
-    <link rel="shortcut icon" href="/phav.png" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" media="print" onload="this.media='all'" />
-    <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
-
-    <meta property="og:title" content="Identity Prism - Solana Identity Card" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <meta property="og:title" content="Identity Prism - Sybil-Resistant Solana Identity" />
     <meta
       property="og:description"
-      content="Identity Prism generates a shareable Solana identity card from your on-chain activity with cosmic visuals, traits, and stats."
+      content="A Solana identity layer where humans can prove trust through on-chain history, gameplay, cleanup, and community sybil detection."
     />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Identity Prism" />
     <meta property="og:url" content="https://identityprism.xyz/" />
-    <meta property="og:image" content="https://identityprism.xyz/phav.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Identity Prism preview" />
-
-    <meta name="solana-action" content="https://identityprism.xyz/api/actions/share" />
-
+    <meta property="og:image" content="https://identityprism.xyz/og-image.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@Identity_Prism" />
-    <meta name="twitter:creator" content="@Identity_Prism" />
-    <meta name="twitter:title" content="Identity Prism - Solana Identity Card" />
+    <meta name="twitter:title" content="Identity Prism - Sybil-Resistant Solana Identity" />
     <meta
       name="twitter:description"
-      content="Identity Prism generates a shareable Solana identity card from your on-chain activity with cosmic visuals, traits, and stats."
+      content="A Solana identity layer where humans can prove trust through on-chain history, gameplay, cleanup, and community sybil detection."
     />
-    <meta name="twitter:image" content="https://identityprism.xyz/phav.png" />
-    <meta name="twitter:image:alt" content="Identity Prism preview" />
-    <script type="application/ld+json">
-      {"@context":"https://schema.org","@type":"WebSite","name":"Identity Prism","url":"https://identityprism.xyz/","description":"Identity Prism generates a shareable Solana identity card from your on-chain activity with cosmic visuals, traits, and stats.","publisher":{"@type":"Organization","name":"Identity Prism","url":"https://identityprism.xyz/","logo":{"@type":"ImageObject","url":"https://identityprism.xyz/phav.png"}}}
-    </script>
-    <script>
-      (function () {
-        if (!globalThis.global) {
-          globalThis.global = globalThis;
-        }
-        if (!globalThis.process) {
-          globalThis.process = { env: { DEBUG: undefined } };
-        } else if (!globalThis.process.env) {
-          globalThis.process.env = { DEBUG: undefined };
-        } else if (!('DEBUG' in globalThis.process.env)) {
-          globalThis.process.env.DEBUG = undefined;
-        }
-      })();
-    </script>
+    <meta name="twitter:image" content="https://identityprism.xyz/og-image.png" />
   </head>
-
   <body style="background:#05070a;">
-    <!-- Preloader: full landing-page lookalike rendered from static HTML.
-         User sees a "ready" UI instantly while JS bundle loads in background.
-         Removed by Index.tsx once React overlay is painted. -->
-    <div id="app-preloader" style="position:fixed;inset:0;z-index:999999;background:#05070a;display:flex;flex-direction:column;align-items:center;justify-content:center;">
-      <div style="width:380px;max-width:88vw;box-sizing:border-box;padding:2.5rem 2rem;border-radius:1.25rem;background:rgba(6,11,25,0.85);border:1px solid rgba(255,255,255,0.08);backdrop-filter:blur(35px);-webkit-backdrop-filter:blur(35px);display:flex;flex-direction:column;align-items:center;text-align:center;">
-        <img src="/phav.png" alt="" width="96" height="96" style="margin-bottom:1.5rem;filter:drop-shadow(0 0 24px rgba(34,211,238,0.25));" />
-        <p style="color:rgba(34,211,238,0.6);font-size:10px;font-weight:700;letter-spacing:0.35em;text-transform:uppercase;margin:0 0 0.5rem;font-family:system-ui,sans-serif;">Identity Prism v4.0</p>
-        <h1 style="color:#fff;font-size:clamp(1.25rem,4.5vw,1.75rem);font-weight:800;line-height:1.25;margin:0 0 2rem;font-family:system-ui,sans-serif;">Decode your cosmic signature</h1>
-        <div style="width:28px;height:28px;border:2.5px solid rgba(34,211,238,0.15);border-top-color:#22d3ee;border-radius:50%;animation:preloader-spin 0.8s linear infinite;"></div>
-      </div>
-    </div>
-    <style>
-      @keyframes preloader-spin { to { transform: rotate(360deg); } }
-    </style>
+    <div id="app-preloader" style="position:fixed;inset:0;z-index:999999;background:#05070a;"></div>
     <div id="root" style="background:#05070a;min-height:100vh;"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

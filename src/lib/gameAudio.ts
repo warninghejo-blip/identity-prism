@@ -1,5 +1,5 @@
 /**
- * Game audio engine — procedural Web Audio API sounds + background music.
+ * Game audio engine — procedural Web Audio API sound effects.
  * Call initAudio() from a user gesture (button click) to unlock.
  */
 
@@ -8,12 +8,6 @@ let masterGain: GainNode | null = null;
 let sfxGain: GainNode | null = null;
 let musicGain: GainNode | null = null;
 let _ready = false;
-let _musicPlaying = false;
-let _musicNodes: (OscillatorNode | AudioBufferSourceNode)[] = [];
-let _musicGains: GainNode[] = [];
-let _currentTrack = '';
-
-const LOG = (msg: string, ...args: unknown[]) => console.log(`[audio] ${msg}`, ...args);
 
 /* ── Global SFX throttle — prevents audio node spam causing frame drops ── */
 const _lastSfxTime: Record<string, number> = {};
@@ -45,13 +39,12 @@ function _getCachedNoiseBuffer(dur: number): AudioBuffer | null {
 /* ── Init ────────────────────────────────────── */
 export function initAudio() {
   if (ctx && _ready) return;
-  LOG('initAudio called');
   if (!ctx) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const AC = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AC) { LOG('No AudioContext available!'); return; }
+      if (!AC) return;
       ctx = new AC();
-      LOG('AudioContext created, state:', ctx.state, 'sampleRate:', ctx.sampleRate);
 
       masterGain = ctx.createGain();
       masterGain.gain.value = 0.5;
@@ -64,8 +57,7 @@ export function initAudio() {
       musicGain = ctx.createGain();
       musicGain.gain.value = 0.0;
       musicGain.connect(masterGain);
-    } catch (e) {
-      LOG('Failed to create AudioContext:', e);
+    } catch {
       return;
     }
   }
@@ -73,26 +65,50 @@ export function initAudio() {
   const doResume = () => {
     if (!ctx) return;
     if (ctx.state === 'suspended') {
-      ctx.resume().then(() => {
-        _ready = true;
-        LOG('Context resumed, state:', ctx?.state);
-        _playConfirmBeep();
-      }).catch(e => LOG('Resume failed:', e));
+      ctx
+        .resume()
+        .then(() => {
+          _ready = true;
+          _playConfirmBeep();
+        })
+        .catch(() => {});
     } else if (ctx.state === 'running') {
-      if (!_ready) { _ready = true; _playConfirmBeep(); }
+      if (!_ready) {
+        _ready = true;
+        _playConfirmBeep();
+      }
     }
   };
 
   doResume();
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (!(window as any).__audioUnlockAdded) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__audioUnlockAdded = true;
+    const unlockEvents = ['click', 'touchstart', 'keydown', 'pointerdown'] as const;
+    const removeUnlockListeners = () => {
+      for (const evt of unlockEvents) {
+        document.removeEventListener(evt, unlock);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).__audioUnlockAdded = false;
+    };
     const unlock = () => {
       if (ctx && ctx.state === 'suspended') {
-        ctx.resume().then(() => { _ready = true; LOG('Unlocked via gesture'); }).catch(() => {});
-      } else if (ctx && ctx.state === 'running') { _ready = true; }
+        ctx
+          .resume()
+          .then(() => {
+            _ready = true;
+            removeUnlockListeners();
+          })
+          .catch(() => {});
+      } else if (ctx && ctx.state === 'running') {
+        _ready = true;
+        removeUnlockListeners();
+      }
     };
-    for (const evt of ['click', 'touchstart', 'keydown', 'pointerdown']) {
+    for (const evt of unlockEvents) {
       document.addEventListener(evt, unlock, { passive: true });
     }
   }
@@ -112,9 +128,8 @@ function _playConfirmBeep() {
     o.connect(g).connect(sfxGain);
     o.start(t);
     o.stop(t + 0.15);
-    LOG('Confirm beep at t=', t.toFixed(2));
-  } catch (e) {
-    LOG('Confirm beep error:', e);
+  } catch {
+    // ignore
   }
 }
 
@@ -122,8 +137,9 @@ function _playConfirmBeep() {
 function _sfx(): GainNode | null {
   if (!ctx || !sfxGain) return null;
   if (!_ready) {
-    if (ctx.state === 'running') { _ready = true; }
-    else return null;
+    if (ctx.state === 'running') {
+      _ready = true;
+    } else return null;
   }
   return sfxGain;
 }
@@ -180,199 +196,15 @@ function playFilteredTone(freq: number, dur: number, vol: number, type: Oscillat
   o.stop(t + dur + 0.05);
 }
 
-/* ═══════════════════════════════════════════════════
-   Background Music — multiple cosmic tracks, per mode
-   ═══════════════════════════════════════════════════ */
-
-// Track definitions — each has a chord, scale, BPM, and feel
-interface TrackDef {
-  name: string;
-  bpm: number;
-  padNotes: number[];    // sustained pad chord (low freqs)
-  padType: OscillatorType;
-  scale: number[];       // arpeggio note pool
-  arpType: OscillatorType;
-  arpPattern: number[];  // indices into scale
-  padVol: number;
-  arpVol: number;
-}
-
-// ── ALL TRACKS ──────────────────────────────────────
-// Each mode has multiple variants; one is picked at random each session.
-// To add your own: just append a new TrackDef to the appropriate array.
-// File location: src/lib/gameAudio.ts
-
-const ORBIT_TRACKS: TrackDef[] = [
-  {
-    name: 'Stellar Drift',
-    bpm: 88,
-    padNotes: [130.8, 164.8, 196.0], // C3 E3 G3
-    padType: 'sine',
-    scale: [261.6, 293.7, 329.6, 392.0, 440.0, 523.3, 587.3, 659.3],
-    arpType: 'sine',
-    arpPattern: [0, 2, 4, 7, 4, 2, 5, 3],
-    padVol: 0.018,
-    arpVol: 0.08,
-  },
-  {
-    name: 'Nebula Waltz',
-    bpm: 76,
-    padNotes: [146.8, 174.6, 220.0], // D3 F3 A3
-    padType: 'sine',
-    scale: [293.7, 349.2, 392.0, 440.0, 523.3, 587.3, 659.3, 784.0],
-    arpType: 'sine',
-    arpPattern: [0, 3, 5, 2, 7, 4, 6, 1],
-    padVol: 0.018,
-    arpVol: 0.07,
-  },
-  {
-    name: 'Deep Space Lullaby',
-    bpm: 66,
-    padNotes: [116.5, 146.8, 174.6], // Bb2 D3 F3
-    padType: 'sine',
-    scale: [233.1, 261.6, 293.7, 349.2, 392.0, 466.2, 523.3, 587.3],
-    arpType: 'sine',
-    arpPattern: [0, 4, 1, 5, 3, 7, 2, 6],
-    padVol: 0.016,
-    arpVol: 0.065,
-  },
-];
-
-const DEFENDER_TRACKS: TrackDef[] = [
-  {
-    name: 'Battle Horizon',
-    bpm: 110,
-    padNotes: [110.0, 146.8, 164.8], // A2 D3 E3
-    padType: 'triangle',
-    scale: [220.0, 261.6, 293.7, 329.6, 392.0, 440.0, 523.3, 587.3],
-    arpType: 'triangle',
-    arpPattern: [0, 3, 5, 7, 6, 4, 2, 1],
-    padVol: 0.016,
-    arpVol: 0.07,
-  },
-  {
-    name: 'Ion Storm',
-    bpm: 120,
-    padNotes: [123.5, 155.6, 185.0], // B2 Eb3 F#3
-    padType: 'triangle',
-    scale: [246.9, 293.7, 329.6, 370.0, 440.0, 493.9, 554.4, 659.3],
-    arpType: 'square',
-    arpPattern: [0, 5, 2, 7, 1, 6, 3, 4],
-    padVol: 0.014,
-    arpVol: 0.06,
-  },
-  {
-    name: 'Plasma Drive',
-    bpm: 100,
-    padNotes: [98.0, 130.8, 155.6], // G2 C3 Eb3
-    padType: 'triangle',
-    scale: [196.0, 233.1, 261.6, 311.1, 349.2, 392.0, 466.2, 523.3],
-    arpType: 'triangle',
-    arpPattern: [0, 2, 5, 3, 7, 1, 6, 4],
-    padVol: 0.016,
-    arpVol: 0.065,
-  },
-];
-
-const MENU_TRACKS: TrackDef[] = [
-  {
-    name: 'Cosmic Overture',
-    bpm: 72,
-    padNotes: [98.0, 130.8, 164.8, 196.0], // G2 C3 E3 G3
-    padType: 'sine',
-    scale: [196.0, 261.6, 293.7, 329.6, 392.0, 440.0, 523.3, 659.3],
-    arpType: 'sine',
-    arpPattern: [0, 4, 2, 6, 3, 7, 5, 1],
-    padVol: 0.016,
-    arpVol: 0.07,
-  },
-  {
-    name: 'Astral Gateway',
-    bpm: 80,
-    padNotes: [110.0, 138.6, 164.8, 220.0], // A2 C#3 E3 A3
-    padType: 'sine',
-    scale: [220.0, 277.2, 329.6, 370.0, 440.0, 554.4, 659.3, 740.0],
-    arpType: 'sine',
-    arpPattern: [0, 2, 4, 6, 7, 5, 3, 1],
-    padVol: 0.016,
-    arpVol: 0.07,
-  },
-];
-
-const MODE_TRACKS: Record<string, TrackDef[]> = {
-  orbit: ORBIT_TRACKS,
-  defender: DEFENDER_TRACKS,
-  menu: MENU_TRACKS,
-};
-
-function pickRandom<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
+/* ── Music stubs (music system removed — SFX only) ── */
 
 export function startMusic(_mode: 'orbit' | 'defender' | 'menu' = 'menu') {
   // Music disabled — SFX only
 }
 
-let _arpTimer: ReturnType<typeof setTimeout> | null = null;
-let _arpStep = 0;
-
-function _scheduleArpeggio(startTime: number, track: TrackDef) {
-  if (!_musicPlaying || !ctx || !musicGain) return;
-  const beatDur = 60 / track.bpm;
-  const pat = [...track.arpPattern];
-  const noteDur = beatDur * 0.65;
-
-  // Shift pattern every 4 bars for variety
-  if (_arpStep % 4 === 1) pat.reverse();
-  else if (_arpStep % 4 === 2) { const h = pat.splice(0, 4); pat.push(...h); }
-  else if (_arpStep % 4 === 3) { pat.reverse(); const h = pat.splice(0, 4); pat.push(...h); }
-
-  for (let i = 0; i < pat.length; i++) {
-    const noteTime = startTime + i * beatDur;
-    if (noteTime < (ctx?.currentTime ?? 0) - 0.1) continue;
-    const freq = track.scale[pat[i] % track.scale.length];
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = track.arpType;
-    o.frequency.setValueAtTime(freq, noteTime);
-    g.gain.setValueAtTime(0, noteTime);
-    g.gain.linearRampToValueAtTime(track.arpVol, noteTime + 0.015);
-    g.gain.exponentialRampToValueAtTime(0.001, noteTime + noteDur);
-    o.connect(g).connect(musicGain!);
-    o.start(noteTime);
-    o.stop(noteTime + noteDur + 0.05);
-  }
-
-  const barDur = pat.length * beatDur;
-  _arpStep++;
-  _arpTimer = setTimeout(() => {
-    if (ctx && _musicPlaying) {
-      _scheduleArpeggio(ctx.currentTime + 0.05, track);
-    }
-  }, barDur * 1000 - 100);
-}
-
-function _stopMusicImmediate() {
-  _musicPlaying = false;
-  if (_arpTimer) { clearTimeout(_arpTimer); _arpTimer = null; }
-  for (const o of _musicNodes) { try { o.stop(); } catch {} }
-  _musicNodes = [];
-  _musicGains = [];
-  _arpStep = 0;
-}
-
-export function stopMusic() {
-  // Music disabled — no-op
-}
-
 /** Kill every running oscillator / scheduled node so nothing lingers after leaving the game */
 export function stopAllAudio() {
-  _musicPlaying = false;
-  _currentTrack = '';
-  if (_arpTimer) { clearTimeout(_arpTimer); _arpTimer = null; }
-  for (const o of _musicNodes) { try { o.stop(); } catch {} }
-  _musicNodes = [];
-  _musicGains = [];
-  _arpStep = 0;
-  // Mute music gain only — leave masterGain alone so SFX keep working
+  // Mute music gain — leave masterGain alone so SFX keep working
   if (ctx && musicGain) {
     const t = ctx.currentTime;
     musicGain.gain.cancelScheduledValues(t);
@@ -380,7 +212,7 @@ export function stopAllAudio() {
   }
 }
 
-/* ── SFX (all volumes halved from previous) ──── */
+/* ── SFX ──── */
 export function sfxPickup() {
   if (_throttled('pickup', 100)) return;
   playTone(880, 0.1, 0.2, 'sine');
@@ -407,9 +239,12 @@ export function sfxShoot() {
   g.gain.setValueAtTime(0.04, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
   const f = ctx.createBiquadFilter();
-  f.type = 'bandpass'; f.frequency.value = 900; f.Q.value = 2;
+  f.type = 'bandpass';
+  f.frequency.value = 900;
+  f.Q.value = 2;
   o.connect(f).connect(g).connect(d);
-  o.start(t); o.stop(t + 0.1);
+  o.start(t);
+  o.stop(t + 0.1);
 }
 
 /** Double/dual shot — stereo laser burst */
@@ -427,9 +262,12 @@ export function sfxShootDouble() {
     g.gain.setValueAtTime(0.03, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
     const f = ctx.createBiquadFilter();
-    f.type = 'bandpass'; f.frequency.value = 800; f.Q.value = 1.5;
+    f.type = 'bandpass';
+    f.frequency.value = 800;
+    f.Q.value = 1.5;
     o.connect(f).connect(g).connect(d);
-    o.start(t); o.stop(t + 0.1);
+    o.start(t);
+    o.stop(t + 0.1);
   }
 }
 
@@ -440,20 +278,14 @@ export function sfxShootRocket() {
   playTone(300, 0.08, 0.04, 'triangle');
 }
 
-/** Enemy hit — metallic ping */
-export function sfxHit() {
-  if (_throttled('hit', 60)) return;
-  playTone(200, 0.08, 0.15, 'sawtooth');
-}
-
-/** Enemy destroyed — crunch + low thud (more impactful than just a hit) */
+/** Enemy destroyed — crunch + low thud */
 export function sfxEnemyDestroy() {
   if (_throttled('destroy', 250)) return;
   playNoise(0.18, 0.12);
   playFilteredTone(100, 0.2, 0.15, 'sawtooth', 800);
 }
 
-/** Player explosion — heavy asteroid impact: deep thud + rock crunch + debris */
+/** Player explosion — heavy asteroid impact */
 export function sfxExplosion() {
   if (_throttled('explosion', 200)) return;
   playFilteredTone(45, 0.6, 0.25, 'sine', 400);
@@ -485,7 +317,7 @@ export function sfxRevive() {
   setTimeout(() => playTone(880, 0.15, 0.1, 'sine'), 200);
 }
 
-/** Low rumble — intensity 0..1 (soft sine, not harsh) */
+/** Low rumble — intensity 0..1 */
 export function sfxRumble(intensity: number) {
   if (_throttled('rumble', 120)) return;
   const vol = Math.min(intensity, 1) * 0.04;
@@ -500,7 +332,7 @@ export function sfxDebris() {
   playTone(120, 0.06, 0.06, 'square');
 }
 
-/** Asteroid-asteroid collision — short rocky clunk, volume scales with impact */
+/** Asteroid-asteroid collision */
 export function sfxAsteroidHit(intensity: number = 0.5) {
   if (_throttled('ast_hit', 60)) return;
   const vol = Math.min(intensity, 1) * 0.06;
@@ -545,7 +377,7 @@ export function sfxGameOver() {
   setTimeout(() => playTone(262, 0.4, 0.1, 'sine'), 650);
 }
 
-/** Victory fanfare — triumphant ascending phrase for completing all levels */
+/** Victory fanfare */
 export function sfxVictory() {
   const notes = [523.3, 659.3, 784.0, 1047, 784.0, 1047, 1318.5];
   const times = [0, 120, 240, 380, 500, 600, 720];

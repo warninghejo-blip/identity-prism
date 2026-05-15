@@ -75,17 +75,17 @@ export function StarField({
   const intensityMax = intensityRange[1];
   
   const [positions, colorsAttr, sizes, intensities] = useMemo(() => {
-    const pos = new Float32Array(count * 3);
-    const col = new Float32Array(count * 3);
-    const sz = new Float32Array(count);
-    const intens = new Float32Array(count);
-    
+    const pos = new Float32Array(effectiveCount * 3);
+    const col = new Float32Array(effectiveCount * 3);
+    const sz = new Float32Array(effectiveCount);
+    const intens = new Float32Array(effectiveCount);
+
     const paletteColors = palette.map((value) => new THREE.Color(value));
     const radiusSpan = radiusMax - radiusMin;
     const sizeSpan = sizeMax - sizeMin;
     const intensitySpan = intensityMax - intensityMin;
 
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < effectiveCount; i++) {
       const r = radiusMin + Math.random() * radiusSpan;
       const theta = Math.random() * Math.PI * 2;
       const cosPhi = hemisphere === 'back' ? -Math.random() : 1 - 2 * Math.random();
@@ -106,7 +106,7 @@ export function StarField({
     }
     
     return [pos, col, sz, intens];
-  }, [count, radiusMin, radiusMax, sizeMin, sizeMax, intensityMin, intensityMax, hemisphere, palette]);
+  }, [effectiveCount, radiusMin, radiusMax, sizeMin, sizeMax, intensityMin, intensityMax, hemisphere, palette]);
 
   const uniforms = useMemo(() => ({
     uPixelRatio: { value: typeof window !== 'undefined' ? Math.min(window.devicePixelRatio, 2) : 1 },
@@ -115,10 +115,10 @@ export function StarField({
   return (
     <points ref={mesh}>
       <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
-        <bufferAttribute attach="attributes-color" count={count} array={colorsAttr} itemSize={3} />
-        <bufferAttribute attach="attributes-size" count={count} array={sizes} itemSize={1} />
-        <bufferAttribute attach="attributes-intensity" count={count} array={intensities} itemSize={1} />
+        <bufferAttribute attach="attributes-position" count={effectiveCount} array={positions} itemSize={3} />
+        <bufferAttribute attach="attributes-color" count={effectiveCount} array={colorsAttr} itemSize={3} />
+        <bufferAttribute attach="attributes-size" count={effectiveCount} array={sizes} itemSize={1} />
+        <bufferAttribute attach="attributes-intensity" count={effectiveCount} array={intensities} itemSize={1} />
       </bufferGeometry>
       <shaderMaterial
         vertexShader={starVertexShader}

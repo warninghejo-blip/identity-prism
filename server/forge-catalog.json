@@ -1,0 +1,587 @@
+{
+  "version": 1,
+  "generatedFrom": "src/lib/forgeItems.ts",
+  "items": [
+    {
+      "id": "frame_nebula",
+      "name": "Nebula Frame",
+      "category": "frame",
+      "price": 800,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_iron_veil",
+      "name": "Iron Veil",
+      "category": "frame",
+      "price": 1000,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_solar_flare",
+      "name": "Solar Flare",
+      "category": "frame",
+      "price": 2800,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_ionic_storm",
+      "name": "Ionic Storm",
+      "category": "frame",
+      "price": 2800,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_basalt",
+      "name": "Basalt Fortress",
+      "category": "frame",
+      "price": 3500,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_void",
+      "name": "Void Edge",
+      "category": "frame",
+      "price": 5500,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_quantum",
+      "name": "Quantum Lattice",
+      "category": "frame",
+      "price": 6500,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_pulsar",
+      "name": "Pulsar Grid",
+      "category": "frame",
+      "price": 6000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_supernova",
+      "name": "Supernova",
+      "category": "frame",
+      "price": 20000,
+      "requiredRank": "ace",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_event_horizon",
+      "name": "Event Horizon",
+      "category": "frame",
+      "price": 22000,
+      "requiredRank": "ace",
+      "unlockCondition": "Burn 100+ tokens in Black Hole",
+      "maxModuleSlots": null
+    },
+    {
+      "id": "frame_singularity",
+      "name": "Singularity Core",
+      "category": "frame",
+      "price": 24000,
+      "requiredRank": "legend",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_frost",
+      "name": "Frost Aura",
+      "category": "aura",
+      "price": 3000,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_ember",
+      "name": "Ember Aura",
+      "category": "aura",
+      "price": 3000,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_solar_wind",
+      "name": "Solar Wind",
+      "category": "aura",
+      "price": 3000,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_fortune_mist",
+      "name": "Fortune Mist",
+      "category": "aura",
+      "price": 3000,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_electric",
+      "name": "Electric Storm",
+      "category": "aura",
+      "price": 7000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_crimson_tide",
+      "name": "Crimson Tide",
+      "category": "aura",
+      "price": 6000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_void_shell",
+      "name": "Void Shell",
+      "category": "aura",
+      "price": 8000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_plasma",
+      "name": "Plasma Field",
+      "category": "aura",
+      "price": 14000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_stellar_tide",
+      "name": "Stellar Tide",
+      "category": "aura",
+      "price": 15000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_dark_matter",
+      "name": "Dark Matter",
+      "category": "aura",
+      "price": 20000,
+      "requiredRank": "ace",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "aura_binary_pulse",
+      "name": "Binary Pulse",
+      "category": "aura",
+      "price": 32000,
+      "requiredRank": "legend",
+      "unlockCondition": "Reach Binary Sun tier",
+      "maxModuleSlots": null
+    },
+    {
+      "id": "ship_cargo",
+      "name": "Cargo Hauler",
+      "category": "ship_skin",
+      "price": 4000,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": 1
+    },
+    {
+      "id": "ship_cargo_b",
+      "name": "Cargo Titan",
+      "category": "ship_skin",
+      "price": 5000,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": 1
+    },
+    {
+      "id": "ship_crystal",
+      "name": "Crystal Sentinel",
+      "category": "ship_skin",
+      "price": 9000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_crystal_b",
+      "name": "Emerald Sentinel",
+      "category": "ship_skin",
+      "price": 9000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_chrome",
+      "name": "Chrome Sentinel",
+      "category": "ship_skin",
+      "price": 9500,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_fortress",
+      "name": "Stellar Fortress",
+      "category": "ship_skin",
+      "price": 10000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_fighter",
+      "name": "Starfighter Mk.II",
+      "category": "ship_skin",
+      "price": 10000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_fighter_b",
+      "name": "Starfighter Mk.III",
+      "category": "ship_skin",
+      "price": 10000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_neon",
+      "name": "Neon Racer",
+      "category": "ship_skin",
+      "price": 11000,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_stealth_v2",
+      "name": "Shadow Wraith",
+      "category": "ship_skin",
+      "price": 18000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_stealth",
+      "name": "Ghost Protocol",
+      "category": "ship_skin",
+      "price": 19000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_stealth_v2_b",
+      "name": "Crimson Wraith",
+      "category": "ship_skin",
+      "price": 19000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_phantom",
+      "name": "Phantom Striker",
+      "category": "ship_skin",
+      "price": 19500,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_fortress_b",
+      "name": "Phoenix Citadel",
+      "category": "ship_skin",
+      "price": 21000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": 2
+    },
+    {
+      "id": "ship_prism",
+      "name": "Prism Ascendant",
+      "category": "ship_skin",
+      "price": 45000,
+      "requiredRank": "ace",
+      "unlockCondition": null,
+      "maxModuleSlots": 3
+    },
+    {
+      "id": "ship_manta",
+      "name": "Void Manta",
+      "category": "ship_skin",
+      "price": 40000,
+      "requiredRank": "ace",
+      "unlockCondition": null,
+      "maxModuleSlots": 3
+    },
+    {
+      "id": "ship_trident",
+      "name": "Teal Trident",
+      "category": "ship_skin",
+      "price": 44000,
+      "requiredRank": "ace",
+      "unlockCondition": null,
+      "maxModuleSlots": 3
+    },
+    {
+      "id": "ship_golden",
+      "name": "Solar Sovereign",
+      "category": "ship_skin",
+      "price": 50000,
+      "requiredRank": "ace",
+      "unlockCondition": null,
+      "maxModuleSlots": 3
+    },
+    {
+      "id": "title_explorer",
+      "name": "Void Wanderer",
+      "category": "title",
+      "price": 600,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_starborn",
+      "name": "Child of Starfire",
+      "category": "title",
+      "price": 600,
+      "requiredRank": null,
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_guardian",
+      "name": "Celestial Warden",
+      "category": "title",
+      "price": 2400,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_destroyer",
+      "name": "Annihilator of Worlds",
+      "category": "title",
+      "price": 3200,
+      "requiredRank": "pilot",
+      "unlockCondition": "Burn 50 tokens",
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_voidrunner",
+      "name": "Voidrunner",
+      "category": "title",
+      "price": 2400,
+      "requiredRank": "pilot",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_architect",
+      "name": "Architect of Galaxies",
+      "category": "title",
+      "price": 6000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_sovereign",
+      "name": "Sovereign of the Nebula",
+      "category": "title",
+      "price": 8000,
+      "requiredRank": "captain",
+      "unlockCondition": "Own 5+ Forge items",
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_dreadnought",
+      "name": "Dreadnought",
+      "category": "title",
+      "price": 6000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_phantom_hand",
+      "name": "Phantom Hand",
+      "category": "title",
+      "price": 7000,
+      "requiredRank": "captain",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_ascended",
+      "name": "Omega Transcendent",
+      "category": "title",
+      "price": 24000,
+      "requiredRank": "legend",
+      "unlockCondition": "Score 1000+ identity points",
+      "maxModuleSlots": null
+    },
+    {
+      "id": "title_harbinger",
+      "name": "Harbinger of Void",
+      "category": "title",
+      "price": 28000,
+      "requiredRank": "ace",
+      "unlockCondition": null,
+      "maxModuleSlots": null
+    }
+  ],
+  "modules": [
+    {
+      "id": "mod_speed_1",
+      "name": "Thruster Boost",
+      "tier": "blue",
+      "price": 4000,
+      "requiredRank": null,
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_speed_2",
+      "name": "Warp Coils",
+      "tier": "yellow",
+      "price": 16000,
+      "requiredRank": "pilot",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_speed_3",
+      "name": "Quantum Engine",
+      "tier": "red",
+      "price": 50000,
+      "requiredRank": "captain",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_shield_1",
+      "name": "Plating Mk.I",
+      "tier": "blue",
+      "price": 4000,
+      "requiredRank": null,
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_shield_2",
+      "name": "Deflector Array",
+      "tier": "yellow",
+      "price": 16000,
+      "requiredRank": "pilot",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_shield_3",
+      "name": "Fortress Core",
+      "tier": "red",
+      "price": 50000,
+      "requiredRank": "captain",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_fire_1",
+      "name": "Targeting Chip",
+      "tier": "blue",
+      "price": 4000,
+      "requiredRank": null,
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_fire_2",
+      "name": "Arsenal Pack",
+      "tier": "yellow",
+      "price": 16000,
+      "requiredRank": "pilot",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_fire_3",
+      "name": "Devastator Core",
+      "tier": "red",
+      "price": 50000,
+      "requiredRank": "captain",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_luck_1",
+      "name": "Scanner Lens",
+      "tier": "blue",
+      "price": 4000,
+      "requiredRank": null,
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_luck_2",
+      "name": "Probability Matrix",
+      "tier": "yellow",
+      "price": 16000,
+      "requiredRank": "pilot",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    },
+    {
+      "id": "mod_luck_3",
+      "name": "Quantum Oracle",
+      "tier": "red",
+      "price": 50000,
+      "requiredRank": "captain",
+      "compatibleCategories": [
+        "ship_skin"
+      ]
+    }
+  ]
+}

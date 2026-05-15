@@ -123,7 +123,7 @@ export async function commitScoreOnchain(
     const memoIx = new TransactionInstruction({
       keys: [{ pubkey: wallet.publicKey, isSigner: true, isWritable: false }],
       programId: MEMO_PROGRAM_ID,
-      data: Buffer.from(memoData, 'utf-8'),
+      data: new TextEncoder().encode(memoData),
     });
 
     const tx = new Transaction().add(memoIx);
@@ -151,10 +151,7 @@ export async function commitScoreOnchain(
 
     // ── Simulate BEFORE prompting user to sign (dApp Store requirement) ──
     try {
-      const simulation = await connection.simulateTransaction(tx, undefined, {
-        sigVerify: false,
-        replaceRecentBlockhash: true,
-      });
+      const simulation = await connection.simulateTransaction(tx);
       if (simulation.value.err) {
         console.error('[score] simulation failed', simulation.value.err, simulation.value.logs);
         return { success: false, error: `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}` };
@@ -250,7 +247,7 @@ function saveOnchainScore(entry: OnchainScore) {
   try {
     const existing = getOnchainScores();
     const idx = existing.findIndex(
-      (e) => e.address === entry.address && e.score === entry.score,
+      (e) => e.txSignature && e.txSignature === entry.txSignature,
     );
     if (idx !== -1) {
       existing[idx] = entry;

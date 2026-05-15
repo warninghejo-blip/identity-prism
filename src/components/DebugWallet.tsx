@@ -5,6 +5,7 @@ export const DebugWallet = () => {
   const { wallets, connected, publicKey } = useWallet();
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     console.log('[DebugWallet] Wallets available:', wallets.map(w => w.adapter.name));
     console.log('[DebugWallet] Connected:', connected);
     console.log('[DebugWallet] PublicKey:', publicKey?.toBase58());

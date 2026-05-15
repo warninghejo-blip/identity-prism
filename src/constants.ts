@@ -6,69 +6,71 @@ const COLLECTION_MINT = (import.meta.env.VITE_COLLECTION_MINT ?? '').trim();
 const COLLECTION_VERIFY_URL = (import.meta.env.VITE_COLLECTION_VERIFY_URL ?? '').trim();
 const UPDATE_AUTHORITY = (import.meta.env.VITE_UPDATE_AUTHORITY ?? '').trim();
 const CNFT_MINT_URL = (import.meta.env.VITE_CNFT_MINT_URL ?? '').trim();
-const HELIUS_KEYS = (import.meta.env.VITE_HELIUS_API_KEYS ?? import.meta.env.VITE_HELIUS_API_KEY ?? '')
-  .split(',')
-  .map((key) => key.trim())
-  .filter(Boolean);
-
 const normalizeProxyUrl = (url: string) => url.replace(/\/+$/, '');
 const isLocalDevHost = (host: string) => /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(host);
+const getNativeHostedOrigin = () => {
+  if (typeof window === 'undefined') return null;
+  if (window.location.protocol === 'https:' && isLocalDevHost(window.location.hostname ?? '')) {
+    return 'https://identityprism.xyz';
+  }
+  return null;
+};
 
-export const getHeliusProxyUrl = () => {
+const getLocalDevOrigin = () => {
   if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.origin) {
     const devHost = window.location.hostname ?? '';
-    if (isLocalDevHost(devHost)) {
-      // In local dev, force same-origin so local proxy (/api, /rpc) is used without CORS.
-      return normalizeProxyUrl(window.location.origin);
-    }
+    if (isLocalDevHost(devHost)) return normalizeProxyUrl(window.location.origin);
   }
+  return null;
+};
+
+export const getHeliusProxyUrl = () => {
+  const localDevOrigin = getLocalDevOrigin();
+  if (localDevOrigin) return localDevOrigin;
   if (HELIUS_PROXY_URL) return normalizeProxyUrl(HELIUS_PROXY_URL);
   if (APP_BASE_URL) return normalizeProxyUrl(APP_BASE_URL);
+  const nativeHostedOrigin = getNativeHostedOrigin();
+  if (nativeHostedOrigin) return normalizeProxyUrl(nativeHostedOrigin);
   if (typeof window !== 'undefined' && window.location?.origin) {
     return normalizeProxyUrl(window.location.origin);
   }
   return null;
 };
-export const getMetadataBaseUrl = () => (METADATA_BASE_URL ? normalizeProxyUrl(METADATA_BASE_URL) : null);
+export const getMetadataBaseUrl = () =>
+  getLocalDevOrigin() ??
+  (METADATA_BASE_URL
+    ? normalizeProxyUrl(METADATA_BASE_URL)
+    : getNativeHostedOrigin()
+      ? normalizeProxyUrl(getNativeHostedOrigin()!)
+      : null);
 export const getMetadataImageUrl = () => {
   if (METADATA_IMAGE_URL) return METADATA_IMAGE_URL;
   const baseUrl = getMetadataBaseUrl();
   return baseUrl ? `${baseUrl}/phav.png` : null;
 };
-export const getAppBaseUrl = () => (APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : null);
+export const getAppBaseUrl = () =>
+  APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : getNativeHostedOrigin() ? normalizeProxyUrl(getNativeHostedOrigin()!) : null;
 export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : null);
-export const getCollectionVerifyUrl = () =>
-  COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null;
+export const getCollectionVerifyUrl = () => (COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null);
 export const getUpdateAuthorityAddress = () => (UPDATE_AUTHORITY ? UPDATE_AUTHORITY : null);
-export const getCnftMintUrl = () => (CNFT_MINT_URL ? normalizeProxyUrl(CNFT_MINT_URL) : null);
+export const getCnftMintUrl = () =>
+  getLocalDevOrigin() ??
+  (CNFT_MINT_URL
+    ? normalizeProxyUrl(CNFT_MINT_URL)
+    : getNativeHostedOrigin()
+      ? normalizeProxyUrl(getNativeHostedOrigin()!)
+      : null);
 
-const getHeliusKeyIndex = (seed?: string) => {
-  if (!HELIUS_KEYS.length) return -1;
-  if (!seed) return 0;
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 2147483647;
-  }
-  return Math.abs(hash) % HELIUS_KEYS.length;
-};
-
-export const getHeliusRpcUrl = (seed?: string) => {
+export const getHeliusRpcUrl = (_seed?: string) => {
   const proxyUrl = getHeliusProxyUrl();
   if (proxyUrl) return `${proxyUrl}/rpc`;
-  const index = getHeliusKeyIndex(seed);
-  if (index < 0) return null;
-  return `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEYS[index]}`;
+  return null;
 };
 
-export const getHeliusRpcUrls = (seed?: string) => {
+export const getHeliusRpcUrls = (_seed?: string) => {
   const proxyUrl = getHeliusProxyUrl();
   if (proxyUrl) return [`${proxyUrl}/rpc`];
-  if (!HELIUS_KEYS.length) return [];
-  const startIndex = Math.max(0, getHeliusKeyIndex(seed));
-  return HELIUS_KEYS.map((_, index) => {
-    const key = HELIUS_KEYS[(startIndex + index) % HELIUS_KEYS.length];
-    return `https://mainnet.helius-rpc.com/?api-key=${key}`;
-  });
+  return [];
 };
 
 export const getHeliusProxyHeaders = (seed?: string) => {
@@ -79,12 +81,11 @@ export const getHeliusProxyHeaders = (seed?: string) => {
 };
 
 export const HELIUS_CONFIG = {
-  API_KEYS: HELIUS_KEYS,
   REST_URL: 'https://api.helius.xyz/v0',
 };
 
 export const MINT_CONFIG = {
-  PRICE_SOL: 0.01,
+  PRICE_SOL: 0.03,
   NETWORK: 'mainnet-beta',
   COLLECTION: 'Identity Prism',
   SYMBOL: 'PRISM',
@@ -94,23 +95,22 @@ export const MINT_CONFIG = {
 export const SEEKER_TOKEN = {
   MINT: 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3',
   SYMBOL: 'SKR',
-  DISCOUNT: 0.5,
 } as const;
 
 export const BLACKHOLE_ENABLED = true;
 
 // Scoring + rarity system (Identity Prism 3.0)
 export const SCORING = {
-  SEEKER_GENESIS_BONUS: 200,
-  CHAPTER2_PREORDER_BONUS: 150,
-  COMBO_BONUS: 200,
-  BLUE_CHIP_BONUS: 50,
-  MEME_LORD_BONUS: 30,
-  DEFI_KING_BONUS: 30,
+  SEEKER_GENESIS_BONUS: 20,
+  CHAPTER2_PREORDER_BONUS: 15,
+  COMBO_BONUS: 15,
+  BLUE_CHIP_BONUS: 5,
+  MEME_LORD_BONUS: 3,
+  DEFI_KING_BONUS: 5,
   HYPERACTIVE_THRESHOLD_30D: 8, // tx/day
-  DIAMOND_HANDS_DAYS: 60,
-  DIAMOND_HANDS_BONUS: 50,
-  HYPERACTIVE_BONUS: 50,
+  DIAMOND_HANDS_DAYS: 365,
+  DIAMOND_HANDS_BONUS: 5,
+  HYPERACTIVE_BONUS: 2,
 
   SOL_BALANCE_THRESHOLDS: {
     MINOR: { amount: 0.1, bonus: 15 },
@@ -124,19 +124,19 @@ export const SCORING = {
   TX_COUNT_MULTIPLIER: 0.2,
   TX_COUNT_CAP: 100,
 
-  MAX_SCORE: 1200,
+  MAX_SCORE: 400,
   BLUE_CHIP_THRESHOLD: 10,
 } as const;
 
 export const RARITY_THRESHOLDS = {
   COMMON: 0,
-  RARE: 201,
-  EPIC: 451,
-  LEGENDARY: 651,
-  MYTHIC: 851,
+  RARE: 80,
+  EPIC: 180,
+  LEGENDARY: 260,
+  MYTHIC: 340,
 } as const;
 
-export const MAX_SCORE_CAP = 1200;
+export const MAX_SCORE_CAP = 400;
 
 export const TOKEN_ADDRESSES = {
   SEEKER_GENESIS_COLLECTION: 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te',
@@ -171,11 +171,12 @@ export const BLUE_CHIP_COLLECTIONS = [
 
 // Also match by collection name (case-insensitive) for broader coverage
 export const BLUE_CHIP_COLLECTION_NAMES = [
-  'mad lads', 'solana monkey business', 'claynosaurz', 'okay bears',
-  'famous fox federation', 'tensorians', 'degenerate ape academy',
-  'y00ts', 'abc', 'cets on creck', 'primates', 'portals',
-  'galactic geckos', 'taiyo robotics', 'degen ape academy',
-  'froganas', 'jelly rascals', 'lily',
+  'mad lads',
+  'solana monkey business',
+  'claynosaurz',
+  'okay bears',
+  'famous fox federation',
+  'taiyo robotics',
 ];
 
 export const TREASURY_ADDRESS = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
@@ -199,7 +200,7 @@ export const VISUAL_CONFIG = {
     MYTHIC_PRIMARY: '#FF9C6D',
     MYTHIC_SECONDARY: '#7F5BFF',
   },
-  
+
   // Planet generation
   PLANETS: {
     TOKENS_PER_PLANET: 10, // 1 planet per 10 unique tokens
@@ -208,7 +209,7 @@ export const VISUAL_CONFIG = {
     ORBIT_SPACING: 2.5,
     SIZE_RANGE: { min: 0.3, max: 0.8 },
   },
-  
+
   // Moon generation
   MOONS: {
     NFTS_PER_MOON: 50, // 1 moon per 50 NFTs
@@ -216,14 +217,14 @@ export const VISUAL_CONFIG = {
     SIZE_RANGE: { min: 0.05, max: 0.15 },
     ORBIT_RADIUS: { min: 0.8, max: 1.5 },
   },
-  
+
   // Space dust density based on activity
   DUST: {
     BASE_COUNT: 150,
     TX_MULTIPLIER: 4, // Additional particles per 100 tx
     MAX_PARTICLES: 1500, // Reduced for mobile performance
   },
-  
+
   // Animation speeds (Dramatically slowed down for a majestic cinematic feel)
   ANIMATION: {
     SUN_ROTATION: 0.001,
@@ -232,7 +233,7 @@ export const VISUAL_CONFIG = {
     MOON_ORBIT: 0.1,
     BINARY_ORBIT: 0.01,
   },
-  
+
   // Post-processing (High-Clarity Cinematic - Mobile Optimized)
   POST_PROCESSING: {
     BLOOM_INTENSITY: 1.1,
@@ -242,7 +243,7 @@ export const VISUAL_CONFIG = {
     VIGNETTE_DARKNESS: 0.3,
     NOISE_OPACITY: 0.008,
   },
-  
+
   // Starfield configuration
   STARS: {
     RADIUS: 300,
@@ -252,12 +253,12 @@ export const VISUAL_CONFIG = {
     SATURATION: 0,
     FADE: false,
   },
-  
+
   ORBITS: {
     DEFAULT: '#4488ff',
     GOLDEN: '#ffd479',
   },
-  
+
   NEBULA: {
     COLORS: ['#2b1055', '#7a00ff', '#ff8e53'],
     INTENSITY: 0.45,
@@ -268,10 +269,42 @@ export type RarityTier = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic';
 
 // Planet types for visual variety
 export const PLANET_TYPES = [
-  { name: 'terrestrial', baseColor: '#1a4d2e', accent: '#4ade80', surface: 'terrestrial', roughness: 0.8, metalness: 0.2, emissiveIntensity: 0.35 },
-  { name: 'volcanic', baseColor: '#7c2d12', accent: '#ef4444', surface: 'volcanic', roughness: 0.9, metalness: 0.2, emissiveIntensity: 0.4 },
-  { name: 'gas', baseColor: '#92400e', accent: '#f59e0b', surface: 'gas', roughness: 0.5, metalness: 0.2, emissiveIntensity: 0.25 },
-  { name: 'ice', baseColor: '#bae6fd', accent: '#ffffff', surface: 'ice', roughness: 0.2, metalness: 0.5, emissiveIntensity: 0.3 },
+  {
+    name: 'terrestrial',
+    baseColor: '#1a4d2e',
+    accent: '#4ade80',
+    surface: 'terrestrial',
+    roughness: 0.8,
+    metalness: 0.2,
+    emissiveIntensity: 0.35,
+  },
+  {
+    name: 'volcanic',
+    baseColor: '#7c2d12',
+    accent: '#ef4444',
+    surface: 'volcanic',
+    roughness: 0.9,
+    metalness: 0.2,
+    emissiveIntensity: 0.4,
+  },
+  {
+    name: 'gas',
+    baseColor: '#92400e',
+    accent: '#f59e0b',
+    surface: 'gas',
+    roughness: 0.5,
+    metalness: 0.2,
+    emissiveIntensity: 0.25,
+  },
+  {
+    name: 'ice',
+    baseColor: '#bae6fd',
+    accent: '#ffffff',
+    surface: 'ice',
+    roughness: 0.2,
+    metalness: 0.5,
+    emissiveIntensity: 0.3,
+  },
 ] as const;
 
 export const MEME_COIN_PRICES_USD: Record<keyof typeof MEME_COIN_MINTS, number> = {

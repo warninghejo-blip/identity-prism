@@ -22,6 +22,28 @@ const getGameSessionApiBase = (): string | null => {
   return null;
 };
 
+const getCachedGameJwt = (walletAddress?: string): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem('ip_auth_jwt');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { token?: string; address?: string; expiresAt?: number };
+    const expected = walletAddress?.trim();
+    if (expected && parsed.address && parsed.address !== expected) {
+      sessionStorage.removeItem('ip_auth_jwt');
+      return null;
+    }
+    if (!parsed.token || !parsed.expiresAt || parsed.expiresAt <= Date.now() + 60_000) {
+      sessionStorage.removeItem('ip_auth_jwt');
+      return null;
+    }
+    return parsed.token;
+  } catch {
+    sessionStorage.removeItem('ip_auth_jwt');
+    return null;
+  }
+};
+
 export interface MagicBlockConfig {
   rpcUrl: string;
   wsUrl: string;
@@ -59,6 +81,7 @@ export interface GameSessionProof {
     slotFound: boolean;
     seedMatchesSlot: boolean;
     slotBlockhash: string | null;
+    slotBlockTimeMs?: number | null;
     reason: string;
   };
   createdAt: string;
@@ -172,17 +195,18 @@ export async function verifyGameSessionSeed(seed: string, slot?: number): Promis
 /**
  * Register completed run on backend to get verifiable session proof id/hash.
  */
-export async function registerGameSessionProof(
-  payload: RegisterGameSessionPayload,
-): Promise<GameSessionProof | null> {
+export async function registerGameSessionProof(payload: RegisterGameSessionPayload): Promise<GameSessionProof | null> {
   const base = getGameSessionApiBase();
   if (!base) return null;
 
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 8000);
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const jwt = getCachedGameJwt(payload.walletAddress);
+  if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
   const res = await fetch(`${base}/api/game/session`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
     signal: ctrl.signal,
   });
@@ -191,6 +215,13 @@ export async function registerGameSessionProof(
     throw new Error(`Session proof API ${res.status}`);
   }
   const data = (await res.json()) as { session?: GameSessionProof };
+  if (data.session?.id && payload.walletAddress && typeof window !== 'undefined') {
+    try {
+      sessionStorage.setItem(`game_session_owner_${data.session.id}`, payload.walletAddress);
+    } catch {
+      /* ignore */
+    }
+  }
   return data.session ?? null;
 }
 
@@ -201,7 +232,17 @@ export async function getGameSessionProof(sessionId: string): Promise<GameSessio
   const base = getGameSessionApiBase();
   if (!base) return null;
   const safeId = encodeURIComponent(sessionId);
-  const res = await fetch(`${base}/api/game/session/${safeId}`, { method: 'GET' });
+  const headers: Record<string, string> = {};
+  try {
+    const raw = sessionStorage.getItem(`game_session_owner_${sessionId}`);
+    if (raw) {
+      const jwt = getCachedGameJwt(raw);
+      if (jwt) headers.Authorization = `Bearer ${jwt}`;
+    }
+  } catch {
+    /* ignore */
+  }
+  const res = await fetch(`${base}/api/game/session/${safeId}`, { method: 'GET', headers });
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Session verify API ${res.status}`);

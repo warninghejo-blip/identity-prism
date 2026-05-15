@@ -11,6 +11,7 @@ import {
   Group,
   LinearFilter,
   Mesh,
+  NormalBlending,
   Points,
   ShaderMaterial,
   Texture,
@@ -18,6 +19,7 @@ import {
 } from 'three';
 import type { PlanetTier } from '@/hooks/useWalletData';
 import { SunCore, SunGlow, getProceduralParams, STAR_ARCHETYPES } from './SeekerSun';
+// ForgeAura removed — too heavy for mobile planet rendering. Auras applied via CSS on card instead.
 
 const IS_MOBILE = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
 // Restore high quality segments as requested
@@ -979,6 +981,7 @@ export function Planet3D({ tier, isCapture = false, onTexturesReady }: Planet3DP
           </points>
         </group>
       )}
+
     </group>
   );
 }
