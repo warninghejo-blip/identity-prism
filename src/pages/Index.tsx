@@ -520,7 +520,6 @@ const Index = () => {
     }
   }, [activeAddress, isConnected, jwtSigning, connectedAddress, wallet.publicKey, forceIdentityCardRoute, setViewState]);
 
-  const didForceDisconnect = useRef(false);
   const recentWalletRestoreRef = useRef(hasRecentExternalWalletBackground() || hasRecentNativeWalletRestore());
   const [walletStable, setWalletStable] = useState(
     Boolean(urlAddress) ||
@@ -530,37 +529,14 @@ const Index = () => {
       recentWalletRestoreRef.current,
   );
 
-  // On fresh app open (no URL address, not returning from BlackHole),
-  // force-disconnect any auto-connected wallet so user must choose manually.
-  // Keep walletStable=false until disconnect settles to prevent connected UI flash.
-  // Re-runs on isConnected to catch Phantom eager-connect that fires AFTER first render.
+  // Keep wallet state stable across route changes and reloads. Do not auto-disconnect
+  // an eager-restored wallet; only explicit user disconnect should do that.
   useEffect(() => {
-    // If user explicitly disconnected, force-disconnect any auto-reconnect
     if (isDisconnectingRef.current && isConnected) {
       disconnect().catch(() => {});
       return;
     }
-    if (
-      urlAddress ||
-      returningFromBH.current ||
-      returningFromGameJump.current ||
-      returningFromSubPage.current ||
-      recentWalletRestoreRef.current
-    ) {
-      setWalletStable(true);
-      return;
-    }
-    if (isConnected && !didForceDisconnect.current) {
-      didForceDisconnect.current = true;
-      disconnect()
-        .catch(() => {})
-        .finally(() => setTimeout(() => setWalletStable(true), 100));
-      return;
-    }
-    if (!isConnected && !didForceDisconnect.current) {
-      didForceDisconnect.current = true;
-      setWalletStable(true);
-    }
+    setWalletStable(true);
   }, [isConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When returning from game/BlackHole with connected wallet but no URL address,
@@ -1701,8 +1677,6 @@ const Index = () => {
       next.delete('mode');
       setSearchParams(next, { replace: true });
     }
-    // Reset force-disconnect ref so next auto-connect will be force-disconnected
-    didForceDisconnect.current = false;
     // Clear wallet session data
     clearStoredAuthJwt();
     // Clear localStorage BEFORE disconnect to prevent auto-reconnect race
