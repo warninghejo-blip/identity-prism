@@ -4,6 +4,111 @@ export const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9
 export const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 
+export type UnknownTokenResolution = {
+  mint: string;
+  name: string;
+  symbol?: string;
+  image?: string;
+  source: 'cache' | 'jupiter' | 'registry' | 'fallback';
+};
+
+const UNKNOWN_TOKEN_CACHE_KEY = 'identity-prism:unknown-token-resolver:v1';
+const UNKNOWN_TOKEN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+let jupiterTokenListPromise: Promise<Map<string, UnknownTokenResolution>> | null = null;
+
+const truncateMint = (mint: string) => `${mint.slice(0, 4)}...${mint.slice(-4)}`;
+
+const readUnknownTokenCache = () => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(UNKNOWN_TOKEN_CACHE_KEY) || '{}') as {
+      timestamp?: number;
+      assets?: Record<string, UnknownTokenResolution>;
+    };
+    if (!parsed.timestamp || Date.now() - parsed.timestamp > UNKNOWN_TOKEN_CACHE_TTL_MS) return {};
+    return parsed.assets ?? {};
+  } catch {
+    return {};
+  }
+};
+
+const writeUnknownTokenCache = (assets: Record<string, UnknownTokenResolution>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(UNKNOWN_TOKEN_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), assets }));
+  } catch {
+    /* ignore cache write failures */
+  }
+};
+
+const getJupiterTokenList = async () => {
+  if (jupiterTokenListPromise) return jupiterTokenListPromise;
+  jupiterTokenListPromise = (async () => {
+    const response = await fetch('https://token.jup.ag/all');
+    if (!response.ok) throw new Error(`Jupiter token list failed: ${response.status}`);
+    const list = (await response.json()) as Array<{ address?: string; name?: string; symbol?: string; logoURI?: string }>;
+    const map = new Map<string, UnknownTokenResolution>();
+    list.forEach((token) => {
+      if (!token.address) return;
+      map.set(token.address, {
+        mint: token.address,
+        name: token.name || token.symbol || `Unknown ${truncateMint(token.address)}`,
+        symbol: token.symbol,
+        image: token.logoURI,
+        source: 'jupiter',
+      });
+    });
+    return map;
+  })();
+  return jupiterTokenListPromise;
+};
+
+export async function resolveUnknownToken(mint: string): Promise<UnknownTokenResolution> {
+  const cache = readUnknownTokenCache();
+  const cached = cache[mint];
+  if (cached) return { ...cached, source: 'cache' };
+
+  try {
+    const jupiter = await getJupiterTokenList();
+    const match = jupiter.get(mint);
+    if (match) {
+      writeUnknownTokenCache({ ...cache, [mint]: match });
+      return match;
+    }
+  } catch {
+    /* registry fallback below */
+  }
+
+  try {
+    const response = await fetch('https://raw.githubusercontent.com/solana-labs/token-list/main/src/tokens/solana.tokenlist.json');
+    if (response.ok) {
+      const registry = (await response.json()) as { tokens?: Array<{ address?: string; name?: string; symbol?: string; logoURI?: string }> };
+      const token = registry.tokens?.find((entry) => entry.address === mint);
+      if (token?.address) {
+        const resolved: UnknownTokenResolution = {
+          mint,
+          name: token.name || token.symbol || `Unknown ${truncateMint(mint)}`,
+          symbol: token.symbol,
+          image: token.logoURI,
+          source: 'registry',
+        };
+        writeUnknownTokenCache({ ...cache, [mint]: resolved });
+        return resolved;
+      }
+    }
+  } catch {
+    /* fallback below */
+  }
+
+  const fallback: UnknownTokenResolution = {
+    mint,
+    name: `Unknown ${truncateMint(mint)}`,
+    source: 'fallback',
+  };
+  writeUnknownTokenCache({ ...cache, [mint]: fallback });
+  return fallback;
+}
+
 export async function getAssociatedTokenAddress(
   mint: PublicKey,
   owner: PublicKey,

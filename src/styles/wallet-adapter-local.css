@@ -129,7 +129,7 @@
     opacity: 0;
     transition: opacity linear 150ms;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 12000;
+    z-index: 100000;
     overflow-y: auto;
 }
 
@@ -194,7 +194,7 @@
     display: flex;
     align-items: center;
     flex-direction: column;
-    z-index: 12010;
+    z-index: 100010;
     max-width: 400px;
     border-radius: 14px;
     background: #10141f;
