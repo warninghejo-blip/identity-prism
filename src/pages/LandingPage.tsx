@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, CircleCheck, Flame, Gamepad2, ShieldCheck, Sparkles, Trophy, Wallet, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -83,6 +84,133 @@ function StatTile({ label, value, color }: { label: string; value: number; color
   );
 }
 
+function LiveClusterGraph() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let frame = 0;
+    let raf = 0;
+    let flashIndex = 4;
+    let flashUntil = 0;
+    let lastFlash = 0;
+    const nodes = Array.from({ length: 30 }, (_, index) => {
+      const sybil = index < 16;
+      const cx = sybil ? 0.34 : 0.68;
+      const cy = sybil ? 0.54 : 0.42;
+      return {
+        sybil,
+        x: cx + (Math.random() - 0.5) * 0.28,
+        y: cy + (Math.random() - 0.5) * 0.34,
+        vx: (Math.random() - 0.5) * 0.006,
+        vy: (Math.random() - 0.5) * 0.006,
+        r: 4 + Math.random() * 4,
+      };
+    });
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+
+    const draw = (time: number) => {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      if (!width || !height) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      if (time - lastFlash > 4000) {
+        flashIndex = Math.floor(Math.random() * nodes.length);
+        flashUntil = time + 600;
+        lastFlash = time;
+      }
+
+      ctx.clearRect(0, 0, width, height);
+      const gradient = ctx.createRadialGradient(width * 0.5, height * 0.5, 0, width * 0.5, height * 0.5, width * 0.8);
+      gradient.addColorStop(0, 'rgba(34,211,238,.10)');
+      gradient.addColorStop(1, 'rgba(2,6,23,.16)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      nodes.forEach((node) => {
+        node.x += node.vx;
+        node.y += node.vy;
+        if (node.x < 0.06 || node.x > 0.94) node.vx *= -1;
+        if (node.y < 0.12 || node.y > 0.9) node.vy *= -1;
+      });
+
+      ctx.lineWidth = 1;
+      for (let i = 0; i < nodes.length; i += 1) {
+        for (let j = i + 1; j < nodes.length; j += 1) {
+          const a = nodes[i];
+          const b = nodes[j];
+          const ax = a.x * width;
+          const ay = a.y * height;
+          const bx = b.x * width;
+          const by = b.y * height;
+          const distance = Math.hypot(ax - bx, ay - by);
+          if (distance <= 80) {
+            ctx.strokeStyle = a.sybil === b.sybil ? 'rgba(255,255,255,.20)' : 'rgba(34,211,238,.12)';
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+            ctx.stroke();
+          }
+        }
+      }
+
+      nodes.forEach((node, index) => {
+        const x = node.x * width;
+        const y = node.y * height;
+        const isTarget = index === 2;
+        const isFlash = index === flashIndex && time < flashUntil;
+        const pulse = 1 + Math.sin(time / 160) * 0.22;
+        ctx.shadowBlur = isTarget || isFlash ? 28 : 12;
+        ctx.shadowColor = isFlash ? '#ef4444' : node.sybil ? '#f87171' : '#22d3ee';
+        ctx.fillStyle = isFlash ? '#ef4444' : node.sybil ? '#f87171' : '#22d3ee';
+        ctx.globalAlpha = isFlash ? 1 : 0.82;
+        ctx.beginPath();
+        ctx.arc(x, y, node.r * (isTarget ? pulse : 1), 0, Math.PI * 2);
+        ctx.fill();
+        if (isTarget || isFlash) {
+          ctx.globalAlpha = 0.24;
+          ctx.beginPath();
+          ctx.arc(x, y, node.r * 3.2 * pulse, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0;
+      frame += 1;
+      raf = requestAnimationFrame(draw);
+    };
+
+    resize();
+    window.addEventListener('resize', resize);
+    raf = requestAnimationFrame(draw);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+      void frame;
+    };
+  }, []);
+
+  return (
+    <div className="sybil-stage reveal in">
+      <canvas ref={canvasRef} className="sybil-canvas" aria-label="Animated live cluster graph" />
+      <span>LIVE CLUSTER GRAPH</span>
+    </div>
+  );
+}
+
 export default function LandingPage() {
   const stats = useGlobalStats();
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -155,7 +283,7 @@ export default function LandingPage() {
                 ].map(([Icon, title, copy]) => <div className="glass-card" key={String(title)}><Icon aria-hidden="true" /><b>{title as string}</b><span>{copy as string}</span></div>)}
               </div>
             </div>
-            <div className="sybil-stage reveal in"><span>LIVE CLUSTER GRAPH</span></div>
+            <LiveClusterGraph />
           </div>
         </section>
 

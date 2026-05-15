@@ -16,7 +16,9 @@ import {
   TOKEN_2022_PROGRAM_ID,
   createBurnInstruction,
   createCloseAccountInstruction,
+  resolveUnknownToken,
 } from '@/lib/solanaToken';
+import { readBlackHolePrefetch } from '@/hooks/useBlackHolePrefetch';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 import { toast, Toaster as Sonner } from 'sonner';
@@ -422,8 +424,21 @@ const formatSolCompact = (value?: number | null): string | null => {
 
 const getAssetDisplayName = (token: Pick<TokenAccount, 'symbol' | 'name' | 'mint'>) => {
   const name = (token.name || token.symbol || '').trim();
-  return name || `Asset ${token.mint.slice(0, 4)}...${token.mint.slice(-4)}`;
+  return name || `Unknown ${token.mint.slice(0, 4)}...${token.mint.slice(-4)}`;
 };
+
+const getTokenProgramLabel = (token: Pick<TokenAccount, 'programId'>) =>
+  token.programId.equals(TOKEN_2022_PROGRAM_ID) ? 'Token-2022' : 'SPL';
+
+const getTokenTooltip = (token: TokenAccount) =>
+  [
+    `Mint: ${token.mint}`,
+    `Program: ${getTokenProgramLabel(token)}`,
+    `Decimals: ${token.decimals}`,
+    token.valueSol !== undefined && token.valueSol !== null ? `Value: ${formatSolCompact(token.valueSol)} SOL` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
 
 const fetchCollectionMarketStats = async (
   proxyBase: string | null,
@@ -1256,6 +1271,41 @@ const BlackHole = () => {
     };
     try {
       updateScanStep('getParsedTokenAccounts', 'Reading token accounts');
+      const prefetched = readBlackHolePrefetch(targetOwner.toBase58());
+      if (prefetched?.tokenAccounts.length) {
+        const cachedTokens = prefetched.tokenAccounts
+          .map((item): TokenAccount | null => {
+            try {
+              const info = item.data?.info;
+              if (!info?.mint) return null;
+              const programId = item.programId === TOKEN_2022_PROGRAM_ID.toBase58() ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+              const isFrozen = info.state === 'frozen';
+              return {
+                pubkey: new PublicKey(item.pubkey),
+                programId,
+                mint: info.mint,
+                amount: BigInt(info.tokenAmount?.amount ?? '0'),
+                decimals: info.tokenAmount?.decimals ?? 0,
+                uiAmount: Number(info.tokenAmount?.uiAmount ?? 0),
+                lamports: item.lamports,
+                rentSol: item.lamports / LAMPORTS_PER_SOL,
+                frozen: isFrozen,
+                closeable: !isFrozen,
+                assetStatus: isFrozen ? 'protected' : undefined,
+                isCandidate: false,
+                protectReason: isFrozen ? 'Frozen account cannot be closed' : undefined,
+              };
+            } catch {
+              return null;
+            }
+          })
+          .filter((token): token is TokenAccount => Boolean(token));
+        if (cachedTokens.length && !isStaleRequest()) {
+          setTokens(sortTokensForDisplay(cachedTokens));
+          setFetchError(null);
+          updateScanStep('getParsedTokenAccounts', 'Refreshing cached scan');
+        }
+      }
       const [splTokensResult, token2022TokensResult] = await Promise.allSettled([
         fetchParsedTokenAccounts(targetOwner, TOKEN_PROGRAM_ID),
         fetchParsedTokenAccounts(targetOwner, TOKEN_2022_PROGRAM_ID),
@@ -1414,6 +1464,25 @@ const BlackHole = () => {
           t.image = getBlackHoleImageUrl(meta.image);
           t.metadataImageMissing = !t.image;
         });
+
+        const unknownTokens = parsedTokens.filter((token) => !token.name && !token.symbol);
+        if (unknownTokens.length > 0) {
+          const resolved = await Promise.allSettled(
+            [...new Set(unknownTokens.map((token) => token.mint))].map((mint) => resolveUnknownToken(mint)),
+          );
+          const resolvedMap = new Map<string, Awaited<ReturnType<typeof resolveUnknownToken>>>();
+          resolved.forEach((result) => {
+            if (result.status === 'fulfilled') resolvedMap.set(result.value.mint, result.value);
+          });
+          parsedTokens.forEach((token) => {
+            if (token.name || token.symbol) return;
+            const meta = resolvedMap.get(token.mint);
+            token.name = meta?.name ?? `Unknown ${token.mint.slice(0, 4)}...${token.mint.slice(-4)}`;
+            token.symbol = meta?.symbol;
+            token.image = meta?.image ? getBlackHoleImageUrl(meta.image) : undefined;
+            token.metadataImageMissing = !token.image;
+          });
+        }
 
         // Resolve holder perks from the backend first so fee UX matches server verification.
         let ownsCard = false;
@@ -3187,9 +3256,9 @@ const BlackHole = () => {
                            ) : (
                              <div
                                className="blackhole-token-avatar blackhole-token-avatar--missing h-6 w-6 rounded-lg"
-                               title="No verified metadata image"
+                               title={getTokenTooltip(token)}
                              >
-                              <span aria-hidden="true">NO IMG</span>
+                              <span aria-hidden="true">{getAssetDisplayName(token).slice(0, 1).toUpperCase()}</span>
                             </div>
                           )}
                           <div className="min-w-0">
@@ -3198,9 +3267,9 @@ const BlackHole = () => {
                             </div>
                             <div className="flex items-center gap-1 mt-0.5">
                               <span
-                                 className={`text-[7px] uppercase font-bold ${token.isNft ? 'text-purple-300' : 'text-zinc-500'}`}
+                                 className={`text-[7px] uppercase font-bold ${token.isNft ? 'text-purple-300' : token.programId.equals(TOKEN_2022_PROGRAM_ID) ? 'text-cyan-300' : 'text-zinc-500'}`}
                               >
-                                {token.isNft ? 'NFT' : 'TKN'}
+                                {token.isNft ? 'NFT' : getTokenProgramLabel(token)}
                               </span>
                               <span className="text-[8px] text-zinc-600 font-mono">
                                 {formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)}◎` : ''}
@@ -3344,9 +3413,9 @@ const BlackHole = () => {
                               ) : (
                                 <div
                                   className="blackhole-token-avatar blackhole-token-avatar--missing h-7 w-7 rounded-lg"
-                                  title="No verified metadata image"
+                                  title={getTokenTooltip(token)}
                                 >
-                                  <span aria-hidden="true">NO IMG</span>
+                                  <span aria-hidden="true">{getAssetDisplayName(token).slice(0, 1).toUpperCase()}</span>
                                 </div>
                               )}
                               <div className="flex flex-col min-w-0">
@@ -3355,9 +3424,9 @@ const BlackHole = () => {
                                     {getAssetDisplayName(token)}
                                   </span>
                                   <span
-                                    className={`text-[8px] px-1 py-px rounded leading-none shrink-0 ${token.isNft ? 'bg-purple-900/30 text-purple-400' : 'bg-zinc-800/60 text-zinc-500'}`}
+                                    className={`text-[8px] px-1 py-px rounded leading-none shrink-0 ${token.isNft ? 'bg-purple-900/30 text-purple-400' : token.programId.equals(TOKEN_2022_PROGRAM_ID) ? 'bg-cyan-950/40 text-cyan-300' : 'bg-zinc-800/60 text-zinc-500'}`}
                                   >
-                                    {token.isNft ? 'NFT' : 'TKN'}
+                                    {token.isNft ? 'NFT' : getTokenProgramLabel(token)}
                                   </span>
                                   {token.isNft && (
                                     <>

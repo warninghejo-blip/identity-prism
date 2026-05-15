@@ -4,7 +4,7 @@ import { Bell, ChevronRight, Shield, Wallet, X } from 'lucide-react';
 import { Canvas } from '@react-three/fiber';
 import { Environment, OrbitControls } from '@react-three/drei';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { useWalletModal, WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import SiteHeader from '@/components/SiteHeader';
 import { useWalletData } from '@/hooks/useWalletData';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
@@ -97,6 +97,7 @@ function IdentityPlanet({ tier }: { tier: PlanetTier }) {
 
 export default function IdentityHub() {
   const { connected, publicKey } = useWallet();
+  const { setVisible } = useWalletModal();
   const address = publicKey?.toBase58() ?? '';
   const walletData = useWalletData(connected ? address : undefined);
   const composite = useCompositeScore(connected ? address : null);
@@ -145,10 +146,23 @@ export default function IdentityHub() {
         <SiteHeader />
         <main className="apk-main">
           <section className="apk-panel identity-empty">
-            <Wallet size={56} color="#4ee5d5" aria-hidden="true" />
-            <h1 className="apk-title">Identity Hub</h1>
-            <p className="apk-muted">Connect Wallet to view your Identity, score bars, hub modules, and full Data Prism card.</p>
-            <WalletMultiButton />
+            <div className="empty-planet" aria-hidden="true">
+              <div className="empty-planet__ring" />
+              <div className="empty-planet__body" />
+              <span />
+              <span />
+              <span />
+            </div>
+            <h1>Connect your wallet to view your Identity</h1>
+            <div className="identity-feature-chips">
+              <span>Solana score 0-1000</span>
+              <span>10 planet tiers</span>
+              <span>5 stat dimensions</span>
+            </div>
+            <button type="button" className="identity-connect-pill" onClick={() => setVisible(true)}>
+              <Wallet size={18} aria-hidden="true" /> Connect Wallet
+            </button>
+            <div className="identity-wallet-fallback"><WalletMultiButton /></div>
           </section>
         </main>
       </div>
@@ -224,9 +238,9 @@ export default function IdentityHub() {
             </button>
             <div className="dossier-grid">
               <div>
-                <div className="apk-kicker" style={{ color: '#4ee5d5' }}>Data Prism</div>
-                <ScoreRing score={score} />
-                <p className="apk-muted">{Math.max(0, 700 - score)} pts to SATURN</p>
+                <div className="apk-kicker" style={{ color: '#4ee5d5' }}>Tier level</div>
+                <h2 className="identity-modal-tier">{TIER_LABELS[tier]}</h2>
+                <div className="identity-modal-planet"><IdentityPlanet tier={tier} /></div>
                 <p style={{ fontFamily: 'monospace' }}>{truncateAddress(address)}</p>
               </div>
               <div>

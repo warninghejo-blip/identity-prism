@@ -98,12 +98,11 @@ export default function SybilHunt() {
           <section>
             <div className="apk-panel sybil-card recruit-card">
               <img src="/landing/textures/ranks/rank_cadet.png" alt="" style={{ width: 88 }} />
-              <div>
-                <h2 style={{ fontSize: 30, fontWeight: 900 }}>Recruit</h2>
-                <p className="apk-muted"><b>0</b> hunts &nbsp; <b style={{ color: '#f87171' }}>0</b> caught</p>
-                <div className="limit-track" style={{ marginTop: 18 }}><span style={{ '--pct': '0%', background: 'linear-gradient(90deg,#f5a623,#ef4444)' } as React.CSSProperties} /></div>
-                <p className="apk-muted">Next: Tracker /3 sybils</p>
-              </div>
+              <div className="recruit-stat"><b>0</b><span>hunts</span></div>
+              <div className="recruit-stat"><b style={{ color: '#f87171' }}>0</b><span>caught</span></div>
+              <div className="recruit-stat"><b>Nest-Tracker</b><span>next rank</span></div>
+              <div className="recruit-stat"><b>0</b><span>/3 sybils</span></div>
+              <div className="limit-track recruit-progress"><span style={{ '--pct': '0%', background: 'linear-gradient(90deg,#f5a623,#ef4444)' } as React.CSSProperties} /></div>
               <strong style={{ color: '#d7a72d', fontSize: 26 }}>⊕ 0</strong>
             </div>
 
@@ -144,6 +143,10 @@ export default function SybilHunt() {
                 <ul className="checklist">
                   {result.signals.length ? result.signals.map((signal: any) => <li key={signal.id ?? signal.name}><Radar size={16} aria-hidden="true" /> {signal.name ?? signal.id ?? 'Risk signal'}</li>) : <li><Shield size={16} aria-hidden="true" /> No high-confidence linked cluster returned.</li>}
                 </ul>
+                <div className="sybil-result-actions">
+                  <button type="button" className="apk-primary-button" onClick={() => { setTarget(''); setSubmitted(''); setResult(null); }}>Try another</button>
+                  <button type="button" className="apk-secondary-button" onClick={() => setError('Target added to the local bounty board queue.')}>Add to bounty board</button>
+                </div>
               </div>
             )}
 
@@ -164,7 +167,7 @@ export default function SybilHunt() {
             <div className="apk-kicker" style={{ color: '#f87171' }}>Bounty Board</div>
             {bountyTargets.map((item) => (
               <button type="button" className="bounty-row" key={item} onClick={() => void runHunt(item)}>
-                <span>{truncate(item)}</span><span className="risk-pill">risk 60</span><span className="linked-pill">LINKED</span>
+                <span>{truncate(item)}</span><span className="risk-pill">60 LINKED</span><span className="linked-pill">+20 coins</span>
               </button>
             ))}
           </aside>

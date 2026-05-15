@@ -1,5 +1,7 @@
 import { Link, NavLink } from 'react-router-dom';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { useBlackHolePrefetch } from '@/hooks/useBlackHolePrefetch';
 import './SiteHeader.css';
 
 const navItems = [
@@ -10,6 +12,9 @@ const navItems = [
 ];
 
 export default function SiteHeader() {
+  const { publicKey } = useWallet();
+  useBlackHolePrefetch(publicKey ?? null);
+
   return (
     <header className="site-header">
       <Link to="/" className="site-header__brand" aria-label="Identity Prism home">
