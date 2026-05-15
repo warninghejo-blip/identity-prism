@@ -1,6 +1,9 @@
-import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import {
   AlertTriangle,
   ArrowRight,
@@ -24,7 +27,13 @@ import {
 import { Canvas } from '@react-three/fiber';
 import { Environment, OrbitControls } from '@react-three/drei';
 import type { PlanetTier, WalletData, WalletTraits } from '@/hooks/useWalletData';
+import { useWalletData } from '@/hooks/useWalletData';
+import { useCompositeScore } from '@/hooks/useCompositeScore';
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@/lib/solanaToken';
+import { fetchSybilAnalysis, type SybilResult } from '@/components/prism/shared';
+import { gatherXPSourcesMerged, computeRangerXP, getRangerRank, getRankProgress } from '@/lib/rangerRanks';
 import { TIER_HEX, TIER_LABELS } from '@/lib/constants/tierColors';
+import { toast } from 'sonner';
 import './landing.css';
 
 const Planet3D = lazy(() => import('@/components/Planet3D').then((module) => ({ default: module.Planet3D })));
@@ -110,6 +119,34 @@ const mockWallet: WalletData = {
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(' ');
+}
+
+function truncateAddress(address: string, chars = 4) {
+  return address.length <= chars * 2 + 3 ? address : `${address.slice(0, chars)}...${address.slice(-chars)}`;
+}
+
+function formatCompact(value: number) {
+  if (!Number.isFinite(value)) return '0';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  if (abs >= 100) return `${Math.round(value)}`;
+  if (abs >= 1) return `${Number(value.toFixed(2))}`;
+  if (abs > 0) return `${Number(value.toFixed(5))}`;
+  return '0';
+}
+
+function scoreToTier(score: number): PlanetTier {
+  const index = Math.max(0, Math.min(tiers.length - 1, Math.floor(score / 100)));
+  return tiers[index];
+}
+
+function isSolanaAddress(value: string) {
+  try {
+    return Boolean(new PublicKey(value.trim()));
+  } catch {
+    return false;
+  }
 }
 
 function SectionDivider({ label }: { label: string }) {
@@ -239,8 +276,61 @@ function SybilCanvas() {
   return <canvas ref={ref} className="sybil-canvas" aria-label="Animated sybil cluster graph" />;
 }
 
+function LandingWalletButton() {
+  const { connected, connecting, publicKey, disconnect } = useWallet();
+  const { setVisible } = useWalletModal();
+  const address = publicKey?.toBase58();
+
+  if (connected && address) {
+    return (
+      <button
+        type="button"
+        className="landing-btn small wallet-connected"
+        onClick={() => void disconnect()}
+        aria-label={`Disconnect wallet ${truncateAddress(address)}`}
+      >
+        <span aria-hidden="true" />
+        Connected: {truncateAddress(address)}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="landing-btn small"
+      disabled={connecting}
+      onClick={() => setVisible(true)}
+      aria-busy={connecting}
+    >
+      {connecting ? <Loader2 className="spin" aria-hidden="true" /> : <Wallet aria-hidden="true" />}
+      {connecting ? 'Connecting' : 'Connect Wallet'}
+    </button>
+  );
+}
+
+type LandingTokenAccount = {
+  pubkey: string;
+  mint: string;
+  amount: number;
+  decimals: number;
+  uiAmount: number;
+  lamports: number;
+  rentSol: number;
+  frozen: boolean;
+  status: 'protected' | 'quarantine';
+  reason: string;
+};
+
 function BlackHoleFeature() {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const { connection } = useConnection();
+  const { publicKey, connected } = useWallet();
+  const { setVisible } = useWalletModal();
+  const [tokens, setTokens] = useState<LandingTokenAccount[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const address = publicKey?.toBase58() ?? '';
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -254,13 +344,63 @@ function BlackHoleFeature() {
     return () => el.removeEventListener('mousemove', onMove);
   }, []);
 
-  const tokens = [
-    { tone: 'cyan', name: 'BitX Runes DEX', tag: 'TKN', symbol: 'BitX', address: 'EJAE...tJeH', balance: '100', value: '0.001368 SOL', returns: '+0.0005', status: 'quarantine' },
-    { tone: 'orange', name: 'woofer', tag: 'TKN', symbol: 'woofer', address: 'i75X...D3QC', balance: '87.8K', value: '0.000926 SOL', returns: '+0.0009', status: 'quarantine' },
-    { tone: 'orange', name: 'PONKE', tag: 'TKN', symbol: 'PONKE', address: '5z3E...mrRC', balance: '1.27', value: '0.000562 SOL', returns: '+0.0013', status: 'quarantine' },
-    { tone: 'yellow', name: 'Goateus Maximus', tag: 'TKN', symbol: 'GOAT', address: '9k2m...3RFa', balance: '412', value: '0.000418 SOL', returns: '+0.0007', status: 'quarantine' },
-    { tone: 'purple', name: 'Sarosism', tag: 'NFT ME', symbol: 'SARO', address: '7Pn3...kQbX', balance: '1', value: '0.0023 SOL', returns: '+0.0018', status: 'protected' },
-  ];
+  const scan = useCallback(async () => {
+    if (!publicKey) return;
+    setLoading(true);
+    setError('');
+    try {
+      const results = await Promise.all([
+        connection.getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID }, 'confirmed'),
+        connection.getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_2022_PROGRAM_ID }, 'confirmed'),
+      ]);
+      const next = results.flatMap((result) =>
+        result.value.map(({ pubkey, account }) => {
+          const parsed = account.data.parsed.info;
+          const tokenAmount = parsed.tokenAmount ?? {};
+          const rawAmount = Number(tokenAmount.amount ?? 0);
+          const decimals = Number(tokenAmount.decimals ?? 0);
+          const uiAmount =
+            typeof tokenAmount.uiAmount === 'number' ? tokenAmount.uiAmount : rawAmount / Math.max(1, 10 ** decimals);
+          const frozen = parsed.state === 'frozen';
+          const isNft = decimals === 0 && rawAmount === 1;
+          const isDust = !isNft && uiAmount > 0 && uiAmount < 1000;
+          const status = frozen || isNft || !isDust ? 'protected' : 'quarantine';
+          return {
+            pubkey: pubkey.toBase58(),
+            mint: String(parsed.mint),
+            amount: rawAmount,
+            decimals,
+            uiAmount,
+            lamports: account.lamports,
+            rentSol: account.lamports / LAMPORTS_PER_SOL,
+            frozen,
+            status,
+            reason: frozen ? 'Frozen account' : isNft ? 'NFT / collectible' : isDust ? 'Dust token cleanup candidate' : 'Token balance protected',
+          } satisfies LandingTokenAccount;
+        }),
+      );
+      setTokens(next.sort((a, b) => b.rentSol - a.rentSol).slice(0, 8));
+    } catch (err) {
+      console.error('[Landing BlackHole] scan failed', err);
+      setError('Token scan failed. Try again or open the full BlackHole page.');
+    } finally {
+      setLoading(false);
+    }
+  }, [connection, publicKey]);
+
+  useEffect(() => {
+    if (!connected || !publicKey) {
+      setTokens([]);
+      setError('');
+      return;
+    }
+    void scan();
+  }, [connected, publicKey, scan]);
+
+  const protectedCount = tokens.filter((token) => token.status === 'protected').length;
+  const threatCount = tokens.filter((token) => token.status === 'quarantine').length;
+  const contaminationPct = tokens.length ? Math.round((threatCount / tokens.length) * 100) : 0;
+  const salvageSol = tokens.filter((token) => token.status === 'quarantine').reduce((sum, token) => sum + token.rentSol, 0);
 
   return (
     <section className="section landing-section blackhole-feature" data-section-id="blackhole" id="blackhole">
@@ -280,7 +420,10 @@ function BlackHoleFeature() {
               <span className="void-disc" />
             </div>
           </div>
-          <div className="bh-found-toast"><CircleCheck aria-hidden="true" />Found 86 token accounts</div>
+          <div className="bh-found-toast">
+            {loading ? <Loader2 className="spin" aria-hidden="true" /> : <CircleCheck aria-hidden="true" />}
+            {connected ? (loading ? 'Scanning token accounts' : `Found ${tokens.length} token accounts`) : 'Connect wallet to scan'}
+          </div>
         </div>
 
         <div className="bh-mode-panel reveal">
@@ -288,28 +431,28 @@ function BlackHoleFeature() {
             <button type="button" className="active">READ-ONLY SCAN</button>
             <button type="button"><span />ACTIVE MISSION</button>
           </div>
-          <p>Black Hole separated protected assets, caution assets, and cleanup candidates. Nothing moves until the connected wallet signs.</p>
+          <p>{connected ? `Read-only scan for ${truncateAddress(address)}. Protected assets stay untouched; cleanup executes on the full page.` : 'Connect your Solana wallet to run the same read-only token account scan used by BlackHole.'}</p>
           <div className="bh-holder"><Shield aria-hidden="true" /> <b>ID Holder</b> — salvage fee: <strong>2%</strong> (vs 10% standard)</div>
         </div>
 
         <div className="bh-contamination glass-card reveal">
           <div className="bh-contamination-head">
             <span>CONTAMINATION LEVEL</span>
-            <b>HIGH</b>
+            <b>{!connected ? 'WAITING' : contaminationPct >= 40 ? 'HIGH' : contaminationPct > 0 ? 'WATCH' : 'CLEAN'}</b>
           </div>
-          <div className="bh-contamination-meter"><span /></div>
+          <div className="bh-contamination-meter"><span style={{ width: `${contaminationPct}%` }} /></div>
           <div className="bh-contamination-foot">
-            <span>44% contaminated</span>
-            <span>38 threats / 86 total</span>
+            <span>{contaminationPct}% contaminated</span>
+            <span>{threatCount} threats / {tokens.length} total</span>
           </div>
         </div>
 
         <div className="bh-stats apk reveal-stagger">
           {[
-            [Search, '86', 'SCANNED', 'scanned'],
-            [Shield, '34', 'SHIELDED', 'shielded'],
-            [AlertTriangle, '14', 'CAUTION', 'caution'],
-            [Flame, '38', 'THREATS', 'threats'],
+            [Search, String(tokens.length), 'SCANNED', 'scanned'],
+            [Shield, String(protectedCount), 'SHIELDED', 'shielded'],
+            [AlertTriangle, String(threatCount), 'CAUTION', 'caution'],
+            [Flame, salvageSol.toFixed(4), 'RENT SOL', 'threats'],
           ].map(([Icon, value, label, tone]) => (
             <div key={String(label)} className={String(tone)}>
               <Icon aria-hidden="true" />
@@ -322,17 +465,20 @@ function BlackHoleFeature() {
         <div className="bh-salvage glass-card reveal">
           <div>
             <span>SALVAGE REWARD</span>
-            <b>~0.0775 SOL</b>
-            <small>$6.89</small>
+            <b>~{salvageSol.toFixed(4)} SOL</b>
+            <small>Rent estimate from real token accounts</small>
           </div>
           <Flame aria-hidden="true" />
-          <p>Read-only scan only; connect the matching wallet before any asset can move.</p>
+          <p>{connected ? 'Read-only landing scan. Open the full page to review and sign cleanup.' : 'No scan runs until a wallet is connected.'}</p>
         </div>
 
-        <div className="bh-notice reveal"><AlertTriangle aria-hidden="true" />1 asset have no metadata image — no generated icons.</div>
+        {error && <div className="bh-notice reveal in"><AlertTriangle aria-hidden="true" />{error}</div>}
 
         <div className="bh-controls reveal">
-          <button type="button" className="landing-btn ghost"><RotateCw aria-hidden="true" />Re-scan</button>
+          <button type="button" className="landing-btn ghost" onClick={connected ? scan : () => setVisible(true)} disabled={loading} aria-busy={loading}>
+            {loading ? <Loader2 className="spin" aria-hidden="true" /> : <RotateCw aria-hidden="true" />}
+            {connected ? 'Re-scan' : 'Connect Wallet to scan'}
+          </button>
           <div>
             <button type="button" className="active">All</button>
             <button type="button">NFTs</button>
@@ -345,20 +491,42 @@ function BlackHoleFeature() {
           <div className="bh-token-head">
             <span></span><span>Asset</span><span>Balance</span><span>Value ↓</span><span>Return</span><span>Status</span>
           </div>
-          {tokens.map((token, index) => (
-            <div className="bh-token-row" key={token.name}>
-              <label aria-label={`Select ${token.name}`}><input type="checkbox" defaultChecked={index < 3} /></label>
+          {!connected && (
+            <div className="landing-empty-state bh-empty">
+              <Wallet aria-hidden="true" />
+              <b>Connect Wallet to scan</b>
+              <span>BlackHole will read your token accounts and separate protected assets from cleanup candidates.</span>
+              <button type="button" className="landing-btn primary" onClick={() => setVisible(true)}>Select Wallet</button>
+            </div>
+          )}
+          {connected && loading && (
+            <div className="landing-empty-state bh-empty">
+              <Loader2 className="spin" aria-hidden="true" />
+              <b>Scanning token accounts</b>
+              <span>Reading SPL and Token-2022 accounts from the connected wallet.</span>
+            </div>
+          )}
+          {connected && !loading && tokens.length === 0 && (
+            <div className="landing-empty-state bh-empty">
+              <CircleCheck aria-hidden="true" />
+              <b>No token accounts found</b>
+              <span>This wallet has no cleanup candidates in the landing scan.</span>
+            </div>
+          )}
+          {connected && !loading && tokens.map((token, index) => (
+            <div className="bh-token-row" key={token.pubkey}>
+              <label aria-label={`Select ${truncateAddress(token.mint)}`}><input type="checkbox" defaultChecked={token.status === 'quarantine'} /></label>
               <div className="bh-asset-cell">
-                <span className={`bh-thumb ${token.tone}`}><em>{token.symbol.slice(0, 2)}</em></span>
+                <span className={`bh-thumb ${token.status === 'protected' ? 'purple' : index % 2 ? 'orange' : 'cyan'}`}><em>{token.mint.slice(0, 2)}</em></span>
                 <div>
-                  <b>{token.name}</b>
-                  <i>{token.tag}</i>
-                  <small>{token.symbol} · {token.address}</small>
+                  <b>{truncateAddress(token.mint)}</b>
+                  <i>{token.decimals === 0 && token.amount === 1 ? 'NFT' : 'TKN'}</i>
+                  <small>{token.reason} · {truncateAddress(token.pubkey)}</small>
                 </div>
               </div>
-              <span>{token.balance}</span>
-              <span>{token.value}</span>
-              <strong>{token.returns}</strong>
+              <span>{formatCompact(token.uiAmount)}</span>
+              <span>Read-only</span>
+              <strong>+{token.rentSol.toFixed(4)} SOL</strong>
               <div className={`bh-status ${token.status}`}>
                 {token.status === 'protected' ? <Shield aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
                 <div><b>{token.status === 'protected' ? 'Protected' : 'Quarantine'}</b><small>{token.status === 'protected' ? 'Blue-chip collection' : 'Manual review required'}</small></div>
@@ -368,7 +536,7 @@ function BlackHoleFeature() {
         </div>
 
         <div className="bh-bulk glass-card reveal">
-          <span>3 assets selected — Net SOL recovery: <b>~0.0027 SOL</b></span>
+          <span>{threatCount} assets selected — Net SOL recovery: <b>~{salvageSol.toFixed(4)} SOL</b></span>
           <Link to="/blackhole" className="landing-btn primary">EXECUTE CLEANUP <ArrowRight aria-hidden="true" /></Link>
         </div>
       </div>
@@ -378,13 +546,44 @@ function BlackHoleFeature() {
 
 function IdentityFeature() {
   const [openCard, setOpenCard] = useState(false);
+  const { connected, publicKey } = useWallet();
+  const { setVisible } = useWalletModal();
+  const address = publicKey?.toBase58() ?? '';
+  const walletData = useWalletData(connected ? address : undefined);
+  const composite = useCompositeScore(connected ? address : null);
+  const [rankState, setRankState] = useState<{ xp: number; rank: string; progress: number; next: string }>({
+    xp: 0,
+    rank: 'Cadet',
+    progress: 0,
+    next: 'Pilot',
+  });
+
+  useEffect(() => {
+    if (!connected || !address) return;
+    let cancelled = false;
+    gatherXPSourcesMerged(address)
+      .then((sources) => {
+        if (cancelled) return;
+        const xp = computeRangerXP(sources);
+        const rank = getRangerRank(xp);
+        const next = getRangerRank(xp + Math.max(1, Math.ceil((1 - getRankProgress(xp)) * 1500)));
+        setRankState({ xp, rank: rank.name, progress: Math.round(getRankProgress(xp) * 100), next: next.name });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [address, connected]);
+
+  const score = composite.score || walletData.score || 0;
+  const tier = (composite.tier || walletData.traits?.planetTier || scoreToTier(score)) as PlanetTier;
   const statBars = [
-    ['ON-CHAIN', '72%', 'cyan'],
-    ['TRUST', '84%', 'violet'],
-    ['GAMES', '91%', 'green'],
-    ['SOCIAL', '48%', 'pink'],
-    ['ENGAGE', '79%', 'purple'],
-  ];
+    ['ON-CHAIN', composite.breakdown.onchain, 400, 'cyan'],
+    ['TRUST', composite.breakdown.sybilTrust, 250, 'violet'],
+    ['GAMES', composite.breakdown.humanProof, 150, 'green'],
+    ['SOCIAL', composite.breakdown.social, 100, 'pink'],
+    ['ENGAGE', composite.breakdown.engagement, 100, 'purple'],
+  ] as const;
   const hubItems = [
     ['league.png', 'League'],
     ['scanner.png', 'Sybil Hunt'],
@@ -404,47 +603,56 @@ function IdentityFeature() {
       <div className="landing-container identity-v2-container">
         <div className="identity-tier-hero reveal">
           <span>TIER LEVEL</span>
-          <h2>URANUS</h2>
-          <button type="button" aria-label="Refresh identity card"><RotateCw aria-hidden="true" /></button>
+          <h2>{connected ? TIER_LABELS[tier] : 'LOCKED'}</h2>
+          <button type="button" aria-label="Refresh identity card" onClick={() => composite.refetch()} disabled={!connected}><RotateCw aria-hidden="true" /></button>
         </div>
 
+        {!connected ? (
+          <div className="landing-empty-state identity-empty glass-card reveal">
+            <Wallet aria-hidden="true" />
+            <b>Connect Your Wallet</b>
+            <span>Connect your Solana wallet to view your Identity card with tier, score, badges, and stats.</span>
+            <button type="button" className="landing-btn primary" onClick={() => setVisible(true)}>Select Wallet</button>
+          </div>
+        ) : (
+          <>
         <div className="identity-hub-card glass-card reveal">
           <div className="identity-score-col">
-            <div className="score-ring" aria-label="Identity score 630">
+            <div className="score-ring" aria-label={`Identity score ${Math.round(score)}`} style={{ '--score': Math.max(0, Math.min(100, score / 10)) } as React.CSSProperties}>
               <svg viewBox="0 0 180 180" aria-hidden="true">
                 <defs><linearGradient id="scoreRingGradient" x1="0" x2="1"><stop stopColor="#22d3ee" /><stop offset=".55" stopColor="#a78bfa" /><stop offset="1" stopColor="#f472b6" /></linearGradient></defs>
                 <circle cx="90" cy="90" r="76" />
                 <circle cx="90" cy="90" r="76" pathLength="100" />
               </svg>
-              <b>630</b>
+              <b>{walletData.isLoading || composite.isLoading ? <Loader2 className="spin" aria-hidden="true" /> : Math.round(score)}</b>
               <span>SCORE</span>
             </div>
-            <small>2psA...r49R</small>
+            <small>{truncateAddress(address)}</small>
           </div>
 
           <div className="identity-planet-col">
-            <PlanetCanvas tier="uranus" />
+            {walletData.isLoading && !walletData.traits ? <div className="landing-skeleton"><Loader2 className="spin" aria-hidden="true" /> Loading identity...</div> : <PlanetCanvas tier={tier} />}
             <BadgeCheck className="identity-a-mark" aria-hidden="true" />
           </div>
 
           <div className="identity-rank-col">
-            <div className="xp-line"><Star aria-hidden="true" /><b>95,357 XP</b></div>
+            <div className="xp-line"><Star aria-hidden="true" /><b>{rankState.xp.toLocaleString('en-US')} XP</b></div>
             <div className="bell-line"><Bell aria-hidden="true" /><span>8</span></div>
             <div className="rank-badge">
               <Shield aria-hidden="true" />
-              <b>Cadet</b>
-              <div><span /></div>
-              <small>1200 XP — Pilot</small>
+              <b>{rankState.rank}</b>
+              <div><span style={{ width: `${rankState.progress}%` }} /></div>
+              <small>{rankState.progress}% — {rankState.next}</small>
             </div>
           </div>
         </div>
 
         <div className="identity-stat-bars reveal-stagger">
-          {statBars.map(([label, value, tone]) => (
+          {statBars.map(([label, value, max, tone]) => (
             <div key={label} className={tone}>
               <span>{label}</span>
-              <div><i style={{ width: value }} /></div>
-              <b>{value}</b>
+              <div><i style={{ width: `${Math.max(0, Math.min(100, (value / max) * 100))}%` }} /></div>
+              <b>{Math.round(value)}/{max}</b>
             </div>
           ))}
         </div>
@@ -468,8 +676,12 @@ function IdentityFeature() {
             <div className="identity-modal-card glass-card">
               <div className="identity-modal-main">
                 <span>TIER LEVEL</span>
-                <h3>URANUS</h3>
-                <div className="identity-modal-planet"><PlanetCanvas tier="uranus" /></div>
+                <h3>{TIER_LABELS[tier]}</h3>
+                <div className="identity-card-stage landing-card-modal">
+                  <Suspense fallback={<div className="landing-skeleton"><Loader2 className="spin" aria-hidden="true" /></div>}>
+                    <CelestialCard data={walletData} captureView="back" />
+                  </Suspense>
+                </div>
                 <div className="identity-modal-badges">
                   {fullBadges.map(([src, label]) => (
                     <div key={src}><img src={`/landing/badges/${src}`} alt={label} /><b>{label}</b></div>
@@ -477,11 +689,13 @@ function IdentityFeature() {
                 </div>
               </div>
               <div className="identity-modal-actions">
-                <a href="https://x.com/intent/tweet?text=My%20Identity%20Prism%20tier%20is%20URANUS" target="_blank" rel="noreferrer" className="landing-btn ghost">SHARE ON X</a>
+                <a href={`https://x.com/intent/tweet?text=My%20Identity%20Prism%20tier%20is%20${encodeURIComponent(TIER_LABELS[tier])}`} target="_blank" rel="noreferrer" className="landing-btn ghost">SHARE ON X</a>
                 <button type="button" className="landing-btn ghost" onClick={() => setOpenCard(false)}>BACK</button>
               </div>
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
     </section>
@@ -490,34 +704,81 @@ function IdentityFeature() {
 
 type RiskKind = 'clear' | 'warning' | 'high_risk';
 
-function riskForQuery(query: string): { kind: RiskKind; score: number; label: string } {
-  const seed = Array.from(query || 'example').reduce((sum, char, index) => sum + char.charCodeAt(0) * (index + 3), 0);
-  const score = 12 + (seed % 84);
-  if (score >= 70) return { kind: 'high_risk', score, label: 'High risk cluster' };
-  if (score >= 42) return { kind: 'warning', score, label: 'Needs review' };
-  return { kind: 'clear', score, label: 'Likely human' };
+type LandingSybilIndicator = {
+  label: string;
+  risk: 'low' | 'medium' | 'high';
+  explanation: string;
+};
+
+function normalizeSybilResult(query: string, data: SybilResult): {
+  kind: RiskKind;
+  score: number;
+  label: string;
+  indicators: LandingSybilIndicator[];
+} {
+  const score = Math.max(0, Math.min(100, Number(data.riskScore ?? 0)));
+  const kind: RiskKind = score >= 70 ? 'high_risk' : score >= 35 ? 'warning' : 'clear';
+  const rawSignals = Array.isArray(data.signals) ? data.signals : [];
+  const indicators = rawSignals.slice(0, 5).map((signal) => {
+    const item = signal as Record<string, unknown>;
+    const severity = String(item.severity ?? item.risk ?? 'low').toLowerCase();
+    return {
+      label: String(item.name ?? item.label ?? item.id ?? 'Risk signal'),
+      risk: severity.includes('high') || severity.includes('danger') ? 'high' : severity.includes('medium') || severity.includes('warn') ? 'medium' : 'low',
+      explanation: String(item.description ?? item.explanation ?? item.value ?? 'Signal returned by Sybil analysis.'),
+    } satisfies LandingSybilIndicator;
+  });
+
+  return {
+    kind,
+    score,
+    label:
+      data.verdict && typeof data.verdict === 'object' && 'label' in data.verdict
+        ? String((data.verdict as { label?: unknown }).label)
+        : kind === 'high_risk'
+          ? 'High risk cluster'
+          : kind === 'warning'
+            ? 'Needs review'
+            : 'Likely human',
+    indicators: indicators.length
+      ? indicators
+      : [
+          {
+            label: 'Analysis complete',
+            risk: kind === 'clear' ? 'low' : kind === 'warning' ? 'medium' : 'high',
+            explanation: `Sybil engine returned risk score for ${query}.`,
+          },
+        ],
+  };
 }
 
 function SybilHuntFeature() {
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [loading, setLoading] = useState(false);
-  const risk = submitted ? riskForQuery(submitted) : null;
+  const [risk, setRisk] = useState<ReturnType<typeof normalizeSybilResult> | null>(null);
+  const [error, setError] = useState('');
 
-  const submit = (value = query) => {
-    if (!value.trim()) return;
+  const submit = async (value = query) => {
+    const target = value.trim();
+    if (!target) return;
     setLoading(true);
-    window.setTimeout(() => {
-      setSubmitted(value.trim());
+    setError('');
+    try {
+      const data = await fetchSybilAnalysis(target);
+      if (!data) throw new Error('No Sybil analysis returned');
+      setSubmitted(target);
+      setRisk(normalizeSybilResult(target, data));
+    } catch (err) {
+      console.error('[Landing Sybil] search failed', err);
+      setRisk(null);
+      setSubmitted('');
+      setError('Sybil analysis failed. Check the address and try again.');
+      toast.error('Sybil analysis failed. Try another address.');
+    } finally {
       setLoading(false);
-    }, 360);
+    }
   };
-
-  const indicators = [
-    ['medium', 'Funding source reuse', 'Target shares sponsor wallets with known clusters.'],
-    ['low', 'Human timing variance', 'Session cadence includes organic gaps.'],
-    ['high', 'Dust fan-out', 'Many low-value token routes point to the same sink.'],
-  ];
 
   return (
     <section className="section landing-section sybil-hunt-feature" data-section-id="sybil-hunt" id="sybil-hunt">
@@ -527,16 +788,17 @@ function SybilHuntFeature() {
             <span className="detector-pill"><i /> Sybil Detector</span>
             <h2>Catch Sybils</h2>
             <p>Search a wallet, .skr name, or cluster hint. The landing preview mirrors the app logic with risk cards, indicators, and example targets.</p>
-            <form className="hunt-search" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+            <form className="hunt-search" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
               <label htmlFor="hunt-search">Wallet or name</label>
               <div>
                 <input id="hunt-search" type="search" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="fenn.skr" />
                 <button type="submit" aria-label="Search sybil target">{loading ? <Loader2 className="spin" /> : <Search />}</button>
               </div>
             </form>
+            {error && <div className="hunt-error" role="alert">{error}</div>}
             {!risk && (
               <div className="examples">
-                {['fenn.skr', 'example'].map((item) => <button key={item} type="button" onClick={() => { setQuery(item); submit(item); }}>{item}</button>)}
+                {['fenn.skr', 'FDpbCtY6S22L9PZ3oRDADpnQLhEAF8uP3meMtEMeLYqa'].map((item) => <button key={item} type="button" onClick={() => { setQuery(item); void submit(item); }}>{item}</button>)}
               </div>
             )}
           </div>
@@ -551,8 +813,8 @@ function SybilHuntFeature() {
               <div className="empty-risk"><Radar aria-hidden="true" /><b>No target selected</b><span>Use examples to run a mock scan.</span></div>
             )}
             <div className="indicator-list reveal-stagger in">
-              {indicators.map(([level, label, copy]) => (
-                <div key={label}><span className={level}>{level}</span><b>{label}</b><p>{copy}</p></div>
+              {(risk?.indicators ?? []).map(({ risk: level, label, explanation }) => (
+                <div key={label}><span className={level}>{level}</span><b>{label}</b><p>{explanation}</p></div>
               ))}
             </div>
           </div>
@@ -626,7 +888,10 @@ function LandingPage() {
             <button key={id} type="button" onClick={() => scrollTo(id)}>{id.replace('-', ' ')}</button>
           ))}
         </nav>
-        <Link to="/app" className="landing-btn small">Launch App</Link>
+        <div className="landing-header-actions">
+          <LandingWalletButton />
+          <Link to="/app" className="landing-btn small">Launch App</Link>
+        </div>
       </header>
 
       <aside className="scroll-rail" aria-label="Section progress">

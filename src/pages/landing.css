@@ -132,6 +132,20 @@
   transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
 }
 .landing-btn:hover { transform: translateY(-2px); border-color: rgba(255,255,255,.24); }
+.landing-btn:focus-visible,
+.landing-header button:focus-visible,
+.hunt-search input:focus-visible,
+.examples button:focus-visible,
+.bh-controls button:focus-visible {
+  outline: 2px solid var(--c-cyan);
+  outline-offset: 3px;
+}
+.landing-btn:disabled,
+.landing-header button:disabled {
+  cursor: not-allowed;
+  opacity: .58;
+  transform: none;
+}
 .landing-btn.primary {
   color: #090712;
   background: linear-gradient(90deg, var(--c-cyan), var(--c-prism));
@@ -141,6 +155,50 @@
 .landing-btn.ghost { background: rgba(255,255,255,.04); }
 .landing-btn.small { min-height: 40px; padding: 9px 16px; font-size: 13px; }
 .landing-btn.full { width: 100%; }
+.landing-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wallet-connected {
+  color: #bbf7d0;
+  border-color: rgba(52,211,153,.32);
+}
+.wallet-connected span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #34d399;
+  box-shadow: 0 0 12px rgba(52,211,153,.9);
+}
+
+.landing-empty-state {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 34px;
+  text-align: center;
+  color: rgba(255,255,255,.62);
+  border-radius: 24px;
+}
+.landing-empty-state svg {
+  width: 58px;
+  height: 58px;
+  color: #a78bfa;
+  filter: drop-shadow(0 0 22px rgba(167,139,250,.5));
+}
+.landing-empty-state b {
+  color: #fff;
+  font: 900 24px "Orbitron", sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.landing-empty-state span {
+  max-width: 560px;
+  line-height: 1.6;
+}
 
 .scroll-rail {
   position: fixed;
@@ -1330,7 +1388,7 @@
 .score-ring circle:first-child { stroke: rgba(255,255,255,.06); }
 .score-ring circle:last-child {
   stroke: url(#scoreRingGradient);
-  stroke-dasharray: 72 100;
+  stroke-dasharray: var(--score, 0) 100;
   stroke-linecap: round;
   filter: drop-shadow(0 0 10px rgba(34,211,238,.7));
 }
@@ -1339,6 +1397,10 @@
   margin-top: -14px;
   color: #67e8f9;
   font: 900 56px "JetBrains Mono", monospace;
+}
+.score-ring b svg {
+  width: 42px;
+  height: 42px;
 }
 
 .score-ring span {
@@ -1578,6 +1640,14 @@
   height: 100%;
   min-height: 320px;
 }
+.landing-card-modal {
+  min-height: 720px;
+  margin: 0 auto 18px;
+}
+.landing-card-modal .celestial-card-shell {
+  width: min(430px, 100%);
+  height: min(720px, 78vh);
+}
 
 .identity-modal-badges {
   display: grid;
@@ -1666,6 +1736,14 @@
   border-radius: 16px;
   color: #050508;
   background: linear-gradient(135deg, var(--c-cyan), var(--c-prism));
+}
+.hunt-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  color: #fecaca;
+  background: rgba(248,113,113,.1);
+  border: 1px solid rgba(248,113,113,.22);
 }
 .spin { animation: cc-spin 1s linear infinite; }
 .examples { display: flex; gap: 10px; margin-top: 14px; }
