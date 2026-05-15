@@ -21,7 +21,7 @@ import {
 import { readBlackHolePrefetch } from '@/hooks/useBlackHolePrefetch';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
-import { toast, Toaster as Sonner } from 'sonner';
+import { toast, Toaster as Sonner } from '@/components/ui/sonner';
 import { Loader2, RefreshCw, Shield, AlertTriangle, Flame, Coins, ArrowLeft } from 'lucide-react';
 import {
   getHeliusProxyUrl,

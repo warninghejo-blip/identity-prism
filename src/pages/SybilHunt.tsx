@@ -96,23 +96,38 @@ export default function SybilHunt() {
 
         <div className="sybil-layout">
           <section>
-            <div className="apk-panel sybil-card recruit-card">
-              <img src="/landing/textures/ranks/rank_cadet.png" alt="" style={{ width: 88 }} />
-              <div className="recruit-stat"><b>0</b><span>hunts</span></div>
-              <div className="recruit-stat"><b style={{ color: '#f87171' }}>0</b><span>caught</span></div>
-              <div className="recruit-stat"><b>Nest-Tracker</b><span>next rank</span></div>
-              <div className="recruit-stat"><b>0</b><span>/3 sybils</span></div>
-              <div className="limit-track recruit-progress"><span style={{ '--pct': '0%', background: 'linear-gradient(90deg,#f5a623,#ef4444)' } as React.CSSProperties} /></div>
-              <strong style={{ color: '#d7a72d', fontSize: 26 }}>⊕ 0</strong>
-            </div>
+            <div className="apk-panel sybil-command">
+              <div className="sybil-copy">
+                <div className="apk-kicker" style={{ color: '#f5a623' }}>Operator console</div>
+                <h2>Expose linked wallet clusters before they farm trust.</h2>
+                <p>Run a target through funding graph checks, behavior signals, token activity, and cluster heuristics. Clean wallets earn scan rewards; linked clusters go to bounty review.</p>
+                <div className="sybil-metrics">
+                  <span><b>23</b> signals</span>
+                  <span><b>5</b> graph checks</span>
+                  <span><b>+20</b> bounty</span>
+                </div>
+              </div>
 
-            <form className="sybil-search" onSubmit={onSubmit}>
-              <label className="sr-only" htmlFor="sybil-target">Target wallet address</label>
-              <input id="sybil-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Enter target wallet address..." autoComplete="off" />
-              <button className="hunt-button" type="submit" disabled={loading}>
-                {loading ? <><Loader2 className="animate-spin" aria-hidden="true" /> SCANNING</> : <><Target aria-hidden="true" /> HUNT</>}
-              </button>
-            </form>
+              <div className="sybil-console">
+                <div className="apk-panel sybil-card recruit-card">
+                  <img src="/landing/textures/ranks/rank_cadet.png" alt="" style={{ width: 88 }} />
+                  <div className="recruit-stat"><b>0</b><span>hunts</span></div>
+                  <div className="recruit-stat"><b style={{ color: '#f87171' }}>0</b><span>caught</span></div>
+                  <div className="recruit-stat"><b>Nest-Tracker</b><span>next rank</span></div>
+                  <div className="recruit-stat"><b>0</b><span>/3 sybils</span></div>
+                  <div className="limit-track recruit-progress"><span style={{ '--pct': '0%', background: 'linear-gradient(90deg,#f5a623,#ef4444)' } as React.CSSProperties} /></div>
+                  <strong style={{ color: '#d7a72d', fontSize: 26 }}>⊕ 0</strong>
+                </div>
+
+                <form className="sybil-search" onSubmit={onSubmit}>
+                  <label className="sr-only" htmlFor="sybil-target">Target wallet address</label>
+                  <input id="sybil-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Wallet address" autoComplete="off" />
+                  <button className="hunt-button" type="submit" disabled={loading}>
+                    {loading ? <><Loader2 className="animate-spin" aria-hidden="true" /> SCANNING</> : <><Target aria-hidden="true" /> HUNT</>}
+                  </button>
+                </form>
+              </div>
+            </div>
 
             {loading && (
               <div className="apk-panel sybil-card">

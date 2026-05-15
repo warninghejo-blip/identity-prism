@@ -262,6 +262,7 @@ const Index = () => {
   const location = useLocation();
   const isNftMode = searchParams.get('mode') === 'nft';
   const urlAddress = searchParams.get('address');
+  const forceIdentityCardRoute = location.pathname.replace(/\/+$/, '') === '/identity';
   const storedReturn = sessionStorage.getItem('fromBlackHole') === '1';
   const [storedSubPageReturn] = useState(() => {
     const val = sessionStorage.getItem('returnedFromSubPage') === '1';
@@ -312,7 +313,7 @@ const Index = () => {
   );
   const [showWelcomeBack, setShowWelcomeBack] = useState(false);
   const [viewState, _setViewState] = useState<ViewState>(
-    shouldOpenCard && urlAddress
+    (shouldOpenCard || forceIdentityCardRoute) && urlAddress
       ? 'ready'
       : returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current
         ? 'hub'
@@ -515,9 +516,9 @@ const Index = () => {
     setJwtDeclined(false);
     setActiveAddress(restoredAddress);
     if (viewStateRef.current === 'landing') {
-      setViewState('scanning');
+      setViewState(forceIdentityCardRoute ? 'ready' : 'scanning');
     }
-  }, [activeAddress, isConnected, jwtSigning, connectedAddress, wallet.publicKey, setViewState]);
+  }, [activeAddress, isConnected, jwtSigning, connectedAddress, wallet.publicKey, forceIdentityCardRoute, setViewState]);
 
   const didForceDisconnect = useRef(false);
   const recentWalletRestoreRef = useRef(hasRecentExternalWalletBackground() || hasRecentNativeWalletRestore());
@@ -585,13 +586,13 @@ const Index = () => {
         return;
       }
       setActiveAddress(addr);
-      setViewState('hub');
+      setViewState(forceIdentityCardRoute ? 'ready' : 'hub');
       // Also update URL so refresh works
       const next = new URLSearchParams(searchParams);
       next.set('address', addr);
       setSearchParams(next, { replace: true });
     }
-  }, [isConnected, connectedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isConnected, connectedAddress, forceIdentityCardRoute]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const balanceAddress = activeAddress ? (wallet.publicKey?.toBase58() ?? activeAddress) : null;
 
@@ -761,8 +762,8 @@ const Index = () => {
       }
       if (viewState === 'landing') {
         if (returningFromSubPage.current || returningFromBH.current || returningFromGameJump.current) {
-          setViewState('hub');
-        } else if (shouldOpenCard) {
+          setViewState(forceIdentityCardRoute ? 'ready' : 'hub');
+        } else if (shouldOpenCard || forceIdentityCardRoute) {
           setViewState('ready');
         } else {
           setViewState('scanning');
@@ -775,7 +776,7 @@ const Index = () => {
         setViewState('landing');
       }
     }
-  }, [urlAddress, activeAddress, viewState, jwtSigning]);
+  }, [urlAddress, activeAddress, viewState, jwtSigning, forceIdentityCardRoute]);
 
   const userAgent = globalThis.navigator?.userAgent ?? '';
   const isCapacitor = Boolean(
@@ -1422,7 +1423,7 @@ const Index = () => {
     if (resolvedAddress && !getCachedJwt(resolvedAddress)) {
       setJwtDeclined(true);
       if (allowUnsignedHubRef.current || returningFromBH.current) {
-        setViewState('hub');
+        setViewState(forceIdentityCardRoute ? 'ready' : 'hub');
         return;
       }
       setActiveAddress(undefined);
@@ -1432,7 +1433,7 @@ const Index = () => {
 
     // When returning from BlackHole/Game/SubPage, skip scanning and go straight to hub
     if ((returningFromBH.current || suppressLoadingRef.current || returningFromSubPage.current) && resolvedAddress) {
-      setViewState('hub');
+      setViewState(forceIdentityCardRoute ? 'ready' : 'hub');
       return;
     }
 
@@ -1467,6 +1468,13 @@ const Index = () => {
       }
       setViewState('scanning');
     } else {
+      if (forceIdentityCardRoute) {
+        hasReachedHub.current = true;
+        setViewState('ready');
+        if (returningFromSubPage.current) returningFromSubPage.current = false;
+        if (returningFromGameJump.current) returningFromGameJump.current = false;
+        return;
+      }
       // After scan → go to Hub. But only once — don't re-trigger on background trait updates.
       if (viewStateRef.current === 'scanning') {
         // Traits loaded (from cache or fresh) while still in scanning — go to hub
@@ -1532,7 +1540,7 @@ const Index = () => {
         }
       }
     }
-  }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable, jwtSigning]);
+  }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable, jwtSigning, forceIdentityCardRoute]);
 
   // Removed auto-warp effect
 
