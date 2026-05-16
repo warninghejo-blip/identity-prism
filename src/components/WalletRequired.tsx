@@ -2,6 +2,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { Loader2, ShieldCheck, Wallet } from 'lucide-react';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 import { getCachedJwt, obtainJwt, setAuthWallet } from '@/components/prism/shared';
 
@@ -28,8 +29,16 @@ export default function WalletRequired({ children }: WalletRequiredProps) {
     setSigning(true);
     setSignError(null);
     try {
-      setAuthWallet(wallet);
-      const jwt = await obtainJwt(wallet, { forceFresh: true });
+      const isMwa = wallet.wallet?.adapter.name === SolanaMobileWalletAdapterWalletName;
+      const authWallet = {
+        publicKey,
+        signMessage: wallet.signMessage,
+        signIn: wallet.signIn,
+        preferSignMessage: isMwa,
+        authDelayMs: isMwa ? 350 : 0,
+      };
+      setAuthWallet(authWallet);
+      const jwt = await obtainJwt(authWallet, { forceFresh: true });
       if (!jwt) {
         setSignError('Wallet signature was not approved.');
         return;
@@ -42,7 +51,7 @@ export default function WalletRequired({ children }: WalletRequiredProps) {
     }
   }, [canSign, publicKey, wallet]);
 
-  if (activeAddress || liveHasJwt) {
+  if (activeAddress || liveHasJwt || publicKey) {
     return <>{children}</>;
   }
 

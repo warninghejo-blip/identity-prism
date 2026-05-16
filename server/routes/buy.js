@@ -69,12 +69,11 @@ function registerBuyRoute(ctx) {
 
     if (pathname === '/api/prism/buy' && req.method === 'POST') {
       if (!ipRateLimit('prism_buy', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-      const jwtAuth = requireJwt(req, res);
-      if (!jwtAuth.ok) return true;
       try {
-        const { packageIndex, txSignature } = JSON.parse(await readBody(req));
-        const address = jwtAuth.address;
+        const { address: bodyAddress, packageIndex, txSignature } = JSON.parse(await readBody(req));
+        const address = typeof bodyAddress === 'string' ? bodyAddress.trim() : '';
         if (!address) return respondJson(res, 400, { error: 'address required' });
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address format' });
 
         const pkgIdx = Number(packageIndex);
         if (pkgIdx < 0 || pkgIdx >= coinPackages.length) return respondJson(res, 400, { error: 'Invalid package' });
@@ -210,12 +209,11 @@ function registerBuyRoute(ctx) {
 
     if (pathname === '/api/prism/buy/skr' && req.method === 'POST') {
       if (!ipRateLimit('prism_buy_skr', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-      const jwtAuth = requireJwt(req, res);
-      if (!jwtAuth.ok) return true;
       try {
-        const { packageIndex, txSignature } = JSON.parse(await readBody(req));
-        const address = jwtAuth.address;
+        const { address: bodyAddress, packageIndex, txSignature } = JSON.parse(await readBody(req));
+        const address = typeof bodyAddress === 'string' ? bodyAddress.trim() : '';
         if (!address) return respondJson(res, 400, { error: 'address required' });
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address format' });
 
         const pkgIdx = Number(packageIndex);
         if (pkgIdx < 0 || pkgIdx >= coinPackages.length) return respondJson(res, 400, { error: 'Invalid package' });
