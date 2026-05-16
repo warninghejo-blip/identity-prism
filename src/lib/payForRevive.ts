@@ -155,14 +155,14 @@ export async function payForRevive(wallet: WalletContextState): Promise<ReviveRe
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('USER_REJECTED: Signing timed out')), 120_000),
     );
-    const sendOptions = { skipPreflight: true, preflightCommitment: 'confirmed' as const };
+    const sendOptions = { skipPreflight: false, preflightCommitment: 'confirmed' as const };
     let sig: string;
     if (wallet.signTransaction) {
       const signPromise = wallet.signTransaction(tx);
       const signed = await Promise.race([signPromise, timeoutPromise]);
       sig = await connection.sendRawTransaction(
         signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-        { skipPreflight: true },
+        { skipPreflight: false, preflightCommitment: 'confirmed' },
       );
     } else if (wallet.sendTransaction) {
       sig = (await Promise.race([wallet.sendTransaction(tx, connection, sendOptions), timeoutPromise])) as string;

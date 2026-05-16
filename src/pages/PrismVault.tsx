@@ -3,9 +3,11 @@
  * Dedicated financial hub page.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type PointerEvent, type TouchEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
+import { Capacitor } from '@capacitor/core';
 import { goBack } from '@/lib/safeNavigate';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
 import { ArrowLeft, Coins, Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap, Check } from 'lucide-react';
@@ -18,6 +20,27 @@ import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 
 // ── Buy Coins Section ──
 
+const RPC_STEP_TIMEOUT_MS = 30_000;
+const CONFIRM_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
+function createRpcFetch(timeoutMs = RPC_STEP_TIMEOUT_MS): typeof fetch {
+  return (input, init) => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeoutId));
+  };
+}
+
 function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
   const wallet = useWallet();
   const [buyingIdx, setBuyingIdx] = useState<number | null>(null);
@@ -25,6 +48,9 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
   const [status, setStatus] = useState<{ purchasedToday: number; remainingToday: number } | null>(null);
   const [payWith, setPayWith] = useState<'sol' | 'skr'>('sol');
   const [skrQuotes, setSkrQuotes] = useState<{ coins: number; skrPrice: number }[] | null>(null);
+  const [pendingConnectBuyIdx, setPendingConnectBuyIdx] = useState<number | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const isNativePlatform = Capacitor.isNativePlatform();
 
   useEffect(() => {
     if (!walletAddress) return;
@@ -49,15 +75,35 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
   const handleBuy = useCallback(async () => {
     if (selectedIdx === null || buyingIdx !== null) return;
     const signerAddress = wallet.publicKey?.toBase58() || walletAddress;
-    if (!signerAddress) {
-      toast.error('Connect wallet first');
-      return;
-    }
-    if (!wallet.signTransaction && !wallet.sendTransaction) {
-      toast.error('Wallet is still restoring — try again in a moment');
+    const walletReady = Boolean(signerAddress && wallet.connected && (wallet.signTransaction || wallet.sendTransaction));
+    if (!walletReady) {
+      if (isNativePlatform) {
+        setActionMessage('Opening wallet approval...');
+        setPendingConnectBuyIdx(selectedIdx);
+        if (!wallet.wallet) {
+          wallet.select(SolanaMobileWalletAdapterWalletName);
+          toast.info('Opening wallet...');
+          return;
+        }
+        if (!wallet.connecting) {
+          toast.info('Opening wallet...');
+          try {
+            await wallet.connect();
+          } catch (error: any) {
+            setPendingConnectBuyIdx(null);
+            setActionMessage(error?.message || 'Wallet connection cancelled');
+            toast.error(error?.message || 'Wallet connection cancelled');
+          }
+        }
+        return;
+      }
+      const message = !signerAddress ? 'Connect wallet first' : 'Wallet is still restoring — try again in a moment';
+      setActionMessage(message);
+      toast.error(message);
       return;
     }
     const pkg = COIN_PACKAGES[selectedIdx];
+    setActionMessage('Preparing transaction...');
     setBuyingIdx(selectedIdx);
 
     const timeout = new Promise<never>((_, reject) =>
@@ -68,17 +114,6 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
       await Promise.race([
         timeout,
         (async () => {
-          const jwt = await obtainJwt({
-            publicKey: wallet.publicKey ?? { toBase58: () => signerAddress },
-            signMessage: wallet.signMessage,
-            signIn: wallet.signIn,
-          });
-          if (!jwt) {
-            toast.error('Authentication required');
-            setBuyingIdx(null);
-            return;
-          }
-
           const {
             Connection: SolConn,
             PublicKey: SolPK,
@@ -86,16 +121,25 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             Transaction: SolTx,
           } = await import('@solana/web3.js');
           const base = getApiBase();
-          const conn = new SolConn(base.replace(/\/api(\/.*)?$/, '') + '/rpc', 'confirmed');
+          const conn = new SolConn(base.replace(/\/api(\/.*)?$/, '') + '/rpc', {
+            commitment: 'confirmed',
+            fetch: createRpcFetch() as any,
+          } as any);
           const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
           if (signerAddress === treasuryAddr) {
+            setActionMessage('Treasury wallet cannot purchase coin packs');
             toast.error('Treasury wallet cannot purchase coin packs');
             setBuyingIdx(null);
             return;
           }
 
           let sig: string;
-          const sendOptions = { skipPreflight: true, preflightCommitment: 'confirmed' as const };
+          const sendOptions = { skipPreflight: false, preflightCommitment: 'confirmed' as const };
+          const authHeader = getCachedJwt(signerAddress);
+          const jsonHeaders = {
+            'Content-Type': 'application/json',
+            ...(authHeader ? { Authorization: `Bearer ${authHeader}` } : {}),
+          };
 
           if (payWith === 'skr') {
             const skrQuote = skrQuotes?.[selectedIdx];
@@ -137,7 +181,12 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 TOKEN_PROGRAM_ID,
               ),
             );
-            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx.recentBlockhash = (await Promise.race([
+              conn.getLatestBlockhash('confirmed'),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
+              ),
+            ])).blockhash;
             tx.feePayer = ownerKey;
             const simulation = await conn.simulateTransaction(tx, undefined, {
               sigVerify: false,
@@ -145,7 +194,12 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             } as any);
             if (simulation.value.err)
               throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx.recentBlockhash = (await Promise.race([
+              conn.getLatestBlockhash('confirmed'),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
+              ),
+            ])).blockhash;
             const origSerializeSKR = tx.serialize.bind(tx);
             tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
               origSerializeSKR({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
@@ -165,8 +219,8 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
 
             const res = await fetch(`${base}/api/prism/buy/skr`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-              body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
+              headers: jsonHeaders,
+              body: JSON.stringify({ address: signerAddress, packageIndex: selectedIdx, txSignature: sig }),
             });
             if (res.ok) {
               toast.success(`Purchased ${pkg.coins} Coins for ${skrQuote.skrPrice} SKR!`);
@@ -189,7 +243,12 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 lamports: Math.floor(pkg.solPrice * 1e9),
               }),
             );
-            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx.recentBlockhash = (await Promise.race([
+              conn.getLatestBlockhash('confirmed'),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
+              ),
+            ])).blockhash;
             tx.feePayer = new SolPK(signerAddress);
             const simulation = await conn.simulateTransaction(tx, undefined, {
               sigVerify: false,
@@ -197,7 +256,12 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             } as any);
             if (simulation.value.err)
               throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-            tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+            tx.recentBlockhash = (await Promise.race([
+              conn.getLatestBlockhash('confirmed'),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
+              ),
+            ])).blockhash;
             const origSerializeSOL = tx.serialize.bind(tx);
             tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
               origSerializeSOL({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
@@ -217,8 +281,8 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
 
             const res = await fetch(`${base}/api/prism/buy`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-              body: JSON.stringify({ packageIndex: selectedIdx, txSignature: sig }),
+              headers: jsonHeaders,
+              body: JSON.stringify({ address: signerAddress, packageIndex: selectedIdx, txSignature: sig }),
             });
             if (res.ok) {
               toast.success(`Purchased ${pkg.coins} Coins!`);
@@ -234,19 +298,52 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               toast.error(err.error || 'Purchase failed');
             }
           }
+          setActionMessage(null);
           setSelectedIdx(null);
         })(),
       ]);
     } catch (e: any) {
       if (e?.message?.includes('User rejected')) {
+        setActionMessage('Transaction cancelled');
         toast.info('Transaction cancelled');
       } else {
-        toast.error(e?.message || 'Purchase failed');
+        const message = e?.name === 'AbortError' ? 'RPC request timed out' : e?.message || 'Purchase failed';
+        setActionMessage(message);
+        toast.error(message);
       }
     } finally {
       setBuyingIdx(null);
     }
-  }, [walletAddress, wallet, buyingIdx, selectedIdx, status, onPurchased, payWith, skrQuotes]);
+  }, [walletAddress, wallet, buyingIdx, selectedIdx, status, onPurchased, payWith, skrQuotes, isNativePlatform]);
+
+  const handleBuyTouch = useCallback(
+    (event: TouchEvent<HTMLButtonElement> | PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void handleBuy();
+    },
+    [handleBuy],
+  );
+
+  useEffect(() => {
+    if (pendingConnectBuyIdx === null || !isNativePlatform || buyingIdx !== null) return;
+    if (!wallet.wallet) return;
+    if (wallet.connected && wallet.publicKey && (wallet.signTransaction || wallet.sendTransaction)) {
+      setPendingConnectBuyIdx(null);
+      setSelectedIdx(pendingConnectBuyIdx);
+      window.setTimeout(() => {
+        void handleBuy();
+      }, 0);
+      return;
+    }
+    if (!wallet.connecting) {
+      wallet.connect().catch((error: any) => {
+        setPendingConnectBuyIdx(null);
+        setActionMessage(error?.message || 'Wallet connection cancelled');
+        toast.error(error?.message || 'Wallet connection cancelled');
+      });
+    }
+  }, [pendingConnectBuyIdx, isNativePlatform, buyingIdx, wallet, handleBuy]);
 
   const selectedPkg = selectedIdx !== null ? COIN_PACKAGES[selectedIdx] : null;
   const selectedSkr = selectedIdx !== null ? skrQuotes?.[selectedIdx]?.skrPrice : null;
@@ -349,13 +446,20 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             to the Identity Prism treasury. Purchases are final after on-chain confirmation.
           </p>
           <Button
-            className="w-full h-11 font-bold text-sm"
+            type="button"
+            className="w-full h-11 font-bold text-sm no-select touch-manipulation"
             style={{
               background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
               color: '#000',
               boxShadow: '0 4px 20px rgba(251,191,36,0.25)',
             }}
             onClick={handleBuy}
+            onTouchEnd={handleBuyTouch}
+            onPointerUp={(event) => {
+              if (event.pointerType === 'touch') {
+                handleBuyTouch(event);
+              }
+            }}
             disabled={buyingIdx !== null || (payWith === 'skr' && !selectedSkr)}
           >
             {buyingIdx !== null ? (
@@ -373,6 +477,9 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               </>
             )}
           </Button>
+          {actionMessage && (
+            <p className="mt-2 text-center text-[10px] font-semibold text-white/45">{actionMessage}</p>
+          )}
         </>
       )}
     </div>

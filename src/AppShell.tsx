@@ -1,5 +1,5 @@
 import React, { Component, type ReactNode, useEffect } from 'react';
-import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, createHashRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { ConnectionProvider } from '@solana/wallet-adapter-react';
 import { CustomWalletProvider } from './components/CustomWalletProvider';
 import { DebugWallet } from './components/DebugWallet';
@@ -12,6 +12,7 @@ import {
   createDefaultAddressSelector,
   createDefaultWalletNotFoundHandler,
 } from '@solana-mobile/wallet-adapter-mobile';
+import { Capacitor } from '@capacitor/core';
 import App from './App';
 import Index from './pages/Index';
 import NotFound from './pages/NotFound';
@@ -122,11 +123,7 @@ const SybilHunt = React.lazy(() => import('./pages/SybilHunt'));
 const CardDemoPage = React.lazy(() => import('./pages/CardDemoPage'));
 const SybilCheckerPage = React.lazy(() => import('./pages/SybilCheckerPage'));
 
-const isCapacitorNative = Boolean(
-  (
-    globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }
-  ).Capacitor?.isNativePlatform?.(),
-);
+const isCapacitorNative = Capacitor.isNativePlatform();
 
 // Removed: visibilitychange→blur was disconnecting wallet on app minimize
 
@@ -139,7 +136,7 @@ const routerOptions: Parameters<typeof createBrowserRouter>[1] = {
 type CapacitorAppPlugin = {
   addListener?: (
     eventName: string,
-    listenerFunc: (event: { url?: string }) => void,
+    listenerFunc: (event: { url?: string; canGoBack?: boolean }) => void,
   ) => Promise<{ remove: () => Promise<void> | void }> | { remove: () => Promise<void> | void };
   getLaunchUrl?: () => Promise<{ url?: string } | undefined>;
   minimizeApp?: () => void;
@@ -164,8 +161,7 @@ const navigateFromNativeUrl = (rawUrl?: string | null) => {
   });
 };
 
-const router = createBrowserRouter(
-  [
+const appRoutes = [
     {
       path: '/blackhole',
       element: BLACKHOLE_ENABLED ? lazyRoute(<BlackHole />) : <Navigate to="/" replace />,
@@ -179,7 +175,7 @@ const router = createBrowserRouter(
         { path: 'app/*', element: <Index /> },
         { path: 'landing', element: lazyRoute(<LandingPage />) },
         { path: 'identity', element: lazyRoute(<IdentityHub />) },
-        { path: 'sybil-hunt', element: lazyRoute(<SybilHunt />) },
+        { path: 'sybil-hunt', element: <Navigate to="/sybil-check" replace /> },
         { path: 'demo', element: lazyRoute(<CardDemoPage />) },
         { path: 'sybil-check', element: lazyRoute(<SybilCheckerPage />) },
         { path: 'home', element: lazyRoute(<HomePage />) },
@@ -265,9 +261,9 @@ const router = createBrowserRouter(
         { path: '*', element: <NotFound /> },
       ],
     },
-  ],
-  routerOptions,
-);
+  ];
+
+const router = (isCapacitorNative ? createHashRouter : createBrowserRouter)(appRoutes, routerOptions);
 
 const cluster =
   MINT_CONFIG.NETWORK === 'devnet'
@@ -278,7 +274,9 @@ const cluster =
 
 const appIdentity = {
   name: 'Identity Prism',
-  uri: (import.meta.env.VITE_APP_BASE_URL || 'https://identityprism.xyz').replace(/\/+$/, ''),
+  uri: (
+    isCapacitorNative ? 'identityprism://app' : import.meta.env.VITE_APP_BASE_URL || 'https://identityprism.xyz'
+  ).replace(/\/+$/, ''),
 };
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
@@ -348,6 +346,8 @@ export default function AppShell() {
 
     // Push a sentinel entry so there's always something to pop back to
     window.history.pushState({ __appHub: true }, '', window.location.href);
+    const appPlugin = getCapacitorAppPlugin();
+    let removeBackButtonListener: (() => Promise<void> | void) | undefined;
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -360,24 +360,37 @@ export default function AppShell() {
         window.history.pushState({ __appHub: true }, '', window.location.href);
         return;
       }
-      const path = window.location.pathname.replace(/\/+$/, '') || '/';
+      const path = router.state.location.pathname.replace(/\/+$/, '') || '/';
       const isHub = path === '/' || path === '/app' || path === '';
       if (isHub) {
         // Re-push sentinel so next back also minimizes
         window.history.pushState({ __appHub: true }, '', window.location.href);
         // Minimize app via Capacitor if available
-        getCapacitorAppPlugin()?.minimizeApp?.();
+        appPlugin?.minimizeApp?.();
       } else {
         // Go to hub instead of browser history back
         router.navigate(getAppHubFallback(), { replace: false, state: { fromSubPage: true } });
       }
     };
+    const nativeBackHandler = () => {
+      handler();
+    };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('popstate', handler);
+    window.addEventListener('identityprism:nativeBack', nativeBackHandler);
+    Promise.resolve(appPlugin?.addListener?.('backButton', handler))
+      .then((handle) => {
+        removeBackButtonListener = handle?.remove?.bind(handle);
+      })
+      .catch(() => {});
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('popstate', handler);
+      window.removeEventListener('identityprism:nativeBack', nativeBackHandler);
+      if (removeBackButtonListener) {
+        void removeBackButtonListener();
+      }
     };
   }, []);
 

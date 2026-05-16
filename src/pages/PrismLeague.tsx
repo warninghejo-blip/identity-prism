@@ -1242,9 +1242,13 @@ const PrismLeague = () => {
 
   // Continue/Revive feature — free revives for ID holders: 3 per DAY (persisted)
   const FREE_REVIVES_PER_DAY = 3;
+  const MAX_REVIVES_PER_GAME = 3;
+  const FREE_REVIVES_PER_GAME = 3;
   const reviveRef = useRef(false);
   const continueUsed = useRef(false);
   const freeRevivesLeft = useRef(0);
+  const revivesUsedThisRun = useRef(0);
+  const freeRevivesUsedThisRun = useRef(0);
   const [showContinue, setShowContinue] = useState(false);
   const [revivePaying, setRevivePaying] = useState(false);
   const [isVictory, setIsVictory] = useState(false);
@@ -1543,6 +1547,8 @@ const PrismLeague = () => {
     setSessionProof(null);
     setNewAchievements([]);
     continueUsed.current = false;
+    revivesUsedThisRun.current = 0;
+    freeRevivesUsedThisRun.current = 0;
     defenderLevel.current = 0;
     defenderKills.current = 0;
     // Init free revives from localStorage as immediate fallback
@@ -1957,8 +1963,9 @@ const PrismLeague = () => {
         finalizeDeath(finalScore, finalCoins, true);
         return;
       }
-      // Show continue if: has free revives OR (hasn't used paid continue yet AND connected)
-      if (freeRevivesLeft.current > 0 || (!continueUsed.current && connected)) {
+      const canUseFreeRevive = !activeChallengeId && freeRevivesLeft.current > 0;
+      const canUsePaidRevive = connected && revivesUsedThisRun.current < MAX_REVIVES_PER_GAME;
+      if (revivesUsedThisRun.current < MAX_REVIVES_PER_GAME && (canUseFreeRevive || canUsePaidRevive)) {
         pendingGameOver.current = { score: finalScore, coins: finalCoins, endedAtMs: Date.now() };
         setScore(finalScore);
         setCoins(finalCoins);
@@ -1967,7 +1974,7 @@ const PrismLeague = () => {
       }
       finalizeDeath(finalScore, finalCoins, false);
     },
-    [finalizeDeath, connected],
+    [finalizeDeath, connected, activeChallengeId],
   );
 
   // Gravity-specific game over handler — captures extra session stats then calls shared handler
@@ -1984,41 +1991,22 @@ const PrismLeague = () => {
   const handleContinue = useCallback(async () => {
     if (!pendingGameOver.current || revivePaying) return;
 
-    // Free revive for ID holders (3 per day per arcade mode, server-authoritative)
-    if (freeRevivesLeft.current > 0) {
-      const mode = getArcadeGameMode(gameMode);
-      if (address) {
-        // Confirm with server first
-        const serverResult = await serverRevive(address, mode);
-        if (!serverResult.success) {
-          // Server denied — sync local state
-          freeRevivesLeft.current = serverResult.left;
-          if (serverResult.left <= 0) {
-            toast.error('No free revives left today (server)');
-          } else {
-            toast.warning('Free revive unavailable — try paid revive');
-          }
-          // Fall through to paid revive below
-        } else {
-          freeRevivesLeft.current = serverResult.left;
-          setDailyReviveUsed();
-          setShowContinue(false);
-          reviveRef.current = true;
-          pendingGameOver.current = null;
-          toast.success(`Free Revive! (${serverResult.left} left today)`);
-          hapticSuccess();
-          return;
-        }
-      } else {
-        // No address — use local only
-        freeRevivesLeft.current--;
-        setDailyReviveUsed();
-        setShowContinue(false);
-        reviveRef.current = true;
-        pendingGameOver.current = null;
-        toast.success(`Free Revive! (${freeRevivesLeft.current} left today)`);
-        return;
-      }
+    if (revivesUsedThisRun.current >= MAX_REVIVES_PER_GAME) {
+      toast.error('Revive limit reached', { description: 'Maximum 3 revives per game.' });
+      return;
+    }
+
+    // Free revive for ID holders. Disabled in Arena/challenge mode.
+    if (!activeChallengeId && freeRevivesLeft.current > 0) {
+      revivesUsedThisRun.current++;
+      freeRevivesUsedThisRun.current++;
+      freeRevivesLeft.current = Math.max(0, FREE_REVIVES_PER_GAME - freeRevivesUsedThisRun.current);
+      setShowContinue(false);
+      reviveRef.current = true;
+      pendingGameOver.current = null;
+      toast.success(`Free Revive! (${freeRevivesLeft.current} left)`);
+      hapticSuccess();
+      return;
     }
 
     // Paid revive via SKR
@@ -2028,6 +2016,7 @@ const PrismLeague = () => {
       const result = await payForRevive(wallet);
       if (result.success) {
         continueUsed.current = true;
+        revivesUsedThisRun.current++;
         setShowContinue(false);
         reviveRef.current = true;
         pendingGameOver.current = null;
@@ -2054,7 +2043,7 @@ const PrismLeague = () => {
     } finally {
       setRevivePaying(false);
     }
-  }, [wallet, revivePaying, gameMode, address, setDailyReviveUsed]);
+  }, [wallet, revivePaying, activeChallengeId]);
 
   const handleDeclineContinue = useCallback(() => {
     if (!pendingGameOver.current) return;

@@ -87,6 +87,48 @@ function registerBlinksRoute(ctx) {
   } = ctx;
 
   const updateFeeSol = 0.0005;
+  const CORE_RPC_TIMEOUT_MS = 15_000;
+  const CORE_COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000;
+  const coreCollectionCache = new Map();
+
+  const withOperationTimeout = (promise, timeoutMs, message) => {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+  };
+
+  const fetchCoreCollectionCached = async (umi, collectionMint, requestId) => {
+    const key = collectionMint.toString();
+    const now = Date.now();
+    const cached = coreCollectionCache.get(key);
+    if (cached?.collection && now - cached.fetchedAt < CORE_COLLECTION_CACHE_TTL_MS) {
+      return cached.collection;
+    }
+    if (cached?.promise) {
+      return withOperationTimeout(cached.promise, CORE_RPC_TIMEOUT_MS, 'Collection fetch timed out');
+    }
+
+    const promise = fetchCollection(umi, collectionMint)
+      .then((collection) => {
+        coreCollectionCache.set(key, { collection, fetchedAt: Date.now() });
+        return collection;
+      })
+      .catch((error) => {
+        const current = coreCollectionCache.get(key);
+        if (current?.promise === promise) coreCollectionCache.delete(key);
+        console.warn('[mint-cnft] collection fetch failed', {
+          requestId,
+          collectionMint: key,
+          error: error?.message,
+        });
+        throw error;
+      });
+
+    coreCollectionCache.set(key, { promise, fetchedAt: now });
+    return withOperationTimeout(promise, CORE_RPC_TIMEOUT_MS, 'Collection fetch timed out');
+  };
 
   const findAddressCandidate = (payload, maxNodes = 200) => {
     if (!payload || typeof payload !== 'object') return '';

@@ -46,6 +46,78 @@ type NativeSessionRestoreMarker = {
   armedAt: number;
 };
 
+const withNativeWalletDismissDetection = async <T,>(operation: () => Promise<T>, label: string): Promise<T> => {
+  const hardTimeoutMs = 120_000;
+  const dismissGraceMs = Capacitor.isNativePlatform() ? 30_000 : 15_000;
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let wentToBackground = false;
+    let dismissTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let hardTimer: ReturnType<typeof window.setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (dismissTimer) window.clearTimeout(dismissTimer);
+      if (hardTimer) window.clearTimeout(hardTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('identityprism:nativePause', onNativePause);
+      window.removeEventListener('identityprism:nativeResume', onNativeResume);
+    };
+
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+
+    const startDismissTimer = () => {
+      if (settled || dismissTimer) return;
+      dismissTimer = window.setTimeout(() => {
+        settle(() => reject(new Error(`USER_REJECTED: ${label} dismissed`)));
+      }, dismissGraceMs);
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') wentToBackground = true;
+      if (document.visibilityState === 'visible' && wentToBackground && !settled) startDismissTimer();
+    };
+    const onBlur = () => {
+      wentToBackground = true;
+    };
+    const onFocus = () => {
+      if (Capacitor.isNativePlatform()) return;
+      if (wentToBackground && !settled) startDismissTimer();
+    };
+    const onNativePause = () => {
+      wentToBackground = true;
+    };
+    const onNativeResume = () => {
+      if (!wentToBackground || settled) return;
+      window.setTimeout(() => {
+        if (!settled && document.visibilityState === 'visible') startDismissTimer();
+      }, 1_500);
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('identityprism:nativePause', onNativePause);
+    window.addEventListener('identityprism:nativeResume', onNativeResume);
+
+    hardTimer = window.setTimeout(() => {
+      settle(() => reject(new Error(`USER_REJECTED: ${label} timed out`)));
+    }, hardTimeoutMs);
+
+    operation().then(
+      (result) => settle(() => resolve(result)),
+      (error) => settle(() => reject(error)),
+    );
+  });
+};
+
 const readPersistedAddress = (includeLocal = false) => {
   const storageReaders = [
     () => sessionStorage.getItem('prism_active_address'),
@@ -230,6 +302,37 @@ export const CustomWalletProvider = ({
       armExternalWalletReturnGuard();
     }
   }, [isNativePlatform]);
+
+  const startNativeMwaAssociationNudge = useCallback(() => {
+    if (!isNativePlatform || adapter?.name !== SolanaMobileWalletAdapterWalletName) {
+      return () => {};
+    }
+    let ticks = 0;
+    const intervalId = window.setInterval(() => {
+      window.dispatchEvent(new Event('blur'));
+      ticks += 1;
+      if (ticks >= 12) {
+        window.clearInterval(intervalId);
+      }
+    }, 250);
+    window.dispatchEvent(new Event('blur'));
+    return () => window.clearInterval(intervalId);
+  }, [adapter?.name, isNativePlatform]);
+
+  const ensureNativeMwaAdapterReady = useCallback(async () => {
+    if (!isNativePlatform || adapter?.name !== SolanaMobileWalletAdapterWalletName || adapter.connected) return;
+    try {
+      await Promise.race([
+        (adapter as Adapter & { autoConnect?: () => Promise<void> }).autoConnect?.() ?? Promise.resolve(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 2_500)),
+      ]);
+      for (let i = 0; i < 20 && !adapter.connected && !adapter.publicKey; i += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      }
+    } catch {
+      /* adapter call below will surface the real wallet error */
+    }
+  }, [adapter, isNativePlatform]);
 
   const clearTransientAuthState = useCallback(() => {
     try {
@@ -457,7 +560,7 @@ export const CustomWalletProvider = ({
     if (!adapter) throw handleError(new WalletNotSelectedError());
 
     if (adapter.readyState !== WalletReadyState.Installed && adapter.readyState !== WalletReadyState.Loadable) {
-      if (typeof window !== 'undefined' && adapter.url) {
+      if (!isNativePlatform && typeof window !== 'undefined' && adapter.url) {
         window.open(adapter.url, '_blank');
       }
       throw handleError(new WalletNotReadyError(), adapter);
@@ -557,10 +660,19 @@ export const CustomWalletProvider = ({
     ) => {
       if (!adapter) throw handleError(new WalletNotSelectedError());
       if (!connected) throw handleError(new WalletNotConnectedError(), adapter);
+      await ensureNativeMwaAdapterReady();
       armWalletReturnGuard();
-      return await adapter.sendTransaction(transaction, connection, options);
+      const stopNudge = startNativeMwaAssociationNudge();
+      try {
+        return await withNativeWalletDismissDetection(
+          () => adapter.sendTransaction(transaction, connection, options),
+          'Wallet transaction',
+        );
+      } finally {
+        window.setTimeout(stopNudge, 3_500);
+      }
     },
-    [adapter, connected, handleError, armWalletReturnGuard],
+    [adapter, connected, handleError, armWalletReturnGuard, startNativeMwaAssociationNudge, ensureNativeMwaAdapterReady],
   );
 
   const signTransaction = useMemo(
@@ -568,15 +680,27 @@ export const CustomWalletProvider = ({
       adapter && 'signTransaction' in adapter
         ? async (txn: Transaction | VersionedTransaction) => {
             if (!connected) throw handleError(new WalletNotConnectedError(), adapter);
+            await ensureNativeMwaAdapterReady();
             armWalletReturnGuard();
-            return await (
-              adapter as Adapter & {
-                signTransaction: (t: Transaction | VersionedTransaction) => Promise<Transaction | VersionedTransaction>;
-              }
-            ).signTransaction(txn);
+            const stopNudge = startNativeMwaAssociationNudge();
+            try {
+              return await withNativeWalletDismissDetection(
+                () =>
+                  (
+                    adapter as Adapter & {
+                      signTransaction: (
+                        t: Transaction | VersionedTransaction,
+                      ) => Promise<Transaction | VersionedTransaction>;
+                    }
+                  ).signTransaction(txn),
+                'Wallet signing',
+              );
+            } finally {
+              window.setTimeout(stopNudge, 3_500);
+            }
           }
         : undefined,
-    [adapter, connected, handleError, armWalletReturnGuard],
+    [adapter, connected, handleError, armWalletReturnGuard, startNativeMwaAssociationNudge, ensureNativeMwaAdapterReady],
   );
 
   const signAllTransactions = useMemo(
@@ -584,17 +708,27 @@ export const CustomWalletProvider = ({
       adapter && 'signAllTransactions' in adapter
         ? async (txns: (Transaction | VersionedTransaction)[]) => {
             if (!connected) throw handleError(new WalletNotConnectedError(), adapter);
+            await ensureNativeMwaAdapterReady();
             armWalletReturnGuard();
-            return await (
-              adapter as Adapter & {
-                signAllTransactions: (
-                  t: (Transaction | VersionedTransaction)[],
-                ) => Promise<(Transaction | VersionedTransaction)[]>;
-              }
-            ).signAllTransactions(txns);
+            const stopNudge = startNativeMwaAssociationNudge();
+            try {
+              return await withNativeWalletDismissDetection(
+                () =>
+                  (
+                    adapter as Adapter & {
+                      signAllTransactions: (
+                        t: (Transaction | VersionedTransaction)[],
+                      ) => Promise<(Transaction | VersionedTransaction)[]>;
+                    }
+                  ).signAllTransactions(txns),
+                'Wallet batch signing',
+              );
+            } finally {
+              window.setTimeout(stopNudge, 3_500);
+            }
           }
         : undefined,
-    [adapter, connected, handleError, armWalletReturnGuard],
+    [adapter, connected, handleError, armWalletReturnGuard, startNativeMwaAssociationNudge, ensureNativeMwaAdapterReady],
   );
 
   const signMessage = useMemo(
@@ -602,24 +736,41 @@ export const CustomWalletProvider = ({
       adapter && 'signMessage' in adapter
         ? async (msg: Uint8Array) => {
             if (!connected) throw handleError(new WalletNotConnectedError(), adapter);
+            await ensureNativeMwaAdapterReady();
             armWalletReturnGuard();
-            return await (adapter as Adapter & { signMessage: (m: Uint8Array) => Promise<Uint8Array> }).signMessage(
-              msg,
-            );
+            const stopNudge = startNativeMwaAssociationNudge();
+            try {
+              return await withNativeWalletDismissDetection(
+                () =>
+                  (adapter as Adapter & { signMessage: (m: Uint8Array) => Promise<Uint8Array> }).signMessage(msg),
+                'Wallet message signing',
+              );
+            } finally {
+              window.setTimeout(stopNudge, 3_500);
+            }
           }
         : undefined,
-    [adapter, connected, handleError, armWalletReturnGuard],
+    [adapter, connected, handleError, armWalletReturnGuard, startNativeMwaAssociationNudge, ensureNativeMwaAdapterReady],
   );
 
   const signIn = useMemo(
     () =>
       adapter && 'signIn' in adapter
         ? async (input: unknown) => {
+            await ensureNativeMwaAdapterReady();
             armWalletReturnGuard();
-            return await (adapter as Adapter & { signIn: (i: unknown) => Promise<unknown> }).signIn(input);
+            const stopNudge = startNativeMwaAssociationNudge();
+            try {
+              return await withNativeWalletDismissDetection(
+                () => (adapter as Adapter & { signIn: (i: unknown) => Promise<unknown> }).signIn(input),
+                'Wallet sign-in',
+              );
+            } finally {
+              window.setTimeout(stopNudge, 3_500);
+            }
           }
         : undefined,
-    [adapter, armWalletReturnGuard],
+    [adapter, armWalletReturnGuard, startNativeMwaAssociationNudge, ensureNativeMwaAdapterReady],
   );
 
   useEffect(() => {
