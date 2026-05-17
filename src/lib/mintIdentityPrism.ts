@@ -127,7 +127,11 @@ async function getAuthToken(
 
     // 2. Sign the challenge message
     const msgBytes = new TextEncoder().encode(message);
-    const signatureBytes = await wallet.signMessage(msgBytes);
+    const signTimeoutMs = 45_000;
+    const signTimeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('SIGN_TIMEOUT')), signTimeoutMs),
+    );
+    const signatureBytes = await Promise.race([wallet.signMessage(msgBytes), signTimeout]);
     const signatureBase64 = Buffer.from(signatureBytes).toString('base64');
 
     // 3. Exchange for JWT
