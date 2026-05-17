@@ -1235,6 +1235,58 @@
   margin: 0 !important;
 }
 
+/* Pay-selector: currency chips for Identity mint */
+.identity-pay-selector {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  margin: 4px 0 2px 0;
+  flex-wrap: wrap;
+}
+.identity-pay-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 46px;
+  min-height: 46px;
+  padding: 6px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+.identity-pay-chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.identity-pay-chip.active {
+  background: rgba(78, 229, 213, 0.14);
+  border-color: rgba(78, 229, 213, 0.55);
+  box-shadow: 0 0 0 1px rgba(78, 229, 213, 0.35) inset, 0 0 12px rgba(78, 229, 213, 0.25);
+}
+.identity-pay-chip img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+}
+.identity-pay-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+.identity-pay-bal {
+  font-size: 11px;
+  font-weight: 800;
+  color: #f8fbff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding-left: 2px;
+}
+
 .checklist {
   display: grid;
   gap: 10px;

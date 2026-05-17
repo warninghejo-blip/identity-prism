@@ -1,16 +1,29 @@
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, BadgeCheck, Loader2, Share2, Shield, Wallet } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, Coins, Loader2, Share2, Shield, Wallet } from 'lucide-react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import { Connection, PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@/lib/solanaToken';
 import SiteHeader from '@/components/SiteHeader';
 import { CelestialCard } from '@/components/CelestialCard';
 import { useWalletData, type PlanetTier, type WalletData, type WalletTraits } from '@/hooks/useWalletData';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { TIER_LABELS } from '@/lib/constants/tierColors';
 import { mintIdentityPrism } from '@/lib/mintIdentityPrism';
+import { getPrismBalance } from '@/lib/prismCoin';
+import { getHeliusRpcUrl, getHeliusProxyHeaders, SEEKER_TOKEN } from '@/constants';
 import { toast } from '@/components/ui/sonner';
 import './apk-pages.css';
+
+type PayCurrency = 'SOL' | 'SKR' | 'COINS' | 'PRISM';
+
+const PAY_OPTIONS: Array<{ key: PayCurrency; label: string; iconUrl?: string; emoji?: string }> = [
+  { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
+  { key: 'SKR', label: 'SKR', iconUrl: '/landing/badges/skr.png' },
+  { key: 'COINS', label: 'Game Coins', emoji: '🪙' },
+  { key: 'PRISM', label: 'PRISM', iconUrl: '/landing/badges/prism.png' },
+];
 
 const demoAddress = '11111111111111111111111111111111';
 
@@ -59,6 +72,50 @@ export default function IdentityHub() {
   const walletData = useWalletData(wallet.connected ? address : undefined);
   const composite = useCompositeScore(wallet.connected ? address : null);
   const [minting, setMinting] = useState(false);
+  const [payWith, setPayWith] = useState<PayCurrency>('SOL');
+  const [balances, setBalances] = useState<{ SOL: number | null; SKR: number | null; COINS: number | null; PRISM: number | null }>({
+    SOL: null,
+    SKR: null,
+    COINS: null,
+    PRISM: null,
+  });
+
+  // Fetch balances for the connected wallet (SOL, SKR, Coins). PRISM = NFT, not balance.
+  useEffect(() => {
+    let cancelled = false;
+    if (!wallet.connected || !address) {
+      setBalances({ SOL: null, SKR: null, COINS: null, PRISM: null });
+      return;
+    }
+    (async () => {
+      try {
+        const rpc = getHeliusRpcUrl(address);
+        if (rpc) {
+          const conn = new Connection(rpc, { commitment: 'confirmed', httpHeaders: getHeliusProxyHeaders(address) });
+          const owner = new PublicKey(address);
+          const lamports = await conn.getBalance(owner).catch(() => 0);
+          if (!cancelled) setBalances((b) => ({ ...b, SOL: lamports / 1e9 }));
+          // SKR — try both token programs
+          let skr = 0;
+          const skrMint = new PublicKey(SEEKER_TOKEN.MINT);
+          for (const progId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+            try {
+              const ata = await getAssociatedTokenAddress(skrMint, owner, false, progId);
+              const info = await conn.getTokenAccountBalance(ata);
+              skr = Number(info.value.uiAmount ?? 0);
+              break;
+            } catch { /* try next */ }
+          }
+          if (!cancelled) setBalances((b) => ({ ...b, SKR: skr }));
+        }
+        const coins = await getPrismBalance(address).catch(() => null);
+        if (!cancelled && coins) setBalances((b) => ({ ...b, COINS: coins.balance ?? 0 }));
+      } catch (e) {
+        console.warn('[identity-hub] balance fetch failed', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [wallet.connected, address]);
 
   const liveTraits = walletData.traits;
   const liveScore = Math.round(composite.score || walletData.score || 0);
@@ -82,12 +139,15 @@ export default function IdentityHub() {
     }
     setMinting(true);
     try {
+      const paymentToken: 'SOL' | 'SKR' = payWith === 'SKR' ? 'SKR' : 'SOL';
+      const paidWithCoins = payWith === 'COINS';
       const result = await mintIdentityPrism({
         wallet,
         address,
         traits: liveTraits,
         score: liveScore,
-        paymentToken: 'SOL',
+        paymentToken,
+        paidWithCoins,
       });
       toast.success('Identity minted', {
         description: `${result.mint.slice(0, 4)}...${result.mint.slice(-4)}`,
@@ -155,6 +215,42 @@ export default function IdentityHub() {
                 </div>
               </div>
 
+              {/* Pay-selector: pick currency for mint */}
+              <div className="identity-pay-selector" role="group" aria-label="Select payment currency">
+                {PAY_OPTIONS.map((opt) => {
+                  const active = payWith === opt.key;
+                  const bal = balances[opt.key];
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      className={`identity-pay-chip${active ? ' active' : ''}`}
+                      onClick={() => setPayWith(opt.key)}
+                      aria-pressed={active}
+                      aria-label={opt.label}
+                      title={opt.label}
+                    >
+                      {opt.iconUrl ? (
+                        <img src={opt.iconUrl} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <span className="identity-pay-emoji" aria-hidden="true">{opt.emoji}</span>
+                      )}
+                      {active && (
+                        <span className="identity-pay-bal">
+                          {bal == null
+                            ? '—'
+                            : opt.key === 'SOL'
+                              ? `${bal.toFixed(3)}`
+                              : opt.key === 'PRISM'
+                                ? (bal > 0 ? 'Owned' : '0')
+                                : `${Math.floor(bal).toLocaleString()}`}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
               <button
                 type="button"
                 className="mint-primary-btn identity-card-web-mint-btn"
@@ -172,7 +268,12 @@ export default function IdentityHub() {
 
               <Link to="/blackhole" className="mint-share-btn identity-card-web-secondary">
                 <Share2 size={16} aria-hidden="true" />
-                BLACK HOLE
+                SHARE / BLACK HOLE
+              </Link>
+
+              <Link to="/" className="mint-secondary-btn identity-card-web-secondary">
+                <ArrowLeft size={16} aria-hidden="true" />
+                BACK TO HUB
               </Link>
             </div>
           </aside>

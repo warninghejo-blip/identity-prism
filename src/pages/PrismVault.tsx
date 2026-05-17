@@ -126,12 +126,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             fetch: createRpcFetch() as any,
           } as any);
           const treasuryAddr = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
-          if (signerAddress === treasuryAddr) {
-            setActionMessage('Treasury wallet cannot purchase coin packs');
-            toast.error('Treasury wallet cannot purchase coin packs');
-            setBuyingIdx(null);
-            return;
-          }
+          // Treasury self-purchase is allowed (operator request) — no client-side block.
 
           let sig: string;
           const sendOptions = { skipPreflight: false, preflightCommitment: 'confirmed' as const };
