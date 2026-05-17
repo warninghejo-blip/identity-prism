@@ -4,6 +4,7 @@ import {
   WalletReadyState,
   WalletNotConnectedError,
   WalletSignMessageError,
+  WalletSignTransactionError,
   WalletConnectionError,
   WalletDisconnectionError,
 } from '@solana/wallet-adapter-base';
@@ -135,11 +136,33 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
   }
 
   async signTransaction<T extends Transaction | VersionedTransaction>(transaction: T): Promise<T> {
-    // Stage B: not required for SIWS sign-in flow. Will be wired in a follow-up.
-    throw new Error('signTransaction not implemented (Stage B)');
-    // Keep the parameter referenced to satisfy TS unused-param check.
-    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-    transaction;
+    if (this._authToken === null) throw new WalletNotConnectedError();
+    try {
+      const txBytes = transaction instanceof VersionedTransaction
+        ? transaction.serialize()
+        : (transaction as Transaction).serialize({ requireAllSignatures: false, verifySignatures: false });
+      const txB64 = bytesToBase64(new Uint8Array(txBytes));
+      const { signature } = await SeedVault.signTransaction({
+        authToken: this._authToken,
+        transaction: txB64,
+        derivationPath: this._derivationPath || undefined,
+      });
+      const signedBytes = base64ToBytes(signature);
+      if (transaction instanceof VersionedTransaction) {
+        return VersionedTransaction.deserialize(signedBytes) as T;
+      }
+      return Transaction.from(signedBytes) as T;
+    } catch (e: any) {
+      throw new WalletSignTransactionError(e?.message || 'Seed Vault signTransaction failed', e);
+    }
+  }
+
+  async signAllTransactions<T extends Transaction | VersionedTransaction>(transactions: T[]): Promise<T[]> {
+    const out: T[] = [];
+    for (const tx of transactions) {
+      out.push(await this.signTransaction(tx));
+    }
+    return out;
   }
 
   /**
