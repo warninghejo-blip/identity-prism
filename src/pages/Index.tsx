@@ -2447,6 +2447,75 @@ const Index = () => {
                   {!previewMode && (
                     <div className="mint-panel open">
                       <div className="mint-panel-content">
+                        {/* Pay-selector — chips with icon, shows balance for active currency */}
+                        <div className="identity-pay-selector" role="group" aria-label="Select payment currency">
+                          {([
+                            { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
+                            { key: 'SKR', label: 'SKR', iconUrl: '/landing/badges/skr.png' },
+                            { key: 'COINS', label: 'Game Coins', emoji: '🪙' },
+                          ] as const).map((opt) => {
+                            const active = paymentToken === opt.key;
+                            const bal =
+                              opt.key === 'SOL'
+                                ? solBalance
+                                : opt.key === 'SKR'
+                                  ? skrQuote?.skrAmount ?? null
+                                  : prismBalance?.balance ?? null;
+                            return (
+                              <button
+                                key={opt.key}
+                                type="button"
+                                className={`identity-pay-chip${active ? ' active' : ''}`}
+                                onClick={() => setPaymentToken(opt.key as PaymentToken)}
+                                aria-pressed={active}
+                                aria-label={opt.label}
+                                title={opt.label}
+                              >
+                                {'iconUrl' in opt && opt.iconUrl ? (
+                                  <img
+                                    src={opt.iconUrl}
+                                    alt=""
+                                    onError={(e) => {
+                                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                    }}
+                                  />
+                                ) : (
+                                  <span className="identity-pay-emoji" aria-hidden="true">{('emoji' in opt) ? opt.emoji : ''}</span>
+                                )}
+                                {active && (
+                                  <span className="identity-pay-bal">
+                                    {bal == null
+                                      ? '—'
+                                      : opt.key === 'SOL'
+                                        ? `${Number(bal).toFixed(3)}`
+                                        : `${Math.floor(Number(bal)).toLocaleString()}`}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* MINT button */}
+                        <Button
+                          variant="ghost"
+                          onClick={paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
+                          className="mint-primary-btn"
+                          disabled={mintState === 'minting'}
+                        >
+                          {mintState === 'minting' ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              MINTING
+                            </>
+                          ) : (
+                            <>
+                              <Coins className="h-4 w-4 mr-2" />
+                              MINT IDENTITY
+                            </>
+                          )}
+                        </Button>
+
                         <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
                           <Share2 className="h-4 w-4 mr-2" />
                           SHARE ON X
@@ -2462,7 +2531,7 @@ const Index = () => {
                           className="mint-secondary-btn"
                         >
                           <ArrowLeft className="h-4 w-4 mr-2" />
-                          BACK
+                          BACK TO HUB
                         </Button>
                       </div>
                     </div>
