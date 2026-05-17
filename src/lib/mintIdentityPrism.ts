@@ -80,83 +80,6 @@ function encodeBase64(value: string): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// ── JWT Auth Helper (persisted in sessionStorage — sign once per session) ──
-const JWT_STORAGE_KEY = 'ip_auth_jwt';
-const scopedJwtStorageKey = (baseUrl: string, address: string) => `${JWT_STORAGE_KEY}:${baseUrl}:${address}`;
-
-function loadCachedJwt(baseUrl: string, address: string): { token: string; address: string; expiresAt: number } | null {
-  try {
-    const raw = typeof window !== 'undefined' ? sessionStorage.getItem(scopedJwtStorageKey(baseUrl, address)) : null;
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { token: string; address: string; expiresAt: number };
-    if (parsed.address === address && parsed.expiresAt > Date.now() + 60_000) return parsed;
-    sessionStorage.removeItem(scopedJwtStorageKey(baseUrl, address));
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-function saveCachedJwt(baseUrl: string, entry: { token: string; address: string; expiresAt: number }) {
-  try {
-    sessionStorage.setItem(scopedJwtStorageKey(baseUrl, entry.address), JSON.stringify(entry));
-  } catch {
-    /* ignore */
-  }
-}
-
-async function getAuthToken(
-  wallet: { publicKey?: PublicKey | null; signMessage?: (message: Uint8Array) => Promise<Uint8Array> },
-  baseUrl: string,
-): Promise<string | null> {
-  const address = wallet.publicKey?.toBase58();
-  if (!address || !wallet.signMessage) return null;
-
-  // Return cached token (memory or sessionStorage) if still valid
-  const cached = loadCachedJwt(baseUrl, address);
-  if (cached) return cached.token;
-
-  try {
-    // 1. Get challenge
-    const challengeRes = await fetch(`${baseUrl}/api/auth/challenge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address }),
-    });
-    if (!challengeRes.ok) return null;
-    const { nonce, message } = (await challengeRes.json()) as { nonce: string; message: string };
-
-    // 2. Sign the challenge message
-    const msgBytes = new TextEncoder().encode(message);
-    const signTimeoutMs = 45_000;
-    const signTimeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('SIGN_TIMEOUT')), signTimeoutMs),
-    );
-    console.warn('[auth] requesting signMessage from wallet (MWA Verify dialog)');
-    toast.warning('STAGE: auth.signMessage', { description: 'awaiting wallet dialog', duration: 60000 });
-    const signatureBytes = await Promise.race([wallet.signMessage(msgBytes), signTimeout]);
-    const signatureBase64 = Buffer.from(signatureBytes).toString('base64');
-
-    // 3. Exchange for JWT
-    const tokenRes = await fetch(`${baseUrl}/api/auth/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, nonce, signature: signatureBase64 }),
-    });
-    if (!tokenRes.ok) return null;
-    const { token } = (await tokenRes.json()) as { token: string };
-
-    const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
-    saveCachedJwt(baseUrl, entry);
-    console.warn('[auth] JWT obtained (cached for session)');
-    toast.success('STAGE: auth.jwt OK', { duration: 4000 });
-    return token;
-  } catch (e) {
-    console.warn('[auth] JWT flow failed, proceeding without auth', e);
-    return null;
-  }
-}
-
 const TX_FEE_BUFFER_SOL = 0.003;
 const MIN_REQUIRED_SOL = 0.02;
 
@@ -351,8 +274,9 @@ export async function mintIdentityPrism({
     throw new Error('Wallet not ready or does not support transactions');
   }
 
-  // Obtain JWT auth token (non-blocking — proceeds without if signMessage unavailable)
-  const authToken = await getAuthToken(wallet, coreMintUrl);
+  // Obtain JWT auth token via shared SIWS one-shot (primes MWA session)
+  const { ensureJwt } = await import('@/components/prism/shared');
+  const authToken = await ensureJwt();
   toast.warning(`STAGE: authToken=${authToken ? 'YES' : 'NO'}`, { duration: 4000 });
 
   let coinReservationRequestId: string | null = null;
@@ -839,8 +763,9 @@ export async function updateIdentityPrism({
   const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;
   if (!coreMintUrl) throw new Error('Core mint endpoint is not configured');
 
-  // Obtain JWT auth token
-  const authToken = await getAuthToken(wallet, coreMintUrl);
+  // Obtain JWT auth token via shared SIWS one-shot (primes MWA session)
+  const { ensureJwt } = await import('@/components/prism/shared');
+  const authToken = await ensureJwt();
   const updateAuthHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) updateAuthHeaders['Authorization'] = `Bearer ${authToken}`;
 
