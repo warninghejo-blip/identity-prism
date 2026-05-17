@@ -131,6 +131,7 @@ async function getAuthToken(
     const signTimeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('SIGN_TIMEOUT')), signTimeoutMs),
     );
+    console.warn('[auth] requesting signMessage from wallet (MWA Verify dialog)');
     const signatureBytes = await Promise.race([wallet.signMessage(msgBytes), signTimeout]);
     const signatureBase64 = Buffer.from(signatureBytes).toString('base64');
 
@@ -145,7 +146,7 @@ async function getAuthToken(
 
     const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
     saveCachedJwt(baseUrl, entry);
-    console.info('[auth] JWT obtained (cached for session)');
+    console.warn('[auth] JWT obtained (cached for session)');
     return token;
   } catch (e) {
     console.warn('[auth] JWT flow failed, proceeding without auth', e);
@@ -357,7 +358,7 @@ export async function mintIdentityPrism({
     if (!authToken) {
       throw new Error('Authentication required for coins payment. Please try again.');
     }
-    console.info('[mint-for-coins] sending request', { address, baseUrl: coreMintUrl, ts: Date.now() });
+    console.warn('[mint-for-coins] sending request', { address, baseUrl: coreMintUrl, ts: Date.now() });
     const t0 = performance.now();
     const coinsMintRes = await fetch(`${coreMintUrl}/api/prism/mint-for-coins`, {
       method: 'POST',
@@ -368,7 +369,7 @@ export async function mintIdentityPrism({
       body: JSON.stringify({ address }),
     });
     const elapsed = Math.round(performance.now() - t0);
-    console.info('[mint-for-coins] response', { status: coinsMintRes.status, ok: coinsMintRes.ok, elapsedMs: elapsed });
+    console.warn('[mint-for-coins] response', { status: coinsMintRes.status, ok: coinsMintRes.ok, elapsedMs: elapsed });
     if (!coinsMintRes.ok) {
       const errorText = await coinsMintRes.text();
       let errorMessage = `Coins deduction failed: ${coinsMintRes.status}`;
@@ -392,7 +393,7 @@ export async function mintIdentityPrism({
       throw new Error('Coins reservation missing requestId');
     }
     coinReservationRequestId = coinsPayload.requestId;
-    console.info('[mint] coins payment reserved — skipping SOL payment step');
+    console.warn('[mint] coins payment reserved — skipping SOL payment step');
   }
 
   const parseOptionalPublicKey = (value: string | null, label: string) => {
@@ -526,7 +527,7 @@ export async function mintIdentityPrism({
     ...(paidWithCoins ? { paidWithCoins: true } : {}),
     ...(coinReservationRequestId ? { requestId: coinReservationRequestId } : {}),
   };
-  console.info('[mint] sending mint-cnft payload', {
+  console.warn('[mint] sending mint-cnft payload', {
     coreMintUrl,
     remint,
     paidWithCoins,
@@ -593,7 +594,7 @@ export async function mintIdentityPrism({
     publicKey: new PublicKey(signer),
     signature: signatureMap.get(signer) ?? null,
   }));
-  console.info('[mint] required signers', requiredSigners);
+  console.warn('[mint] required signers', requiredSigners);
   if (!requestId) {
     throw new Error('Mint requestId missing from server response');
   }
@@ -776,7 +777,7 @@ export async function remintIdentityPrism(
   }
 
   const assetId = existingCard.id;
-  console.info('[remint] found asset to burn', { assetId, interface: existingCard.interface });
+  console.warn('[remint] found asset to burn', { assetId, interface: existingCard.interface });
 
   // 2. Combined burn+mint in one transaction — server builds both instructions
   const mintResult = await mintIdentityPrism({
@@ -866,7 +867,7 @@ export async function updateIdentityPrism({
     throw new Error('No existing Identity Prism Core NFT found. Use regular mint instead.');
   }
   const assetId = coreAsset.id;
-  console.info('[update] found Core asset', { assetId });
+  console.warn('[update] found Core asset', { assetId });
 
   // 2. Build metadata and upload
   const resolvedImageUrl = cardImageUrl || `${appBaseUrl}/phav.png`;
@@ -920,7 +921,7 @@ export async function updateIdentityPrism({
   if (!metadataUri) throw new Error('Metadata URI not returned');
 
   // 3. Phase 1: get partially-signed tx from server
-  console.info('[update] requesting tx from /api/update-card', { assetId: assetId.slice(0, 16), name: displayName });
+  console.warn('[update] requesting tx from /api/update-card', { assetId: assetId.slice(0, 16), name: displayName });
   const prepareResponse = await fetch(`${coreMintUrl}/api/update-card`, {
     method: 'POST',
     headers: updateAuthHeaders,
