@@ -146,24 +146,30 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             const {
               getAssociatedTokenAddress,
               createTransferCheckedInstruction,
-              createAssociatedTokenAccountInstruction,
+              createAssociatedTokenAccountIdempotentInstruction,
               TOKEN_PROGRAM_ID,
+              TOKEN_2022_PROGRAM_ID,
             } = await import('@/lib/solanaToken');
             const skrMint = new SolPK('SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3');
             const ownerKey = new SolPK(signerAddress);
             const treasuryKey = new SolPK(treasuryAddr);
-            const mintInfo = await conn.getParsedAccountInfo(skrMint);
-            const decimals = (mintInfo.value?.data as any)?.parsed?.info?.decimals ?? 6;
+            // Detect SKR mint owner program (handles Token-2022) and read decimals from on-chain mint
+            const mintAccountInfo = await conn.getAccountInfo(skrMint);
+            if (!mintAccountInfo) throw new Error('SKR mint account not found');
+            const activeTokenProgramId = mintAccountInfo.owner.equals(TOKEN_2022_PROGRAM_ID)
+              ? TOKEN_2022_PROGRAM_ID
+              : TOKEN_PROGRAM_ID;
+            // SPL mint layout: decimals at offset 44 (1 byte)
+            const decimals = mintAccountInfo.data?.[44] ?? 6;
             const amountBaseUnits = BigInt(skrQuote.skrPrice) * 10n ** BigInt(decimals);
-            const ownerAta = await getAssociatedTokenAddress(skrMint, ownerKey, false, TOKEN_PROGRAM_ID);
-            const treasuryAta = await getAssociatedTokenAddress(skrMint, treasuryKey, false, TOKEN_PROGRAM_ID);
+            const ownerAta = await getAssociatedTokenAddress(skrMint, ownerKey, false, activeTokenProgramId);
+            const treasuryAta = await getAssociatedTokenAddress(skrMint, treasuryKey, false, activeTokenProgramId);
             const tx = new SolTx();
-            const treasuryAtaInfo = await conn.getAccountInfo(treasuryAta);
-            if (!treasuryAtaInfo) {
-              tx.add(
-                createAssociatedTokenAccountInstruction(ownerKey, treasuryAta, treasuryKey, skrMint, TOKEN_PROGRAM_ID),
-              );
-            }
+            // Always use idempotent ATA create — safe whether treasury ATA exists or not.
+            // (Plain create + getAccountInfo race / proxy null-result caused Custom:1 AccountAlreadyInUse.)
+            tx.add(
+              createAssociatedTokenAccountIdempotentInstruction(ownerKey, treasuryAta, treasuryKey, skrMint, activeTokenProgramId),
+            );
             tx.add(
               createTransferCheckedInstruction(
                 ownerAta,
@@ -173,7 +179,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 amountBaseUnits,
                 decimals,
                 [],
-                TOKEN_PROGRAM_ID,
+                activeTokenProgramId,
               ),
             );
             tx.recentBlockhash = (await Promise.race([
