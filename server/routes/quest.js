@@ -110,7 +110,19 @@ function registerQuestRoute(ctx) {
         invalidateQuestProgressCache(addr);
         saveQuestProgressDebounced();
         triggerCompositeUpdate(addr);
-        respondJson(res, 200, { ok: true });
+        const result = {};
+        for (const key of validQuestIds) {
+          const sani = sanitized[key];
+          const serverQ = serverSnapshot[key] || { completed: false, progress: 0 };
+          const incomingQuest = incomingQuests[key] && typeof incomingQuests[key] === 'object' ? incomingQuests[key] : {};
+          const incomingClaimed = incomingQuest.claimed === true || Boolean(incomingQuest.claimedAt);
+          result[key] = {
+            serverCompleted: serverQ.completed,
+            serverProgress: serverQ.progress,
+            accepted: incomingClaimed ? (sani.claimed === true && serverQ.completed) : true,
+          };
+        }
+        respondJson(res, 200, { ok: true, result });
       } catch {
         respondJson(res, 400, { error: 'Invalid JSON body' });
       }

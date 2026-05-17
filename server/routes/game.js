@@ -51,7 +51,7 @@ function registerGameV1Route(ctx) {
 
           const gameMode = mode || session.gameMode || 'orbit';
           if (session.gameMode && session.gameMode !== gameMode) {
-            return respondJson(res, 400, { error: 'Session mode mismatch' });
+            return respondJson(res, 400, { error: 'Session mode mismatch', reason: 'mode_mismatch' });
           }
           const idMultiplier = Math.max(1, Math.floor(Number(session.identityGameCoinMultiplier) || 1));
           const normalizedRequestedDelta = normalizeGameCoinDeltaForCap(delta, idMultiplier);
@@ -62,13 +62,13 @@ function registerGameV1Route(ctx) {
           const alreadyCredited = Number(session.coinsCredited) || 0;
           const remainingSessionAllowance = Math.max(0, Math.floor(maxDelta - alreadyCredited));
           if (remainingSessionAllowance <= 0) {
-            return respondJson(res, 400, { error: 'Session coin allowance exhausted' });
+            return respondJson(res, 400, { error: 'Session coin allowance exhausted', reason: 'session_allowance_exhausted' });
           }
           const todayCoins = getGameCoinsToday(addr);
           const isHolder = mintedAddresses.has(addr);
           const gameCap = isHolder ? dailyGameCoinCap : Math.floor(dailyGameCoinCap / 2);
           if (todayCoins >= gameCap) {
-            return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
+            return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), earned: 0, capped: true, reason: 'daily_cap_exceeded', dailyRemaining: 0 });
           }
           let baseDelta = Math.min(delta, remainingSessionAllowance * idMultiplier, gameCap - todayCoins);
           addGameCoinsToday(addr, baseDelta);
@@ -429,7 +429,7 @@ function registerGameRoute(ctx) {
           const requestedMode = mode || session.gameMode || 'orbit';
           const gameMode = VALID_GAME_MODES.has(requestedMode) ? requestedMode : 'orbit';
           if (session.gameMode && session.gameMode !== gameMode) {
-            return respondJson(res, 400, { error: 'Session mode mismatch' });
+            return respondJson(res, 400, { error: 'Session mode mismatch', reason: 'mode_mismatch' });
           }
           let pinnedIdentityGameCoinMultiplier = Number.isFinite(Number(session.identityGameCoinMultiplier))
             ? Math.max(1, Math.floor(Number(session.identityGameCoinMultiplier)))
@@ -447,13 +447,13 @@ function registerGameRoute(ctx) {
           const alreadyCredited = Number(session.coinsCredited) || 0;
           const remainingSessionAllowance = Math.max(0, Math.floor(maxDelta - alreadyCredited));
           if (remainingSessionAllowance <= 0) {
-            return respondJson(res, 400, { error: 'Session coin allowance exhausted' });
+            return respondJson(res, 400, { error: 'Session coin allowance exhausted', reason: 'session_allowance_exhausted' });
           }
           const todayCoins = getGameCoinsToday(addr);
           const isHolder = mintedAddresses.has(addr);
           const gameCap = isHolder ? dailyGameCoinCap : Math.floor(dailyGameCoinCap / 2);
           if (todayCoins >= gameCap) {
-            return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), capped: true, dailyRemaining: 0 });
+            return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), earned: 0, capped: true, reason: 'daily_cap_exceeded', dailyRemaining: 0 });
           }
           const requestedDelta = Math.min(delta, remainingSessionAllowance * pinnedIdentityGameCoinMultiplier);
           let appliedDelta = requestedDelta;

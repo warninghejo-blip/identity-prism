@@ -402,9 +402,21 @@ export function syncQuestsToServer(address: string, quests: Record<string, Quest
           ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
         },
         body: JSON.stringify({ address, quests: payload }),
-      }).catch((error) => {
-        console.warn('[quests] Sync failed:', error);
-      });
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { result?: Record<string, { serverCompleted: boolean; serverProgress: number; accepted: boolean }> } | null) => {
+          if (data?.result) {
+            Object.entries(data.result).forEach(([qid, r]) => {
+              const local = payload[qid];
+              if (local?.claimedAt && !r.accepted) {
+                console.warn(`[quests] Server rejected claim ${qid}: serverCompleted=${r.serverCompleted}, progress=${r.serverProgress}`);
+              }
+            });
+          }
+        })
+        .catch((error) => {
+          console.warn('[quests] Sync failed:', error);
+        });
     })
     .catch((error) => {
       console.warn('[quests] Sync failed:', error);
