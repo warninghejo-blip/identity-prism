@@ -162,8 +162,8 @@ function NavCard({
 }) {
   return (
     <motion.div variants={hubItemVariants} className="pointer-events-auto">
-      <a
-        href={route}
+      <Link
+        to={route}
         onClick={trackInternalNavigation}
         aria-label={label}
         className="group flex min-h-[96px] w-full flex-col items-center justify-center gap-1.5 cursor-pointer pointer-events-auto active:scale-90 transition-transform overflow-visible rounded-lg bg-transparent p-0 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
@@ -177,7 +177,7 @@ function NavCard({
         <span className="text-[10px] font-bold text-white/50 group-hover:text-white/80 transition-colors text-center leading-tight tracking-wide">
           {label}
         </span>
-      </a>
+      </Link>
     </motion.div>
   );
 }

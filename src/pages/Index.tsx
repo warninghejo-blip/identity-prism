@@ -92,15 +92,18 @@ const makeAdapterAuthWallet = (adapter: AuthCapableAdapter, address: string): Au
   const authWallet: AuthWalletLike = {
     publicKey: { toBase58: () => address },
   };
-  if (adapter.name === SolanaMobileWalletAdapterWalletName) {
-    authWallet.preferSignMessage = true;
-    authWallet.authDelayMs = 350;
-  }
   if (typeof adapter.signMessage === 'function') {
     authWallet.signMessage = (msg: Uint8Array) => adapter.signMessage!(msg);
   }
   if (typeof adapter.signIn === 'function') {
     authWallet.signIn = (input?: AuthSignInInput) => adapter.signIn!(input);
+  }
+  if (adapter.name === SolanaMobileWalletAdapterWalletName) {
+    // SIWS one-shot fix: only prefer signMessage if signIn is unavailable.
+    // signIn() runs in the same MWA transact session as authorize, so it shows
+    // a single biometric prompt instead of two.
+    authWallet.preferSignMessage = !authWallet.signIn;
+    authWallet.authDelayMs = 350;
   }
   return authWallet.signMessage || authWallet.signIn ? authWallet : null;
 };
@@ -343,6 +346,7 @@ const Index = () => {
   const jwtPrewarmPromiseRef = useRef<Promise<boolean> | null>(null);
   const autoEnterAttemptedRef = useRef<string | null>(null);
   const walletHandoffTimeoutRef = useRef<number | null>(null);
+  const warpTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const setWalletHandoff = useCallback((active: boolean) => {
     if (walletHandoffTimeoutRef.current !== null) {
@@ -934,9 +938,49 @@ const Index = () => {
       // eslint-disable-next-line no-console
       if (import.meta.env.DEV) console.log('[MobileConnect] Calling adapter.connect()...');
       const stopMwaNudge = isMwaTarget ? startMwaAssociationNudge() : undefined;
+      let siwsResult: { token: string; address: string } | null = null;
       try {
         const authorizationAdapter = targetWallet.adapter as MobileAuthorizationAdapter;
-        if (isMwaTarget && typeof authorizationAdapter.performAuthorization === 'function') {
+        if (isMwaTarget && typeof (authorizationAdapter as AuthCapableAdapter).signIn === 'function') {
+          // SIWS one-shot: authorize + sign-in message in a SINGLE wallet popup.
+          // Fixes the Seeker 64%-freeze where a second wallet popup never surfaced.
+          writeAuthFlowDebug({ stage: 'mwa_siws_oneshot_start' });
+          const { obtainJwtViaAdapterSignIn } = await import('@/components/prism/shared');
+          siwsResult = await obtainJwtViaAdapterSignIn(authorizationAdapter as AuthCapableAdapter & {
+            publicKey?: { toBase58(): string } | null;
+          });
+          if (!siwsResult) {
+            writeAuthFlowDebug({ stage: 'mwa_siws_oneshot_failed_fallback' });
+            // Fallback to legacy authorize-only path (will trigger separate signMessage popup later).
+            if (typeof authorizationAdapter.performAuthorization === 'function') {
+              await authorizationAdapter.performAuthorization();
+            } else {
+              await targetWallet.adapter.connect();
+            }
+          } else {
+            writeAuthFlowDebug({ stage: 'mwa_siws_oneshot_signed', address: siwsResult.address.slice(0, 8) });
+          }
+        // SIWS one-shot success — JWT already stored by obtainJwtViaAdapterSignIn().
+        // Skip the legacy poll + pendingAutoEnter path (which would call prewarmJwt
+        // with forceFresh: true and trigger the dreaded second-MWA-popup that never
+        // surfaces on Seeker). Just hand the resolved address straight to the hub.
+        if (siwsResult) {
+          jwtPrewarmedRef.current = siwsResult.address;
+          jwtAttemptedRef.current = siwsResult.address;
+          setJwtDeclined(false);
+          setPendingAutoEnterAddress(null);
+          setActiveAddress(siwsResult.address);
+          setIsWarping(true);
+          clearTimeout(warpTimerRef.current);
+          warpTimerRef.current = setTimeout(() => setIsWarping(false), 900);
+          setViewState('scanning');
+          rememberLastConnectedWalletName(targetWallet.adapter.name);
+          trackWalletConnect('mwa-siws');
+          toast.success('Wallet Connected');
+          setWalletHandoff(false);
+          return;
+        }
+        } else if (isMwaTarget && typeof authorizationAdapter.performAuthorization === 'function') {
           await authorizationAdapter.performAuthorization();
         } else {
           await targetWallet.adapter.connect();
@@ -1240,11 +1284,19 @@ const Index = () => {
   useEffect(() => {
     if (!resolvedAddress) return;
     if (suppressPassiveAuthRef.current) return;
-    if (jwtAttemptedRef.current === resolvedAddress || jwtPrewarmedRef.current === resolvedAddress) return;
+    // Always re-check the JWT cache on resolvedAddress change. The early-return
+    // guard that used to live here masked a Seeker SIWS race where the prewarm
+    // ref was set but jwtDeclined had already been flipped to true by the state
+    // machine, leaving the amber "Sign wallet to earn coins" banner stuck even
+    // after a successful sign-in. Cheap to re-check, costs only one storage read.
     import('@/components/prism/shared').then(({ getCachedJwt }) => {
       if (getCachedJwt(resolvedAddress)) {
         jwtPrewarmedRef.current = resolvedAddress;
         setJwtDeclined(false);
+        return;
+      }
+      if (jwtAttemptedRef.current === resolvedAddress || jwtPrewarmedRef.current === resolvedAddress) {
+        // Already attempted via SIWS one-shot path; do not flip back to declined.
         return;
       }
       writeAuthFlowDebug({ stage: 'active_address_no_cached_jwt', address: resolvedAddress.slice(0, 8) });
@@ -1397,6 +1449,14 @@ const Index = () => {
     }
 
     if (resolvedAddress && !getCachedJwt(resolvedAddress)) {
+      // Guard: SIWS one-shot may have just stored the JWT in the same render tick,
+      // before getCachedJwt sees it. If our prewarm ref points to this address we
+      // trust that the JWT exists and skip the declined fallback (otherwise the
+      // amber "Sign wallet to earn coins" banner sticks even after a successful
+      // SIWS sign-in on Seeker).
+      if (jwtPrewarmedRef.current === resolvedAddress) {
+        return;
+      }
       setJwtDeclined(true);
       if (allowUnsignedHubRef.current || returningFromBH.current) {
         setViewState(forceIdentityCardRoute ? 'ready' : 'hub');
@@ -1519,8 +1579,6 @@ const Index = () => {
   }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable, jwtSigning, forceIdentityCardRoute]);
 
   // Removed auto-warp effect
-
-  const warpTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
     if (!pendingAutoEnterAddress) return;
@@ -2201,7 +2259,19 @@ const Index = () => {
   const hasVisitedHub = useRef(false);
   useEffect(() => {
     if (viewState === 'hub') hasVisitedHub.current = true;
-  }, [viewState]);
+    // When we land in the hub with an active address, clear the "Sign wallet to
+    // earn coins" banner if a JWT is already cached. This unbreaks the Seeker
+    // SIWS one-shot flow where the JWT exists but jwtDeclined was flipped to
+    // true earlier in the render cycle.
+    if (viewState === 'hub' && activeAddress) {
+      import('@/components/prism/shared').then(({ getCachedJwt }) => {
+        if (getCachedJwt(activeAddress)) {
+          jwtPrewarmedRef.current = activeAddress;
+          setJwtDeclined(false);
+        }
+      });
+    }
+  }, [viewState, activeAddress]);
   const skipCurtain = isReturning || hasVisitedHub.current;
   const [curtainOpen, setCurtainOpen] = useState(skipCurtain);
   const [curtainDone, setCurtainDone] = useState(skipCurtain);

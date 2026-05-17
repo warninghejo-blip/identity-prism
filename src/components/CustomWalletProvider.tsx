@@ -793,11 +793,17 @@ export const CustomWalletProvider = ({
         }
 
         const isMwa = adapter?.name === SolanaMobileWalletAdapterWalletName;
+        // SIWS one-shot fix: for MWA we prefer signIn() over signMessage() because
+        // signIn() runs inside the SAME wallet transact session as the initial authorize,
+        // showing a single biometric prompt. The legacy signMessage() path requires a
+        // second transact() round-trip, and on Seed Vault that second wallet popup
+        // never surfaces (PRISM SCAN freeze at 64%).
+        const preferSignMessage = isMwa && !signIn;
         const authWallet = {
           publicKey,
           signMessage,
           signIn,
-          preferSignMessage: isMwa,
+          preferSignMessage,
           authDelayMs: isMwa ? 350 : 0,
         };
         setAuthWallet(authWallet);
