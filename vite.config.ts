@@ -20,7 +20,14 @@ export default defineConfig(({ mode }) => {
     ? (process.env.VITE_LOCAL_RPC_TARGET || prodApiTarget)
     : prodApiTarget;
 
+  // Target split: VITE_TARGET=web → marketing site; VITE_TARGET=app → APK/Capacitor
+  const target = (process.env.VITE_TARGET === "app" ? "app" : "web") as "web" | "app";
+  const outDir = target === "app" ? "dist/app" : "dist/web";
+  const publicDir = target === "app" ? "public-app" : "public-web";
+  const htmlInput = target === "app" ? "index-app.html" : "index-web.html";
+
   return {
+  publicDir,
   server: {
     host: "::",
     port: 7474,
@@ -76,11 +83,14 @@ export default defineConfig(({ mode }) => {
     },
   },
   build: {
+    outDir,
+    emptyOutDir: true,
     sourcemap: false,
     modulePreload: { polyfill: true },
     cssCodeSplit: true,
     target: 'es2020',
     rollupOptions: {
+      input: htmlInput,
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {

@@ -3,7 +3,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.identityprism.app',
   appName: 'Identity Prism',
-  webDir: 'dist',
+  webDir: 'dist/app',
   server: {
     androidScheme: 'https',
     cleartext: true,

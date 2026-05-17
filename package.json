@@ -4,10 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "build:dev": "vite build --mode development",
-    "preview": "vite preview",
+    "dev": "cross-env VITE_TARGET=web vite",
+    "dev:web": "cross-env VITE_TARGET=web vite",
+    "dev:app": "cross-env VITE_TARGET=app vite",
+    "build:web": "cross-env VITE_TARGET=web vite build && node -e \"require('fs').copyFileSync('dist/web/index-web.html','dist/web/index.html')\"",
+    "build:app": "cross-env VITE_TARGET=app vite build && node -e \"require('fs').copyFileSync('dist/app/index-app.html','dist/app/index.html')\"",
+    "build": "npm run build:web && npm run build:app",
+    "build:dev": "cross-env VITE_TARGET=web vite build --mode development",
+    "preview": "cross-env VITE_TARGET=web vite preview",
+    "cap:sync": "npm run build:app && node -e \"require('fs').copyFileSync('dist/app/index-app.html','dist/app/index.html')\" && npx cap sync android",
     "test": "vitest run"
   },
   "dependencies": {
@@ -64,6 +69,7 @@
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.21",
+    "cross-env": "^10.1.0",
     "eslint": "^9.32.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
