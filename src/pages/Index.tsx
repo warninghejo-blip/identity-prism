@@ -344,6 +344,12 @@ const Index = () => {
   const jwtAttemptedRef = useRef<string | null>(null);
   const jwtPrewarmInFlightAddressRef = useRef<string | null>(null);
   const jwtPrewarmPromiseRef = useRef<Promise<boolean> | null>(null);
+  // True while the SIWS one-shot adapter.signIn() call is in flight. The MWA adapter
+  // can fire its 'connect' event BEFORE signIn() resolves — which would queue a
+  // redundant prewarmJwt(forceFresh) that re-signs the message and immediately hits
+  // the server's 5s rate-limit on /api/auth/token (429), surfacing a spurious
+  // "Sign-in needed" toast on Seeker even though sign-in just succeeded.
+  const siwsInProgressRef = useRef(false);
   const autoEnterAttemptedRef = useRef<string | null>(null);
   const walletHandoffTimeoutRef = useRef<number | null>(null);
   const warpTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -413,6 +419,17 @@ const Index = () => {
 
         const { getCachedJwt, obtainJwt, setAuthWallet } = await import('@/components/prism/shared');
         setAuthWallet(authWallet);
+        // Defense-in-depth against SIWS-one-shot/legacy-prewarm race: even when callers
+        // ask for forceFresh, honor a JWT that the SIWS path stored in the same render
+        // tick. Skipping this would re-sign the message and immediately hit the server's
+        // 5-second per-IP rate-limit on /api/auth/token (429), surfacing a spurious
+        // "Sign-in needed" toast on Seeker right after a successful sign-in.
+        if (options?.forceFresh && getCachedJwt(targetAddress)) {
+          jwtPrewarmedRef.current = targetAddress;
+          setJwtDeclined(false);
+          writeAuthFlowDebug({ stage: 'index_prewarm_force_fresh_skipped_cached' });
+          return true;
+        }
         if (options?.forceFresh) {
           clearStoredAuthJwt();
           jwtPrewarmedRef.current = null;
@@ -848,6 +865,25 @@ const Index = () => {
       if (!activeAddress) {
         const resolved = pubKey?.toBase58?.();
         if (resolved) {
+          // SIWS one-shot race fix: handleMobileConnect's SIWS path stores JWT and sets
+          // jwtPrewarmedRef synchronously, but setActiveAddress is async. The MWA adapter
+          // fires its 'connect' event mid-signIn() (BEFORE the promise resolves) — at that
+          // microtask activeAddress and jwtPrewarmedRef are both still empty, and we'd
+          // queue a redundant prewarmJwt(forceFresh) that re-signs the message AND hits the
+          // 5s /api/auth/token rate-limit (429), surfacing the "Sign-in needed" toast even
+          // though sign-in just succeeded.
+          if (
+            siwsInProgressRef.current ||
+            jwtPrewarmedRef.current === resolved ||
+            jwtAttemptedRef.current === resolved
+          ) {
+            writeAuthFlowDebug({
+              stage: 'connect_event_skipped_siws_in_progress_or_done',
+              address: resolved.slice(0, 8),
+              siwsInProgress: siwsInProgressRef.current,
+            });
+            return;
+          }
           // eslint-disable-next-line no-console
           if (import.meta.env.DEV) console.log('[MobileConnect] Adapter connect event:', resolved);
           writeAuthFlowDebug({ stage: 'connect_event_auto_enter_pending', address: resolved.slice(0, 8) });
@@ -952,9 +988,19 @@ const Index = () => {
           // Fixes the Seeker 64%-freeze where a second wallet popup never surfaced.
           writeAuthFlowDebug({ stage: 'mwa_siws_oneshot_start' });
           const { obtainJwtViaAdapterSignIn } = await import('@/components/prism/shared');
-          siwsResult = await obtainJwtViaAdapterSignIn(authorizationAdapter as AuthCapableAdapter & {
-            publicKey?: { toBase58(): string } | null;
-          });
+          siwsInProgressRef.current = true;
+          try {
+            siwsResult = await obtainJwtViaAdapterSignIn(authorizationAdapter as AuthCapableAdapter & {
+              publicKey?: { toBase58(): string } | null;
+            });
+          } finally {
+            // Keep the sentinel set for one extra microtask so that any
+            // adapter 'connect' event that fires synchronously right after
+            // signIn() resolves still sees us in the SIWS path.
+            queueMicrotask(() => {
+              siwsInProgressRef.current = false;
+            });
+          }
           if (!siwsResult) {
             writeAuthFlowDebug({ stage: 'mwa_siws_oneshot_failed_fallback' });
             // Fallback to legacy authorize-only path (will trigger separate signMessage popup later).
