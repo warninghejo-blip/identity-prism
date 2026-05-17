@@ -129,7 +129,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
           // Treasury self-purchase is allowed (operator request) — no client-side block.
 
           let sig: string;
-          const sendOptions = { skipPreflight: false, preflightCommitment: 'confirmed' as const };
+          const sendOptions = { skipPreflight: true, preflightCommitment: 'confirmed' as const };
           const authHeader = getCachedJwt(signerAddress);
           const jsonHeaders = {
             'Content-Type': 'application/json',
@@ -189,18 +189,6 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               ),
             ])).blockhash;
             tx.feePayer = ownerKey;
-            const simulation = await conn.simulateTransaction(tx, undefined, {
-              sigVerify: false,
-              replaceRecentBlockhash: true,
-            } as any);
-            if (simulation.value.err)
-              throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-            tx.recentBlockhash = (await Promise.race([
-              conn.getLatestBlockhash('confirmed'),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
-              ),
-            ])).blockhash;
             const origSerializeSKR = tx.serialize.bind(tx);
             tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
               origSerializeSKR({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
