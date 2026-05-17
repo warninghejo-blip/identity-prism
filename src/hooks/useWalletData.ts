@@ -388,6 +388,7 @@ export function useWalletData(address?: string) {
   const isDev = import.meta.env.DEV;
 
   useEffect(() => {
+    console.info('[useWalletData] effect fired', { address, hasAddress: Boolean(address) });
     // Immediate reset when address changes or is removed
     if (!address) {
       setWalletData(buildDisconnectedWalletData());
