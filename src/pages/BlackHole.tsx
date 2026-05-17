@@ -2000,12 +2000,18 @@ const BlackHole = () => {
         })) as typeof tx.serialize;
 
       const signPromise = signTransaction
-        ? signTransaction(tx).then(async (signed) =>
-            connection.sendRawTransaction(
+        ? signTransaction(tx).then(async (signed) => {
+            console.warn(`[BlackHole] ${label} signed — broadcasting`, {
+              feePayer: publicKey?.toBase58().slice(0, 8),
+              blockhash: blockhash?.slice(0, 8),
+            });
+            const sig = await connection.sendRawTransaction(
               (signed as Transaction).serialize({ requireAllSignatures: false, verifySignatures: false }),
               { skipPreflight: true, preflightCommitment: 'confirmed' },
-            ),
-          )
+            );
+            console.warn(`[BlackHole] ${label} broadcast → ${sig}`);
+            return sig;
+          })
         : sendTransaction(tx, connection, { skipPreflight: true, preflightCommitment: 'confirmed' });
 
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -2187,6 +2193,17 @@ const BlackHole = () => {
 
       burnPlans = await validateTokenPlans(burnPlans, 'burn');
       closePlans = await validateTokenPlans(closePlans, 'close');
+      // Hard guard: if validation killed every plan, abort loudly. Previously would silent-succeed.
+      if (swapPlans.length === 0 && burnPlans.length === 0 && closePlans.length === 0) {
+        console.error('[BlackHole] handleIncinerate aborted — all plans invalidated post-scan', {
+          initialExecutable: executablePlans.length,
+          swap: 0, burn: 0, close: 0,
+        });
+        toast.error('Wallet state changed — please rescan and try again', {
+          description: 'All selected assets were modified between scan and execute. Nothing was broadcast.',
+        });
+        return;
+      }
       const estimatedNetSol = executablePlans.reduce((sum, plan) => sum + plan.estimatedNetSol, 0);
       const estimatedReward = estimateBlackHoleReward(
         executablePlans.filter((plan) => !plan.token.isNft).length,
@@ -2228,7 +2245,8 @@ const BlackHole = () => {
           const tx = new Transaction();
           tx.add(
             ComputeBudgetProgram.setComputeUnitLimit({ units: mode === 'burn' ? 240_000 : 180_000 }),
-            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5_000 }),
+            // Bumped 5_000 → 50_000 — 5_000 frequently lost to mempool drop on current mainnet load.
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
             buildMemoInstruction(mode === 'burn' ? BH_BURN_MEMO : BH_CLOSE_MEMO),
           );
 

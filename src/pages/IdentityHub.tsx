@@ -255,7 +255,7 @@ export default function IdentityHub() {
                 type="button"
                 className="mint-primary-btn identity-card-web-mint-btn"
                 onClick={handleMint}
-                disabled={wallet.connected && !readyToMint}
+                disabled={minting}
               >
                 {minting ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <BadgeCheck size={18} aria-hidden="true" />}
                 {minting ? 'MINTING' : wallet.connected ? 'MINT IDENTITY' : 'CONNECT WALLET'}
