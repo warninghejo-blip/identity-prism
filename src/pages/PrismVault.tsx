@@ -106,8 +106,19 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
     setActionMessage('Preparing transaction...');
     setBuyingIdx(selectedIdx);
 
+    // 120s timeout covers PIN entry + MWA approval + chain confirmation + POST round-trip.
+    // Earlier 30s caused silent fails: SOL was spent but coins not credited when user
+    // took longer than 30s to approve in wallet UI.
     const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Request timed out — server may be unavailable')), 30_000),
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              'Purchase took longer than 2 minutes — your SOL may still be processing. Check Vault balance or wallet activity before retrying.',
+            ),
+          ),
+        120_000,
+      ),
     );
 
     try {
@@ -1124,6 +1135,23 @@ export default function PrismVault() {
 
   useEffect(() => {
     fetchBalanceDirect();
+  }, [fetchBalanceDirect]);
+
+  // Refetch balance when user returns to the page (window focus / app foreground).
+  // Without this, balance stayed stale after buying coins and switching apps.
+  useEffect(() => {
+    const onFocus = () => {
+      fetchBalanceDirect();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') fetchBalanceDirect();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [fetchBalanceDirect]);
 
   return (
