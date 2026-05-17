@@ -47,6 +47,8 @@
         <package android:name="app.phantom" />
         <package android:name="com.solflare.mobile" />
         <package android:name="xnft.backpack" />
+        <package android:name="com.solanamobile.wallet" />
+        <package android:name="com.seekervault.app" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.BROWSABLE" />
@@ -63,6 +65,4 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Android 14+ Local Network Access (Solana Mobile Wallet Adapter loopback) -->
-    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 </manifest>
