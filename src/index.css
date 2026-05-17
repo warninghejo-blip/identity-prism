@@ -505,7 +505,31 @@ body:has(.page-shell) #root > * {
 }
 
 .card-stage.controls-closed {
-  padding-bottom: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1rem;
+  padding-bottom: clamp(16px, 4vh, 32px);
+}
+
+/* Portrait / narrow viewports — ensure card + mint-panel stack vertically
+   so the MINT button is reachable inside viewport (was clipped off-screen). */
+@media (max-aspect-ratio: 1/1) {
+  .card-stage.controls-closed {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding-top: clamp(16px, 4vh, 48px);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    gap: 1rem;
+  }
+  .card-stage.controls-closed .celestial-card-shell {
+    height: min(64vh, 560px);
+    flex: 0 0 auto;
+  }
+  .card-stage.controls-closed .mint-panel {
+    flex: 0 0 auto;
+    margin-top: 0;
+  }
 }
 
 @media (max-width: 640px) {
