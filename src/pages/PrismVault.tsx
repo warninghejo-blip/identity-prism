@@ -21,7 +21,7 @@ import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 // ── Buy Coins Section ──
 
 const RPC_STEP_TIMEOUT_MS = 30_000;
-const CONFIRM_TIMEOUT_MS = 60_000;
+const CONFIRM_TIMEOUT_MS = 120_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
@@ -39,6 +39,37 @@ function createRpcFetch(timeoutMs = RPC_STEP_TIMEOUT_MS): typeof fetch {
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
     return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeoutId));
   };
+}
+
+/**
+ * Long-running tx confirmation using getSignatureStatuses polling.
+ * web3.js conn.confirmTransaction has 30s default that fires before slow mainnet finalization.
+ * We poll up to `timeoutMs` (default CONFIRM_TIMEOUT_MS) every 2s. On timeout we throw
+ * a non-fatal error so caller can still attempt backend credit (backend re-verifies on-chain).
+ */
+async function waitForConfirmation(
+  conn: { getSignatureStatuses: (sigs: string[]) => Promise<{ value: ({ confirmationStatus?: string; err?: unknown } | null)[] }> },
+  sig: string,
+  timeoutMs = CONFIRM_TIMEOUT_MS,
+): Promise<'confirmed' | 'finalized' | 'timeout'> {
+  const start = Date.now();
+  let lastError: unknown = null;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await conn.getSignatureStatuses([sig]);
+      const status = res?.value?.[0];
+      if (status?.err) throw new Error('Transaction failed on-chain');
+      if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
+        return status.confirmationStatus;
+      }
+    } catch (e) {
+      lastError = e;
+      // soft-fail: keep polling; network blip shouldn't kill flow
+    }
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  if (lastError instanceof Error && lastError.message === 'Transaction failed on-chain') throw lastError;
+  return 'timeout';
 }
 
 function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
@@ -219,7 +250,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               throw new Error('Wallet does not support transaction signing');
             }
             toast.info('Confirming SKR transaction...');
-            await conn.confirmTransaction(sig, 'confirmed');
+            const skrConfirmStatus = await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
+            if (skrConfirmStatus === 'timeout') {
+              toast.info('Still confirming — credit will be processed when transaction is verified.');
+            }
 
             const res = await fetch(`${base}/api/prism/buy/skr`, {
               method: 'POST',
@@ -272,7 +306,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               throw new Error('Wallet does not support transaction signing');
             }
             toast.info('Confirming transaction...');
-            await conn.confirmTransaction(sig, 'confirmed');
+            const solConfirmStatus = await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
+            if (solConfirmStatus === 'timeout') {
+              toast.info('Still confirming — credit will be processed when transaction is verified.');
+            }
 
             const res = await fetch(`${base}/api/prism/buy`, {
               method: 'POST',
