@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="/phav.png" />
+    <link rel="apple-touch-icon" href="/phav.png" />
+    <title>Identity Prism Privacy Policy</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+        margin: 0;
+        line-height: 1.6;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      .legal-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 40px;
+        background: #ffffff;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+        position: sticky;
+        top: 0;
+      }
+      .legal-back {
+        text-decoration: none;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .legal-back:hover {
+        color: #0ea5e9;
+      }
+      .legal-logo {
+        width: 28px;
+        height: 28px;
+      }
+      .legal-shell {
+        padding: 32px 40px 48px;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 16px;
+      }
+      h2 {
+        font-size: 18px;
+        margin-top: 24px;
+      }
+      p {
+        max-width: 820px;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="legal-nav">
+      <a class="legal-back" href="/" data-legal-back>Back to app</a>
+      <img class="legal-logo" src="/phav.png" alt="Identity Prism" />
+    </nav>
+    <main class="legal-shell">
+      <h1>Privacy Policy</h1>
+      <p><strong>Last updated:</strong> 2026-02-03</p>
+
+      <p>
+        Identity Prism provides on-chain wallet insights and visual identity cards. We only process public
+        blockchain data and public wallet addresses that you enter or connect to. We do not collect
+        passwords, private keys, seed phrases, or any non-public wallet credentials.
+      </p>
+
+      <h2>Data We Process</h2>
+      <p>
+        We process public wallet addresses, transaction history, balances, and other publicly available
+        on-chain metadata needed to generate scores, badges, and identity visuals. This data is publicly
+        available on the Solana blockchain.
+      </p>
+
+      <h2>Wallet Permissions</h2>
+      <p>
+        When you connect a wallet, you authorize the app to read your public address and request standard
+        public account data. You can disconnect at any time from your wallet provider.
+      </p>
+
+      <h2>How We Use Data</h2>
+      <p>
+        Data is used solely to generate your Identity Prism card, insights, and sharing features (including
+        Solana Blink sharing). We do not sell personal data or share it with advertisers.
+      </p>
+
+      <h2>Data Retention</h2>
+      <p>
+        Wallet insights are generated on demand. We do not store private user data beyond what is required
+        for app functionality and caching public results.
+      </p>
+
+      <h2>Third-Party Services</h2>
+      <p>
+        We may query blockchain infrastructure providers to retrieve public on-chain data. These providers
+        process the same public data to fulfill requests and do not receive any private keys.
+      </p>
+
+      <h2>Contact</h2>
+      <p>If you have questions, contact us at <a href="mailto:support@identityprism.xyz">support@identityprism.xyz</a>.</p>
+    </main>
+    <script>
+      (function () {
+        var back = document.querySelector("[data-legal-back]");
+        if (!back) return;
+        back.addEventListener("click", function (event) {
+          event.preventDefault();
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.href = "/";
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

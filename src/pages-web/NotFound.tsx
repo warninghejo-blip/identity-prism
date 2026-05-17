@@ -1,0 +1,26 @@
+import { useLocation, Link } from 'react-router-dom';
+import { useEffect } from 'react';
+import { fadeOutTransition } from '@/lib/fadeTransition';
+
+const NotFound = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    fadeOutTransition();
+    console.warn('[404] Non-existent route:', location.pathname);
+  }, [location.pathname]);
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#05070a]">
+      <div className="text-center">
+        <h1 className="mb-4 text-4xl font-bold text-white">404</h1>
+        <p className="mb-4 text-xl text-white/70">Oops! Page not found</p>
+        <Link to="/" className="text-primary underline hover:text-primary/90">
+          Return to Home
+        </Link>
+      </div>
+    </div>
+  );
+};
+
+export default NotFound;

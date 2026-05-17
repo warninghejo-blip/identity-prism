@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="/phav.png" />
+    <link rel="apple-touch-icon" href="/phav.png" />
+    <title>Identity Prism Terms & Conditions</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+        margin: 0;
+        line-height: 1.6;
+        color: #0f172a;
+        background: #f8fafc;
+      }
+      .legal-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 40px;
+        background: #ffffff;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+        position: sticky;
+        top: 0;
+      }
+      .legal-back {
+        text-decoration: none;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.2em;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .legal-back:hover {
+        color: #0ea5e9;
+      }
+      .legal-logo {
+        width: 28px;
+        height: 28px;
+      }
+      .legal-shell {
+        padding: 32px 40px 48px;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 16px;
+      }
+      h2 {
+        font-size: 18px;
+        margin-top: 24px;
+      }
+      p {
+        max-width: 820px;
+      }
+      ul {
+        max-width: 820px;
+        padding-left: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="legal-nav">
+      <a class="legal-back" href="/" data-legal-back>Back to app</a>
+      <img class="legal-logo" src="/phav.png" alt="Identity Prism" />
+    </nav>
+    <main class="legal-shell">
+      <h1>Terms & Conditions</h1>
+      <p><strong>Last updated:</strong> 2026-02-05</p>
+
+      <p>
+        These Terms & Conditions govern your use of Identity Prism. By accessing or using the app, you
+        agree to these terms. If you do not agree, do not use the service.
+      </p>
+
+      <h2>Use of the Service</h2>
+      <p>
+        Identity Prism is a non-custodial Solana dApp that visualizes public blockchain data. You are
+        responsible for all actions taken with your wallet and for verifying any on-chain transaction.
+        We do not request or store your private keys or seed phrase.
+      </p>
+
+      <h2>Eligibility</h2>
+      <p>
+        You must be at least 18 years old, or the age of majority in your jurisdiction, to use the
+        service. By using Identity Prism, you represent that you meet this requirement.
+      </p>
+
+      <h2>Wallet Connections</h2>
+      <p>
+        When you connect a wallet, you authorize the app to read your public address and related
+        blockchain data. You can disconnect your wallet at any time from your wallet provider.
+      </p>
+
+      <h2>Third-Party Services</h2>
+      <p>
+        The app integrates with third-party wallet providers and RPC infrastructure. We are not
+        responsible for the availability, security, or performance of those services.
+      </p>
+
+      <h2>Prohibited Activities</h2>
+      <ul>
+        <li>Using the service for unlawful purposes or to violate third-party rights.</li>
+        <li>Attempting to disrupt, exploit, or reverse engineer the application or its infrastructure.</li>
+        <li>Submitting fraudulent or malicious data.</li>
+      </ul>
+
+      <h2>User Content & Feedback</h2>
+      <p>
+        If you provide feedback, ideas, or suggestions, you grant us a perpetual, worldwide,
+        royalty-free license to use them to improve the service. You remain responsible for any
+        content you publish on third-party platforms.
+      </p>
+
+      <h2>Intellectual Property</h2>
+      <p>
+        Identity Prism, its visuals, branding, and code are owned by the publisher. You may not copy,
+        redistribute, or modify the app or its assets without permission.
+      </p>
+
+      <h2>Disclaimer</h2>
+      <p>
+        Identity Prism is provided "as is" without warranties of any kind. The app does not provide
+        financial or investment advice.
+      </p>
+
+      <h2>Limitation of Liability</h2>
+      <p>
+        To the maximum extent permitted by law, the publisher is not liable for any indirect or
+        consequential damages arising from your use of the service.
+      </p>
+
+      <h2>Termination</h2>
+      <p>
+        We may suspend or terminate access to the service if you violate these terms or if required
+        to comply with legal obligations. You may stop using the service at any time.
+      </p>
+
+      <h2>Governing Law</h2>
+      <p>
+        These terms are governed by the laws of the publisher's jurisdiction, without regard to
+        conflict of law principles.
+      </p>
+
+      <h2>Dispute Resolution</h2>
+      <p>
+        Disputes should first be sent to us at the contact email below. If we cannot resolve the
+        issue, disputes will be handled in the courts of the publisher's jurisdiction.
+      </p>
+
+      <h2>Changes</h2>
+      <p>
+        We may update these Terms & Conditions from time to time. Continued use of the app indicates
+        acceptance of the updated terms.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions about these terms? Contact
+        <a href="mailto:support@identityprism.xyz">support@identityprism.xyz</a>.
+      </p>
+    </main>
+    <script>
+      (function () {
+        var back = document.querySelector("[data-legal-back]");
+        if (!back) return;
+        back.addEventListener("click", function (event) {
+          event.preventDefault();
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            window.location.href = "/";
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
