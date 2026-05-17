@@ -13,6 +13,7 @@ import {
   createDefaultWalletNotFoundHandler,
 } from '@solana-mobile/wallet-adapter-mobile';
 import { Capacitor } from '@capacitor/core';
+import { SeedVaultAdapter } from './lib/SeedVaultAdapter';
 import App from './App';
 import Index from './pages/Index';
 import NotFound from './pages/NotFound';
@@ -285,6 +286,30 @@ const appIdentity = {
   icon: 'icon-192.png',
 };
 
+// Patch: Capacitor WebView never fires window.blur on intent launch,
+// causing MWA browser-build to throw ERROR_WALLET_NOT_FOUND after 3s timeout.
+// Force-resolve blur detection on native platforms by synthesizing blur event.
+try {
+  if (typeof window !== 'undefined' && Capacitor?.isNativePlatform?.()) {
+    const originalAssign = window.location.assign.bind(window.location);
+    (window.location as any).assign = (url: string | URL) => {
+      try {
+        const urlStr = typeof url === 'string' ? url : url.toString();
+        if (urlStr.startsWith('solana-wallet:')) {
+          originalAssign(urlStr);
+          setTimeout(() => {
+            try { window.dispatchEvent(new Event('blur')); } catch {}
+          }, 50);
+          return;
+        }
+      } catch {}
+      return originalAssign(url as any);
+    };
+  }
+} catch (e) {
+  console.error('[BlurPatch] init failed:', e);
+}
+
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   addressSelector: createDefaultAddressSelector(),
   appIdentity,
@@ -293,7 +318,13 @@ const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   onWalletNotFound: createDefaultWalletNotFoundHandler(),
 });
 
-const wallets = [mobileWalletAdapter, new PhantomWalletAdapter(), new SolflareWalletAdapter()];
+// On Capacitor native (Seeker) prefer Seed Vault. MWA + browser wallets remain as fallbacks.
+const wallets = [
+  ...(isCapacitorNative ? [new SeedVaultAdapter()] : []),
+  mobileWalletAdapter,
+  new PhantomWalletAdapter(),
+  new SolflareWalletAdapter(),
+];
 const heliusRpcUrl = getHeliusRpcUrl();
 if (!heliusRpcUrl) {
   console.warn('Helius proxy URL missing. Wallet RPC will fall back to the public Solana endpoint.');
