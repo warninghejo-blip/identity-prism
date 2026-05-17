@@ -318,12 +318,14 @@ const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   onWalletNotFound: createDefaultWalletNotFoundHandler(),
 });
 
-// On Capacitor native (Seeker) prefer Seed Vault. MWA + browser wallets remain as fallbacks.
+// MWA primary on native — Solana Mobile Wallet (com.solanamobile.wallet) provides
+// system bottom-sheet picker exposing Genesis Seed + all signers plug-and-play.
+// SeedVaultAdapter registered last as manual fallback.
 const wallets = [
-  ...(isCapacitorNative ? [new SeedVaultAdapter()] : []),
   mobileWalletAdapter,
   new PhantomWalletAdapter(),
   new SolflareWalletAdapter(),
+  ...(isCapacitorNative ? [new SeedVaultAdapter()] : []),
 ];
 const heliusRpcUrl = getHeliusRpcUrl();
 if (!heliusRpcUrl) {
