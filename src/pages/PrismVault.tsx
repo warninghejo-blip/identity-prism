@@ -33,12 +33,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-function createRpcFetch(timeoutMs = RPC_STEP_TIMEOUT_MS): typeof fetch {
-  return (input, init) => {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeoutId));
-  };
+// FIX (2026-05-17): Removed AbortController-based fetch wrapper.
+// Capacitor backgrounds the WebView when MWA opens → setTimeout fires late on resume,
+// aborting the in-flight blockhash fetch with "signal is aborted without reason".
+// Use default fetch — web3.js has its own retry. Outer 120s Promise.race covers stalls.
+function createRpcFetch(_timeoutMs = RPC_STEP_TIMEOUT_MS): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init)) as typeof fetch;
 }
 
 /**

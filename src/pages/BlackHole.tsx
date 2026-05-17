@@ -906,58 +906,47 @@ const buildSwapTransaction = async (userPublicKey: string, quoteResponse: SwapQu
   // Extract from quoteResponse — supports both synthetic order_execute ({mode,inputMint,outputMint,amount})
   // and full Jupiter legacy_raw response ({inputMint,outputMint,inAmount,...}).
   const amountStr = String(quoteResponse?.amount ?? quoteResponse?.inAmount ?? '');
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(new Error('BUILD_SWAP_TIMEOUT')), 15_000);
-  try {
-    const response = await fetch(`${base}/api/market/build-swap`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${jwt}`,
-      },
-      body: JSON.stringify({
-        userPublicKey,
-        inputMint: quoteResponse?.inputMint,
-        outputMint: quoteResponse?.outputMint,
-        amount: amountStr,
-        slippageBps: 100,
-      }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload?.swapTransaction) {
-      throw new Error(payload?.error || 'Failed to build swap transaction');
-    }
-    return payload as PreparedSwapTransaction;
-  } finally {
-    clearTimeout(timeoutId);
+  // FIX (2026-05-17): Removed AbortController — Capacitor backgrounds WebView during MWA,
+  // delayed setTimeout fires on resume and aborts in-flight fetch with "signal aborted".
+  const response = await fetch(`${base}/api/market/build-swap`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify({
+      userPublicKey,
+      inputMint: quoteResponse?.inputMint,
+      outputMint: quoteResponse?.outputMint,
+      amount: amountStr,
+      slippageBps: 100,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.swapTransaction) {
+    throw new Error(payload?.error || 'Failed to build swap transaction');
   }
+  return payload as PreparedSwapTransaction;
 };
 
 const executeSwapTransaction = async (signedTransaction: string, requestId: string) => {
   const jwt = await ensureJwt();
   if (!jwt) throw new Error('Wallet authorization required');
   const base = getApiBase();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(new Error('EXECUTE_SWAP_TIMEOUT')), 15_000);
-  try {
-    const response = await fetch(`${base}/api/market/execute-swap`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${jwt}`,
-      },
-      body: JSON.stringify({ signedTransaction, requestId }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload?.signature) {
-      throw new Error(payload?.error || 'Failed to execute swap transaction');
-    }
-    return payload as { signature: string; status?: string };
-  } finally {
-    clearTimeout(timeoutId);
+  // FIX (2026-05-17): Removed AbortController (MWA-background-resume abort bug).
+  const response = await fetch(`${base}/api/market/execute-swap`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify({ signedTransaction, requestId }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.signature) {
+    throw new Error(payload?.error || 'Failed to execute swap transaction');
   }
+  return payload as { signature: string; status?: string };
 };
 
 const claimBlackHoleReward = async (operations: ResolutionOperation[]) => {
@@ -965,26 +954,20 @@ const claimBlackHoleReward = async (operations: ResolutionOperation[]) => {
   const jwt = await ensureJwt();
   if (!jwt) return { earned: 0 };
   const base = getApiBase();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(new Error('CLAIM_REWARD_TIMEOUT')), 30_000);
-  try {
-    const response = await fetch(`${base}/api/blackhole/claim`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${jwt}`,
-      },
-      body: JSON.stringify({ operations }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.error || 'Failed to claim Black Hole reward');
-    }
-    return payload as { earned: number; netResolvedSol: number; fungibleResolved: number; nftResolved: number };
-  } finally {
-    clearTimeout(timeoutId);
+  // FIX (2026-05-17): Removed AbortController (MWA-background-resume abort bug).
+  const response = await fetch(`${base}/api/blackhole/claim`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify({ operations }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || 'Failed to claim Black Hole reward');
   }
+  return payload as { earned: number; netResolvedSol: number; fungibleResolved: number; nftResolved: number };
 };
 
 const decodeVersionedTransaction = (base64: string) => {
