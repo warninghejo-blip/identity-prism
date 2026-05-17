@@ -2134,10 +2134,6 @@ const BlackHole = () => {
 
     setIsBurning(true);
     try {
-      const { ensureJwt } = await import('@/components/prism/shared');
-      await ensureJwt(); // SIWS one-shot — primes MWA session
-    } catch { /* non-blocking */ }
-    try {
       const initialWallet = publicKey.toBase58();
       const swapPlans = executablePlans.filter((plan) => plan.action === 'swap');
       let burnPlans = executablePlans.filter((plan) => plan.action === 'burn');
