@@ -105,26 +105,6 @@ function saveCachedJwt(baseUrl: string, entry: { token: string; address: string;
   }
 }
 
-// Fallback: reuse any cached JWT for this address from another baseUrl (avoid 2nd MWA round-trip)
-function loadAnyCachedJwt(addr: string): { token: string; expiresAt: number } | null {
-  try {
-    if (typeof window === 'undefined') return null;
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const k = sessionStorage.key(i);
-      if (!k || !k.startsWith('ip_auth_jwt:') || !k.endsWith(':' + addr)) continue;
-      const raw = sessionStorage.getItem(k);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      if (parsed?.address === addr && parsed?.expiresAt > Date.now() + 60_000 && parsed?.token) {
-        return { token: parsed.token, expiresAt: parsed.expiresAt };
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
 async function getAuthToken(
   wallet: { publicKey?: PublicKey | null; signMessage?: (message: Uint8Array) => Promise<Uint8Array> },
   baseUrl: string,
@@ -152,12 +132,6 @@ async function getAuthToken(
     const signTimeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('SIGN_TIMEOUT')), signTimeoutMs),
     );
-    const fallbackJwt = loadAnyCachedJwt(address);
-    if (fallbackJwt) {
-      console.warn('[auth] cross-baseUrl JWT reused for', address);
-      toast.success('STAGE: JWT cross-reuse', { duration: 3000 });
-      return fallbackJwt.token;
-    }
     console.warn('[auth] requesting signMessage from wallet (MWA Verify dialog)');
     toast.warning('STAGE: auth.signMessage', { description: 'awaiting wallet dialog', duration: 60000 });
     const signatureBytes = await Promise.race([wallet.signMessage(msgBytes), signTimeout]);
