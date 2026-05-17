@@ -163,7 +163,6 @@ export default function Leaderboard() {
       try {
         const base = getServerBase();
         if (!base) {
-          setLoading(false);
           return;
         }
 
@@ -182,7 +181,9 @@ export default function Leaderboard() {
               setError('Failed to load leaderboard');
             }
           }
-        } else if (currentTab !== 'tournament') {
+        } else {
+          // Game tab (orbit/destroyer/gravity) \u2014 never matched 'tournament' (not in TabKey).
+          // Removed stale `currentTab !== 'tournament'` guard that obscured the else branch.
           // Check sessionStorage cache
           const cacheRaw = sessionStorage.getItem(`${CACHE_KEY}:${currentTab}`);
           if (cacheRaw) {
@@ -190,17 +191,26 @@ export default function Leaderboard() {
               const { data: cachedData, ts } = JSON.parse(cacheRaw);
               if (Date.now() - ts < CACHE_TTL) {
                 setGameEntries((prev) => ({ ...prev, [currentTab]: cachedData }));
-                setLoading(false);
                 return;
               }
             } catch {
               /* ignore */
             }
           }
-          const res = await fetch(`${base}/api/v2/game/leaderboard?gameType=${currentTab}`);
+          // 15s timeout \u2014 without it skeleton stuck forever when network stalls
+          const controller = new AbortController();
+          const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+          let res: Response;
+          try {
+            res = await fetch(`${base}/api/v2/game/leaderboard?gameType=${currentTab}`, {
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timeoutId);
+          }
           if (res.ok) {
             const data = await res.json();
-            const entries = data?.entries || [];
+            const entries = Array.isArray(data?.entries) ? data.entries : [];
             setGameEntries((prev) => ({
               ...prev,
               [currentTab]: entries,
@@ -210,10 +220,13 @@ export default function Leaderboard() {
             setError('Failed to load leaderboard');
           }
         }
-      } catch {
-        setError('Network error \u2014 check your connection');
+      } catch (e: any) {
+        const msg = e?.name === 'AbortError' ? 'Request timed out \u2014 tap retry' : 'Network error \u2014 check your connection';
+        setError(msg);
+      } finally {
+        // ALWAYS reset loading \u2014 guarantees skeleton never sticks even on early return/throw.
+        setLoading(false);
       }
-      setLoading(false);
     },
     [activeTab],
   );

@@ -577,6 +577,36 @@ export default function StellarForge() {
     };
   }, [walletAddress]);
 
+  // Balance refetcher — single source of truth (server response, no local mutation).
+  // Used by initial load AND focus listener so balance/affordability is always fresh
+  // when user returns from Vault (after buying coins). Earlier the page kept stale
+  // balance and Buy buttons stayed disabled even when funds were sufficient.
+  const refetchBalance = useCallback(() => {
+    if (!walletAddress) return;
+    const base = getApiBase();
+    if (!base) return;
+    fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setBalance(d);
+      })
+      .catch(() => {});
+  }, [walletAddress]);
+
+  // Refetch when user returns to the page (window focus / app foreground)
+  useEffect(() => {
+    const onFocus = () => refetchBalance();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refetchBalance();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [refetchBalance]);
+
   // Load data
   useEffect(() => {
     if (!walletAddress) return;
