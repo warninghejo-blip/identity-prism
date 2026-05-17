@@ -21,6 +21,7 @@ import {
   SEEKER_TOKEN,
 } from '@/constants';
 import type { WalletTraits } from '@/hooks/useWalletData';
+import { toast } from '@/components/ui/sonner';
 
 export interface MintMetadata {
   collection: string;
@@ -104,6 +105,26 @@ function saveCachedJwt(baseUrl: string, entry: { token: string; address: string;
   }
 }
 
+// Fallback: reuse any cached JWT for this address from another baseUrl (avoid 2nd MWA round-trip)
+function loadAnyCachedJwt(addr: string): { token: string; expiresAt: number } | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (!k || !k.startsWith('ip_auth_jwt:') || !k.endsWith(':' + addr)) continue;
+      const raw = sessionStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed?.address === addr && parsed?.expiresAt > Date.now() + 60_000 && parsed?.token) {
+        return { token: parsed.token, expiresAt: parsed.expiresAt };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 async function getAuthToken(
   wallet: { publicKey?: PublicKey | null; signMessage?: (message: Uint8Array) => Promise<Uint8Array> },
   baseUrl: string,
@@ -131,7 +152,14 @@ async function getAuthToken(
     const signTimeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('SIGN_TIMEOUT')), signTimeoutMs),
     );
+    const fallbackJwt = loadAnyCachedJwt(address);
+    if (fallbackJwt) {
+      console.warn('[auth] cross-baseUrl JWT reused for', address);
+      toast.success('STAGE: JWT cross-reuse', { duration: 3000 });
+      return fallbackJwt.token;
+    }
     console.warn('[auth] requesting signMessage from wallet (MWA Verify dialog)');
+    toast.warning('STAGE: auth.signMessage', { description: 'awaiting wallet dialog', duration: 60000 });
     const signatureBytes = await Promise.race([wallet.signMessage(msgBytes), signTimeout]);
     const signatureBase64 = Buffer.from(signatureBytes).toString('base64');
 
@@ -147,6 +175,7 @@ async function getAuthToken(
     const entry = { token, address, expiresAt: Date.now() + 55 * 60 * 1000 };
     saveCachedJwt(baseUrl, entry);
     console.warn('[auth] JWT obtained (cached for session)');
+    toast.success('STAGE: auth.jwt OK', { duration: 4000 });
     return token;
   } catch (e) {
     console.warn('[auth] JWT flow failed, proceeding without auth', e);
@@ -350,6 +379,7 @@ export async function mintIdentityPrism({
 
   // Obtain JWT auth token (non-blocking — proceeds without if signMessage unavailable)
   const authToken = await getAuthToken(wallet, coreMintUrl);
+  toast.warning(`STAGE: authToken=${authToken ? 'YES' : 'NO'}`, { duration: 4000 });
 
   let coinReservationRequestId: string | null = null;
 
@@ -458,6 +488,7 @@ export async function mintIdentityPrism({
     },
   };
 
+  toast.warning('STAGE: metadata upload', { duration: 8000 });
   const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
@@ -538,6 +569,7 @@ export async function mintIdentityPrism({
   const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) authHeaders['Authorization'] = `Bearer ${authToken}`;
 
+  toast.warning('STAGE: mint-cnft request', { duration: 8000 });
   const cnftResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
     method: 'POST',
     headers: authHeaders,
@@ -675,6 +707,7 @@ export async function mintIdentityPrism({
         requireAllSignatures: false,
         verifySignatures: false,
       })) as typeof transaction.serialize;
+    toast.warning('STAGE: signTransaction (MWA dialog?)', { description: 'should see wallet now', duration: 60000 });
     const signedTransaction = await signWithDismissDetection(wallet, transaction);
     const walletSigner = wallet.publicKey?.toBase58();
     if (walletSigner) {
@@ -684,6 +717,7 @@ export async function mintIdentityPrism({
       }
     }
 
+    toast.warning('STAGE: finalize submit', { duration: 8000 });
     const finalizeResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
       method: 'POST',
       headers: authHeaders,
@@ -703,6 +737,7 @@ export async function mintIdentityPrism({
     }
     signature = finalizePayload.signature;
   } catch (error) {
+    toast.error(`STAGE: ERROR ${error instanceof Error ? error.message : 'unknown'}`, { duration: 30000 });
     await logSendTransactionError(error);
     throw error;
   }
