@@ -9,7 +9,6 @@ import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom';
 import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare';
 import {
   SolanaMobileWalletAdapter,
-  SolanaMobileWalletAdapterWalletName,
   createDefaultAddressSelector,
   createDefaultWalletNotFoundHandler,
 } from '@solana-mobile/wallet-adapter-mobile';
@@ -96,7 +95,7 @@ function lazyRoute(element: ReactNode) {
   );
 }
 // wallet-adapter CSS imported eagerly in main.tsx to avoid lazy CSS dep
-import { extractMwaAddress, mwaAuthorizationCache } from './lib/mwaAuthorizationCache';
+import { mwaAuthorizationCache } from './lib/mwaAuthorizationCache';
 import { BLACKHOLE_ENABLED, getHeliusRpcUrl, MINT_CONFIG } from './constants';
 import { DEV_WALLET_ENABLED } from './lib/devWallet';
 import { DevWalletProvider } from './components/DevWalletProvider';
@@ -446,25 +445,7 @@ export default function AppShell() {
       </WalletModalProvider>
     </DevWalletProvider>
   ) : (
-    <CustomWalletProvider
-      wallets={wallets}
-      autoConnect={async (adapter) => {
-        if (adapter.name === SolanaMobileWalletAdapterWalletName) {
-          try {
-            const cached = await mwaAuthorizationCache.get();
-            return Boolean(extractMwaAddress(cached));
-          } catch {
-            return false;
-          }
-        }
-        try {
-          return Boolean(localStorage.getItem('walletAdapter'));
-        } catch {
-          return false;
-        }
-      }}
-      localStorageKey="walletAdapter"
-    >
+    <CustomWalletProvider wallets={wallets} autoConnect={false} localStorageKey="walletAdapter">
       <DebugWallet />
       <WalletModalProvider>
         <React.Suspense
