@@ -787,12 +787,6 @@ const Index = () => {
       ? availableWallets.find((wallet) => wallet.adapter.name === lastConnectedWalletName)
       : undefined;
     if (remembered && isWalletUsable(remembered)) return remembered;
-    // On Capacitor native (Seeker), prefer Seed Vault when installed — it's the
-    // first-class hardware-backed signer and avoids MWA roundtrips.
-    if (isCapacitor) {
-      const seedVault = availableWallets.find((w) => w.adapter.name === 'Seed Vault');
-      if (seedVault && isWalletUsable(seedVault)) return seedVault;
-    }
     if (mobileWallet) return mobileWallet;
     const installed = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Installed);
     if (installed) return installed;
@@ -891,19 +885,13 @@ const Index = () => {
     let targetWallet = preferredMobileWallet;
     let targetReady = preferredMobileWalletReady;
 
-    // On Capacitor Android or Seeker device, fallback first to Seed Vault if installed,
-    // else to raw MWA adapter even if not detected as ready.
+    // On Capacitor Android or Seeker device, fallback to raw MWA — system MWA bottom sheet
+    // (com.solanamobile.wallet/.MWABottomSheetActivity) handles the wallet picker plug-and-play.
     if ((!targetWallet || !targetReady) && ((isCapacitor && isAndroidDevice) || isSeekerDevice)) {
-      const seedVault = availableWallets.find((w) => w.adapter.name === 'Seed Vault');
-      if (seedVault && isWalletUsable(seedVault)) {
-        targetWallet = seedVault;
+      const rawMwa = availableWallets.find((w) => w.adapter.name === SolanaMobileWalletAdapterWalletName);
+      if (rawMwa) {
+        targetWallet = rawMwa;
         targetReady = true;
-      } else {
-        const rawMwa = availableWallets.find((w) => w.adapter.name === SolanaMobileWalletAdapterWalletName);
-        if (rawMwa) {
-          targetWallet = rawMwa;
-          targetReady = true;
-        }
       }
     }
 
