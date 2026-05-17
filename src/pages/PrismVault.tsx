@@ -153,14 +153,18 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             const skrMint = new SolPK('SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3');
             const ownerKey = new SolPK(signerAddress);
             const treasuryKey = new SolPK(treasuryAddr);
-            // Detect SKR mint owner program (handles Token-2022) and read decimals from on-chain mint
-            const mintAccountInfo = await conn.getAccountInfo(skrMint);
-            if (!mintAccountInfo) throw new Error('SKR mint account not found');
-            const activeTokenProgramId = mintAccountInfo.owner.equals(TOKEN_2022_PROGRAM_ID)
+            // Detect SKR mint owner program (handles Token-2022) and read decimals from on-chain mint.
+            // 5s race: if RPC stalls, fall back to legacy TOKEN_PROGRAM_ID + 6 decimals
+            // (SKRbvo6... is legacy SPL Token with 6 decimals — verified on-chain).
+            const mintAccountInfo = await Promise.race([
+              conn.getAccountInfo(skrMint),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+            ]);
+            const activeTokenProgramId = mintAccountInfo?.owner.equals(TOKEN_2022_PROGRAM_ID)
               ? TOKEN_2022_PROGRAM_ID
               : TOKEN_PROGRAM_ID;
-            // SPL mint layout: decimals at offset 44 (1 byte)
-            const decimals = mintAccountInfo.data?.[44] ?? 6;
+            // SPL mint layout: decimals at offset 44 (1 byte). Fallback 6 if RPC timed out.
+            const decimals = mintAccountInfo?.data?.[44] ?? 6;
             const amountBaseUnits = BigInt(skrQuote.skrPrice) * 10n ** BigInt(decimals);
             const ownerAta = await getAssociatedTokenAddress(skrMint, ownerKey, false, activeTokenProgramId);
             const treasuryAta = await getAssociatedTokenAddress(skrMint, treasuryKey, false, activeTokenProgramId);
@@ -239,18 +243,9 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               ),
             ])).blockhash;
             tx.feePayer = new SolPK(signerAddress);
-            const simulation = await conn.simulateTransaction(tx, undefined, {
-              sigVerify: false,
-              replaceRecentBlockhash: true,
-            } as any);
-            if (simulation.value.err)
-              throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-            tx.recentBlockhash = (await Promise.race([
-              conn.getLatestBlockhash('confirmed'),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
-              ),
-            ])).blockhash;
+            // Pre-wallet simulate removed: skipPreflight=true is set, MWA does its own simulation.
+            // Earlier simulate call had no timeout and could hang RPC, tripping outer 30s race
+            // before MWA UI opened ("Request timed out — server may be unavailable").
             const origSerializeSOL = tx.serialize.bind(tx);
             tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
               origSerializeSOL({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
