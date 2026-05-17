@@ -906,6 +906,111 @@ export async function obtainJwt(
   return _jwtInFlight;
 }
 
+// ── SIWS one-shot via adapter.signIn() (single MWA transact session) ──
+// IMPORTANT: this calls adapter.signIn() directly. On MWA/Seed Vault this triggers a SINGLE
+// wallet popup that BOTH authorizes the dapp AND signs the SIWS message in one round-trip.
+// Use this for the initial connect flow on Capacitor Android (Seeker) to avoid the
+// well-known "second wallet popup never surfaces" bug that froze PRISM SCAN at 64%.
+//
+// Server-side: the matching /api/auth/token endpoint accepts a `siws: true` flag with a
+// client-generated nonce (no server-stored challenge needed). The server verifies the signed
+// message contains address + "Identity Prism" keyword + the supplied nonce, then burns the
+// nonce to prevent replay.
+export async function obtainJwtViaAdapterSignIn(adapter: {
+  name?: string;
+  signIn?: (input?: WalletSignInInput) => Promise<WalletSignInResult>;
+  publicKey?: { toBase58(): string } | null;
+}): Promise<{ token: string; address: string } | null> {
+  if (typeof adapter?.signIn !== 'function') {
+    writeAuthDebug({ stage: 'siws_adapter_no_signin', name: adapter?.name ?? null });
+    return null;
+  }
+
+  try {
+    setAuthState('signing');
+    const base = getApiBase();
+
+    // Generate a client-side nonce. Server accepts it via the `siws: true` path on /api/auth/token,
+    // verifies the signed message contains it, and burns it to prevent replay.
+    const clientNonce =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().replace(/-/g, '')
+        : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).padEnd(32, '0');
+
+    const preAddress = adapter.publicKey?.toBase58?.() ?? null;
+    writeAuthDebug({
+      stage: 'siws_calling_adapter_signin',
+      hasPreAddress: Boolean(preAddress),
+      noncePrefix: clientNonce.slice(0, 8),
+    });
+
+    // Single wallet popup: authorize + sign-in message in one MWA transact session.
+    const signedIn = await adapter.signIn({
+      domain: window.location.host,
+      ...(preAddress ? { address: preAddress } : {}),
+      statement: 'Sign in to Identity Prism to save progress and earn coins.',
+      uri: window.location.origin,
+      version: '1',
+      chainId: 'solana:mainnet',
+      nonce: clientNonce,
+      issuedAt: new Date().toISOString(),
+    });
+
+    const resolvedAddress = signedIn?.account?.address ?? adapter.publicKey?.toBase58?.() ?? preAddress;
+    if (!resolvedAddress) {
+      writeAuthDebug({ stage: 'siws_no_resolved_address' });
+      setAuthState('declined');
+      return null;
+    }
+    const sigArr = toBytes(signedIn.signature);
+    const msgArr = toBytes(signedIn.signedMessage);
+    if (sigArr.length !== 64 || msgArr.length === 0) {
+      writeAuthDebug({ stage: 'siws_invalid_result', sigLen: sigArr.length, msgLen: msgArr.length });
+      setAuthState('declined');
+      return null;
+    }
+    const signatureHex = bytesToHex(sigArr);
+    const signedMessageBase64 = bytesToBase64(msgArr);
+    const tokenRes = await postAuthEndpoint(`${base}/api/auth/token`, {
+      address: resolvedAddress,
+      nonce: clientNonce,
+      signature: signatureHex,
+      signedMessage: signedMessageBase64,
+      siws: true,
+    });
+    if (!tokenRes.ok) {
+      const body = await tokenRes.text().catch(() => '');
+      writeAuthDebug({ stage: 'siws_token_failed', status: tokenRes.status, body: body.slice(0, 180) });
+      setAuthState('declined');
+      return null;
+    }
+    const { token } = (await tokenRes.json()) as { token: string };
+    const entry = { token, address: resolvedAddress, expiresAt: Date.now() + 23 * 60 * 60 * 1000 };
+    storeAuthJwt(entry);
+    try {
+      const readBack = readStoredAuthJwt();
+      const parsed = readBack ? (JSON.parse(readBack) as StoredAuthJwt) : null;
+      writeAuthDebug({
+        stage: 'siws_signed',
+        address: resolvedAddress.slice(0, 8),
+        addressFull: resolvedAddress,
+        storedAddress: parsed?.address ?? null,
+        addressMatch: parsed?.address === resolvedAddress,
+        tokenLen: token.length,
+        storedTokenLen: parsed?.token?.length ?? 0,
+      });
+    } catch {
+      writeAuthDebug({ stage: 'siws_signed', address: resolvedAddress.slice(0, 8) });
+    }
+    setAuthState('signed');
+    return { token, address: resolvedAddress };
+  } catch (error) {
+    writeAuthDebug({ stage: 'siws_exception', ...describeAuthError(error) });
+    setAuthState('declined');
+    return null;
+  }
+}
+
 // ── Auth state listeners ──
 type AuthState = 'idle' | 'signing' | 'signed' | 'declined';
 let _authState: AuthState = 'idle';

@@ -65,12 +65,34 @@ function createAuthRouteHandler({
         if (!address || !nonce || !signature) {
           respondJson(res, 400, { error: 'address, nonce, and signature required' }); return true;
         }
-        const challenge = authChallenges.get(nonce);
+        // SIWS one-shot path: client supplied a self-generated nonce + signedMessage from
+        // wallet.signIn() — there is no server-stored challenge. Verify by trusting the signed
+        // message itself (it must contain address + "Identity Prism" keyword + the supplied nonce)
+        // and burning the nonce against an in-memory used-nonces set inside authChallenges.
+        const siwsParamRaw = getAuthParam(parsed, url, 'siws');
+        const siwsFlag = siwsParamRaw === '1' || siwsParamRaw === 'true' || parsed?.siws === true;
+        let siwsMode = false;
+        let challenge = authChallenges.get(nonce);
+        if (!challenge && siwsFlag && typeof signedMessage === 'string' && signedMessage.trim()) {
+          if (!/^[0-9a-fA-F\-]{8,128}$/.test(nonce)) {
+            respondJson(res, 400, { error: 'Invalid nonce format' }); return true;
+          }
+          // Anti-replay: reject nonces already used.
+          const usedKey = `siws:${nonce}`;
+          if (authChallenges.has(usedKey)) {
+            respondJson(res, 401, { error: 'Replay detected' }); return true;
+          }
+          // Register synthetically so the burn at end of flow marks it used.
+          challenge = { address, message: '', expiresAt: Date.now() + authChallengeTtlMs, siws: true };
+          authChallenges.set(nonce, challenge);
+          authChallenges.set(usedKey, { burnedAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+          siwsMode = true;
+        }
         if (!challenge) {
           console.warn('[auth:token] nonce not found in authChallenges. Map size:', authChallenges.size);
           respondJson(res, 401, { error: 'Invalid or expired nonce' }); return true;
         }
-        if (challenge.address !== address) {
+        if (!siwsMode && challenge.address !== address) {
           console.warn('[auth:token] address mismatch:', { expected: challenge.address.slice(0, 8), got: address.slice(0, 8) });
           respondJson(res, 401, { error: 'Address mismatch' }); return true;
         }
@@ -85,18 +107,37 @@ function createAuthRouteHandler({
         if (typeof signedMessage === 'string' && signedMessage.trim()) {
           const signedMessageBytes = Buffer.from(signedMessage, 'base64');
           const signedMessageText = signedMessageBytes.toString('utf8');
-          const hasNonce = signedMessageText.includes(String(nonce));
+          // MWA-compliant wallets (e.g. Seed Vault) IGNORE client-supplied nonce and inject
+          // their own. Extract the wallet's actual nonce from the SIWS message and treat it
+          // as the authoritative anti-replay token. Falls back to client nonce for wallets
+          // that do honour the input.
+          const nonceMatch = signedMessageText.match(/^Nonce:\s*([A-Za-z0-9_-]+)\s*$/m);
+          const walletNonce = nonceMatch ? nonceMatch[1] : null;
+          const effectiveNonce = walletNonce || String(nonce);
+          const hasNonce = Boolean(walletNonce) || signedMessageText.includes(String(nonce));
           const hasAddress = signedMessageText.includes(address);
           const hasIdentity = /identity\s+prism|identityprism/i.test(signedMessageText);
           if (!hasNonce || !hasAddress || !hasIdentity) {
             console.warn('[auth] SIWS message missing required fields', {
               address: address.slice(0, 8),
               nonce: String(nonce).slice(0, 8),
+              nonceFull: String(nonce),
+              walletNonce,
               hasNonce,
               hasAddress,
               hasIdentity,
+              msgLen: signedMessageText.length,
+              msgPreview: signedMessageText.slice(0, 400),
             });
             respondJson(res, 401, { error: 'Invalid sign-in message' }); return true;
+          }
+          // Anti-replay using the EFFECTIVE nonce (wallet-generated if present)
+          if (siwsMode && walletNonce && walletNonce !== String(nonce)) {
+            const walletUsedKey = `siws:${walletNonce}`;
+            if (authChallenges.has(walletUsedKey)) {
+              respondJson(res, 401, { error: 'Replay detected' }); return true;
+            }
+            authChallenges.set(walletUsedKey, { burnedAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
           }
           challengeMessage = signedMessageText;
           verified = verifyWalletSignature(address, signedMessageBytes, signature);

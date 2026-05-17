@@ -902,13 +902,23 @@ const buildSwapTransaction = async (userPublicKey: string, quoteResponse: SwapQu
   const jwt = await ensureJwt();
   if (!jwt) throw new Error('Wallet authorization required');
   const base = getApiBase();
+  // Server expects canonical inputs (inputMint/outputMint/amount/slippageBps) per market.js:277-311.
+  // Extract from quoteResponse — supports both synthetic order_execute ({mode,inputMint,outputMint,amount})
+  // and full Jupiter legacy_raw response ({inputMint,outputMint,inAmount,...}).
+  const amountStr = String(quoteResponse?.amount ?? quoteResponse?.inAmount ?? '');
   const response = await fetch(`${base}/api/market/build-swap`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${jwt}`,
     },
-    body: JSON.stringify({ userPublicKey, quoteResponse }),
+    body: JSON.stringify({
+      userPublicKey,
+      inputMint: quoteResponse?.inputMint,
+      outputMint: quoteResponse?.outputMint,
+      amount: amountStr,
+      slippageBps: 100,
+    }),
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload?.swapTransaction) {
@@ -2215,48 +2225,66 @@ const BlackHole = () => {
         });
       };
 
+      let swapSkippedCount = 0;
       for (let index = 0; index < swapPlans.length; index += 1) {
         const plan = swapPlans[index];
         if (publicKey.toBase58() !== initialWallet) {
           throw new Error('Wallet changed — remaining transactions cancelled');
         }
+        const tokenLabel = plan.token.name || plan.token.symbol || plan.token.mint.slice(0, 6);
         if (!plan.swapQuote?.quoteResponse) {
-          throw new Error(
-            `Missing swap route for ${plan.token.name || plan.token.symbol || plan.token.mint.slice(0, 6)}`,
+          console.warn('[BlackHole] swap skipped — missing quote', { mint: plan.token.mint });
+          swapSkippedCount += 1;
+          toast.warning(`Swap skipped: ${tokenLabel}`, { description: 'No liquid route available' });
+          continue;
+        }
+
+        try {
+          toast.info(`Swap ${index + 1}/${swapPlans.length}`, {
+            description: `${tokenLabel} → SOL`,
+          });
+
+          const preparedSwap = await buildSwapTransaction(publicKey.toBase58(), plan.swapQuote.quoteResponse);
+          const { swapTransaction } = preparedSwap;
+          const versionedTx = decodeVersionedTransaction(swapTransaction);
+          if (preparedSwap.transport === 'order_execute' && !preparedSwap.requestId) {
+            throw new Error('Missing Jupiter requestId for swap execution');
+          }
+          const swapSignature =
+            preparedSwap.transport === 'order_execute'
+              ? await signAndExecuteOrderedTransaction(
+                  versionedTx,
+                  preparedSwap.requestId || '',
+                  `Swap ${index + 1}/${swapPlans.length}`,
+                )
+              : await signAndSendVersionedTransaction(versionedTx, `Swap ${index + 1}/${swapPlans.length}`);
+          const closeBatch = createBatches([plan], 'close')[0];
+          const closeSignature = await signAndSendLegacyTransaction(
+            closeBatch.tx,
+            `Close swapped account ${index + 1}/${swapPlans.length}`,
           );
+
+          operationMap.set(plan.token.pubkey.toBase58(), {
+            account: plan.token.pubkey.toBase58(),
+            mint: plan.token.mint,
+            action: 'swap',
+            swapSignature,
+            closeSignature,
+          });
+        } catch (swapError) {
+          // Wallet rejection / disconnect / chain timeout = abort whole flow
+          if (isWalletRejectError(swapError)) throw swapError;
+          if (swapError instanceof Error && swapError.message.includes('Wallet changed')) throw swapError;
+          // Per-asset failure (build-swap 400, route unavailable, sim fail) — skip and continue
+          console.warn('[BlackHole] swap asset skipped', {
+            mint: plan.token.mint,
+            error: swapError instanceof Error ? swapError.message : String(swapError),
+          });
+          swapSkippedCount += 1;
+          toast.warning(`Swap skipped: ${tokenLabel}`, {
+            description: swapError instanceof Error ? swapError.message : 'Unsupported asset',
+          });
         }
-
-        toast.info(`Swap ${index + 1}/${swapPlans.length}`, {
-          description: `${plan.token.name || plan.token.symbol || plan.token.mint.slice(0, 6)} → SOL`,
-        });
-
-        const preparedSwap = await buildSwapTransaction(publicKey.toBase58(), plan.swapQuote.quoteResponse);
-        const { swapTransaction } = preparedSwap;
-        const versionedTx = decodeVersionedTransaction(swapTransaction);
-        if (preparedSwap.transport === 'order_execute' && !preparedSwap.requestId) {
-          throw new Error('Missing Jupiter requestId for swap execution');
-        }
-        const swapSignature =
-          preparedSwap.transport === 'order_execute'
-            ? await signAndExecuteOrderedTransaction(
-                versionedTx,
-                preparedSwap.requestId || '',
-                `Swap ${index + 1}/${swapPlans.length}`,
-              )
-            : await signAndSendVersionedTransaction(versionedTx, `Swap ${index + 1}/${swapPlans.length}`);
-        const closeBatch = createBatches([plan], 'close')[0];
-        const closeSignature = await signAndSendLegacyTransaction(
-          closeBatch.tx,
-          `Close swapped account ${index + 1}/${swapPlans.length}`,
-        );
-
-        operationMap.set(plan.token.pubkey.toBase58(), {
-          account: plan.token.pubkey.toBase58(),
-          mint: plan.token.mint,
-          action: 'swap',
-          swapSignature,
-          closeSignature,
-        });
       }
 
       const burnBatches = createBatches(burnPlans, 'burn');
@@ -2340,8 +2368,9 @@ const BlackHole = () => {
       }
 
       const resolvedCount = completedOperations.length;
+      const skippedSuffix = swapSkippedCount > 0 ? ` · ${swapSkippedCount} skipped (unsupported)` : '';
       toast.success('Resolution complete!', {
-        description: `Resolved ${resolvedCount} asset${resolvedCount === 1 ? '' : 's'} · ~${(claimedNetResolvedSol || estimatedNetSol).toFixed(4)} SOL · ${earnedPrism} PRISM`,
+        description: `Resolved ${resolvedCount} asset${resolvedCount === 1 ? '' : 's'}${skippedSuffix} · ~${(claimedNetResolvedSol || estimatedNetSol).toFixed(4)} SOL · ${earnedPrism} PRISM`,
       });
 
       if (publicKey) {

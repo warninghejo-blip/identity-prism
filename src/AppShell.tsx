@@ -272,11 +272,17 @@ const cluster =
       ? WalletAdapterNetwork.Testnet
       : WalletAdapterNetwork.Mainnet;
 
+// MWA `appIdentity`: wallet renders this in the Verify dialog. The Wallet
+// Standard spec requires `icon` to be a relative URI resolved against `uri`,
+// so we host the icon at https://identityprism.xyz/icon-192.png and reference
+// it relatively. Anchor `uri` at the public site so wallets can fetch the
+// icon even on native (custom-scheme URIs cannot be dereferenced).
 const appIdentity = {
   name: 'Identity Prism',
   uri: (
-    isCapacitorNative ? 'identityprism://app' : import.meta.env.VITE_APP_BASE_URL || 'https://identityprism.xyz'
+    isCapacitorNative ? 'https://identityprism.xyz' : import.meta.env.VITE_APP_BASE_URL || 'https://identityprism.xyz'
   ).replace(/\/+$/, ''),
+  icon: 'icon-192.png',
 };
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
