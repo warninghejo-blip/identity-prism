@@ -500,6 +500,11 @@ const Index = () => {
   useEffect(() => {
     if (!activeAddress || jwtSigning || isDisconnectingRef.current) return;
     if (getCachedJwt(activeAddress)) return;
+    // SIWS one-shot just stored JWT для этого address — trust prewarm refs; не reset
+    if (jwtPrewarmedRef.current === activeAddress || jwtAttemptedRef.current === activeAddress) {
+      setJwtDeclined(false);
+      return;
+    }
     setJwtDeclined(true);
     if (allowUnsignedHubRef.current || returningFromBH.current) {
       setViewState('hub');

@@ -956,7 +956,9 @@ export async function obtainJwtViaAdapterSignIn(adapter: {
       issuedAt: new Date().toISOString(),
     });
 
-    const resolvedAddress = signedIn?.account?.address ?? adapter.publicKey?.toBase58?.() ?? preAddress;
+    // Prefer adapter.publicKey (canonical base58) над signedIn.account.address
+    // (MWA Seed Vault может возвращать иной encoding/checksum).
+    const resolvedAddress = adapter.publicKey?.toBase58?.() ?? signedIn?.account?.address ?? preAddress;
     if (!resolvedAddress) {
       writeAuthDebug({ stage: 'siws_no_resolved_address' });
       setAuthState('declined');
