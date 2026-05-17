@@ -311,6 +311,19 @@ export default function PrismArena() {
         try {
           sessionStorage.removeItem('ip_auth_jwt');
         } catch {}
+        const fresh = await obtainJwt(wallet, { forceFresh: true }).catch(() => null);
+        if (fresh) {
+          const retry = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, {
+            headers: { Authorization: `Bearer ${fresh}` },
+          });
+          if (retry.ok) {
+            const data = await retry.json();
+            const list: Challenge[] = Array.isArray(data) ? data : (data.challenges ?? []);
+            setMyChallenges(list);
+          }
+        }
+        setLoadingMine(false);
+        return;
       }
       if (res.ok) {
         const data = await res.json();
@@ -469,6 +482,13 @@ export default function PrismArena() {
       if (res.ok) {
         trackChallengeCreate();
         const resData = await res.json().catch(() => ({}));
+        if (resData?.challenge) {
+          setMyChallenges((prev) => {
+            if (prev.some((c) => c.id === resData.challenge.id)) return prev;
+            return [resData.challenge as Challenge, ...prev];
+          });
+          prevMineRef.current = `${resData.challenge.id}:${resData.challenge.status}`;
+        }
         setCreating(false);
         setFormOpponent('');
         setFormStake(10);

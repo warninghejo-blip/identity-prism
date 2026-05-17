@@ -2060,7 +2060,7 @@ const Index = () => {
         const errName = (err as { name?: string })?.name ?? '';
         console.error('Mint error:', { message: msg, code, name: errName, raw: err });
         const isUserCancel =
-          /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(
+          /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED|SIGN_TIMEOUT/i.test(
             msg + ' ' + code,
           ) ||
           errName === 'WalletSignTransactionError' ||
@@ -2128,7 +2128,7 @@ const Index = () => {
       const errName = (err as { name?: string })?.name ?? '';
       console.error('Mint-for-coins error:', { message: msg, code, name: errName });
       const isUserCancel =
-        /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED/i.test(
+        /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED|SIGN_TIMEOUT/i.test(
           msg + ' ' + code,
         ) ||
         errName === 'WalletSignTransactionError' ||
