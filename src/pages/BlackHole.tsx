@@ -1964,21 +1964,30 @@ const BlackHole = () => {
     async (tx: Transaction, label: string) => {
       if (!publicKey) throw new Error('Wallet not connected');
 
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      const bhPromise = connection.getLatestBlockhash('confirmed');
+      const bhTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} blockhash timed out — RPC slow, retry`)), 8_000),
+      );
+      const { blockhash, lastValidBlockHeight } = await Promise.race([bhPromise, bhTimeout]);
       tx.recentBlockhash = blockhash;
       tx.lastValidBlockHeight = lastValidBlockHeight;
       tx.feePayer = publicKey;
 
       try {
-        const simulation = await connection.simulateTransaction(tx, undefined, {
+        const simPromise = connection.simulateTransaction(tx, undefined, {
           sigVerify: false,
           replaceRecentBlockhash: true,
         });
+        const simTimeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} simulation timed out — RPC slow, retry`)), 12_000),
+        );
+        const simulation = await Promise.race([simPromise, simTimeoutPromise]);
         if (simulation.value.err) {
           throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}`);
         }
       } catch (error) {
         if (error instanceof Error && error.message.includes('simulation failed')) throw error;
+        if (error instanceof Error && error.message.includes('simulation timed out')) throw error;
         console.warn(`[BlackHole] ${label} simulation skipped`, error);
       }
 
@@ -2015,15 +2024,20 @@ const BlackHole = () => {
   const signAndSendVersionedTransaction = useCallback(
     async (tx: VersionedTransaction, label: string) => {
       try {
-        const simulation = await connection.simulateTransaction(tx, {
+        const simPromise = connection.simulateTransaction(tx, {
           sigVerify: false,
           replaceRecentBlockhash: true,
         });
+        const simTimeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} simulation timed out — RPC slow, retry`)), 12_000),
+        );
+        const simulation = await Promise.race([simPromise, simTimeoutPromise]);
         if (simulation.value.err) {
           throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}`);
         }
       } catch (error) {
         if (error instanceof Error && error.message.includes('simulation failed')) throw error;
+        if (error instanceof Error && error.message.includes('simulation timed out')) throw error;
         console.warn(`[BlackHole] ${label} simulation skipped`, error);
       }
 
@@ -2052,15 +2066,20 @@ const BlackHole = () => {
   const signAndExecuteOrderedTransaction = useCallback(
     async (tx: VersionedTransaction, requestId: string, label: string) => {
       try {
-        const simulation = await connection.simulateTransaction(tx, {
+        const simPromise = connection.simulateTransaction(tx, {
           sigVerify: false,
           replaceRecentBlockhash: true,
         });
+        const simTimeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} simulation timed out — RPC slow, retry`)), 12_000),
+        );
+        const simulation = await Promise.race([simPromise, simTimeoutPromise]);
         if (simulation.value.err) {
           throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}`);
         }
       } catch (error) {
         if (error instanceof Error && error.message.includes('simulation failed')) throw error;
+        if (error instanceof Error && error.message.includes('simulation timed out')) throw error;
         console.warn(`[BlackHole] ${label} simulation skipped`, error);
       }
 

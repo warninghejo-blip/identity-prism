@@ -2081,6 +2081,7 @@ const Index = () => {
   }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
 
   const handleMintWithCoins = useCallback(async () => {
+    console.info('[handleMintWithCoins] start', { paymentToken, hasWallet: !!wallet?.publicKey, hasTraits: !!traits });
     if (!wallet || !wallet.publicKey || !traits) return;
     setMintState('minting');
     let succeeded = false;
@@ -2102,6 +2103,7 @@ const Index = () => {
         paymentToken: 'SOL',
         paidWithCoins: true,
       });
+      console.info('[handleMintWithCoins] mintIdentityPrism returned', { signature: result?.signature });
       // eslint-disable-next-line no-console
       if (import.meta.env.DEV) console.log('Mint-for-coins success:', result);
       succeeded = true;

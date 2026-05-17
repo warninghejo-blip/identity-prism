@@ -189,6 +189,7 @@ function registerBlinksRoute(ctx) {
 
   return async function handleBlinksRoute(req, res, url, pathname) {
     if (pathname === '/api/prism/mint-for-coins' && req.method === 'POST') {
+      console.info('[mint-for-coins] received', { ip: req.ip || req.headers['x-forwarded-for'], ts: Date.now() });
       if (!ipRateLimit('mint_coins', getClientIp(req), 10, 60000)) {
         respondJson(res, 429, { error: 'Too many requests' });
         return true;

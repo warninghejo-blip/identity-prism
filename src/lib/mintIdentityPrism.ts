@@ -357,6 +357,8 @@ export async function mintIdentityPrism({
     if (!authToken) {
       throw new Error('Authentication required for coins payment. Please try again.');
     }
+    console.info('[mint-for-coins] sending request', { address, baseUrl: coreMintUrl, ts: Date.now() });
+    const t0 = performance.now();
     const coinsMintRes = await fetch(`${coreMintUrl}/api/prism/mint-for-coins`, {
       method: 'POST',
       headers: {
@@ -365,6 +367,8 @@ export async function mintIdentityPrism({
       },
       body: JSON.stringify({ address }),
     });
+    const elapsed = Math.round(performance.now() - t0);
+    console.info('[mint-for-coins] response', { status: coinsMintRes.status, ok: coinsMintRes.ok, elapsedMs: elapsed });
     if (!coinsMintRes.ok) {
       const errorText = await coinsMintRes.text();
       let errorMessage = `Coins deduction failed: ${coinsMintRes.status}`;
