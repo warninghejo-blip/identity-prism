@@ -1389,7 +1389,7 @@ export default function StellarForge() {
                           <div className="flex items-center gap-2 mb-2">
                             <AssetIcon icon={CATEGORY_ICONS[cat]} className="w-4 h-4" />
                             <span className="text-[11px] font-bold text-white/50 uppercase tracking-wider">
-                              {CATEGORY_LABELS[cat]}s
+                              {CATEGORY_LABELS[cat]}
                             </span>
                           </div>
                           {ownedInCat.length > 0 ? (

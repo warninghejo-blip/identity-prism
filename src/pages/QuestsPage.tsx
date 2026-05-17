@@ -239,10 +239,30 @@ export default function QuestsPage() {
       // Mark as claimed locally — XP is stored in quest state
       const updatedState = claimQuestReward(questState, quest.id);
       if (updatedState === questState) return; // already claimed — no change
+      const prevState = questState;
       setQuestState({ ...updatedState });
       setClaiming(quest.id);
       toast.success(`+${quest.reward} XP`, { description: quest.name });
       setClaiming(null);
+      // Verify server accepted the claim — refetch within 2s, revert if rejected
+      (async () => {
+        try {
+          const base = getApiBase();
+          if (!base) return;
+          await new Promise((r) => setTimeout(r, 1500));
+          const resp = await fetch(`${base}/api/quest/progress?address=${encodeURIComponent(walletAddress)}`);
+          if (!resp.ok) return;
+          const data = await resp.json();
+          const serverQ = data?.quests?.[quest.id];
+          if (serverQ && !serverQ.claimedAt) {
+            console.warn(`[quests] handleClaim: server did not record claim for ${quest.id}, reverting`);
+            setQuestState(prevState);
+            toast.warning('Quest not yet synced with server');
+          }
+        } catch (err) {
+          console.warn('[quests] handleClaim verify failed:', err);
+        }
+      })();
     },
     [walletAddress, questState, claiming],
   );
