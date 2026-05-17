@@ -152,10 +152,6 @@ export async function payForRevive(wallet: WalletContextState): Promise<ReviveRe
 
   // 6. Sign and send (with timeout)
   try {
-    try {
-      const { ensureJwt } = await import('@/components/prism/shared');
-      await ensureJwt(); // SIWS one-shot — primes MWA session
-    } catch { /* non-blocking */ }
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('USER_REJECTED: Signing timed out')), 120_000),
     );
