@@ -87,9 +87,11 @@ export interface WalletTraits {
 export interface WalletData {
   address: string;
   score: number;
+  tier?: PlanetTier | null;
   traits: WalletTraits | null;
   isLoading: boolean;
   error: string | null;
+  isNewWallet?: boolean;
 }
 
 export const WALLET_DATA_CACHE_TTL_MS = 15 * 60 * 1000;
@@ -270,6 +272,12 @@ const fetchFastProfileJson = async (url: string): Promise<unknown> => {
   return response.json();
 };
 
+const getFastProfileStatus = (error: unknown): number | null => {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const match = message.match(/FAST_PROFILE_(?:NATIVE|FETCH)_(\d{3})/);
+  return match ? Number(match[1]) : null;
+};
+
 const primeCompositeCache = (address: string, wallet: any) => {
   if (!wallet || typeof wallet !== 'object') return;
   const fallbackScore = toFiniteNumber(wallet.score);
@@ -445,11 +453,13 @@ export function useWalletData(address?: string) {
 
         const proxyBase = getHeliusProxyUrl();
         const isNativeProfileOnly = Capacitor.isNativePlatform();
+        let fastProfileAllNotFound = false;
         if (proxyBase) {
           const fastProfilePaths = [
             `/api/prism/summary?address=${encodeURIComponent(address)}`,
             `/api/wallet-database?address=${encodeURIComponent(address)}`,
           ];
+          const fastProfileStatuses: Array<number | null> = [];
 
           for (const path of fastProfilePaths) {
             try {
@@ -465,20 +475,27 @@ export function useWalletData(address?: string) {
               emitScan('done', 100);
               return;
             } catch (error) {
+              fastProfileStatuses.push(getFastProfileStatus(error));
               if (isDev) console.warn('[Wallet Database] Fast profile endpoint failed, trying fallback.', error);
             }
           }
+          fastProfileAllNotFound =
+            fastProfileStatuses.length === fastProfilePaths.length && fastProfileStatuses.every((status) => status === 404);
           if (isNativeProfileOnly) {
-            if (!cancelled) {
-              setWalletData({
-                address,
-                traits: null,
-                score: 0,
-                isLoading: false,
-                error: 'Identity profile is temporarily unavailable.',
-              });
+            if (fastProfileAllNotFound) {
+              if (isDev) console.warn('[Wallet Database] Wallet not registered; falling back to on-chain scan.');
+            } else {
+              if (!cancelled) {
+                setWalletData({
+                  address,
+                  traits: null,
+                  score: 0,
+                  isLoading: false,
+                  error: 'Identity profile is temporarily unavailable.',
+                });
+              }
+              return;
             }
-            return;
           }
         }
 
@@ -933,7 +950,7 @@ export function useWalletData(address?: string) {
         };
 
         emitScan('scoring', 80);
-        const score = calculateScore(traits);
+        const score = fastProfileAllNotFound ? 0 : calculateScore(traits);
 
         // Enhanced TX data — fire-and-forget, updates state in background
         const enhancedTxPromise = fetch(`${getHeliusProxyUrl()}/api/enhanced-tx?address=${address}`, {
@@ -944,7 +961,9 @@ export function useWalletData(address?: string) {
           .catch(() => null);
 
         // 9-Tier Planet System + Binary Sun for Combo holders (0-400 scale)
-        if (traits.hasCombo) {
+        if (fastProfileAllNotFound) {
+          traits.planetTier = 'mercury';
+        } else if (traits.hasCombo) {
           traits.planetTier = 'binary_sun';
         } else if (score >= 352) {
           traits.planetTier = 'sun';
@@ -968,7 +987,15 @@ export function useWalletData(address?: string) {
 
         emitScan('done', 100);
         if (cancelled) return;
-        const finalData: WalletData = { address, traits, score, isLoading: false, error: null };
+        const finalData: WalletData = {
+          address,
+          traits,
+          score,
+          tier: fastProfileAllNotFound ? null : traits.planetTier,
+          isLoading: false,
+          error: null,
+          isNewWallet: fastProfileAllNotFound || undefined,
+        };
         setWalletData(finalData);
         writeWalletDataCache(address, finalData);
         if (isDev)
@@ -1071,8 +1098,9 @@ export function useWalletData(address?: string) {
 
           if (changed) {
             // Recalculate planet tier
-            const updatedScore = calculateScore(traits);
-            if (traits.hasCombo) traits.planetTier = 'binary_sun';
+            const updatedScore = fastProfileAllNotFound ? 0 : calculateScore(traits);
+            if (fastProfileAllNotFound) traits.planetTier = 'mercury';
+            else if (traits.hasCombo) traits.planetTier = 'binary_sun';
             else if (updatedScore >= 352) traits.planetTier = 'sun';
             else if (updatedScore >= 320) traits.planetTier = 'jupiter';
             else if (updatedScore >= 280) traits.planetTier = 'saturn';
@@ -1083,7 +1111,15 @@ export function useWalletData(address?: string) {
             else if (updatedScore >= 40) traits.planetTier = 'mars';
             else traits.planetTier = 'mercury';
 
-            const updated: WalletData = { address, traits, score: updatedScore, isLoading: false, error: null };
+            const updated: WalletData = {
+              address,
+              traits,
+              score: updatedScore,
+              tier: fastProfileAllNotFound ? null : traits.planetTier,
+              isLoading: false,
+              error: null,
+              isNewWallet: fastProfileAllNotFound || undefined,
+            };
             setWalletData(updated);
             writeWalletDataCache(address, updated);
           }

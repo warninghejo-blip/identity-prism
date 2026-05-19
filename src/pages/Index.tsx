@@ -1327,6 +1327,7 @@ const Index = () => {
   const walletSignIn = wallet.signIn;
   const walletData = useWalletData(resolvedAddress);
   const { traits, score, address, isLoading } = walletData;
+  const isNewWallet = Boolean(walletData.isNewWallet);
 
   useEffect(() => {
     if (!balanceAddress || address !== balanceAddress || !traits) return;
@@ -1567,11 +1568,11 @@ const Index = () => {
       if (viewStateRef.current === 'scanning') {
         // Traits loaded (from cache or fresh) while still in scanning — go to hub
         hasReachedHub.current = true;
-        setViewState('hub');
+        setViewState(isNewWallet ? 'ready' : 'hub');
       } else if (!hasReachedHub.current) {
         hasReachedHub.current = true;
         if (viewStateRef.current !== 'ready' && viewStateRef.current !== 'hub') {
-          setViewState('hub');
+          setViewState(isNewWallet ? 'ready' : 'hub');
         }
       }
       // Clear one-shot returning flags now that data is loaded
@@ -1628,7 +1629,7 @@ const Index = () => {
         }
       }
     }
-  }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable, jwtSigning, forceIdentityCardRoute]);
+  }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable, jwtSigning, forceIdentityCardRoute, isNewWallet]);
 
   // Removed auto-warp effect
 
@@ -2566,7 +2567,7 @@ const Index = () => {
                           ) : (
                             <>
                               <Coins className="h-4 w-4 mr-2" />
-                              MINT IDENTITY
+                              {isNewWallet ? 'Mint Identity to Activate Score' : 'MINT IDENTITY'}
                             </>
                           )}
                         </Button>
