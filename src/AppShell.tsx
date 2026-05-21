@@ -119,7 +119,9 @@ const TrustRecovery = React.lazy(() => import('./pages/TrustRecovery'));
 const TextQuestPage = React.lazy(() => import('./pages/TextQuestPage'));
 // Landing pages
 const LandingPage = React.lazy(() => import('./pages/LandingPage'));
-const IdentityHub = React.lazy(() => import('./pages/IdentityHub'));
+const ApkIdentityHub = React.lazy(() => import('./pages/ApkIdentityHub'));
+const WebIdentityHub = React.lazy(() => import('./pages/WebIdentityHub'));
+const WebBlackHole = React.lazy(() => import('./pages/WebBlackHole'));
 const SybilHunt = React.lazy(() => import('./pages/SybilHunt'));
 const CardDemoPage = React.lazy(() => import('./pages/CardDemoPage'));
 const SybilCheckerPage = React.lazy(() => import('./pages/SybilCheckerPage'));
@@ -165,7 +167,9 @@ const navigateFromNativeUrl = (rawUrl?: string | null) => {
 const appRoutes = [
     {
       path: '/blackhole',
-      element: BLACKHOLE_ENABLED ? lazyRoute(<BlackHole />) : <Navigate to="/" replace />,
+      element: BLACKHOLE_ENABLED
+        ? lazyRoute(isCapacitorNative ? <BlackHole /> : <WebBlackHole />)
+        : <Navigate to="/" replace />,
     },
     {
       path: '/',
@@ -175,7 +179,7 @@ const appRoutes = [
         { path: 'app', element: <Index /> },
         { path: 'app/*', element: <Index /> },
         { path: 'landing', element: lazyRoute(<LandingPage />) },
-        { path: 'identity', element: lazyRoute(<IdentityHub />) },
+        { path: 'identity', element: lazyRoute(isCapacitorNative ? <ApkIdentityHub /> : <WebIdentityHub />) },
         { path: 'sybil-hunt', element: <Navigate to="/sybil-check" replace /> },
         { path: 'demo', element: lazyRoute(<CardDemoPage />) },
         { path: 'sybil-check', element: lazyRoute(<SybilCheckerPage />) },
@@ -291,23 +295,29 @@ const appIdentity = {
 // Force-resolve blur detection on native platforms by synthesizing blur event.
 try {
   if (typeof window !== 'undefined' && Capacitor?.isNativePlatform?.()) {
-    const originalAssign = window.location.assign.bind(window.location);
-    (window.location as any).assign = (url: string | URL) => {
-      try {
-        const urlStr = typeof url === 'string' ? url : url.toString();
-        if (urlStr.startsWith('solana-wallet:')) {
-          originalAssign(urlStr);
-          setTimeout(() => {
-            try { window.dispatchEvent(new Event('blur')); } catch {}
-          }, 50);
-          return;
-        }
-      } catch {}
-      return originalAssign(url as any);
-    };
+    const assignDescriptor = Object.getOwnPropertyDescriptor(window.location, 'assign');
+    if (assignDescriptor?.writable || assignDescriptor?.configurable) {
+      const originalAssign = window.location.assign.bind(window.location);
+      Object.defineProperty(window.location, 'assign', {
+        configurable: true,
+        value: (url: string | URL) => {
+          try {
+            const urlStr = typeof url === 'string' ? url : url.toString();
+            if (urlStr.startsWith('solana-wallet:')) {
+              originalAssign(urlStr);
+              setTimeout(() => {
+                try { window.dispatchEvent(new Event('blur')); } catch {}
+              }, 50);
+              return;
+            }
+          } catch {}
+          return originalAssign(url as any);
+        },
+      });
+    }
   }
 } catch (e) {
-  console.error('[BlurPatch] init failed:', e);
+  if (import.meta.env.DEV) console.warn('[BlurPatch] init skipped:', e);
 }
 
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({

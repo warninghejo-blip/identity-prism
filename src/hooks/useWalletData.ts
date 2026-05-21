@@ -108,6 +108,14 @@ const getWalletDataCacheKeys = (address: string): WalletDataCacheKeys[] => [
     dataKey: `walletData_v4_${address}`,
     timestampKey: `walletData_v4_ts_${address}`,
   },
+  {
+    dataKey: `walletData_v3_${address}`,
+    timestampKey: `walletData_v3_ts_${address}`,
+  },
+  {
+    dataKey: `walletData_${address}`,
+    timestampKey: `walletData_ts_${address}`,
+  },
 ];
 
 export function readCachedWalletData(address: string): WalletData | null {
@@ -387,7 +395,9 @@ const buildTraitsFromWalletDatabase = (address: string, wallet: any): WalletData
 };
 
 export function useWalletData(address?: string) {
-  const [walletData, setWalletData] = useState<WalletData>(buildDisconnectedWalletData());
+  const [walletData, setWalletData] = useState<WalletData>(() =>
+    address ? (readCachedWalletData(address) ?? buildDisconnectedWalletData()) : buildDisconnectedWalletData(),
+  );
   const _isLowEndDevice =
     typeof navigator !== 'undefined' &&
     /android/i.test(navigator.userAgent) &&
@@ -404,23 +414,19 @@ export function useWalletData(address?: string) {
 
     // Check for cached data so planet renders immediately on return from BlackHole
     const cachedWalletData = readCachedWalletData(address);
-    const hasCached = Boolean(cachedWalletData);
     if (cachedWalletData) {
       setWalletData(cachedWalletData);
       writeWalletDataCache(address, cachedWalletData);
+      emitScan('done', 100);
+      return;
     }
-    if (!hasCached) {
-      setWalletData({
-        address,
-        traits: null,
-        score: 0,
-        isLoading: true,
-        error: null,
-      });
-    }
-    // Don't set isLoading:true when we have cached data — it causes card flicker
-    // (card appears from cache → hides during loading → reappears after fetch)
-    // The card stays visible with cached data while fresh data loads in background
+    setWalletData({
+      address,
+      traits: null,
+      score: 0,
+      isLoading: true,
+      error: null,
+    });
 
     let cancelled = false;
 
@@ -1129,6 +1135,14 @@ export function useWalletData(address?: string) {
       } catch (error) {
         console.error('Scan Error:', error);
         if (cancelled) return;
+        if (cachedWalletData) {
+          setWalletData({
+            ...cachedWalletData,
+            isLoading: false,
+            error: null,
+          });
+          return;
+        }
         if (Capacitor.isNativePlatform() && fastProfileAllNotFound) {
           const fallbackData = buildNewWalletData(address || '');
           emitScan('done', 100);

@@ -42,15 +42,22 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 type AuthorizedSeedVaultAccount = {
-  authToken: number;
+  authToken?: number | string;
   address: string;
   derivationPath: string;
   isUserWallet?: boolean;
   isValid?: boolean;
 };
 
+function normalizeAuthToken(value: unknown): number | null {
+  const token = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(token) ? token : null;
+}
+
 function getPreferredAuthorizedAccount(accounts: AuthorizedSeedVaultAccount[]): AuthorizedSeedVaultAccount | null {
-  const withAddress = accounts.filter((account) => account.address && account.derivationPath);
+  const withAddress = accounts.filter(
+    (account) => account.address && account.derivationPath && normalizeAuthToken(account.authToken) !== null,
+  );
   const usable = withAddress.filter((account) => account.isValid !== false);
   const candidates = usable.length ? usable : withAddress;
   if (!candidates.length) return null;
@@ -127,7 +134,8 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
       const authorized = await SeedVault.getAuthorizedAccounts().catch(() => null);
       const account = authorized ? getPreferredAuthorizedAccount(authorized.accounts) : null;
       if (account) {
-        this._authToken = account.authToken;
+        this._authToken = normalizeAuthToken(account.authToken);
+        if (this._authToken === null) throw new Error('Seed Vault account is missing auth token');
         this._derivationPath = account.derivationPath;
         this._publicKey = new PublicKey(account.address);
         this.emit('connect', this._publicKey);
@@ -135,7 +143,8 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
       }
 
       const { authToken, address, derivationPath } = await SeedVault.authorize();
-      this._authToken = authToken;
+      this._authToken = normalizeAuthToken(authToken);
+      if (this._authToken === null) throw new Error('Seed Vault authorize returned no auth token');
       this._derivationPath = derivationPath;
       this._publicKey = new PublicKey(address);
       this.emit('connect', this._publicKey);

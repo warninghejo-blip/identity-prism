@@ -40,11 +40,6 @@ import SiteHeader from '@/components/SiteHeader';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-
 type AssetStatus = 'protected' | 'valuable' | 'burnable' | 'unknown';
 type ResolutionAction = 'swap' | 'burn' | 'close' | 'skip';
 
@@ -3610,16 +3605,22 @@ const BlackHole = () => {
         )}
       </div>
 
-      <AlertDialog
-        open={!!shieldedBurnConfirm}
-        onOpenChange={(open) => !open && setShieldedBurnConfirm(null)}
-      >
-        <AlertDialogContent className="border-red-500/30 bg-zinc-950">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-red-400">
+      {shieldedBurnConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shielded-burn-title"
+          onClick={() => setShieldedBurnConfirm(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-red-500/30 bg-zinc-950 p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="shielded-burn-title" className="text-base font-bold text-red-400">
               Burn shielded NFT — irreversible
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-zinc-300">
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-zinc-300">
               You are about to permanently burn{' '}
               <span className="font-bold text-red-300">
                 {shieldedBurnConfirm?.name || shieldedBurnConfirm?.symbol || 'this NFT'}
@@ -3627,25 +3628,30 @@ const BlackHole = () => {
               . This NFT is shielded because it may have value (collection, floor price, or ecosystem
               relevance). Burning will destroy it forever and reclaim only the rent
               (~{shieldedBurnConfirm?.rentSol?.toFixed(4) ?? '0.0020'} SOL). If the NFT has resale value, it will be lost.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setShieldedBurnConfirm(null)}>
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-900"
+                onClick={() => setShieldedBurnConfirm(null)}
+              >
               Cancel — keep NFT
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-600 text-white hover:bg-red-500"
-              onClick={() => {
-                setShieldedBurnConfirm(null);
-                confirmedShieldedBurn.current = true;
-                void handleIncinerate();
-              }}
-            >
-              Yes, burn forever
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500"
+                onClick={() => {
+                  setShieldedBurnConfirm(null);
+                  confirmedShieldedBurn.current = true;
+                  void handleIncinerate();
+                }}
+              >
+                Yes, burn forever
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Sonner
         position="bottom-center"

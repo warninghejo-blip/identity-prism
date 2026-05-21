@@ -10,9 +10,27 @@ export type BlackHolePrefetchToken = {
   data: ParsedAccountData['parsed'];
 };
 
+export type BlackHolePrefetchMetadata = {
+  mint?: string;
+  name?: string;
+  symbol?: string;
+  image?: string;
+  isNft?: boolean;
+  collectionId?: string;
+  collectionName?: string;
+  collectionSymbol?: string;
+  priceUsd?: number | null;
+};
+
 export type BlackHolePrefetchCache = {
   tokenAccounts: BlackHolePrefetchToken[];
   timestamp: number;
+  complete?: boolean;
+  programCounts?: Record<string, number>;
+  metadataStatus?: 'ready' | 'failed' | 'partial' | string;
+  metadata?: Record<string, BlackHolePrefetchMetadata>;
+  solUsd?: number | null;
+  identityPerks?: any;
 };
 
 const TTL_MS = 5 * 60 * 1000;
@@ -29,6 +47,15 @@ export function readBlackHolePrefetch(address: string): BlackHolePrefetchCache |
     return parsed;
   } catch {
     return null;
+  }
+}
+
+export function writeBlackHolePrefetch(address: string, cache: BlackHolePrefetchCache) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(getBlackHolePrefetchKey(address), JSON.stringify(cache));
+  } catch {
+    /* storage can be unavailable */
   }
 }
 
@@ -69,10 +96,7 @@ export function useBlackHolePrefetch(publicKey: PublicKey | null) {
             })),
           );
         }
-        sessionStorage.setItem(
-          getBlackHolePrefetchKey(address),
-          JSON.stringify({ tokenAccounts, timestamp: Date.now() } satisfies BlackHolePrefetchCache),
-        );
+        writeBlackHolePrefetch(address, { tokenAccounts, timestamp: Date.now() });
       } catch (error) {
         console.warn('[BH prefetch]', error);
       }

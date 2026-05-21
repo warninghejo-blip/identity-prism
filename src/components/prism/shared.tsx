@@ -469,8 +469,7 @@ function readStoredAuthJwt(): string | null {
     /* ignore */
   }
   try {
-    const localRaw = localStorage.getItem(AUTH_JWT_KEY);
-    if (localRaw) return localRaw;
+    localStorage.removeItem(AUTH_JWT_KEY);
   } catch {
     /* ignore */
   }
@@ -483,6 +482,14 @@ function storeAuthJwt(entry: StoredAuthJwt): void {
     sessionStorage.setItem(AUTH_JWT_KEY, raw);
   } catch {
     /* ignore */
+  }
+  if (Capacitor.isNativePlatform()) {
+    try {
+      localStorage.removeItem(AUTH_JWT_KEY);
+    } catch {
+      /* ignore */
+    }
+    return;
   }
   try {
     localStorage.setItem(AUTH_JWT_KEY, raw);
@@ -820,7 +827,7 @@ export async function obtainJwt(
 
       let signatureHex = '';
       let signedMessageBase64: string | undefined;
-      const signTimeoutMs = wallet.preferSignMessage ? 60_000 : 45_000;
+      const signTimeoutMs = Capacitor.isNativePlatform() ? 240_000 : wallet.preferSignMessage ? 60_000 : 45_000;
       const signTimeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('SIGN_TIMEOUT')), signTimeoutMs),
       );

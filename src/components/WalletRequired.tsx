@@ -51,7 +51,7 @@ export default function WalletRequired({ children }: WalletRequiredProps) {
     }
   }, [canSign, publicKey, wallet]);
 
-  if (activeAddress || liveHasJwt || publicKey) {
+  if (activeAddress || liveHasJwt) {
     return <>{children}</>;
   }
 

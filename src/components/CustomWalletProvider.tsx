@@ -47,8 +47,8 @@ type NativeSessionRestoreMarker = {
 };
 
 const withNativeWalletDismissDetection = async <T,>(operation: () => Promise<T>, label: string): Promise<T> => {
-  const hardTimeoutMs = 120_000;
-  const dismissGraceMs = Capacitor.isNativePlatform() ? 30_000 : 15_000;
+  const hardTimeoutMs = Capacitor.isNativePlatform() ? 240_000 : 120_000;
+  const dismissGraceMs = Capacitor.isNativePlatform() ? 60_000 : 15_000;
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;

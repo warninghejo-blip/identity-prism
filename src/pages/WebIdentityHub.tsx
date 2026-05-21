@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, BadgeCheck, Loader2, Share2, Shield, Wallet } from 'lucide-react';
+import { BadgeCheck, Loader2, Share2, Shield, Wallet } from 'lucide-react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -25,6 +25,7 @@ const PAY_OPTIONS: Array<{ key: PayCurrency; label: string; iconUrl?: string; em
 ];
 
 const demoAddress = '11111111111111111111111111111111';
+const demoScore = 750;
 
 function buildPreviewTraits(tier: PlanetTier): WalletTraits {
   return {
@@ -123,9 +124,25 @@ export default function WebIdentityHub() {
       : getCompositeTierFromScore(liveScore, liveTraits?.planetTier || 'uranus')
   ) as PlanetTier;
   const previewTraits = useMemo(() => buildPreviewTraits('saturn'), []);
+  const previewComposite = useMemo(
+    () => ({
+      score: demoScore,
+      tier: 'saturn' as PlanetTier,
+      breakdown: {
+        onchain: 300,
+        sybilTrust: 188,
+        humanProof: 112,
+        social: 75,
+        engagement: 75,
+      },
+      details: null,
+    }),
+    [],
+  );
+  const isLiveCard = Boolean(wallet.connected && liveTraits);
   const cardData: WalletData = wallet.connected && liveTraits
     ? { ...walletData, score: liveScore, traits: { ...liveTraits, planetTier: liveTier }, address }
-    : { address: demoAddress, score: 900, traits: previewTraits, isLoading: false, error: null };
+    : { address: demoAddress, score: demoScore, traits: previewTraits, isLoading: false, error: null };
 
   const readyToMint = Boolean(wallet.connected && address && liveTraits && !walletData.isLoading && !minting);
   const tierLabel = TIER_LABELS[(cardData.traits?.planetTier || 'saturn') as PlanetTier];
@@ -174,10 +191,6 @@ export default function WebIdentityHub() {
       <SiteHeader />
       <main className="identity-card-web-shell">
         <div className="identity-card-web-toolbar">
-          <Link to="/" className="identity-card-web-back">
-            <ArrowLeft size={18} aria-hidden="true" />
-            Back
-          </Link>
           <div>
             <span>Identity Prism</span>
             <h1>Identity Passport</h1>
@@ -194,7 +207,11 @@ export default function WebIdentityHub() {
                 </div>
               }
             >
-              <WebCelestialCard data={cardData} />
+              <WebCelestialCard
+                data={cardData}
+                liveData={isLiveCard}
+                compositeOverride={isLiveCard ? undefined : previewComposite}
+              />
             </Suspense>
           </div>
 
