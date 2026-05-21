@@ -16,7 +16,7 @@ const TRUST_GRADE_META: Record<string, { color: string; glow: string; label: str
 };
 
 const SIZE_CLASS: Record<TrustGradeBadgeSize, { box: string; icon: number; text: string; label: string }> = {
-  xs: { box: 'gap-0', icon: 25, text: 'text-[9px]', label: 'hidden' },
+  xs: { box: 'gap-0', icon: 40, text: 'text-[9px]', label: 'hidden' },
   sm: { box: 'gap-1.5', icon: 30, text: 'text-[10px]', label: 'text-[9px]' },
   md: { box: 'gap-2', icon: 36, text: 'text-xs', label: 'text-[10px]' },
 };

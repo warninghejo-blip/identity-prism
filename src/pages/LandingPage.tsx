@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, CircleCheck, Flame, Gamepad2, ShieldCheck, Sparkles, Trophy, Wallet, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 import SiteHeader from '@/components/SiteHeader';
+import WebIdentityDemoCard from '@/components/WebIdentityDemoCard';
 import type { PlanetTier } from '@/hooks/useWalletData';
 import { useGlobalStats } from '@/hooks/useGlobalStats';
 import { TIER_HEX, TIER_LABELS } from '@/lib/constants/tierColors';
@@ -50,7 +51,7 @@ function SectionDivider({ label }: { label: string }) {
 
 function SectionHead({ eyebrow, title, copy, tone = 'prism' }: { eyebrow: string; title: string; copy: string; tone?: 'prism' | 'red' | 'green' | 'gold' }) {
   return (
-    <div className="landing-section-head reveal in">
+    <div className="landing-section-head reveal">
       <span className={`landing-eyebrow ${tone}`}>{eyebrow}</span>
       <h2>{title}</h2>
       <p>{copy}</p>
@@ -204,16 +205,46 @@ function LiveClusterGraph() {
   }, []);
 
   return (
-    <div className="sybil-stage reveal in">
+    <div className="sybil-stage reveal">
       <canvas ref={canvasRef} className="sybil-canvas" aria-label="Animated live cluster graph" />
       <span>LIVE CLUSTER GRAPH</span>
     </div>
   );
 }
 
+function useLandingScrollReveals() {
+  useEffect(() => {
+    const targets = Array.from(document.querySelectorAll<HTMLElement>('.landing-page .reveal, .landing-page .reveal-stagger'));
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion || !('IntersectionObserver' in window)) {
+      targets.forEach((target) => target.classList.add('in'));
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('in');
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.14, rootMargin: '0px 0px -10% 0px' },
+    );
+
+    targets.forEach((target) => observer.observe(target));
+    return () => observer.disconnect();
+  }, []);
+}
+
 export default function LandingPage() {
-  const stats = useGlobalStats();
+  useLandingScrollReveals();
+  const stats = useGlobalStats(15_000);
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const statsUpdatedAt = stats?.updatedAt
+    ? new Date(stats.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : 'syncing';
   const heroStats = [
     [stats?.idsMinted ?? 0, 'Identities'],
     [stats?.walletsScanned ?? 0, 'Wallets Scanned'],
@@ -235,7 +266,7 @@ export default function LandingPage() {
       <main>
         <section className="section hero-section" data-section-id="hero" id="hero">
           <div className="landing-container hero-grid">
-            <div className="reveal in">
+            <div className="reveal">
               <span className="landing-eyebrow">Solana reputation layer</span>
               <h1><span>Sybil-resistant</span><span>identity for real users.</span></h1>
               <p>Identity Prism turns wallet history, gameplay, cleanup, badges, and community review into a readable reputation card.</p>
@@ -243,7 +274,7 @@ export default function LandingPage() {
                 <Link to="/identity" className="landing-btn primary">Open Identity Hub <ArrowRight aria-hidden="true" /></Link>
                 <button type="button" className="landing-btn ghost" onClick={() => scrollTo('solution')}>See System</button>
               </div>
-              <div className="hero-stats reveal-stagger in">
+              <div className="hero-stats reveal-stagger">
                 {heroStats.map(([value, label]) => (
                   <div key={label}>
                     <b>{formatStat(value)}</b>
@@ -252,18 +283,8 @@ export default function LandingPage() {
                 ))}
               </div>
             </div>
-            <div className="hero-card-preview reveal in">
-              <div className="cc-stage">
-                <div className="cc-card">
-                  <div className="cc-head"><span>2psA...r4RN</span><b>URANUS</b></div>
-                  <div className="landing-id-mock">
-                    <img src="/landing/textures/tiers/uranus.png" alt="Uranus tier preview" />
-                    <strong>641</strong>
-                  </div>
-                  <div className="cc-info"><h3>PRISM ID</h3><strong>641<small>/1000</small></strong><div className="cc-progress"><span /></div></div>
-                  <div className="cc-badges">{badges.slice(0, 5).map(([src, label]) => <img key={src} src={`/landing/badges/${src}`} alt={label} />)}</div>
-                </div>
-              </div>
+            <div className="hero-card-preview reveal">
+              <WebIdentityDemoCard />
             </div>
           </div>
         </section>
@@ -271,11 +292,11 @@ export default function LandingPage() {
         <SectionDivider label="The Problem" />
         <section className="section landing-section problem-section" data-section-id="problem" id="problem">
           <div className="landing-container split-grid">
-            <div className="reveal in">
+            <div className="reveal">
               <span className="landing-eyebrow red">Sybil pressure</span>
               <h2>Wallets are cheap. Trust is expensive.</h2>
               <p>Public campaigns, airdrops, quests, and communities need better signals than token balance. Identity Prism compresses hard-to-fake behavior into a score people can inspect.</p>
-              <div className="problem-list reveal-stagger in">
+              <div className="problem-list reveal-stagger">
                 {[
                   [Flame, 'Airdrop farms mimic humans', 'Clusters reuse funding, timing, and routing patterns.'],
                   [Wallet, 'Wallets have no context', 'Useful users look identical to fresh spam accounts.'],
@@ -291,7 +312,7 @@ export default function LandingPage() {
         <section className="section landing-section solution-section" data-section-id="solution" id="solution">
           <div className="landing-container">
             <SectionHead eyebrow="Solution" tone="green" title="A wallet becomes an identity when evidence compounds." copy="On-chain history, human gameplay, cleanup behavior, social review, and achievements flow into one composite score." />
-            <div className="flow-grid reveal-stagger in">
+            <div className="flow-grid reveal-stagger">
               {['Wallet', 'Signals', 'Score', 'Tier', 'Identity'].map((item, index) => (
                 <div className="flow-node" key={item}><span>{index + 1}</span><b>{item}</b><i /></div>
               ))}
@@ -304,8 +325,8 @@ export default function LandingPage() {
           <div className="landing-container">
             <SectionHead eyebrow="Sybil Catch" tone="gold" title="Two tracks. One reputation outcome." copy="Bad behavior gets isolated. Organic users can clear ambiguity through proof instead of waiting on manual moderation." />
             <div className="track-grid">
-              <div className="track-card bad reveal in"><h3>Bad Track</h3>{['Shared funding source', 'Script-like timing', 'Dust fan-out', 'Cluster similarity'].map((x) => <p key={x}><Flame aria-hidden="true" />{x}</p>)}</div>
-              <div className="track-card good reveal in"><h3>Good Track</h3>{['Gameplay history', 'Clean wallet age', 'Human verification', 'Community corrections'].map((x) => <p key={x}><CircleCheck aria-hidden="true" />{x}</p>)}</div>
+              <div className="track-card bad reveal"><h3>Bad Track</h3>{['Shared funding source', 'Script-like timing', 'Dust fan-out', 'Cluster similarity'].map((x) => <p key={x}><Flame aria-hidden="true" />{x}</p>)}</div>
+              <div className="track-card good reveal"><h3>Good Track</h3>{['Gameplay history', 'Clean wallet age', 'Human verification', 'Community corrections'].map((x) => <p key={x}><CircleCheck aria-hidden="true" />{x}</p>)}</div>
             </div>
           </div>
         </section>
@@ -314,7 +335,7 @@ export default function LandingPage() {
         <section className="section landing-section badges-section" data-section-id="badges" id="badges">
           <div className="landing-container">
             <SectionHead eyebrow="Badges" title="Achievements users can actually inspect." copy="Badges are visible proof units: wallet history, cleanup, games, social review, and device ownership." />
-            <div className="badges-grid reveal-stagger in">{badges.map(([src, label, copy]) => <div className="badge-card glass-card" key={src}><img src={`/landing/badges/${src}`} alt={label} /><b>{label}</b><span>{copy}</span></div>)}</div>
+            <div className="badges-grid reveal-stagger">{badges.map(([src, label, copy]) => <div className="badge-card glass-card" key={src}><img src={`/landing/badges/${src}`} alt={label} /><b>{label}</b><span>{copy}</span></div>)}</div>
           </div>
         </section>
 
@@ -322,7 +343,7 @@ export default function LandingPage() {
         <section className="section landing-section tiers-section" data-section-id="tiers" id="tiers">
           <div className="landing-container">
             <SectionHead eyebrow="Tiers" tone="gold" title="Ten planets from Mercury to Binary Sun." copy="Each score band maps to a planet tier, making reputation scannable without hiding the underlying stats." />
-            <div className="tiers-grid reveal-stagger in">
+            <div className="tiers-grid reveal-stagger">
               {tiers.map((tier, index) => <div className="tier-card glass-card" key={tier} style={{ '--tier': TIER_HEX[tier] } as React.CSSProperties}><img src={`/landing/textures/tiers/${tier}.png`} alt={`${TIER_LABELS[tier]} tier`} /><b>{TIER_LABELS[tier]}</b><span>{index * 100}-{index === 9 ? '1000' : index * 100 + 99}</span></div>)}
             </div>
           </div>
@@ -332,7 +353,7 @@ export default function LandingPage() {
         <section className="section landing-section games-section" data-section-id="games" id="games">
           <div className="landing-container">
             <SectionHead eyebrow="Prism League" title="Skill is proof that bots struggle to fake." copy="Games, arena matches, and quests become human-proof signals that feed Ranger XP and identity reputation." />
-            <div className="games-grid reveal-stagger in">
+            <div className="games-grid reveal-stagger">
               {[
                 ['Prism League', 'Orbit survival, gravity runs, and session scores.', Gamepad2],
                 ['Arena', 'Wallet-vs-wallet brackets with seasonal standings.', Trophy],
@@ -346,7 +367,7 @@ export default function LandingPage() {
         <section className="section landing-section ranks-section" data-section-id="ranks" id="ranks">
           <div className="landing-container">
             <SectionHead eyebrow="Ranger Ranks" tone="green" title="A second progression track for play." copy="Composite tier measures wallet reputation. Ranger Rank measures XP earned through games, quests, achievements, and community actions." />
-            <div className="rank-table glass-card reveal in">
+            <div className="rank-table glass-card reveal">
               {['Cadet', 'Pilot', 'Captain', 'Ace', 'Legend'].map((r, i) => <div key={r}><span>{r}</span><b>{[0, 1500, 8000, 25000, 50000][i].toLocaleString('en-US')} XP</b><em>{['Base gear', 'Text quests', 'Yellow slots', 'Red slots', 'All systems'][i]}</em></div>)}
             </div>
           </div>
@@ -356,7 +377,7 @@ export default function LandingPage() {
         <section className="section landing-section explode-section" data-section-id="explode" id="explode">
           <div className="landing-container">
             <SectionHead eyebrow="Planet Explode" title="Every identity can be rebuilt from fresh proof." copy="Risk collapses, shards fly, and a stronger planet reforms from updated evidence." />
-            <div className="explode-stage reveal in">
+            <div className="explode-stage reveal">
               <div className="explode-planet"><img src="/landing/textures/tiers/sun.png" alt="Exploding planet finale" /></div>
               {Array.from({ length: 14 }, (_, i) => <span key={i} className="shard" style={{ '--i': i } as React.CSSProperties} />)}
             </div>
@@ -372,7 +393,8 @@ export default function LandingPage() {
               title="The protocol pulse is public."
               copy="Identity mints, scans, sybil outcomes, cleanup operations, reports, and clusters update from the live backend."
             />
-            <div className="live-stats-grid reveal-stagger in">
+            <p className="live-stats-updated reveal" aria-live="polite">Fresh backend sync: {statsUpdatedAt}</p>
+            <div className="live-stats-grid reveal-stagger">
               <StatTile label="Identities Minted" value={stats?.idsMinted ?? 0} color="cyan" />
               <StatTile label="Wallets Scanned" value={stats?.walletsScanned ?? 0} color="violet" />
               <StatTile label="Sybils Caught" value={stats?.sybilsCaught ?? 0} color="red" />
@@ -390,15 +412,7 @@ export default function LandingPage() {
             <p>Open the hub, connect your wallet, inspect your score bars, and start building proof.</p>
             <div className="hero-actions">
               <Link to="/identity" className="landing-btn primary">Open Identity Hub</Link>
-              <Link to="/sybil-hunt" className="landing-btn ghost">Start Sybil Hunt</Link>
-            </div>
-            <div className="hero-stats reveal-stagger in">
-              {heroStats.slice(0, 3).map(([value, label]) => (
-                <div key={label}>
-                  <b>{formatStat(value)}</b>
-                  <span>{label}</span>
-                </div>
-              ))}
+              <Link to="/sybil-check" className="landing-btn ghost">Open Sybil Checker</Link>
             </div>
           </div>
         </section>

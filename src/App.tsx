@@ -4,6 +4,7 @@ import { Toaster as Sonner } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Outlet, useLocation } from 'react-router-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { cleanupOverlays } from '@/lib/safeNavigate';
 import { trackPageView } from '@/lib/analytics';
 import { useChallengeNotifier } from '@/lib/useChallengeNotifier';
@@ -21,6 +22,7 @@ const queryClient = new QueryClient({
 
 const App = () => {
   const location = useLocation();
+  const reduceMotion = useReducedMotion();
   useChallengeNotifier();
 
   // Dismiss HTML preloader and stale overlays on route change.
@@ -55,7 +57,17 @@ const App = () => {
             Skip to content
           </a>
           <main id="root-content">
-            <Outlet />
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={location.pathname}
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
+                transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
+              >
+                <Outlet />
+              </motion.div>
+            </AnimatePresence>
           </main>
           <Toaster />
           <Sonner position="bottom-right" expand={false} closeButton richColors={false} offset={24} />

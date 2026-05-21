@@ -285,8 +285,13 @@ function createReputationBuilderService({
 
     const traits = walletEntry.traits || {};
     const stats = walletEntry.stats || {};
-    const sybil = walletEntry.sybil || {};
-    const sybilVerdict = sybil.verdict || (sybil.verdictKey ? getSybilQuickVerdict(sybil) : null);
+    const sybil = getRecentSybilAnalysis(address) || walletEntry.sybil || {};
+    const sybilVerdict =
+      (sybil.metrics || sybil.signals || sybil.verdict)
+        ? getSybilVerdict(sybil)
+        : sybil.verdictKey
+          ? getSybilQuickVerdict(sybil)
+          : null;
     const socialActivity = getSocialActivitySummary(address);
 
     return {

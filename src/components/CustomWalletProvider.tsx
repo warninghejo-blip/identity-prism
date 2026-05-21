@@ -157,12 +157,6 @@ const hasNativeSessionRestoreMarker = () => {
     const sessionMarker = parseNativeSessionRestoreMarker(sessionStorage.getItem(NATIVE_SESSION_RESTORE_KEY));
     if (sessionMarker) return true;
 
-    const localMarker = parseNativeSessionRestoreMarker(localStorage.getItem(NATIVE_SESSION_RESTORE_KEY));
-    if (localMarker) {
-      sessionStorage.setItem(NATIVE_SESSION_RESTORE_KEY, JSON.stringify(localMarker));
-      return true;
-    }
-
     sessionStorage.removeItem(NATIVE_SESSION_RESTORE_KEY);
     localStorage.removeItem(NATIVE_SESSION_RESTORE_KEY);
     return false;
@@ -175,7 +169,7 @@ const setNativeSessionRestoreMarker = () => {
   try {
     const marker = JSON.stringify({ armedAt: Date.now() });
     sessionStorage.setItem(NATIVE_SESSION_RESTORE_KEY, marker);
-    localStorage.setItem(NATIVE_SESSION_RESTORE_KEY, marker);
+    localStorage.removeItem(NATIVE_SESSION_RESTORE_KEY);
   } catch {
     /* ignore */
   }
@@ -268,6 +262,10 @@ export const CustomWalletProvider = ({
     () => dedupedAdapters.find((a) => a.name === walletName) ?? null,
     [dedupedAdapters, walletName],
   );
+  const selectedAdapterRef = useRef<Adapter | null>(adapter);
+  useEffect(() => {
+    selectedAdapterRef.current = adapter;
+  }, [adapter]);
   const mobileWalletAdapter = useMemo(
     () => dedupedAdapters.find((a) => a.name === SolanaMobileWalletAdapterWalletName) ?? null,
     [dedupedAdapters],
@@ -296,7 +294,7 @@ export const CustomWalletProvider = ({
   const isUnloadingRef = useRef(false);
   const isNativePlatform = Capacitor.isNativePlatform();
   const nativeRestoreArmed = hasNativeSessionRestoreMarker();
-  const nativeRestoreAllowed = !isNativePlatform || nativeRestoreArmed || Boolean(readPersistedAddress());
+  const nativeRestoreAllowed = !isNativePlatform || nativeRestoreArmed;
   const armWalletReturnGuard = useCallback(() => {
     if (isNativePlatform) {
       armExternalWalletReturnGuard();
@@ -470,6 +468,35 @@ export const CustomWalletProvider = ({
   }, [adapter, disconnecting, restoreMobileWalletSession, nativeRestoreAllowed]);
 
   useEffect(() => {
+    if (!isNativePlatform) return;
+
+    const handleMwaSiwsConnected = (event: Event) => {
+      const address = (event as CustomEvent<{ address?: string }>).detail?.address;
+      if (!looksLikeSolanaAddress(address)) return;
+      try {
+        const resolvedPublicKey = new PublicKey(address);
+        setNativeSessionRestoreMarker();
+        setWalletName(SolanaMobileWalletAdapterWalletName);
+        setConnected(true);
+        setPublicKey(resolvedPublicKey);
+        setConnecting(false);
+        setDisconnecting(false);
+        writeProviderAuthDebug({
+          stage: 'provider_siws_handoff',
+          address: resolvedPublicKey.toBase58().slice(0, 8),
+        });
+      } catch {
+        /* ignore malformed wallet handoff */
+      }
+    };
+
+    window.addEventListener('identityprism:mwa-siws-connected', handleMwaSiwsConnected);
+    return () => {
+      window.removeEventListener('identityprism:mwa-siws-connected', handleMwaSiwsConnected);
+    };
+  }, [isNativePlatform, setWalletName]);
+
+  useEffect(() => {
     if (!nativeRestoreAllowed || !isNativePlatform || walletName || connecting || disconnecting || !mobileWalletAdapter)
       return;
 
@@ -521,6 +548,7 @@ export const CustomWalletProvider = ({
   const select = useCallback(
     (name: WalletName | null) => {
       if (name === walletName) return;
+      selectedAdapterRef.current = name ? dedupedAdapters.find((a) => a.name === name) ?? null : null;
       // Reset connection state before switching so stale state can't block autoConnect
       setConnecting(false);
       setConnected(false);
@@ -551,19 +579,24 @@ export const CustomWalletProvider = ({
       clearStoredWalletSession,
       setWalletName,
       isNativePlatform,
+      dedupedAdapters,
     ],
   );
 
   // Connect
   const connect = useCallback(async () => {
     if (connecting || disconnecting || connected) return;
-    if (!adapter) throw handleError(new WalletNotSelectedError());
+    const activeAdapter = selectedAdapterRef.current ?? adapter;
+    if (!activeAdapter) throw handleError(new WalletNotSelectedError());
 
-    if (adapter.readyState !== WalletReadyState.Installed && adapter.readyState !== WalletReadyState.Loadable) {
-      if (!isNativePlatform && typeof window !== 'undefined' && adapter.url) {
-        window.open(adapter.url, '_blank');
+    if (
+      activeAdapter.readyState !== WalletReadyState.Installed &&
+      activeAdapter.readyState !== WalletReadyState.Loadable
+    ) {
+      if (!isNativePlatform && typeof window !== 'undefined' && activeAdapter.url) {
+        window.open(activeAdapter.url, '_blank');
       }
-      throw handleError(new WalletNotReadyError(), adapter);
+      throw handleError(new WalletNotReadyError(), activeAdapter);
     }
 
     setConnecting(true);
@@ -575,11 +608,15 @@ export const CustomWalletProvider = ({
       connectTimeoutId = setTimeout(() => reject(new Error('Connection timed out')), 15_000);
     });
     try {
-      await Promise.race([adapter.connect(), connectTimeout]);
+      await Promise.race([activeAdapter.connect(), connectTimeout]);
+      if (activeAdapter.publicKey) {
+        setConnected(true);
+        setPublicKey(activeAdapter.publicKey);
+      }
     } catch (error: unknown) {
       await clearStoredWalletSession();
       setWalletName(null);
-      throw handleError(error as WalletError, adapter);
+      throw handleError(error as WalletError, activeAdapter);
     } finally {
       if (connectTimeoutId !== null) clearTimeout(connectTimeoutId);
       setConnecting(false);

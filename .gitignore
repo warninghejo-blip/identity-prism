@@ -115,3 +115,10 @@ twitter-bot-python/.env.server
 
 # Local Netlify folder
 .netlify
+node_modules/
+dist/
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+*.log

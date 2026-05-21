@@ -3,6 +3,8 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
+import { WalletReadyState } from '@solana/wallet-adapter-base';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Button } from '@/components/ui/button';
 import { getApiBase, getCachedJwt, obtainJwt, setAuthWallet, type WalletPreview } from '@/components/prism/shared';
 import { invalidateCompositeCache, useCompositeScore } from '@/hooks/useCompositeScore';
@@ -28,7 +30,6 @@ import {
   ChevronUp,
   ChevronLeft,
   ChevronRight,
-  Coins,
   RotateCw,
   Swords,
   BookOpen,
@@ -249,24 +250,72 @@ async function syncCoinsToServer(
     const base = getServerBase();
     if (!base) return null;
     const jwt = getChallengeJwt(walletAddress);
-    if (!jwt) return null; // Require JWT to sync coins
+    if (!jwt) return { address: walletAddress, coins, failed: true, status: 401, error: 'auth_jwt_missing' };
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
-    const response = await fetch(`${base}/api/v2/game/coins`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ address: walletAddress, coins, delta, mode, gameSessionId }),
-    });
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      console.warn('[coins-sync] FAIL', response.status, errText);
-      return { address: walletAddress, coins, failed: true, status: response.status, error: errText };
+    const url = `${base}/api/v2/game/coins`;
+    const payload = { address: walletAddress, coins, delta, mode, gameSessionId };
+    console.info('[coins-sync] START', { address: walletAddress.slice(0, 8), coins, delta, mode, gameSessionId });
+
+    let status = 0;
+    let data: unknown = null;
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const response = await CapacitorHttp.post({
+          url,
+          headers,
+          data: payload,
+          responseType: 'json',
+          connectTimeout: 10000,
+          readTimeout: 18000,
+        });
+        status = response.status;
+        if (response.status < 200 || response.status >= 300) {
+          const errText = typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? {});
+          console.warn('[coins-sync] NATIVE_FAIL', response.status, errText);
+          return { address: walletAddress, coins, failed: true, status: response.status, error: errText };
+        }
+        data = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+      } else {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        });
+        status = response.status;
+        if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          console.warn('[coins-sync] FAIL', response.status, errText);
+          return { address: walletAddress, coins, failed: true, status: response.status, error: errText };
+        }
+        data = await response.json();
+      }
+    } catch (error) {
+      if (Capacitor.isNativePlatform()) {
+        console.warn('[coins-sync] native http failed, retrying fetch', error);
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        });
+        status = response.status;
+        if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          console.warn('[coins-sync] FAIL', response.status, errText);
+          return { address: walletAddress, coins, failed: true, status: response.status, error: errText };
+        }
+        data = await response.json();
+      } else {
+        throw error;
+      }
     }
-    const json = await response.json();
+    const json = data as { address: string; coins: number; earned?: number; capped?: boolean; reason?: string };
+    console.info('[coins-sync] OK', { status, coins: json?.coins, earned: json?.earned, capped: json?.capped, reason: json?.reason });
     if (json?.capped) {
       console.warn('[coins-sync] CAPPED — reason=' + (json.reason || 'unknown'));
     }
     return json;
-  } catch {
+  } catch (error) {
+    console.warn('[coins-sync] EXCEPTION', error);
     return null;
   }
 }
@@ -282,6 +331,14 @@ async function fetchServerCoins(walletAddress: string): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+async function restoreServerCoins(walletAddress: string): Promise<number | null> {
+  const serverCoins = await fetchServerCoins(walletAddress);
+  if (typeof serverCoins === 'number') {
+    writeWalletCoins(walletAddress, serverCoins);
+  }
+  return serverCoins;
 }
 
 async function claimAchievementOnServer(
@@ -831,10 +888,13 @@ const PrismLeague = () => {
       const installedNonMwa = availableWallets.find(
         (w) =>
           w.adapter.name !== SolanaMobileWalletAdapterWalletName &&
-          (w.readyState === 'Installed' || w.readyState === 'Loadable'),
+          (w.readyState === WalletReadyState.Installed || w.readyState === WalletReadyState.Loadable),
       );
-      // On Capacitor Android (Seeker), always try MWA even if readyState not detected
-      const target = mwaWallet || installedNonMwa;
+      const usableMwa =
+        mwaWallet &&
+        (mwaWallet.readyState === WalletReadyState.Installed || mwaWallet.readyState === WalletReadyState.Loadable);
+      // On Seeker, prefer direct Seed Vault when available; MWA remains fallback.
+      const target = installedNonMwa || (usableMwa ? mwaWallet : undefined) || mwaWallet;
 
       if (target || (isCapacitor && isAndroid)) {
         const finalTarget = target || mwaWallet;
@@ -1019,6 +1079,7 @@ const PrismLeague = () => {
     };
   }, [address]);
   const [sessionProof, setSessionProof] = useState<GameSessionProof | null>(null);
+  const [sessionProofStatus, setSessionProofStatus] = useState<'idle' | 'generating' | 'failed'>('idle');
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStats>(() => getPlayerStats());
   const [achievements, setAchievements] = useState<Achievement[]>(() => getAchievements());
@@ -1549,6 +1610,7 @@ const PrismLeague = () => {
     setLastTxSignature(null);
     setOnchainBonusApplied(false);
     setSessionProof(null);
+    setSessionProofStatus('idle');
     setNewAchievements([]);
     continueUsed.current = false;
     defenderLevel.current = 0;
@@ -1655,10 +1717,9 @@ const PrismLeague = () => {
       setScore(finalScore);
       setCoins(finalCoins);
 
-      // Persist coins to local wallet balance immediately (server sync happens in verifyAndPublish after proof)
-      // Skip coin earning when playing a challenge — earnings come from challenge result
+      // Keep the round result local, but let the backend be authoritative for wallet totals.
       const walletAddr = address || 'anonymous';
-      if (finalCoins > 0 && !activeChallengeId) {
+      if (walletAddr === 'anonymous' && finalCoins > 0 && !activeChallengeId) {
         const prev = readWalletCoins(walletAddr);
         const next = prev + finalCoins;
         writeWalletCoins(walletAddr, next);
@@ -1696,41 +1757,53 @@ const PrismLeague = () => {
 
       const verifyAndPublish = async () => {
         let proof: GameSessionProof | null = null;
+        setSessionProofStatus('generating');
         const actualDurationSec = Math.round((endedAtMs - startedAtMs) / 1000);
         const sessionSurvivalTime = gameMode === 'destroyer' ? formatTime(actualDurationSec) : formatTime(finalScore);
-        // Wait for seed if not ready yet (up to 4s — covers short Defender games)
+        // Wait for seed if not ready yet. Short games can end before MagicBlock
+        // responds, especially on mobile network handoff.
         let curSeed = mbSeedRef.current;
         let curSlot = mbSlotRef.current;
         if (!curSeed || curSlot <= 0) {
-          for (let i = 0; i < 40; i++) {
-            await new Promise((r) => setTimeout(r, 100));
+          for (let i = 0; i < 100; i++) {
+            await new Promise((r) => setTimeout(r, 150));
             curSeed = mbSeedRef.current;
             curSlot = mbSlotRef.current;
             if (curSeed && curSlot > 0) break;
           }
         }
         if (curSeed && curSlot > 0) {
-          try {
-            proof = await registerGameSessionProof({
-              walletAddress: address,
-              score: finalScore,
-              survivalTime: sessionSurvivalTime,
-              seed: curSeed,
-              slot: curSlot,
-              startedAtMs,
-              endedAtMs,
-              gameMode,
-            });
-          } catch {
-            proof = null;
+          let lastProofError: unknown = null;
+          for (let attempt = 0; attempt < 3 && !proof; attempt += 1) {
+            try {
+              if (address && !getChallengeJwt(address)) {
+                await obtainJwt(wallet);
+              }
+              proof = await registerGameSessionProof({
+                walletAddress: address,
+                score: finalScore,
+                survivalTime: sessionSurvivalTime,
+                seed: curSeed,
+                slot: curSlot,
+                startedAtMs,
+                endedAtMs,
+                gameMode,
+              });
+            } catch (error) {
+              lastProofError = error;
+              if (attempt < 2) await new Promise((r) => setTimeout(r, 1_000 * (attempt + 1)));
+            }
           }
+          if (!proof && lastProofError) console.warn('[game-session] proof registration failed', lastProofError);
         }
 
         if (proof) {
           setSessionProof(proof);
-          // Server-side proof is the real verification — mark verified
-          setMbVerified(true);
+          setSessionProofStatus('idle');
+          // Server-side proof is the real verification.
+          setMbVerified(Boolean(proof.verified));
         } else if (curSeed) {
+          setSessionProofStatus('failed');
           // Verify seed against MagicBlock — timeout fallback to false
           const verifyTimeout = setTimeout(() => setMbVerified(false), 6000);
           verifyGameSessionSeed(curSeed, curSlot)
@@ -1744,22 +1817,45 @@ const PrismLeague = () => {
             });
         } else {
           // No seed was generated — unverified
+          setSessionProofStatus('failed');
           setMbVerified(false);
         }
 
         // Sync coins to server with verified session proof
         // Skip coin earning when playing a challenge — earnings come from challenge result
-        if (proof?.id && finalCoins > 0 && !activeChallengeId) {
-          const walletAddr = playerAddr;
-          const prev = readWalletCoins(walletAddr);
+        console.info('[coins-sync] CHECK', {
+          proofId: proof?.id,
+          proofVerified: proof?.verified,
+          finalCoins,
+          activeChallengeId,
+          playerAddr: playerAddr === 'anonymous' ? playerAddr : playerAddr.slice(0, 8),
+        });
+        if (proof?.id && proof.verified && finalCoins > 0 && !activeChallengeId) {
+          const walletAddr = proof.walletAddress || playerAddr;
+          if (!getChallengeJwt(walletAddr)) {
+            await obtainJwt(wallet);
+          }
+          if (!getChallengeJwt(walletAddr)) {
+            console.warn('[coins-sync] SKIP auth_jwt_missing', walletAddr.slice(0, 8));
+            toast.warning('Coins not credited: auth_jwt_missing');
+            void restoreServerCoins(walletAddr).then((serverCoins) => {
+              if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+            });
+            return;
+          }
+          const prev = (await restoreServerCoins(walletAddr)) ?? readWalletCoins(walletAddr);
           syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id)
             .then((serverResult) => {
               if (serverResult && typeof serverResult.coins === 'number') {
                 writeWalletCoins(walletAddr, serverResult.coins);
                 setTotalCoins(serverResult.coins);
+                window.dispatchEvent(new CustomEvent('identity-prism-balance-updated'));
               }
               if (serverResult?.failed) {
                 toast.warning('Coins not credited: ' + (serverResult.error || serverResult.status));
+                void restoreServerCoins(walletAddr).then((serverCoins) => {
+                  if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+                });
               } else if (serverResult?.capped && !serverResult?.earned) {
                 toast.warning('Daily coin cap reached — ' + (serverResult.reason || 'no credit'));
               }
@@ -1767,12 +1863,22 @@ const PrismLeague = () => {
               if (walletAddr !== 'anonymous') {
                 import('@/lib/prismCoin')
                   .then(({ getPrismBalance }) => {
-                    getPrismBalance(walletAddr).catch(() => {});
+                    getPrismBalance(walletAddr)
+                      .then(() => window.dispatchEvent(new CustomEvent('identity-prism-balance-updated')))
+                      .catch(() => {});
                   })
                   .catch(() => {});
               }
             })
-            .catch(() => {});
+            .catch(() => {
+              void restoreServerCoins(walletAddr).then((serverCoins) => {
+                if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+              });
+            });
+        } else if (finalCoins > 0 && !activeChallengeId && playerAddr !== 'anonymous') {
+          void restoreServerCoins(playerAddr).then((serverCoins) => {
+            if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+          });
         }
 
         // Submit to server leaderboard with verified session proof (skip for challenges)
@@ -2561,7 +2667,7 @@ const PrismLeague = () => {
                           Coins
                         </span>
                         <div className="flex items-center gap-1.5">
-                          <Coins className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-400" />
+                          <img src="/tokens/prism-icon.png" alt="" className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-400 object-contain" loading="lazy" />
                           <span
                             ref={_coinsDomRef}
                             className="text-2xl sm:text-3xl md:text-4xl font-black text-yellow-400 tabular-nums tracking-tight drop-shadow-[0_0_16px_rgba(234,179,8,0.4)]"
@@ -2598,7 +2704,7 @@ const PrismLeague = () => {
                     {/* Coins + Level/Wave — single compact row */}
                     <div className="flex items-center gap-1.5 sm:gap-3 mt-1">
                       <div className="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-black/40 border border-yellow-500/20">
-                        <Coins className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-400" />
+                        <img src="/tokens/prism-icon.png" alt="" className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-yellow-400 object-contain" loading="lazy" />
                         <span
                           ref={_coinsDomRef}
                           className="text-[9px] sm:text-[10px] text-yellow-400/80 font-bold tabular-nums"
@@ -2662,7 +2768,7 @@ const PrismLeague = () => {
 
                 {hasMintedId && (
                   <div className="flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded-full bg-yellow-500/10 border border-yellow-500/20">
-                    <Coins className="w-2.5 h-2.5 text-yellow-400" />
+                    <img src="/tokens/prism-icon.png" alt="" className="w-2.5 h-2.5 text-yellow-400 object-contain" loading="lazy" />
                     <span className="text-[8px] sm:text-[9px] text-yellow-300/80 font-bold uppercase">
                       ×2 Coin Bonus
                     </span>
@@ -2937,7 +3043,7 @@ const PrismLeague = () => {
                                     <span className="text-xs font-bold text-purple-300">{timeLeft || '—'}</span>
                                   </div>
                                   <div className="flex flex-col items-center py-2.5">
-                                    <Coins className="w-3.5 h-3.5 text-yellow-400/60 mb-0.5" />
+                                    <img src="/tokens/prism-icon.png" alt="" className="w-3.5 h-3.5 text-yellow-400/60 mb-0.5 object-contain" loading="lazy" />
                                     <span className="text-[10px] text-white/30">Prize Pool</span>
                                     <span className="text-xs font-bold text-yellow-300">
                                       {activeTournament.prizePool.toLocaleString()}
@@ -3091,7 +3197,7 @@ const PrismLeague = () => {
                                         <Orbit className="w-4 h-4 animate-spin" />
                                       ) : (
                                         <>
-                                          <Coins className="w-4 h-4" /> Join —{' '}
+                                          <img src="/tokens/prism-icon.png" alt="" className="w-4 h-4 object-contain" loading="lazy" /> Join —{' '}
                                           {TOURNAMENT_TIERS.find((t) => t.key === tournamentTier)!.fee.toLocaleString()}{' '}
                                           coins
                                         </>
@@ -3146,7 +3252,7 @@ const PrismLeague = () => {
                       <div className="w-full mb-4 grid grid-cols-2 gap-3">
                         <div className="rounded-2xl bg-gradient-to-br from-yellow-500/10 to-orange-500/5 border border-yellow-500/20 px-4 py-4 text-center">
                           <div className="flex items-center justify-center gap-2 mb-2">
-                            <Coins className="w-5 h-5 text-yellow-400" />
+                            <img src="/tokens/prism-icon.png" alt="" className="w-5 h-5 text-yellow-400 object-contain" loading="lazy" />
                             <span className="text-[11px] text-yellow-400/70 uppercase tracking-[0.15em] font-bold">
                               Coins
                             </span>
@@ -3327,8 +3433,11 @@ const PrismLeague = () => {
                               </div>
                               <div className="flex flex-col gap-1.5">
                                 <div className="flex items-center gap-2.5">
-                                  <Coins
-                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
+                                  <img
+                                    src="/tokens/prism-icon.png"
+                                    alt=""
+                                    loading="lazy"
+                                    className={`w-4 h-4 flex-shrink-0 object-contain ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
                                   />
                                   <span
                                     className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
@@ -3368,7 +3477,7 @@ const PrismLeague = () => {
                               <span className="text-white/70 flex-1">Crystals — collect for +5 coins</span>
                             </div>
                             <div className="flex items-center gap-2.5">
-                              <Coins className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                              <img src="/tokens/prism-icon.png" alt="" className="w-5 h-5 text-cyan-400 flex-shrink-0 object-contain" loading="lazy" />
                               <span className="text-white/70 flex-1">Columns — +3 coins per column passed</span>
                             </div>
                             {/* ID Holder Perks */}
@@ -3382,8 +3491,11 @@ const PrismLeague = () => {
                               </div>
                               <div className="flex flex-col gap-1.5">
                                 <div className="flex items-center gap-2.5">
-                                  <Coins
-                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
+                                  <img
+                                    src="/tokens/prism-icon.png"
+                                    alt=""
+                                    loading="lazy"
+                                    className={`w-4 h-4 flex-shrink-0 object-contain ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
                                   />
                                   <span
                                     className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
@@ -3451,8 +3563,11 @@ const PrismLeague = () => {
                               </div>
                               <div className="flex flex-col gap-1.5">
                                 <div className="flex items-center gap-2.5">
-                                  <Coins
-                                    className={`w-4 h-4 flex-shrink-0 ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
+                                  <img
+                                    src="/tokens/prism-icon.png"
+                                    alt=""
+                                    loading="lazy"
+                                    className={`w-4 h-4 flex-shrink-0 object-contain ${hasMintedId ? 'text-yellow-400' : 'text-white/25'}`}
                                   />
                                   <span
                                     className={`text-[12px] flex-1 ${hasMintedId ? 'text-yellow-300/80' : 'text-white/30'}`}
@@ -3904,7 +4019,7 @@ const PrismLeague = () => {
                             Coins
                           </span>
                           <div className="flex items-center gap-1">
-                            <Coins className="w-4 h-4 text-yellow-400" />
+                            <img src="/tokens/prism-icon.png" alt="" className="w-4 h-4 text-yellow-400 object-contain" loading="lazy" />
                             <span className="text-2xl font-black text-yellow-400 tabular-nums">{coins}</span>
                           </div>
                         </div>
@@ -3949,7 +4064,7 @@ const PrismLeague = () => {
                     {/* Coins earned this round + rank */}
                     <div className="flex items-center gap-3 mb-4 mt-1">
                       <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-yellow-500/10 border border-yellow-500/25">
-                        <Coins className="w-3.5 h-3.5 text-yellow-400" />
+                        <img src="/tokens/prism-icon.png" alt="" className="w-3.5 h-3.5 text-yellow-400 object-contain" loading="lazy" />
                         <span className="text-sm font-bold text-yellow-300">
                           {activeChallengeId
                             ? 'Challenge'
@@ -4060,7 +4175,13 @@ const PrismLeague = () => {
                           )}
                         </>
                       ) : (
-                        <span className="text-[10px] text-white/20 flex-1">generating…</span>
+                        <span className="text-[10px] text-white/20 flex-1">
+                          {sessionProofStatus === 'failed'
+                            ? 'unavailable'
+                            : sessionProofStatus === 'generating'
+                              ? 'generating…'
+                              : 'pending…'}
+                        </span>
                       )}
                     </div>
 
@@ -4074,11 +4195,15 @@ const PrismLeague = () => {
                           boxShadow: '0 0 20px rgba(147,51,234,0.3)',
                         }}
                         onClick={handleCommitOnchain}
-                        disabled={isCommitting}
+                        disabled={isCommitting || sessionProofStatus === 'generating'}
                       >
                         {isCommitting ? (
                           <>
                             <Clock className="w-4 h-4 animate-spin" /> Committing...
+                          </>
+                        ) : sessionProofStatus === 'generating' ? (
+                          <>
+                            <Clock className="w-4 h-4 animate-spin" /> Preparing...
                           </>
                         ) : (
                           <>

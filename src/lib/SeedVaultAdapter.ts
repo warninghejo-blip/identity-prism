@@ -11,6 +11,7 @@ import {
 import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import { Capacitor } from '@capacitor/core';
 import { SeedVault } from './seedVaultPlugin';
+import { readPreferredMobileWalletAddress } from './mobileWalletAddressPreference';
 
 export const SEEDVAULT_NAME = 'Seed Vault' as WalletName<'Seed Vault'>;
 
@@ -38,6 +39,38 @@ function base64ToBytes(b64: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+type AuthorizedSeedVaultAccount = {
+  authToken: number;
+  address: string;
+  derivationPath: string;
+  isUserWallet?: boolean;
+  isValid?: boolean;
+};
+
+function getPreferredAuthorizedAccount(accounts: AuthorizedSeedVaultAccount[]): AuthorizedSeedVaultAccount | null {
+  const withAddress = accounts.filter((account) => account.address && account.derivationPath);
+  const usable = withAddress.filter((account) => account.isValid !== false);
+  const candidates = usable.length ? usable : withAddress;
+  if (!candidates.length) return null;
+  const preferredAddress = readPreferredMobileWalletAddress();
+  if (preferredAddress) {
+    const preferredAccount = candidates.find((account) => account.address === preferredAddress);
+    if (preferredAccount) return preferredAccount;
+  }
+
+  let preferredIndex = 0;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const rawIndex = params.get('seedWallet') ?? window.localStorage?.getItem('ip_seed_wallet_index') ?? '';
+    const parsed = Number.parseInt(rawIndex, 10);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed < candidates.length) preferredIndex = parsed;
+  } catch {
+    /* default to first account */
+  }
+
+  return candidates[preferredIndex] ?? candidates.find((account) => account.isUserWallet) ?? candidates[0] ?? null;
 }
 
 export class SeedVaultAdapter extends BaseSignerWalletAdapter {
@@ -91,6 +124,16 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
     }
     this._connecting = true;
     try {
+      const authorized = await SeedVault.getAuthorizedAccounts().catch(() => null);
+      const account = authorized ? getPreferredAuthorizedAccount(authorized.accounts) : null;
+      if (account) {
+        this._authToken = account.authToken;
+        this._derivationPath = account.derivationPath;
+        this._publicKey = new PublicKey(account.address);
+        this.emit('connect', this._publicKey);
+        return;
+      }
+
       const { authToken, address, derivationPath } = await SeedVault.authorize();
       this._authToken = authToken;
       this._derivationPath = derivationPath;
@@ -137,6 +180,7 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
 
   async signTransaction<T extends Transaction | VersionedTransaction>(transaction: T): Promise<T> {
     if (this._authToken === null) throw new WalletNotConnectedError();
+    if (!this._publicKey) throw new WalletNotConnectedError();
     try {
       const txBytes = transaction instanceof VersionedTransaction
         ? transaction.serialize()
@@ -147,11 +191,20 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
         transaction: txB64,
         derivationPath: this._derivationPath || undefined,
       });
-      const signedBytes = base64ToBytes(signature);
-      if (transaction instanceof VersionedTransaction) {
-        return VersionedTransaction.deserialize(signedBytes) as T;
+      const signatureBytes = base64ToBytes(signature);
+      if (signatureBytes.length !== 64) {
+        throw new Error(`Invalid Seed Vault signature length: ${signatureBytes.length}`);
       }
-      return Transaction.from(signedBytes) as T;
+      if (transaction instanceof VersionedTransaction) {
+        const signerIndex = transaction.message.staticAccountKeys.findIndex((key) => key.equals(this._publicKey!));
+        if (signerIndex < 0 || signerIndex >= transaction.message.header.numRequiredSignatures) {
+          throw new Error('Seed Vault signer is not required for this transaction');
+        }
+        transaction.signatures[signerIndex] = signatureBytes;
+        return transaction;
+      }
+      transaction.addSignature(this._publicKey, Buffer.from(signatureBytes));
+      return transaction;
     } catch (e: any) {
       throw new WalletSignTransactionError(e?.message || 'Seed Vault signTransaction failed', e);
     }
@@ -170,7 +223,7 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
    * Returns the shape expected by @solana/wallet-standard-features `signIn`.
    */
   async signIn(
-    input: { domain?: string; nonce?: string; statement?: string; uri?: string; version?: string } = {},
+    input: { address?: string; domain?: string; nonce?: string; statement?: string; uri?: string; version?: string } = {},
   ): Promise<{
     account: { address: string; publicKey: Uint8Array };
     signedMessage: Uint8Array;

@@ -88,8 +88,56 @@ function registerBlinksRoute(ctx) {
 
   const updateFeeSol = 0.0005;
   const CORE_RPC_TIMEOUT_MS = 15_000;
+
+  const describeTransactionError = (error) => {
+    const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+    const details = {
+      name: error?.name,
+      message,
+      code: error?.code,
+      logs: Array.isArray(error?.logs) ? error.logs.slice(-20) : undefined,
+    };
+    Object.keys(details).forEach((key) => {
+      if (details[key] === undefined || details[key] === null || details[key] === '') delete details[key];
+    });
+    return details;
+  };
   const CORE_COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000;
   const coreCollectionCache = new Map();
+  const PENDING_MINT_FALLBACK_TTL_MS = 10 * 60 * 1000;
+  const pendingMintFinalizeCache = globalThis._identityPrismPendingMintFinalizeCache
+    || (globalThis._identityPrismPendingMintFinalizeCache = new Map());
+
+  const prunePendingMintFinalizeCache = () => {
+    const now = Date.now();
+    for (const [key, entry] of pendingMintFinalizeCache.entries()) {
+      if (!entry?.createdAt || now - entry.createdAt > PENDING_MINT_FALLBACK_TTL_MS) {
+        pendingMintFinalizeCache.delete(key);
+      }
+    }
+  };
+
+  const storePendingMintFinalizeFallback = (entry) => {
+    if (!entry?.requestId) return;
+    prunePendingMintFinalizeCache();
+    pendingMintFinalizeCache.set(entry.requestId, {
+      ...entry,
+      createdAt: Date.now(),
+    });
+  };
+
+  const getPendingMintFinalizeFallback = (requestId) => {
+    prunePendingMintFinalizeCache();
+    const entry = pendingMintFinalizeCache.get(requestId);
+    if (!entry) return null;
+    return entry;
+  };
+
+  const consumePendingMintFinalizeFallback = (requestId) => {
+    const entry = getPendingMintFinalizeFallback(requestId);
+    pendingMintFinalizeCache.delete(requestId);
+    return entry;
+  };
 
   const withOperationTimeout = (promise, timeoutMs, message) => {
     let timeoutId;
@@ -764,13 +812,15 @@ function registerBlinksRoute(ctx) {
         const isFinalize = Boolean(payloadRequestId && signedTransaction);
         if (isFinalize) {
           // FIX 2: peek at pending mint WITHOUT consuming it yet — consume only after all checks pass
-          const pendingRaw = consumePendingMint(payloadRequestId);
+          const pendingRaw = consumePendingMint(payloadRequestId)
+            || getPendingMintFinalizeFallback(payloadRequestId);
           if (!pendingRaw) {
             respondJson(res, 400, { error: 'Mint finalize request expired or missing', requestId: payloadRequestId });
             return true;
           }
           // Re-store immediately so we can restore on failure before final consume
           storePendingMint({ ...pendingRaw, requestId: payloadRequestId });
+          storePendingMintFinalizeFallback({ ...pendingRaw, requestId: payloadRequestId });
           const pending = pendingRaw;
 
           // FIX 2: verify caller is the original requester
@@ -828,6 +878,7 @@ function registerBlinksRoute(ctx) {
 
           // All checks passed — consume for real
           consumePendingMint(payloadRequestId);
+          consumePendingMintFinalizeFallback(payloadRequestId);
 
           // Deduct coins NOW at finalize time (not at reservation time).
           // This way a server restart before finalize never causes coin loss.
@@ -873,10 +924,39 @@ function registerBlinksRoute(ctx) {
           const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
           transaction.partialSign(assetKeypair, collectionAuthorityKeypair);
 
+          if (pending.blockhash) {
+            const validity = await connection.isBlockhashValid(pending.blockhash, 'confirmed').catch((error) => {
+              console.warn('[mint-cnft] finalize: blockhash validity check failed', {
+                requestId: payloadRequestId,
+                error: error?.message ?? String(error),
+              });
+              return null;
+            });
+            if (validity?.value === false) {
+              respondJson(res, 409, {
+                error: 'Mint transaction expired. Please retry.',
+                code: 'BLOCKHASH_EXPIRED',
+                requestId: payloadRequestId,
+              });
+              return true;
+            }
+          }
+
           const signature = await connection.sendRawTransaction(transaction.serialize(), {
             preflightCommitment: 'confirmed',
           });
-          await connection.confirmTransaction(signature, 'confirmed');
+          if (pending.blockhash && pending.lastValidBlockHeight) {
+            await connection.confirmTransaction(
+              {
+                signature,
+                blockhash: pending.blockhash,
+                lastValidBlockHeight: pending.lastValidBlockHeight,
+              },
+              'confirmed',
+            );
+          } else {
+            await connection.confirmTransaction(signature, 'confirmed');
+          }
 
           // Mint confirmed on-chain — mark reservation consumed so catch block skips rollback.
           if (coinDeducted && globalThis._mintReservations?.get(reservationKey)) {
@@ -1194,7 +1274,7 @@ function registerBlinksRoute(ctx) {
           }
         }
 
-        const latestBlockhash = await connection.getLatestBlockhash('finalized');
+        const latestBlockhash = await connection.getLatestBlockhash('confirmed');
         const instructions = [
           ...burnInstructions,
           ...paymentInstructions,
@@ -1223,7 +1303,8 @@ function registerBlinksRoute(ctx) {
         if (requiredSigners.includes(assetKeypair.publicKey.toBase58())) signerPool.push(assetKeypair);
         if (requiredSigners.includes(collectionAuthorityKeypair.publicKey.toBase58())) signerPool.push(collectionAuthorityKeypair);
         if (adminMode && treasuryKeypair && requiredSigners.includes(treasuryKeypair.publicKey.toBase58())) signerPool.push(treasuryKeypair);
-        if (adminMode && signerPool.length) transaction.partialSign(...signerPool);
+        const attachServerSignatures = adminMode || !coinsPaymentReserved;
+        if (attachServerSignatures && signerPool.length) transaction.partialSign(...signerPool);
 
         const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
         if (adminMode) {
@@ -1280,7 +1361,7 @@ function registerBlinksRoute(ctx) {
         const _msgBytesForHash = _txBufForHash.slice(_byteOffsetForHash + _sigCountForHash * 64);
         const unsignedMessageHash = crypto.createHash('sha256').update(_msgBytesForHash).digest('hex');
 
-        storePendingMint({
+        const pendingMintEntry = {
           requestId,
           owner,
           ownerAddress: jwtAuth.address,
@@ -1291,7 +1372,11 @@ function registerBlinksRoute(ctx) {
           metadataUri: payload?.metadataUri || metadataUri,
           isRemint: remintMode,
           unsignedMessageHash,
-        });
+          blockhash: latestBlockhash.blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        };
+        storePendingMint(pendingMintEntry);
+        storePendingMintFinalizeFallback(pendingMintEntry);
 
         respondJson(res, 200, {
           transaction: serialized,
@@ -1323,7 +1408,11 @@ function registerBlinksRoute(ctx) {
             });
           }
         }
-        respondJson(res, 500, { error: 'Core mint failed' });
+        respondJson(res, 500, {
+          error: 'Core mint failed',
+          requestId: payloadRequestId || undefined,
+          detail: describeTransactionError(error),
+        });
       }
       return true;
     }

@@ -7,10 +7,11 @@ import { useState, useEffect, useCallback, type PointerEvent, type TouchEvent } 
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
-import { Capacitor } from '@capacitor/core';
+import { WalletReadyState } from '@solana/wallet-adapter-base';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { goBack } from '@/lib/safeNavigate';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
-import { ArrowLeft, Coins, Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap, Check } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap, Check } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -72,6 +73,149 @@ async function waitForConfirmation(
   return 'timeout';
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bytesToBase58(bytes: Uint8Array): string {
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i += 1) {
+      carry += digits[i] << 8;
+      digits[i] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let result = '';
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    result += alphabet[0];
+  }
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    result += alphabet[digits[i]];
+  }
+  return result;
+}
+
+function signedTransactionSignature(tx: { signature?: Uint8Array | null }): string | null {
+  return tx.signature ? bytesToBase58(new Uint8Array(tx.signature)) : null;
+}
+
+function isNativeRpcTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /timeout|timed out|SocketTimeout/i.test(message);
+}
+
+function rpcUrlFromApiBase(base: string): string {
+  return `${base.replace(/\/api(\/.*)?$/, '')}/rpc`;
+}
+
+async function nativeRpcRequest<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
+  const response = await CapacitorHttp.post({
+    url: rpcUrl,
+    headers: { 'Content-Type': 'application/json' },
+    data: { jsonrpc: '2.0', id: Date.now(), method, params },
+    responseType: 'json',
+    connectTimeout: RPC_STEP_TIMEOUT_MS,
+    readTimeout: RPC_STEP_TIMEOUT_MS,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`RPC ${method} failed (${response.status})`);
+  }
+  const payload = response.data;
+  if (payload?.error) {
+    throw new Error(payload.error.message || `RPC ${method} error`);
+  }
+  return payload?.result as T;
+}
+
+async function nativeSendRawTransaction(
+  rpcUrl: string,
+  rawTransaction: Uint8Array,
+  options: { skipPreflight: boolean; preflightCommitment: 'confirmed' },
+): Promise<string> {
+  return nativeRpcRequest<string>(rpcUrl, 'sendTransaction', [
+    bytesToBase64(rawTransaction),
+    { encoding: 'base64', ...options },
+  ]);
+}
+
+async function nativeGetLatestBlockhash(rpcUrl: string): Promise<string> {
+  const result = await nativeRpcRequest<{ value?: { blockhash?: string } }>(rpcUrl, 'getLatestBlockhash', [
+    { commitment: 'confirmed' },
+  ]);
+  const blockhash = result?.value?.blockhash;
+  if (!blockhash) throw new Error('Recent blockhash response was invalid');
+  return blockhash;
+}
+
+async function waitForConfirmationNative(
+  rpcUrl: string,
+  sig: string,
+  timeoutMs = CONFIRM_TIMEOUT_MS,
+): Promise<'confirmed' | 'finalized' | 'timeout'> {
+  const start = Date.now();
+  let lastError: unknown = null;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await nativeRpcRequest<{ value: ({ confirmationStatus?: string; err?: unknown } | null)[] }>(
+        rpcUrl,
+        'getSignatureStatuses',
+        [[sig]],
+      );
+      const status = res?.value?.[0];
+      if (status?.err) throw new Error('Transaction failed on-chain');
+      if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
+        return status.confirmationStatus;
+      }
+    } catch (e) {
+      lastError = e;
+    }
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  if (lastError instanceof Error && lastError.message === 'Transaction failed on-chain') throw lastError;
+  return 'timeout';
+}
+
+async function postPurchaseJson(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+): Promise<{ ok: boolean; status: number; data: any }> {
+  if (Capacitor.isNativePlatform()) {
+    const response = await CapacitorHttp.post({
+      url,
+      headers,
+      data: JSON.stringify(body),
+      responseType: 'json',
+      connectTimeout: 20_000,
+      readTimeout: 30_000,
+    });
+    return { ok: response.status >= 200 && response.status < 300, status: response.status, data: response.data };
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    data: await response.json().catch(() => null),
+  };
+}
+
 function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
   const wallet = useWallet();
   const [buyingIdx, setBuyingIdx] = useState<number | null>(null);
@@ -112,7 +256,15 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
         setActionMessage('Opening wallet approval...');
         setPendingConnectBuyIdx(selectedIdx);
         if (!wallet.wallet) {
-          wallet.select(SolanaMobileWalletAdapterWalletName);
+          const nativeWallet =
+            wallet.wallets.find(
+              (entry) =>
+                entry.adapter.name !== SolanaMobileWalletAdapterWalletName &&
+                (entry.readyState === WalletReadyState.Installed || entry.readyState === WalletReadyState.Loadable),
+            ) ?? wallet.wallets.find((entry) => entry.adapter.name === SolanaMobileWalletAdapterWalletName);
+          if (nativeWallet) {
+            wallet.select(nativeWallet.adapter.name);
+          }
           toast.info('Opening wallet...');
           return;
         }
@@ -163,6 +315,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             Transaction: SolTx,
           } = await import('@solana/web3.js');
           const base = getApiBase();
+          const rpcUrl = rpcUrlFromApiBase(base);
           const conn = new SolConn(base.replace(/\/api(\/.*)?$/, '') + '/rpc', {
             commitment: 'confirmed',
             fetch: createRpcFetch() as any,
@@ -228,37 +381,51 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 activeTokenProgramId,
               ),
             );
-            tx.recentBlockhash = (await Promise.race([
-              conn.getLatestBlockhash('confirmed'),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
-              ),
-            ])).blockhash;
+            tx.recentBlockhash = isNativePlatform
+              ? await nativeGetLatestBlockhash(rpcUrl)
+              : (await Promise.race([
+                  conn.getLatestBlockhash('confirmed'),
+                  new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
+                  ),
+                ])).blockhash;
             tx.feePayer = ownerKey;
             const origSerializeSKR = tx.serialize.bind(tx);
             tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
               origSerializeSKR({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
             if (wallet.signTransaction) {
               const signed = await wallet.signTransaction(tx);
-              sig = await conn.sendRawTransaction(
-                signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-                sendOptions,
-              );
+              const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
+              const signedSig = signedTransactionSignature(signed);
+              try {
+                sig = isNativePlatform
+                  ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
+                  : await conn.sendRawTransaction(raw, sendOptions);
+              } catch (error) {
+                if (isNativePlatform && signedSig && isNativeRpcTimeout(error)) {
+                  console.warn('[PrismVault] native sendTransaction timed out; recovering with signed tx signature', signedSig);
+                  sig = signedSig;
+                } else {
+                  throw error;
+                }
+              }
             } else if (wallet.sendTransaction) {
               sig = await wallet.sendTransaction(tx, conn, sendOptions);
             } else {
               throw new Error('Wallet does not support transaction signing');
             }
             toast.info('Confirming SKR transaction...');
-            const skrConfirmStatus = await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
+            const skrConfirmStatus = isNativePlatform
+              ? await waitForConfirmationNative(rpcUrl, sig, CONFIRM_TIMEOUT_MS)
+              : await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
             if (skrConfirmStatus === 'timeout') {
               toast.info('Still confirming — credit will be processed when transaction is verified.');
             }
 
-            const res = await fetch(`${base}/api/prism/buy/skr`, {
-              method: 'POST',
-              headers: jsonHeaders,
-              body: JSON.stringify({ address: signerAddress, packageIndex: selectedIdx, txSignature: sig }),
+            const res = await postPurchaseJson(`${base}/api/prism/buy/skr`, jsonHeaders, {
+              address: signerAddress,
+              packageIndex: selectedIdx,
+              txSignature: sig,
             });
             if (res.ok) {
               toast.success(`Purchased ${pkg.coins} Coins for ${skrQuote.skrPrice} SKR!`);
@@ -270,7 +437,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 });
               onPurchased();
             } else {
-              const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
+              const err = res.data || { error: `Purchase failed (${res.status})` };
               toast.error(err.error || 'Purchase failed');
             }
           } else {
@@ -281,12 +448,14 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 lamports: Math.floor(pkg.solPrice * 1e9),
               }),
             );
-            tx.recentBlockhash = (await Promise.race([
-              conn.getLatestBlockhash('confirmed'),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
-              ),
-            ])).blockhash;
+            tx.recentBlockhash = isNativePlatform
+              ? await nativeGetLatestBlockhash(rpcUrl)
+              : (await Promise.race([
+                  conn.getLatestBlockhash('confirmed'),
+                  new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
+                  ),
+                ])).blockhash;
             tx.feePayer = new SolPK(signerAddress);
             // Pre-wallet simulate removed: skipPreflight=true is set, MWA does its own simulation.
             // Earlier simulate call had no timeout and could hang RPC, tripping outer 30s race
@@ -296,25 +465,37 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               origSerializeSOL({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
             if (wallet.signTransaction) {
               const signed = await wallet.signTransaction(tx);
-              sig = await conn.sendRawTransaction(
-                signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-                sendOptions,
-              );
+              const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
+              const signedSig = signedTransactionSignature(signed);
+              try {
+                sig = isNativePlatform
+                  ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
+                  : await conn.sendRawTransaction(raw, sendOptions);
+              } catch (error) {
+                if (isNativePlatform && signedSig && isNativeRpcTimeout(error)) {
+                  console.warn('[PrismVault] native sendTransaction timed out; recovering with signed tx signature', signedSig);
+                  sig = signedSig;
+                } else {
+                  throw error;
+                }
+              }
             } else if (wallet.sendTransaction) {
               sig = await wallet.sendTransaction(tx, conn, sendOptions);
             } else {
               throw new Error('Wallet does not support transaction signing');
             }
             toast.info('Confirming transaction...');
-            const solConfirmStatus = await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
+            const solConfirmStatus = isNativePlatform
+              ? await waitForConfirmationNative(rpcUrl, sig, CONFIRM_TIMEOUT_MS)
+              : await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
             if (solConfirmStatus === 'timeout') {
               toast.info('Still confirming — credit will be processed when transaction is verified.');
             }
 
-            const res = await fetch(`${base}/api/prism/buy`, {
-              method: 'POST',
-              headers: jsonHeaders,
-              body: JSON.stringify({ address: signerAddress, packageIndex: selectedIdx, txSignature: sig }),
+            const res = await postPurchaseJson(`${base}/api/prism/buy`, jsonHeaders, {
+              address: signerAddress,
+              packageIndex: selectedIdx,
+              txSignature: sig,
             });
             if (res.ok) {
               toast.success(`Purchased ${pkg.coins} Coins!`);
@@ -326,7 +507,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 });
               onPurchased();
             } else {
-              const err = await res.json().catch(() => ({ error: 'Purchase failed' }));
+              const err = res.data || { error: `Purchase failed (${res.status})` };
               toast.error(err.error || 'Purchase failed');
             }
           }
@@ -864,7 +1045,7 @@ function PrismVaultSection({
                 label: 'coins/day',
               },
               {
-                icon: <Coins className="w-4 h-4 text-amber-400" />,
+                icon: <img src="/tokens/prism-icon.png" alt="" className="w-4 h-4 text-amber-400 object-contain" loading="lazy" />,
                 value: String(Math.floor(vaultStatus.unclaimedYield ?? 0)),
                 label: 'unclaimed',
               },
@@ -894,7 +1075,7 @@ function PrismVaultSection({
               onClick={handleClaim}
               disabled={claiming || (vaultStatus.unclaimedYield ?? 0) < 1}
             >
-              {claiming ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Coins className="w-3 h-3 mr-1" />}
+              {claiming ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <img src="/tokens/prism-icon.png" alt="" className="w-3 h-3 mr-1 object-contain" loading="lazy" />}
               Claim Yield
             </Button>
             <Button

@@ -7,6 +7,7 @@
  */
 
 import { getHeliusProxyUrl } from '@/constants';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 const MAGICBLOCK_RPC = 'https://devnet.magicblock.app/api';
 const MAGICBLOCK_WS = 'wss://devnet.magicblock.app/api';
@@ -25,21 +26,24 @@ const getGameSessionApiBase = (): string | null => {
 const getCachedGameJwt = (walletAddress?: string): string | null => {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = sessionStorage.getItem('ip_auth_jwt');
+    const raw = sessionStorage.getItem('ip_auth_jwt') || localStorage.getItem('ip_auth_jwt');
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { token?: string; address?: string; expiresAt?: number };
     const expected = walletAddress?.trim();
     if (expected && parsed.address && parsed.address !== expected) {
       sessionStorage.removeItem('ip_auth_jwt');
+      localStorage.removeItem('ip_auth_jwt');
       return null;
     }
     if (!parsed.token || !parsed.expiresAt || parsed.expiresAt <= Date.now() + 60_000) {
       sessionStorage.removeItem('ip_auth_jwt');
+      localStorage.removeItem('ip_auth_jwt');
       return null;
     }
     return parsed.token;
   } catch {
     sessionStorage.removeItem('ip_auth_jwt');
+    localStorage.removeItem('ip_auth_jwt');
     return null;
   }
 };
@@ -199,22 +203,47 @@ export async function registerGameSessionProof(payload: RegisterGameSessionPaylo
   const base = getGameSessionApiBase();
   if (!base) return null;
 
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 8000);
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const jwt = getCachedGameJwt(payload.walletAddress);
   if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-  const res = await fetch(`${base}/api/game/session`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(payload),
-    signal: ctrl.signal,
-  });
-  clearTimeout(timeout);
-  if (!res.ok) {
-    throw new Error(`Session proof API ${res.status}`);
+  const url = `${base}/api/game/session`;
+  let data: { session?: GameSessionProof };
+
+  try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 18000);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`Session proof API ${res.status}`);
+      }
+      data = (await res.json()) as { session?: GameSessionProof };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    if (!Capacitor.isNativePlatform()) throw error;
+    const response = await CapacitorHttp.post({
+      url,
+      headers,
+      data: payload,
+      responseType: 'json',
+      connectTimeout: 10000,
+      readTimeout: 18000,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Session proof API ${response.status}`);
+    }
+    data = typeof response.data === 'string'
+      ? JSON.parse(response.data) as { session?: GameSessionProof }
+      : response.data as { session?: GameSessionProof };
   }
-  const data = (await res.json()) as { session?: GameSessionProof };
+
   if (data.session?.id && payload.walletAddress && typeof window !== 'undefined') {
     try {
       sessionStorage.setItem(`game_session_owner_${data.session.id}`, payload.walletAddress);

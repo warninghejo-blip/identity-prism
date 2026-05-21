@@ -1237,54 +1237,75 @@
 
 /* Pay-selector: currency chips for Identity mint */
 .identity-pay-selector {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  justify-content: center;
   align-items: center;
   width: 100%;
   margin: 4px 0 2px 0;
-  flex-wrap: wrap;
 }
 .identity-pay-chip {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-width: 46px;
-  min-height: 46px;
-  padding: 6px 10px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #fff;
+  gap: 7px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 7px 10px;
+  border-radius: 12px;
+  background: rgba(9, 9, 11, 0.62);
+  border: 1px solid rgba(63, 63, 70, 0.92);
+  color: rgba(161, 161, 170, 0.95);
   cursor: pointer;
-  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
 }
 .identity-pay-chip:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(24, 24, 27, 0.82);
+  border-color: rgba(113, 113, 122, 0.92);
+  color: rgba(244, 244, 245, 0.95);
 }
 .identity-pay-chip.active {
-  background: rgba(78, 229, 213, 0.14);
-  border-color: rgba(78, 229, 213, 0.55);
-  box-shadow: 0 0 0 1px rgba(78, 229, 213, 0.35) inset, 0 0 12px rgba(78, 229, 213, 0.25);
+  background: rgba(34, 211, 238, 0.16);
+  border-color: rgba(103, 232, 249, 0.82);
+  color: rgba(165, 243, 252, 0.98);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.24) inset, 0 0 14px rgba(34, 211, 238, 0.16);
 }
-.identity-pay-chip img {
-  width: 22px;
-  height: 22px;
+.identity-pay-chip .identity-pay-icon {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px;
+  max-width: 20px !important;
+  max-height: 20px !important;
+  flex: 0 0 20px;
   object-fit: contain;
   display: block;
 }
+.identity-pay-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .identity-pay-emoji {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
 }
-.identity-pay-bal {
-  font-size: 11px;
+.identity-pay-price {
+  grid-column: 1 / -1;
+  min-height: 18px;
+  color: rgba(248, 250, 252, 0.92);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
   font-weight: 800;
-  color: #f8fbff;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  padding-left: 2px;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .checklist {
@@ -1424,8 +1445,8 @@
 
   .identity-card-web-card .celestial-card-shell {
     width: 100% !important;
-    height: 650px !important;
-    min-height: 580px;
+    height: min(78svh, 720px) !important;
+    min-height: min(620px, calc(100svh - 260px));
     max-height: none;
   }
 

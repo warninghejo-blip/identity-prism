@@ -220,7 +220,7 @@ function TrustContext({
   const status =
     details.verdictLabel ||
     (walletTrust >= 80 ? 'Looks organic' : walletTrust >= 50 ? 'Building trust' : 'Needs proof');
-  const needsRecovery = walletTrust < 80;
+  const needsRecovery = rawTrust < 50;
 
   return (
     <SummaryPanel

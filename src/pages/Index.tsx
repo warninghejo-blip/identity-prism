@@ -6,10 +6,12 @@ const CelestialCard = React.lazy(() =>
 );
 import type { PlanetTier, WalletData, WalletTraits } from '@/hooks/useWalletData';
 import { readCachedWalletData, useWalletData } from '@/hooks/useWalletData';
+import { useBlackHolePrefetch } from '@/hooks/useBlackHolePrefetch';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletReadyState } from '@solana/wallet-adapter-base';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
+import { Capacitor } from '@capacitor/core';
 // mintIdentityPrism loaded dynamically in handleMint()
 import { extractMwaAddress, mwaAuthorizationCache } from '@/lib/mwaAuthorizationCache';
 import { toast } from 'sonner';
@@ -147,7 +149,8 @@ const hasRecentNativeWalletRestore = () => {
   };
 
   try {
-    return isFresh(sessionStorage.getItem(NATIVE_SESSION_RESTORE_KEY)) || isFresh(localStorage.getItem(NATIVE_SESSION_RESTORE_KEY));
+    localStorage.removeItem(NATIVE_SESSION_RESTORE_KEY);
+    return isFresh(sessionStorage.getItem(NATIVE_SESSION_RESTORE_KEY));
   } catch {
     return false;
   }
@@ -351,6 +354,7 @@ const Index = () => {
   // "Sign-in needed" toast on Seeker even though sign-in just succeeded.
   const siwsInProgressRef = useRef(false);
   const autoEnterAttemptedRef = useRef<string | null>(null);
+  const coldLaunchPickerAttemptedRef = useRef(false);
   const walletHandoffTimeoutRef = useRef<number | null>(null);
   const warpTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -395,6 +399,7 @@ const Index = () => {
     wallets: availableWallets,
     wallet: _selectedWallet,
   } = wallet;
+  useBlackHolePrefetch(connectedAddress ?? wallet.publicKey ?? null);
   const { setVisible: setWalletModalVisible } = useWalletModal();
 
   const prewarmJwt = useCallback(
@@ -781,11 +786,13 @@ const Index = () => {
   }, [urlAddress, activeAddress, viewState, jwtSigning, forceIdentityCardRoute]);
 
   const userAgent = globalThis.navigator?.userAgent ?? '';
-  const isCapacitor = Boolean(
-    (
-      globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }
-    ).Capacitor?.isNativePlatform?.(),
-  );
+  const isCapacitor = Capacitor.isNativePlatform();
+  const isNativeRuntime =
+    isCapacitor ||
+    (typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      window.location.hostname === 'localhost');
+  const shouldSkipMintCardCapture = isNativeRuntime || /android/i.test(userAgent);
   const isAndroidDevice = /android/i.test(userAgent);
   const isMobileBrowser = /android|iphone|ipad|ipod/i.test(userAgent);
   const isIosDevice = /iphone|ipad|ipod/i.test(userAgent);
@@ -809,19 +816,21 @@ const Index = () => {
       ? availableWallets.find((wallet) => wallet.adapter.name === lastConnectedWalletName)
       : undefined;
     if (remembered && isWalletUsable(remembered)) return remembered;
-    if (mobileWallet) return mobileWallet;
     const installed = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Installed);
+    if ((isCapacitor || isSeekerDevice) && installed) return installed;
+    if (mobileWallet && isWalletUsable(mobileWallet)) return mobileWallet;
     if (installed) return installed;
     const loadable = nonMwaWallets.find((wallet) => wallet.readyState === WalletReadyState.Loadable);
     if (loadable) return loadable;
+    if (mobileWallet) return mobileWallet;
     return undefined;
-  }, [availableWallets, lastConnectedWalletName, nonMwaWallets, mobileWallet, isCapacitor]);
+  }, [availableWallets, lastConnectedWalletName, nonMwaWallets, mobileWallet, isCapacitor, isSeekerDevice]);
   const mobileWalletReady = isWalletUsable(mobileWallet);
   const preferredMobileWalletReady = isWalletUsable(preferredMobileWallet);
   // On Capacitor Android or Seeker device, always allow mobile wallet connect.
   // MWA adapter may start as Unsupported in WebView and change later.
   const mobileConnectReady =
-    (isCapacitor && isAndroidDevice) || isSeekerDevice || preferredMobileWalletReady || mobileWalletReady;
+    isCapacitor || isSeekerDevice || preferredMobileWalletReady || mobileWalletReady;
   const preferredDesktopWallet = useMemo(() => {
     const remembered = lastConnectedWalletName
       ? nonMwaWallets.find((wallet) => wallet.adapter.name === lastConnectedWalletName)
@@ -922,13 +931,13 @@ const Index = () => {
     return () => window.clearInterval(interval);
   }, [viewState]);
 
-  const handleMobileConnect = useCallback(async () => {
-    let targetWallet = preferredMobileWallet;
-    let targetReady = preferredMobileWalletReady;
+  const handleMobileConnect = useCallback(async (options?: { forceWalletPicker?: boolean }) => {
+    let targetWallet = options?.forceWalletPicker ? (mobileWallet ?? availableWallets[0]) : preferredMobileWallet;
+    let targetReady = options?.forceWalletPicker ? Boolean(mobileWallet ?? availableWallets[0]) : preferredMobileWalletReady;
 
     // On Capacitor Android or Seeker device, fallback to raw MWA — system MWA bottom sheet
     // (com.solanamobile.wallet/.MWABottomSheetActivity) handles the wallet picker plug-and-play.
-    if ((!targetWallet || !targetReady) && ((isCapacitor && isAndroidDevice) || isSeekerDevice)) {
+    if ((!targetWallet || !targetReady) && (isCapacitor || isAndroidDevice || isSeekerDevice)) {
       const rawMwa = availableWallets.find((w) => w.adapter.name === SolanaMobileWalletAdapterWalletName);
       if (rawMwa) {
         targetWallet = rawMwa;
@@ -972,6 +981,15 @@ const Index = () => {
       }
 
       const isMwaTarget = targetWallet.adapter.name === SolanaMobileWalletAdapterWalletName;
+      if (options?.forceWalletPicker && isMwaTarget) {
+        await mwaAuthorizationCache.clear();
+        try {
+          await targetWallet.adapter.disconnect();
+        } catch {
+          /* ignore stale adapter state cleanup failures */
+        }
+      }
+
       if (isMwaTarget) {
         setWalletHandoff(true);
       }
@@ -1204,6 +1222,7 @@ const Index = () => {
   }, [
     preferredMobileWallet,
     preferredMobileWalletReady,
+    mobileWallet,
     availableWallets,
     isCapacitor,
     isAndroidDevice,
@@ -1217,6 +1236,31 @@ const Index = () => {
     startMwaAssociationNudge,
     setWalletHandoff,
     prewarmJwt,
+  ]);
+
+  useEffect(() => {
+    if (coldLaunchPickerAttemptedRef.current) return;
+    if (!(isCapacitor || isAndroidDevice || isSeekerDevice) || !useMobileWallet || !mobileConnectReady) return;
+    if (availableWallets.length === 0) return;
+    if (isConnected || activeAddress || jwtSigning || viewState !== 'landing') return;
+    coldLaunchPickerAttemptedRef.current = true;
+    window.setTimeout(() => {
+      if (viewStateRef.current !== 'landing' || isDisconnectingRef.current) return;
+      void mwaAuthorizationCache.clear();
+      setWalletModalVisible(true);
+    }, 650);
+  }, [
+    isCapacitor,
+    isAndroidDevice,
+    isSeekerDevice,
+    useMobileWallet,
+    mobileConnectReady,
+    isConnected,
+    activeAddress,
+    jwtSigning,
+    viewState,
+    availableWallets,
+    setWalletModalVisible,
   ]);
 
   const handleDesktopConnect = useCallback(async () => {
@@ -1728,18 +1772,21 @@ const Index = () => {
     setJwtDeclined(false);
     setViewState('scanning');
 
-    if (jwtPrewarmedRef.current !== nextAddress) {
-      const mobileAuthWallet =
-        mobileWallet?.adapter?.name === SolanaMobileWalletAdapterWalletName
-          ? makeAdapterAuthWallet(mobileWallet.adapter as AuthCapableAdapter, nextAddress)
-          : null;
+    const cachedJwt = getCachedJwt(nextAddress);
+    if (cachedJwt) {
+      jwtPrewarmedRef.current = nextAddress;
+      writeAuthFlowDebug({ stage: 'enter_cached_jwt', address: nextAddress.slice(0, 8) });
+    }
+
+    if (!cachedJwt && jwtPrewarmedRef.current !== nextAddress) {
       const authWallet =
-        mobileAuthWallet ??
-        (wallet.publicKey && (wallet.signMessage || wallet.signIn)
+        wallet.publicKey && (wallet.signMessage || wallet.signIn)
           ? wallet
-          : mobileWallet?.adapter
-            ? makeAdapterAuthWallet(mobileWallet.adapter as AuthCapableAdapter, nextAddress)
-            : null);
+          : _selectedWallet?.adapter
+            ? makeAdapterAuthWallet(_selectedWallet.adapter as AuthCapableAdapter, nextAddress)
+            : mobileWallet?.adapter
+              ? makeAdapterAuthWallet(mobileWallet.adapter as AuthCapableAdapter, nextAddress)
+              : null;
 
       if (!authWallet) {
         writeAuthFlowDebug({ stage: 'enter_no_signer', address: nextAddress.slice(0, 8) });
@@ -1836,10 +1883,23 @@ const Index = () => {
     }
     const heliusUrl = getHeliusRpcUrl(addr);
     const collectionMint = getCollectionMint();
-    if (!heliusUrl || !collectionMint) return;
+    if (!proxyBase && (!heliusUrl || !collectionMint)) return;
     let cancelled = false;
     (async () => {
       try {
+        if (proxyBase) {
+          const summaryRes = await fetch(`${proxyBase}/api/prism/summary?address=${encodeURIComponent(addr)}`);
+          if (cancelled) return;
+          if (summaryRes.ok) {
+            const summary = await summaryRes.json();
+            if (cancelled) return;
+            if (summary?.mint?.minted === true) {
+              setHasExistingId(true);
+              return;
+            }
+          }
+        }
+        if (!heliusUrl || !collectionMint) return;
         const res = await fetch(heliusUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1859,13 +1919,13 @@ const Index = () => {
         );
         if (!cancelled) setHasExistingId(owns);
       } catch {
-        if (!cancelled) setHasExistingId(false);
+        if (!cancelled) setHasExistingId(null);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [wallet?.publicKey, activeAddress]);
+  }, [wallet?.publicKey, activeAddress, proxyBase]);
 
   const fetchSkrQuote = useCallback(async () => {
     if (!proxyBase) {
@@ -2040,8 +2100,27 @@ const Index = () => {
     }
   }, [renderCardImage, uploadCardImage]);
   const handleMint = useCallback(async () => {
-    console.warn('[handleMint] start', { paymentToken, hasWallet: !!wallet?.publicKey, hasTraits: !!traits, skrQuoteReady: !!skrQuote });
-    if (!wallet || !wallet.publicKey || !traits) return;
+    const signerAddress = wallet.publicKey?.toBase58?.();
+    console.warn(
+      `[handleMint] start paymentToken=${paymentToken} signer=${signerAddress ?? 'none'} active=${
+        resolvedAddress ?? 'none'
+      } data=${address ?? 'none'} hasWallet=${Boolean(wallet)} hasPublicKey=${Boolean(
+        wallet.publicKey,
+      )} hasTraits=${Boolean(traits)} skrQuoteReady=${Boolean(skrQuote)}`,
+    );
+    if (!wallet.publicKey || !traits) {
+      console.warn(
+        `[handleMint] guard failed signer=${signerAddress ?? 'none'} active=${resolvedAddress ?? 'none'} data=${
+          address ?? 'none'
+        } view=${viewState} isLoading=${Boolean(isLoading)} hasTraits=${Boolean(traits)}`,
+      );
+      toast.error('Mint unavailable', {
+        description: !wallet.publicKey
+          ? 'Wallet signer is not ready. Reconnect wallet and try again.'
+          : 'Identity data is still loading. Wait a moment and retry.',
+      });
+      return;
+    }
 
     if (paymentToken === 'SKR' && !skrQuote) {
       toast.error('SKR price unavailable', {
@@ -2053,15 +2132,17 @@ const Index = () => {
     setMintState('minting');
     let succeeded = false;
     // Safety: auto-reset spinner if wallet promise hangs (e.g. Seeker silently drops request)
-    // 30s to allow for card capture + wallet signing + finalize
+    // Native mint can take minutes on Seeker: card capture/upload, backend prepare,
+    // wallet approval, and finalize all happen in sequence.
     const safetyTimer = setTimeout(() => {
       if (!succeeded) {
         setMintState('idle');
         toast.info('Transaction timed out — please try again');
       }
-    }, 30_000);
+    }, 420_000);
     try {
-      const cardImageUrl = await captureCardImage();
+      const cardImageUrl = shouldSkipMintCardCapture ? undefined : await captureCardImage();
+      console.warn('[handleMint] card image ready', { skipped: shouldSkipMintCardCapture, hasCardImageUrl: !!cardImageUrl });
       const { mintIdentityPrism } = await import('@/lib/mintIdentityPrism');
       const result = await mintIdentityPrism({
         wallet,
@@ -2077,6 +2158,7 @@ const Index = () => {
       succeeded = true;
       trackMint(true);
       setMintState('success');
+      setHasExistingId(true);
       setTimeout(() => setMintState('idle'), 4000);
       toast.success('Identity minted!', {
         description: `Tx: ${result.signature.slice(0, 8)}...`,
@@ -2111,7 +2193,11 @@ const Index = () => {
         const msg = err instanceof Error ? err.message : String(err);
         const code = (err as { code?: string })?.code ?? '';
         const errName = (err as { name?: string })?.name ?? '';
-        console.error('Mint error:', { message: msg, code, name: errName, raw: err });
+        try {
+          console.error('Mint error detail:', JSON.stringify({ message: msg, code, name: errName }));
+        } catch {
+          console.error('Mint error detail:', msg);
+        }
         const isUserCancel =
           /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED|SIGN_TIMEOUT/i.test(
             msg + ' ' + code,
@@ -2131,11 +2217,40 @@ const Index = () => {
       // Guarantee spinner always stops (handles hung promises, unexpected errors)
       if (!succeeded) setMintState('idle');
     }
-  }, [wallet, traits, score, captureCardImage, paymentToken, skrQuote]);
+  }, [
+    wallet,
+    traits,
+    score,
+    captureCardImage,
+    paymentToken,
+    skrQuote,
+    shouldSkipMintCardCapture,
+    resolvedAddress,
+    address,
+    viewState,
+    isLoading,
+  ]);
 
   const handleMintWithCoins = useCallback(async () => {
-    console.warn('[handleMintWithCoins] start', { paymentToken, hasWallet: !!wallet?.publicKey, hasTraits: !!traits });
-    if (!wallet || !wallet.publicKey || !traits) return;
+    const signerAddress = wallet.publicKey?.toBase58?.();
+    console.warn(
+      `[handleMintWithCoins] start paymentToken=${paymentToken} signer=${signerAddress ?? 'none'} active=${
+        resolvedAddress ?? 'none'
+      } data=${address ?? 'none'} hasPublicKey=${Boolean(wallet.publicKey)} hasTraits=${Boolean(traits)}`,
+    );
+    if (!wallet.publicKey || !traits) {
+      console.warn(
+        `[handleMintWithCoins] guard failed signer=${signerAddress ?? 'none'} active=${
+          resolvedAddress ?? 'none'
+        } data=${address ?? 'none'} view=${viewState} isLoading=${Boolean(isLoading)} hasTraits=${Boolean(traits)}`,
+      );
+      toast.error('Mint unavailable', {
+        description: !wallet.publicKey
+          ? 'Wallet signer is not ready. Reconnect wallet and try again.'
+          : 'Identity data is still loading. Wait a moment and retry.',
+      });
+      return;
+    }
     setMintState('minting');
     let succeeded = false;
     const safetyTimer = setTimeout(() => {
@@ -2143,9 +2258,10 @@ const Index = () => {
         setMintState('idle');
         toast.info('Transaction timed out — please try again');
       }
-    }, 60_000);
+    }, 300_000);
     try {
-      const cardImageUrl = await captureCardImage();
+      const cardImageUrl = shouldSkipMintCardCapture ? undefined : await captureCardImage();
+      console.warn('[handleMintWithCoins] card image ready', { skipped: shouldSkipMintCardCapture, hasCardImageUrl: !!cardImageUrl });
       const { mintIdentityPrism } = await import('@/lib/mintIdentityPrism');
       const result = await mintIdentityPrism({
         wallet,
@@ -2162,6 +2278,7 @@ const Index = () => {
       succeeded = true;
       trackMint(true);
       setMintState('success');
+      setHasExistingId(true);
       setTimeout(() => setMintState('idle'), 4000);
       // Refresh coin balance after spending
       getPrismBalance(wallet.publicKey.toBase58())
@@ -2200,7 +2317,27 @@ const Index = () => {
       if (!succeeded) setMintState('idle');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallet, traits, score, captureCardImage, prismBalance]);
+  }, [
+    wallet,
+    traits,
+    score,
+    captureCardImage,
+    prismBalance,
+    shouldSkipMintCardCapture,
+    paymentToken,
+    resolvedAddress,
+    address,
+    viewState,
+    isLoading,
+  ]);
+
+  useEffect(() => {
+    if (walletData.isMinted) setHasExistingId(true);
+  }, [walletData.isMinted]);
+
+  const hasMintedIdentity = hasExistingId === true || walletData.isMinted === true;
+  const isMintStatusChecking =
+    Boolean(resolvedAddress && walletData.traits) && hasExistingId === null && walletData.isMinted !== true;
 
   const handleRemint = useCallback(async () => {
     if (!wallet || !wallet.publicKey || !traits) return;
@@ -2216,7 +2353,7 @@ const Index = () => {
       toast.info('Updating card...', {
         description: 'Updates metadata on existing NFT — only 0.0005 SOL.',
       });
-      const cardImageUrl = await captureCardImage();
+      const cardImageUrl = shouldSkipMintCardCapture ? undefined : await captureCardImage();
       const { updateIdentityPrism } = await import('@/lib/mintIdentityPrism');
       const result = await updateIdentityPrism({
         wallet,
@@ -2244,7 +2381,7 @@ const Index = () => {
       clearTimeout(safetyTimer);
       if (!succeeded) setRemintState('idle');
     }
-  }, [wallet, traits, score, captureCardImage]);
+  }, [wallet, traits, score, captureCardImage, shouldSkipMintCardCapture]);
 
   const shareInsight = useMemo(() => {
     if (!traits) return 'Cosmic insight pending... 🔮';
@@ -2360,6 +2497,14 @@ const Index = () => {
   }, [viewState]);
 
   const showOverlay = !curtainDone && !suppressLoadingRef.current;
+  const activePaymentAmount =
+    paymentToken === 'SOL'
+      ? `${solBalance == null ? '—' : Number(solBalance).toFixed(3)} SOL`
+      : paymentToken === 'SKR'
+        ? skrQuoteLoading && !skrQuote
+          ? 'Loading SKR'
+          : `${skrQuote?.skrAmount == null ? '—' : Math.floor(Number(skrQuote.skrAmount)).toLocaleString()} SKR`
+        : `${prismBalance?.balance == null ? '—' : Math.floor(Number(prismBalance.balance)).toLocaleString()} PRISM`;
 
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
@@ -2507,16 +2652,10 @@ const Index = () => {
                         <div className="identity-pay-selector" role="group" aria-label="Select payment currency">
                           {([
                             { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
-                            { key: 'SKR', label: 'SKR', iconUrl: '/landing/badges/skr.png' },
-                            { key: 'COINS', label: 'Game Coins', emoji: '🪙' },
+                            { key: 'SKR', label: 'SKR', iconUrl: '/tokens/skr-icon.png' },
+                            { key: 'COINS', label: 'PRISM', iconUrl: '/tokens/prism-icon.png' },
                           ] as const).map((opt) => {
                             const active = paymentToken === opt.key;
-                            const bal =
-                              opt.key === 'SOL'
-                                ? solBalance
-                                : opt.key === 'SKR'
-                                  ? skrQuote?.skrAmount ?? null
-                                  : prismBalance?.balance ?? null;
                             return (
                               <button
                                 key={opt.key}
@@ -2530,6 +2669,7 @@ const Index = () => {
                                 {'iconUrl' in opt && opt.iconUrl ? (
                                   <img
                                     src={opt.iconUrl}
+                                    className="identity-pay-icon"
                                     alt=""
                                     onError={(e) => {
                                       (e.currentTarget as HTMLImageElement).style.display = 'none';
@@ -2538,36 +2678,36 @@ const Index = () => {
                                 ) : (
                                   <span className="identity-pay-emoji" aria-hidden="true">{('emoji' in opt) ? opt.emoji : ''}</span>
                                 )}
-                                {active && (
-                                  <span className="identity-pay-bal">
-                                    {bal == null
-                                      ? '—'
-                                      : opt.key === 'SOL'
-                                        ? `${Number(bal).toFixed(3)}`
-                                        : `${Math.floor(Number(bal)).toLocaleString()}`}
-                                  </span>
-                                )}
+                                <span className="identity-pay-label">{opt.label}</span>
                               </button>
                             );
                           })}
+                          <div className="identity-pay-price" aria-live="polite">
+                            {activePaymentAmount}
+                          </div>
                         </div>
 
                         {/* MINT button */}
                         <Button
                           variant="ghost"
-                          onClick={paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
+                          onClick={hasMintedIdentity ? handleRemint : paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
                           className="mint-primary-btn"
-                          disabled={mintState === 'minting'}
+                          disabled={isMintStatusChecking || mintState === 'minting' || remintState === 'updating'}
                         >
-                          {mintState === 'minting' ? (
+                          {mintState === 'minting' || remintState === 'updating' ? (
                             <>
                               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              MINTING
+                              {remintState === 'updating' ? 'UPDATING' : 'MINTING'}
+                            </>
+                          ) : isMintStatusChecking ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              CHECKING IDENTITY
                             </>
                           ) : (
                             <>
                               <Coins className="h-4 w-4 mr-2" />
-                              {isNewWallet ? 'Mint Identity to Activate Score' : 'MINT IDENTITY'}
+                              {hasMintedIdentity ? 'UPDATE IDENTITY' : isNewWallet ? 'Mint Identity to Activate Score' : 'MINT IDENTITY'}
                             </>
                           )}
                         </Button>

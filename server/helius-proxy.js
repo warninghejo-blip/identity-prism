@@ -2942,15 +2942,9 @@ const verifyMagicBlockSeedSlot = async (seed, slot) => {
     reason: 'unverified',
   };
 
-  try {
-    const health = await callMagicBlockRpc('getHealth', []);
-    verification.rpcHealthy = health === 'ok';
-  } catch {
-    verification.rpcHealthy = false;
-  }
-
-  try {
-    const block = await callMagicBlockRpc('getBlock', [
+  const [healthResult, blockResult] = await Promise.allSettled([
+    callMagicBlockRpc('getHealth', []),
+    callMagicBlockRpc('getBlock', [
       slot,
       {
         commitment: 'confirmed',
@@ -2958,15 +2952,28 @@ const verifyMagicBlockSeedSlot = async (seed, slot) => {
         rewards: false,
         maxSupportedTransactionVersion: 0,
       },
-    ]);
-    const blockhash = typeof block?.blockhash === 'string' ? block.blockhash : '';
-    verification.slotFound = Boolean(blockhash);
-    verification.slotBlockhash = blockhash || null;
-    verification.slotBlockTimeMs = Number.isFinite(Number(block?.blockTime))
-      ? Math.floor(Number(block.blockTime) * 1000)
-      : null;
-    verification.seedMatchesSlot = Boolean(blockhash) && blockhash === seed;
-  } catch {
+    ]),
+  ]);
+
+  verification.rpcHealthy = healthResult.status === 'fulfilled' && healthResult.value === 'ok';
+
+  if (blockResult.status === 'fulfilled') {
+    try {
+      const block = blockResult.value;
+      const blockhash = typeof block?.blockhash === 'string' ? block.blockhash : '';
+      verification.slotFound = Boolean(blockhash);
+      verification.slotBlockhash = blockhash || null;
+      verification.slotBlockTimeMs = Number.isFinite(Number(block?.blockTime))
+        ? Math.floor(Number(block.blockTime) * 1000)
+        : null;
+      verification.seedMatchesSlot = Boolean(blockhash) && blockhash === seed;
+    } catch {
+      verification.slotFound = false;
+      verification.seedMatchesSlot = false;
+      verification.slotBlockhash = null;
+      verification.slotBlockTimeMs = null;
+    }
+  } else {
     verification.slotFound = false;
     verification.seedMatchesSlot = false;
     verification.slotBlockhash = null;
@@ -3928,12 +3935,19 @@ const server = http.createServer(async (req, res) => {
       heliusUrl = u.toString();
     }
 
-    // Build ordered URL list based on method type
-    // DAS methods → Helius only (other providers don't support DAS)
-    // Standard RPC → Alchemy → Helius → Solana Public
+    // Build ordered URL list based on method type.
+    // DAS methods -> Helius only (other providers don't support DAS).
+    // Transaction broadcast/status paths prefer Helius first: some providers can
+    // return a syntactically valid sendTransaction signature without timely TPU
+    // propagation, which leaves mobile clients waiting on a signature nobody sees.
+    // Other standard RPC reads keep the lower-cost Alchemy-first order.
     const urls = [];
     if (isDasMethod) {
       if (heliusUrl) urls.push({ url: heliusUrl, name: 'helius' });
+    } else if (['sendTransaction', 'getSignatureStatuses', 'getTransaction'].includes(rpcMethod)) {
+      if (heliusUrl) urls.push({ url: heliusUrl, name: 'helius' });
+      if (ALCHEMY_RPC_URL) urls.push({ url: ALCHEMY_RPC_URL, name: 'alchemy' });
+      if (FALLBACK_RPC_URL) urls.push({ url: FALLBACK_RPC_URL, name: 'solana-public' });
     } else {
       if (ALCHEMY_RPC_URL) urls.push({ url: ALCHEMY_RPC_URL, name: 'alchemy' });
       if (heliusUrl) urls.push({ url: heliusUrl, name: 'helius' });
@@ -4033,30 +4047,34 @@ function getSybilCacheTxCount(entry) {
 
 function normalizeSybilCacheEntry(entry) {
   if (!entry?.analysis || typeof entry.analysis !== 'object') return null;
+  const normalizedVerdict = getSybilVerdict(entry.analysis);
+  const analysis = normalizedVerdict
+    ? { ...entry.analysis, verdict: normalizedVerdict }
+    : entry.analysis;
   const computedAt = Math.max(0, Math.round(Number(entry.computedAt ?? entry.cachedAt) || 0)) || Date.now();
   const estimatedTxCount = Math.max(
     0,
     Math.round(Number(
       entry.estimatedTxCount
-      ?? entry.analysis?.scanMeta?.estimatedTxCount
-      ?? entry.analysis?.metrics?.txCount
+      ?? analysis?.scanMeta?.estimatedTxCount
+      ?? analysis?.metrics?.txCount
       ?? 0,
     ) || 0),
   );
   const normalized = {
-    analysis: entry.analysis,
+    analysis,
     fundingSources: Array.isArray(entry.fundingSources) ? entry.fundingSources : [],
     cachedAt: computedAt,
     computedAt,
     ttlExpiresAt: Math.max(0, Math.round(Number(entry.ttlExpiresAt) || 0)),
-    lastSeenSignature: entry.lastSeenSignature || entry.analysis?.scanMeta?.lastSeenSignature || null,
-    firstSeenSignature: entry.firstSeenSignature || entry.analysis?.scanMeta?.firstSeenSignature || null,
+    lastSeenSignature: entry.lastSeenSignature || analysis?.scanMeta?.lastSeenSignature || null,
+    firstSeenSignature: entry.firstSeenSignature || analysis?.scanMeta?.firstSeenSignature || null,
     estimatedTxCount,
-    firstTxBlockTime: Number(entry.firstTxBlockTime ?? entry.analysis?.scanMeta?.firstTxBlockTime) || null,
-    confidence: Number(entry.confidence) || Number(entry.analysis?.scanMeta?.confidenceScore) || 0,
-    riskLevel: entry.riskLevel || entry.analysis?.riskLevel || 'clean',
-    score: Math.round(Number(entry.score ?? entry.analysis?.riskScore) || 0),
-    scanVersion: Math.max(1, Math.round(Number(entry.scanVersion ?? entry.analysis?.scanMeta?.scanVersion) || 1)),
+    firstTxBlockTime: Number(entry.firstTxBlockTime ?? analysis?.scanMeta?.firstTxBlockTime) || null,
+    confidence: Number(entry.confidence) || Number(analysis?.scanMeta?.confidenceScore) || 0,
+    riskLevel: entry.riskLevel || analysis?.riskLevel || 'clean',
+    score: Math.round(Number(entry.score ?? analysis?.riskScore) || 0),
+    scanVersion: Math.max(1, Math.round(Number(entry.scanVersion ?? analysis?.scanMeta?.scanVersion) || 1)),
   };
   if (!normalized.ttlExpiresAt) {
     normalized.ttlExpiresAt = normalized.cachedAt + getSybilCacheTtlMs(getSybilCacheTxCount(normalized), false);
@@ -5381,6 +5399,7 @@ const ctx = createContext({
   getCachedSkrPriceUsd,
   getSkrQuote,
   getRpcUrl,
+  getRpcUrls,
   getBatchRpcUrl,
   parsePublicKey,
   getPrismEarnRateLimit,
@@ -5560,6 +5579,7 @@ const ctx = createContext({
   loadSecretKeyFromFile,
   storePendingMint,
   consumePendingMint,
+  saveMintedAddresses,
   toCanonGameMode,
   leaderboardCacheRef,
   leaderboardCacheTimeRef,

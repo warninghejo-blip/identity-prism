@@ -3,14 +3,14 @@
   top: 0;
   z-index: 10000;
   min-height: 72px;
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 20px;
   padding: 12px clamp(16px, 4vw, 48px);
-  border-bottom: 1px solid rgba(78, 229, 213, 0.14);
-  background: rgba(5, 10, 26, 0.78);
-  backdrop-filter: blur(24px) saturate(140%);
+  border-bottom: 1px solid rgba(245, 166, 35, 0.16);
+  background: rgba(5, 7, 10, 0.86);
+  backdrop-filter: blur(18px) saturate(130%);
 }
 
 .site-header__brand {
@@ -22,7 +22,7 @@
   text-decoration: none;
   font-size: 13px;
   font-weight: 800;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.08em;
 }
 
 .site-header__brand img {
@@ -39,8 +39,8 @@
   gap: 6px;
   padding: 5px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.035);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .site-header__nav a {
@@ -48,8 +48,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 14px;
-  border-radius: 999px;
+  padding: 0 12px;
+  border-radius: 6px;
   color: rgba(241, 245, 249, 0.68);
   text-decoration: none;
   font-size: 13px;
@@ -65,13 +65,14 @@
 }
 
 .site-header__nav a:focus-visible,
-.site-header__wallet .wallet-adapter-button:focus-visible {
+.site-header__wallet .wallet-adapter-button:focus-visible,
+.site-header__wallet .web-wallet-button:focus-visible {
   box-shadow: 0 0 0 2px #4ee5d5, 0 0 0 5px rgba(78, 229, 213, 0.18);
 }
 
 .site-header__nav a.is-active {
-  color: #06111d;
-  background: linear-gradient(135deg, #4ee5d5, #8bd6ff);
+  color: #0c0a06;
+  background: linear-gradient(135deg, #f5a623, #4ee5d5);
 }
 
 .site-header__wallet {
@@ -79,17 +80,32 @@
   justify-content: flex-end;
 }
 
-.site-header__wallet .wallet-adapter-button {
+.site-header__wallet .wallet-adapter-button,
+.site-header__wallet .web-wallet-button {
   min-height: 44px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(78, 229, 213, 0.95), rgba(139, 214, 255, 0.9));
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(245, 166, 35, 0.95), rgba(78, 229, 213, 0.9));
   color: #06111d;
   font-weight: 900;
+  cursor: pointer;
+}
+
+.site-header__wallet .web-wallet-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.site-header__wallet .web-wallet-button.is-connected {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8f8ff;
+  border: 1px solid rgba(78, 229, 213, 0.24);
 }
 
 @media (max-width: 860px) {
   .site-header {
-    grid-template-columns: 1fr;
+    flex-direction: column;
     justify-items: stretch;
     gap: 10px;
   }
@@ -99,6 +115,7 @@
   }
 
   .site-header__nav {
+    width: 100%;
     overflow-x: auto;
     justify-content: flex-start;
   }

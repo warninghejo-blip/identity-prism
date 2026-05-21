@@ -9,6 +9,8 @@ import { Zap } from 'lucide-react';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { getHeliusProxyUrl } from '@/constants';
 import type { WalletTraits } from '@/hooks/useWalletData';
+import { readPreferredMobileWalletAddress } from '@/lib/mobileWalletAddressPreference';
+import { verdictFromScore } from '@/lib/sybilVerdict';
 
 // Import + re-export canonical tier constants
 import { TIER_HEX, TIER_LABELS, TIER_COLORS_TW, TIER_ICONS, getTierIcon } from '@/lib/constants/tierColors';
@@ -164,6 +166,9 @@ export function fetchSybilAnalysis(address: string): Promise<SybilResult | null>
       const base = getApiBase();
       const data = await fetchApiJson<SybilResult>(`${base}/api/sybil/analysis?address=${address}`);
       if (data?.riskScore !== undefined) {
+        data.verdict = data.verdict
+          ? { ...data.verdict, label: verdictFromScore(Number(data.riskScore) || 0) }
+          : data.verdict;
         _sybilCache.set(address, { data, ts: Date.now() });
         return data as SybilResult;
       }
@@ -938,16 +943,19 @@ export async function obtainJwtViaAdapterSignIn(adapter: {
         : (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).padEnd(32, '0');
 
     const preAddress = adapter.publicKey?.toBase58?.() ?? null;
+    const preferredAddress = readPreferredMobileWalletAddress();
+    const requestedAddress = preferredAddress || preAddress;
     writeAuthDebug({
       stage: 'siws_calling_adapter_signin',
       hasPreAddress: Boolean(preAddress),
+      preferredAddress: preferredAddress ? `${preferredAddress.slice(0, 4)}...${preferredAddress.slice(-4)}` : null,
       noncePrefix: clientNonce.slice(0, 8),
     });
 
     // Single wallet popup: authorize + sign-in message in one MWA transact session.
     const signedIn = await adapter.signIn({
       domain: window.location.host,
-      ...(preAddress ? { address: preAddress } : {}),
+      ...(requestedAddress ? { address: requestedAddress } : {}),
       statement: 'Sign in to Identity Prism to save progress and earn coins.',
       uri: window.location.origin,
       version: '1',
@@ -1001,6 +1009,15 @@ export async function obtainJwtViaAdapterSignIn(adapter: {
       });
     } catch {
       writeAuthDebug({ stage: 'siws_signed', address: resolvedAddress.slice(0, 8) });
+    }
+    try {
+      window.dispatchEvent(
+        new CustomEvent('identityprism:mwa-siws-connected', {
+          detail: { address: resolvedAddress },
+        }),
+      );
+    } catch {
+      /* ignore */
     }
     setAuthState('signed');
     return { token, address: resolvedAddress };
