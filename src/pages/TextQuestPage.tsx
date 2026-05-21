@@ -514,7 +514,7 @@ export default function TextQuestPage() {
             {/* Text + image layout */}
             <div className={`flex gap-4 ${currentNode.image && isImagePath(currentNode.image) ? '' : ''}`}>
               <div
-                className="flex-1 p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] cursor-pointer"
+                className="flex-1 p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] max-h-[42vh] sm:max-h-none overflow-y-auto overscroll-contain cursor-pointer"
                 onClick={() => !done && skip()}
               >
                 {/* Emoji image inline */}

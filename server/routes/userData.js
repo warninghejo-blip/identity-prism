@@ -125,6 +125,10 @@ function registerUserDataRoute(ctx) {
         score: Number.isFinite(compositeScore) ? compositeScore : (wallet.score || 0),
         tier: compositeTier || wallet.tier || 'mercury',
         badges: wallet.badges || [],
+        mint: {
+          ...(wallet.mint && typeof wallet.mint === 'object' ? wallet.mint : {}),
+          minted: Boolean(wallet.mint?.minted || mintedAddresses.has(address)),
+        },
         composite: wallet.composite
           ? {
               compositeScore: wallet.composite.compositeScore,
@@ -154,11 +158,20 @@ function registerUserDataRoute(ctx) {
 
     if (pathname === '/api/daily-limits' && req.method === 'GET') {
       if (!ipRateLimit('dailyLimits', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-      const jwtAuth = requireJwt(req, res);
-      if (!jwtAuth.ok) return true;
-      const address = url.searchParams.get('address') || jwtAuth.address;
+      const requestedAddress = url.searchParams.get('address') || '';
+      const authHeader = req.headers['authorization'] ?? '';
+      const hasAuthToken = typeof authHeader === 'string' && authHeader.startsWith('Bearer ');
+      let address = requestedAddress;
+
+      if (hasAuthToken || !address) {
+        const jwtAuth = requireJwt(req, res);
+        if (!jwtAuth.ok) return true;
+        address = requestedAddress || jwtAuth.address;
+        if (requestedAddress && requestedAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      }
+
       if (!address) return respondJson(res, 400, { error: 'address required' });
-      if (address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return respondJson(res, 400, { error: 'Invalid address' });
       const today = new Date().toISOString().slice(0, 10);
       const gameToday = getGameCoinsToday ? getGameCoinsToday(address) : 0;
       const nonGameEntry = getPrismEarnRateLimit(`nongame_daily:${address}`);

@@ -14,6 +14,7 @@ import {
 } from '@/constants';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { getCompositeTierFromScore } from '@/lib/constants/tierColors';
 
 // ── Scan progress broadcasting ──
 
@@ -92,6 +93,7 @@ export interface WalletData {
   isLoading: boolean;
   error: string | null;
   isNewWallet?: boolean;
+  isMinted?: boolean;
 }
 
 export const WALLET_DATA_CACHE_TTL_MS = 15 * 60 * 1000;
@@ -103,12 +105,8 @@ type WalletDataCacheKeys = {
 
 const getWalletDataCacheKeys = (address: string): WalletDataCacheKeys[] => [
   {
-    dataKey: `walletData_v3_${address}`,
-    timestampKey: `walletData_v3_ts_${address}`,
-  },
-  {
-    dataKey: `walletData_${address}`,
-    timestampKey: `walletData_ts_${address}`,
+    dataKey: `walletData_v4_${address}`,
+    timestampKey: `walletData_v4_ts_${address}`,
   },
 ];
 
@@ -139,8 +137,8 @@ export function readCachedWalletData(address: string): WalletData | null {
 export function writeWalletDataCache(address: string, data: WalletData) {
   if (!address || typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.setItem(`walletData_v3_${address}`, JSON.stringify(data));
-    sessionStorage.setItem(`walletData_v3_ts_${address}`, String(Date.now()));
+    sessionStorage.setItem(`walletData_v4_${address}`, JSON.stringify(data));
+    sessionStorage.setItem(`walletData_v4_ts_${address}`, String(Date.now()));
   } catch {
     /* ignore cache write */
   }
@@ -297,8 +295,10 @@ const primeCompositeCache = (address: string, wallet: any) => {
   }
   const data = {
     score: toFiniteNumber(composite?.compositeScore, fallbackScore),
-    tier:
+    tier: getCompositeTierFromScore(
+      toFiniteNumber(composite?.compositeScore, fallbackScore),
       typeof composite?.compositeTier === 'string' && composite.compositeTier ? composite.compositeTier : fallbackTier,
+    ),
     breakdown,
     details,
     hasComposite: Boolean(composite),
@@ -324,11 +324,8 @@ const buildTraitsFromWalletDatabase = (address: string, wallet: any): WalletData
   const swapCount = toFiniteNumber(scoreBreakdown.defiActivity?.swaps);
   const compositeScore = toFiniteNumber(wallet.composite?.compositeScore ?? wallet.score);
   const baseScore = toFiniteNumber(onchain.identityScore ?? wallet.score);
-  const tier = isPlanetTier(wallet.tier)
-    ? wallet.tier
-    : isPlanetTier(wallet.composite?.compositeTier)
-      ? wallet.composite.compositeTier
-      : 'earth';
+  const mappedCompositeTier = getCompositeTierFromScore(compositeScore, wallet.composite?.compositeTier ?? wallet.tier);
+  const tier = isPlanetTier(mappedCompositeTier) ? mappedCompositeTier : 'earth';
 
   const traits: WalletTraits = {
     hasSeeker: Boolean(onchain.hasSeeker),
@@ -382,8 +379,10 @@ const buildTraitsFromWalletDatabase = (address: string, wallet: any): WalletData
     address,
     traits,
     score: compositeScore || Math.max(baseScore, calculateScore(traits)),
+    tier,
     isLoading: false,
     error: null,
+    isMinted: Boolean(wallet.mint?.minted),
   };
 };
 
@@ -406,7 +405,6 @@ export function useWalletData(address?: string) {
     // Check for cached data so planet renders immediately on return from BlackHole
     const cachedWalletData = readCachedWalletData(address);
     const hasCached = Boolean(cachedWalletData);
-    const cacheIsFresh = hasCached;
     if (cachedWalletData) {
       setWalletData(cachedWalletData);
       writeWalletDataCache(address, cachedWalletData);
@@ -420,8 +418,6 @@ export function useWalletData(address?: string) {
         error: null,
       });
     }
-    // Skip re-fetch if cache is fresh (< 5 min old)
-    if (cacheIsFresh) return;
     // Don't set isLoading:true when we have cached data — it causes card flicker
     // (card appears from cache → hides during loading → reappears after fetch)
     // The card stays visible with cached data while fresh data loads in background
@@ -429,6 +425,7 @@ export function useWalletData(address?: string) {
     let cancelled = false;
 
     const fetchData = async () => {
+      let fastProfileAllNotFound = false;
       try {
         const heliusRpcUrls = getHeliusRpcUrls(address);
         if (!heliusRpcUrls.length) {
@@ -453,7 +450,6 @@ export function useWalletData(address?: string) {
 
         const proxyBase = getHeliusProxyUrl();
         const isNativeProfileOnly = Capacitor.isNativePlatform();
-        let fastProfileAllNotFound = false;
         if (proxyBase) {
           const fastProfilePaths = [
             `/api/prism/summary?address=${encodeURIComponent(address)}`,
@@ -483,7 +479,13 @@ export function useWalletData(address?: string) {
             fastProfileStatuses.length === fastProfilePaths.length && fastProfileStatuses.every((status) => status === 404);
           if (isNativeProfileOnly) {
             if (fastProfileAllNotFound) {
-              if (isDev) console.warn('[Wallet Database] Wallet not registered; falling back to on-chain scan.');
+              if (isDev) console.warn('[Wallet Database] Wallet not registered; using new wallet profile.');
+              const fallbackData = buildNewWalletData(address);
+              if (cancelled) return;
+              emitScan('done', 100);
+              setWalletData(fallbackData);
+              writeWalletDataCache(address, fallbackData);
+              return;
             } else {
               if (!cancelled) {
                 setWalletData({
@@ -1127,6 +1129,13 @@ export function useWalletData(address?: string) {
       } catch (error) {
         console.error('Scan Error:', error);
         if (cancelled) return;
+        if (Capacitor.isNativePlatform() && fastProfileAllNotFound) {
+          const fallbackData = buildNewWalletData(address || '');
+          emitScan('done', 100);
+          setWalletData(fallbackData);
+          writeWalletDataCache(address, fallbackData);
+          return;
+        }
         setWalletData({
           address: address || '',
           traits: null,
@@ -1157,4 +1166,48 @@ function isFungibleAsset(asset: { interface?: string; token_info?: { supply?: nu
 
 function buildDisconnectedWalletData(): WalletData {
   return { address: '', traits: null, score: 0, isLoading: false, error: null };
+}
+
+function buildNewWalletData(address: string): WalletData {
+  const traits: WalletTraits = {
+    hasSeeker: false,
+    hasPreorder: false,
+    hasCombo: false,
+    isOG: false,
+    isWhale: false,
+    isCollector: false,
+    isEarlyAdopter: false,
+    isTxTitan: false,
+    isSolanaMaxi: false,
+    isBlueChip: false,
+    isDeFiKing: false,
+    uniqueTokenCount: 0,
+    nftCount: 0,
+    txCount: 0,
+    memeCoinsHeld: [],
+    isMemeLord: false,
+    hyperactiveDegen: false,
+    diamondHands: false,
+    avgTxPerDay30d: 0,
+    daysSinceLastTx: null,
+    solBalance: 0,
+    solBonusApplied: 0,
+    walletAgeDays: 0,
+    walletAgeBonus: 0,
+    planetTier: 'mercury',
+    totalAssetsCount: 0,
+    solTier: null,
+    totalValueUSD: 0,
+    cosmicRank: 'stardust',
+  };
+
+  return {
+    address,
+    traits,
+    score: 0,
+    tier: null,
+    isLoading: false,
+    error: null,
+    isNewWallet: true,
+  };
 }

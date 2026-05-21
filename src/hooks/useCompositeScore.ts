@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getHeliusProxyUrl } from '@/constants';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { verdictFromScore } from '@/lib/sybilVerdict';
+import { getCompositeTierFromScore } from '@/lib/constants/tierColors';
 
 interface CompositeBreakdown {
   onchain: number;
@@ -114,7 +116,10 @@ const buildOnchainFallbackBreakdown = (score: number): CompositeBreakdown => ({
 
 const normalizeCachedData = (cachedData: Partial<CompositeData>): CompositeData => ({
   score: typeof cachedData.score === 'number' ? cachedData.score : 0,
-  tier: typeof cachedData.tier === 'string' && cachedData.tier ? cachedData.tier : 'mercury',
+  tier: getCompositeTierFromScore(
+    typeof cachedData.score === 'number' ? cachedData.score : 0,
+    typeof cachedData.tier === 'string' && cachedData.tier ? cachedData.tier : 'mercury',
+  ),
   breakdown: cachedData.breakdown ?? EMPTY_BREAKDOWN,
   details: cachedData.details ?? null,
   isLoading: false,
@@ -232,6 +237,10 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
                 details: null,
               };
           const details: ScoreDetails | null = wallet.scoreDetails || composite.details || null;
+          if (details?.sybilTrust) {
+            const trust = Number(details.sybilTrust.rawTrustScore ?? details.sybilTrust.trustScore ?? 100);
+            details.sybilTrust.verdictLabel = verdictFromScore(Math.max(0, 100 - trust));
+          }
           // Merge top-level scoreBreakdown into composite details if missing
           // (composite may have been computed before wallet was fully scanned)
           if (details?.onchain && !details.onchain.scoreBreakdown && wallet.scoreBreakdown) {
@@ -239,7 +248,7 @@ export function useCompositeScore(address: string | null): CompositeData & { ref
           }
           const result = {
             score: composite.compositeScore,
-            tier: composite.compositeTier,
+            tier: getCompositeTierFromScore(composite.compositeScore, composite.compositeTier),
             breakdown: composite.breakdown,
             details,
             hasComposite,

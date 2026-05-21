@@ -28,6 +28,7 @@ import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
 import TrustGradeBadge from '@/components/TrustGradeBadge';
 import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
+import { getBoostedCompositeScore } from '@/lib/shipStats';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { gatherXPSourcesMerged, computeRangerXP, getRangerRank, getRankProgress } from '@/lib/rangerRanks';
 
@@ -119,6 +120,20 @@ interface CelestialCardProps {
   captureTab?: 'stats' | 'badges' | 'intel';
   fromBlackHole?: boolean;
   onSceneReady?: () => void;
+  staticFront?: boolean;
+  liveData?: boolean;
+  compositeOverride?: {
+    score: number;
+    tier: PlanetTier;
+    breakdown?: {
+      onchain: number;
+      sybilTrust: number;
+      humanProof: number;
+      social: number;
+      engagement: number;
+    };
+    details?: ScoreDetails | null;
+  };
 }
 
 import {
@@ -130,7 +145,17 @@ import {
 } from '@/lib/constants/tierColors';
 
 export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(function CelestialCard(
-  { data, captureMode = false, captureView = 'front', captureTab = 'stats', fromBlackHole = false, onSceneReady },
+  {
+    data,
+    captureMode = false,
+    captureView = 'front',
+    captureTab = 'stats',
+    fromBlackHole = false,
+    onSceneReady,
+    staticFront = false,
+    liveData = true,
+    compositeOverride,
+  },
   ref,
 ) {
   const [isFlipped, setIsFlipped] = useState(captureView === 'back');
@@ -187,11 +212,32 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const { traits, score, address } = data;
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : captureTab === 'intel' ? 'intel' : 'stats';
-  const compositeData = useCompositeScore(address);
+  const fetchedCompositeData = useCompositeScore(liveData ? address : null);
+  const compositeData = useMemo(
+    () =>
+      compositeOverride
+        ? {
+            score: compositeOverride.score,
+            tier: compositeOverride.tier,
+            breakdown: compositeOverride.breakdown ?? {
+              onchain: Math.min(Math.round(compositeOverride.score * 0.4), 400),
+              sybilTrust: Math.min(Math.round(compositeOverride.score * 0.25), 250),
+              humanProof: Math.min(Math.round(compositeOverride.score * 0.15), 150),
+              social: Math.min(Math.round(compositeOverride.score * 0.1), 100),
+              engagement: Math.min(Math.round(compositeOverride.score * 0.1), 100),
+            },
+            details: compositeOverride.details ?? null,
+            isLoading: false,
+            hasComposite: true,
+            refetch: () => {},
+          }
+        : fetchedCompositeData,
+    [compositeOverride, fetchedCompositeData],
+  );
 
   // Forge loadout — always load (needed for NFT capture too)
   useEffect(() => {
-    if (!address) return;
+    if (!address || !liveData) return;
     try {
       const raw = localStorage.getItem(`prism_forge_loadout_v1_${address}`);
       if (raw) {
@@ -211,11 +257,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
         }
       }
     } catch {}
-  }, [address]);
+  }, [address, liveData]);
 
   // Ranger XP + Rank
   useEffect(() => {
-    if (!address) return;
+    if (!address || !liveData) return;
     let cancelled = false;
     gatherXPSourcesMerged(address).then((sources) => {
       if (cancelled) return;
@@ -227,13 +273,13 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     return () => {
       cancelled = true;
     };
-  }, [address]);
+  }, [address, liveData]);
 
   const refetchComposite = compositeData.refetch;
 
   // Hydrate the dossier from already-prefetched trust data, then enrich it with the deep scan.
   useEffect(() => {
-    if (!address || isCapture) return;
+    if (!address || isCapture || !liveData) return;
     const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
     let cancelled = false;
 
@@ -332,10 +378,10 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     return () => {
       cancelled = true;
     };
-  }, [address, isCapture, refetchComposite, compositeData.hasComposite]);
+  }, [address, isCapture, liveData, refetchComposite, compositeData.hasComposite]);
 
   useEffect(() => {
-    if (!address || isCapture) return;
+    if (!address || isCapture || !liveData) return;
     let cancelled = false;
     setHistoryLoading(true);
     (async () => {
@@ -360,7 +406,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     return () => {
       cancelled = true;
     };
-  }, [address, isCapture]);
+  }, [address, isCapture, liveData]);
 
   const clearTransitionTimers = useCallback(() => {
     transitionTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -479,6 +525,10 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     setIsFlipped(captureView === 'back');
   }, [isCapture, captureView]);
 
+  useEffect(() => {
+    if (staticFront) setIsFlipped(false);
+  }, [staticFront]);
+
   const fallbackTraits: WalletTraits = {
     hasSeeker: false,
     hasPreorder: false,
@@ -517,6 +567,15 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     cosmicRank: traits?.cosmicRank || fallbackTraits.cosmicRank,
     planetTier: traits?.planetTier || fallbackTraits.planetTier,
   };
+  // Apply frame bonus to composite breakdown + score
+  const frameLoadout = useMemo(
+    () => (forgeFrame ? { equippedShipSkin: null, equippedFrame: forgeFrame, equippedAura: null } : null),
+    [forgeFrame],
+  );
+  const boostedComposite = useMemo(() => {
+    const result = getBoostedCompositeScore(compositeData.breakdown, frameLoadout);
+    return result ?? { score: compositeData.score, breakdown: compositeData.breakdown };
+  }, [compositeData.breakdown, compositeData.score, frameLoadout]);
   const hasCompositeDisplay = compositeData.hasComposite;
   const fallbackIdentityScore = Math.max(score, 0);
   const fallbackBreakdown = {
@@ -526,8 +585,8 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     social: 0,
     engagement: 0,
   };
-  const displayScore = hasCompositeDisplay ? compositeData.score : fallbackIdentityScore;
-  const displayBreakdown = hasCompositeDisplay ? compositeData.breakdown : fallbackBreakdown;
+  const displayScore = hasCompositeDisplay ? boostedComposite.score : fallbackIdentityScore;
+  const displayBreakdown = hasCompositeDisplay ? boostedComposite.breakdown : fallbackBreakdown;
   const maxDisplayScore = hasCompositeDisplay ? 1000 : 400;
   const effectiveTier = (
     hasCompositeDisplay
@@ -655,16 +714,18 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                     />
                   );
                 })()}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsFlipped(true);
-                }}
-                className="capture-hidden absolute right-3 top-3 flex aspect-square h-10 w-10 items-center justify-center rounded-full !rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 p-0 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
-                title="Flip Card"
-              >
-                <RotateCw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:rotate-180 duration-500" />
-              </button>
+              {!staticFront && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFlipped(true);
+                  }}
+                  className="capture-hidden absolute right-3 top-3 flex aspect-square h-10 w-10 items-center justify-center rounded-full !rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 p-0 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
+                  title="Flip Card"
+                >
+                  <RotateCw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:rotate-180 duration-500" />
+                </button>
+              )}
               <p className="text-cyan-200/50 text-[9px] font-bold tracking-[0.3em] uppercase">Tier Level</p>
               <h1
                 className="text-3xl font-black uppercase tracking-widest"
@@ -787,7 +848,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               <div className="flex justify-center items-center border-t border-white/5 pt-3 pb-1 relative z-30">
                 {/* Badges moved here */}
                 {frontBadges.length > 0 ? (
-                  <div className="front-badges grid grid-cols-5 gap-2 justify-items-center items-center w-full max-w-[300px] mx-auto pointer-events-auto">
+                  <div className="front-badges grid grid-cols-5 gap-1.5 justify-items-center items-center w-full max-w-[340px] mx-auto pointer-events-auto">
                     {frontBadges.map((badge) => (
                       <div
                         key={badge.key}
@@ -849,16 +910,18 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               {/* Flip Button (Back) */}
               {/* Back Header */}
               <div className="text-center pt-8 pb-4 border-b border-white/5 relative z-20">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsFlipped(false);
-                  }}
-                  className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
-                  title="Flip Back"
-                >
-                  <RotateCcw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:-rotate-180 duration-500" />
-                </button>
+                {!staticFront && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFlipped(false);
+                    }}
+                    className="capture-hidden absolute right-3 top-3 flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-white/12 to-white/5 border border-white/15 text-white/40 hover:text-white shadow-[0_0_16px_rgba(56,189,248,0.35)] backdrop-blur-md transition-all group/btn"
+                    title="Flip Back"
+                  >
+                    <RotateCcw className="w-4 h-4 shrink-0 transition-transform group-hover/btn:-rotate-180 duration-500" />
+                  </button>
+                )}
                 <h2 className="text-lg font-bold text-white uppercase tracking-widest">Data Prism</h2>
                 <div className="flex flex-col gap-0.5 items-center mt-2 mb-1">
                   {/* Progress Ring */}

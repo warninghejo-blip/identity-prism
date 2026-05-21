@@ -64,7 +64,7 @@ function shortAddress(address: string) {
   return address ? `${address.slice(0, 4)}...${address.slice(-4)}` : 'Not connected';
 }
 
-export default function IdentityHub() {
+export default function ApkIdentityHub() {
   const wallet = useWallet();
   const { setVisible } = useWalletModal();
   const address = wallet.publicKey?.toBase58() ?? '';

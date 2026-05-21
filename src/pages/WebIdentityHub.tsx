@@ -1,12 +1,12 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, BadgeCheck, Coins, Loader2, Share2, Shield, Wallet } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, Loader2, Share2, Shield, Wallet } from 'lucide-react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@/lib/solanaToken';
 import SiteHeader from '@/components/SiteHeader';
-import { CelestialCard } from '@/components/CelestialCard';
+import { CelestialCard as WebCelestialCard } from '@/components/WebCelestialCard';
 import { useWalletData, type PlanetTier, type WalletData, type WalletTraits } from '@/hooks/useWalletData';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { TIER_LABELS, getCompositeTierFromScore } from '@/lib/constants/tierColors';
@@ -64,7 +64,7 @@ function shortAddress(address: string) {
   return address ? `${address.slice(0, 4)}...${address.slice(-4)}` : 'Not connected';
 }
 
-export default function IdentityHub() {
+export default function WebIdentityHub() {
   const wallet = useWallet();
   const { setVisible } = useWalletModal();
   const address = wallet.publicKey?.toBase58() ?? '';
@@ -194,7 +194,7 @@ export default function IdentityHub() {
                 </div>
               }
             >
-              <CelestialCard data={cardData} />
+              <WebCelestialCard data={cardData} />
             </Suspense>
           </div>
 
@@ -276,10 +276,6 @@ export default function IdentityHub() {
                 SHARE / BLACK HOLE
               </Link>
 
-              <Link to="/" className="mint-secondary-btn identity-card-web-secondary">
-                <ArrowLeft size={16} aria-hidden="true" />
-                BACK TO HUB
-              </Link>
             </div>
           </aside>
         </section>

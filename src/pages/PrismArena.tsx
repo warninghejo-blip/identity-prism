@@ -12,7 +12,6 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 import {
   ArrowLeft,
-  Coins,
   Plus,
   X,
   Swords,
@@ -264,7 +263,10 @@ export default function PrismArena() {
   // Fetch challenge leaderboard
   useEffect(() => {
     if (subTab !== 'top' || !base) return;
-    fetch(`${base}/api/challenge/leaderboard`)
+    fetch(`${base}/api/challenge/leaderboard`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' },
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d) {
@@ -285,7 +287,10 @@ export default function PrismArena() {
     if (!(await isServerAvailable(base))) return;
     setLoadingOpen(true);
     try {
-      const res = await fetch(`${base}/api/challenge/list`);
+      const res = await fetch(`${base}/api/challenge/list`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
       if (res.ok) {
         const data = await res.json();
         setOpenChallenges(Array.isArray(data) ? data : (data.challenges ?? []));
@@ -304,8 +309,12 @@ export default function PrismArena() {
     try {
       const jwt = getCachedJwt(myAddress);
       const headers: Record<string, string> = {};
+      headers['Cache-Control'] = 'no-cache';
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-      const res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, { headers });
+      const res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, {
+        cache: 'no-store',
+        headers,
+      });
       // Passive page loads must not trigger a new wallet approval prompt.
       if (res.status === 401) {
         try {
@@ -314,7 +323,8 @@ export default function PrismArena() {
         const fresh = await obtainJwt(wallet, { forceFresh: true }).catch(() => null);
         if (fresh) {
           const retry = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, {
-            headers: { Authorization: `Bearer ${fresh}` },
+            cache: 'no-store',
+            headers: { Authorization: `Bearer ${fresh}`, 'Cache-Control': 'no-cache' },
           });
           if (retry.ok) {
             const data = await retry.json();
@@ -703,7 +713,7 @@ export default function PrismArena() {
               onClick={() => setShowCoinHistory(true)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 transition-colors cursor-pointer"
             >
-              <Coins className="w-3 h-3 text-amber-400" />
+              <img src="/tokens/prism-icon.png" alt="" className="w-3 h-3 text-amber-400 object-contain" loading="lazy" />
               <span className="text-xs font-bold text-amber-300">{coinBalance.toLocaleString()}</span>
             </button>
           )}
@@ -1002,7 +1012,7 @@ export default function PrismArena() {
                       )}
                       <div className="text-[10px] text-white/30 font-mono truncate mb-1">{formatAddr(c.creator)}</div>
                       <div className="flex items-center gap-1">
-                        <Coins className="w-3 h-3 text-amber-400" />
+                        <img src="/tokens/prism-icon.png" alt="" className="w-3 h-3 text-amber-400 object-contain" loading="lazy" />
                         <span className="text-[11px] font-bold text-amber-400">{c.stakeAmount} Coins</span>
                       </div>
                     </div>
@@ -1054,7 +1064,7 @@ export default function PrismArena() {
 
             {!myAddress && (
               <div className="text-center py-12 text-white/20">
-                <Coins className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                <img src="/tokens/prism-icon.png" alt="" className="w-10 h-10 mx-auto mb-3 opacity-20 object-contain" loading="lazy" />
                 <p className="text-sm">Connect your wallet to see your challenges</p>
               </div>
             )}
@@ -1133,7 +1143,7 @@ export default function PrismArena() {
                             </span>
                           </div>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 border border-amber-400/15 text-[11px] font-bold text-amber-400">
-                            <Coins className="w-3 h-3" />
+                            <img src="/tokens/prism-icon.png" alt="" className="w-3 h-3 object-contain" loading="lazy" />
                             {c.stakeAmount} Coins
                           </span>
                         </div>
@@ -1332,7 +1342,7 @@ export default function PrismArena() {
                     {p.reward > 0 && (
                       <div className="text-right shrink-0 space-y-0.5">
                         <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-xl bg-amber-400/10 border border-amber-400/20">
-                          <Coins className="w-3 h-3 text-amber-400" />
+                          <img src="/tokens/prism-icon.png" alt="" className="w-3 h-3 text-amber-400 object-contain" loading="lazy" />
                           <span className="text-[10px] font-bold text-amber-300">+{p.reward}</span>
                         </div>
                         {p.xpReward ? (
@@ -1518,7 +1528,7 @@ export default function PrismArena() {
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
               <div className="flex items-center gap-2">
-                <Coins className="w-4 h-4 text-amber-400" />
+                <img src="/tokens/prism-icon.png" alt="" className="w-4 h-4 text-amber-400 object-contain" loading="lazy" />
                 <span className="text-sm font-bold text-white">Coin History</span>
               </div>
               <div className="flex items-center gap-3">

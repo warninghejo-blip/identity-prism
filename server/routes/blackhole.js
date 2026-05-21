@@ -1,10 +1,15 @@
 import { createBlackHoleOrchestrator } from '../services/blackHoleOrchestrator.js';
 import { PublicKey } from '@solana/web3.js';
 
-const BLACKHOLE_METADATA_TIMEOUT_MS = 12000;
+const BLACKHOLE_METADATA_TIMEOUT_MS = 6000;
 const BLACKHOLE_IMAGE_TIMEOUT_MS = 12000;
 const BLACKHOLE_IMAGE_ATTEMPT_TIMEOUT_MS = 4500;
 const BLACKHOLE_TOKEN_ACCOUNTS_TIMEOUT_MS = 18000;
+const BLACKHOLE_TOKEN_ACCOUNTS_ATTEMPT_TIMEOUT_MS = 3000;
+const BLACKHOLE_TOKEN_ACCOUNTS_CACHE_TTL_MS = 30 * 1000;
+const BLACKHOLE_TOKEN_ACCOUNTS_CACHE_MAX = 256;
+const BLACKHOLE_TOKEN_ACCOUNTS_MAX_PARALLEL_RPCS = 4;
+const BLACKHOLE_TOKEN_ACCOUNTS_MIN_CACHEABLE_COUNT = 8;
 const BLACKHOLE_METADATA_MAX_MINTS = 120;
 const BLACKHOLE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const BLACKHOLE_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -59,7 +64,149 @@ const isAllowedImageHost = (hostname) => {
 };
 
 const imageCache = new Map();
+const tokenAccountsCache = new Map();
 let sharpModulePromise = null;
+
+const getCachedTokenAccounts = (key) => {
+  const cached = tokenAccountsCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > BLACKHOLE_TOKEN_ACCOUNTS_CACHE_TTL_MS) {
+    tokenAccountsCache.delete(key);
+    return null;
+  }
+  return cached.value;
+};
+
+const setCachedTokenAccounts = (key, value) => {
+  if (tokenAccountsCache.size >= BLACKHOLE_TOKEN_ACCOUNTS_CACHE_MAX) {
+    const oldestKey = tokenAccountsCache.keys().next().value;
+    if (oldestKey) tokenAccountsCache.delete(oldestKey);
+  }
+  tokenAccountsCache.set(key, { value, timestamp: Date.now() });
+};
+
+const metadataCache = new Map();
+const BLACKHOLE_METADATA_CACHE_TTL_MS = 5 * 60 * 1000;
+const BLACKHOLE_METADATA_CACHE_MAX = 256;
+
+const getCachedMetadata = (key) => {
+  const cached = metadataCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > BLACKHOLE_METADATA_CACHE_TTL_MS) {
+    metadataCache.delete(key);
+    return null;
+  }
+  return cached.value;
+};
+
+const setCachedMetadata = (key, value) => {
+  if (metadataCache.size >= BLACKHOLE_METADATA_CACHE_MAX) {
+    const oldestKey = metadataCache.keys().next().value;
+    if (oldestKey) metadataCache.delete(oldestKey);
+  }
+  metadataCache.set(key, { value, timestamp: Date.now() });
+};
+
+const hashMints = (mints) => {
+  const sorted = [...mints].sort().join(',');
+  let h = 0;
+  for (let i = 0; i < sorted.length; i++) { h = ((h << 5) - h + sorted.charCodeAt(i)) | 0; }
+  return String(h);
+};
+
+async function rpcRace(urls, bodyJson, perAttemptTimeoutMs) {
+  const controllers = urls.map(() => new AbortController());
+  const tasks = urls.map((url, i) => {
+    const t = setTimeout(() => controllers[i].abort(), perAttemptTimeoutMs);
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: bodyJson,
+      signal: controllers[i].signal,
+    })
+      .then(async (resp) => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        if (data?.error) throw new Error(data.error.message || 'rpc error');
+        return data;
+      })
+      .finally(() => clearTimeout(t));
+  });
+  try {
+    const winner = await Promise.any(tasks);
+    controllers.forEach((c) => { try { c.abort(); } catch {} });
+    return { ok: true, data: winner };
+  } catch (err) {
+    return { ok: false, error: err?.errors?.[0]?.message || err?.message || 'all rpc failed' };
+  }
+}
+
+const fetchRpcJson = async (url, bodyJson, perAttemptTimeoutMs) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), perAttemptTimeoutMs);
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: bodyJson,
+      signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data?.error) throw new Error(data.error.message || 'rpc error');
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const getTokenAccountValue = (data) => (Array.isArray(data?.result?.value) ? data.result.value : []);
+
+const shouldCacheTokenAccounts = ({ value, counts, attempted }) => {
+  if (attempted <= 1) return true;
+  if (!counts.length) return false;
+  const selectedCount = value.length;
+  const matchingSuccesses = counts.filter((count) => count === selectedCount).length;
+  if (matchingSuccesses >= 2) return true;
+  if (selectedCount >= BLACKHOLE_TOKEN_ACCOUNTS_MIN_CACHEABLE_COUNT) return true;
+  return selectedCount === 0 && counts.length === attempted;
+};
+
+async function rpcMostCompleteTokenAccounts(urls, bodyJson, perAttemptTimeoutMs) {
+  const attemptedUrls = urls.slice(0, BLACKHOLE_TOKEN_ACCOUNTS_MAX_PARALLEL_RPCS);
+  const results = await Promise.allSettled(
+    attemptedUrls.map((url) => fetchRpcJson(url, bodyJson, perAttemptTimeoutMs)),
+  );
+  const successes = [];
+  const errors = [];
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      const value = getTokenAccountValue(result.value);
+      successes.push({ url: attemptedUrls[index], data: result.value, value });
+    } else {
+      errors.push(result.reason?.message || 'rpc failed');
+    }
+  });
+  if (!successes.length) {
+    return {
+      ok: false,
+      error: errors[0] || 'all rpc failed',
+      attempted: attemptedUrls.length,
+      counts: [],
+    };
+  }
+  successes.sort((a, b) => b.value.length - a.value.length);
+  const counts = successes.map((success) => success.value.length);
+  return {
+    ok: true,
+    data: successes[0].data,
+    value: successes[0].value,
+    attempted: attemptedUrls.length,
+    counts,
+    selectedCount: successes[0].value.length,
+    providerCount: successes.length,
+  };
+}
 
 const SPL_TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
@@ -215,6 +362,7 @@ function registerBlackholeRoute(ctx) {
       requireJwt,
       readBody,
       getRpcUrl,
+      getRpcUrls,
     },
   } = ctx;
   const blackHoleOrchestrator = createBlackHoleOrchestrator(ctx);
@@ -329,44 +477,35 @@ function registerBlackholeRoute(ctx) {
         respondJson(res, 400, { error: `Expected 1-${BLACKHOLE_METADATA_MAX_MINTS} mints` });
         return true;
       }
-      const rpcUrl = getRpcUrl(address);
-      if (!rpcUrl) {
+      const cacheKey = `${address}:${hashMints(mints)}`;
+      const cachedAssets = getCachedMetadata(cacheKey);
+      if (cachedAssets) {
+        respondJson(res, 200, { assets: cachedAssets, cached: true });
+        return true;
+      }
+      const rpcUrls = typeof getRpcUrls === 'function' ? getRpcUrls(address) : null;
+      const candidateUrls = Array.isArray(rpcUrls) && rpcUrls.length ? rpcUrls : [getRpcUrl(address)].filter(Boolean);
+      if (!candidateUrls.length) {
         respondJson(res, 503, { error: 'RPC endpoint unavailable' });
         return true;
       }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), BLACKHOLE_METADATA_TIMEOUT_MS);
+      const bodyJson = JSON.stringify({ jsonrpc: '2.0', id: 'blackhole-metadata', method: 'getAssetBatch', params: { ids: mints } });
       try {
-        const upstream = await fetch(rpcUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 'blackhole-metadata',
-            method: 'getAssetBatch',
-            params: { ids: mints },
-          }),
-          signal: controller.signal,
-        });
-        if (!upstream.ok) {
-          respondJson(res, 502, { error: `Metadata provider returned ${upstream.status}` });
+        const raceResult = await rpcRace(candidateUrls.slice(0, 2), bodyJson, BLACKHOLE_METADATA_TIMEOUT_MS);
+        if (!raceResult.ok) {
+          respondJson(res, 504, { error: raceResult.error });
           return true;
         }
-        const data = await upstream.json();
-        if (data?.error) {
-          respondJson(res, 502, { error: data.error.message || 'Metadata provider error' });
-          return true;
-        }
+        const data = raceResult.data;
         const assets = {};
         (Array.isArray(data?.result) ? data.result : []).forEach((asset, index) => {
           const normalized = normalizeAsset(asset, mints[index]);
           if (normalized?.mint) assets[normalized.mint] = normalized;
         });
+        setCachedMetadata(cacheKey, assets);
         respondJson(res, 200, { assets });
       } catch (error) {
         respondJson(res, 504, { error: error?.name === 'AbortError' ? 'Metadata provider timeout' : 'Metadata fetch failed' });
-      } finally {
-        clearTimeout(timeout);
       }
       return true;
     }
@@ -388,44 +527,68 @@ function registerBlackholeRoute(ctx) {
         respondJson(res, 400, { error: 'Unsupported token program' });
         return true;
       }
-      const rpcUrl = getRpcUrl(address);
-      if (!rpcUrl) {
+
+      const cacheKey = `${address}:${programId}`;
+      const cachedValue = getCachedTokenAccounts(cacheKey);
+      if (cachedValue) {
+        respondJson(res, 200, { value: cachedValue, cached: true });
+        return true;
+      }
+
+      const rpcUrls = typeof getRpcUrls === 'function' ? getRpcUrls(address) : null;
+      const candidateUrls = Array.isArray(rpcUrls) && rpcUrls.length ? rpcUrls : [getRpcUrl(address)].filter(Boolean);
+      if (!candidateUrls.length) {
         respondJson(res, 503, { error: 'RPC endpoint unavailable' });
         return true;
       }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), BLACKHOLE_TOKEN_ACCOUNTS_TIMEOUT_MS);
-      try {
-        const upstream = await fetch(rpcUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: `blackhole-token-accounts-${programId.slice(0, 6)}`,
-            method: 'getTokenAccountsByOwner',
-            params: [address, { programId }, { encoding: 'jsonParsed', commitment: 'confirmed' }],
-          }),
-          signal: controller.signal,
+
+      const bodyJson = JSON.stringify({
+        jsonrpc: '2.0',
+        id: `blackhole-token-accounts-${programId.slice(0, 6)}`,
+        method: 'getTokenAccountsByOwner',
+        params: [address, { programId }, { encoding: 'jsonParsed', commitment: 'confirmed' }],
+      });
+      const attemptTimeoutMs = BLACKHOLE_TOKEN_ACCOUNTS_ATTEMPT_TIMEOUT_MS;
+      const tokenAccountsResult = await rpcMostCompleteTokenAccounts(candidateUrls, bodyJson, attemptTimeoutMs);
+      if (tokenAccountsResult.ok) {
+        const value = tokenAccountsResult.value;
+        const cacheable = shouldCacheTokenAccounts({
+          value,
+          counts: tokenAccountsResult.counts,
+          attempted: tokenAccountsResult.attempted,
         });
-        if (!upstream.ok) {
-          respondJson(res, 502, { error: `Token account provider returned ${upstream.status}` });
-          return true;
-        }
-        const data = await upstream.json();
-        if (data?.error) {
-          if (programId === TOKEN_2022_PROGRAM_ID && /unrecognized Token program id/i.test(data.error.message || '')) {
-            respondJson(res, 200, { value: [] });
-            return true;
-          }
-          respondJson(res, 502, { error: data.error.message || 'Token account provider error' });
-          return true;
-        }
-        respondJson(res, 200, { value: Array.isArray(data?.result?.value) ? data.result.value : [] });
-      } catch (error) {
-        respondJson(res, 504, { error: error?.name === 'AbortError' ? 'Token account provider timeout' : 'Token account scan failed' });
-      } finally {
-        clearTimeout(timeout);
+        if (cacheable) setCachedTokenAccounts(cacheKey, value);
+        respondJson(res, 200, {
+          value,
+          selectedCount: tokenAccountsResult.selectedCount,
+          providerCounts: tokenAccountsResult.counts,
+          providerCount: tokenAccountsResult.providerCount,
+          cacheable,
+        });
+        return true;
       }
+      let lastError = tokenAccountsResult.error || 'Token account scan failed';
+      let lastStatus = 504;
+      for (const url of candidateUrls.slice(BLACKHOLE_TOKEN_ACCOUNTS_MAX_PARALLEL_RPCS)) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), attemptTimeoutMs);
+        try {
+          const upstream = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyJson, signal: controller.signal });
+          if (!upstream.ok) { lastStatus = 502; lastError = `provider ${upstream.status}`; continue; }
+          const data = await upstream.json();
+          if (data?.error) { lastStatus = 502; lastError = data.error.message || 'rpc error'; continue; }
+          const value = Array.isArray(data?.result?.value) ? data.result.value : [];
+          if (shouldCacheTokenAccounts({ value, counts: [value.length], attempted: 1 })) {
+            setCachedTokenAccounts(cacheKey, value);
+          }
+          respondJson(res, 200, { value, selectedCount: value.length, providerCounts: [value.length], providerCount: 1, cacheable: true });
+          return true;
+        } catch (e) {
+          lastStatus = 504;
+          lastError = e?.name === 'AbortError' ? 'timeout' : (e?.message || 'fetch failed');
+        } finally { clearTimeout(timeout); }
+      }
+      respondJson(res, lastStatus, { error: lastError });
       return true;
     }
 

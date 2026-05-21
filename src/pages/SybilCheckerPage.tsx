@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { riskBand, verdictFromScore } from '@/lib/sybilVerdict';
+import SiteHeader from '@/components/SiteHeader';
 import './SybilCheckerPage.css';
 
 const DEFAULT_WALLET = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
@@ -157,14 +159,6 @@ function yearsFromDays(days?: number) {
   return `${Math.round(d)}d`;
 }
 
-function riskBand(score: number) {
-  if (score >= 75) return { label: 'Critical', nodeType: 'suspect' as const, color: 'red' };
-  if (score >= 50) return { label: 'High', nodeType: 'suspect' as const, color: 'red' };
-  if (score >= 30) return { label: 'Medium', nodeType: 'flagged' as const, color: 'yl' };
-  if (score >= 10) return { label: 'Low', nodeType: 'flagged' as const, color: 'yl' };
-  return { label: 'Clean', nodeType: 'verified' as const, color: 'gn' };
-}
-
 function severityLabel(riskLevel?: string, riskScore = 0) {
   const normalized = String(riskLevel || '').toLowerCase();
   if (normalized && normalized !== 'unknown') return normalized;
@@ -207,28 +201,28 @@ function categorySignals(signals: SybilSignal[], category: string, ids: string[]
 function verdictCopy(data: SybilResult | null, flaggedCount: number) {
   const riskScore = Math.round(data?.riskScore ?? 0);
   const trustScore = Math.round(data?.trustScore ?? Math.max(0, 100 - riskScore));
-  const verdictKey = data?.verdict?.key || '';
-  if (riskScore >= 75 || verdictKey.includes('sybil')) {
+  const label = verdictFromScore(riskScore);
+  if (riskScore >= 80) {
     return {
-      tag: 'Verdict - High Risk',
-      title: 'Likely sybil - hard review recommended.',
+      tag: `Verdict - ${label}`,
+      title: `${label} - hard review recommended.`,
       summary:
         data?.verdict?.summary ||
         `${flaggedCount} active risk signals crossed the threshold. Funding and behavior patterns need manual review.`,
     };
   }
-  if (riskScore >= 30 || flaggedCount >= 3) {
+  if (riskScore >= 20 || flaggedCount >= 3) {
     return {
-      tag: 'Verdict - Watchlist',
-      title: `Likely human - but ${flaggedCount} flags worth a second look.`,
+      tag: `Verdict - ${label}`,
+      title: `${label} - ${flaggedCount} flag${flaggedCount === 1 ? '' : 's'} worth review.`,
       summary:
         data?.verdict?.summary ||
         `Trust ${trustScore}/100 with ${flaggedCount} flagged checks. Evidence is not strong enough for a hard sybil call.`,
     };
   }
   return {
-    tag: 'Verdict - Clear',
-    title: flaggedCount > 0 ? `Mostly clean - ${flaggedCount} soft signal${flaggedCount === 1 ? '' : 's'}.` : 'Likely human - no active flags.',
+    tag: `Verdict - ${label}`,
+    title: flaggedCount > 0 ? `${label} - ${flaggedCount} soft signal${flaggedCount === 1 ? '' : 's'}.` : `${label} - no active flags.`,
     summary:
       data?.verdict?.summary ||
       'On-chain history, funding graph, and behavior signals do not show a sybil pattern for this wallet.',
@@ -268,14 +262,14 @@ function buildGraphData(address: string, data: SybilResult | null, funding: Fund
   });
 
   sources.forEach((source, index) => {
-    const risk = index === 0 && riskScore >= 30 ? Math.max(30, Math.min(70, riskScore + 20)) : Math.max(8, Math.min(60, riskScore + 16 - index * 8));
+    const risk = index === 0 && riskScore >= 20 ? Math.max(20, Math.min(78, riskScore + 20)) : Math.max(8, Math.min(60, riskScore + 16 - index * 8));
     const node = addNode({
       x: 0,
       y: 0,
       baseX: 0,
       baseY: 0,
       r: 7 + Math.max(0, Number(source.percentage) || 0) * 0.12,
-      type: risk >= 70 ? 'suspect' : risk >= 30 ? 'flagged' : 'neutral',
+      type: riskBand(risk).nodeType === 'suspect' ? 'suspect' : riskBand(risk).nodeType === 'flagged' ? 'flagged' : 'neutral',
       risk,
       age: Math.max(1, walletAge - index * 67),
       addr: source.label || shortAddressGlyph(source.address, 6, 4),
@@ -288,14 +282,14 @@ function buildGraphData(address: string, data: SybilResult | null, funding: Fund
   });
 
   topPrograms.slice(0, 4).forEach((program, index) => {
-    const risk = index === 0 && riskScore >= 50 ? 70 : Math.max(30, riskScore + 10 - index * 5);
+    const risk = index === 0 && riskScore >= 60 ? 78 : Math.max(20, riskScore + 10 - index * 5);
     const node = addNode({
       x: 0,
       y: 0,
       baseX: 0,
       baseY: 0,
       r: 7 + Math.min(12, (program.interactions || 0) / 20),
-      type: risk >= 70 ? 'suspect' : risk >= 30 ? 'flagged' : 'neutral',
+      type: riskBand(risk).nodeType === 'suspect' ? 'suspect' : riskBand(risk).nodeType === 'flagged' ? 'flagged' : 'neutral',
       risk,
       age: Math.max(30, walletAge),
       addr: program.name || shortAddressGlyph(program.programId, 6, 4),
@@ -316,7 +310,7 @@ function buildGraphData(address: string, data: SybilResult | null, funding: Fund
       baseX: 0,
       baseY: 0,
       r: 2.8,
-      type: riskScore >= 30 ? 'suspect' : 'flagged',
+      type: riskBand(riskScore).nodeType === 'suspect' ? 'suspect' : 'flagged',
       risk: Math.max(30, Math.min(92, riskScore + 10)),
       age: Math.max(1, walletAge - index * 4),
       addr: shortAddressGlyph(sibling, 4, 4),
@@ -852,8 +846,6 @@ function ClusterGraph({ address, data, funding }: { address: string; data: Sybil
 
   const visibleTypeCount = Object.values(filterType).filter(Boolean).length;
   const riskScore = Math.round(data?.riskScore ?? 0);
-  const clusterSim = Math.round(data?.metrics?.clusterSimilarity ?? 0);
-  const primaryFunding = funding[0]?.label || shortAddressGlyph(funding[0]?.address, 6, 4);
 
   const toggleType = (key: keyof typeof filterType) => setFilterType((prev) => ({ ...prev, [key]: !prev[key] }));
   const toggleEdge = (key: keyof typeof filterEdge) => setFilterEdge((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -955,16 +947,12 @@ function ClusterGraph({ address, data, funding }: { address: string; data: Sybil
             <span className="v">{counts.nodes}</span>
             <span className="k">Suspect Edges</span>
             <span className={`v ${counts.edges > 0 ? 'yl' : 'gn'}`}>{counts.edges}</span>
-            <span className="k">Primary Funding</span>
-            <span className="v">{primaryFunding}</span>
-            <span className="k">Cluster Sim</span>
-            <span className={`v ${clusterSim > 30 ? 'red' : 'gn'}`}>{clusterSim}%</span>
           </div>
 
           <div className="graph-legend">
             <div className="lg-row"><div className="lg-dot hub" />Hub node (target wallet)</div>
-            <div className="lg-row"><div className="lg-dot suspect" />Suspect (risk ≥ 70)</div>
-            <div className="lg-row"><div className="lg-dot flagged" />Flagged (risk 30-70)</div>
+            <div className="lg-row"><div className="lg-dot suspect" />Suspect (risk ≥ 60)</div>
+            <div className="lg-row"><div className="lg-dot flagged" />Flagged (risk 20-60)</div>
             <div className="lg-row"><div className="lg-dot neutral" />Neutral (unscored)</div>
             <div className="lg-row"><div className="lg-dot verified" />Verified human</div>
             <div className="lg-row"><div className="lg-line l-tx" />Transaction edge</div>
@@ -1042,25 +1030,26 @@ function Radar({ metrics }: { metrics?: SybilMetrics }) {
 }
 
 function Heatmap({ metrics }: { metrics?: SybilMetrics }) {
+  const buckets = metrics?.dayBuckets;
   const heights = useMemo(() => {
     const buckets = metrics?.dayBuckets;
-    if (Array.isArray(buckets) && buckets.length > 0) return buckets.slice(-24).map((value) => Math.max(5, Math.min(95, Number(value) * 8)));
+    if (Array.isArray(buckets) && buckets.length > 0) return buckets.slice(-30).map((value) => Math.max(5, Math.min(95, Number(value) * 8)));
     if (buckets && typeof buckets === 'object') {
-      return Object.values(buckets).slice(-24).map((value) => Math.max(5, Math.min(95, Number(value) * 8)));
+      return Object.values(buckets).slice(-30).map((value) => Math.max(5, Math.min(95, Number(value) * 8)));
     }
-    const ratio = Math.max(0.03, Math.min(0.85, metrics?.activeDaysRatio || 0.08));
-    return Array.from({ length: 24 }, (_, idx) => Math.max(5, Math.round(((Math.sin(idx * 1.7) + 1.2) * 22 + ratio * 65) % 90)));
+    return [];
   }, [metrics]);
+  if (heights.length === 0 || !buckets) return null;
   const activePct = Math.round((metrics?.activeDaysRatio || 0) * 100);
   return (
     <div className="heat">
       <div className="heat-head">
-        <div className="l"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>Activity Heatmap - 24 weeks</div>
+        <div className="l"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>Activity Heatmap - 30 days</div>
         <div className="mono-muted">{activePct}% active days</div>
       </div>
       <div className="heat-bars">
         {heights.map((height, idx) => (
-          <div key={idx} className="heat-bar" style={{ height: `${height}%` }} title={`${Math.round(height)}% - week ${idx + 1}`} />
+          <div key={idx} className="heat-bar" style={{ height: `${height}%` }} title={`${Math.round(height)}% - day ${idx + 1}`} />
         ))}
       </div>
     </div>
@@ -1138,7 +1127,6 @@ export default function SybilCheckerPage() {
   const severity = severityLabel(data?.riskLevel, riskScore);
   const band = riskBand(riskScore);
   const activeRatio = Math.round((metrics.activeDaysRatio || 0) * 100);
-  const fundingTop = funding[0]?.label || shortAddress(funding[0]?.address, 6, 4);
   const primarySource = typeof data?.primaryFundingSource === 'string'
     ? shortAddress(data.primaryFundingSource, 6, 4)
     : data?.primaryFundingSource?.label || shortAddress(data?.primaryFundingSource?.address, 6, 4);
@@ -1198,27 +1186,10 @@ export default function SybilCheckerPage() {
   };
 
   return (
-    <div className="sybil-check-page">
-      <AmbientCanvas />
-
-      <header className="site-header">
-        <div className="container hdr-row">
-          <a href="/" className="brand">
-            <img src="/landing/sybil-checker/phav.png" alt="" />
-            <div>
-              <b>IDENTITY PRISM</b>
-              <span>Sybil-Resistant Identity</span>
-            </div>
-          </a>
-          <nav className="hdr-nav" aria-label="Primary">
-            <a href="/">Home</a>
-            <a href="/identity">Identity</a>
-            <a className="active" href="/sybil-check">Sybil Checker</a>
-            <a href="/blackhole">Black Hole</a>
-          </nav>
-          <a href="/app" className="btn btn-primary">Launch App</a>
-        </div>
-      </header>
+    <>
+      <SiteHeader />
+      <div className="sybil-check-page">
+        <AmbientCanvas />
 
       <section className="intro">
         <div className="container">
@@ -1284,13 +1255,7 @@ export default function SybilCheckerPage() {
                     <span className="a">{shortAddressGlyph(address, 6, 4)}</span>
                     <button type="button" className="cp" title="Copy" onClick={() => navigator.clipboard?.writeText(address)}>Copy</button>
                   </div>
-                  <div className="ptags">
-                    <span className="ptag t-trust">Trust {trustScore}/100</span>
-                    <span className={`ptag ${riskScore > 29 ? 't-susp' : 't-risk'}`}>Risk {riskScore}</span>
-                    <span className="ptag t-susp">{data?.verdict?.key || severity}</span>
-                    <span className="ptag t-sev">{severity}</span>
-                    <span className="ptag t-sev">{flaggedCount}/{TOTAL_CHECKS} flags</span>
-                  </div>
+                  <div className="profile-caption">Wallet metrics from the live sybil analysis API</div>
                 </div>
               </div>
 
@@ -1375,25 +1340,6 @@ export default function SybilCheckerPage() {
 
       <section>
         <div className="container below">
-          <div className="risk-strip">
-            <div className="risk-h">
-              <span className="lab">Composite Risk</span>
-              <h2>Risk: <b>{riskScore}/100</b> - {band.label.toUpperCase()}</h2>
-              <span className="tag">{flaggedCount} of {TOTAL_CHECKS} checks flagged</span>
-            </div>
-            <div className="risk-notes">
-              {(data?.verdict?.reasons && data.verdict.reasons.length > 0 ? data.verdict.reasons : [
-                verdict.summary,
-                `${formatNumber(metrics.txCount)} transactions across ${formatNumber(metrics.walletAgeDays)} wallet-age days.`,
-                `${funding.length} funding source rows returned by the live API.`,
-                `${flaggedCount} active checks crossed the risk threshold.`,
-              ]).slice(0, 4).map((note, idx) => (
-                <div className="risk-note" key={idx}>{note}</div>
-              ))}
-            </div>
-            <Radar metrics={metrics} />
-          </div>
-
           <div className="checks-grid">
             {checks.map((group) => (
               <div className="check-card" key={group.title}>
@@ -1420,6 +1366,7 @@ export default function SybilCheckerPage() {
           </div>
         </div>
       </footer>
-    </div>
+      </div>
+    </>
   );
 }

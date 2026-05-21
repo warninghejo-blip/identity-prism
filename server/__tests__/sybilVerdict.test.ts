@@ -217,7 +217,7 @@ describe('getCompositeTrustProfile', () => {
     expect(profile.allowBadges).toBe(false);
   });
 
-  it('preserves clean-wallet upside for composite trust', () => {
+  it('does not apply recovery to healthy wallets', () => {
     const profile = getCompositeTrustProfile({
       verdict: { key: 'clean', label: 'Clean' },
       trustScore: 82,
@@ -225,8 +225,21 @@ describe('getCompositeTrustProfile', () => {
     });
 
     expect(profile.baseCompositeTrust).toBe(82);
-    expect(profile.recoveryBonus).toBe(12);
-    expect(profile.effectiveTrust).toBe(94);
+    expect(profile.recoveryBonus).toBe(0);
+    expect(profile.effectiveTrust).toBe(82);
+    expect(profile.allowBadges).toBe(true);
+  });
+
+  it('caps recovery at 50 trust for low-trust wallets', () => {
+    const profile = getCompositeTrustProfile({
+      verdict: { key: 'clean', label: 'Clean' },
+      trustScore: 49,
+      recoveryBonus: 25,
+    });
+
+    expect(profile.baseCompositeTrust).toBe(49);
+    expect(profile.recoveryBonus).toBe(1);
+    expect(profile.effectiveTrust).toBe(50);
     expect(profile.allowBadges).toBe(true);
   });
 

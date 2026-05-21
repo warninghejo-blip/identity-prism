@@ -28,6 +28,19 @@ export const TIER_LABELS: Record<string, string> = {
   sun: 'SUN', binary_sun: 'BINARY SUN',
 };
 
+export const COMPOSITE_TIER_THRESHOLDS = [
+  { min: 0, max: 99, tier: 'mercury', next: 'mars' },
+  { min: 100, max: 219, tier: 'mars', next: 'venus' },
+  { min: 220, max: 349, tier: 'venus', next: 'earth' },
+  { min: 350, max: 479, tier: 'earth', next: 'neptune' },
+  { min: 480, max: 599, tier: 'neptune', next: 'uranus' },
+  { min: 600, max: 699, tier: 'uranus', next: 'saturn' },
+  { min: 700, max: 799, tier: 'saturn', next: 'jupiter' },
+  { min: 800, max: 879, tier: 'jupiter', next: 'sun' },
+  { min: 880, max: 949, tier: 'sun', next: 'binary_sun' },
+  { min: 950, max: Infinity, tier: 'binary_sun', next: null },
+] as const;
+
 export function getSybilGradeColor(trustScore: number): string {
   if (trustScore >= 80) return '#22c55e';
   if (trustScore >= 60) return '#3b82f6';
@@ -48,6 +61,40 @@ export const TIER_ICONS: Record<string, string> = {
   sun: '/textures/tiers/sun.png',
   binary_sun: '/textures/tiers/binary_sun.png',
 };
+
+export function getCompositeTierFromScore(score: number, fallback = 'mercury'): string {
+  if (!Number.isFinite(score)) return TIER_LABELS[fallback] ? fallback : 'mercury';
+  const safeScore = Math.max(0, Math.round(score));
+  const match = COMPOSITE_TIER_THRESHOLDS.find(({ min, max }) => safeScore >= min && safeScore <= max);
+  if (match) return match.tier;
+  return TIER_LABELS[fallback] ? fallback : 'mercury';
+}
+
+export function getTierGrade(tier: string): string {
+  switch (tier) {
+    case 'binary_sun':
+      return 'A+';
+    case 'sun':
+    case 'jupiter':
+      return 'A';
+    case 'saturn':
+      return 'A-';
+    case 'uranus':
+      return 'B';
+    case 'neptune':
+      return 'B-';
+    case 'earth':
+      return 'C';
+    case 'venus':
+      return 'C-';
+    case 'mars':
+      return 'D';
+    case 'mercury':
+      return 'F';
+    default:
+      return 'N/A';
+  }
+}
 
 export function getTierIcon(tier: string): string {
   return TIER_ICONS[tier] || TIER_ICONS.mercury;

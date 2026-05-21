@@ -523,7 +523,9 @@ body:has(.page-shell) #root > * {
     gap: 1rem;
   }
   .card-stage.controls-closed .celestial-card-shell {
-    height: min(64vh, 560px);
+    width: min(92vw, 430px);
+    height: min(78vh, 720px);
+    min-height: min(620px, calc(100svh - 260px));
     flex: 0 0 auto;
   }
   .card-stage.controls-closed .mint-panel {
@@ -566,6 +568,12 @@ body:has(.page-shell) #root > * {
 
   .card-stage.controls-open .celestial-card-shell {
     height: 74vh;
+  }
+
+  .card-stage.controls-closed .celestial-card-shell {
+    width: min(94vw, 430px);
+    height: min(78svh, 720px);
+    min-height: min(620px, calc(100svh - 260px));
   }
 
   .celestial-card-body {
@@ -671,7 +679,7 @@ body:has(.page-shell) #root > * {
   background-size: contain;
   background-position: center;
   background-repeat: no-repeat;
-  border-radius: 14px;
+  border-radius: 10px;
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.3));
   transition: transform 0.2s ease, opacity 0.2s ease, filter 0.2s ease;
 }
@@ -892,6 +900,89 @@ body:has(.page-shell) #root > * {
 
 .mint-payment-note.is-error {
   color: rgba(248, 113, 113, 0.85);
+}
+
+.identity-pay-selector {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 0.15rem;
+}
+
+.identity-pay-chip {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgba(63, 63, 70, 0.92);
+  border-radius: 12px;
+  background: rgba(9, 9, 11, 0.62);
+  color: rgba(161, 161, 170, 0.95);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.identity-pay-chip:hover {
+  background: rgba(24, 24, 27, 0.82);
+  border-color: rgba(113, 113, 122, 0.92);
+  color: rgba(244, 244, 245, 0.95);
+}
+
+.identity-pay-chip:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.72);
+  outline-offset: 2px;
+}
+
+.identity-pay-chip.active {
+  background: rgba(34, 211, 238, 0.16);
+  border-color: rgba(103, 232, 249, 0.82);
+  color: rgba(165, 243, 252, 0.98);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.24) inset, 0 0 14px rgba(34, 211, 238, 0.16);
+}
+
+.identity-pay-chip .identity-pay-icon {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px;
+  max-width: 20px !important;
+  max-height: 20px !important;
+  flex: 0 0 20px;
+  display: block;
+  object-fit: contain;
+}
+
+.identity-pay-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.identity-pay-emoji {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.identity-pay-price {
+  grid-column: 1 / -1;
+  min-height: 18px;
+  color: rgba(248, 250, 252, 0.92);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .mint-toggle {
@@ -2929,7 +3020,7 @@ body:has(.page-shell) #root > * {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   animation: bh-page-fade-in 0.6s ease-out both;
-  background: linear-gradient(180deg, #050505 0%, #080812 30%, #0a0a18 50%, #080812 70%, #050505 100%);
+  background: #050505;
 }
 
 .blackhole-shell .site-header {
@@ -2937,6 +3028,30 @@ body:has(.page-shell) #root > * {
   top: 0;
 }
 .blackhole-shell::-webkit-scrollbar { width: 0; height: 0; }
+
+.blackhole-shell .nebula-layer,
+.blackhole-shell .constellation-bg {
+  animation: none;
+}
+
+.blackhole-shell .nebula-layer,
+.blackhole-shell .constellation-bg,
+.blackhole-shell .identity-gradient {
+  display: none;
+}
+
+.blackhole-shell .nebula-layer {
+  mix-blend-mode: normal;
+}
+
+.blackhole-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: #050505;
+}
 
 .blackhole-shell::after {
   content: '';
@@ -3317,17 +3432,28 @@ body:has(.page-shell) #root > * {
   appearance: none;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   min-height: 34px;
   border: 1px solid rgba(63, 63, 70, 0.45);
   border-radius: 999px;
-  background: rgba(9, 9, 12, 0.34);
+  background: rgba(9, 9, 12, 0.34) !important;
   padding: 0 10px;
   color: rgba(161, 161, 170, 0.92);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.03em;
   cursor: pointer;
+  transition: border-color 120ms ease-out, color 120ms ease-out, transform 80ms ease-out;
+}
+
+.blackhole-show-all-toggle:hover {
+  border-color: rgba(103, 232, 249, 0.22);
+  color: rgba(212, 212, 216, 0.96);
+}
+
+.blackhole-show-all-toggle:active {
+  transform: translateY(1px);
 }
 
 .blackhole-show-all-toggle:focus-visible {
@@ -3359,6 +3485,11 @@ body:has(.page-shell) #root > * {
 .blackhole-show-all-toggle[data-state="checked"] .blackhole-checkbox-indicator {
   border-color: rgba(34, 211, 238, 0.9);
   background: rgba(8, 47, 73, 0.62);
+}
+
+.blackhole-show-all-toggle[data-state="checked"] {
+  border-color: rgba(34, 211, 238, 0.28);
+  color: rgba(165, 243, 252, 0.94);
 }
 
 .blackhole-show-all-toggle[data-state="checked"] .blackhole-checkbox-indicator::after {
@@ -3477,6 +3608,91 @@ body:has(.page-shell) #root > * {
   background: linear-gradient(170deg, rgba(34, 211, 238, 0.06), transparent 40%, rgba(20, 140, 200, 0.03));
   z-index: -1;
   pointer-events: none;
+}
+
+.blackhole-controls {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr) minmax(104px, auto);
+  align-items: center;
+  gap: 10px;
+}
+
+.blackhole-rescan-button {
+  height: 36px;
+  min-width: 96px;
+  border-radius: 999px !important;
+  background: rgba(9, 9, 12, 0.34);
+}
+
+.blackhole-filter-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  min-height: 38px;
+  overflow: hidden;
+  border: 1px solid rgba(34, 211, 238, 0.12);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(12, 18, 30, 0.82), rgba(4, 6, 12, 0.72));
+  padding: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.blackhole-filter-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 11px !important;
+  background: transparent;
+  padding: 0 10px;
+  color: rgba(113, 113, 122, 0.98);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, transform 80ms ease-out;
+}
+
+.blackhole-filter-tab:hover {
+  color: rgba(212, 212, 216, 0.96);
+  background: rgba(39, 39, 42, 0.44);
+}
+
+.blackhole-filter-tab:active {
+  transform: translateY(1px);
+}
+
+.blackhole-filter-tab:focus-visible {
+  outline: 2px solid rgba(103, 232, 249, 0.8);
+  outline-offset: 2px;
+}
+
+.blackhole-filter-tab[data-state="active"] {
+  border-color: rgba(34, 211, 238, 0.38);
+  background:
+    linear-gradient(180deg, rgba(34, 211, 238, 0.2), rgba(14, 116, 144, 0.16));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 22px rgba(34, 211, 238, 0.08);
+  color: rgba(165, 243, 252, 0.98);
+}
+
+@media (max-width: 640px) {
+  .blackhole-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .blackhole-filter-tabs {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .blackhole-rescan-button,
+  .blackhole-show-all-toggle {
+    width: 100%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

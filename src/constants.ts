@@ -6,6 +6,7 @@ const COLLECTION_MINT = (import.meta.env.VITE_COLLECTION_MINT ?? '').trim();
 const COLLECTION_VERIFY_URL = (import.meta.env.VITE_COLLECTION_VERIFY_URL ?? '').trim();
 const UPDATE_AUTHORITY = (import.meta.env.VITE_UPDATE_AUTHORITY ?? '').trim();
 const CNFT_MINT_URL = (import.meta.env.VITE_CNFT_MINT_URL ?? '').trim();
+const PRODUCTION_CORE_COLLECTION = '4JAq5D5qYMU5RtRuQj4eotQErWvTMKrMYGK87vtbJqJD';
 const normalizeProxyUrl = (url: string) => url.replace(/\/+$/, '');
 const isLocalDevHost = (host: string) => /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(host);
 const getNativeHostedOrigin = () => {
@@ -50,7 +51,7 @@ export const getMetadataImageUrl = () => {
 };
 export const getAppBaseUrl = () =>
   APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : getNativeHostedOrigin() ? normalizeProxyUrl(getNativeHostedOrigin()!) : null;
-export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : null);
+export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : PRODUCTION_CORE_COLLECTION);
 export const getCollectionVerifyUrl = () => (COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null);
 export const getUpdateAuthorityAddress = () => (UPDATE_AUTHORITY ? UPDATE_AUTHORITY : null);
 export const getCnftMintUrl = () =>

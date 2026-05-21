@@ -9,6 +9,7 @@ import {
 } from '@solana/web3.js';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@/lib/solanaToken';
 import { Buffer } from 'buffer';
+import { Capacitor } from '@capacitor/core';
 import {
   getAppBaseUrl,
   getHeliusProxyHeaders,
@@ -83,6 +84,21 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const TX_FEE_BUFFER_SOL = 0.003;
 const MIN_REQUIRED_SOL = 0.02;
 
+const stringifyLog = (value: unknown) => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const describeTransactionSignatures = (transaction: Transaction) =>
+  transaction.signatures.map((entry) => ({
+    publicKey: entry.publicKey.toBase58(),
+    hasSignature: Boolean(entry.signature),
+    signaturePrefix: entry.signature ? Buffer.from(entry.signature).toString('base64').slice(0, 18) : null,
+  }));
+
 const buildPreflightError = (
   code: 'INSUFFICIENT_SOL' | 'INSUFFICIENT_SKR' | 'SIMULATION_FAILED',
   message: string,
@@ -139,8 +155,8 @@ async function signWithDismissDetection(
     throw new Error('Wallet does not support signTransaction');
   }
 
-  const HARD_TIMEOUT_MS = 120_000;
-  const DISMISS_GRACE_MS = 3_000;
+  const HARD_TIMEOUT_MS = Capacitor.isNativePlatform() ? 300_000 : 120_000;
+  const DISMISS_GRACE_MS = Capacitor.isNativePlatform() ? 60_000 : 20_000;
 
   return new Promise<Transaction>((resolve, reject) => {
     let settled = false;
@@ -191,14 +207,36 @@ async function signWithDismissDetection(
       settle(() => reject(new Error('USER_REJECTED: Signing timed out')));
     }, HARD_TIMEOUT_MS);
 
+    console.warn('[mint] signTransaction request dispatched');
     wallet.signTransaction!(transaction).then(
-      (signed) => settle(() => resolve(signed)),
-      (err) => settle(() => reject(err)),
+      (signed) => {
+        console.warn('[mint] signTransaction resolved');
+        settle(() => resolve(signed));
+      },
+      (err) => {
+        console.error('[mint] signTransaction rejected', err);
+        settle(() => reject(err));
+      },
     );
   });
 }
 
 const logSendTransactionError = async (error: unknown) => {
+  const printable =
+    error instanceof Error
+      ? {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          code: (error as { code?: unknown }).code,
+          cause: (error as { cause?: unknown }).cause,
+        }
+      : error;
+  try {
+    console.error('[mint] error detail', JSON.stringify(printable));
+  } catch {
+    console.error('[mint] error detail', printable);
+  }
   const candidate = error as { getLogs?: () => Promise<string[] | null> };
   if (candidate?.getLogs) {
     try {
@@ -270,13 +308,14 @@ export async function mintIdentityPrism({
   const adminMode = wantsAdminMode;
   const requiresWalletTx = !adminMode;
 
-  if (!wallet || !wallet.publicKey || (requiresWalletTx && !wallet.sendTransaction)) {
+  if (!wallet || !wallet.publicKey || (requiresWalletTx && !wallet.signTransaction)) {
     throw new Error('Wallet not ready or does not support transactions');
   }
 
-  // Obtain JWT auth token via shared SIWS one-shot (primes MWA session)
-  const { ensureJwt } = await import('@/components/prism/shared');
-  const authToken = await ensureJwt();
+  // For SOL/SKR minting auth is optional. Do not auto-request a fresh JWT here:
+  // on Seeker/MWA a second auth/signMessage popup can hang after approval.
+  const { ensureJwt, getCachedJwt } = await import('@/components/prism/shared');
+  const authToken = paidWithCoins ? await ensureJwt() : getCachedJwt(address);
   toast.warning(`STAGE: authToken=${authToken ? 'YES' : 'NO'}`, { duration: 4000 });
 
   let coinReservationRequestId: string | null = null;
@@ -387,6 +426,15 @@ export async function mintIdentityPrism({
   };
 
   toast.warning('STAGE: metadata upload', { duration: 8000 });
+  const metadataUploadStartedAt = performance.now();
+  console.warn(
+    '[mint] metadata upload start',
+    stringifyLog({
+      metadataBaseUrl,
+      name: metadataJson.name,
+      hasAuthToken: Boolean(authToken),
+    }),
+  );
   const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
@@ -395,15 +443,26 @@ export async function mintIdentityPrism({
 
   if (!metadataResponse.ok) {
     const errorText = await metadataResponse.text();
-    console.error('[mint] metadata upload failed', {
-      status: metadataResponse.status,
-      statusText: metadataResponse.statusText,
-      body: errorText,
-      metadataBaseUrl,
-    });
+    console.error(
+      '[mint] metadata upload failed',
+      stringifyLog({
+        status: metadataResponse.status,
+        statusText: metadataResponse.statusText,
+        elapsedMs: Math.round(performance.now() - metadataUploadStartedAt),
+        body: errorText,
+        metadataBaseUrl,
+      }),
+    );
     throw new Error(`Metadata upload failed: ${metadataResponse.status} ${errorText || metadataResponse.statusText}`);
   }
   const metadataPayload = (await metadataResponse.json()) as { uri?: string };
+  console.warn(
+    '[mint] metadata upload response',
+    stringifyLog({
+      elapsedMs: Math.round(performance.now() - metadataUploadStartedAt),
+      hasUri: Boolean(metadataPayload.uri),
+    }),
+  );
   const metadataUri = metadataPayload.uri;
   if (!metadataUri) {
     throw new Error('Metadata URI not returned');
@@ -456,13 +515,19 @@ export async function mintIdentityPrism({
     ...(paidWithCoins ? { paidWithCoins: true } : {}),
     ...(coinReservationRequestId ? { requestId: coinReservationRequestId } : {}),
   };
-  console.warn('[mint] sending mint-cnft payload', {
-    coreMintUrl,
-    remint,
-    paidWithCoins,
-    burnAssetId: burnAssetId?.slice(0, 16),
-    payloadKeys: Object.keys(mintPayload),
-  });
+  console.warn(
+    '[mint] sending mint-cnft payload',
+    stringifyLog({
+      coreMintUrl,
+      remint,
+      paidWithCoins,
+      burnAssetId: burnAssetId?.slice(0, 16),
+      owner: mintPayload.owner,
+      collectionMint: mintPayload.collectionMint,
+      paymentToken: mintPayload.paymentToken,
+      payloadKeys: Object.keys(mintPayload),
+    }),
+  );
 
   const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) authHeaders['Authorization'] = `Bearer ${authToken}`;
@@ -476,12 +541,15 @@ export async function mintIdentityPrism({
 
   if (!cnftResponse.ok) {
     const errorText = await cnftResponse.text();
-    console.error('[mint] core mint failed', {
-      status: cnftResponse.status,
-      statusText: cnftResponse.statusText,
-      body: errorText,
-      coreMintUrl,
-    });
+    console.error(
+      '[mint] core mint failed',
+      stringifyLog({
+        status: cnftResponse.status,
+        statusText: cnftResponse.statusText,
+        body: errorText,
+        coreMintUrl,
+      }),
+    );
     throw new Error(`Core mint failed: ${cnftResponse.status} ${errorText || cnftResponse.statusText}`);
   }
 
@@ -495,6 +563,19 @@ export async function mintIdentityPrism({
     finalize?: boolean;
     finalized?: boolean;
   };
+  console.warn(
+    '[mint] mint-cnft response',
+    stringifyLog({
+      requestId: cnftPayload.requestId,
+      assetId: cnftPayload.assetId,
+      hasTransaction: Boolean(cnftPayload.transaction),
+      transactionLength: cnftPayload.transaction?.length ?? 0,
+      admin: cnftPayload.admin,
+      finalize: cnftPayload.finalize,
+      finalized: cnftPayload.finalized,
+      serverSignatureKeys: cnftPayload.signatures ? Object.keys(cnftPayload.signatures) : [],
+    }),
+  );
   if (adminMode && cnftPayload.signature) {
     return {
       signature: cnftPayload.signature,
@@ -524,12 +605,22 @@ export async function mintIdentityPrism({
     publicKey: new PublicKey(signer),
     signature: signatureMap.get(signer) ?? null,
   }));
-  console.warn('[mint] required signers', requiredSigners);
+  console.warn(
+    '[mint] prepared transaction',
+    stringifyLog({
+      requestId,
+      feePayer: transaction.feePayer?.toBase58() ?? null,
+      recentBlockhash: transaction.recentBlockhash,
+      requiredSigners,
+      signatures: describeTransactionSignatures(transaction),
+      instructionCount: transaction.instructions.length,
+    }),
+  );
   if (!requestId) {
     throw new Error('Mint requestId missing from server response');
   }
 
-  if (requiresWalletTx) {
+  if (requiresWalletTx && !Capacitor.isNativePlatform()) {
     const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
     const feeLamports = feeForMessage.value ?? 0;
     // Remint and coins-paid modes have no SOL payment — only rent + tx fee are required
@@ -607,6 +698,19 @@ export async function mintIdentityPrism({
       })) as typeof transaction.serialize;
     toast.warning('STAGE: signTransaction (MWA dialog?)', { description: 'should see wallet now', duration: 60000 });
     const signedTransaction = await signWithDismissDetection(wallet, transaction);
+    const signedSignatures = describeTransactionSignatures(signedTransaction);
+    const signatureVerify =
+      typeof signedTransaction.verifySignatures === 'function' ? signedTransaction.verifySignatures(false) : null;
+    console.warn(
+      '[mint] wallet signature returned',
+      stringifyLog({
+        requestId,
+        walletSigner: wallet.publicKey?.toBase58() ?? null,
+        signatureCount: signedTransaction.signatures.length,
+        signatures: signedSignatures,
+        verifySignaturesFalse: signatureVerify,
+      }),
+    );
     const walletSigner = wallet.publicKey?.toBase58();
     if (walletSigner) {
       const walletSignature = signedTransaction.signatures.find((entry) => entry.publicKey.toBase58() === walletSigner);
@@ -616,20 +720,42 @@ export async function mintIdentityPrism({
     }
 
     toast.warning('STAGE: finalize submit', { duration: 8000 });
+    const signedTransactionBase64 = signedTransaction
+      .serialize({ requireAllSignatures: false, verifySignatures: false })
+      .toString('base64');
+    console.warn(
+      '[mint] finalize submit',
+      stringifyLog({
+        requestId,
+        owner: payer.toBase58(),
+        signedTransactionLength: signedTransactionBase64.length,
+        signatures: signedSignatures,
+      }),
+    );
     const finalizeResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({
         requestId,
         owner: payer.toBase58(),
-        signedTransaction: signedTransaction.serialize({ requireAllSignatures: false }).toString('base64'),
+        signedTransaction: signedTransactionBase64,
       }),
     });
     if (!finalizeResponse.ok) {
       const errorText = await finalizeResponse.text();
+      console.error(
+        '[mint] finalize failed',
+        stringifyLog({
+          requestId,
+          status: finalizeResponse.status,
+          statusText: finalizeResponse.statusText,
+          body: errorText,
+        }),
+      );
       throw new Error(`Mint finalize failed: ${finalizeResponse.status} ${errorText || finalizeResponse.statusText}`);
     }
     const finalizePayload = (await finalizeResponse.json()) as { signature?: string };
+    console.warn('[mint] finalize response', stringifyLog({ requestId, ...finalizePayload }));
     if (!finalizePayload.signature) {
       throw new Error('Mint finalize response missing signature');
     }

@@ -1,14 +1,14 @@
 import { Link, NavLink } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useBlackHolePrefetch } from '@/hooks/useBlackHolePrefetch';
+import WebWalletButton from './WebWalletButton';
 import './SiteHeader.css';
 
 const navItems = [
   { to: '/', label: 'Home' },
   { to: '/identity', label: 'Identity' },
   { to: '/blackhole', label: 'Black Hole' },
-  { to: '/sybil-hunt', label: 'Sybil Hunt' },
+  { to: '/sybil-check', label: 'Sybil Check' },
 ];
 
 export default function SiteHeader() {
@@ -34,7 +34,7 @@ export default function SiteHeader() {
         ))}
       </nav>
       <div className="site-header__wallet">
-        <WalletMultiButton />
+        <WebWalletButton />
       </div>
     </header>
   );
