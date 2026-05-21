@@ -150,7 +150,10 @@ global.fetch = vi.fn(() =>
 vi.mock('@capacitor/haptics', () => ({ Haptics: { impact: vi.fn(), vibrate: vi.fn() } }));
 
 // react-router-dom navigate
-vi.mock('@/lib/safeNavigate', () => ({ goBack: vi.fn() }));
+vi.mock('@/lib/safeNavigate', () => ({
+  goBack: vi.fn(),
+  hasRecentExternalWalletBackground: vi.fn(() => false),
+}));
 vi.mock('@/lib/fadeTransition', () => ({
   fadeOutTransition: vi.fn((_el, cb) => cb?.()),
   startFadeTransition: vi.fn((_el, cb) => cb?.()),

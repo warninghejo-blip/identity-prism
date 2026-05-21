@@ -65,7 +65,7 @@ describe('WalletRequired', () => {
     expect(sessionStorage.getItem('ip_auth_jwt')).toContain(TEST_ADDRESS);
   });
 
-  it('accepts a persisted localStorage JWT when the native WebView session is restored', () => {
+  it('ignores a legacy localStorage JWT after a native WebView restart', () => {
     localStorage.setItem(
       'ip_auth_jwt',
       JSON.stringify({
@@ -77,8 +77,8 @@ describe('WalletRequired', () => {
 
     renderGuard();
 
-    expect(screen.getByText('Guarded content')).toBeInTheDocument();
-    expect(screen.queryByText('Connect Your Wallet')).not.toBeInTheDocument();
+    expect(screen.getByText('Connect Your Wallet')).toBeInTheDocument();
+    expect(screen.queryByText('Guarded content')).not.toBeInTheDocument();
   });
 
   it('requires a wallet signature when a live wallet has no cached JWT', () => {
