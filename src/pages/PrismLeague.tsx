@@ -2266,7 +2266,7 @@ const PrismLeague = () => {
     setRevivePaying(true);
     try {
       const { payForRevive, REVIVE_SKR_AMOUNT } = await import('@/lib/payForRevive');
-      const result = await payForRevive(wallet);
+      const result = await payForRevive(wallet, address);
       if (result.success) {
         continueUsed.current = true;
         setShowContinue(false);
@@ -2305,7 +2305,7 @@ const PrismLeague = () => {
   }, [finalizeDeath]);
 
   const handleCommitOnchain = async () => {
-    if (!connected || !publicKey) {
+    if (!connected || !address) {
       toast.error('Connect wallet to save score on-chain');
       return;
     }
@@ -2319,7 +2319,7 @@ const PrismLeague = () => {
             sessionSlot: sessionProof.slot,
           }
         : undefined;
-      const result = await commitScoreOnchain(wallet, score, proofForMemo);
+      const result = await commitScoreOnchain(wallet, score, proofForMemo, address);
       if (!result.success && result.error?.startsWith('INSUFFICIENT_FUNDS:')) {
         const detail = result.error.replace('INSUFFICIENT_FUNDS:', '');
         toast.error('Insufficient SOL', { description: detail || 'Top up your wallet and try again.' });

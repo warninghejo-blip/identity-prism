@@ -1,4 +1,5 @@
 import { WalletContextState } from '@solana/wallet-adapter-react';
+import { Capacitor } from '@capacitor/core';
 import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
@@ -9,6 +10,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@/lib/solanaToken';
 import { SEEKER_TOKEN, TREASURY_ADDRESS, getHeliusRpcUrl, getHeliusProxyHeaders } from '@/constants';
+import { SeedVaultAdapter } from '@/lib/SeedVaultAdapter';
 
 const REVIVE_SKR_AMOUNT = 5;
 const MIN_SOL_FOR_FEE = 0.003;
@@ -26,12 +28,50 @@ export interface ReviveResult {
   error?: ReviveError;
 }
 
-export async function payForRevive(wallet: WalletContextState): Promise<ReviveResult> {
-  if (!wallet.publicKey || (!wallet.signTransaction && !wallet.sendTransaction)) {
+type ReviveWallet = Pick<WalletContextState, 'publicKey' | 'signTransaction' | 'sendTransaction'>;
+
+async function resolveReviveWallet(wallet: WalletContextState, expectedAddress?: string): Promise<ReviveWallet | null> {
+  if (wallet.publicKey && (wallet.signTransaction || wallet.sendTransaction)) {
+    return wallet;
+  }
+
+  if (!Capacitor.isNativePlatform()) {
+    return null;
+  }
+
+  const seedVault = new SeedVaultAdapter();
+  await seedVault.connect();
+  if (!seedVault.publicKey) {
+    return null;
+  }
+
+  const actualAddress = seedVault.publicKey.toBase58();
+  if (expectedAddress && actualAddress !== expectedAddress) {
+    throw new Error(`Connected Seed Vault account ${actualAddress} does not match active wallet ${expectedAddress}`);
+  }
+
+  return {
+    publicKey: seedVault.publicKey,
+    signTransaction: seedVault.signTransaction.bind(seedVault) as ReviveWallet['signTransaction'],
+    sendTransaction: undefined,
+  };
+}
+
+export async function payForRevive(wallet: WalletContextState, expectedAddress?: string): Promise<ReviveResult> {
+  let reviveWallet: ReviveWallet | null = null;
+  try {
+    reviveWallet = await resolveReviveWallet(wallet, expectedAddress);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const isCancel = /reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(msg);
+    return { success: false, error: isCancel ? { code: 'USER_CANCELLED' } : { code: 'UNKNOWN', message: msg } };
+  }
+
+  if (!reviveWallet?.publicKey || (!reviveWallet.signTransaction && !reviveWallet.sendTransaction)) {
     return { success: false, error: { code: 'UNKNOWN', message: 'Wallet not connected' } };
   }
 
-  const payer = wallet.publicKey;
+  const payer = reviveWallet.publicKey;
   const address = payer.toBase58();
   const heliusRpcUrl = getHeliusRpcUrl(address);
   if (!heliusRpcUrl) {
@@ -90,12 +130,8 @@ export async function payForRevive(wallet: WalletContextState): Promise<ReviveRe
     };
   }
 
-  // 3. Build transaction
   const destAta = await getAssociatedTokenAddress(skrMint, treasury, true, tokenProgramId);
   const amount = BigInt(REVIVE_SKR_AMOUNT) * BigInt(10 ** decimals);
-
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-  const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: payer });
 
   // Only create treasury ATA if it doesn't exist yet (avoids extra instruction in wallet preview)
   let destAtaExists = false;
@@ -105,70 +141,110 @@ export async function payForRevive(wallet: WalletContextState): Promise<ReviveRe
   } catch {
     /* assume missing */
   }
-  if (!destAtaExists) {
-    tx.add(
-      createAssociatedTokenAccountIdempotentInstruction(
-        payer,
-        destAta,
-        treasury,
-        skrMint,
-        tokenProgramId,
-        ASSOCIATED_TOKEN_PROGRAM_ID,
-      ),
-    );
-  }
-  tx.add(createTransferInstruction(sourceAta, destAta, payer, amount, [], tokenProgramId));
 
-  // 4. Simulate before prompting user to sign (dApp Store requirement)
-  try {
-    const sim = await connection.simulateTransaction(tx, undefined, {
-      sigVerify: false,
-      replaceRecentBlockhash: true,
-    });
-    if (sim.value.err) {
-      console.error('[revive] simulation failed', sim.value.err, sim.value.logs);
-      return {
-        success: false,
-        error: { code: 'SIMULATION_FAILED', message: JSON.stringify(sim.value.err) },
-      };
-    }
-  } catch (e) {
-    console.warn('[revive] simulation skip', e);
-  }
+  const buildTransaction = async () => {
+    // Use finalized blockhashes: mobile signing can return through a different RPC
+    // backend than the one that served a fresh confirmed blockhash.
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: payer });
 
-  // 5. Refresh blockhash right before signing — minimises expiry on MWA
-  const freshBH = await connection.getLatestBlockhash('confirmed');
-  tx.recentBlockhash = freshBH.blockhash;
-  tx.lastValidBlockHeight = freshBH.lastValidBlockHeight;
-
-  // Patch serialize to skip signature verification (same pattern as mint/BlackHole/score)
-  const origSerialize = tx.serialize.bind(tx);
-  tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
-    origSerialize({
-      ...config,
-      requireAllSignatures: false,
-      verifySignatures: false,
-    })) as typeof tx.serialize;
-
-  // 6. Sign and send (with timeout)
-  try {
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('USER_REJECTED: Signing timed out')), 120_000),
-    );
-    const sendOptions = { skipPreflight: false, preflightCommitment: 'confirmed' as const };
-    let sig: string;
-    if (wallet.signTransaction) {
-      const signPromise = wallet.signTransaction(tx);
-      const signed = await Promise.race([signPromise, timeoutPromise]);
-      sig = await connection.sendRawTransaction(
-        signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-        { skipPreflight: false, preflightCommitment: 'confirmed' },
+    if (!destAtaExists) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          payer,
+          destAta,
+          treasury,
+          skrMint,
+          tokenProgramId,
+          ASSOCIATED_TOKEN_PROGRAM_ID,
+        ),
       );
-    } else if (wallet.sendTransaction) {
-      sig = (await Promise.race([wallet.sendTransaction(tx, connection, sendOptions), timeoutPromise])) as string;
-    } else {
-      return { success: false, error: { code: 'UNKNOWN', message: 'Wallet not connected' } };
     }
+    tx.add(createTransferInstruction(sourceAta, destAta, payer, amount, [], tokenProgramId));
+
+    // Patch serialize to skip signature verification (same pattern as mint/BlackHole/score)
+    const origSerialize = tx.serialize.bind(tx);
+    tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+      origSerialize({
+        ...config,
+        requireAllSignatures: false,
+        verifySignatures: false,
+      })) as typeof tx.serialize;
+
+    return tx;
+  };
+
+  const prepareTransaction = async (): Promise<{ tx?: Transaction; error?: ReviveError }> => {
+    const tx = await buildTransaction();
+
+    // Simulate before prompting user to sign (dApp Store requirement)
+    try {
+      const sim = await connection.simulateTransaction(tx, undefined, {
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+      });
+      if (sim.value.err) {
+        console.error('[revive] simulation failed', sim.value.err, sim.value.logs);
+        return { error: { code: 'SIMULATION_FAILED', message: JSON.stringify(sim.value.err) } };
+      }
+    } catch (e) {
+      console.warn('[revive] simulation skip', e);
+    }
+
+    // Refresh blockhash right before signing. If the native approval takes too long,
+    // sendRawTransaction below retries once with a freshly rebuilt transaction.
+    const freshBH = await connection.getLatestBlockhash('finalized');
+    tx.recentBlockhash = freshBH.blockhash;
+    tx.lastValidBlockHeight = freshBH.lastValidBlockHeight;
+    return { tx };
+  };
+
+  // 4. Sign and send (with one blockhash-expiry retry)
+  try {
+    const sendOptions = { skipPreflight: false, preflightCommitment: 'finalized' as const };
+    let sig: string | null = null;
+    let lastSendError: unknown = null;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const prepared = await prepareTransaction();
+      if (prepared.error) {
+        return { success: false, error: prepared.error };
+      }
+      const tx = prepared.tx!;
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('USER_REJECTED: Signing timed out')), 120_000),
+      );
+
+      try {
+        if (reviveWallet.signTransaction) {
+          const signPromise = reviveWallet.signTransaction(tx);
+          const signed = await Promise.race([signPromise, timeoutPromise]);
+          sig = await connection.sendRawTransaction(
+            signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+            sendOptions,
+          );
+        } else if (reviveWallet.sendTransaction) {
+          sig = (await Promise.race([reviveWallet.sendTransaction(tx, connection, sendOptions), timeoutPromise])) as string;
+        } else {
+          return { success: false, error: { code: 'UNKNOWN', message: 'Wallet not connected' } };
+        }
+        break;
+      } catch (err) {
+        lastSendError = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt === 0 && /blockhash not found|Blockhash not found|block height exceeded|expired/i.test(msg)) {
+          console.warn('[revive] retrying with fresh blockhash after stale signing flow', msg);
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!sig) {
+      const msg = lastSendError instanceof Error ? lastSendError.message : String(lastSendError ?? 'Transaction not sent');
+      return { success: false, error: { code: 'UNKNOWN', message: msg } };
+    }
+
     const start = Date.now();
     while (Date.now() - start < 30000) {
       const status = await connection.getSignatureStatuses([sig], { searchTransactionHistory: true });

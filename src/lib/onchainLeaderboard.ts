@@ -5,6 +5,7 @@
  */
 
 import { WalletContextState } from '@solana/wallet-adapter-react';
+import { Capacitor } from '@capacitor/core';
 import {
   Connection,
   LAMPORTS_PER_SOL,
@@ -12,7 +13,8 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
-import { getHeliusRpcUrl } from '@/constants';
+import { getHeliusProxyHeaders, getHeliusRpcUrl } from '@/constants';
+import { SeedVaultAdapter } from '@/lib/SeedVaultAdapter';
 
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 
@@ -40,9 +42,41 @@ export interface SessionProofMemoPayload {
   sessionSlot: number;
 }
 
-function getConnection(): Connection {
+type ScoreWallet = Pick<WalletContextState, 'publicKey' | 'signTransaction' | 'sendTransaction'>;
+
+async function resolveScoreWallet(wallet: WalletContextState, expectedAddress?: string): Promise<ScoreWallet | null> {
+  if (wallet.publicKey && (wallet.signTransaction || wallet.sendTransaction)) {
+    return wallet;
+  }
+
+  if (!Capacitor.isNativePlatform()) {
+    return null;
+  }
+
+  const seedVault = new SeedVaultAdapter();
+  await seedVault.connect();
+  if (!seedVault.publicKey) {
+    return null;
+  }
+
+  const actualAddress = seedVault.publicKey.toBase58();
+  if (expectedAddress && actualAddress !== expectedAddress) {
+    throw new Error(`Connected Seed Vault account ${actualAddress} does not match active wallet ${expectedAddress}`);
+  }
+
+  return {
+    publicKey: seedVault.publicKey,
+    signTransaction: seedVault.signTransaction.bind(seedVault) as ScoreWallet['signTransaction'],
+    sendTransaction: undefined,
+  };
+}
+
+function getConnection(address?: string): Connection {
   const rpcUrl = getHeliusRpcUrl() || 'https://api.mainnet-beta.solana.com';
-  return new Connection(rpcUrl, 'confirmed');
+  return new Connection(rpcUrl, {
+    commitment: 'confirmed',
+    httpHeaders: getHeliusProxyHeaders(address),
+  });
 }
 
 function buildMemoData(address: string, score: number, sessionProof?: SessionProofMemoPayload): string {
@@ -110,29 +144,38 @@ export async function commitScoreOnchain(
   wallet: WalletContextState,
   score: number,
   sessionProof?: SessionProofMemoPayload,
+  expectedAddress?: string,
 ): Promise<CommitScoreResult> {
-  if (!wallet.publicKey || (!wallet.sendTransaction && !wallet.signTransaction)) {
+  let scoreWallet: ScoreWallet | null = null;
+  try {
+    scoreWallet = await resolveScoreWallet(wallet, expectedAddress);
+  } catch (err: any) {
+    const message = err?.message || 'Wallet not connected';
+    if (/reject|cancel|denied|abort|dismiss|decline|user.?reject|4001|USER_REJECTED/i.test(message)) {
+      return { success: false, error: 'Transaction cancelled by user' };
+    }
+    return { success: false, error: message };
+  }
+
+  if (!scoreWallet?.publicKey || (!scoreWallet.sendTransaction && !scoreWallet.signTransaction)) {
     return { success: false, error: 'Wallet not connected' };
   }
 
   try {
-    const connection = getConnection();
-    const address = wallet.publicKey.toBase58();
+    const address = scoreWallet.publicKey.toBase58();
+    const connection = getConnection(address);
     const memoData = buildMemoData(address, score, sessionProof);
 
     const memoIx = new TransactionInstruction({
-      keys: [{ pubkey: wallet.publicKey, isSigner: true, isWritable: false }],
+      keys: [{ pubkey: scoreWallet.publicKey, isSigner: true, isWritable: false }],
       programId: MEMO_PROGRAM_ID,
       data: new TextEncoder().encode(memoData),
     });
 
-    const tx = new Transaction().add(memoIx);
-    tx.feePayer = wallet.publicKey;
-
     // ── Balance preflight — fail early with clear message ──
     const MIN_LAMPORTS_FOR_MEMO = 10_000; // ~0.00001 SOL covers memo fee + buffer
     try {
-      const balanceLamports = await connection.getBalance(wallet.publicKey);
+      const balanceLamports = await connection.getBalance(scoreWallet.publicKey);
       if (balanceLamports < MIN_LAMPORTS_FOR_MEMO) {
         const balanceSol = (balanceLamports / LAMPORTS_PER_SOL).toFixed(6);
         const requiredSol = (MIN_LAMPORTS_FOR_MEMO / LAMPORTS_PER_SOL).toFixed(6);
@@ -145,52 +188,90 @@ export async function commitScoreOnchain(
       console.warn('[score] balance check failed', balErr);
     }
 
-    // ── Get blockhash — used for simulation and signing ──
-    const { blockhash } = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
+    const buildTransaction = async () => {
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+      const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: scoreWallet!.publicKey! }).add(memoIx);
+
+      // Patch serialize to skip sig verification (same pattern as mint/BlackHole/revive)
+      const origSerialize = tx.serialize.bind(tx);
+      tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
+        origSerialize({
+          ...config,
+          requireAllSignatures: false,
+          verifySignatures: false,
+        })) as typeof tx.serialize;
+
+      return tx;
+    };
 
     // ── Simulate BEFORE prompting user to sign (dApp Store requirement) ──
-    try {
-      const simulation = await connection.simulateTransaction(tx);
-      if (simulation.value.err) {
-        console.error('[score] simulation failed', simulation.value.err, simulation.value.logs);
-        return { success: false, error: `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}` };
+    const prepareTransaction = async () => {
+      const tx = await buildTransaction();
+      try {
+        const simulation = await connection.simulateTransaction(tx, undefined, {
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+        });
+        if (simulation.value.err) {
+          console.error('[score] simulation failed', simulation.value.err, simulation.value.logs);
+          return { error: `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}` };
+        }
+      } catch (simError) {
+        if (simError instanceof Error && simError.message.startsWith('Transaction simulation failed')) {
+          return { error: simError.message };
+        }
+        console.warn('[score] simulateTransaction network error', simError);
       }
-    } catch (simError) {
-      if (simError instanceof Error && simError.message.startsWith('Transaction simulation failed')) {
-        return { success: false, error: simError.message };
-      }
-      console.warn('[score] simulateTransaction network error', simError);
-    }
 
-    // ── Refresh blockhash right before signing — minimises expiry on MWA ──
-    const freshBH = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = freshBH.blockhash;
+      const freshBH = await connection.getLatestBlockhash('finalized');
+      tx.recentBlockhash = freshBH.blockhash;
+      tx.lastValidBlockHeight = freshBH.lastValidBlockHeight;
+      return { tx };
+    };
 
-    // Patch serialize to skip sig verification (same pattern as mint/BlackHole)
-    const origSerialize = tx.serialize.bind(tx);
-    tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
-      origSerialize({
-        ...config,
-        requireAllSignatures: false,
-        verifySignatures: false,
-      })) as typeof tx.serialize;
-
-    // ── Sign & send (with timeout) ──
-    let txSignature: string;
+    // ── Sign & send (with timeout and one stale-blockhash retry) ──
+    let txSignature: string | null = null;
     const signTimeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('User rejected the request.')), 120_000)
     );
-    if (wallet.signTransaction) {
-      const signed = await Promise.race([wallet.signTransaction(tx), signTimeout]);
-      txSignature = await connection.sendRawTransaction(
-        signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-        { skipPreflight: true, maxRetries: 3 },
-      );
-    } else if (wallet.sendTransaction) {
-      txSignature = await Promise.race([wallet.sendTransaction(tx, connection), signTimeout]) as string;
-    } else {
-      return { success: false, error: 'Wallet does not support transaction signing' };
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const prepared = await prepareTransaction();
+      if (prepared.error) return { success: false, error: prepared.error };
+      const tx = prepared.tx!;
+
+      try {
+        if (scoreWallet.signTransaction) {
+          const signed = await Promise.race([scoreWallet.signTransaction(tx), signTimeout]);
+          txSignature = await connection.sendRawTransaction(
+            signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
+            { skipPreflight: false, preflightCommitment: 'finalized', maxRetries: 3 },
+          );
+        } else if (scoreWallet.sendTransaction) {
+          txSignature = (await Promise.race([
+            scoreWallet.sendTransaction(tx, connection, {
+              skipPreflight: false,
+              preflightCommitment: 'finalized',
+              maxRetries: 3,
+            }),
+            signTimeout,
+          ])) as string;
+        } else {
+          return { success: false, error: 'Wallet does not support transaction signing' };
+        }
+        break;
+      } catch (sendErr: any) {
+        const message = sendErr?.message || String(sendErr);
+        if (attempt === 0 && /blockhash not found|Blockhash not found|block height exceeded|expired/i.test(message)) {
+          console.warn('[score] retrying with fresh blockhash after stale signing flow', message);
+          continue;
+        }
+        throw sendErr;
+      }
+    }
+
+    if (!txSignature) {
+      return { success: false, error: 'Transaction not sent' };
     }
 
     console.log('[score] tx sent:', txSignature);
