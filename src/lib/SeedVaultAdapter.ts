@@ -10,6 +10,7 @@ import {
 } from '@solana/wallet-adapter-base';
 import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import { Capacitor } from '@capacitor/core';
+import nacl from 'tweetnacl';
 import { SeedVault } from './seedVaultPlugin';
 import { readPreferredMobileWalletAddress } from './mobileWalletAddressPreference';
 
@@ -54,6 +55,19 @@ function normalizeAuthToken(value: unknown): number | null {
   return Number.isFinite(token) ? token : null;
 }
 
+function getPreferredSeedWalletIndex(maxExclusive?: number): number {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const rawIndex = params.get('seedWallet') ?? window.localStorage?.getItem('ip_seed_wallet_index') ?? '';
+    const parsed = Number.parseInt(rawIndex, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    if (maxExclusive != null && parsed >= maxExclusive) return 0;
+    return parsed;
+  } catch {
+    return 0;
+  }
+}
+
 function getPreferredAuthorizedAccount(accounts: AuthorizedSeedVaultAccount[]): AuthorizedSeedVaultAccount | null {
   const withAddress = accounts.filter(
     (account) => account.address && account.derivationPath && normalizeAuthToken(account.authToken) !== null,
@@ -67,15 +81,7 @@ function getPreferredAuthorizedAccount(accounts: AuthorizedSeedVaultAccount[]): 
     if (preferredAccount) return preferredAccount;
   }
 
-  let preferredIndex = 0;
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const rawIndex = params.get('seedWallet') ?? window.localStorage?.getItem('ip_seed_wallet_index') ?? '';
-    const parsed = Number.parseInt(rawIndex, 10);
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed < candidates.length) preferredIndex = parsed;
-  } catch {
-    /* default to first account */
-  }
+  const preferredIndex = getPreferredSeedWalletIndex(candidates.length);
 
   return candidates[preferredIndex] ?? candidates.find((account) => account.isUserWallet) ?? candidates[0] ?? null;
 }
@@ -142,7 +148,9 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
         return;
       }
 
-      const { authToken, address, derivationPath } = await SeedVault.authorize();
+      const { authToken, address, derivationPath } = await SeedVault.authorize({
+        accountIndex: getPreferredSeedWalletIndex(),
+      });
       this._authToken = normalizeAuthToken(authToken);
       if (this._authToken === null) throw new Error('Seed Vault authorize returned no auth token');
       this._derivationPath = derivationPath;
@@ -191,10 +199,10 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
     if (this._authToken === null) throw new WalletNotConnectedError();
     if (!this._publicKey) throw new WalletNotConnectedError();
     try {
-      const txBytes = transaction instanceof VersionedTransaction
-        ? transaction.serialize()
-        : (transaction as Transaction).serialize({ requireAllSignatures: false, verifySignatures: false });
-      const txB64 = bytesToBase64(new Uint8Array(txBytes));
+      const messageBytes = transaction instanceof VersionedTransaction
+        ? transaction.message.serialize()
+        : (transaction as Transaction).serializeMessage();
+      const txB64 = bytesToBase64(new Uint8Array(messageBytes));
       const { signature } = await SeedVault.signTransaction({
         authToken: this._authToken,
         transaction: txB64,
@@ -203,6 +211,14 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
       const signatureBytes = base64ToBytes(signature);
       if (signatureBytes.length !== 64) {
         throw new Error(`Invalid Seed Vault signature length: ${signatureBytes.length}`);
+      }
+      const isValidSignature = nacl.sign.detached.verify(
+        new Uint8Array(messageBytes),
+        signatureBytes,
+        this._publicKey.toBytes(),
+      );
+      if (!isValidSignature) {
+        throw new Error('Seed Vault returned a signature that does not verify for this transaction');
       }
       if (transaction instanceof VersionedTransaction) {
         const signerIndex = transaction.message.staticAccountKeys.findIndex((key) => key.equals(this._publicKey!));

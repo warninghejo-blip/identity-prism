@@ -115,6 +115,36 @@ export async function fetchApiJson<T = unknown>(
   return response.json() as Promise<T>;
 }
 
+export async function postApiJson<T = unknown>(
+  url: string,
+  body: unknown,
+  options: { headers?: Record<string, string>; timeoutMs?: number } = {},
+): Promise<T> {
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/json', ...options.headers };
+  if (Capacitor.isNativePlatform()) {
+    const response = await CapacitorHttp.post({
+      url,
+      headers,
+      data: body,
+      responseType: 'json',
+      connectTimeout: Math.min(options.timeoutMs ?? 8_000, 8_000),
+      readTimeout: options.timeoutMs ?? 20_000,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`API ${response.status}`);
+    }
+    return response.data as T;
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`API ${response.status}`);
+  return response.json() as Promise<T>;
+}
+
 // ── Shared sybil analysis fetch (deduped + cached) ──
 export interface SybilVerdictEvidence {
   flaggedSignals: number;
@@ -622,6 +652,26 @@ async function nativeAuthEndpoint(url: string): Promise<Response | null> {
 }
 
 async function postAuthEndpoint(url: string, payload: Record<string, string | undefined>): Promise<Response> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const response = await CapacitorHttp.post({
+        url,
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        data: payload,
+        responseType: 'json',
+        connectTimeout: 8_000,
+        readTimeout: 12_000,
+      });
+      const data = typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? null);
+      return new Response(data, {
+        status: response.status,
+        headers: response.headers,
+      });
+    } catch (error) {
+      writeAuthDebug({ stage: 'auth_native_post_failed', ...describeAuthError(error) });
+    }
+  }
+
   if (shouldUseBodylessAuthTransport(url)) {
     const nativeTarget = new URL(url);
     Object.entries(payload).forEach(([key, value]) => {
@@ -1079,7 +1129,9 @@ export function setAuthWallet(w: AuthWalletRef | null): void {
 
 /** Try to get a valid JWT, auto-obtaining if wallet is available. */
 export async function ensureJwt(): Promise<string | null> {
+  const sessionJwt = getSessionJwt();
   if (!_authWallet) {
+    if (sessionJwt) return sessionJwt;
     writeAuthDebug({ stage: 'ensure_missing_wallet' });
     return null;
   }
@@ -1087,8 +1139,10 @@ export async function ensureJwt(): Promise<string | null> {
   if (address) {
     const existing = getCachedJwt(address);
     if (existing) return existing;
+  } else if (sessionJwt) {
+    return sessionJwt;
   }
-  return obtainJwt(_authWallet);
+  return (await obtainJwt(_authWallet)) ?? sessionJwt;
 }
 
 // ── Server health check ──
@@ -1102,6 +1156,18 @@ export async function isServerAvailable(base: string): Promise<boolean> {
     return _serverAvailable;
   }
   try {
+    if (Capacitor.isNativePlatform()) {
+      const response = await CapacitorHttp.get({
+        url: `${base}/api/challenge/list`,
+        responseType: 'json',
+        connectTimeout: 3_000,
+        readTimeout: 3_000,
+      });
+      _serverAvailable = response.status < 500;
+      _serverCheckAt = Date.now();
+      return _serverAvailable;
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(`${base}/api/challenge/list`, { signal: controller.signal });

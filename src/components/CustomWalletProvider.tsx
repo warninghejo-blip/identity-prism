@@ -602,10 +602,12 @@ export const CustomWalletProvider = ({
     setConnecting(true);
     if (isNativePlatform) setNativeSessionRestoreMarker();
     armWalletReturnGuard();
-    // Timeout guard: if adapter.connect() hangs (e.g. user dismissed the popup), unblock after 15s
+    // Timeout guard: native Seed Vault can legitimately stay in its secure
+    // PIN/activity flow longer than 15s during manual entry on-device.
+    const connectTimeoutMs = isNativePlatform ? 90_000 : 15_000;
     let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
     const connectTimeout = new Promise<never>((_, reject) => {
-      connectTimeoutId = setTimeout(() => reject(new Error('Connection timed out')), 15_000);
+      connectTimeoutId = setTimeout(() => reject(new Error('Connection timed out')), connectTimeoutMs);
     });
     try {
       await Promise.race([activeAdapter.connect(), connectTimeout]);
@@ -614,6 +616,11 @@ export const CustomWalletProvider = ({
         setPublicKey(activeAdapter.publicKey);
       }
     } catch (error: unknown) {
+      if (isNativePlatform && activeAdapter.publicKey) {
+        setConnected(true);
+        setPublicKey(activeAdapter.publicKey);
+        return;
+      }
       await clearStoredWalletSession();
       setWalletName(null);
       throw handleError(error as WalletError, activeAdapter);

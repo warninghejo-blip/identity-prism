@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, BadgeCheck, Coins, Loader2, Share2, Shield, Wallet } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, Loader2, RefreshCw, Share2, Shield, Wallet } from 'lucide-react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -10,9 +10,10 @@ import { CelestialCard } from '@/components/CelestialCard';
 import { useWalletData, type PlanetTier, type WalletData, type WalletTraits } from '@/hooks/useWalletData';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { TIER_LABELS, getCompositeTierFromScore } from '@/lib/constants/tierColors';
-import { mintIdentityPrism } from '@/lib/mintIdentityPrism';
+import { mintIdentityPrism, updateIdentityPrism } from '@/lib/mintIdentityPrism';
 import { getPrismBalance } from '@/lib/prismCoin';
 import { getHeliusRpcUrl, getHeliusProxyHeaders, SEEKER_TOKEN } from '@/constants';
+import { fetchApiJson, getApiBase } from '@/components/prism/shared';
 import { toast } from '@/components/ui/sonner';
 import './apk-pages.css';
 
@@ -71,6 +72,8 @@ export default function ApkIdentityHub() {
   const walletData = useWalletData(wallet.connected ? address : undefined);
   const composite = useCompositeScore(wallet.connected ? address : null);
   const [minting, setMinting] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [hasIdentityPrism, setHasIdentityPrism] = useState(false);
   const [payWith, setPayWith] = useState<PayCurrency>('SOL');
   const [balances, setBalances] = useState<{ SOL: number | null; SKR: number | null; COINS: number | null }>({
     SOL: null,
@@ -115,6 +118,26 @@ export default function ApkIdentityHub() {
     return () => { cancelled = true; };
   }, [wallet.connected, address]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!wallet.connected || !address) {
+      setHasIdentityPrism(false);
+      return;
+    }
+    (async () => {
+      try {
+        const perks = await fetchApiJson<{ hasIdentityPrism?: boolean }>(
+          `${getApiBase()}/api/identity/perks?address=${encodeURIComponent(address)}`,
+          { timeoutMs: 8_000 },
+        );
+        if (!cancelled) setHasIdentityPrism(Boolean(perks?.hasIdentityPrism));
+      } catch (e) {
+        console.warn('[identity-hub] identity status fetch failed', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [wallet.connected, address]);
+
   const liveTraits = walletData.traits;
   const liveScore = Math.round(composite.score || walletData.score || 0);
   const liveTier = (
@@ -127,7 +150,11 @@ export default function ApkIdentityHub() {
     ? { ...walletData, score: liveScore, traits: { ...liveTraits, planetTier: liveTier }, address }
     : { address: demoAddress, score: 900, traits: previewTraits, isLoading: false, error: null };
 
-  const readyToMint = Boolean(wallet.connected && address && liveTraits && !walletData.isLoading && !minting);
+  const readyToMint = Boolean(wallet.connected && address && liveTraits && !walletData.isLoading && !minting && !updating);
+  const readyToUpdate = Boolean(
+    wallet.connected && address && liveTraits && !walletData.isLoading && !minting && !updating,
+  );
+  const canUpdateIdentity = Boolean(hasIdentityPrism || walletData.isMinted);
   const tierLabel = TIER_LABELS[(cardData.traits?.planetTier || 'saturn') as PlanetTier];
   const activePaymentAmount =
     payWith === 'SOL'
@@ -160,12 +187,46 @@ export default function ApkIdentityHub() {
       toast.success('Identity minted', {
         description: `${result.mint.slice(0, 4)}...${result.mint.slice(-4)}`,
       });
+      setHasIdentityPrism(true);
+      getPrismBalance(address)
+        .then((coins) => setBalances((b) => ({ ...b, COINS: coins.balance ?? b.COINS })))
+        .catch(() => {});
     } catch (error) {
       toast.error('Mint failed', {
         description: error instanceof Error ? error.message : 'Try again in a moment.',
       });
     } finally {
       setMinting(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!wallet.connected) {
+      setVisible(true);
+      return;
+    }
+    if (!readyToUpdate || !liveTraits) {
+      toast.info('Identity is loading', { description: 'Wait for wallet traits before updating.' });
+      return;
+    }
+    setUpdating(true);
+    try {
+      const result = await updateIdentityPrism({
+        wallet,
+        address,
+        traits: liveTraits,
+        score: liveScore,
+      });
+      setHasIdentityPrism(true);
+      toast.success('Card updated', {
+        description: `${result.assetId.slice(0, 4)}...${result.assetId.slice(-4)}`,
+      });
+    } catch (error) {
+      toast.error('Update failed', {
+        description: error instanceof Error ? error.message : 'Try again in a moment.',
+      });
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -260,11 +321,27 @@ export default function ApkIdentityHub() {
                 type="button"
                 className="mint-primary-btn identity-card-web-mint-btn"
                 onClick={handleMint}
-                disabled={minting}
+                disabled={minting || updating}
               >
                 {minting ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <BadgeCheck size={18} aria-hidden="true" />}
                 {minting ? 'MINTING' : wallet.connected ? 'MINT IDENTITY' : 'CONNECT WALLET'}
               </button>
+
+              {canUpdateIdentity ? (
+                <button
+                  type="button"
+                  className="mint-secondary-btn identity-card-web-secondary"
+                  onClick={handleUpdate}
+                  disabled={updating || minting}
+                >
+                  {updating ? (
+                    <Loader2 className="animate-spin" size={18} aria-hidden="true" />
+                  ) : (
+                    <RefreshCw size={18} aria-hidden="true" />
+                  )}
+                  {updating ? 'UPDATING' : 'UPDATE IDENTITY'}
+                </button>
+              ) : null}
 
               <button type="button" className="mint-secondary-btn identity-card-web-secondary" onClick={() => setVisible(true)}>
                 <Wallet size={16} aria-hidden="true" />

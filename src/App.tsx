@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { Capacitor } from '@capacitor/core';
 import { cleanupOverlays } from '@/lib/safeNavigate';
 import { trackPageView } from '@/lib/analytics';
 import { useChallengeNotifier } from '@/lib/useChallengeNotifier';
@@ -23,6 +24,7 @@ const queryClient = new QueryClient({
 const App = () => {
   const location = useLocation();
   const reduceMotion = useReducedMotion();
+  const disableRouteMotion = reduceMotion || Capacitor.isNativePlatform();
   useChallengeNotifier();
 
   // Dismiss HTML preloader and stale overlays on route change.
@@ -57,17 +59,21 @@ const App = () => {
             Skip to content
           </a>
           <main id="root-content">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={location.pathname}
-                initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
-                transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
-              >
-                <Outlet />
-              </motion.div>
-            </AnimatePresence>
+            {disableRouteMotion ? (
+              <Outlet />
+            ) : (
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={location.pathname}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  <Outlet />
+                </motion.div>
+              </AnimatePresence>
+            )}
           </main>
           <Toaster />
           <Sonner position="bottom-right" expand={false} closeButton richColors={false} offset={24} />

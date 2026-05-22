@@ -876,54 +876,6 @@ function registerBlinksRoute(ctx) {
             }
           }
 
-          // All checks passed — consume for real
-          consumePendingMint(payloadRequestId);
-          consumePendingMintFinalizeFallback(payloadRequestId);
-
-          // Deduct coins NOW at finalize time (not at reservation time).
-          // This way a server restart before finalize never causes coin loss.
-          const reservationKey = `mintres_${payloadRequestId}`;
-          const reservation = globalThis._mintReservations?.get(reservationKey);
-          const reservationOwner = owner || pending.owner;
-          let coinDeducted = false;
-          if (reservation && reservation.status === 'reserved' && reservation.wallet === reservationOwner) {
-            const currentBalance = getCoinBalance(reservation.wallet);
-            if (currentBalance < reservation.coinsReserved) {
-              respondJson(res, 400, { error: 'Insufficient coin balance at finalize time', requestId: payloadRequestId });
-              return true;
-            }
-            const { burned } = applyBurnFee(reservation.coinsReserved);
-            setCoinBalance(reservation.wallet, currentBalance - reservation.coinsReserved);
-            addCoinSpent(reservation.wallet, reservation.coinsReserved);
-            const walletEntryFC = walletDatabase.get(reservation.wallet);
-            if (walletEntryFC) {
-              walletEntryFC.coins = currentBalance - reservation.coinsReserved;
-              saveWalletDatabaseDebounced();
-            }
-            const txRecord = {
-              id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-              address: reservation.wallet,
-              amount: reservation.coinsReserved,
-              type: 'spend',
-              source: 'mint_for_coins',
-              description: `Minted Identity Prism for ${reservation.coinsReserved} Coins (${burned} burned)`,
-              timestamp: new Date().toISOString(),
-            };
-            const txList = prismTransactions.get(reservation.wallet) || [];
-            txList.unshift(txRecord);
-            if (txList.length > 500) txList.length = 500;
-            prismTransactions.set(reservation.wallet, txList);
-            debouncedSavePrism();
-            // Keep status 'reserved' until after confirmTransaction so the catch block
-            // can roll back coins if sendRawTransaction / confirmTransaction throws.
-            coinDeducted = true;
-            console.info('[mint-cnft] finalize: coins deducted', { requestId: payloadRequestId, wallet: reservation.wallet, coins: reservation.coinsReserved, burned });
-          }
-
-          const assetKeypair = Keypair.fromSecretKey(Uint8Array.from(pending.assetSecret));
-          const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
-          transaction.partialSign(assetKeypair, collectionAuthorityKeypair);
-
           if (pending.blockhash) {
             const validity = await connection.isBlockhashValid(pending.blockhash, 'confirmed').catch((error) => {
               console.warn('[mint-cnft] finalize: blockhash validity check failed', {
@@ -941,6 +893,49 @@ function registerBlinksRoute(ctx) {
               return true;
             }
           }
+
+          // All checks passed — consume for real
+          consumePendingMint(payloadRequestId);
+          consumePendingMintFinalizeFallback(payloadRequestId);
+
+          // Deduct coins NOW at finalize time (not at reservation time).
+          // This way a server restart before finalize never causes coin loss.
+          const reservationKey = `mintres_${payloadRequestId}`;
+          const reservation = globalThis._mintReservations?.get(reservationKey);
+          const reservationOwner = owner || pending.owner;
+          let coinDeducted = false;
+          let pendingCoinSpendRecord = null;
+          if (reservation && reservation.status === 'reserved' && reservation.wallet === reservationOwner) {
+            const currentBalance = getCoinBalance(reservation.wallet);
+            if (currentBalance < reservation.coinsReserved) {
+              respondJson(res, 400, { error: 'Insufficient coin balance at finalize time', requestId: payloadRequestId });
+              return true;
+            }
+            const { burned } = applyBurnFee(reservation.coinsReserved);
+            setCoinBalance(reservation.wallet, currentBalance - reservation.coinsReserved);
+            const walletEntryFC = walletDatabase.get(reservation.wallet);
+            if (walletEntryFC) {
+              walletEntryFC.coins = currentBalance - reservation.coinsReserved;
+              saveWalletDatabaseDebounced();
+            }
+            pendingCoinSpendRecord = {
+              id: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              address: reservation.wallet,
+              amount: reservation.coinsReserved,
+              type: 'spend',
+              source: 'mint_for_coins',
+              description: `Minted Identity Prism for ${reservation.coinsReserved} Coins (${burned} burned)`,
+              timestamp: new Date().toISOString(),
+            };
+            // Keep status 'reserved' until after confirmTransaction so the catch block
+            // can roll back coins if sendRawTransaction / confirmTransaction throws.
+            coinDeducted = true;
+            console.info('[mint-cnft] finalize: coins reserved for deduction', { requestId: payloadRequestId, wallet: reservation.wallet, coins: reservation.coinsReserved, burned });
+          }
+
+          const assetKeypair = Keypair.fromSecretKey(Uint8Array.from(pending.assetSecret));
+          const collectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
+          transaction.partialSign(assetKeypair, collectionAuthorityKeypair);
 
           const signature = await connection.sendRawTransaction(transaction.serialize(), {
             preflightCommitment: 'confirmed',
@@ -963,6 +958,15 @@ function registerBlinksRoute(ctx) {
             const r = globalThis._mintReservations.get(reservationKey);
             r.status = 'consumed';
             globalThis._mintReservations.set(reservationKey, r);
+            addCoinSpent(r.wallet, r.coinsReserved);
+            if (pendingCoinSpendRecord) {
+              const txList = prismTransactions.get(r.wallet) || [];
+              txList.unshift(pendingCoinSpendRecord);
+              if (txList.length > 500) txList.length = 500;
+              prismTransactions.set(r.wallet, txList);
+            }
+            debouncedSavePrism();
+            console.info('[mint-cnft] finalize: coins deducted', { requestId: payloadRequestId, wallet: r.wallet, coins: r.coinsReserved });
           }
 
           const finalOwner = owner || pending.owner;

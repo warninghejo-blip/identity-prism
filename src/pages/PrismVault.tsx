@@ -18,11 +18,13 @@ import { toast } from 'sonner';
 import { getPrismBalance, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
 import { getApiBase, getCachedJwt, obtainJwt, setAuthWallet } from '@/components/prism/shared';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { SEEDVAULT_NAME } from '@/lib/SeedVaultAdapter';
 
 // ── Buy Coins Section ──
 
 const RPC_STEP_TIMEOUT_MS = 30_000;
 const CONFIRM_TIMEOUT_MS = 120_000;
+const PUBLIC_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
@@ -117,18 +119,25 @@ function isNativeRpcTimeout(error: unknown): boolean {
   return /timeout|timed out|SocketTimeout/i.test(message);
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function rpcUrlFromApiBase(base: string): string {
   return `${base.replace(/\/api(\/.*)?$/, '')}/rpc`;
 }
 
-async function nativeRpcRequest<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
+async function nativeRpcRequest<T>(
+  rpcUrl: string,
+  method: string,
+  params: unknown[],
+  timeoutMs = RPC_STEP_TIMEOUT_MS,
+): Promise<T> {
   const response = await CapacitorHttp.post({
     url: rpcUrl,
     headers: { 'Content-Type': 'application/json' },
     data: { jsonrpc: '2.0', id: Date.now(), method, params },
     responseType: 'json',
-    connectTimeout: RPC_STEP_TIMEOUT_MS,
-    readTimeout: RPC_STEP_TIMEOUT_MS,
+    connectTimeout: timeoutMs,
+    readTimeout: timeoutMs,
   });
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`RPC ${method} failed (${response.status})`);
@@ -145,19 +154,46 @@ async function nativeSendRawTransaction(
   rawTransaction: Uint8Array,
   options: { skipPreflight: boolean; preflightCommitment: 'confirmed' },
 ): Promise<string> {
-  return nativeRpcRequest<string>(rpcUrl, 'sendTransaction', [
+  const params = [
     bytesToBase64(rawTransaction),
     { encoding: 'base64', ...options },
-  ]);
+  ];
+  const rpcUrls = Array.from(new Set([rpcUrl, PUBLIC_SOLANA_RPC_URL].filter(Boolean)));
+  let lastError: unknown = null;
+  for (const url of rpcUrls) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await nativeRpcRequest<string>(url, 'sendTransaction', params, attempt === 0 ? 45_000 : 30_000);
+      } catch (error) {
+        lastError = error;
+        if (!isNativeRpcTimeout(error)) throw error;
+        await sleep(600 * (attempt + 1));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('sendTransaction timed out');
 }
 
 async function nativeGetLatestBlockhash(rpcUrl: string): Promise<string> {
-  const result = await nativeRpcRequest<{ value?: { blockhash?: string } }>(rpcUrl, 'getLatestBlockhash', [
-    { commitment: 'confirmed' },
-  ]);
-  const blockhash = result?.value?.blockhash;
-  if (!blockhash) throw new Error('Recent blockhash response was invalid');
-  return blockhash;
+  const rpcUrls = Array.from(new Set([rpcUrl, PUBLIC_SOLANA_RPC_URL].filter(Boolean)));
+  let lastError: unknown = null;
+  for (const url of rpcUrls) {
+    try {
+      const result = await nativeRpcRequest<{ value?: { blockhash?: string } }>(
+        url,
+        'getLatestBlockhash',
+        [{ commitment: 'confirmed' }],
+        url === rpcUrl ? 8_000 : 20_000,
+      );
+      const blockhash = result?.value?.blockhash;
+      if (!blockhash) throw new Error('Recent blockhash response was invalid');
+      return blockhash;
+    } catch (error) {
+      lastError = error;
+      if (!isNativeRpcTimeout(error)) break;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Recent blockhash timed out');
 }
 
 async function waitForConfirmationNative(
@@ -169,11 +205,23 @@ async function waitForConfirmationNative(
   let lastError: unknown = null;
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await nativeRpcRequest<{ value: ({ confirmationStatus?: string; err?: unknown } | null)[] }>(
-        rpcUrl,
-        'getSignatureStatuses',
-        [[sig]],
-      );
+      let res: { value: ({ confirmationStatus?: string; err?: unknown } | null)[] } | null = null;
+      const rpcUrls = Array.from(new Set([rpcUrl, PUBLIC_SOLANA_RPC_URL].filter(Boolean)));
+      for (const url of rpcUrls) {
+        try {
+          res = await nativeRpcRequest<{ value: ({ confirmationStatus?: string; err?: unknown } | null)[] }>(
+            url,
+            'getSignatureStatuses',
+            [[sig]],
+            url === rpcUrl ? 8_000 : 20_000,
+          );
+          break;
+        } catch (error) {
+          lastError = error;
+          if (!isNativeRpcTimeout(error)) throw error;
+        }
+      }
+      if (!res) throw lastError instanceof Error ? lastError : new Error('Signature status unavailable');
       const status = res?.value?.[0];
       if (status?.err) throw new Error('Transaction failed on-chain');
       if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
@@ -216,6 +264,28 @@ async function postPurchaseJson(
   };
 }
 
+async function getVaultJson<T = any>(
+  url: string,
+  headers?: Record<string, string>,
+): Promise<{ ok: boolean; status: number; data: T | null }> {
+  if (Capacitor.isNativePlatform()) {
+    const response = await CapacitorHttp.get({
+      url,
+      headers,
+      responseType: 'json',
+      connectTimeout: 20_000,
+      readTimeout: 30_000,
+    });
+    return { ok: response.status >= 200 && response.status < 300, status: response.status, data: response.data as T };
+  }
+  const response = await fetch(url, { headers });
+  return {
+    ok: response.ok,
+    status: response.status,
+    data: response.ok ? await response.json().catch(() => null) : null,
+  };
+}
+
 function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
   const wallet = useWallet();
   const [buyingIdx, setBuyingIdx] = useState<number | null>(null);
@@ -231,16 +301,16 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
     if (!walletAddress) return;
     const base = getApiBase();
     const jwt = getCachedJwt(walletAddress);
-    fetch(`${base}/api/prism/buy/status?address=${encodeURIComponent(walletAddress)}`, {
-      headers: jwt ? { Authorization: `Bearer ${jwt}` } : undefined,
+    getVaultJson(`${base}/api/prism/buy/status?address=${encodeURIComponent(walletAddress)}`, {
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
     })
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.data : null))
       .then((d) => {
         if (d) setStatus(d);
       })
       .catch(() => {});
-    fetch(`${base}/api/prism/buy/skr-quote`)
-      .then((r) => (r.ok ? r.json() : null))
+    getVaultJson(`${base}/api/prism/buy/skr-quote`)
+      .then((r) => (r.ok ? r.data : null))
       .then((d) => {
         if (d?.quotes) setSkrQuotes(d.quotes);
       })
@@ -255,17 +325,25 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
       if (isNativePlatform) {
         setActionMessage('Opening wallet approval...');
         setPendingConnectBuyIdx(selectedIdx);
+        const seedVaultWallet = wallet.wallets.find((entry) => entry.adapter.name === SEEDVAULT_NAME);
+        if (seedVaultWallet && wallet.wallet?.adapter.name !== SEEDVAULT_NAME) {
+          wallet.select(SEEDVAULT_NAME);
+          toast.info('Opening Seed Vault...');
+          return;
+        }
         if (!wallet.wallet) {
           const nativeWallet =
+            seedVaultWallet ??
+            wallet.wallets.find((entry) => entry.adapter.name === SolanaMobileWalletAdapterWalletName) ??
             wallet.wallets.find(
               (entry) =>
                 entry.adapter.name !== SolanaMobileWalletAdapterWalletName &&
                 (entry.readyState === WalletReadyState.Installed || entry.readyState === WalletReadyState.Loadable),
-            ) ?? wallet.wallets.find((entry) => entry.adapter.name === SolanaMobileWalletAdapterWalletName);
+            );
           if (nativeWallet) {
             wallet.select(nativeWallet.adapter.name);
           }
-          toast.info('Opening wallet...');
+          toast.info(nativeWallet?.adapter.name === SEEDVAULT_NAME ? 'Opening Seed Vault...' : 'Opening wallet...');
           return;
         }
         if (!wallet.connecting) {
@@ -325,7 +403,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
 
           let sig: string;
           const sendOptions = { skipPreflight: true, preflightCommitment: 'confirmed' as const };
-          const authHeader = getCachedJwt(signerAddress);
+          const authHeader = getCachedJwt(signerAddress) ?? (await obtainJwt(wallet));
+          if (!authHeader) {
+            throw new Error('Sign-in needed before purchase');
+          }
           const jsonHeaders = {
             'Content-Type': 'application/json',
             ...(authHeader ? { Authorization: `Bearer ${authHeader}` } : {}),
@@ -396,19 +477,9 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             if (wallet.signTransaction) {
               const signed = await wallet.signTransaction(tx);
               const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
-              const signedSig = signedTransactionSignature(signed);
-              try {
-                sig = isNativePlatform
-                  ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
-                  : await conn.sendRawTransaction(raw, sendOptions);
-              } catch (error) {
-                if (isNativePlatform && signedSig && isNativeRpcTimeout(error)) {
-                  console.warn('[PrismVault] native sendTransaction timed out; recovering with signed tx signature', signedSig);
-                  sig = signedSig;
-                } else {
-                  throw error;
-                }
-              }
+              sig = isNativePlatform
+                ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
+                : await conn.sendRawTransaction(raw, sendOptions);
             } else if (wallet.sendTransaction) {
               sig = await wallet.sendTransaction(tx, conn, sendOptions);
             } else {
@@ -466,19 +537,9 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             if (wallet.signTransaction) {
               const signed = await wallet.signTransaction(tx);
               const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
-              const signedSig = signedTransactionSignature(signed);
-              try {
-                sig = isNativePlatform
-                  ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
-                  : await conn.sendRawTransaction(raw, sendOptions);
-              } catch (error) {
-                if (isNativePlatform && signedSig && isNativeRpcTimeout(error)) {
-                  console.warn('[PrismVault] native sendTransaction timed out; recovering with signed tx signature', signedSig);
-                  sig = signedSig;
-                } else {
-                  throw error;
-                }
-              }
+              sig = isNativePlatform
+                ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
+                : await conn.sendRawTransaction(raw, sendOptions);
             } else if (wallet.sendTransaction) {
               sig = await wallet.sendTransaction(tx, conn, sendOptions);
             } else {
@@ -540,6 +601,11 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
 
   useEffect(() => {
     if (pendingConnectBuyIdx === null || !isNativePlatform || buyingIdx !== null) return;
+    const seedVaultWallet = wallet.wallets.find((entry) => entry.adapter.name === SEEDVAULT_NAME);
+    if (seedVaultWallet && wallet.wallet?.adapter.name !== SEEDVAULT_NAME) {
+      wallet.select(SEEDVAULT_NAME);
+      return;
+    }
     if (!wallet.wallet) return;
     if (wallet.connected && wallet.publicKey && (wallet.signTransaction || wallet.sendTransaction)) {
       setPendingConnectBuyIdx(null);
@@ -829,10 +895,10 @@ function PrismVaultSection({
     setLoadingStatus(true);
     const base = getApiBase();
     const jwt = getCachedJwt(walletAddress);
-    fetch(`${base}/api/prism/vault/status?address=${encodeURIComponent(walletAddress)}`, {
-      headers: jwt ? { Authorization: `Bearer ${jwt}` } : undefined,
+    getVaultJson(`${base}/api/prism/vault/status?address=${encodeURIComponent(walletAddress)}`, {
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
     })
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.data : null))
       .then((d) => {
         if (d?.staking) {
           setVaultStatus({
@@ -1343,8 +1409,8 @@ export default function PrismVault() {
     if (!walletAddress) return;
     const base = getApiBase();
     if (!base) return;
-    fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
-      .then((r) => (r.ok ? r.json() : null))
+    getVaultJson<PrismBalance>(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
+      .then((r) => (r.ok ? r.data : null))
       .then((d) => {
         if (d) setBalance(d);
       })

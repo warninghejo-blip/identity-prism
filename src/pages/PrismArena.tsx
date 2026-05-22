@@ -10,6 +10,7 @@ import { invalidateBalanceCache } from '@/lib/prefetch';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import {
   ArrowLeft,
   Plus,
@@ -47,6 +48,76 @@ import {
   formatAddr,
   timeAgo,
 } from '@/components/prism/shared';
+
+type ArenaApiResponse<T = unknown> = {
+  ok: boolean;
+  status: number;
+  data: T | null;
+  text: string;
+};
+
+async function arenaApiJson<T = unknown>(
+  url: string,
+  options: {
+    method?: 'GET' | 'POST';
+    headers?: Record<string, string>;
+    body?: unknown;
+    timeoutMs?: number;
+  } = {},
+): Promise<ArenaApiResponse<T>> {
+  const method = options.method ?? 'GET';
+  const headers = { Accept: 'application/json', ...(options.headers ?? {}) };
+
+  if (Capacitor.isNativePlatform()) {
+    const body =
+      typeof options.body === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(options.body as string);
+            } catch {
+              return options.body;
+            }
+          })()
+        : options.body;
+    const request = {
+      url,
+      headers,
+      responseType: 'json' as const,
+      connectTimeout: options.timeoutMs ?? 8_000,
+      readTimeout: options.timeoutMs ?? 15_000,
+    };
+    const response =
+      method === 'POST'
+        ? await CapacitorHttp.post({
+            ...request,
+            headers: { 'Content-Type': 'application/json', ...headers },
+            data: body ?? {},
+          })
+        : await CapacitorHttp.get(request);
+    const data = typeof response.data === 'string' ? JSON.parse(response.data || 'null') : response.data;
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      data: (data ?? null) as T | null,
+      text: typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? null),
+    };
+  }
+
+  const res = await fetch(url, {
+    method,
+    cache: 'no-store',
+    headers,
+    body: options.body === undefined ? undefined : typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
+  });
+  const text = await res.text();
+  let data: T | null = null;
+  try {
+    data = text ? (JSON.parse(text) as T) : null;
+  } catch {
+    data = null;
+  }
+  return { ok: res.ok, status: res.status, data, text };
+}
 
 // ── Toast component (glass-morphism, matches Sonner theme) ──
 
@@ -245,30 +316,48 @@ export default function PrismArena() {
   const base = getApiBase();
 
   // ── Fetch coin balance (direct, no JWT needed) ──
-  const refreshBalance = useCallback(() => {
-    if (!myAddress || !base) return;
-    fetch(`${base}/api/prism/balance?address=${encodeURIComponent(myAddress)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.balance == null) return;
+  const refreshBalance = useCallback(async () => {
+    if (!myAddress || !base) return null;
+    const url =
+      `${base}/api/prism/balance?address=${encodeURIComponent(myAddress)}` +
+      `&_=${Date.now()}`;
+    return arenaApiJson<PrismBalance>(url, {
+      headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+    })
+      .then((response) => {
+        const data = response.ok ? response.data : null;
+        if (data?.balance == null) return null;
         setCoinBalance(data.balance);
         try {
           sessionStorage.setItem('ip_prism_balance', JSON.stringify(data));
         } catch {}
+        try {
+          localStorage.setItem(`prism_balance_v1_${data.address}`, JSON.stringify(data));
+        } catch {}
         window.dispatchEvent(new CustomEvent<PrismBalance>(PRISM_BALANCE_UPDATED_EVENT, { detail: data }));
+        return data;
       })
-      .catch(() => {});
+      .catch(() => null);
   }, [myAddress, base]);
+
+  const refreshBalanceWithRetry = useCallback(() => {
+    void refreshBalance();
+    window.setTimeout(() => void refreshBalance(), 1200);
+    window.setTimeout(() => void refreshBalance(), 3500);
+  }, [refreshBalance]);
 
   // Fetch challenge leaderboard
   useEffect(() => {
     if (subTab !== 'top' || !base) return;
-    fetch(`${base}/api/challenge/leaderboard`, {
-      cache: 'no-store',
+    arenaApiJson<{
+      weekly?: typeof weeklyBoard;
+      allTime?: typeof allTimeBoard;
+      nextReset?: number;
+    }>(`${base}/api/challenge/leaderboard`, {
       headers: { 'Cache-Control': 'no-cache' },
     })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
+      .then((response) => {
+        const d = response.ok ? response.data : null;
         if (d) {
           if (d.weekly) setWeeklyBoard(d.weekly);
           if (d.allTime) setAllTimeBoard(d.allTime);
@@ -287,12 +376,11 @@ export default function PrismArena() {
     if (!(await isServerAvailable(base))) return;
     setLoadingOpen(true);
     try {
-      const res = await fetch(`${base}/api/challenge/list`, {
-        cache: 'no-store',
+      const res = await arenaApiJson<{ challenges?: Challenge[] } | Challenge[]>(`${base}/api/challenge/list`, {
         headers: { 'Cache-Control': 'no-cache' },
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = res.data;
         setOpenChallenges(Array.isArray(data) ? data : (data.challenges ?? []));
       }
     } catch {
@@ -311,10 +399,12 @@ export default function PrismArena() {
       const headers: Record<string, string> = {};
       headers['Cache-Control'] = 'no-cache';
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-      const res = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, {
-        cache: 'no-store',
+      const res = await arenaApiJson<{ challenges?: Challenge[] } | Challenge[]>(
+        `${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`,
+        {
         headers,
-      });
+        },
+      );
       // Passive page loads must not trigger a new wallet approval prompt.
       if (res.status === 401) {
         try {
@@ -322,12 +412,14 @@ export default function PrismArena() {
         } catch {}
         const fresh = await obtainJwt(wallet, { forceFresh: true }).catch(() => null);
         if (fresh) {
-          const retry = await fetch(`${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`, {
-            cache: 'no-store',
-            headers: { Authorization: `Bearer ${fresh}`, 'Cache-Control': 'no-cache' },
-          });
+          const retry = await arenaApiJson<{ challenges?: Challenge[] } | Challenge[]>(
+            `${base}/api/challenge/my?address=${encodeURIComponent(myAddress)}`,
+            {
+              headers: { Authorization: `Bearer ${fresh}`, 'Cache-Control': 'no-cache' },
+            },
+          );
           if (retry.ok) {
-            const data = await retry.json();
+            const data = retry.data;
             const list: Challenge[] = Array.isArray(data) ? data : (data.challenges ?? []);
             setMyChallenges(list);
           }
@@ -336,7 +428,7 @@ export default function PrismArena() {
         return;
       }
       if (res.ok) {
-        const data = await res.json();
+        const data = res.data;
         const list: Challenge[] = Array.isArray(data) ? data : (data.challenges ?? []);
         setMyChallenges(list);
 
@@ -382,7 +474,7 @@ export default function PrismArena() {
                 if (myAddress) {
                   invalidateCompositeCache(myAddress);
                   invalidateBalanceCache(myAddress);
-                  refreshBalance();
+                  refreshBalanceWithRetry();
                   // Track arena quests (fallback — primary tracking is in PrismLeague on score submit)
                   import('@/lib/prismQuests')
                     .then(({ getQuestState, incrementQuest }) => {
@@ -483,15 +575,15 @@ export default function PrismArena() {
       if (formType === 'game') body.gameMode = formGameMode;
       if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(formOpponent.trim())) body.opponent = formOpponent.trim();
 
-      const res = await fetch(`${base}/api/challenge/create`, {
+      const res = await arenaApiJson<{ challenge?: Challenge; id?: string; error?: string }>(`${base}/api/challenge/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify(body),
+        body,
       });
 
       if (res.ok) {
         trackChallengeCreate();
-        const resData = await res.json().catch(() => ({}));
+        const resData = res.data ?? {};
         if (resData?.challenge) {
           setMyChallenges((prev) => {
             if (prev.some((c) => c.id === resData.challenge.id)) return prev;
@@ -507,7 +599,7 @@ export default function PrismArena() {
 
         // Refresh balance — coins were deducted server-side
         if (myAddress) invalidateBalanceCache(myAddress);
-        refreshBalance();
+        refreshBalanceWithRetry();
 
         // Request notification permission on user gesture (challenge creation)
         try {
@@ -544,7 +636,7 @@ export default function PrismArena() {
           setSubTab('mine');
         }
       } else {
-        const err = await res.json().catch(() => ({ error: 'Failed to create challenge' }));
+        const err = res.data ?? { error: 'Failed to create challenge' };
         toast.error(err.error || 'Failed to create challenge');
       }
     } catch {
@@ -553,7 +645,7 @@ export default function PrismArena() {
       actionLockRef.current = false;
       setSubmitting(false);
     }
-  }, [myAddress, formType, formGameMode, formStake, formOpponent, base, wallet, fetchOpen, fetchMine]);
+  }, [myAddress, formType, formGameMode, formStake, formOpponent, base, wallet, fetchOpen, fetchMine, refreshBalanceWithRetry]);
 
   // ── Accept challenge ──
   const handleAccept = useCallback(
@@ -578,17 +670,17 @@ export default function PrismArena() {
 
         const challenge = [...openChallenges, ...myChallenges].find((c) => c.id === challengeId);
 
-        const res = await fetch(`${base}/api/challenge/accept`, {
+        const res = await arenaApiJson<{ challenge?: Challenge; error?: string }>(`${base}/api/challenge/accept`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ challengeId }),
+          body: { challengeId },
         });
 
         if (res.ok) {
           trackChallengeAccept();
-          const resData = await res.json().catch(() => ({}));
+          const resData = res.data ?? {};
           if (myAddress) invalidateBalanceCache(myAddress);
-          refreshBalance();
+          refreshBalanceWithRetry();
           fetchOpen();
           fetchMine();
 
@@ -610,7 +702,7 @@ export default function PrismArena() {
             toast.success('Challenge accepted! Good luck.');
           }
         } else {
-          const err = await res.json().catch(() => ({ error: 'Failed to accept' }));
+          const err = res.data ?? { error: 'Failed to accept' };
           toast.error(err.error || 'Failed to accept challenge');
         }
       } catch {
@@ -620,7 +712,7 @@ export default function PrismArena() {
         setAcceptingId(null);
       }
     },
-    [myAddress, base, wallet, fetchOpen, fetchMine, openChallenges, myChallenges],
+    [myAddress, base, wallet, fetchOpen, fetchMine, openChallenges, myChallenges, refreshBalanceWithRetry],
   );
 
   // ── Cancel challenge ──
@@ -656,14 +748,14 @@ export default function PrismArena() {
           }
         }
 
-        const res = await fetch(`${base}/api/challenge/cancel`, {
+        const res = await arenaApiJson<{ refunded?: number; fee?: number; error?: string }>(`${base}/api/challenge/cancel`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ challengeId }),
+          body: { challengeId },
         });
 
         if (res.ok) {
-          const data = await res.json().catch(() => ({}));
+          const data = res.data ?? {};
           const refunded = data.refunded != null ? data.refunded : '?';
           const fee = data.fee != null ? data.fee : '?';
           toast(
@@ -674,11 +766,11 @@ export default function PrismArena() {
             />,
           );
           if (myAddress) invalidateBalanceCache(myAddress);
-          refreshBalance();
+          refreshBalanceWithRetry();
           fetchOpen();
           fetchMine();
         } else {
-          const err = await res.json().catch(() => ({ error: 'Failed to cancel' }));
+          const err = res.data ?? { error: 'Failed to cancel' };
           toast.error(err.error || 'Failed to cancel challenge');
         }
       } catch {
@@ -688,7 +780,7 @@ export default function PrismArena() {
         setCancellingId(null);
       }
     },
-    [myAddress, base, wallet, fetchOpen, fetchMine, myChallenges, refreshBalance],
+    [myAddress, base, wallet, fetchOpen, fetchMine, myChallenges, refreshBalanceWithRetry],
   );
 
   return (
@@ -1435,13 +1527,13 @@ export default function PrismArena() {
             try {
               const token = getCachedJwt(myAddress);
               if (token) {
-                const r = await fetch(`${getApiBase()}/api/challenge/cancel`, {
+                const r = await arenaApiJson<{ error?: string }>(`${getApiBase()}/api/challenge/cancel`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                  body: JSON.stringify({ challengeId: id }),
+                  body: { challengeId: id },
                 });
                 if (!r.ok) {
-                  const err = await r.json().catch(() => ({ error: 'Cannot cancel' }));
+                  const err = r.data ?? { error: 'Cannot cancel' };
                   toast.error(err.error || 'Cannot cancel challenge');
                 }
               }
