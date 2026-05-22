@@ -13,13 +13,41 @@ interface WalletData {
   firstSeenAt?: string;
   lastSeenAt?: string;
   coins?: number;
+  totalCoins?: number;
+  coinBalance?: number;
+  prism?: { balance?: number; totalEarned?: number };
   sybil?: { trustScore?: number; trustGrade?: string };
   composite?: {
     compositeScore: number;
     compositeTier: string;
     breakdown: { onchain: number; sybilTrust: number; humanProof: number; social: number; engagement: number };
+    details?: {
+      onchain?: { identityScore?: number; txCount?: number; nftCount?: number; solBalance?: number };
+      sybilTrust?: { trustScore?: number; effectiveTrust?: number; trustGrade?: string; verdictLabel?: string };
+      engagement?: { scanCount?: number };
+    } | null;
   };
+  scoreDetails?: {
+    onchain?: { identityScore?: number; txCount?: number; nftCount?: number; solBalance?: number };
+    sybilTrust?: { trustScore?: number; effectiveTrust?: number; trustGrade?: string; verdictLabel?: string };
+    engagement?: { scanCount?: number };
+  } | null;
   stats?: { tokens?: number; nfts?: number; transactions?: number; solBalance?: number };
+}
+
+function deriveTrustGrade(score?: number) {
+  if (score == null || !Number.isFinite(score)) return '—';
+  if (score >= 90) return 'A+';
+  if (score >= 80) return 'A';
+  if (score >= 70) return 'B';
+  if (score >= 60) return 'C';
+  if (score >= 50) return 'D';
+  return 'F';
+}
+
+function formatNumber(value?: number) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.floor(n).toLocaleString() : '0';
 }
 
 export default function ProfilePage() {
@@ -42,13 +70,24 @@ export default function ProfilePage() {
     }
     setLoading(true);
     const proxyUrl = getHeliusProxyUrl() || '';
-    fetch(`${proxyUrl}/api/wallet-database?address=${encodeURIComponent(address)}`)
-      .then((r) => {
+    Promise.allSettled([
+      fetch(`${proxyUrl}/api/wallet-database?address=${encodeURIComponent(address)}`).then((r) => {
         if (!r.ok) throw new Error('Wallet not found');
         return r.json();
-      })
-      .then((d) => {
-        setData(d);
+      }),
+      fetch(`${proxyUrl}/api/prism/balance?address=${encodeURIComponent(address)}`).then((r) =>
+        r.ok ? r.json() : null,
+      ),
+    ])
+      .then((r) => {
+        const profileResult = r[0];
+        if (profileResult.status !== 'fulfilled') throw profileResult.reason;
+        const d = profileResult.value as WalletData;
+        const balance = r[1].status === 'fulfilled' ? r[1].value : null;
+        setData({
+          ...d,
+          coins: Number(balance?.balance ?? d.coins ?? d.totalCoins ?? d.coinBalance ?? d.prism?.balance ?? 0),
+        });
         setError('');
       })
       .catch((e) => setError(e.message))
@@ -78,6 +117,15 @@ export default function ProfilePage() {
   const tierColor = TIER_HEX[tier] || '#94a3b8';
   const compositeScore = data.composite?.compositeScore ?? 0;
   const breakdown = data.composite?.breakdown;
+  const details = data.composite?.details || data.scoreDetails || null;
+  const trustScore = data.sybil?.trustScore ?? details?.sybilTrust?.trustScore ?? details?.sybilTrust?.effectiveTrust;
+  const trustGrade = data.sybil?.trustGrade || details?.sybilTrust?.trustGrade || deriveTrustGrade(trustScore);
+  const onchainScore = breakdown?.onchain ?? details?.onchain?.identityScore ?? 0;
+  const scanCount = data.scanCount ?? details?.engagement?.scanCount ?? 0;
+  const coinBalance = data.coins ?? data.totalCoins ?? data.coinBalance ?? data.prism?.balance ?? 0;
+  const txCount = data.stats?.transactions ?? details?.onchain?.txCount;
+  const nftCount = data.stats?.nfts ?? details?.onchain?.nftCount;
+  const solBalance = data.stats?.solBalance ?? details?.onchain?.solBalance;
 
   const barData = breakdown
     ? [
@@ -132,21 +180,23 @@ export default function ProfilePage() {
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="On-Chain Score" value={`${data.score || 0}/400`} />
-        <StatCard label="Sybil Grade" value={data.sybil?.trustGrade || '—'} />
-        {data.sybil?.trustGrade && ['D', 'F'].includes(data.sybil.trustGrade) && (
+        <StatCard label="On-Chain Score" value={`${onchainScore}/400`} />
+        <StatCard label="Sybil Grade" value={trustScore != null ? `${trustGrade} (${Math.round(trustScore)}/100)` : trustGrade} />
+        {trustGrade && ['D', 'F'].includes(trustGrade) && (
           <Link to="/recovery" className="text-xs text-amber-400 hover:underline ml-2">
             Improve →
           </Link>
         )}
-        <StatCard label="Scans" value={String(data.scanCount || 0)} />
-        <StatCard label="Coins" value={String(data.coins || 0)} />
+        <StatCard label="Scans" value={formatNumber(scanCount)} />
+        <StatCard label="Coins" value={formatNumber(coinBalance)} />
+        {txCount != null && <StatCard label="Transactions" value={formatNumber(txCount)} />}
+        {solBalance != null && <StatCard label="SOL Balance" value={Number(solBalance).toFixed(3)} />}
         {data.stats && (
           <>
             <StatCard label="Tokens" value={String(data.stats.tokens || 0)} />
-            <StatCard label="NFTs" value={String(data.stats.nfts || 0)} />
           </>
         )}
+        {nftCount != null && <StatCard label="NFTs" value={formatNumber(nftCount)} />}
       </div>
 
       <div className="text-center">

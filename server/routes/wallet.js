@@ -1,5 +1,16 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 
+function deriveTrustGrade(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return null;
+  if (n >= 90) return 'A+';
+  if (n >= 80) return 'A';
+  if (n >= 70) return 'B';
+  if (n >= 60) return 'C';
+  if (n >= 50) return 'D';
+  return 'F';
+}
+
 function registerWalletRoute(ctx) {
   const {
     core: {
@@ -15,6 +26,7 @@ function registerWalletRoute(ctx) {
     },
     wallet: {
       walletDatabase,
+      getCoinBalance,
     },
   } = ctx;
 
@@ -212,16 +224,35 @@ function registerWalletRoute(ctx) {
         if (!wallet) return respondJson(res, 404, { error: 'Wallet not found' });
         const compositeScore = Number(wallet.composite?.compositeScore);
         const compositeTier = typeof wallet.composite?.compositeTier === 'string' ? wallet.composite.compositeTier : '';
+        const details = wallet.composite?.details || null;
+        const sybilDetails = details?.sybilTrust || null;
+        const trustScore = Number(sybilDetails?.trustScore ?? sybilDetails?.effectiveTrust);
         const publicScore = Number.isFinite(compositeScore) ? compositeScore : (wallet.score || 0);
         const publicTier = compositeTier || wallet.tier || 'mercury';
         const publicData = {
           address,
           tier: publicTier,
           score: publicScore,
+          coins: typeof getCoinBalance === 'function' ? getCoinBalance(address) : (wallet.coins || 0),
+          scanCount: Number(wallet.scanCount) || Number(details?.engagement?.scanCount) || 0,
+          sybil: sybilDetails
+            ? {
+                trustScore: Number.isFinite(trustScore) ? trustScore : undefined,
+                trustGrade: sybilDetails.trustGrade || deriveTrustGrade(trustScore),
+                verdictLabel: sybilDetails.verdictLabel || null,
+              }
+            : null,
+          stats: details?.onchain
+            ? {
+                transactions: details.onchain.txCount,
+                nfts: details.onchain.nftCount,
+                solBalance: details.onchain.solBalance,
+              }
+            : null,
           badges: wallet.badges || [],
-          composite: wallet.composite ? { compositeScore: wallet.composite.compositeScore, compositeTier: wallet.composite.compositeTier, breakdown: wallet.composite.breakdown, details: wallet.composite.details || null } : null,
+          composite: wallet.composite ? { compositeScore: wallet.composite.compositeScore, compositeTier: wallet.composite.compositeTier, breakdown: wallet.composite.breakdown, details } : null,
           scoreBreakdown: wallet.scoreBreakdown || null,
-          scoreDetails: wallet.composite?.details || null,
+          scoreDetails: details,
           joinedAt: wallet.joinedAt || null,
           lastSeenAt: wallet.lastSeenAt || null,
           tournamentXP: wallet.tournamentXP || 0,
