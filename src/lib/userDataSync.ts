@@ -9,7 +9,7 @@
  * Server endpoint: POST /api/user-data (JWT required)
  */
 
-import { getApiBase, ensureJwt } from '@/components/prism/shared';
+import { getApiBase, ensureJwt, fetchApiJson, postApiJson } from '@/components/prism/shared';
 
 // ── Debounced sync ──
 
@@ -21,12 +21,8 @@ async function postUserData(data: Record<string, unknown>): Promise<boolean> {
     const base = getApiBase();
     const jwt = await ensureJwt();
     if (!jwt) return false;
-    const res = await fetch(`${base}/api/user-data`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-      body: JSON.stringify(data),
-    });
-    return res.ok;
+    await postApiJson(`${base}/api/user-data`, data, { headers: { Authorization: `Bearer ${jwt}` }, timeoutMs: 8_000 });
+    return true;
   } catch {
     return false;
   }
@@ -68,11 +64,10 @@ export async function loadFromServer(address: string): Promise<void> {
     const base = getApiBase();
     const jwt = await ensureJwt();
     if (!jwt) return;
-    const res = await fetch(`${base}/api/user-data`, {
+    const { userData } = await fetchApiJson<{ userData: ServerUserData | null }>(`${base}/api/user-data`, {
       headers: { Authorization: `Bearer ${jwt}` },
+      timeoutMs: 8_000,
     });
-    if (!res.ok) return;
-    const { userData } = (await res.json()) as { userData: ServerUserData | null };
     if (!userData) return;
 
     // Restore loadout from server authoritatively

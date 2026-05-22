@@ -328,15 +328,21 @@ const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   onWalletNotFound: createDefaultWalletNotFoundHandler(),
 });
 
-// MWA primary on native — Solana Mobile Wallet (com.solanamobile.wallet) provides
-// system bottom-sheet picker exposing Genesis Seed + all signers plug-and-play.
-// SeedVaultAdapter registered last as manual fallback.
-const wallets = [
-  mobileWalletAdapter,
-  new PhantomWalletAdapter(),
-  new SolflareWalletAdapter(),
-  ...(isCapacitorNative ? [new SeedVaultAdapter()] : []),
-];
+// On Seeker, prefer direct Seed Vault signing. Browser wallet adapters can appear
+// as loadable inside the WebView and cause native payment flows to open the wrong
+// approval surface.
+const wallets = isCapacitorNative
+  ? [
+      new SeedVaultAdapter(),
+      mobileWalletAdapter,
+      new PhantomWalletAdapter(),
+      new SolflareWalletAdapter(),
+    ]
+  : [
+      mobileWalletAdapter,
+      new PhantomWalletAdapter(),
+      new SolflareWalletAdapter(),
+    ];
 const heliusRpcUrl = getHeliusRpcUrl();
 if (!heliusRpcUrl) {
   console.warn('Helius proxy URL missing. Wallet RPC will fall back to the public Solana endpoint.');

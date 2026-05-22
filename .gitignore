@@ -122,3 +122,5 @@ android/app/build/
 android/.gradle/
 android/local.properties
 *.log
+android/keystore.properties
+android/*.jks

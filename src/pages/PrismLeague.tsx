@@ -154,14 +154,86 @@ function getServerBase(): string {
   return getHeliusProxyUrl() || getAppBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
 }
 
+type LeagueApiResponse<T = unknown> = {
+  ok: boolean;
+  status: number;
+  data: T | null;
+  text: string;
+};
+
+async function leagueApiJson<T = unknown>(
+  url: string,
+  options: {
+    method?: 'GET' | 'POST';
+    headers?: Record<string, string>;
+    body?: unknown;
+    timeoutMs?: number;
+  } = {},
+): Promise<LeagueApiResponse<T>> {
+  const method = options.method ?? 'GET';
+  const headers = { Accept: 'application/json', ...(options.headers ?? {}) };
+
+  if (Capacitor.isNativePlatform()) {
+    const body =
+      typeof options.body === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(options.body as string);
+            } catch {
+              return options.body;
+            }
+          })()
+        : options.body;
+    const request = {
+      url,
+      headers,
+      responseType: 'json' as const,
+      connectTimeout: options.timeoutMs ?? 8_000,
+      readTimeout: options.timeoutMs ?? 15_000,
+    };
+    const response =
+      method === 'POST'
+        ? await CapacitorHttp.post({
+            ...request,
+            headers: { 'Content-Type': 'application/json', ...headers },
+            data: body ?? {},
+          })
+        : await CapacitorHttp.get(request);
+    const data = typeof response.data === 'string' ? JSON.parse(response.data || 'null') : response.data;
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      data: (data ?? null) as T | null,
+      text: typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? null),
+    };
+  }
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: options.body === undefined ? undefined : typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
+  });
+  const text = await response.text();
+  let data: T | null = null;
+  try {
+    data = text ? (JSON.parse(text) as T) : null;
+  } catch {
+    data = null;
+  }
+  return { ok: response.ok, status: response.status, data, text };
+}
+
 async function fetchServerLeaderboard(gameType?: string): Promise<LeaderboardEntry[]> {
   try {
     const base = getServerBase();
     if (!base) return [];
     const params = gameType ? `?gameType=${gameType}` : '';
-    const res = await fetch(`${base}/api/v2/game/leaderboard${params}`);
+    const res = await leagueApiJson<{ entries?: { address: string; score: number; playedAt?: string; txSignature?: string }[] }>(
+      `${base}/api/v2/game/leaderboard${params}`,
+      { headers: { 'Cache-Control': 'no-cache' } },
+    );
     if (!res.ok) return [];
-    const data = await res.json();
+    const data = res.data;
     return (data?.entries || []).map(
       (e: { address: string; score: number; playedAt?: string; txSignature?: string }) => ({
         id: `srv-${e.address}-${e.score}`,
@@ -189,13 +261,12 @@ async function submitToServerLeaderboard(entry: {
     if (!base) return;
     const jwt = getChallengeJwt(entry.address);
     if (!jwt) return; // no token — server will 401 anyway
-    await fetch(`${base}/api/v2/game/leaderboard`, {
+    await leagueApiJson(`${base}/api/v2/game/leaderboard`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
-      body: JSON.stringify(entry),
+      body: entry,
     });
   } catch {
     /* silent */
@@ -324,9 +395,12 @@ async function fetchServerCoins(walletAddress: string): Promise<number | null> {
   try {
     const base = getServerBase();
     if (!base) return null;
-    const res = await fetch(`${base}/api/game/coins?address=${encodeURIComponent(walletAddress)}`);
+    const res = await leagueApiJson<{ coins?: number }>(
+      `${base}/api/game/coins?address=${encodeURIComponent(walletAddress)}&_=${Date.now()}`,
+      { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } },
+    );
     if (!res.ok) return null;
-    const data = await res.json();
+    const data = res.data;
     return typeof data?.coins === 'number' ? data.coins : null;
   } catch {
     return null;
@@ -351,15 +425,15 @@ async function claimAchievementOnServer(
     if (!base) return { ok: true };
     const jwt = getChallengeJwt(walletAddress);
     if (!jwt) return { ok: false }; // Require JWT
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
-    const res = await fetch(`${base}/api/game/achievements`, {
+    const headers: Record<string, string> = { Authorization: `Bearer ${jwt}` };
+    const res = await leagueApiJson<{ coins?: number }>(`${base}/api/game/achievements`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ address: walletAddress, achievementId, reward }),
+      body: { address: walletAddress, achievementId, reward },
     });
     if (res.status === 409) return { ok: false };
     if (!res.ok) return { ok: false };
-    const data = await res.json();
+    const data = res.data;
     return { ok: true, coins: data?.coins };
   } catch {
     return { ok: false };
@@ -1196,9 +1270,12 @@ const PrismLeague = () => {
       const headers: Record<string, string> = {};
       const jwt = getChallengeJwt(address);
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-      const res = await fetch(`${base}/api/tournament/active`, { headers });
+      const res = await leagueApiJson<{
+        tournaments?: Record<TournamentTierKey, ActiveTournament | null>;
+        tournament?: ActiveTournament | null;
+      }>(`${base}/api/tournament/active?_=${Date.now()}`, { headers });
       if (res.ok) {
-        const data = await res.json();
+        const data = res.data;
         if (data?.tournaments) {
           setTournaments({
             daily: data.tournaments.daily || null,
@@ -1236,6 +1313,32 @@ const PrismLeague = () => {
     };
   }, [playMode, fetchTournaments]);
 
+  const refreshLeagueCoinsFromServer = useCallback(async () => {
+    if (!address) return null;
+    invalidateBalanceCache(address);
+    const serverCoins = await fetchServerCoins(address);
+    if (typeof serverCoins === 'number') {
+      writeWalletCoins(address, serverCoins);
+      setTotalCoins(serverCoins);
+      try {
+        const raw = localStorage.getItem(`prism_balance_v1_${address}`);
+        const prev = raw ? JSON.parse(raw) : { address, totalEarned: 0, totalSpent: 0 };
+        localStorage.setItem(
+          `prism_balance_v1_${address}`,
+          JSON.stringify({
+            ...prev,
+            address,
+            balance: serverCoins,
+            lastUpdated: new Date().toISOString(),
+          }),
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+    return serverCoins;
+  }, [address]);
+
   // Countdown ticker
   useEffect(() => {
     const t = tournaments[tournamentTier];
@@ -1266,29 +1369,48 @@ const PrismLeague = () => {
       setJoinLoading(true);
       setJoinMessage(null);
       try {
-        const res = await fetch(`${base}/api/tournament/join`, {
+        const res = await leagueApiJson<{ error?: string; newBalance?: number }>(`${base}/api/tournament/join`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ tier }),
+          headers: { Authorization: `Bearer ${jwt}` },
+          body: { tier },
         });
-        const data = await res.json();
+        const data = res.data;
         if (res.ok) {
           setJoinMessage('Joined successfully!');
-          fetchTournaments();
-          import('@/lib/prismCoin')
-            .then(({ getPrismBalance }) => {
-              getPrismBalance(address).catch(() => {});
-            })
-            .catch(() => {});
+          if (typeof data?.newBalance === 'number') {
+            writeWalletCoins(address, data.newBalance);
+            setTotalCoins(data.newBalance);
+            try {
+              const raw = localStorage.getItem(`prism_balance_v1_${address}`);
+              const prev = raw ? JSON.parse(raw) : { address, totalEarned: 0, totalSpent: 0 };
+              localStorage.setItem(
+                `prism_balance_v1_${address}`,
+                JSON.stringify({
+                  ...prev,
+                  address,
+                  balance: data.newBalance,
+                  totalSpent: Math.max(Number(prev.totalSpent) || 0, (Number(prev.totalSpent) || 0) + TOURNAMENT_TIERS.find((item) => item.key === tier)!.fee),
+                  lastUpdated: new Date().toISOString(),
+                }),
+              );
+            } catch {
+              /* ignore */
+            }
+            invalidateBalanceCache(address);
+          }
+          await refreshLeagueCoinsFromServer();
+          await fetchTournaments();
         } else {
           setJoinMessage(data?.error || 'Failed to join tournament');
         }
       } catch {
-        setJoinMessage('Network error — could not join');
+        await refreshLeagueCoinsFromServer();
+        await fetchTournaments();
+        setJoinMessage('Join status refreshed from server');
       }
       setJoinLoading(false);
     },
-    [address, tournamentTier, fetchTournaments],
+    [address, tournamentTier, fetchTournaments, refreshLeagueCoinsFromServer],
   );
 
   const submitToTournament = useCallback(
@@ -1297,10 +1419,10 @@ const PrismLeague = () => {
         const base = getServerBase();
         const jwt = getChallengeJwt(address);
         if (!base || !jwt) return;
-        await fetch(`${base}/api/tournament/submit`, {
+        await leagueApiJson(`${base}/api/tournament/submit`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ score, tier: tournamentTier, gameSessionId }),
+          headers: { Authorization: `Bearer ${jwt}` },
+          body: { score, tier: tournamentTier, gameSessionId },
         });
       } catch {
         /* silent */

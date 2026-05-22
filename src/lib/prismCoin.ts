@@ -7,7 +7,7 @@
  * Fallback: localStorage for offline/anonymous use.
  */
 
-import { getApiBase, ensureJwt, fetchApiJson } from '@/components/prism/shared';
+import { getApiBase, ensureJwt, fetchApiJson, postApiJson } from '@/components/prism/shared';
 import { toast } from 'sonner';
 
 // ── Types ──
@@ -115,13 +115,7 @@ async function apiCall<T>(path: string, body?: unknown): Promise<T | null> {
     if (!body) {
       return await fetchApiJson<T>(url, { headers, timeoutMs: 4_500 });
     }
-    const res = await fetch(url, {
-      method: body ? 'POST' : 'GET',
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) return null;
-    return await res.json();
+    return await postApiJson<T>(url, body, { headers, timeoutMs: 20_000 });
   } catch {
     return null;
   }
@@ -288,6 +282,8 @@ export async function spendPrism(
   metadata?: PrismSpendMetadata,
 ): Promise<{ balance: PrismBalance; spent: number } | null> {
   const desc = description ?? `Spent ${amount} Coins on ${source.replace(/_/g, ' ')}`;
+  const startedAt = Date.now();
+  const before = getLocalBalance(address);
 
   // Try server first
   const serverResult = await apiCall<{ balance: PrismBalance; spent: number }>('/api/prism/spend', {
@@ -301,6 +297,31 @@ export async function spendPrism(
 
   if (serverResult) {
     saveLocalBalance(serverResult.balance);
+  }
+
+  if (!serverResult) {
+    const [serverBalance, recentTxs] = await Promise.all([
+      apiCall<PrismBalance>(`/api/prism/balance?address=${encodeURIComponent(address)}`),
+      apiCall<PrismTransaction[]>(`/api/prism/transactions?address=${encodeURIComponent(address)}&limit=10`),
+    ]);
+    const hasMatchingSpend =
+      recentTxs?.some((tx) => {
+        const txAt = Date.parse(tx.timestamp);
+        return (
+          tx.type === 'spend' &&
+          tx.source === source &&
+          tx.amount === amount &&
+          Number.isFinite(txAt) &&
+          Math.abs(txAt - startedAt) < 120_000
+        );
+      }) ?? false;
+    const balanceLooksSpent =
+      !!serverBalance &&
+      (serverBalance.totalSpent >= before.totalSpent + amount || serverBalance.balance <= before.balance - amount);
+    if (serverBalance && (hasMatchingSpend || balanceLooksSpent)) {
+      saveLocalBalance(serverBalance);
+      return { balance: serverBalance, spent: amount };
+    }
   }
 
   // Spending MUST be server-authoritative — no local fallback (prevents free purchases when server is down)

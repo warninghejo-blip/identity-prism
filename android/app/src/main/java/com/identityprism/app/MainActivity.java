@@ -1,6 +1,8 @@
 package com.identityprism.app;
 
+import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import androidx.activity.OnBackPressedCallback;
 import androidx.webkit.WebSettingsCompat;
@@ -23,6 +25,9 @@ public class MainActivity extends BridgeActivity {
 
         // Disable Android WebView force-dark mode — it darkens the entire card/UI
         WebView webView = getBridge().getWebView();
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            webView.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.getSettings(), false);
         } else if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {

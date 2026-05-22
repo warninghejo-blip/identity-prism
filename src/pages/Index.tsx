@@ -117,7 +117,25 @@ const MWA_AUTH_CACHE_KEY = 'SolanaMobileWalletAdapterDefaultAuthorizationCache';
 const LAST_CONNECTED_WALLET_KEY = 'ip_last_connected_wallet';
 const NATIVE_SESSION_RESTORE_KEY = 'ip_native_wallet_session';
 const NATIVE_SESSION_RESTORE_WINDOW_MS = 90_000;
+const SEED_WALLET_INDEX_KEY = 'ip_seed_wallet_index';
 // SCANNING_MESSAGES moved to LandingOverlay.tsx
+
+const readSeedWalletIndex = () => {
+  try {
+    const parsed = Number.parseInt(localStorage.getItem(SEED_WALLET_INDEX_KEY) || '0', 10);
+    return Number.isFinite(parsed) && parsed === 1 ? 1 : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const writeSeedWalletIndex = (index: number) => {
+  try {
+    localStorage.setItem(SEED_WALLET_INDEX_KEY, String(index === 1 ? 1 : 0));
+  } catch {
+    /* ignore */
+  }
+};
 
 const readLastConnectedWalletName = () => {
   try {
@@ -166,6 +184,15 @@ const clearStoredAuthJwt = () => {
   try {
     localStorage.removeItem('ip_auth_jwt');
     localStorage.removeItem('prism_active_address');
+  } catch {
+    /* ignore */
+  }
+};
+
+const persistActiveWalletAddress = (address: string) => {
+  try {
+    sessionStorage.setItem('prism_active_address', address);
+    localStorage.setItem('prism_active_address', address);
   } catch {
     /* ignore */
   }
@@ -266,6 +293,7 @@ const writeAuthFlowDebug = (event: Record<string, unknown>) => {
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const [seedAccountIndex, setSeedAccountIndex] = useState(readSeedWalletIndex);
   const isNftMode = searchParams.get('mode') === 'nft';
   const urlAddress = searchParams.get('address');
   const forceIdentityCardRoute = location.pathname.replace(/\/+$/, '') === '/identity';
@@ -550,6 +578,19 @@ const Index = () => {
       setViewState(forceIdentityCardRoute ? 'ready' : 'scanning');
     }
   }, [activeAddress, isConnected, jwtSigning, connectedAddress, wallet.publicKey, forceIdentityCardRoute, setViewState]);
+
+  useEffect(() => {
+    if (activeAddress || jwtSigning || isDisconnectingRef.current) return;
+    const restoredAddress = readPersistedActiveAddress();
+    if (!looksLikeSolanaAddress(restoredAddress) || !getCachedJwt(restoredAddress)) return;
+    setPendingAutoEnterAddress(null);
+    setJwtDeclined(false);
+    persistActiveWalletAddress(restoredAddress);
+    setActiveAddress(restoredAddress);
+    if (viewStateRef.current === 'landing') {
+      setViewState(forceIdentityCardRoute ? 'ready' : 'scanning');
+    }
+  }, [activeAddress, jwtSigning, forceIdentityCardRoute, setViewState]);
 
   const recentWalletRestoreRef = useRef(hasRecentExternalWalletBackground() || hasRecentNativeWalletRestore());
   const [walletStable, setWalletStable] = useState(
@@ -1039,6 +1080,7 @@ const Index = () => {
           jwtAttemptedRef.current = siwsResult.address;
           setJwtDeclined(false);
           setPendingAutoEnterAddress(null);
+          persistActiveWalletAddress(siwsResult.address);
           setActiveAddress(siwsResult.address);
           setIsWarping(true);
           clearTimeout(warpTimerRef.current);
@@ -1080,6 +1122,7 @@ const Index = () => {
             setViewState('landing');
             return;
           }
+          persistActiveWalletAddress(resolved);
           setActiveAddress(resolved);
           setViewState('scanning');
           rememberLastConnectedWalletName(targetWallet.adapter.name);
@@ -1865,6 +1908,13 @@ const Index = () => {
     isDisconnectingRef.current = false;
   };
 
+  const handleSwitchSeedAccount = async () => {
+    const nextIndex = readSeedWalletIndex() === 0 ? 1 : 0;
+    writeSeedWalletIndex(nextIndex);
+    setSeedAccountIndex(nextIndex);
+    await handleDisconnect();
+  };
+
   const [mintState, setMintState] = useState<'idle' | 'minting' | 'success' | 'error'>('idle');
   const [remintState, setRemintState] = useState<'idle' | 'updating' | 'success' | 'error'>('idle');
   const [hasExistingId, setHasExistingId] = useState<boolean | null>(null);
@@ -2550,6 +2600,8 @@ const Index = () => {
               fadeOutTransition(0);
             }}
             onDisconnect={handleDisconnect}
+            onSwitchSeedAccount={handleSwitchSeedAccount}
+            seedAccountIndex={seedAccountIndex}
             identityScore={walletData.score}
             planetTier={walletData.traits?.planetTier}
             jwtDeclined={jwtDeclined}
@@ -2711,6 +2763,27 @@ const Index = () => {
                             </>
                           )}
                         </Button>
+
+                        {hasMintedIdentity && (
+                          <Button
+                            variant="ghost"
+                            onClick={paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
+                            className="mint-secondary-btn"
+                            disabled={isMintStatusChecking || mintState === 'minting' || remintState === 'updating'}
+                          >
+                            {mintState === 'minting' ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                MINTING
+                              </>
+                            ) : (
+                              <>
+                                <Coins className="h-4 w-4 mr-2" />
+                                MINT NEW IDENTITY
+                              </>
+                            )}
+                          </Button>
+                        )}
 
                         <Button variant="ghost" onClick={handleShare} className="mint-share-btn">
                           <Share2 className="h-4 w-4 mr-2" />

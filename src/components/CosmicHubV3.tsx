@@ -18,7 +18,7 @@ import { fetchApiJson, fetchSybilAnalysis, getCachedJwt } from '@/components/pri
 import { writeCachedNotifications, type CachedNotification } from '@/lib/notificationCache';
 import TrustGradeBadge from '@/components/TrustGradeBadge';
 import type { PlanetTier } from '@/hooks/useWalletData';
-import { ArrowRight, Eye, Zap, LogOut, Bell, ChevronDown } from 'lucide-react';
+import { ArrowRight, Eye, Zap, LogOut, Bell, ChevronDown, Users } from 'lucide-react';
 import { useRangerProgress } from '@/hooks/useRangerProgress';
 
 /* ── Tier color map ── */
@@ -41,6 +41,8 @@ export interface CosmicHubProps {
   prismBalance?: { balance: number } | null;
   onNavigateToCard: () => void;
   onDisconnect?: () => void;
+  onSwitchSeedAccount?: () => void;
+  seedAccountIndex?: number;
   identityScore?: number;
   planetTier?: PlanetTier;
   jwtDeclined?: boolean;
@@ -658,6 +660,8 @@ export default function CosmicHub({
   prismBalance,
   onNavigateToCard,
   onDisconnect,
+  onSwitchSeedAccount,
+  seedAccountIndex,
   identityScore,
   planetTier,
   jwtDeclined,
@@ -825,6 +829,18 @@ export default function CosmicHub({
                 </span>
               )}
             </Link>
+            {onSwitchSeedAccount && (
+              <button
+                type="button"
+                onClick={onSwitchSeedAccount}
+                className="flex h-10 min-w-10 items-center justify-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.06] px-2 transition-colors hover:border-purple-400/25 hover:bg-purple-400/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+                title="Switch Seed Vault account"
+                aria-label="Switch Seed Vault account"
+              >
+                <Users className="h-4 w-4 text-white/45 transition-colors" />
+                <span className="text-[10px] font-black text-white/45">S{(seedAccountIndex ?? 0) + 1}</span>
+              </button>
+            )}
             {onDisconnect && (
               <button
                 type="button"

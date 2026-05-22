@@ -2,7 +2,7 @@ import { registerPlugin } from '@capacitor/core';
 
 export interface SeedVaultPlugin {
   isAvailable(): Promise<{ available: boolean }>;
-  authorize(): Promise<{ authToken: number; address: string; derivationPath: string }>;
+  authorize(opts?: { accountIndex?: number }): Promise<{ authToken: number; address: string; derivationPath: string }>;
   getAuthorizedAccounts(): Promise<{
     accounts: Array<{
       authToken: number;

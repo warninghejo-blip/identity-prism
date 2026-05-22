@@ -58,13 +58,14 @@ import { computeShipStats, getEquipmentBonusLines, SKIN_RARITY_BONUS, type ShipS
 import { gatherXPSourcesMerged, computeRangerXP, getRangerRank } from '@/lib/rangerRanks';
 import {
   fetchWalletPreview,
+  fetchApiJson,
   getCachedWalletPreview,
   obtainJwt,
   setAuthWallet,
   type WalletPreview,
+  getApiBase,
 } from '@/components/prism/shared';
 import { getPrismBalance, spendPrism, type PrismBalance } from '@/lib/prismCoin';
-import { getApiBase } from '@/components/prism/shared';
 import { getQuestProgress, getQuestState } from '@/lib/prismQuests';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 
@@ -583,10 +584,7 @@ export default function StellarForge() {
   // balance and Buy buttons stayed disabled even when funds were sufficient.
   const refetchBalance = useCallback(() => {
     if (!walletAddress) return;
-    const base = getApiBase();
-    if (!base) return;
-    fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
-      .then((r) => (r.ok ? r.json() : null))
+    getPrismBalance(walletAddress)
       .then((d) => {
         if (d) setBalance(d);
       })
@@ -612,13 +610,13 @@ export default function StellarForge() {
     if (!walletAddress) return;
     const base = getApiBase();
     let cancelled = false;
-    if (base)
-      fetch(`${base}/api/prism/balance?address=${encodeURIComponent(walletAddress)}`)
-        .then((r) => (r.ok ? r.json() : null))
+    if (base) {
+      getPrismBalance(walletAddress)
         .then((d) => {
           if (d && !cancelled) setBalance(d);
         })
         .catch(() => {});
+    }
     setLoadout(getLocalLoadout(walletAddress));
     import('@/lib/userDataSync')
       .then(async ({ loadFromServer }) => {
@@ -627,8 +625,9 @@ export default function StellarForge() {
       })
       .catch(() => {});
     // Check identity card status via wallet-database
-    fetch(`${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`)
-      .then((r) => (r.ok ? r.json() : null))
+    fetchApiJson<{ mint?: { minted?: boolean }; userData?: { loadout?: Partial<ForgeLoadout> }; forgeState?: unknown }>(
+      `${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`,
+    )
       .then((d) => {
         if (!d || cancelled) return;
         if (d?.mint?.minted) setHasIdentityCard(true);
