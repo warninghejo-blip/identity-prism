@@ -1,0 +1,65 @@
+.hub-return-button {
+  position: relative;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 36px;
+  padding: 0.45rem 0.72rem;
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  border-radius: 999px;
+  background: linear-gradient(140deg, rgba(4, 18, 30, 0.86), rgba(6, 13, 22, 0.8));
+  color: rgba(164, 230, 255, 0.96);
+  font-family: "Orbitron", system-ui, sans-serif;
+  font-size: 0.66rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  box-shadow: 0 0 26px rgba(14, 116, 144, 0.25), inset 0 0 0 1px rgba(14, 165, 233, 0.2);
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+.hub-return-button:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+  border-color: rgba(125, 211, 252, 0.72);
+  color: #e6faff;
+}
+
+.hub-return-button:disabled {
+  opacity: 0.75;
+  cursor: wait;
+}
+
+.hub-return-button__halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.2) 0%, transparent 70%);
+  opacity: 0.6;
+  pointer-events: none;
+  animation: hubReturnHalo 3.2s ease-in-out infinite;
+}
+
+.hub-return-button__text {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+
+@keyframes hubReturnHalo {
+  0%,
+  100% {
+    transform: scale(0.9);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.8;
+  }
+}
