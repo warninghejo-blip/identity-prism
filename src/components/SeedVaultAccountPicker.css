@@ -1,0 +1,184 @@
+.seed-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 5, 12, 0.78);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 24px;
+}
+
+.seed-picker-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  padding: 28px 24px 22px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.014)),
+    radial-gradient(circle at 24% 0%, rgba(34, 211, 238, 0.18), transparent 60%);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  box-shadow: 0 32px 88px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  color: #fff;
+}
+
+.seed-picker-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+}
+.seed-picker-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.seed-picker-head {
+  text-align: center;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  margin-bottom: 18px;
+}
+.seed-picker-head svg {
+  color: #22d3ee;
+  filter: drop-shadow(0 0 12px rgba(34, 211, 238, 0.5));
+}
+.seed-picker-head h2 {
+  margin: 4px 0 0;
+  font: 900 20px 'Space Grotesk', sans-serif;
+  letter-spacing: -0.01em;
+}
+.seed-picker-head p {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.seed-picker-loading,
+.seed-picker-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 0 6px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+}
+.seed-picker-empty button {
+  appearance: none;
+  border: 0;
+  background: rgba(34, 211, 238, 0.16);
+  color: #67e8f9;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.seed-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.seed-picker-list button {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+.seed-picker-list button:hover {
+  background: rgba(34, 211, 238, 0.08);
+  border-color: rgba(34, 211, 238, 0.3);
+  transform: translateY(-1px);
+}
+.seed-picker-acc-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: rgba(34, 211, 238, 0.12);
+  color: #22d3ee;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+}
+.seed-picker-acc-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.seed-picker-acc-meta strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seed-picker-acc-addr {
+  font: 600 11px 'JetBrains Mono', monospace;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.seed-picker-add {
+  appearance: none;
+  margin-top: 14px;
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+}
+.seed-picker-add:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+.seed-picker-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.seed-picker-error {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #fda4af;
+  text-align: center;
+}
