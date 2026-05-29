@@ -1,103 +1,156 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Terms - Identity Prism</title>
-    <meta name="robots" content="index, follow" />
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #050508;
-        color: rgba(255, 255, 255, 0.86);
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        background:
-          radial-gradient(circle at top, rgba(167, 139, 250, 0.16), transparent 34%),
-          radial-gradient(circle at 80% 10%, rgba(34, 211, 238, 0.12), transparent 28%),
-          #050508;
-      }
-      main {
-        width: min(840px, calc(100% - 32px));
-        margin: 0 auto;
-        padding: 56px 0 72px;
-      }
-      a {
-        color: #67e8f9;
-      }
-      .back {
-        display: inline-flex;
-        align-items: center;
-        min-height: 40px;
-        padding: 0 16px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 999px;
-        text-decoration: none;
-        color: rgba(255, 255, 255, 0.78);
-      }
-      h1 {
-        margin: 36px 0 12px;
-        font-size: clamp(36px, 8vw, 64px);
-        line-height: 0.95;
-        letter-spacing: 0;
-      }
-      h2 {
-        margin: 32px 0 10px;
-        font-size: 20px;
-      }
-      p,
-      li {
-        color: rgba(255, 255, 255, 0.62);
-        line-height: 1.8;
-      }
-      .panel {
-        margin-top: 28px;
-        padding: 24px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 24px;
-        background: rgba(255, 255, 255, 0.035);
-      }
-      .eyebrow {
-        color: rgba(196, 181, 253, 0.78);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.24em;
-        text-transform: uppercase;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <a class="back" href="/">Back to Identity Prism</a>
-      <div class="eyebrow">Terms</div>
-      <h1>Identity Prism Terms</h1>
-      <p>Last updated: May 14, 2026</p>
-      <div class="panel">
-        <h2>Use of the product</h2>
-        <p>
-          Identity Prism provides wallet reputation, sybil detection, games, and wallet cleanup tooling for Solana users.
-          You are responsible for reviewing wallet actions before signing them.
-        </p>
-        <h2>Wallet actions</h2>
-        <p>
-          The app may ask you to sign messages or transactions. Always verify the wallet prompt. Identity Prism never
-          needs your seed phrase or private key.
-        </p>
-        <h2>Scores and reports</h2>
-        <p>
-          Scores, sybil labels, and risk summaries are product signals, not financial advice or guaranteed legal
-          identity. Community reports may be reviewed, updated, or rejected.
-        </p>
-        <h2>Availability</h2>
-        <p>
-          The service may change as the product, scoring model, and sybil graph improve. Features can be adjusted to
-          protect users and reduce abuse.
-        </p>
-      </div>
-    </main>
-  </body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terms of Use — Identity Prism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@300;400;500;600&display=swap">
+<link rel="stylesheet" href="_legal_styles.css">
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<nav>
+  <a href="/" class="nav-logo"><img src="phav.png" alt="">IDENTITY PRISM</a>
+  <a href="/" class="nav-back">← Back to home</a>
+</nav>
+
+<main>
+  <div class="legal-eyebrow">Legal</div>
+  <h1 class="legal-title">Terms of Use</h1>
+  <div class="legal-meta">
+    <span><strong>Effective:</strong> May 1, 2026</span>
+    <span><strong>Last updated:</strong> May 9, 2026</span>
+    <span><strong>Version:</strong> 2.1</span>
+  </div>
+
+  <div class="callout-box">
+    <p><strong>Plain English —</strong> Identity Prism is experimental software you use at your own risk. We don't custody your funds, we can't reverse on-chain transactions, and our scores are informational — not financial advice. By connecting a wallet, you accept these terms.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#s1">Acceptance of terms</a></li>
+      <li><a href="#s2">The Service</a></li>
+      <li><a href="#s3">Eligibility</a></li>
+      <li><a href="#s4">Wallets &amp; custody</a></li>
+      <li><a href="#s5">Acceptable use</a></li>
+      <li><a href="#s6">Anti-sybil &amp; fair play</a></li>
+      <li><a href="#s7">NFTs &amp; on-chain assets</a></li>
+      <li><a href="#s8">Coins &amp; tournaments</a></li>
+      <li><a href="#s9">Intellectual property</a></li>
+      <li><a href="#s10">Disclaimers</a></li>
+      <li><a href="#s11">Liability</a></li>
+      <li><a href="#s12">Indemnification</a></li>
+      <li><a href="#s13">Termination</a></li>
+      <li><a href="#s14">Governing law</a></li>
+      <li><a href="#s15">Changes &amp; contact</a></li>
+    </ol>
+  </div>
+
+  <article>
+    <h2 id="s1"><span class="num">01</span>Acceptance of terms</h2>
+    <p>By connecting a wallet, scanning an address, playing a game, or otherwise using the Service, you agree to these Terms and to our <a href="privacy.html">Privacy Policy</a>. If you don't agree, disconnect your wallet and don't use the Service.</p>
+
+    <h2 id="s2"><span class="num">02</span>The Service</h2>
+    <p>Identity Prism is a non-custodial, on-chain reputation and sybil-defense protocol for the Solana blockchain. The Service computes a composite score from public on-chain activity, awards badges, runs gameplay-based humanity verification, hosts a coin economy and Stellar Forge cosmetics market, and issues optional Metaplex Core identity NFTs.</p>
+    <p><strong>The Service is provided "as is." Features may be added, modified, or removed at any time without notice.</strong></p>
+
+    <h2 id="s3"><span class="num">03</span>Eligibility</h2>
+    <ul>
+      <li>You must be at least 18 years old (or the age of majority in your jurisdiction).</li>
+      <li>You must not be a resident of, or located in, any country subject to U.S. or EU comprehensive sanctions (including but not limited to Cuba, Iran, North Korea, Syria, and the Crimea/Donetsk/Luhansk regions).</li>
+      <li>You must not be on any government sanctions list.</li>
+      <li>You must have legal capacity to enter into a binding contract.</li>
+    </ul>
+
+    <h2 id="s4"><span class="num">04</span>Wallets &amp; custody</h2>
+    <p><strong>You are solely responsible for the custody and security of your wallet.</strong> We never see, hold, or have access to your private keys or seed phrase. We cannot recover lost wallets, reverse signed transactions, or undo blockchain operations.</p>
+    <div class="warn-box"><p><strong>If you lose your seed phrase, your wallet — and any badges, NFTs, or coins associated with it — is permanently inaccessible.</strong> We cannot help.</p></div>
+
+    <h2 id="s5"><span class="num">05</span>Acceptable use</h2>
+    <p>You agree NOT to:</p>
+    <ul>
+      <li>Operate <strong>sybil clusters</strong> — multiple wallets controlled by one person or coordinated group, used to game scoring, airdrops, or leaderboards</li>
+      <li>Use <strong>bots, scripts, automation, or AI agents</strong> to play games, complete quests, or generate scores</li>
+      <li>Reverse-engineer, scrape, or replay our cryptographic game seeds</li>
+      <li>Attempt to manipulate the composite scoring algorithm through wash-trading, self-transfers, or fake NFT activity</li>
+      <li>Mint, purchase, or trade Identity Prism NFTs in any jurisdiction where doing so is unlawful</li>
+      <li>Impersonate, harass, or harm other users via the chat, arena, or social-graph features</li>
+      <li>Upload malicious code, exploit vulnerabilities, or interfere with Service infrastructure</li>
+      <li>Use the Service to launder funds, evade sanctions, or commit fraud</li>
+    </ul>
+
+    <h2 id="s6"><span class="num">06</span>Anti-sybil &amp; fair play</h2>
+    <p>We continuously monitor on-chain patterns and gameplay telemetry to detect sybil behavior. Suspected sybil clusters may be:</p>
+    <ul>
+      <li>Flagged with a reduced trust grade</li>
+      <li>Excluded from leaderboards, airdrops, and tournament prize pools</li>
+      <li>Banned from minting Identity Prism NFTs</li>
+      <li>Reported to partner protocols via our shared reputation feed</li>
+    </ul>
+    <p>Honest wallets that have been incorrectly flagged may rehabilitate their grade through gameplay, quests, and arena participation. Appeals can be made to <a href="mailto:appeals@identityprism.xyz">appeals@identityprism.xyz</a>.</p>
+
+    <h2 id="s7"><span class="num">07</span>NFTs &amp; on-chain assets</h2>
+    <p>Identity Prism cards are minted as Metaplex Core NFTs on Solana mainnet-beta. By minting, you acknowledge:</p>
+    <ul>
+      <li>You pay all network fees, rent, and Metaplex protocol fees from your own wallet.</li>
+      <li>NFT metadata is public and immutable on-chain.</li>
+      <li>The NFT does not represent a security, share, or financial instrument.</li>
+      <li>Secondary trading is permitted but happens entirely on third-party marketplaces we don't control.</li>
+      <li>Cosmetic items from Stellar Forge are <strong>utility items</strong> — they affect ship stats and visual customization, not financial returns.</li>
+    </ul>
+
+    <h2 id="s8"><span class="num">08</span>Coins, staking &amp; tournaments</h2>
+    <p>"Coins" are an off-chain utility unit used inside the Service. Coins:</p>
+    <ul>
+      <li>Are <strong>not</strong> a cryptocurrency, security, or fiat instrument</li>
+      <li>Have no monetary value outside the Service</li>
+      <li>Cannot be exchanged for fiat, SOL, or any other asset</li>
+      <li>May be modified, redenominated, or discontinued at our discretion</li>
+    </ul>
+    <p>Tournament prize pools, when funded with on-chain assets, are governed by per-tournament rules published in advance. 15% of every tournament pool is burned via the Black Hole module.</p>
+
+    <h2 id="s9"><span class="num">09</span>Intellectual property</h2>
+    <p>The Service's source code, planet textures, badge art, ship designs, and brand are © Identity Prism and licensed under MIT (code) or CC BY-NC-SA 4.0 (art) where applicable. Your wallet address remains yours; on-chain attestations belong to the chain.</p>
+
+    <h2 id="s10"><span class="num">10</span>Disclaimers</h2>
+    <p><strong>The Service is provided "AS IS" and "AS AVAILABLE," without warranty of any kind, express or implied.</strong> We disclaim all warranties of merchantability, fitness for a particular purpose, non-infringement, accuracy, and uninterrupted availability.</p>
+    <p>Identity Prism scores, tiers, and badges are <strong>informational only</strong>. They are not financial advice, creditworthiness assessments, or guarantees of any user's identity, intent, or character. Don't make investment decisions based solely on a score.</p>
+
+    <h2 id="s11"><span class="num">11</span>Limitation of liability</h2>
+    <p>To the maximum extent permitted by law, Identity Prism, its contributors, affiliates, and partners shall not be liable for any indirect, incidental, special, consequential, or punitive damages — including lost profits, lost data, lost wallets, missed airdrops, or loss of goodwill — arising out of your use of the Service. Our total aggregate liability shall not exceed <strong>USD $100</strong>.</p>
+
+    <h2 id="s12"><span class="num">12</span>Indemnification</h2>
+    <p>You agree to indemnify and hold Identity Prism harmless from any claims, damages, or expenses (including legal fees) arising out of (a) your breach of these Terms, (b) your misuse of the Service, or (c) your violation of any applicable law.</p>
+
+    <h2 id="s13"><span class="num">13</span>Termination</h2>
+    <p>We may suspend or terminate your access at any time, with or without cause, including for suspected sybil behavior or violation of these Terms. You may stop using the Service at any time by disconnecting your wallet. Provisions that by their nature should survive termination (IP, disclaimers, liability limits) shall survive.</p>
+
+    <h2 id="s14"><span class="num">14</span>Governing law &amp; disputes</h2>
+    <p>These Terms are governed by the laws of the British Virgin Islands, without regard to conflict-of-laws principles. Any dispute shall be resolved by binding arbitration administered under JAMS Comprehensive Arbitration Rules in a neutral seat. <strong>You waive your right to a jury trial and to participate in any class action.</strong></p>
+
+    <h2 id="s15"><span class="num">15</span>Changes &amp; contact</h2>
+    <p>We may revise these Terms. Material changes are announced 14 days in advance. Continued use after the effective date is acceptance.</p>
+    <p>Contact: <a href="mailto:legal@identityprism.xyz">legal@identityprism.xyz</a> · <a href="https://x.com/Identity_Prism">@Identity_Prism</a></p>
+  </article>
+</main>
+
+<footer>
+  <p>© 2026 Identity Prism · Built on Solana</p>
+  <div class="foot-legal">
+    <a href="/">Home</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="cookies.html">Cookies</a>
+    <a href="disclaimer.html">Disclaimer</a>
+  </div>
+</footer>
+
+<script>
+(function(){const c=document.getElementById('stars');const x=c.getContext('2d');let W,H,s=[];function r(){W=c.width=innerWidth;H=c.height=innerHeight;s=[];for(let i=0;i<160;i++)s.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+.2,a:Math.random()*.6+.1})}function d(){x.clearRect(0,0,W,H);s.forEach(p=>{x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle=`rgba(255,255,255,${p.a})`;x.fill()})}addEventListener('resize',()=>{r();d()});r();d()})();
+</script>
+</body>
 </html>

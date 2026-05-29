@@ -813,3 +813,8 @@
 
 /* hero slot: keep the real card sized like the reference cc-stage */
 .ipl .hero-right{display:flex;justify-content:center;width:100%}
+
+/* hero stats: keep all four on one row */
+.ipl .hero-stats{flex-wrap:nowrap;gap:clamp(16px,2.2vw,34px)}
+.ipl .hero-stat .n{white-space:nowrap}
+.ipl .hero-stat .l{white-space:nowrap}
