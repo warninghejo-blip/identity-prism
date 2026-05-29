@@ -688,13 +688,13 @@ export default function LandingPage() {
           <div className="tiers-formula reveal">
             <h4>Composite Score · <b>Five Pillars</b></h4>
             <div className="formula-row">
-              <div className="formula-cell"><div className="pct">25%</div><div className="lab">On-Chain</div></div>
-              <div className="formula-cell"><div className="pct">25%</div><div className="lab">DeFi</div></div>
-              <div className="formula-cell"><div className="pct">20%</div><div className="lab">Trust</div></div>
-              <div className="formula-cell"><div className="pct">20%</div><div className="lab">Games</div></div>
+              <div className="formula-cell"><div className="pct">40%</div><div className="lab">On-Chain</div></div>
+              <div className="formula-cell"><div className="pct">25%</div><div className="lab">Trust</div></div>
+              <div className="formula-cell"><div className="pct">15%</div><div className="lab">Games</div></div>
               <div className="formula-cell"><div className="pct">10%</div><div className="lab">Social</div></div>
+              <div className="formula-cell"><div className="pct">10%</div><div className="lab">Engagement</div></div>
             </div>
-            <div className="formula-eq">on-chain × 0.25 + defi × 0.25 + trust × 0.20 + games × 0.20 + social × 0.10 = <span className="out">score / 1000</span></div>
+            <div className="formula-eq">on-chain × 0.40 + trust × 0.25 + games × 0.15 + social × 0.10 + engagement × 0.10 = <span className="out">score / 1000</span></div>
           </div>
         </div>
       </section>
