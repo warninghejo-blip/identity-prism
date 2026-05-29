@@ -713,7 +713,7 @@ export default function LandingPage() {
             <div className="explode-ring r1"></div>
             <div className="explode-ring r2"></div>
             <div className="explode-ring r3"></div>
-            <div className="explode-planet"><img src="/landing/textures/tiers/saturn.png" alt="" /></div>
+            <div className="explode-planet"><img className="exp-saturn" src="/landing/textures/tiers/saturn.png" alt="Saturn" /><img className="exp-jupiter" src="/landing/textures/tiers/jupiter.png" alt="Jupiter" /></div>
             <div className="explode-shard"></div><div className="explode-shard"></div><div className="explode-shard"></div>
             <div className="explode-shard"></div><div className="explode-shard"></div><div className="explode-shard"></div>
             <div className="explode-shard"></div><div className="explode-shard"></div><div className="explode-shard"></div>
@@ -836,9 +836,14 @@ export default function LandingPage() {
       {/* CTA */}
       <section id="cta">
         <div className="container cta">
-          <div className="cta-orb reveal-zoom"></div>
+          <div className="cta-logo reveal-zoom"><img src="/landing/phav.png" alt="Identity Prism" /></div>
           <h2 className="reveal grad-cyan">Your reputation<br />starts now.</h2>
           <p className="cta-sub reveal">Connect your wallet. See your tier. Play the games. Carry your reputation across the entire Solana ecosystem.</p>
+          <div className="cta-actions reveal">
+            <a href="/identity" className="btn btn-primary lg">Launch the App</a>
+            <a href="/whitepaper.html" className="btn btn-ghost lg">Whitepaper</a>
+            <a href="/blackhole" className="btn btn-ghost lg">Enter the Black Hole</a>
+          </div>
         </div>
       </section>
 
