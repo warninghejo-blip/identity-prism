@@ -423,10 +423,10 @@ export default function LandingPage() {
                 <div className="live">Live detection</div>
               </div>
               <div className="sybil-readout">
-                ‹ funding-source: <span>shared</span><br />
-                ‹ tx-timing: <span>identical ±2.3s</span><br />
-                ‹ behavior: <span>scripted</span><br />
-                ‹ verdict: <b style={{ color: '#f87171' }}>SYBIL CLUSTER</b>
+                funding-source: <span>shared</span><br />
+                tx-timing: <span>identical ±2.3s</span><br />
+                behavior: <span>scripted</span><br />
+                verdict: <b style={{ color: '#f87171' }}>SYBIL CLUSTER</b>
               </div>
               <div className="sybil-label">Real-time on-chain pattern analysis</div>
             </div>
@@ -516,9 +516,9 @@ export default function LandingPage() {
               <div className="sc-steps">
                 <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects 10,000 wallets</b><span>Operator runs the same scripted on-chain history across a farm.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">02</div><div className="sc-step-content"><b>Pattern flagged</b><span>The Prism detects shared funding sources, identical timing, copy-paste behavior.</span></div></div>
-                <div className="sc-step"><div className="sc-step-n">03</div><div className="sc-step-content"><b>Forced into games</b><span>Score drops. To recover, the wallet must prove it can play — react, aim, survive in real time.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">03</div><div className="sc-step-content"><b>Forced into games</b><span>Score drops. To recover, the wallet must prove it can actually play in real time.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">04</div><div className="sc-step-content"><b>Game performance fails</b><span>Bots can't ace skill games at scale. Cluster scores collapse together.</span></div></div>
-                <div className="sc-step"><div className="sc-step-n">05</div><div className="sc-step-content"><b>Permanently filtered</b><span>Whole cluster falls into the Black Hole. Excluded from drops.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">05</div><div className="sc-step-content"><b>Permanently filtered</b><span>The whole cluster is excluded from drops, governance, and gated rewards — for good.</span></div></div>
               </div>
               <div className="sc-result"><div className="sc-result-tag">Outcome</div>Cluster eliminated · Drops protected · Trust restored</div>
             </div>
@@ -528,7 +528,7 @@ export default function LandingPage() {
                 <div><h4>The Human Path</h4><div className="sub">Real player · Earned reputation</div></div>
               </div>
               <div className="sc-steps">
-                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects one wallet</b><span>Real history. Real transactions. Real time spent on Solana.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects one wallet</b><span>Real on-chain history — genuine transactions and real time spent on Solana.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">02</div><div className="sc-step-content"><b>Initial scan</b><span>The Prism reads the full on-chain story and assigns a starting score and tier.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">03</div><div className="sc-step-content"><b>Plays the games</b><span>Orbit Survival, Gravity Runner, Cosmic Wars — skill-based, time-based, replayable.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">04</div><div className="sc-step-content"><b>Score grows</b><span>Performance lifts the score. Streaks unlock badges. Tier rises through the planets.</span></div></div>
@@ -836,7 +836,6 @@ export default function LandingPage() {
                 <div className="bh-stat"><b>Protects</b><span>high-signal assets</span></div>
                 <div className="bh-stat"><b>2% fee</b><span>for ID holders (10% std)</span></div>
               </div>
-              <a href="/blackhole" className="btn btn-primary lg">Enter the Black Hole →</a>
             </div>
           </div>
         </div>
