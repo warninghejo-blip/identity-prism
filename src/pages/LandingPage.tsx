@@ -30,7 +30,10 @@ export default function LandingPage() {
   useEffect(() => {
     const root = document.querySelector<HTMLElement>('.ipl');
     if (!root) return;
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // The landing's motion (scroll reveals + cosmic/sybil canvases) is core to the
+    // design and explicitly wanted, so we run it regardless of the OS reduced-motion
+    // setting (which would otherwise hide the canvases and skip the reveal animation).
+    const reduce = false;
 
     const rafIds: number[] = [];
     const cleanups: Array<() => void> = [];
