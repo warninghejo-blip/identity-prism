@@ -54,10 +54,10 @@ code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(255
 
     <h2 id="s2"><span class="num">02</span>Authentication</h2>
     <p>Read endpoints for public reputation data require an API key passed in the <code>X-API-Key</code> header. Keys are issued per project from the developer dashboard.</p>
-    <pre><code>curl https://api.identityprism.xyz/v1/score/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU \
+    <pre><code>curl https://api.identityprism.xyz/api/v1/reputation/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU \
   -H "X-API-Key: prism_live_xxxxxxxxxxxxxxxx"</code></pre>
     <p>Endpoints that act <em>on behalf of</em> a wallet (for example, exporting a user's own data) are <strong>wallet-based</strong>: the caller signs a short challenge message with the wallet's private key and submits the signature. The protocol verifies the signature against the public key — it never receives the key itself.</p>
-    <pre><code>POST /v1/auth/verify
+    <pre><code>POST /api/v1/auth/verify
 {
   "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
   "message": "Identity Prism auth · nonce=8f3a1c · ts=1716900000",
@@ -69,9 +69,9 @@ code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(255
 
     <h2 id="s3"><span class="num">03</span>Endpoints</h2>
 
-    <h3><span class="method">GET</span><span class="endpoint-path">/api/score/:address</span></h3>
-    <p>Returns the composite score (0–1000), planetary tier, and the five-pillar breakdown for a wallet.</p>
-    <pre><code>GET /api/score/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+    <h3><span class="method">GET</span><span class="endpoint-path">/api/v1/reputation/:address</span></h3>
+    <p>Returns the composite score (0–1000), planetary tier, the five-pillar breakdown, and the wallet's earned badges — everything you need to gate a drop in one call.</p>
+    <pre><code>GET /api/v1/reputation/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
 
 200 OK
 {
@@ -79,31 +79,22 @@ code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(255
   "score": 774,
   "tier": "Saturn",
   "next_tier": { "name": "Jupiter", "at": 800, "points_to_go": 26 },
-  "pillars": {
-    "onchain": 0.81, "defi": 0.77, "trust": 0.92,
-    "games": 0.68, "social": 0.55
+  "breakdown": {
+    "onchain": 322, "sybilTrust": 230, "humanProof": 102,
+    "social": 60, "engagement": 60
   },
+  "badges": [
+    { "id": "veteran",        "category": "onchain" },
+    { "id": "verified_human", "category": "sybilTrust" },
+    { "id": "game_master",    "category": "humanProof" }
+  ],
   "updated_at": "2026-05-28T12:00:00Z"
 }</code></pre>
+    <p class="legal-meta">Breakdown maxima: onchain 400, sybilTrust 250, humanProof 150, social 100, engagement 100 (sum = 1000).</p>
 
-    <h3><span class="method">GET</span><span class="endpoint-path">/api/badges/:address</span></h3>
-    <p>Returns the list of on-chain badges earned by a wallet, with category and award timestamp.</p>
-    <pre><code>GET /api/badges/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
-
-200 OK
-{
-  "address": "7xKX...gAsU",
-  "count": 7,
-  "badges": [
-    { "id": "veteran",        "category": "onchain", "awarded_at": "2025-11-02T..." },
-    { "id": "verified_human", "category": "trust",   "awarded_at": "2026-01-14T..." },
-    { "id": "game_master",    "category": "games",   "awarded_at": "2026-03-09T..." }
-  ]
-}</code></pre>
-
-    <h3><span class="method">GET</span><span class="endpoint-path">/api/sybil/:address</span></h3>
+    <h3><span class="method">GET</span><span class="endpoint-path">/api/sybil/analysis?address=</span></h3>
     <p>Returns the sybil-risk assessment for a wallet: a trust score, a risk verdict, and the signals that contributed. Use this to decide whether to admit a wallet to a drop.</p>
-    <pre><code>GET /api/sybil/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+    <pre><code>GET /api/sybil/analysis?address=7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
 
 200 OK
 {
