@@ -99,6 +99,27 @@ export default function LandingPage() {
       });
     }
 
+    // ---- Scroll-driven Saturn->Jupiter morph (#explode) ----
+    {
+      const stage = root.querySelector<HTMLElement>('#explode .explode-stage');
+      if (stage) {
+        let ticking = false;
+        const apply = () => {
+          ticking = false;
+          const rect = stage.getBoundingClientRect();
+          const vh = window.innerHeight;
+          // 0 while the section is entering from the bottom, 1 once it's scrolled up past center
+          const p = Math.max(0, Math.min(1, (vh * 0.82 - rect.top) / (vh * 0.66)));
+          stage.style.setProperty('--exp', p.toFixed(3));
+        };
+        const onScroll = () => { if (!ticking) { requestAnimationFrame(apply); ticking = true; } };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        window.addEventListener('resize', onScroll);
+        apply();
+        cleanups.push(() => { window.removeEventListener('scroll', onScroll); window.removeEventListener('resize', onScroll); });
+      }
+    }
+
     if (!reduce) {
       // ---- Cosmic background canvas (#bg-cosmos) ----
       {
@@ -795,8 +816,8 @@ export default function LandingPage() {
           </div>
           <div className="eco-grid reveal-stagger">
             <div className="eco-card eco-c-scanner"><span className="eco-tag">Core</span><div className="eco-icon"><img src="/landing/hub/scanner.png" alt="" /></div><h3>Prism Scanner</h3><p>Analyze any Solana wallet. Composite score, full badge list, tier, age, behavior signals — all in one scan.</p><div className="eco-feats"><div className="eco-feat">Public &amp; private scans</div><div className="eco-feat">Snapshot history</div><div className="eco-feat">Compare wallets</div></div></div>
-            <div className="eco-card eco-c-forge"><span className="eco-tag">Cosmetics</span><div className="eco-icon"><img src="/landing/hub/shop.png" alt="" /></div><h3>Stellar Forge</h3><p>Craft ship skins, frames, auras, and titles. Equip them on your identity card or your in-game ship. Rank-gated.</p><div className="eco-feats"><div className="eco-feat">50+ cosmetic items</div><div className="eco-feat">Ship stat boosts</div><div className="eco-feat">Tradeable as NFTs</div></div></div>
-            <div className="eco-card eco-c-vault"><span className="eco-tag">Staking</span><div className="eco-icon"><img src="/landing/hub/vault.png" alt="" /></div><h3>Cosmic Vault</h3><p>Lock coins for 1 week — 6 months. Yield from 1× to 4× multiplier based on tier &amp; lock duration.</p><div className="eco-feats"><div className="eco-feat">Up to 4× multiplier</div><div className="eco-feat">Tier-boosted APY</div><div className="eco-feat">Compound on unlock</div></div></div>
+            <div className="eco-card eco-c-forge"><span className="eco-tag">Cosmetics</span><div className="eco-icon"><img src="/landing/hub/shop.png" alt="" /></div><h3>Stellar Forge</h3><p>Craft ship skins, frames, auras, and titles. Equip them on your identity card or your in-game ship. Rank-gated.</p><div className="eco-feats"><div className="eco-feat">50+ cosmetic items</div><div className="eco-feat">Ship stat boosts</div><div className="eco-feat">Rank-gated unlocks</div></div></div>
+            <div className="eco-card eco-c-vault"><span className="eco-tag">Staking</span><div className="eco-icon"><img src="/landing/hub/vault.png" alt="" /></div><h3>Cosmic Vault</h3><p>Lock coins for 1 week — 6 months. Yield from 1× to 4× multiplier based on tier &amp; lock duration.</p><div className="eco-feats"><div className="eco-feat">Up to 4× multiplier</div><div className="eco-feat">Tier-boosted APY</div><div className="eco-feat">1-week to 6-month locks</div></div></div>
             <div className="eco-card eco-c-blackhole"><span className="eco-tag">Burn</span><div className="eco-icon"><img src="/landing/hub/blackhole.png" alt="" /></div><h3>Black Hole</h3><p>Scan token accounts &amp; NFTs, protect high-signal assets, then burn or close the worthless dust to reclaim locked SOL rent.</p><div className="eco-feats"><div className="eco-feat">Reclaim SOL rent</div><div className="eco-feat">Protects key assets</div><div className="eco-feat">Burn / close dust</div></div></div>
             <div className="eco-card eco-c-arena"><span className="eco-tag">PvP</span><div className="eco-icon"><img src="/landing/hub/arena.png" alt="" /></div><h3>Wallet Arena</h3><p>1v1 wallet duels — score-vs-score brackets with real prize pools. Climb the ranks; win the season.</p><div className="eco-feats"><div className="eco-feat">Live brackets</div><div className="eco-feat">Seasonal champions</div><div className="eco-feat">On-chain payouts</div></div></div>
             <div className="eco-card eco-c-quests"><span className="eco-tag">Adventure</span><div className="eco-icon"><img src="/landing/hub/quests.png" alt="" /></div><h3>Cosmic Quests</h3><p>Daily &amp; weekly missions. Lore-locked adventure chains. The main path from Cadet to Pilot.</p><div className="eco-feats"><div className="eco-feat">Daily refresh</div><div className="eco-feat">Streak rewards</div><div className="eco-feat">Lore-locked badges</div></div></div>
