@@ -8,7 +8,7 @@
   justify-content: space-between;
   gap: 20px;
   padding: 12px clamp(16px, 4vw, 48px);
-  border-bottom: 1px solid rgba(245, 166, 35, 0.16);
+  border-bottom: 1px solid rgba(34, 211, 238, 0.16);
   background: rgba(5, 7, 10, 0.86);
   backdrop-filter: blur(18px) saturate(130%);
 }
@@ -29,7 +29,7 @@
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  filter: drop-shadow(0 0 16px rgba(78, 229, 213, 0.42));
+  filter: drop-shadow(0 0 16px rgba(167, 139, 250, 0.42));
 }
 
 .site-header__nav {
@@ -67,12 +67,12 @@
 .site-header__nav a:focus-visible,
 .site-header__wallet .wallet-adapter-button:focus-visible,
 .site-header__wallet .web-wallet-button:focus-visible {
-  box-shadow: 0 0 0 2px #4ee5d5, 0 0 0 5px rgba(78, 229, 213, 0.18);
+  box-shadow: 0 0 0 2px #a78bfa, 0 0 0 5px rgba(167, 139, 250, 0.18);
 }
 
 .site-header__nav a.is-active {
   color: #0c0a06;
-  background: linear-gradient(135deg, #f5a623, #4ee5d5);
+  background: linear-gradient(135deg, #22d3ee, #a78bfa);
 }
 
 .site-header__wallet {
@@ -86,7 +86,7 @@
   padding: 0 18px;
   border: 0;
   border-radius: 8px;
-  background: linear-gradient(135deg, rgba(245, 166, 35, 0.95), rgba(78, 229, 213, 0.9));
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.95), rgba(167, 139, 250, 0.9));
   color: #06111d;
   font-weight: 900;
   cursor: pointer;
@@ -100,8 +100,34 @@
 .site-header__wallet .web-wallet-button.is-connected {
   background: rgba(255, 255, 255, 0.08);
   color: #e8f8ff;
-  border: 1px solid rgba(78, 229, 213, 0.24);
+  border: 1px solid rgba(167, 139, 250, 0.24);
 }
+
+/* WalletMultiButton from @solana/wallet-adapter-react-ui — restyle to match header */
+.site-header__wallet .web-wallet-button-host .wallet-adapter-button-trigger {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.95), rgba(167, 139, 250, 0.9));
+  color: #06111d;
+  font-weight: 900;
+  font-family: inherit;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 8px;
+  border: 0;
+  line-height: 1;
+}
+.site-header__wallet .web-wallet-button-host .wallet-adapter-button-trigger:hover,
+.site-header__wallet .web-wallet-button-host .wallet-adapter-button-trigger:not([disabled]):hover {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 1), rgba(167, 139, 250, 1));
+}
+.site-header__wallet .web-wallet-button-host .wallet-adapter-button-trigger[disabled] {
+  cursor: wait;
+  opacity: 0.72;
+}
+/* Modal layering is owned by src/styles/wallet-adapter-local.css —
+   wrapper z-index 100020 sits above the overlay z-index 100005. Don't
+   re-collapse all three layers to one z-index here (that puts overlay on top
+   of wrapper because it's later in the DOM and the modal becomes "dimmed"). */
 
 @media (max-width: 860px) {
   .site-header {
