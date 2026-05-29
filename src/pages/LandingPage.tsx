@@ -807,6 +807,30 @@ export default function LandingPage() {
         </div>
       </section>
 
+      <div className="sec-divider"><div className="ribbon">— Deflationary Engine —</div></div>
+
+      {/* BLACK HOLE feature */}
+      <section id="blackhole-feature">
+        <div className="container">
+          <div className="bh-feature reveal">
+            <div className="bh-visual">
+              <div className="bh-orb" aria-hidden="true"></div>
+            </div>
+            <div className="bh-copy">
+              <div className="sec-tag warn">The Black Hole</div>
+              <h2 className="sec-title">Where sybils<br />and dust die.</h2>
+              <p className="sec-sub">Flagged sybil clusters fall in and never climb back out. Burn dust tokens and abandoned NFTs to reclaim SOL rent — and 15% of every tournament fee feeds the deflationary sink.</p>
+              <div className="bh-stats">
+                <div className="bh-stat"><b>Reclaim</b><span>SOL rent back</span></div>
+                <div className="bh-stat"><b>15%</b><span>fee burn</span></div>
+                <div className="bh-stat"><b>Permanent</b><span>cluster removal</span></div>
+              </div>
+              <a href="/blackhole" className="btn btn-primary lg">Enter the Black Hole →</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <div className="sec-divider"><div className="ribbon">— Get Started —</div></div>
 
       {/* CTA */}
@@ -815,10 +839,6 @@ export default function LandingPage() {
           <div className="cta-orb reveal-zoom"></div>
           <h2 className="reveal grad-cyan">Your reputation<br />starts now.</h2>
           <p className="cta-sub reveal">Connect your wallet. See your tier. Play the games. Carry your reputation across the entire Solana ecosystem.</p>
-          <div className="cta-actions reveal">
-            <a href="https://identityprism.xyz" className="btn btn-primary lg">Launch the App</a>
-            <a href="#solution" className="btn btn-ghost lg">Read the Whitepaper</a>
-          </div>
         </div>
       </section>
 
