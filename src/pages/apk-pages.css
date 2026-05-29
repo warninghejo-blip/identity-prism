@@ -1110,9 +1110,11 @@
 .identity-card-web-stage {
   min-height: calc(100vh - 150px);
   display: grid;
-  grid-template-columns: minmax(500px, 1fr) 330px;
-  align-items: center;
-  gap: 26px;
+  /* Two equal columns so the mint frame mirrors the card width. */
+  grid-template-columns: repeat(2, minmax(0, 460px));
+  justify-content: center;
+  align-items: stretch;
+  gap: 28px;
   border: 1px solid rgba(78, 229, 213, 0.08);
   border-radius: 28px;
   padding: 28px;
@@ -1677,4 +1679,348 @@
   .hub-tile {
     min-height: 160px;
   }
+}
+
+/* ===== Mint Card v2 — premium layout matching the user's reference =====
+   Replaces the old .identity-card-web-mint panel on the live /identity page. */
+
+/* Connect-gate when wallet is disconnected (no demo on /identity — demo lives on /) */
+.identity-connect-gate {
+  display: flex;
+  justify-content: center;
+  padding: 80px 24px;
+}
+.identity-connect-card {
+  max-width: 480px;
+  width: 100%;
+  padding: 44px 36px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.012)),
+    radial-gradient(circle at 50% 0%, rgba(34,211,238,0.18), transparent 60%);
+  border: 1px solid rgba(34,211,238,0.18);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.45), 0 0 60px rgba(34,211,238,0.06);
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  text-align: center;
+  color: #fff;
+}
+.identity-connect-card svg {
+  color: #22d3ee;
+  filter: drop-shadow(0 0 14px rgba(34,211,238,0.5));
+}
+.identity-connect-card h2 {
+  margin: 0;
+  font: 900 26px 'Space Grotesk', sans-serif;
+  letter-spacing: -0.01em;
+}
+.identity-connect-card p {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(255,255,255,0.65);
+  line-height: 1.5;
+}
+.identity-connect-btn {
+  appearance: none;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 28px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #22d3ee, #06b6d4);
+  color: #06111d;
+  font: 800 13px 'Space Grotesk', sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform .2s, box-shadow .2s;
+  box-shadow: 0 14px 40px rgba(34,211,238,0.35);
+}
+.identity-connect-btn:hover { transform: translateY(-2px); box-shadow: 0 18px 50px rgba(34,211,238,0.45); }
+.identity-connect-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 20px;
+  border-radius: 12px;
+  background: rgba(34,211,238,0.06);
+  border: 1px solid rgba(34,211,238,0.22);
+  font-size: 13px;
+  color: rgba(255,255,255,0.7);
+}
+.identity-connect-hint strong { color: #67e8f9; font-weight: 600; }
+.identity-connect-demo {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  text-decoration: none;
+}
+.identity-connect-demo:hover { color: rgba(255,255,255,0.75); }
+
+/* ===== mint-card-v2 panel ===== */
+.mint-card-v2 {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding: 28px 24px;
+  border-radius: 22px;
+  background: rgba(8, 10, 16, 0.78);
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.02) inset;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  width: 100%;
+  /* Match the card frame size + vertical-center the content. */
+  min-height: min(72vh, 700px);
+  justify-self: stretch;
+  align-self: stretch;
+}
+
+/* Top row: address + status */
+.mint-card-v2 .mc-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mint-card-v2 .mc-addr-pill {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.7);
+  font: 600 12px 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: background .2s;
+}
+.mint-card-v2 .mc-addr-pill:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.mint-card-v2 .mc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font: 800 10px 'Orbitron', sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.mint-card-v2 .mc-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.mint-card-v2 .mc-pill.ready,
+.mint-card-v2 .mc-pill.synced {
+  background: rgba(52,211,153,0.10);
+  color: #34d399;
+  border: 1px solid rgba(52,211,153,0.22);
+}
+.mint-card-v2 .mc-pill.ready i,
+.mint-card-v2 .mc-pill.synced i {
+  background: #34d399;
+  box-shadow: 0 0 8px #34d399;
+  animation: mc-pulse 1.8s ease-in-out infinite;
+}
+.mint-card-v2 .mc-pill.pending {
+  background: rgba(251,191,36,0.10);
+  color: #fbbf24;
+  border: 1px solid rgba(251,191,36,0.22);
+}
+.mint-card-v2 .mc-pill.pending i {
+  background: #fbbf24;
+  box-shadow: 0 0 8px #fbbf24;
+}
+@keyframes mc-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* Score row: big ring + identity-score text */
+.mint-card-v2 .mc-score-row {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 18px;
+  align-items: center;
+}
+.mint-card-v2 .mc-ring {
+  position: relative;
+  width: 132px;
+  height: 132px;
+}
+.mint-card-v2 .mc-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.mint-card-v2 .mc-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.mint-card-v2 .mc-ring-score {
+  font: 900 36px 'Space Grotesk', sans-serif;
+  color: #fff;
+  line-height: 1;
+}
+.mint-card-v2 .mc-ring-max {
+  font: 700 10px 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,0.4);
+  margin-top: 4px;
+}
+.mint-card-v2 .mc-score-meta {
+  display: grid;
+  gap: 6px;
+}
+.mint-card-v2 .mc-label {
+  font: 800 10px 'Orbitron', sans-serif;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.45);
+}
+.mint-card-v2 .mc-percentile {
+  font: 700 18px 'Space Grotesk', sans-serif;
+  color: #fff;
+  line-height: 1.2;
+}
+.mint-card-v2 .mc-tier {
+  font-size: 13px;
+  color: rgba(255,255,255,0.65);
+  letter-spacing: 0.02em;
+}
+.mint-card-v2 .mc-tier span { font-weight: 700; }
+
+/* Card row */
+.mint-card-v2 .mc-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.mint-card-v2 .mc-card-row strong {
+  display: block;
+  margin-top: 4px;
+  font: 700 14px 'Space Grotesk', sans-serif;
+  color: #fff;
+}
+
+/* Pay with */
+.mint-card-v2 .mc-paywith { display: grid; gap: 10px; }
+.mint-card-v2 .mc-pay-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.mint-card-v2 .mc-pay-chip {
+  appearance: none;
+  display: grid;
+  gap: 4px;
+  text-align: center;
+  padding: 14px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+  color: rgba(255,255,255,0.7);
+  cursor: pointer;
+  transition: border-color .2s, background .2s, color .2s;
+}
+.mint-card-v2 .mc-pay-chip:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.mint-card-v2 .mc-pay-chip.active {
+  border-color: rgba(34,211,238,0.55);
+  background: rgba(34,211,238,0.06);
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(34,211,238,0.4) inset, 0 0 16px rgba(34,211,238,0.18);
+}
+.mint-card-v2 .mc-pay-name {
+  font: 800 12px 'Orbitron', sans-serif;
+  letter-spacing: 0.18em;
+  color: #22d3ee;
+}
+.mint-card-v2 .mc-pay-chip:not(.active) .mc-pay-name { color: rgba(255,255,255,0.85); }
+.mint-card-v2 .mc-pay-amount {
+  font: 600 11px 'JetBrains Mono', monospace;
+  color: rgba(255,255,255,0.55);
+}
+
+/* Mint button (big) */
+.mint-card-v2 .mc-mint {
+  appearance: none;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 22px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #22d3ee, #06b6d4);
+  color: #06111d;
+  font: 900 13px 'Space Grotesk', sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform .2s, box-shadow .2s, opacity .2s;
+  box-shadow: 0 14px 38px rgba(34,211,238,0.32);
+}
+.mint-card-v2 .mc-mint .mc-mint-l {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.mint-card-v2 .mc-mint:hover { transform: translateY(-1px); box-shadow: 0 18px 48px rgba(34,211,238,0.45); }
+.mint-card-v2 .mc-mint:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.mint-card-v2 .mc-mint-r {
+  font: 700 12px 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  color: #06111d;
+  opacity: 0.85;
+}
+
+/* Action row */
+.mint-card-v2 .mc-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 10px;
+}
+.mint-card-v2 .mc-act {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.025);
+  color: rgba(255,255,255,0.8);
+  font: 800 10px 'Orbitron', sans-serif;
+  letter-spacing: 0.18em;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background .2s, transform .2s;
+}
+.mint-card-v2 .mc-act:hover {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.mint-card-v2 .mc-act:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+@media (max-width: 980px) {
+  .mint-card-v2 { justify-self: center; }
+  .mint-card-v2 .mc-score-row { grid-template-columns: 110px 1fr; }
+  .mint-card-v2 .mc-ring { width: 110px; height: 110px; }
+  .mint-card-v2 .mc-ring-score { font-size: 30px; }
 }
