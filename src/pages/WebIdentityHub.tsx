@@ -1,6 +1,6 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { BadgeCheck, Loader2, RefreshCw, Share2, Shield, Wallet } from 'lucide-react';
+import { BadgeCheck, Copy, Loader2, RefreshCw, Share2, Wallet } from 'lucide-react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -9,7 +9,8 @@ import SiteHeader from '@/components/SiteHeader';
 import { CelestialCard as WebCelestialCard } from '@/components/WebCelestialCard';
 import { useWalletData, type PlanetTier, type WalletData, type WalletTraits } from '@/hooks/useWalletData';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
-import { TIER_LABELS, getCompositeTierFromScore } from '@/lib/constants/tierColors';
+import { useWebComposite } from '@/hooks/useWebComposite';
+import { TIER_LABELS, TIER_HEX, getCompositeTierFromScore } from '@/lib/constants/tierColors';
 import { mintIdentityPrism, updateIdentityPrism } from '@/lib/mintIdentityPrism';
 import { getPrismBalance } from '@/lib/prismCoin';
 import { getHeliusRpcUrl, getHeliusProxyHeaders, SEEKER_TOKEN } from '@/constants';
@@ -19,10 +20,25 @@ import './apk-pages.css';
 
 type PayCurrency = 'SOL' | 'SKR' | 'COINS';
 
+// Rough percentile copy for the mint panel. Bucketed so it stays stable.
+function percentileLabel(score: number): string {
+  if (score >= 950) return 'Top 0.1% of holders';
+  if (score >= 880) return 'Top 1% of holders';
+  if (score >= 800) return 'Top 5% of holders';
+  if (score >= 700) return 'Top 12% of holders';
+  if (score >= 600) return 'Top 22% of holders';
+  if (score >= 480) return 'Top 38% of holders';
+  if (score >= 350) return 'Top 55% of holders';
+  if (score >= 220) return 'Top 75% of holders';
+  if (score > 0)    return 'Building reputation';
+  return '—';
+}
+
+// PRISM (COINS) payment is a Seeker-only privilege — APK uses ApkIdentityHub.tsx
+// which keeps all three options. Web users see only SOL + SKR.
 const PAY_OPTIONS: Array<{ key: PayCurrency; label: string; iconUrl?: string; emoji?: string }> = [
   { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
   { key: 'SKR', label: 'SKR', iconUrl: '/tokens/skr-icon.png' },
-  { key: 'COINS', label: 'PRISM', iconUrl: '/tokens/prism-icon.png' },
 ];
 
 const demoAddress = '11111111111111111111111111111111';
@@ -140,10 +156,16 @@ export default function WebIdentityHub() {
   }, [wallet.connected, address]);
 
   const liveTraits = walletData.traits;
-  const liveScore = Math.round(composite.score || walletData.score || 0);
+  // Web-only composite: depends on onchain + sybilTrust (games/social/engagement
+  // are Seeker-only). Capped at 899 (= "sun" tier) for wallets without a Seeker
+  // Genesis NFT — binary_sun is gated behind Seeker.
+  // IMPORTANT: do NOT fall back to walletData.score (raw full composite) — the
+  // card and the side menu must show the SAME number.
+  const webComposite = useWebComposite(wallet.connected ? address : null);
+  const liveScore = Math.round(webComposite.score || 0);
   const liveTier = (
-    composite.hasComposite
-      ? getCompositeTierFromScore(liveScore, composite.tier)
+    webComposite.tier
+      ? getCompositeTierFromScore(liveScore, webComposite.tier)
       : getCompositeTierFromScore(liveScore, liveTraits?.planetTier || 'uranus')
   ) as PlanetTier;
   const previewTraits = useMemo(() => buildPreviewTraits('saturn'), []);
@@ -258,6 +280,22 @@ export default function WebIdentityHub() {
           </div>
         </div>
 
+        {!wallet.connected ? (
+          /* Web /identity page is wallet-only — demo lives on / (Index.tsx).
+             Show a clean connect prompt instead of a fake preview card. */
+          <section className="identity-connect-gate">
+            <div className="identity-connect-card">
+              <Wallet size={42} aria-hidden="true" />
+              <h2>Connect your wallet first</h2>
+              <p>Identity Prism reads your wallet to build a sybil-resistant identity passport. Demo and tier preview live on the home page.</p>
+              <div className="identity-connect-hint">
+                <Wallet size={16} aria-hidden="true" />
+                Use the <strong>Connect Wallet</strong> button in the top-right menu.
+              </div>
+              <Link to="/" className="identity-connect-demo">See the demo card on home →</Link>
+            </div>
+          </section>
+        ) : (
         <section className="identity-card-web-stage card-stage controls-closed">
           <div className="identity-card-web-card">
             <Suspense
@@ -271,108 +309,127 @@ export default function WebIdentityHub() {
               <WebCelestialCard
                 data={cardData}
                 liveData={isLiveCard}
-                compositeOverride={isLiveCard ? undefined : previewComposite}
+                compositeOverride={undefined}
               />
             </Suspense>
           </div>
 
-          <aside className="identity-card-web-mint mint-panel open">
-            <div className="mint-panel-content identity-card-web-mint-inner">
-              <div className="identity-card-web-status">
-                <div>
-                  <span>{wallet.connected ? shortAddress(address) : 'Preview mode'}</span>
-                  <strong>{wallet.connected ? liveScore || 'Loading' : 'Connect wallet'}</strong>
-                </div>
-                <Shield size={22} aria-hidden="true" />
-              </div>
+          <aside className="mint-card-v2">
+            {/* Top row: address + status pill */}
+            <div className="mc-top-row">
+              <button
+                type="button"
+                className="mc-addr-pill"
+                onClick={() => navigator.clipboard?.writeText(address)}
+                title="Copy address"
+              >
+                <span>{shortAddress(address)}</span>
+                <Copy size={11} aria-hidden="true" />
+              </button>
+              <span className={`mc-pill ${readyToMint ? 'ready' : 'pending'}`}>
+                <i />
+                {walletData.isLoading ? 'LOADING' : readyToMint ? 'MINT READY' : 'PENDING'}
+              </span>
+            </div>
 
-              <div className="identity-card-web-readout">
-                <div>
-                  <span>Tier</span>
-                  <b>{tierLabel}</b>
-                </div>
-                <div>
-                  <span>Card</span>
-                  <b>{wallet.connected ? 'Live wallet' : 'Demo preview'}</b>
-                </div>
-                <div>
-                  <span>Mint</span>
-                  <b>{readyToMint ? 'Ready' : wallet.connected ? 'Loading' : 'Connect'}</b>
+            {/* Score row */}
+            <div className="mc-score-row">
+              <div
+                className="mc-ring"
+                style={{ '--mc-c': TIER_HEX[liveTier] || '#22d3ee' } as CSSProperties}
+              >
+                <svg viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,.06)" strokeWidth="6" />
+                  <circle
+                    cx="50" cy="50" r="42" fill="none"
+                    stroke="var(--mc-c)" strokeWidth="6" strokeLinecap="round"
+                    strokeDasharray="263"
+                    strokeDashoffset={263 - Math.round((Math.max(0, Math.min(1000, liveScore)) / 1000) * 263)}
+                    style={{ filter: 'drop-shadow(0 0 10px var(--mc-c))' }}
+                  />
+                </svg>
+                <div className="mc-ring-label">
+                  <div className="mc-ring-score">{liveScore || '—'}</div>
+                  <div className="mc-ring-max">/ 1000</div>
                 </div>
               </div>
+              <div className="mc-score-meta">
+                <div className="mc-label">IDENTITY SCORE</div>
+                <div className="mc-percentile">{percentileLabel(liveScore)}</div>
+                <div className="mc-tier">
+                  Tier · <span style={{ color: TIER_HEX[liveTier] || '#22d3ee' }}>{tierLabel}</span>
+                </div>
+              </div>
+            </div>
 
-              {/* Pay-selector: pick currency for mint */}
-              <div className="identity-pay-selector" role="group" aria-label="Select payment currency">
+            {/* Card status row */}
+            <div className="mc-card-row">
+              <div>
+                <div className="mc-label">CARD</div>
+                <strong>Live Wallet</strong>
+              </div>
+              <span className="mc-pill synced"><i />SYNCED</span>
+            </div>
+
+            {/* Pay with */}
+            <div className="mc-paywith">
+              <div className="mc-label">PAY WITH</div>
+              <div className="mc-pay-grid">
                 {PAY_OPTIONS.map((opt) => {
                   const active = payWith === opt.key;
+                  const amount = opt.key === 'SOL'
+                    ? `${balances.SOL == null ? '—' : balances.SOL.toFixed(3)} SOL`
+                    : `${balances.SKR == null ? '—' : Math.floor(balances.SKR).toLocaleString()} SKR`;
                   return (
                     <button
                       key={opt.key}
                       type="button"
-                      className={`identity-pay-chip${active ? ' active' : ''}`}
+                      className={`mc-pay-chip${active ? ' active' : ''}`}
                       onClick={() => setPayWith(opt.key)}
                       aria-pressed={active}
-                      aria-label={opt.label}
-                      title={opt.label}
                     >
-                      {opt.iconUrl ? (
-                        <img
-                          src={opt.iconUrl}
-                          className="identity-pay-icon"
-                          alt=""
-                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                        />
-                      ) : (
-                        <span className="identity-pay-emoji" aria-hidden="true">{opt.emoji}</span>
-                      )}
-                      <span className="identity-pay-label">{opt.label}</span>
+                      <span className="mc-pay-name">{opt.label}</span>
+                      <span className="mc-pay-amount">{amount}</span>
                     </button>
                   );
                 })}
-                <div className="identity-pay-price" aria-live="polite">
-                  {activePaymentAmount}
-                </div>
               </div>
+            </div>
 
-              <button
-                type="button"
-                className="mint-primary-btn identity-card-web-mint-btn"
-                onClick={handleMint}
-                disabled={minting || updating}
-              >
+            {/* Big MINT IDENTITY button */}
+            <button
+              type="button"
+              className="mc-mint"
+              onClick={handleMint}
+              disabled={minting || updating || !readyToMint}
+            >
+              <span className="mc-mint-l">
                 {minting ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <BadgeCheck size={18} aria-hidden="true" />}
-                {minting ? 'MINTING' : wallet.connected ? 'MINT IDENTITY' : 'CONNECT WALLET'}
-              </button>
+                {minting ? 'MINTING' : 'MINT IDENTITY'}
+              </span>
+              <span className="mc-mint-r">{activePaymentAmount}</span>
+            </button>
 
-              {canUpdateIdentity ? (
-                <button
-                  type="button"
-                  className="mint-secondary-btn identity-card-web-secondary"
-                  onClick={handleUpdate}
-                  disabled={updating || minting}
-                >
-                  {updating ? (
-                    <Loader2 className="animate-spin" size={18} aria-hidden="true" />
-                  ) : (
-                    <RefreshCw size={18} aria-hidden="true" />
-                  )}
-                  {updating ? 'UPDATING' : 'UPDATE IDENTITY'}
+            {/* 3 secondary buttons */}
+            <div className="mc-actions">
+              {canUpdateIdentity && (
+                <button type="button" className="mc-act" onClick={handleUpdate} disabled={updating || minting}>
+                  {updating ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
+                  <span>UPDATE</span>
                 </button>
-              ) : null}
-
-              <button type="button" className="mint-secondary-btn identity-card-web-secondary" onClick={() => setVisible(true)}>
-                <Wallet size={16} aria-hidden="true" />
-                WALLET
+              )}
+              <button type="button" className="mc-act" onClick={() => setVisible(true)}>
+                <Wallet size={18} aria-hidden="true" />
+                <span>WALLET</span>
               </button>
-
-              <Link to="/blackhole" className="mint-share-btn identity-card-web-secondary">
-                <Share2 size={16} aria-hidden="true" />
-                SHARE / BLACK HOLE
+              <Link to="/blackhole" className="mc-act">
+                <Share2 size={18} aria-hidden="true" />
+                <span>SHARE</span>
               </Link>
-
             </div>
           </aside>
         </section>
+        )}
       </main>
     </div>
   );

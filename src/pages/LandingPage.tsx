@@ -532,7 +532,7 @@ export default function LandingPage() {
                 <div><h4>The Sybil Path</h4><div className="sub">Bot · Farm · Multi-account</div></div>
               </div>
               <div className="sc-steps">
-                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects 10,000 wallets</b><span>Operator runs the same scripted on-chain history across a farm.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects 10,000 wallets</b><span>An operator spins up a wallet farm and replays the same scripted on-chain history across every account to fake real, organic activity.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">02</div><div className="sc-step-content"><b>Pattern flagged</b><span>The Prism detects shared funding sources, identical timing, copy-paste behavior.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">03</div><div className="sc-step-content"><b>Forced into games</b><span>Score drops. To recover, the wallet must prove it can actually play in real time.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">04</div><div className="sc-step-content"><b>Game performance fails</b><span>Bots can't ace skill games at scale. Cluster scores collapse together.</span></div></div>
