@@ -860,10 +860,14 @@
 /* sybil steps: natural height (text is balanced row-for-row so columns line up) */
 .ipl .sc-step{align-items:flex-start}
 
-/* ranks: rows fill the frame so both columns end at the same bottom level */
-.ipl .ranks-vs{display:flex;flex-direction:column}
-.ipl .ranks-vs h4{flex:0 0 auto}
-.ipl .ranks-vs-row{flex:1 1 auto;align-items:center}
+/* ranks: panels top-aligned, rows natural height (no stretch gaps), tighter vertical padding */
+.ipl .ranks-intro{align-items:start}
+.ipl .ranks-vs{display:flex;flex-direction:column;padding:22px 30px}
+.ipl .ranks-vs h4{flex:0 0 auto;margin-bottom:12px}
+.ipl .ranks-vs-row{flex:0 0 auto;align-items:center;padding:11px 0}
+/* rank cards: less top/bottom padding inside the frames */
+.ipl .rank-card{padding:18px 14px}
+.ipl .rank-card .badge-img{width:68px;height:68px;margin:0 auto 10px}
 
 /* black hole orb — proper spinning accretion disk + singularity */
 .ipl .bh-orb{width:min(320px,76%);aspect-ratio:1;border-radius:50%;position:relative;
@@ -893,3 +897,22 @@
 .ipl #badges h2.sec-title{background:linear-gradient(120deg,#fff 26%,#7dd3fc 82%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .ipl #blackhole-feature h2.sec-title{background:linear-gradient(120deg,#fff 26%,#a78bfa 66%,#f472b6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .ipl #explode h2.sec-title{background:linear-gradient(120deg,#fff 26%,#fcbf49 60%,#a78bfa);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+
+/* ── round-4 ── */
+/* hero: no CTA buttons; left column stretches to the card's height and the
+   stats row sticks to the bottom so the card and the text end on the same line */
+.ipl .hero-wrap{align-items:stretch}
+.ipl .hero-left{display:flex;flex-direction:column}
+.ipl .hero-right{display:flex;align-items:center;justify-content:center}
+.ipl .hero-desc2{font-size:15px;line-height:1.7;color:rgba(255,255,255,.55);margin-top:16px;max-width:30em}
+.ipl .hero-desc2 strong{color:rgba(255,255,255,.82);font-weight:600}
+.ipl .hero-stats{margin-top:auto;padding-top:36px}
+@media (max-width:980px){.ipl .hero-stats{margin-top:32px}}
+
+/* ecosystem cards: icon + name on ONE line; card content centered */
+.ipl .eco-card{text-align:center}
+.ipl .eco-head{display:flex;align-items:center;justify-content:center;gap:13px;margin-bottom:14px;position:relative;z-index:2}
+.ipl .eco-head .eco-icon{width:44px;height:44px;margin-bottom:0;flex-shrink:0}
+.ipl .eco-head h3{margin-bottom:0;text-align:left}
+.ipl .eco-card p{margin-left:auto;margin-right:auto}
+.ipl .eco-feats{align-items:center}
