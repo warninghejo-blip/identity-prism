@@ -72,13 +72,13 @@
     <p>The composite score is computed from five weighted pillars and capped at 1000:</p>
     <table>
       <tr><th>Pillar</th><th>Weight</th><th>Measures</th></tr>
-      <tr><td>On-Chain</td><td>25%</td><td>Wallet age, transaction count, holdings</td></tr>
-      <tr><td>DeFi</td><td>25%</td><td>Protocol diversity, positions, depth</td></tr>
-      <tr><td>Trust</td><td>20%</td><td>Sybil-resistance, clean record, integrity</td></tr>
-      <tr><td>Games</td><td>20%</td><td>Real-time skill performance</td></tr>
+      <tr><td>On-Chain</td><td>40%</td><td>Wallet age, transaction count, holdings, protocol use</td></tr>
+      <tr><td>Trust</td><td>25%</td><td>Sybil-resistance, clean record, integrity</td></tr>
+      <tr><td>Games</td><td>15%</td><td>Real-time skill performance (human proof)</td></tr>
       <tr><td>Social</td><td>10%</td><td>PvP results, community contribution</td></tr>
+      <tr><td>Engagement</td><td>10%</td><td>Quests, streaks, exploration</td></tr>
     </table>
-    <p>The weighted result <code>onchain×0.25 + defi×0.25 + trust×0.20 + games×0.20 + social×0.10</code> maps to one of ten planetary tiers:</p>
+    <p>The weighted result <code>onchain×0.40 + trust×0.25 + games×0.15 + social×0.10 + engagement×0.10</code> maps to one of ten planetary tiers:</p>
     <table>
       <tr><th>Tier</th><th>Score Range</th><th>Tier</th><th>Score Range</th></tr>
       <tr><td>Mercury</td><td>0 — 99</td><td>Uranus</td><td>600 — 699</td></tr>
@@ -130,7 +130,7 @@
     <h2 id="s9"><span class="num">09</span>Roadmap</h2>
     <ul>
       <li><strong>Phase 1 — Core.</strong> Composite scoring, ten tiers, twenty badges, Prism Scanner, identity card mint.</li>
-      <li><strong>Phase 2 — Prism League.</strong> Orbit Survival, Gravity Runner, Cosmic Wars, Cosmic Quests, and Prism Cup live with on-chain attestation.</li>
+      <li><strong>Phase 2 — Prism League.</strong> Orbit Survival, Cosmic Defender, Gravity Runner, and Text Adventures live with on-chain attestation.</li>
       <li><strong>Phase 3 — Hub economy.</strong> Stellar Forge cosmetics, Cosmic Vault staking, Black Hole burn, Wallet Arena PvP, leaderboards.</li>
       <li><strong>Phase 4 — Composability.</strong> Public API and SDK so any Solana protocol can gate drops, votes, and access on a portable Prism score.</li>
       <li><strong>Phase 5 — Cross-app reputation.</strong> Shared social graph integration so reputation follows the user across the ecosystem.</li>
