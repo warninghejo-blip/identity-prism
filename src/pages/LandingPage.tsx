@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, BadgeCheck, CircleCheck, Flame, Gamepad2, ShieldCheck, Sparkles, Trophy, Wallet, Zap } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { ArrowRight, BadgeCheck, CircleCheck, Flame, Gamepad2, ShieldCheck, Sparkles, Trophy, Wallet, Zap, type LucideIcon } from 'lucide-react';
+import { motion, useMotionValue, useTransform, animate, useScroll, useSpring } from 'framer-motion';
 import SiteHeader from '@/components/SiteHeader';
 import WebIdentityDemoCard from '@/components/WebIdentityDemoCard';
 import type { PlanetTier } from '@/hooks/useWalletData';
@@ -11,6 +11,7 @@ import './landing.css';
 
 const sections = [
   ['hero', 'Hero'],
+  ['network-live', 'Network'],
   ['problem', 'Problem'],
   ['solution', 'Solution'],
   ['sybil-catch', 'Tracks'],
@@ -19,7 +20,6 @@ const sections = [
   ['games', 'Games'],
   ['ranks', 'Ranks'],
   ['explode', 'Finale'],
-  ['network-live', 'Network'],
   ['cta', 'CTA'],
   ['footer', 'Footer'],
 ] as const;
@@ -61,6 +61,46 @@ function SectionHead({ eyebrow, title, copy, tone = 'prism' }: { eyebrow: string
 
 function formatStat(value: number) {
   return new Intl.NumberFormat('en-US', { notation: value >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value);
+}
+
+function PrimaryStatTile({
+  icon: Icon,
+  label,
+  value,
+  color,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: number;
+  color: 'cyan' | 'violet' | 'red';
+}) {
+  const mv = useMotionValue(0);
+  const display = useTransform(mv, (latest) => Math.round(latest).toLocaleString());
+  useEffect(() => {
+    const controls = animate(mv, value, { duration: 1.2, ease: [0.16, 1, 0.3, 1] });
+    return () => controls.stop();
+  }, [mv, value]);
+  return (
+    <motion.div
+      className={`primary-stat-tile ${color}`}
+      initial={{ opacity: 0, y: 24 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-80px' }}
+      transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <div className="primary-stat-glow" aria-hidden="true" />
+      <div className="primary-stat-head">
+        <span className="primary-stat-icon" aria-hidden="true">
+          <Icon size={20} strokeWidth={1.8} />
+        </span>
+        <span className="primary-stat-live">
+          <i />LIVE
+        </span>
+      </div>
+      <motion.b className="primary-stat-value">{display}</motion.b>
+      <span className="primary-stat-label">{label}</span>
+    </motion.div>
+  );
 }
 
 function StatTile({ label, value, color }: { label: string; value: number; color: 'cyan' | 'violet' | 'red' | 'orange' }) {
@@ -212,6 +252,121 @@ function LiveClusterGraph() {
   );
 }
 
+// Magnetic CTA — cursor pulls the button toward itself within ~60px radius.
+// Falls back to a plain Link if reduced-motion is requested.
+function MagneticLink({
+  to,
+  className,
+  children,
+}: {
+  to: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLAnchorElement>(null);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const reduce = typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return (
+    <Link
+      to={to}
+      ref={ref}
+      className={className}
+      onPointerMove={(e) => {
+        if (reduce || !ref.current) return;
+        const r = ref.current.getBoundingClientRect();
+        const x = e.clientX - (r.left + r.width / 2);
+        const y = e.clientY - (r.top + r.height / 2);
+        setOffset({ x: x * 0.22, y: y * 0.22 });
+      }}
+      onPointerLeave={() => setOffset({ x: 0, y: 0 })}
+      style={{
+        transform: `translate(${offset.x}px, ${offset.y}px)`,
+        transition: 'transform 0.32s cubic-bezier(.16,1,.3,1)',
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
+
+// Fixed gradient scroll-progress bar across the very top of the viewport.
+function ScrollProgress() {
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 120, damping: 30, restDelta: 0.001 });
+  return <motion.div className="scroll-progress" style={{ scaleX }} aria-hidden="true" />;
+}
+
+// Subtle cursor-following radial glow that gives the page a "live" feel
+// without being intrusive. Stays behind content.
+function CursorGlow() {
+  const mx = useMotionValue(0);
+  const my = useMotionValue(0);
+  const sx = useSpring(mx, { stiffness: 80, damping: 24 });
+  const sy = useSpring(my, { stiffness: 80, damping: 24 });
+  useEffect(() => {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) return;
+    const onMove = (e: PointerEvent) => {
+      mx.set(e.clientX);
+      my.set(e.clientY);
+    };
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => window.removeEventListener('pointermove', onMove);
+  }, [mx, my]);
+  return (
+    <motion.div
+      className="cursor-glow"
+      style={{
+        x: useTransform(sx, (v) => v - 240),
+        y: useTransform(sy, (v) => v - 240),
+      }}
+      aria-hidden="true"
+    />
+  );
+}
+
+// Lenis smooth scroll — gives the page a cinematic ease on every wheel tick.
+// Scoped to the landing route only so BlackHole / Sybil / Identity custom
+// scroll containers aren't affected.
+function useLenisSmoothScroll() {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let cancelled = false;
+    let rafId: number | null = null;
+    let lenisRef: { destroy: () => void; raf: (t: number) => void } | null = null;
+    void (async () => {
+      try {
+        const mod = await import('lenis');
+        if (cancelled) return;
+        const Lenis = (mod.default || (mod as unknown as { Lenis: typeof mod.default }).Lenis) as new (opts?: object) => {
+          destroy: () => void; raf: (t: number) => void;
+        };
+        lenisRef = new Lenis({
+          duration: 1.15,
+          easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+          smoothWheel: true,
+          wheelMultiplier: 0.95,
+          touchMultiplier: 1.2,
+        });
+        const loop = (time: number) => {
+          lenisRef?.raf(time);
+          rafId = requestAnimationFrame(loop);
+        };
+        rafId = requestAnimationFrame(loop);
+      } catch (error) {
+        console.warn('[lenis] init failed, falling back to native scroll', error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (rafId != null) cancelAnimationFrame(rafId);
+      lenisRef?.destroy();
+    };
+  }, []);
+}
+
 function useLandingScrollReveals() {
   useEffect(() => {
     const targets = Array.from(document.querySelectorAll<HTMLElement>('.landing-page .reveal, .landing-page .reveal-stagger'));
@@ -240,6 +395,7 @@ function useLandingScrollReveals() {
 
 export default function LandingPage() {
   useLandingScrollReveals();
+  useLenisSmoothScroll();
   const stats = useGlobalStats(15_000);
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const statsUpdatedAt = stats?.updatedAt
@@ -249,29 +405,48 @@ export default function LandingPage() {
     [stats?.idsMinted ?? 0, 'Identities'],
     [stats?.walletsScanned ?? 0, 'Wallets Scanned'],
     [stats?.sybilsCaught ?? 0, 'Sybils Caught'],
-    [stats?.blackHoleOps ?? 0, 'Cleanups Done'],
   ] as const;
+
+  // Hero parallax — title block drifts up, demo card drifts down, slight
+  // opacity fade as the hero exits. Both driven by viewport scroll progress.
+  const heroRef = useRef<HTMLDivElement>(null);
+  const { scrollYProgress: heroScroll } = useScroll({
+    target: heroRef,
+    offset: ['start start', 'end start'],
+  });
+  const heroTextY = useTransform(heroScroll, [0, 1], ['0%', '-30%']);
+  const heroCardY = useTransform(heroScroll, [0, 1], ['0%', '15%']);
+  const heroOpacity = useTransform(heroScroll, [0, 0.8], [1, 0.4]);
+  const heroBlur = useTransform(heroScroll, [0, 1], ['blur(0px)', 'blur(4px)']);
 
   return (
     <div className="landing-page">
       <div className="landing-stars" aria-hidden="true" />
       <SiteHeader />
 
+      <ScrollProgress />
+      <CursorGlow />
+
       <aside className="scroll-rail" aria-label="Section progress">
         {sections.map(([id, label]) => (
-          <button key={id} type="button" data-label={label} onClick={() => scrollTo(id)} aria-label={`Go to ${label}`} />
+          <button
+            key={id}
+            type="button"
+            onClick={() => scrollTo(id)}
+            aria-label={`Go to ${label}`}
+          >{label}</button>
         ))}
       </aside>
 
       <main>
-        <section className="section hero-section" data-section-id="hero" id="hero">
+        <section ref={heroRef} className="section hero-section" data-section-id="hero" id="hero">
           <div className="landing-container hero-grid">
-            <div className="reveal">
+            <motion.div className="reveal" style={{ y: heroTextY, opacity: heroOpacity, filter: heroBlur }}>
               <span className="landing-eyebrow">Solana reputation layer</span>
               <h1><span>Sybil-resistant</span><span>identity for real users.</span></h1>
               <p>Identity Prism turns wallet history, gameplay, cleanup, badges, and community review into a readable reputation card.</p>
               <div className="hero-actions">
-                <Link to="/identity" className="landing-btn primary">Open Identity Hub <ArrowRight aria-hidden="true" /></Link>
+                <MagneticLink to="/identity" className="landing-btn primary">Open Identity Hub <ArrowRight aria-hidden="true" /></MagneticLink>
                 <button type="button" className="landing-btn ghost" onClick={() => scrollTo('solution')}>See System</button>
               </div>
               <div className="hero-stats reveal-stagger">
@@ -282,9 +457,31 @@ export default function LandingPage() {
                   </div>
                 ))}
               </div>
-            </div>
-            <div className="hero-card-preview reveal">
+            </motion.div>
+            <motion.div className="hero-card-preview reveal" style={{ y: heroCardY, opacity: heroOpacity }}>
               <WebIdentityDemoCard />
+            </motion.div>
+          </div>
+        </section>
+
+        <SectionDivider label="Network Live" />
+        <section className="section landing-section live-stats-section" data-section-id="network-live" id="network-live">
+          <div className="landing-container">
+            <SectionHead
+              eyebrow="Network Live"
+              tone="green"
+              title="The protocol pulse is public."
+              copy="Identity mints, wallet scans, sybil verdicts, reports, and clusters — all updating live from the backend."
+            />
+            <p className="live-stats-updated reveal" aria-live="polite">Fresh backend sync: {statsUpdatedAt}</p>
+            <div className="live-stats-primary reveal-stagger">
+              <PrimaryStatTile icon={BadgeCheck} label="Identities Minted" value={stats?.idsMinted ?? 0} color="cyan" />
+              <PrimaryStatTile icon={Wallet} label="Wallets Scanned" value={stats?.walletsScanned ?? 0} color="violet" />
+              <PrimaryStatTile icon={ShieldCheck} label="Sybils Caught" value={stats?.sybilsCaught ?? 0} color="red" />
+            </div>
+            <div className="live-stats-secondary reveal-stagger">
+              <StatTile label="Reports Verified" value={stats?.sybilsReported ?? 0} color="cyan" />
+              <StatTile label="Clusters Mapped" value={stats?.clusters ?? 0} color="violet" />
             </div>
           </div>
         </section>
@@ -380,27 +577,6 @@ export default function LandingPage() {
             <div className="explode-stage reveal">
               <div className="explode-planet"><img src="/landing/textures/tiers/sun.png" alt="Exploding planet finale" /></div>
               {Array.from({ length: 14 }, (_, i) => <span key={i} className="shard" style={{ '--i': i } as React.CSSProperties} />)}
-            </div>
-          </div>
-        </section>
-
-        <SectionDivider label="Network Live" />
-        <section className="section landing-section live-stats-section" data-section-id="network-live" id="network-live">
-          <div className="landing-container">
-            <SectionHead
-              eyebrow="Network Live"
-              tone="green"
-              title="The protocol pulse is public."
-              copy="Identity mints, scans, sybil outcomes, cleanup operations, reports, and clusters update from the live backend."
-            />
-            <p className="live-stats-updated reveal" aria-live="polite">Fresh backend sync: {statsUpdatedAt}</p>
-            <div className="live-stats-grid reveal-stagger">
-              <StatTile label="Identities Minted" value={stats?.idsMinted ?? 0} color="cyan" />
-              <StatTile label="Wallets Scanned" value={stats?.walletsScanned ?? 0} color="violet" />
-              <StatTile label="Sybils Caught" value={stats?.sybilsCaught ?? 0} color="red" />
-              <StatTile label="Cleanups Done" value={stats?.blackHoleOps ?? 0} color="orange" />
-              <StatTile label="Reports Verified" value={stats?.sybilsReported ?? 0} color="cyan" />
-              <StatTile label="Clusters Mapped" value={stats?.clusters ?? 0} color="violet" />
             </div>
           </div>
         </section>
