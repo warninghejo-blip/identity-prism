@@ -1,8 +1,9 @@
 /* Identity Prism — Main landing styles */
 .ipl *,.ipl *::before,.ipl *::after{box-sizing:border-box}
 /* zero margins/padding for the landing's own elements, but NOT inside the real
-   celestial card (.web-id-demo) — it ships its own box model like everywhere else */
-.ipl *:not(.web-id-demo):not(.web-id-demo *),.ipl *::before,.ipl *::after{margin:0;padding:0}
+   celestial card (.web-id-demo). :where() keeps specificity at (0,1,0) so the
+   reference's own .ipl .class paddings still win (otherwise everything loses its spacing). */
+.ipl :where(:not(.web-id-demo, .web-id-demo *)){margin:0;padding:0}
 .ipl{
   --bg:#050508; --bg2:#0a0a14;
   --text:rgba(255,255,255,.88); --muted:rgba(255,255,255,.45); --dim:rgba(255,255,255,.18);
@@ -817,11 +818,12 @@
 /* hero slot: keep the real card sized like the reference cc-stage */
 .ipl .hero-right{display:flex;justify-content:center;width:100%}
 
-/* hero stats: keep all four on one row */
-.ipl .hero-stats{flex-wrap:nowrap;gap:clamp(16px,2.2vw,34px)}
-.ipl .hero-stat .n{white-space:nowrap}
-.ipl .hero-stat .l{white-space:nowrap}
+/* hero stats on one row (wrap only on very small) */
+.ipl .hero-stats{flex-wrap:nowrap;gap:clamp(14px,2vw,34px)}
+@media (max-width:560px){.ipl .hero-stats{flex-wrap:wrap;gap:18px}}
 
-
-/* hero is a 2-column layout — its text must be left-aligned (the reference leaked text-align:center from a duplicate #hero rule) */
-.ipl #hero{text-align:left;justify-content:center}
+/* hero layout — left-aligned 2-col, hard-contained so it can't overflow at any width */
+.ipl #hero{text-align:left;overflow:hidden}
+.ipl #hero > .container{min-width:0;width:100%;max-width:1240px;margin:0 auto}
+.ipl .hero-wrap{grid-template-columns:minmax(0,1fr) minmax(0,420px);gap:clamp(28px,5vw,80px);align-items:center;width:100%}
+@media (max-width:980px){.ipl .hero-wrap{grid-template-columns:1fr;gap:44px}.ipl .cc-stage{max-width:380px}}
