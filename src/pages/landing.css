@@ -850,12 +850,12 @@
 
 /* ===== round-2 fixes ===== */
 /* CTA: logo (instead of orb) + 3 centered buttons */
-.ipl .cta-logo{width:94px;height:94px;margin:0 auto 28px;animation:orb-pulse 4s ease-in-out infinite}
-.ipl .cta-logo img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 34px rgba(167,139,250,.6))}
+.ipl .cta-logo{width:188px;height:188px;margin:0 auto 30px;animation:orb-pulse 4s ease-in-out infinite}
+.ipl .cta-logo img{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 0 40px rgba(167,139,250,.6))}
 .ipl #cta .cta-actions{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:36px}
 
-/* sybil steps: drop the forced min-height (it was overlapping in the green column) */
-.ipl .sc-step{min-height:0;align-items:flex-start}
+/* sybil steps: equal-height rows so both columns line up (no overlap, no drift) */
+.ipl .sc-step{min-height:104px;align-items:flex-start}
 
 /* ranks: rows fill the frame so both columns end at the same bottom level */
 .ipl .ranks-vs{display:flex;flex-direction:column}

@@ -813,8 +813,19 @@ export default function LandingPage() {
       <section id="blackhole-feature">
         <div className="container">
           <div className="bh-feature reveal">
-            <div className="bh-visual">
-              <div className="bh-orb" aria-hidden="true"></div>
+            <div className="bh-visual" aria-hidden="true">
+              <div className="blackhole-visual">
+                <div className="blackhole-glow" />
+                <div className="blackhole-warp" />
+                <div className="blackhole-jet blackhole-jet--north" />
+                <div className="blackhole-jet blackhole-jet--south" />
+                <div className="blackhole-accretion" />
+                <div className="blackhole-ring" />
+                <div className="blackhole-photon" />
+                <div className="blackhole-lens" />
+                <div className="blackhole-shadow" />
+                <div className="blackhole-core" />
+              </div>
             </div>
             <div className="bh-copy">
               <div className="sec-tag warn">The Black Hole</div>
@@ -840,9 +851,9 @@ export default function LandingPage() {
           <h2 className="reveal grad-cyan">Your reputation<br />starts now.</h2>
           <p className="cta-sub reveal">Connect your wallet. See your tier. Play the games. Carry your reputation across the entire Solana ecosystem.</p>
           <div className="cta-actions reveal">
-            <a href="/identity" className="btn btn-primary lg">Launch the App</a>
-            <a href="/whitepaper.html" className="btn btn-ghost lg">Whitepaper</a>
-            <a href="/blackhole" className="btn btn-ghost lg">Enter the Black Hole</a>
+            <a href="/identity" className="btn btn-primary lg">Identity Hub</a>
+            <a href="/blackhole" className="btn btn-ghost lg">Black Hole</a>
+            <a href="/sybil-check" className="btn btn-ghost lg">Sybil Checker</a>
           </div>
         </div>
       </section>
