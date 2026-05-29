@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cookie Policy — Identity Prism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@300;400;500;600&display=swap">
+<link rel="stylesheet" href="_legal_styles.css">
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<nav>
+  <a href="/" class="nav-logo"><img src="phav.png" alt="">IDENTITY PRISM</a>
+  <a href="/" class="nav-back">← Back to home</a>
+</nav>
+
+<main>
+  <div class="legal-eyebrow">Legal</div>
+  <h1 class="legal-title">Cookie Policy</h1>
+  <div class="legal-meta">
+    <span><strong>Effective:</strong> May 1, 2026</span>
+    <span><strong>Last updated:</strong> May 9, 2026</span>
+  </div>
+
+  <div class="callout-box">
+    <p><strong>The short version —</strong> We use a tiny number of strictly-necessary cookies plus some <code>localStorage</code> entries to keep you logged in and remember your preferences. No advertising trackers. No third-party analytics.</p>
+  </div>
+
+  <article>
+    <h2 id="s1"><span class="num">01</span>What is a cookie?</h2>
+    <p>A cookie is a small text file stored by your browser. <code>localStorage</code> is similar — key-value data scoped to our domain. Both let the Service remember things between visits.</p>
+
+    <h2 id="s2"><span class="num">02</span>Cookies we set</h2>
+    <p>We use only first-party, strictly-necessary cookies. There are no advertising or cross-site tracking cookies anywhere in the Service.</p>
+    <table>
+      <tr><th>Name</th><th>Purpose</th><th>Duration</th><th>Type</th></tr>
+      <tr><td><code>ip_session</code></td><td>Authenticated session token (JWT, signed by your wallet)</td><td>7 days</td><td>Necessary</td></tr>
+      <tr><td><code>ip_csrf</code></td><td>CSRF protection on POST endpoints</td><td>Session</td><td>Necessary</td></tr>
+      <tr><td><code>ip_consent</code></td><td>Records your cookie banner choice</td><td>365 days</td><td>Necessary</td></tr>
+    </table>
+
+    <h2 id="s3"><span class="num">03</span>Local storage we use</h2>
+    <table>
+      <tr><th>Key</th><th>Purpose</th></tr>
+      <tr><td><code>ip-theme</code></td><td>Your selected color theme (default: cosmos-dark)</td></tr>
+      <tr><td><code>ip-locale</code></td><td>UI language (en / ru / es / zh)</td></tr>
+      <tr><td><code>ip-onboarding</code></td><td>Whether you've completed first-run onboarding</td></tr>
+      <tr><td><code>ip-last-tab</code></td><td>Last-viewed hub module (Forge, League, Black Hole, etc.)</td></tr>
+      <tr><td><code>ip-game-mute</code></td><td>Audio mute preference for in-game sound</td></tr>
+      <tr><td><code>ip-leaderboard-cache</code></td><td>Cached leaderboard data, refreshed every 60s</td></tr>
+    </table>
+
+    <h2 id="s4"><span class="num">04</span>Third-party services</h2>
+    <p>Some third-party endpoints (Solana RPC, Helius, Cloudflare CDN) may set their own cookies in transit. These are operational only — TLS session keys, anti-DDoS challenges, edge routing. None track you across sites.</p>
+
+    <h2 id="s5"><span class="num">05</span>Managing cookies</h2>
+    <p>You can disable cookies at the browser level — but the Service won't work without the strictly-necessary ones (you'll be logged out on every page reload, CSRF-protected actions will fail). To clear our <code>localStorage</code>, open DevTools → Application → Local Storage → <code>identityprism.xyz</code> → Clear.</p>
+
+    <h2 id="s6"><span class="num">06</span>Do Not Track</h2>
+    <p>We honor the <code>DNT</code> browser header by default — there's nothing to disable, because we don't track you in the first place.</p>
+
+    <h2 id="s7"><span class="num">07</span>Changes &amp; contact</h2>
+    <p>If we add or change cookies, this page is updated and the version-bump is announced via in-app banner.</p>
+    <p>Questions: <a href="mailto:privacy@identityprism.xyz">privacy@identityprism.xyz</a></p>
+  </article>
+</main>
+
+<footer>
+  <p>© 2026 Identity Prism · Built on Solana</p>
+  <div class="foot-legal">
+    <a href="/">Home</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="cookies.html">Cookies</a>
+    <a href="disclaimer.html">Disclaimer</a>
+  </div>
+</footer>
+
+<script>
+(function(){const c=document.getElementById('stars');const x=c.getContext('2d');let W,H,s=[];function r(){W=c.width=innerWidth;H=c.height=innerHeight;s=[];for(let i=0;i<160;i++)s.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+.2,a:Math.random()*.6+.1})}function d(){x.clearRect(0,0,W,H);s.forEach(p=>{x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle=`rgba(255,255,255,${p.a})`;x.fill()})}addEventListener('resize',()=>{r();d()});r();d()})();
+</script>
+</body>
+</html>

@@ -1,100 +1,149 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Privacy Policy - Identity Prism</title>
-    <meta name="robots" content="index, follow" />
-    <style>
-      :root {
-        color-scheme: dark;
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #050508;
-        color: rgba(255, 255, 255, 0.86);
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        background:
-          radial-gradient(circle at top, rgba(34, 211, 238, 0.14), transparent 34%),
-          radial-gradient(circle at 80% 10%, rgba(167, 139, 250, 0.16), transparent 28%),
-          #050508;
-      }
-      main {
-        width: min(840px, calc(100% - 32px));
-        margin: 0 auto;
-        padding: 56px 0 72px;
-      }
-      a {
-        color: #67e8f9;
-      }
-      .back {
-        display: inline-flex;
-        align-items: center;
-        min-height: 40px;
-        padding: 0 16px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 999px;
-        text-decoration: none;
-        color: rgba(255, 255, 255, 0.78);
-      }
-      h1 {
-        margin: 36px 0 12px;
-        font-size: clamp(36px, 8vw, 64px);
-        line-height: 0.95;
-        letter-spacing: 0;
-      }
-      h2 {
-        margin: 32px 0 10px;
-        font-size: 20px;
-      }
-      p,
-      li {
-        color: rgba(255, 255, 255, 0.62);
-        line-height: 1.8;
-      }
-      .panel {
-        margin-top: 28px;
-        padding: 24px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 24px;
-        background: rgba(255, 255, 255, 0.035);
-      }
-      .eyebrow {
-        color: rgba(103, 232, 249, 0.72);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.24em;
-        text-transform: uppercase;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <a class="back" href="/">Back to Identity Prism</a>
-      <div class="eyebrow">Privacy Policy</div>
-      <h1>Identity Prism Privacy</h1>
-      <p>Last updated: May 14, 2026</p>
-      <div class="panel">
-        <h2>What we process</h2>
-        <p>
-          Identity Prism reads public Solana wallet data, product activity, card mint state, sybil scan results, quest
-          progress, game scores, and wallet cleanup metadata needed to run the product.
-        </p>
-        <h2>What we do not need</h2>
-        <p>
-          We do not require passports, government IDs, private keys, seed phrases, or payment card data to use the
-          reputation product. Wallet signatures are used only to prove wallet control.
-        </p>
-        <h2>How data is used</h2>
-        <p>
-          Data is used to calculate identity scores, detect sybil patterns, show badges and ranks, prevent abuse, and
-          keep the shared sybil graph useful for future scans.
-        </p>
-        <h2>Contact</h2>
-        <p>For privacy questions, contact the Identity Prism team through the official project channels.</p>
-      </div>
-    </main>
-  </body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Identity Prism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@300;400;500;600&display=swap">
+<link rel="stylesheet" href="_legal_styles.css">
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<nav>
+  <a href="/" class="nav-logo"><img src="phav.png" alt="">IDENTITY PRISM</a>
+  <a href="/" class="nav-back">← Back to home</a>
+</nav>
+
+<main>
+  <div class="legal-eyebrow">Legal</div>
+  <h1 class="legal-title">Privacy Policy</h1>
+  <div class="legal-meta">
+    <span><strong>Effective:</strong> May 1, 2026</span>
+    <span><strong>Last updated:</strong> May 9, 2026</span>
+    <span><strong>Version:</strong> 2.1</span>
+  </div>
+
+  <div class="callout-box">
+    <p><strong>TL;DR —</strong> We don't collect your name, email, or any personal documents. We read your wallet's <em>public</em> on-chain activity, store your gameplay scores, and that's it. No KYC. No tracking pixels. No data sales. Ever.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#s1">Who we are</a></li>
+      <li><a href="#s2">What we collect</a></li>
+      <li><a href="#s3">How we use it</a></li>
+      <li><a href="#s4">On-chain data</a></li>
+      <li><a href="#s5">Cookies &amp; tracking</a></li>
+      <li><a href="#s6">Third-party services</a></li>
+      <li><a href="#s7">Data retention</a></li>
+      <li><a href="#s8">Your rights</a></li>
+      <li><a href="#s9">Children</a></li>
+      <li><a href="#s10">International transfers</a></li>
+      <li><a href="#s11">Security</a></li>
+      <li><a href="#s12">Changes &amp; contact</a></li>
+    </ol>
+  </div>
+
+  <article>
+    <h2 id="s1"><span class="num">01</span>Who we are</h2>
+    <p>Identity Prism ("we", "us", "the Service") is an on-chain reputation and sybil-defense protocol for the Solana blockchain. We operate at <a href="https://identityprism.xyz">identityprism.xyz</a> and via our Android client.</p>
+    <p>This policy describes how the Service handles information when you connect a wallet, scan an address, play games, or interact with our smart contracts.</p>
+
+    <h2 id="s2"><span class="num">02</span>What we collect</h2>
+    <p>We are a non-custodial protocol. <strong>We never receive, see, or store your private keys, seed phrase, or signing material.</strong> The data we do process falls into four narrow buckets:</p>
+    <table>
+      <tr><th>Category</th><th>Examples</th><th>Source</th></tr>
+      <tr><td>Wallet identifier</td><td>Your public Solana address</td><td>You, by connecting</td></tr>
+      <tr><td>On-chain signals</td><td>Tx count, age, balances, NFT holdings, DeFi positions</td><td>Solana RPC / Helius</td></tr>
+      <tr><td>Gameplay data</td><td>Scores, durations, input cadence, achievement progress</td><td>Your sessions in our games</td></tr>
+      <tr><td>Diagnostics</td><td>Anonymous error logs, page-load timings, browser type</td><td>Your browser</td></tr>
+    </table>
+    <p>We do not collect your name, email address, phone number, IP-derived precise location, government ID, biometrics, or any document of any kind. We do not run KYC. We never ask.</p>
+
+    <h2 id="s3"><span class="num">03</span>How we use what we collect</h2>
+    <ul>
+      <li><strong>To compute your composite score.</strong> Your public on-chain activity is fed through our scoring algorithm to produce a tier (Mercury → Binary Sun) and badges.</li>
+      <li><strong>To detect sybil behavior.</strong> Cluster patterns, transfer graphs, and gameplay cadence are analyzed to flag coordinated wallet farms.</li>
+      <li><strong>To verify humanity through play.</strong> Game scores prove a real person is at the keyboard. Reaction-time and input-cadence patterns are validated server-side before any chain commit.</li>
+      <li><strong>To run leaderboards and economy features.</strong> Coin balances, staking positions, NFT mints — all powered by your wallet identifier.</li>
+      <li><strong>To improve the Service.</strong> Aggregate, de-identified metrics tell us which features are useful.</li>
+    </ul>
+    <p>We never use your data to advertise to you, profile you for third parties, or train external AI models.</p>
+
+    <h2 id="s4"><span class="num">04</span>On-chain data</h2>
+    <p>When you mint your Identity Prism card or commit a score on-chain, that information becomes <strong>permanently public on the Solana blockchain</strong>. This includes:</p>
+    <ul>
+      <li>Your composite score and tier at mint time</li>
+      <li>Earned badges</li>
+      <li>Memo-program attestations of game results</li>
+      <li>NFT metadata (Metaplex Core)</li>
+    </ul>
+    <div class="warn-box"><p><strong>Blockchains are immutable.</strong> Once published, on-chain records cannot be deleted by us, by you, or by anyone else. Mint with intent.</p></div>
+
+    <h2 id="s5"><span class="num">05</span>Cookies &amp; local storage</h2>
+    <p>We use a minimal set of first-party cookies and <code>localStorage</code> entries strictly necessary to keep you logged in across sessions and remember UI preferences (theme, language, last-viewed tab). We do not use advertising cookies or third-party analytics trackers. See our full <a href="cookies.html">Cookie Policy</a> for the itemized list.</p>
+
+    <h2 id="s6"><span class="num">06</span>Third-party services</h2>
+    <p>We rely on a small number of infrastructure providers. Each receives only the minimum data needed for its function:</p>
+    <table>
+      <tr><th>Provider</th><th>Purpose</th><th>Data shared</th></tr>
+      <tr><td>Helius RPC</td><td>Solana indexing</td><td>Public wallet address</td></tr>
+      <tr><td>MagicBlock</td><td>Ephemeral rollup gameplay verification</td><td>Wallet address, game seed, score</td></tr>
+      <tr><td>Tapestry</td><td>Cross-app social graph</td><td>Wallet address, public profile fields you opt in</td></tr>
+      <tr><td>Cloudflare</td><td>CDN, DDoS protection</td><td>Standard request metadata</td></tr>
+      <tr><td>Solana RPC nodes</td><td>Blockchain reads</td><td>Public address queries</td></tr>
+    </table>
+    <p>We do not sell, rent, or barter user data. Period.</p>
+
+    <h2 id="s7"><span class="num">07</span>Data retention</h2>
+    <p>Off-chain data — gameplay scores, leaderboard positions, cached scan results — is retained for as long as your wallet remains active in the Service plus 24 months. Anonymous diagnostic logs roll over after 30 days. On-chain data is retained for the lifetime of the Solana blockchain (i.e., forever).</p>
+
+    <h2 id="s8"><span class="num">08</span>Your rights</h2>
+    <p>Depending on your jurisdiction (GDPR, CCPA, UK DPA), you have the right to:</p>
+    <ul>
+      <li><strong>Access</strong> the off-chain data we hold associated with your wallet</li>
+      <li><strong>Correct</strong> inaccurate off-chain records</li>
+      <li><strong>Delete</strong> off-chain records (on-chain data cannot be deleted by anyone)</li>
+      <li><strong>Export</strong> your data in machine-readable format (JSON)</li>
+      <li><strong>Withdraw consent</strong> by disconnecting your wallet</li>
+    </ul>
+    <p>Email <a href="mailto:privacy@identityprism.xyz">privacy@identityprism.xyz</a> from a wallet-signed message and we'll respond within 30 days.</p>
+
+    <h2 id="s9"><span class="num">09</span>Children</h2>
+    <p>The Service is not directed at and not intended for users under 13 (or under 16 in EEA jurisdictions). We do not knowingly collect data from children. If you believe a minor has connected a wallet, contact us and we'll purge the off-chain record.</p>
+
+    <h2 id="s10"><span class="num">10</span>International transfers</h2>
+    <p>Our infrastructure is globally distributed via Cloudflare's edge network. Off-chain data may be processed in any country where Cloudflare or our service providers maintain data centers. By using the Service, you consent to this processing.</p>
+
+    <h2 id="s11"><span class="num">11</span>Security</h2>
+    <p>We use industry-standard security: TLS 1.3 for all transport, encrypted database storage, principle-of-least-privilege access controls, and routine third-party audits. <strong>However, no system is impenetrable.</strong> If a breach affects your data, we'll notify affected wallets within 72 hours via on-app banner and Twitter announcement.</p>
+
+    <h2 id="s12"><span class="num">12</span>Changes &amp; contact</h2>
+    <p>We may revise this policy. Material changes will be announced 14 days in advance via in-app banner. Continued use after the effective date constitutes acceptance.</p>
+    <p>Questions, requests, or concerns:</p>
+    <ul>
+      <li>Email: <a href="mailto:privacy@identityprism.xyz">privacy@identityprism.xyz</a></li>
+      <li>Twitter: <a href="https://x.com/Identity_Prism">@Identity_Prism</a></li>
+    </ul>
+  </article>
+</main>
+
+<footer>
+  <p>© 2026 Identity Prism · Built on Solana</p>
+  <div class="foot-legal">
+    <a href="/">Home</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="cookies.html">Cookies</a>
+    <a href="disclaimer.html">Disclaimer</a>
+  </div>
+</footer>
+
+<script>
+(function(){const c=document.getElementById('stars');const x=c.getContext('2d');let W,H,s=[];function r(){W=c.width=innerWidth;H=c.height=innerHeight;s=[];for(let i=0;i<160;i++)s.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+.2,a:Math.random()*.6+.1})}function d(){x.clearRect(0,0,W,H);s.forEach(p=>{x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle=`rgba(255,255,255,${p.a})`;x.fill()})}addEventListener('resize',()=>{r();d()});r();d()})();
+</script>
+</body>
 </html>

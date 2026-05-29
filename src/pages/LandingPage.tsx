@@ -334,6 +334,9 @@ export default function LandingPage() {
   }, []);
 
   return (
+    <>
+      {/* Header — real app SiteHeader, OUTSIDE .ipl so the landing reset/styles can't touch it */}
+      <SiteHeader />
     <div className="ipl">
       <canvas id="bg-cosmos"></canvas>
 
@@ -350,9 +353,6 @@ export default function LandingPage() {
         <div className="dot" data-l="Hub" data-target="ecosystem"></div>
         <div className="dot" data-l="Launch" data-target="cta"></div>
       </div>
-
-      {/* Header — real app SiteHeader component */}
-      <SiteHeader />
 
       {/* HERO with celestial card demo */}
       <section id="hero">
@@ -820,7 +820,7 @@ export default function LandingPage() {
             </div>
             <div className="foot-col"><h6>Protocol</h6><a href="#solution">How it works</a><a href="#badges">Badges</a><a href="#tiers">Composite tiers</a><a href="#ranks">Ranger ranks</a><a href="#games">Prism League</a><a href="#ecosystem">Hub modules</a></div>
             <div className="foot-col"><h6>Resources</h6><a href="https://identityprism.xyz">Launch app</a><a href="#">Whitepaper</a><a href="#">API docs</a><a href="#">GitHub</a><a href="#">Brand assets</a></div>
-            <div className="foot-col"><h6>Legal</h6><a href="privacy.html">Privacy Policy</a><a href="terms.html">Terms of Use</a><a href="cookies.html">Cookie Policy</a><a href="disclaimer.html">Disclaimer</a></div>
+            <div className="foot-col"><h6>Legal</h6><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms of Use</a><a href="/cookies.html">Cookie Policy</a><a href="/disclaimer.html">Disclaimer</a></div>
           </div>
           <div className="foot-bottom">
             <div>© 2026 Identity Prism · All rights reserved</div>
@@ -829,5 +829,6 @@ export default function LandingPage() {
         </div>
       </footer>
     </div>
+    </>
   );
 }

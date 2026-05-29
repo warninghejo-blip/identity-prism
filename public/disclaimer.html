@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disclaimer — Identity Prism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@300;400;500;600&display=swap">
+<link rel="stylesheet" href="_legal_styles.css">
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<nav>
+  <a href="/" class="nav-logo"><img src="phav.png" alt="">IDENTITY PRISM</a>
+  <a href="/" class="nav-back">← Back to home</a>
+</nav>
+
+<main>
+  <div class="legal-eyebrow">Legal</div>
+  <h1 class="legal-title">Disclaimer</h1>
+  <div class="legal-meta">
+    <span><strong>Effective:</strong> May 1, 2026</span>
+    <span><strong>Last updated:</strong> May 9, 2026</span>
+  </div>
+
+  <div class="warn-box">
+    <p><strong>Read this carefully.</strong> Identity Prism is experimental software interacting with a public, immutable blockchain. Use is entirely at your own risk.</p>
+  </div>
+
+  <article>
+    <h2 id="s1"><span class="num">01</span>Not financial advice</h2>
+    <p>Composite scores, tiers, badges, and leaderboard positions are <strong>informational metrics only</strong>. They are not investment advice, credit ratings, KYC equivalents, or guarantees of any user's character, intent, or solvency. Do not make investment, lending, or partnership decisions based solely on an Identity Prism score.</p>
+
+    <h2 id="s2"><span class="num">02</span>No guarantees of accuracy</h2>
+    <p>The Service relies on Solana RPC providers, third-party indexers, and heuristic algorithms. Data may be stale, incomplete, or wrong. False positives and false negatives in sybil detection are possible. We make no warranty that any score, tier, or flag is accurate.</p>
+
+    <h2 id="s3"><span class="num">03</span>Smart contract risk</h2>
+    <p>Our on-chain components — Memo attestations, Metaplex Core NFTs, MagicBlock rollup integrations — are deployed contracts. <strong>Smart contracts can contain bugs, exploits, or unintended behavior.</strong> Audits reduce but do not eliminate risk. If a contract is exploited, locked or burned funds may be unrecoverable.</p>
+
+    <h2 id="s4"><span class="num">04</span>Blockchain risk</h2>
+    <p>Solana is a third-party network. Outages, forks, congestion, validator collusion, or chain halts can affect Service availability. We do not control Solana and cannot reverse, accelerate, or modify any on-chain state.</p>
+
+    <h2 id="s5"><span class="num">05</span>Third-party risk</h2>
+    <p>The Service integrates with third-party providers (Helius, MagicBlock, Tapestry, Cloudflare, Phantom, Solflare, etc.). We are not responsible for their availability, security, or accuracy. Their failures may impact you.</p>
+
+    <h2 id="s6"><span class="num">06</span>NFT &amp; coin disclaimer</h2>
+    <p>Identity Prism NFTs and in-app Coins:</p>
+    <ul>
+      <li>Are <strong>not</strong> securities, currencies, or financial instruments</li>
+      <li>Have no guaranteed monetary value</li>
+      <li>May fluctuate, depreciate, or become worthless</li>
+      <li>Are not redeemable for fiat from us</li>
+    </ul>
+    <p>Secondary trading happens on third-party marketplaces under their rules, which we don't control.</p>
+
+    <h2 id="s7"><span class="num">07</span>Game outcomes are non-refundable</h2>
+    <p>Tournament entries, staking lockups, and Stellar Forge purchases are <strong>final</strong>. Game scores, even disputed ones, cannot be retroactively adjusted once committed on-chain.</p>
+
+    <h2 id="s8"><span class="num">08</span>Regulatory risk</h2>
+    <p>Cryptocurrency and Web3 regulations vary by jurisdiction and change frequently. You are responsible for determining whether your use of the Service is lawful where you live. We may restrict or terminate access in any jurisdiction at any time.</p>
+
+    <h2 id="s9"><span class="num">09</span>No fiduciary relationship</h2>
+    <p>Use of the Service does not create any fiduciary, agency, advisory, or trustee relationship between you and Identity Prism. We do not custody your assets and make no recommendations about how you manage them.</p>
+
+    <h2 id="s10"><span class="num">10</span>Final word</h2>
+    <p><strong>Don't risk what you can't afford to lose.</strong> Verify every transaction before signing. Back up your seed phrase. Be skeptical of anyone, including us, claiming to know what your tokens are worth. Trust math, not vibes.</p>
+  </article>
+</main>
+
+<footer>
+  <p>© 2026 Identity Prism · Built on Solana</p>
+  <div class="foot-legal">
+    <a href="/">Home</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="cookies.html">Cookies</a>
+    <a href="disclaimer.html">Disclaimer</a>
+  </div>
+</footer>
+
+<script>
+(function(){const c=document.getElementById('stars');const x=c.getContext('2d');let W,H,s=[];function r(){W=c.width=innerWidth;H=c.height=innerHeight;s=[];for(let i=0;i<160;i++)s.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+.2,a:Math.random()*.6+.1})}function d(){x.clearRect(0,0,W,H);s.forEach(p=>{x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle=`rgba(255,255,255,${p.a})`;x.fill()})}addEventListener('resize',()=>{r();d()});r();d()})();
+</script>
+</body>
+</html>
