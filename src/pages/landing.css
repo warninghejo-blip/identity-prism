@@ -1,5 +1,8 @@
 /* Identity Prism — Main landing styles */
-.ipl *,.ipl *::before,.ipl *::after{box-sizing:border-box;margin:0;padding:0}
+.ipl *,.ipl *::before,.ipl *::after{box-sizing:border-box}
+/* zero margins/padding for the landing's own elements, but NOT inside the real
+   celestial card (.web-id-demo) — it ships its own box model like everywhere else */
+.ipl *:not(.web-id-demo):not(.web-id-demo *),.ipl *::before,.ipl *::after{margin:0;padding:0}
 .ipl{
   --bg:#050508; --bg2:#0a0a14;
   --text:rgba(255,255,255,.88); --muted:rgba(255,255,255,.45); --dim:rgba(255,255,255,.18);
@@ -819,5 +822,3 @@
 .ipl .hero-stat .n{white-space:nowrap}
 .ipl .hero-stat .l{white-space:nowrap}
 
-/* Celestial card must not inherit the landing universal reset (it ships its own box model) */
-.ipl .web-id-demo, .ipl .web-id-demo *, .ipl .web-id-demo *::before, .ipl .web-id-demo *::after { margin: revert; padding: revert; }
