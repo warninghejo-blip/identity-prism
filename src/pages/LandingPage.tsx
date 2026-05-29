@@ -320,6 +320,15 @@ export default function LandingPage() {
             rafIds[1] = requestAnimationFrame(tick);
           };
           resize();
+          // Re-measure whenever the parent actually gets/changes size — the grid
+          // column width isn't final on first paint, which would otherwise collapse
+          // the cluster to a zero-size center (invisible).
+          requestAnimationFrame(resize);
+          if ('ResizeObserver' in window && c.parentElement) {
+            const ro = new ResizeObserver(() => resize());
+            ro.observe(c.parentElement);
+            cleanups.push(() => ro.disconnect());
+          }
           window.addEventListener('resize', resize);
           rafIds[1] = requestAnimationFrame(tick);
           cleanups.push(() => window.removeEventListener('resize', resize));
@@ -819,7 +828,7 @@ export default function LandingPage() {
               <p>The sybil-resistant identity layer for Solana. Reputation earned through behavior &amp; skill, never bought, never sold.</p>
             </div>
             <div className="foot-col"><h6>Protocol</h6><a href="#solution">How it works</a><a href="#badges">Badges</a><a href="#tiers">Composite tiers</a><a href="#ranks">Ranger ranks</a><a href="#games">Prism League</a><a href="#ecosystem">Hub modules</a></div>
-            <div className="foot-col"><h6>Resources</h6><a href="https://identityprism.xyz">Launch app</a><a href="#">Whitepaper</a><a href="#">API docs</a><a href="#">GitHub</a><a href="#">Brand assets</a></div>
+            <div className="foot-col"><h6>Resources</h6><a href="/identity">Launch app</a><a href="/whitepaper.html">Whitepaper</a><a href="/developers.html">API docs</a><a href="https://github.com/warninghejo-blip/identity-prism" target="_blank" rel="noopener noreferrer">GitHub</a><a href="/brand.html">Brand assets</a></div>
             <div className="foot-col"><h6>Legal</h6><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms of Use</a><a href="/cookies.html">Cookie Policy</a><a href="/disclaimer.html">Disclaimer</a></div>
           </div>
           <div className="foot-bottom">

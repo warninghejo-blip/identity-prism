@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brand Assets — Identity Prism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="_legal_styles.css">
+<style>
+.logo-stage{display:flex;align-items:center;gap:32px;flex-wrap:wrap;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:14px;padding:32px;margin:18px 0 24px}
+.logo-stage img{width:120px;height:120px;filter:drop-shadow(0 0 24px rgba(167,139,250,.45))}
+.logo-stage.dark{background:#050508}
+.logo-stage.light{background:#f4f4f7}
+.swatch-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0 24px}
+.swatch{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:rgba(255,255,255,.02)}
+.swatch .chip{height:84px}
+.swatch .meta{padding:12px 14px}
+.swatch .meta b{display:block;font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:.12em;color:#fff;text-transform:uppercase;margin-bottom:4px}
+.swatch .meta code{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted)}
+.font-card{border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin:12px 0;background:rgba(255,255,255,.02)}
+.font-card .label{font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:.22em;color:var(--cyan);text-transform:uppercase;margin-bottom:12px}
+.font-card .specimen{color:#fff;line-height:1.2}
+.do-dont{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0 24px}
+@media (max-width:700px){.swatch-grid{grid-template-columns:1fr 1fr}.do-dont{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<nav>
+  <a href="/" class="nav-logo"><img src="phav.png" alt="">IDENTITY PRISM</a>
+  <a href="/" class="nav-back">← Back to home</a>
+</nav>
+
+<main>
+  <div class="legal-eyebrow">Press &amp; Media</div>
+  <h1 class="legal-title">Brand Assets</h1>
+  <div class="legal-meta">
+    <span><strong>Name:</strong> Identity Prism</span>
+    <span><strong>Network:</strong> Solana</span>
+    <span><strong>Updated:</strong> May 2026</span>
+  </div>
+
+  <div class="callout-box">
+    <p><strong>TL;DR —</strong> Use these assets to reference Identity Prism in articles, integrations, and listings. Keep the logo clear, use the palette as-is, and never imply partnership or endorsement we haven't granted.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#s1">Logo</a></li>
+      <li><a href="#s2">Color Palette</a></li>
+      <li><a href="#s3">Typography</a></li>
+      <li><a href="#s4">Usage Guidelines</a></li>
+    </ol>
+  </div>
+
+  <article>
+    <h2 id="s1"><span class="num">01</span>Logo</h2>
+    <p>The Prism mark is the primary logo. It carries a violet-to-cyan glow and reads clearly on dark backgrounds, which is its preferred home.</p>
+    <div class="logo-stage dark">
+      <img src="phav.png" alt="Identity Prism logo">
+      <div>
+        <p style="margin:0 0 6px"><strong>Primary mark</strong> · on dark</p>
+        <p style="margin:0;font-size:13px;color:var(--muted)">Download: <a href="phav.png" download>phav.png</a> (PNG, transparent)</p>
+      </div>
+    </div>
+    <div class="logo-stage light">
+      <img src="phav.png" alt="Identity Prism logo on light" style="filter:none">
+      <div>
+        <p style="margin:0 0 6px;color:#0a0612"><strong>On light</strong> · acceptable</p>
+        <p style="margin:0;font-size:13px;color:#555">Ensure adequate contrast; prefer the dark variant where possible.</p>
+      </div>
+    </div>
+    <p>Always pair the mark with the wordmark <strong>IDENTITY PRISM</strong> set in Orbitron when space allows. Maintain clear space around the logo equal to at least half the logo's height.</p>
+
+    <h2 id="s2"><span class="num">02</span>Color Palette</h2>
+    <p>The brand runs on a six-color spectrum against a near-black background (<code>#050508</code>). Cyan and violet are the core gradient; the rest are accent and semantic colors.</p>
+    <div class="swatch-grid">
+      <div class="swatch"><div class="chip" style="background:#22d3ee"></div><div class="meta"><b>Cyan</b><code>#22d3ee</code></div></div>
+      <div class="swatch"><div class="chip" style="background:#a78bfa"></div><div class="meta"><b>Violet</b><code>#a78bfa</code></div></div>
+      <div class="swatch"><div class="chip" style="background:#fcbf49"></div><div class="meta"><b>Gold</b><code>#fcbf49</code></div></div>
+      <div class="swatch"><div class="chip" style="background:#34d399"></div><div class="meta"><b>Green</b><code>#34d399</code></div></div>
+      <div class="swatch"><div class="chip" style="background:#f87171"></div><div class="meta"><b>Red</b><code>#f87171</code></div></div>
+      <div class="swatch"><div class="chip" style="background:#f472b6"></div><div class="meta"><b>Pink</b><code>#f472b6</code></div></div>
+    </div>
+    <p>The signature brand gradient is <code>linear-gradient(90deg, #22d3ee, #a78bfa)</code> — used on primary buttons and key headlines. Gold marks tiers and achievement, green marks trust and "human cleared," red marks sybil risk, and pink marks social/engagement.</p>
+
+    <h2 id="s3"><span class="num">03</span>Typography</h2>
+    <p>Three typefaces, each with a distinct role. All are available on Google Fonts.</p>
+    <div class="font-card">
+      <div class="label">Display · Orbitron</div>
+      <div class="specimen" style="font-family:'Orbitron',sans-serif;font-weight:900;font-size:34px;letter-spacing:.04em">IDENTITY PRISM</div>
+      <p style="margin:10px 0 0;font-size:13px;color:var(--muted)">Headings, the wordmark, labels, and numeric stats. Weights 400 / 700 / 900. Use generous letter-spacing.</p>
+    </div>
+    <div class="font-card">
+      <div class="label">Body · Space Grotesk</div>
+      <div class="specimen" style="font-family:'Space Grotesk',sans-serif;font-weight:400;font-size:22px">Reputation, earned not bought.</div>
+      <p style="margin:10px 0 0;font-size:13px;color:var(--muted)">All body copy, paragraphs, and UI text. Weights 300–600.</p>
+    </div>
+    <div class="font-card">
+      <div class="label">Code · JetBrains Mono</div>
+      <div class="specimen" style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:18px">7xK…Yp3F · score: 774/1000</div>
+      <p style="margin:10px 0 0;font-size:13px;color:var(--muted)">Wallet addresses, scores, code samples, and any monospaced data.</p>
+    </div>
+
+    <h2 id="s4"><span class="num">04</span>Usage Guidelines</h2>
+    <div class="do-dont">
+      <div class="callout-box">
+        <p><strong>Do</strong></p>
+        <ul style="margin:8px 0 0 18px">
+          <li>Use the supplied <code>phav.png</code> at full resolution.</li>
+          <li>Keep clear space around the mark.</li>
+          <li>Prefer the logo on dark or transparent backgrounds.</li>
+          <li>Use the exact palette hex values.</li>
+          <li>Pair display Orbitron with body Space Grotesk.</li>
+        </ul>
+      </div>
+      <div class="warn-box">
+        <p><strong>Don't</strong></p>
+        <ul style="margin:8px 0 0 18px">
+          <li>Recolor, rotate, stretch, or add effects to the mark.</li>
+          <li>Place the logo on busy or low-contrast backgrounds.</li>
+          <li>Recreate the wordmark in a different typeface.</li>
+          <li>Imply partnership or endorsement without permission.</li>
+          <li>Use the brand for sybil farming or misleading drops.</li>
+        </ul>
+      </div>
+    </div>
+    <p>Questions about usage, or need vector/additional formats? Email <a href="mailto:brand@identityprism.xyz">brand@identityprism.xyz</a>. For product context, see the <a href="whitepaper.html">whitepaper</a> or the <a href="/">landing page</a>.</p>
+  </article>
+</main>
+
+<footer>
+  <p>© 2026 Identity Prism · Built on Solana</p>
+  <div class="foot-legal">
+    <a href="/">Home</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="cookies.html">Cookies</a>
+    <a href="disclaimer.html">Disclaimer</a>
+  </div>
+</footer>
+
+<script>
+(function(){const c=document.getElementById('stars');const x=c.getContext('2d');let W,H,s=[];function r(){W=c.width=innerWidth;H=c.height=innerHeight;s=[];for(let i=0;i<160;i++)s.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+.2,a:Math.random()*.6+.1})}function d(){x.clearRect(0,0,W,H);s.forEach(p=>{x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle=`rgba(255,255,255,${p.a})`;x.fill()})}addEventListener('resize',()=>{r();d()});r();d()})();
+</script>
+</body>
+</html>

@@ -818,3 +818,6 @@
 .ipl .hero-stats{flex-wrap:nowrap;gap:clamp(16px,2.2vw,34px)}
 .ipl .hero-stat .n{white-space:nowrap}
 .ipl .hero-stat .l{white-space:nowrap}
+
+/* Celestial card must not inherit the landing universal reset (it ships its own box model) */
+.ipl .web-id-demo, .ipl .web-id-demo *, .ipl .web-id-demo *::before, .ipl .web-id-demo *::after { margin: revert; padding: revert; }

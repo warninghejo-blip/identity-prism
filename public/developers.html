@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Documentation — Identity Prism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="_legal_styles.css">
+<style>
+pre{background:rgba(255,255,255,.02);border:1px solid var(--border);border-left:3px solid var(--cyan);border-radius:10px;padding:16px 18px;margin:14px 0 24px;overflow-x:auto;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.7;color:rgba(255,255,255,.78)}
+pre code{font-family:'JetBrains Mono',monospace;color:inherit}
+code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:5px;padding:1px 6px;color:rgba(255,255,255,.85)}
+.method{display:inline-block;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:.14em;font-weight:700;padding:3px 9px;border-radius:5px;margin-right:10px;text-transform:uppercase;background:rgba(52,211,153,.12);color:#34d399;border:1px solid rgba(52,211,153,.3)}
+.endpoint-path{font-family:'JetBrains Mono',monospace;font-size:14px;color:#fff}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<nav>
+  <a href="/" class="nav-logo"><img src="phav.png" alt="">IDENTITY PRISM</a>
+  <a href="/" class="nav-back">← Back to home</a>
+</nav>
+
+<main>
+  <div class="legal-eyebrow">Developers</div>
+  <h1 class="legal-title">API Documentation</h1>
+  <div class="legal-meta">
+    <span><strong>Base URL:</strong> https://api.identityprism.xyz</span>
+    <span><strong>Status:</strong> Public Beta</span>
+    <span><strong>Version:</strong> v1</span>
+  </div>
+
+  <div class="warn-box">
+    <p><strong>Beta —</strong> The public API is in beta. Endpoints, payloads, and rate limits may change without notice until v1 is stabilized. Do not rely on it for production fund-gating without your own fallbacks.</p>
+  </div>
+
+  <div class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#s1">Overview</a></li>
+      <li><a href="#s2">Authentication</a></li>
+      <li><a href="#s3">Endpoints</a></li>
+      <li><a href="#s4">Rate Limits</a></li>
+      <li><a href="#s5">SDK</a></li>
+    </ol>
+  </div>
+
+  <article>
+    <h2 id="s1"><span class="num">01</span>Overview</h2>
+    <p>The Identity Prism API exposes a wallet's public reputation: its composite score, tier, earned badges, sybil-risk signals, and protocol-wide statistics. It lets any Solana app gate airdrops, governance, and access on a portable, sybil-resistant score instead of re-inventing anti-sybil from scratch.</p>
+    <p>All endpoints are REST over HTTPS. Responses are JSON, UTF-8 encoded. Addresses are base58 Solana public keys. All reputation data reflects <em>public</em> on-chain activity plus verified gameplay — no private or personal data is ever returned.</p>
+
+    <h2 id="s2"><span class="num">02</span>Authentication</h2>
+    <p>Read endpoints for public reputation data require an API key passed in the <code>X-API-Key</code> header. Keys are issued per project from the developer dashboard.</p>
+    <pre><code>curl https://api.identityprism.xyz/v1/score/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU \
+  -H "X-API-Key: prism_live_xxxxxxxxxxxxxxxx"</code></pre>
+    <p>Endpoints that act <em>on behalf of</em> a wallet (for example, exporting a user's own data) are <strong>wallet-based</strong>: the caller signs a short challenge message with the wallet's private key and submits the signature. The protocol verifies the signature against the public key — it never receives the key itself.</p>
+    <pre><code>POST /v1/auth/verify
+{
+  "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+  "message": "Identity Prism auth · nonce=8f3a1c · ts=1716900000",
+  "signature": "base58-encoded-ed25519-signature"
+}
+
+200 OK
+{ "verified": true, "session": "sess_...", "expires_in": 900 }</code></pre>
+
+    <h2 id="s3"><span class="num">03</span>Endpoints</h2>
+
+    <h3><span class="method">GET</span><span class="endpoint-path">/api/score/:address</span></h3>
+    <p>Returns the composite score (0–1000), planetary tier, and the five-pillar breakdown for a wallet.</p>
+    <pre><code>GET /api/score/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+
+200 OK
+{
+  "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+  "score": 774,
+  "tier": "Saturn",
+  "next_tier": { "name": "Jupiter", "at": 800, "points_to_go": 26 },
+  "pillars": {
+    "onchain": 0.81, "defi": 0.77, "trust": 0.92,
+    "games": 0.68, "social": 0.55
+  },
+  "updated_at": "2026-05-28T12:00:00Z"
+}</code></pre>
+
+    <h3><span class="method">GET</span><span class="endpoint-path">/api/badges/:address</span></h3>
+    <p>Returns the list of on-chain badges earned by a wallet, with category and award timestamp.</p>
+    <pre><code>GET /api/badges/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+
+200 OK
+{
+  "address": "7xKX...gAsU",
+  "count": 7,
+  "badges": [
+    { "id": "veteran",        "category": "onchain", "awarded_at": "2025-11-02T..." },
+    { "id": "verified_human", "category": "trust",   "awarded_at": "2026-01-14T..." },
+    { "id": "game_master",    "category": "games",   "awarded_at": "2026-03-09T..." }
+  ]
+}</code></pre>
+
+    <h3><span class="method">GET</span><span class="endpoint-path">/api/sybil/:address</span></h3>
+    <p>Returns the sybil-risk assessment for a wallet: a trust score, a risk verdict, and the signals that contributed. Use this to decide whether to admit a wallet to a drop.</p>
+    <pre><code>GET /api/sybil/7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+
+200 OK
+{
+  "address": "7xKX...gAsU",
+  "trust": 92,
+  "risk": "low",
+  "verdict": "verified_human",
+  "signals": {
+    "shared_funding_source": false,
+    "timing_correlation": 0.04,
+    "scripted_behavior": false,
+    "game_skill_verified": true
+  }
+}</code></pre>
+
+    <h3><span class="method">GET</span><span class="endpoint-path">/api/stats/global</span></h3>
+    <p>Returns protocol-wide aggregate statistics. No address required. Useful for dashboards and explorers.</p>
+    <pre><code>GET /api/stats/global
+
+200 OK
+{
+  "wallets_scored": 184302,
+  "identity_cards_minted": 41277,
+  "sybil_clusters_flagged": 1962,
+  "tier_distribution": {
+    "Mercury": 0.31, "Mars": 0.18, "Venus": 0.14, "Earth": 0.11,
+    "Neptune": 0.09, "Uranus": 0.07, "Saturn": 0.05, "Jupiter": 0.03,
+    "Sun": 0.015, "Binary Sun": 0.005
+  }
+}</code></pre>
+
+    <div class="callout-box">
+      <p><strong>Errors —</strong> Failed requests return a standard JSON body: <code>{ "error": "not_found", "message": "..." }</code> with the matching HTTP status (<code>400</code> bad address, <code>401</code> bad key, <code>404</code> unscanned wallet, <code>429</code> rate limited).</p>
+    </div>
+
+    <h2 id="s4"><span class="num">04</span>Rate Limits</h2>
+    <p>Limits are enforced per API key on a rolling window. The current beta tiers:</p>
+    <table>
+      <tr><th>Tier</th><th>Requests / min</th><th>Burst</th></tr>
+      <tr><td>Free</td><td>60</td><td>20</td></tr>
+      <tr><td>Builder</td><td>600</td><td>100</td></tr>
+      <tr><td>Partner</td><td>Custom</td><td>Custom</td></tr>
+    </table>
+    <p>Every response includes <code>X-RateLimit-Limit</code>, <code>X-RateLimit-Remaining</code>, and <code>X-RateLimit-Reset</code> headers. On exhaustion the API returns <code>429 Too Many Requests</code> with a <code>Retry-After</code> header.</p>
+
+    <h2 id="s5"><span class="num">05</span>SDK</h2>
+    <p>An official TypeScript/JavaScript SDK wraps these endpoints, handles wallet-signature auth, and exposes typed helpers. It is published alongside the public beta.</p>
+    <pre><code>npm install @identity-prism/sdk
+
+import { Prism } from "@identity-prism/sdk";
+
+const prism = new Prism({ apiKey: process.env.PRISM_API_KEY });
+
+const { score, tier } = await prism.score(address);
+if (await prism.isHuman(address)) {
+  // admit wallet to the drop
+}</code></pre>
+    <p>For protocol background and the scoring model, read the <a href="whitepaper.html">whitepaper</a>. Questions and access requests: <a href="mailto:developers@identityprism.xyz">developers@identityprism.xyz</a>.</p>
+  </article>
+</main>
+
+<footer>
+  <p>© 2026 Identity Prism · Built on Solana</p>
+  <div class="foot-legal">
+    <a href="/">Home</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="cookies.html">Cookies</a>
+    <a href="disclaimer.html">Disclaimer</a>
+  </div>
+</footer>
+
+<script>
+(function(){const c=document.getElementById('stars');const x=c.getContext('2d');let W,H,s=[];function r(){W=c.width=innerWidth;H=c.height=innerHeight;s=[];for(let i=0;i<160;i++)s.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.2+.2,a:Math.random()*.6+.1})}function d(){x.clearRect(0,0,W,H);s.forEach(p=>{x.beginPath();x.arc(p.x,p.y,p.r,0,Math.PI*2);x.fillStyle=`rgba(255,255,255,${p.a})`;x.fill()})}addEventListener('resize',()=>{r();d()});r();d()})();
+</script>
+</body>
+</html>
