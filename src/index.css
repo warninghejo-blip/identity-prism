@@ -905,10 +905,19 @@ body:has(.page-shell) #root > * {
 .identity-pay-selector {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* auto-fit grows columns to fill row no matter how many chips (was repeat(3) — broke when PRISM was removed and 2 chips landed left-aligned) */
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  justify-items: stretch;
   align-items: center;
   gap: 8px;
   margin: 0 0 0.15rem;
+}
+
+/* Price line is inside the same grid — span the whole row so it doesn't steal a
+   chip slot. Otherwise SOL/SKR end up off-centre with a phantom column where
+   PRISM used to live. */
+.identity-pay-selector .identity-pay-price {
+  grid-column: 1 / -1;
 }
 
 .identity-pay-chip {
@@ -3020,7 +3029,10 @@ body:has(.page-shell) #root > * {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   animation: bh-page-fade-in 0.6s ease-out both;
-  background: #050505;
+  background:
+    radial-gradient(circle at 18% 10%, rgba(8, 145, 178, 0.16), transparent 34%),
+    radial-gradient(circle at 82% 0%, rgba(124, 58, 237, 0.12), transparent 30%),
+    linear-gradient(180deg, #07111f 0%, #080812 32%, #0a0d1f 58%, #07111a 100%);
 }
 
 .blackhole-shell .site-header {
@@ -3037,7 +3049,7 @@ body:has(.page-shell) #root > * {
 .blackhole-shell .nebula-layer,
 .blackhole-shell .constellation-bg,
 .blackhole-shell .identity-gradient {
-  display: none;
+  display: block;
 }
 
 .blackhole-shell .nebula-layer {
@@ -3050,7 +3062,9 @@ body:has(.page-shell) #root > * {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: #050505;
+  background:
+    radial-gradient(circle at center 18%, rgba(34, 211, 238, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(7, 17, 31, 0.86), rgba(8, 8, 18, 0.96) 62%, rgba(7, 11, 22, 0.98));
 }
 
 .blackhole-shell::after {
@@ -3428,84 +3442,13 @@ body:has(.page-shell) #root > * {
   text-transform: none;
 }
 
-.blackhole-show-all-toggle {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-height: 34px;
-  border: 1px solid rgba(63, 63, 70, 0.45);
-  border-radius: 999px;
-  background: rgba(9, 9, 12, 0.34) !important;
-  padding: 0 10px;
-  color: rgba(161, 161, 170, 0.92);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  cursor: pointer;
-  transition: border-color 120ms ease-out, color 120ms ease-out, transform 80ms ease-out;
-}
-
-.blackhole-show-all-toggle:hover {
-  border-color: rgba(103, 232, 249, 0.22);
-  color: rgba(212, 212, 216, 0.96);
-}
-
-.blackhole-show-all-toggle:active {
-  transform: translateY(1px);
-}
-
-.blackhole-show-all-toggle:focus-visible {
-  outline: 2px solid rgba(103, 232, 249, 0.8);
-  outline-offset: 2px;
-}
-
-.blackhole-checkbox {
-  width: 16px !important;
-  height: 16px !important;
-  min-width: 16px !important;
-  min-height: 16px !important;
-  max-width: 16px !important;
-  max-height: 16px !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  flex: 0 0 16px !important;
-}
-
-.blackhole-checkbox-indicator {
-  position: relative;
-  border: 1px solid rgba(82, 82, 91, 0.95);
-  border-radius: 14px;
-  background: rgba(9, 9, 11, 0.82);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-.blackhole-show-all-toggle[data-state="checked"] .blackhole-checkbox-indicator {
-  border-color: rgba(34, 211, 238, 0.9);
-  background: rgba(8, 47, 73, 0.62);
-}
-
-.blackhole-show-all-toggle[data-state="checked"] {
-  border-color: rgba(34, 211, 238, 0.28);
-  color: rgba(165, 243, 252, 0.94);
-}
-
-.blackhole-show-all-toggle[data-state="checked"] .blackhole-checkbox-indicator::after {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 5px;
-  height: 9px;
-  border: solid rgba(165, 243, 252, 0.96);
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
 .blackhole-mobile-bottom-spacer {
-  height: calc(760px + env(safe-area-inset-bottom, 0px));
+  height: 0;
+}
+
+.blackhole-resolution-manifest {
+  min-height: 238px;
+  contain: layout paint;
 }
 
 .blackhole-token-avatar {
@@ -3521,12 +3464,14 @@ body:has(.page-shell) #root > * {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
-.blackhole-token-avatar span {
+.blackhole-token-avatar__initials {
+  position: relative;
+  z-index: 1;
   color: rgba(251, 191, 36, 0.9);
-  font-size: 6px;
+  font-size: 8px;
   font-weight: 800;
   line-height: 1;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   text-align: center;
 }
 
@@ -3549,11 +3494,29 @@ body:has(.page-shell) #root > * {
       rgba(93, 104, 122, 0.96) 48%,
       rgba(116, 128, 147, 0.92) 100%
     );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.86;
+}
+
+.blackhole-token-avatar__spinner {
+  width: 44%;
+  height: 44%;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.84);
+  animation: blackhole-token-avatar-spin 0.8s linear infinite;
+}
+
+@keyframes blackhole-token-avatar-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .blackhole-token-avatar--missing {
   border-color: rgba(245, 158, 11, 0.45);
-  background: rgba(69, 26, 3, 0.9);
   box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.08);
 }
 
@@ -3611,30 +3574,30 @@ body:has(.page-shell) #root > * {
 }
 
 .blackhole-controls {
-  display: grid;
-  grid-template-columns: minmax(96px, auto) minmax(0, 1fr) minmax(104px, auto);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .blackhole-rescan-button {
-  height: 36px;
-  min-width: 96px;
+  min-width: 0;
   border-radius: 999px !important;
-  background: rgba(9, 9, 12, 0.34);
+  border-color: rgba(63, 63, 70, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(212, 212, 216, 0.96);
 }
 
 .blackhole-filter-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: inline-flex;
   gap: 3px;
-  min-height: 38px;
+  min-height: 34px;
   overflow: hidden;
   border: 1px solid rgba(34, 211, 238, 0.12);
-  border-radius: 14px;
+  border-radius: 999px;
   background:
     linear-gradient(180deg, rgba(12, 18, 30, 0.82), rgba(4, 6, 12, 0.72));
-  padding: 3px;
+  padding: 2px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -3644,13 +3607,13 @@ body:has(.page-shell) #root > * {
   align-items: center;
   justify-content: center;
   min-width: 0;
-  min-height: 30px;
+  min-height: 28px;
   border: 1px solid transparent;
-  border-radius: 11px !important;
-  background: transparent;
-  padding: 0 10px;
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0 12px;
   color: rgba(113, 113, 122, 0.98);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -3659,7 +3622,7 @@ body:has(.page-shell) #root > * {
 
 .blackhole-filter-tab:hover {
   color: rgba(212, 212, 216, 0.96);
-  background: rgba(39, 39, 42, 0.44);
+  background: rgba(39, 39, 42, 0.54);
 }
 
 .blackhole-filter-tab:active {
@@ -3679,41 +3642,154 @@ body:has(.page-shell) #root > * {
   color: rgba(165, 243, 252, 0.98);
 }
 
+.blackhole-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  position: relative;
+  z-index: 60;
+}
+
+.blackhole-per-page,
+.blackhole-page-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.blackhole-per-page span,
+.blackhole-page-status {
+  color: rgba(113, 113, 122, 0.98);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.blackhole-page-select,
+.blackhole-page-button {
+  appearance: none;
+  min-height: 28px;
+  border: 1px solid rgba(63, 63, 70, 0.45);
+  border-radius: 999px !important;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(212, 212, 216, 0.96);
+  padding: 0 12px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.blackhole-page-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 72px;
+  height: 28px;
+  padding-right: 24px;
+  position: relative;
+  z-index: 61;
+}
+
+.blackhole-page-select::after {
+  content: '▾';
+  position: absolute;
+  right: 10px;
+  color: rgba(161, 161, 170, 0.92);
+  font-size: 9px;
+}
+
+.blackhole-page-select-wrap {
+  position: relative;
+  display: inline-flex;
+  z-index: 70;
+}
+
+.blackhole-page-select-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 99999;
+  min-width: 72px;
+  overflow: visible;
+  border: 1px solid rgba(63, 63, 70, 0.95);
+  border-radius: 12px;
+  border-color: rgba(63, 63, 70, 0.95);
+  background: rgba(9, 9, 11, 0.98);
+  padding: 4px;
+  color: rgba(244, 244, 245, 0.96);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(34, 211, 238, 0.12);
+}
+
+.blackhole-page-select-item {
+  appearance: none;
+  display: flex;
+  width: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px !important;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(244, 244, 245, 0.96);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.blackhole-page-select-item:hover,
+.blackhole-page-select-item:focus-visible,
+.blackhole-page-select-item[aria-selected="true"] {
+  background: rgba(34, 211, 238, 0.16);
+  color: rgba(207, 250, 254, 0.98);
+}
+
+.blackhole-page-select:focus-visible,
+.blackhole-page-button:focus-visible {
+  outline: 2px solid rgba(103, 232, 249, 0.8);
+  outline-offset: 2px;
+}
+
+.blackhole-page-button:hover:not(:disabled) {
+  border-color: rgba(103, 232, 249, 0.22);
+  background: rgba(39, 39, 42, 0.54);
+  color: rgba(165, 243, 252, 0.98);
+}
+
+.blackhole-page-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 @media (max-width: 640px) {
   .blackhole-controls {
-    grid-template-columns: 1fr 1fr;
+    gap: 6px;
   }
 
   .blackhole-filter-tabs {
-    grid-column: 1 / -1;
-    grid-row: 1;
+    order: 1;
   }
 
-  .blackhole-rescan-button,
-  .blackhole-show-all-toggle {
-    width: 100%;
+  .blackhole-rescan-button {
+    order: 0;
+  }
+
+  .blackhole-pagination {
+    justify-content: flex-start;
+  }
+
+  .blackhole-resolution-manifest {
+    min-height: 318px;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .blackhole-shell,
-  .blackhole-warp,
-  .blackhole-accretion,
-  .blackhole-ring,
-  .blackhole-photon,
-  .blackhole-jet,
-  .blackhole-glow,
-  .bh-debris-particle {
-    animation: none !important;
-    transition: none !important;
-  }
-
-  .blackhole-visual[style] .blackhole-core,
-  .blackhole-visual[style] .blackhole-accretion,
-  .blackhole-visual[style] .blackhole-lens {
-    transform: none !important;
-  }
-}
+/* NOTE: the Black Hole animation is the centerpiece of that page and is explicitly
+   wanted even when the OS requests reduced motion (desktop browsers with "show
+   animations" off were otherwise getting a dead, effect-less black hole — while the
+   APK webview, which ignores the OS setting, kept the effects). So we do NOT disable
+   the black-hole animations under prefers-reduced-motion. */
 
 /* ── Incineration animation overlay ── */
 .blackhole-incineration-layer {
@@ -4060,6 +4136,40 @@ body:has(.page-shell) #root > * {
 }
 .bh-return-overlay:active { transform: scale(0.97); }
 
+.bh-back-floating {
+  position: fixed;
+  right: max(14px, env(safe-area-inset-right, 0px));
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  z-index: 1200;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 999px;
+  background: rgba(4, 12, 22, 0.84);
+  color: rgba(196, 243, 255, 0.96);
+  padding: 0 15px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38), 0 0 22px rgba(34, 211, 238, 0.12);
+  backdrop-filter: blur(14px) saturate(130%);
+}
+
+.bh-back-floating:hover:not(:disabled),
+.bh-back-floating:focus-visible {
+  border-color: rgba(125, 211, 252, 0.62);
+  background: rgba(8, 26, 42, 0.92);
+  color: #effcff;
+}
+
+.bh-back-floating:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 /* ── Page suck-in animation when returning to card (spiral toward black hole) ── */
 @keyframes bh-page-spiral-suck {
   0% {
@@ -4127,6 +4237,7 @@ body:has(.page-shell) #root > * {
 .bh-returning .blackhole-content,
 .bh-returning .bh-return-hint,
 .bh-returning .bh-return-overlay,
+.bh-returning .bh-back-floating,
 .bh-returning .constellation-bg {
   animation: bh-simple-fade 0.4s ease-out forwards !important;
 }
