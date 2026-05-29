@@ -822,3 +822,6 @@
 .ipl .hero-stat .n{white-space:nowrap}
 .ipl .hero-stat .l{white-space:nowrap}
 
+
+/* hero is a 2-column layout — its text must be left-aligned (the reference leaked text-align:center from a duplicate #hero rule) */
+.ipl #hero{text-align:left;justify-content:center}
