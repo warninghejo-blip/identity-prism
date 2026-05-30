@@ -898,6 +898,14 @@
 .ipl #blackhole-feature h2.sec-title{background:linear-gradient(120deg,#fff 26%,#a78bfa 66%,#f472b6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .ipl #explode h2.sec-title{background:linear-gradient(120deg,#fff 26%,#fcbf49 60%,#a78bfa);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 
+/* black-hole jets (landing only): fade the beams out toward their tips so they
+   don't end on a hard edge — soft at both ends, strongest near the hole */
+.ipl .blackhole-jet,
+.ipl .blackhole-jet::after{
+  -webkit-mask-image:linear-gradient(180deg,transparent 0%,#000 28%,#000 72%,transparent 100%);
+  mask-image:linear-gradient(180deg,transparent 0%,#000 28%,#000 72%,transparent 100%);
+}
+
 /* ── round-4 ── */
 /* hero: no CTA buttons; left column stretches to the card's height and the
    stats row sticks to the bottom so the card and the text end on the same line */
