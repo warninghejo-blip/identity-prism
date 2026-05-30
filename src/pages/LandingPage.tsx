@@ -3,6 +3,7 @@ import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import SiteHeader from '@/components/SiteHeader';
 import WebIdentityDemoCard from '@/components/WebIdentityDemoCard';
 import { useGlobalStats } from '@/hooks/useGlobalStats';
+import { useSeo } from '@/hooks/useSeo';
 import './landing.css';
 
 // Animated count-up for the two LIVE hero stats (idsMinted, sybilsCaught).
@@ -24,6 +25,12 @@ function CountUpStat({ value, label }: { value: number; label: string }) {
 
 export default function LandingPage() {
   const stats = useGlobalStats(15_000);
+  useSeo({
+    title: 'Identity Prism — Sybil-Resistant Reputation & Identity on Solana',
+    description:
+      'Build a portable, sybil-resistant on-chain identity on Solana. Earn a composite reputation score through real activity and skill-based games — then check any wallet’s sybil risk for free.',
+    path: '/',
+  });
 
   // ===== Ported scripts: bg-cosmos canvas, sybil-canvas cluster, scroll-rail
   // active highlighting, and reveal IntersectionObserver — all in ONE effect.

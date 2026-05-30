@@ -7,6 +7,7 @@ import {
   nextStepsForTone,
 } from '@/lib/sybilFriendly';
 import SiteHeader from '@/components/SiteHeader';
+import { useSeo } from '@/hooks/useSeo';
 import HubReturnButton from '@/components/HubReturnButton';
 import './SybilCheckerPage.css';
 
@@ -1247,6 +1248,12 @@ function SimplePanel({
 }
 
 export default function SybilCheckerPage() {
+  useSeo({
+    title: 'Solana Sybil Checker — Free Wallet Sybil & Trust Analysis | Identity Prism',
+    description:
+      'Instantly check any Solana wallet for sybil risk. Composite trust score, cluster detection, funding-source analysis and behavioral signals — free, no signup.',
+    path: '/sybil-check',
+  });
   const { publicKey } = useWallet();
   const initialAddress = useMemo(() => {
     if (typeof window === 'undefined') return '';
