@@ -1224,7 +1224,20 @@ function SimplePanel({
 
         <div className="simple-rich-actions">
           <button type="button" className="rich-act primary" onClick={onRecheck} disabled={loading}>Re-check address</button>
-          <button type="button" className="rich-act ghost" onClick={() => navigator.clipboard?.writeText(window.location.href)}>Share report</button>
+          <button
+            type="button"
+            className="rich-act ghost"
+            onClick={() => {
+              const text = `🛰️ I ran ${shortAddressGlyph(address, 4, 4)} through the Identity Prism Sybil Checker.\n\nVerdict: ${v.title} · Trust ${trustScore}/100.\n\nCheck any Solana wallet's sybil risk for free 👇`;
+              window.open(
+                `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(window.location.href)}`,
+                '_blank',
+                'noopener,noreferrer',
+              );
+            }}
+          >
+            Share on X
+          </button>
           <button type="button" className="rich-act ghost" onClick={onShowAdvanced}>Open technical details</button>
           <span className="rich-report-id">Report ID · {reportId}</span>
         </div>

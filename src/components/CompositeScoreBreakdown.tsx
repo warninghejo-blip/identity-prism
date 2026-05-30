@@ -471,31 +471,39 @@ function ExpandedDetails({
 export default function CompositeScoreBreakdown({ breakdown, details, compact = false, webMode = false }: BreakdownProps) {
   const [expandedBar, setExpandedBar] = useState<BarKey | null>(null);
   const canExpand = Boolean(details);
-  // On web, only on-chain + sybil trust feed the score; hide the Seeker-only bars.
-  const visibleBars = webMode ? BARS.filter((b) => b.key === 'onchain' || b.key === 'sybilTrust') : BARS;
+  // Web: on-chain + sybil trust are scaled to the 0-1000 web ladder (raw max 650)
+  // so the two bars SUM to the headline web score; the other three stay visible
+  // for reference but are dimmed and tagged "in app" (Seeker-only, not counted).
+  const WEB_SCALE = 1000 / 650;
+  const isWebCounted = (k: BarKey) => k === 'onchain' || k === 'sybilTrust';
 
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
-      {visibleBars.map((bar) => {
-        const value = breakdown[bar.key] || 0;
-        const pct = Math.min(100, (value / bar.max) * 100);
-        const finalValue = Math.min(value, bar.max);
+      {BARS.map((bar) => {
+        const scaled = webMode && isWebCounted(bar.key);
+        const rawValue = breakdown[bar.key] || 0;
+        const value = scaled ? Math.round(rawValue * WEB_SCALE) : rawValue;
+        const max = scaled ? Math.round(bar.max * WEB_SCALE) : bar.max;
+        const pct = Math.min(100, (value / max) * 100);
+        const finalValue = Math.min(value, max);
+        const appOnly = webMode && !isWebCounted(bar.key);
+        const rowExpandable = canExpand && !appOnly;
         const isExpanded = expandedBar === bar.key;
         const barLabel = webMode && bar.key === 'sybilTrust' ? 'Sybil Trust' : bar.label;
 
         return (
-          <div key={bar.key}>
+          <div key={bar.key} style={appOnly ? { opacity: 0.45 } : undefined}>
             <button
               type="button"
               data-testid={`score-row-${bar.key}`}
               aria-expanded={isExpanded}
-              disabled={!canExpand}
-              className={`w-full text-left ${canExpand ? 'cursor-pointer' : 'cursor-default'}`}
-              onClick={() => canExpand && setExpandedBar(isExpanded ? null : bar.key)}
+              disabled={!rowExpandable}
+              className={`w-full text-left ${rowExpandable ? 'cursor-pointer' : 'cursor-default'}`}
+              onClick={() => rowExpandable && setExpandedBar(isExpanded ? null : bar.key)}
             >
               <div className={`flex justify-between items-center ${compact ? 'text-[10px]' : 'text-xs'} mb-1`}>
                 <span className="text-white/60 flex items-center gap-1">
-                  {canExpand && (
+                  {rowExpandable && (
                     <span
                       className={`text-white/20 text-[8px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
                     >
@@ -512,11 +520,16 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
                     style={{ filter: `drop-shadow(0 0 5px ${bar.color}66)` }}
                   />
                   <span>{barLabel}</span>
+                  {appOnly && (
+                    <span className="ml-1 rounded border border-white/15 px-1 py-px text-[7.5px] font-bold uppercase tracking-wider text-white/45">
+                      in app
+                    </span>
+                  )}
                 </span>
                 <span className="flex items-center gap-1">
                   <InfoTooltip text={bar.tooltip} color={bar.color} />
                   <span style={{ color: bar.color }} className="font-mono">
-                    {finalValue}/{bar.max}
+                    {finalValue}/{max}
                   </span>
                 </span>
               </div>
@@ -535,7 +548,7 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
       })}
       {webMode && (
         <p className={`${compact ? 'text-[8.5px]' : 'text-[10px]'} leading-snug text-white/35 pt-0.5`}>
-          Web score = on-chain + sybil trust only. Games, Social &amp; Engagement are earned in the Seeker app.
+          On-chain + Sybil Trust make up your web score. Games, Social &amp; Engagement are earned in the Seeker app \u2014 shown for reference, not counted here.
         </p>
       )}
     </div>
