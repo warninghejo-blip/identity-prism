@@ -27,6 +27,7 @@ import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
 import TrustGradeBadge from '@/components/TrustGradeBadge';
 import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
+import { useWebComposite } from '@/hooks/useWebComposite';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
 import { getBoostedCompositeScore } from '@/lib/shipStats';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
@@ -213,6 +214,10 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const isCapture = Boolean(captureMode);
   const defaultTab = captureTab === 'badges' ? 'badges' : captureTab === 'intel' ? 'intel' : 'stats';
   const fetchedCompositeData = useCompositeScore(liveData ? address : null);
+  // Web-only composite: uses only onchain + sybilTrust, capped at 899 without Seeker.
+  // For demo (compositeOverride) we keep the override's score; only live wallets
+  // get re-normalised to the web rules.
+  const webComp = useWebComposite(liveData && !compositeOverride ? address : null);
   const compositeData = useMemo(
     () =>
       compositeOverride
@@ -231,8 +236,15 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
             hasComposite: true,
             refetch: () => {},
           }
-        : fetchedCompositeData,
-    [compositeOverride, fetchedCompositeData],
+        : {
+            ...fetchedCompositeData,
+            // ALWAYS use web-composite (onchain+sybilTrust normalized) — never
+            // fall back to the raw full composite or the side-menu would show
+            // a different number than the card.
+            score: webComp.isLoading ? 0 : webComp.score,
+            tier: webComp.tier || fetchedCompositeData.tier,
+          },
+    [compositeOverride, fetchedCompositeData, webComp.score, webComp.tier],
   );
 
   // Forge loadout — always load (needed for NFT capture too)
@@ -572,9 +584,12 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     () => (forgeFrame ? { equippedShipSkin: null, equippedFrame: forgeFrame, equippedAura: null } : null),
     [forgeFrame],
   );
+  // On web the composite is the re-normalised onchain+sybilTrust pair (see
+  // useWebComposite). getBoostedCompositeScore() recomputes from the full 5-
+  // component breakdown and diverges from the menu score, so we use the score
+  // that compositeData carries directly. Frame-boost is APK-only cosmetics.
   const boostedComposite = useMemo(() => {
-    const result = getBoostedCompositeScore(compositeData.breakdown, frameLoadout);
-    return result ?? { score: compositeData.score, breakdown: compositeData.breakdown };
+    return { score: compositeData.score, breakdown: compositeData.breakdown };
   }, [compositeData.breakdown, compositeData.score, frameLoadout]);
   const hasCompositeDisplay = compositeData.hasComposite;
   const fallbackIdentityScore = Math.max(score, 0);
@@ -622,7 +637,12 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
   const nextTierLabel = hasCompositeDisplay && currentThreshold.next ? TIER_LABELS[currentThreshold.next] || '' : null;
   const ptsToNext =
     hasCompositeDisplay && currentThreshold.next ? Math.max(0, currentThreshold.max + 1 - displayScore) : 0;
-  const badgeItems = getBadgeItems(safeTraits, dossierRisk, compositeData.details);
+  // Web-only filter: games (humanProof), social, engagement badges are
+  // Seeker-exclusive — hide them on the web card. APK uses CelestialCard.tsx
+  // which is untouched.
+  const SEEKER_ONLY_CATEGORIES = new Set(['humanProof', 'social', 'engagement']);
+  const badgeItems = getBadgeItems(safeTraits, dossierRisk, compositeData.details)
+    .filter((b) => !SEEKER_ONLY_CATEGORIES.has(b.category));
   const activeBadges = badgeItems.filter((badge) => badge.isActive);
   const inactiveBadges = badgeItems.filter((badge) => !badge.isActive);
   const orderedBadges = [...activeBadges, ...inactiveBadges];
@@ -709,7 +729,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   return (
                     <TrustGradeBadge
                       grade={grade}
-                      size="xs"
+                      size="lg"
                       className="capture-hidden absolute top-3 left-3"
                     />
                   );
@@ -848,7 +868,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
               <div className="flex justify-center items-center border-t border-white/5 pt-3 pb-1 relative z-30">
                 {/* Badges moved here */}
                 {frontBadges.length > 0 ? (
-                  <div className="front-badges grid grid-cols-5 gap-1.5 justify-items-center items-center w-full max-w-[340px] mx-auto pointer-events-auto">
+                  <div className="front-badges flex flex-wrap justify-center items-center gap-2 w-full max-w-[340px] mx-auto pointer-events-auto">
                     {frontBadges.map((badge) => (
                       <div
                         key={badge.key}
@@ -1026,6 +1046,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                         breakdown={displayBreakdown}
                         details={compositeData.details}
                         compact={false}
+                        webMode
                       />
                     </div>
 

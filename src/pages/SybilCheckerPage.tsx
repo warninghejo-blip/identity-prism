@@ -1,10 +1,32 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { riskBand, verdictFromScore } from '@/lib/sybilVerdict';
+import {
+  friendlyVerdict,
+  buildFriendlySignals,
+  nextStepsForTone,
+} from '@/lib/sybilFriendly';
 import SiteHeader from '@/components/SiteHeader';
+import HubReturnButton from '@/components/HubReturnButton';
 import './SybilCheckerPage.css';
 
-const DEFAULT_WALLET = '2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN';
 const TOTAL_CHECKS = 23;
+
+async function readSybilJson<T>(response: Response, label: string): Promise<T> {
+  const contentType = response.headers.get('content-type') || '';
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(`${label} returned an empty response`);
+  }
+  if (!contentType.includes('application/json')) {
+    throw new Error(`${label} is temporarily unavailable. Please check the address and try again.`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${label} returned an invalid response. Please try again in a moment.`);
+  }
+}
 
 type SignalSeverity = 'info' | 'warning' | 'danger';
 
@@ -1056,17 +1078,182 @@ function Heatmap({ metrics }: { metrics?: SybilMetrics }) {
   );
 }
 
+// ===== Simple-mode panel: rich, plain-language verdict for non-technical users.
+// All friendly mapping lives in @/lib/sybilFriendly so the APK PrismScanner uses
+// the exact same headlines and tone-based phrasing.
+
+function SimplePanel({
+  loading,
+  address,
+  trustScore,
+  metrics,
+  primarySource,
+  dataSignalsCount,
+  onShowAdvanced,
+  onRecheck,
+}: {
+  loading: boolean;
+  address: string;
+  trustScore: number;
+  metrics: Partial<SybilMetrics>;
+  primarySource: string;
+  dataSignalsCount: number;
+  onShowAdvanced: () => void;
+  onRecheck: () => void;
+}) {
+  const v = friendlyVerdict(trustScore);
+  const ringColor = v.tone === 'good' ? '#34d399' : v.tone === 'mixed' ? '#a3e635' : v.tone === 'warn' ? '#fbbf24' : '#ef4444';
+  const ringPct = Math.max(0, Math.min(100, trustScore));
+  const dashOffset = 263 - Math.round((ringPct / 100) * 263);
+
+  const signals = buildFriendlySignals({
+    walletAgeDays: metrics.walletAgeDays,
+    uniquePrograms: metrics.uniquePrograms,
+    activeDaysRatio: metrics.activeDaysRatio,
+    primaryFundingSourceLabel: primarySource,
+    siblingCount: metrics.siblingCount,
+    clusterSimilarity: metrics.clusterSimilarity,
+    balance: metrics.balance,
+    txCount: metrics.txCount,
+  });
+
+  // Confidence = how much real on-chain evidence backs this verdict — not just
+  // how many checks ran. A long, active, varied history is far more reliable to
+  // judge than a brand-new wallet with a handful of transactions. We blend signal
+  // coverage (40%) with history depth (60%: age, tx volume, active days, protocol variety).
+  const coverage = Math.min(1, dataSignalsCount / TOTAL_CHECKS);
+  const ageFactor = Math.min(1, (metrics.walletAgeDays ?? 0) / 365); // ~1y+ history → full
+  const txFactor = Math.min(1, Math.log10((metrics.txCount ?? 0) + 1) / 2.7); // ~500 tx → full
+  const activeFactor = Math.min(1, (metrics.activeDaysCount ?? 0) / 90); // 90+ active days → full
+  const programFactor = Math.min(1, (metrics.uniquePrograms ?? 0) / 15); // protocol variety
+  const depth = (ageFactor + txFactor + activeFactor + programFactor) / 4;
+  const confidence = dataSignalsCount > 0 ? Math.round(100 * (0.4 * coverage + 0.6 * depth)) : 0;
+  const confidenceLabel = confidence >= 75 ? 'HIGH' : confidence >= 45 ? 'MEDIUM' : 'LOW';
+
+  const nextSteps = nextStepsForTone(v.tone);
+
+  const reportId = `0xR-${v.tone === 'good' ? 'clean' : v.tone === 'mixed' ? 'mix' : v.tone === 'warn' ? 'warn' : 'risk'}-${address.slice(0, 5)}`;
+
+  return (
+    <section>
+      <div className="container simple-rich">
+        <div className="simple-rich-top">
+          <div className="simple-rich-head">
+            <h2 className={`simple-rich-title tone-${v.tone}`}>
+              {loading ? 'Analyzing…' : v.title}
+            </h2>
+            <p className="simple-rich-sub">
+              {loading ? 'Identity Prism is checking on-chain history, funding sources, and behavioral patterns.' : v.sub}
+            </p>
+            <div className="simple-rich-addrline">
+              <div className="simple-rich-addr">
+                <span>{shortAddressGlyph(address, 8, 4)}</span>
+                <button type="button" className="cp" onClick={() => navigator.clipboard?.writeText(address)}>copy</button>
+              </div>
+              <span className="simple-rich-meta">Solana · checked just now</span>
+            </div>
+          </div>
+          <div className={`simple-rich-ring tone-${v.tone}`} aria-hidden="true">
+            <svg viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,.06)" strokeWidth="6" />
+              <circle cx="50" cy="50" r="42" fill="none" stroke={ringColor} strokeWidth="6" strokeLinecap="round"
+                strokeDasharray="263" strokeDashoffset={dashOffset}
+                style={{ filter: `drop-shadow(0 0 10px ${ringColor})` }} />
+            </svg>
+            <div className="ring-label">
+              <div className="ring-score">{loading ? '…' : trustScore}</div>
+              <div className="ring-name">HUMAN SCORE</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="simple-rich-explain">
+          <div className="explain-mark">?</div>
+          <div>
+            <b>What does this mean?</b>
+            <p>{v.longHelp}</p>
+          </div>
+        </div>
+
+        <div className="simple-rich-grid">
+          <div className="simple-rich-card simple-rich-signals">
+            <div className="rich-card-head">
+              <span>Why this score</span>
+              <span className="rich-card-sub">{signals.length} signals analysed</span>
+            </div>
+            <div className="rich-signal-list">
+              {signals.map((s) => (
+                <div className="rich-signal" key={s.label}>
+                  <div className="rich-sig-l">
+                    <span className="pip" />
+                    <div>
+                      <b>{s.label}</b>
+                      <span>{s.headline}</span>
+                    </div>
+                  </div>
+                  <div className="rich-sig-r">{s.valueText}</div>
+                </div>
+              ))}
+            </div>
+            <button type="button" className="rich-card-cta" onClick={onShowAdvanced}>
+              Show signal weights
+            </button>
+          </div>
+
+          <div className="simple-rich-side">
+            <div className="simple-rich-card">
+              <div className="rich-card-head"><span>Confidence</span></div>
+              <div className="confidence-row">
+                <span className="conf-pct">{confidence}<small>%</small></span>
+                <span className="conf-label">{confidenceLabel}</span>
+              </div>
+              <div className="conf-bar"><div className={`conf-fill tone-${v.tone}`} style={{ width: `${confidence}%` }} /></div>
+              <p className="conf-note">{confidence >= 75 ? 'Deep, active on-chain history — high-confidence read.' : confidence >= 45 ? 'Moderate history — verdict is fairly reliable.' : 'Thin history — verdict may shift as the wallet grows.'}</p>
+            </div>
+
+            <div className="simple-rich-card">
+              <div className="rich-card-head"><span>What to do next</span></div>
+              <ol className="rich-steps">
+                {nextSteps.map((step, i) => (
+                  <li key={i}><span className="step-n">{i + 1}</span><span>{step}</span></li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <div className="simple-rich-actions">
+          <button type="button" className="rich-act primary" onClick={onRecheck} disabled={loading}>Re-check address</button>
+          <button type="button" className="rich-act ghost" onClick={() => navigator.clipboard?.writeText(window.location.href)}>Share report</button>
+          <button type="button" className="rich-act ghost" onClick={onShowAdvanced}>Open technical details</button>
+          <span className="rich-report-id">Report ID · {reportId}</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function SybilCheckerPage() {
+  const { publicKey } = useWallet();
   const initialAddress = useMemo(() => {
-    if (typeof window === 'undefined') return DEFAULT_WALLET;
-    return new URLSearchParams(window.location.search).get('address') || DEFAULT_WALLET;
+    if (typeof window === 'undefined') return '';
+    return new URLSearchParams(window.location.search).get('address') || '';
   }, []);
   const [input, setInput] = useState(initialAddress);
   const [address, setAddress] = useState(initialAddress);
   const [data, setData] = useState<SybilResult | null>(null);
   const [funding, setFunding] = useState<FundingSource[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(initialAddress));
   const [error, setError] = useState('');
+  // Simple view = plain-language verdict for normal users; Advanced = full technical breakdown.
+  // Default = simple; choice persisted across visits.
+  const [viewMode, setViewMode] = useState<'simple' | 'advanced'>(() => {
+    if (typeof window === 'undefined') return 'simple';
+    return (window.localStorage.getItem('sybil-view') as 'simple' | 'advanced') || 'simple';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') window.localStorage.setItem('sybil-view', viewMode);
+  }, [viewMode]);
 
   const loadWallet = useCallback(async (wallet: string) => {
     const next = wallet.trim();
@@ -1079,18 +1266,18 @@ export default function SybilCheckerPage() {
         headers: { Accept: 'application/json' },
       });
       if (!analysisRes.ok) {
-        const body = await analysisRes.json().catch(() => null);
+        const body = await readSybilJson<{ error?: string }>(analysisRes, 'Sybil analysis').catch(() => null);
         throw new Error(body?.error || `API ${analysisRes.status}`);
       }
-      const analysis = (await analysisRes.json()) as SybilResult;
+      const analysis = await readSybilJson<SybilResult>(analysisRes, 'Sybil analysis');
       let sources = Array.isArray(analysis.fundingSources) ? analysis.fundingSources : [];
       if (sources.length === 0) {
         const fundingRes = await fetch(`${base}/api/sybil/funding-sources?address=${encodeURIComponent(next)}`, {
           headers: { Accept: 'application/json' },
         }).catch(() => null);
         if (fundingRes?.ok) {
-          const body = (await fundingRes.json()) as FundingResponse;
-          sources = body.sources || [];
+          const body = await readSybilJson<FundingResponse>(fundingRes, 'Funding source lookup').catch(() => null);
+          sources = body?.sources || [];
         }
       }
       if (sources.length === 0) {
@@ -1114,8 +1301,16 @@ export default function SybilCheckerPage() {
   }, []);
 
   useEffect(() => {
-    void loadWallet(initialAddress);
+    if (initialAddress) void loadWallet(initialAddress);
   }, [initialAddress, loadWallet]);
+
+  // If user has a wallet connected and no address picked yet, auto-fill from it.
+  useEffect(() => {
+    if (address || !publicKey) return;
+    const next = publicKey.toBase58();
+    setInput(next);
+    void loadWallet(next);
+  }, [publicKey, address, loadWallet]);
 
   const metrics = data?.metrics || {};
   const riskScore = Math.round(data?.riskScore ?? 0);
@@ -1193,7 +1388,8 @@ export default function SybilCheckerPage() {
 
       <section className="intro">
         <div className="container">
-          <div className="crumb"><a href="/">Home</a><span className="sep">/</span>Tools<span className="sep">/</span>Sybil Checker</div>
+          <HubReturnButton className="mb-5" />
+          <div className="crumb">Tools<span className="sep">/</span>Sybil Checker</div>
           <h1><span className="grad">Scan any wallet.</span> <span className="red">See the truth.</span></h1>
           <p>Paste a Solana address - Identity Prism analyzes on-chain history, transfer graph, funding sources, behavioral patterns, and cluster membership in real time.</p>
           <form className="scanbar" onSubmit={onSubmit}>
@@ -1233,9 +1429,41 @@ export default function SybilCheckerPage() {
               <div className="v-stat"><div className="k">Severity</div><div className={`val ${band.color}`}>{severity}</div></div>
             </div>
           </div>
+
+          <div className="sybil-view-toggle" role="tablist" aria-label="View mode">
+            <button
+              type="button"
+              role="tab"
+              className={viewMode === 'simple' ? 'active' : ''}
+              aria-selected={viewMode === 'simple'}
+              onClick={() => setViewMode('simple')}
+            >Simple</button>
+            <button
+              type="button"
+              role="tab"
+              className={viewMode === 'advanced' ? 'active' : ''}
+              aria-selected={viewMode === 'advanced'}
+              onClick={() => setViewMode('advanced')}
+            >Advanced</button>
+          </div>
         </div>
       </section>
 
+      {viewMode === 'simple' && address && !error && (
+        <SimplePanel
+          loading={loading}
+          address={address}
+          trustScore={trustScore}
+          metrics={metrics}
+          primarySource={primarySource}
+          dataSignalsCount={data?.signals?.length ?? 0}
+          onShowAdvanced={() => setViewMode('advanced')}
+          onRecheck={() => void loadWallet(address)}
+        />
+      )}
+
+      {viewMode === 'advanced' && (
+      <>
       <section>
         <div className="container result-wrap">
           <ClusterGraph address={address} data={data} funding={funding} />
@@ -1355,6 +1583,8 @@ export default function SybilCheckerPage() {
           <Heatmap metrics={metrics} />
         </div>
       </section>
+      </>
+      )}
 
       <footer>
         <div className="container foot-row">
