@@ -36,6 +36,45 @@
       content="A Solana identity layer where humans can prove trust through on-chain history, gameplay, cleanup, and community sybil detection."
     />
     <meta name="twitter:image" content="https://identityprism.xyz/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://identityprism.xyz/#org",
+          "name": "Identity Prism",
+          "url": "https://identityprism.xyz/",
+          "logo": "https://identityprism.xyz/phav.png",
+          "sameAs": ["https://x.com/Identity_Prism", "https://github.com/warninghejo-blip/identity-prism"]
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://identityprism.xyz/#website",
+          "url": "https://identityprism.xyz/",
+          "name": "Identity Prism",
+          "description": "Sybil-resistant on-chain identity and reputation for Solana.",
+          "publisher": { "@id": "https://identityprism.xyz/#org" },
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": "https://identityprism.xyz/sybil-check?address={search_term_string}",
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "name": "Identity Prism",
+          "applicationCategory": "FinanceApplication",
+          "operatingSystem": "Web, Android",
+          "url": "https://identityprism.xyz/",
+          "description": "Build a sybil-resistant on-chain identity on Solana and check any wallet's sybil risk with a free composite trust score.",
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+        }
+      ]
+    }
+    </script>
   </head>
   <body style="background:#05070a;">
     <div id="app-preloader" style="position:fixed;inset:0;z-index:999999;background:#05070a;"></div>
