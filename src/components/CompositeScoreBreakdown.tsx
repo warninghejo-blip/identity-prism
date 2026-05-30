@@ -15,6 +15,9 @@ interface BreakdownProps {
   };
   details?: ScoreDetails | null;
   compact?: boolean;
+  // Web mode: the web Identity score is on-chain + sybil only (games/social/
+  // engagement are Seeker-app exclusive), so show just those two bars + a note.
+  webMode?: boolean;
 }
 
 type BarKey = 'onchain' | 'sybilTrust' | 'humanProof' | 'social' | 'engagement';
@@ -465,17 +468,20 @@ function ExpandedDetails({
   }
 }
 
-export default function CompositeScoreBreakdown({ breakdown, details, compact = false }: BreakdownProps) {
+export default function CompositeScoreBreakdown({ breakdown, details, compact = false, webMode = false }: BreakdownProps) {
   const [expandedBar, setExpandedBar] = useState<BarKey | null>(null);
   const canExpand = Boolean(details);
+  // On web, only on-chain + sybil trust feed the score; hide the Seeker-only bars.
+  const visibleBars = webMode ? BARS.filter((b) => b.key === 'onchain' || b.key === 'sybilTrust') : BARS;
 
   return (
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
-      {BARS.map((bar) => {
+      {visibleBars.map((bar) => {
         const value = breakdown[bar.key] || 0;
         const pct = Math.min(100, (value / bar.max) * 100);
         const finalValue = Math.min(value, bar.max);
         const isExpanded = expandedBar === bar.key;
+        const barLabel = webMode && bar.key === 'sybilTrust' ? 'Sybil Trust' : bar.label;
 
         return (
           <div key={bar.key}>
@@ -505,7 +511,7 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
                     draggable={false}
                     style={{ filter: `drop-shadow(0 0 5px ${bar.color}66)` }}
                   />
-                  <span>{bar.label}</span>
+                  <span>{barLabel}</span>
                 </span>
                 <span className="flex items-center gap-1">
                   <InfoTooltip text={bar.tooltip} color={bar.color} />
@@ -527,6 +533,11 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
           </div>
         );
       })}
+      {webMode && (
+        <p className={`${compact ? 'text-[8.5px]' : 'text-[10px]'} leading-snug text-white/35 pt-0.5`}>
+          Web score = on-chain + sybil trust only. Games, Social &amp; Engagement are earned in the Seeker app.
+        </p>
+      )}
     </div>
   );
 }
