@@ -362,6 +362,34 @@ export default function WebIdentityHub() {
               </div>
             </div>
 
+            {liveScore > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const text = `🪐 My Identity Prism passport — ${tierLabel} tier · ${liveScore}/1000.\n\nSybil-resistant on-chain reputation on Solana, earned not bought. What's your score?`;
+                  window.open(
+                    `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent('https://identityprism.xyz/identity')}`,
+                    '_blank',
+                    'noopener,noreferrer',
+                  );
+                }}
+                style={{
+                  width: '100%',
+                  marginTop: 10,
+                  padding: '9px 14px',
+                  borderRadius: 10,
+                  border: '1px solid rgba(34,211,238,0.3)',
+                  background: 'linear-gradient(135deg, rgba(34,211,238,0.12), rgba(167,139,250,0.12))',
+                  color: '#67e8f9',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                𝕏&nbsp;&nbsp;Share my identity
+              </button>
+            )}
+
             {/* Card status row */}
             <div className="mc-card-row">
               <div>

@@ -1158,6 +1158,9 @@
   gap: 8px;
   margin-bottom: 8px;
   min-width: 0;
+  /* if the dossier column is tight, the Copy button wraps under the address
+     instead of being sliced off the right edge */
+  flex-wrap: wrap;
 }
 
 .sybil-check-page .profile-caption {
@@ -1173,9 +1176,9 @@
   font-weight: 600;
   letter-spacing: .02em;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* full line box so descenders (p, y) are never clipped vertically */
+  line-height: 1.6;
+  word-break: break-all;
 }
 
 .sybil-check-page .prof-addr .cp {
