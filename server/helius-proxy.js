@@ -283,7 +283,6 @@ const LEADERBOARD_STORE_FILE = process.env.LEADERBOARD_STORE_FILE
 const LEADERBOARD_MAX_ENTRIES = 100;
 const COIN_BALANCE_META_KEY = '__meta__:totalBurned';
 const TOURNAMENT_HISTORY_KEY = '__history__';
-const TOURNAMENT_META_KEY = '__meta__';
 const parseJsonText = (value, fallback = null) => {
   try {
     return JSON.parse(value);
@@ -1085,6 +1084,31 @@ const computeServerRangerXP = (sources) => {
   return Math.max(0, Math.floor(xp));
 };
 
+const getServerAchievementCount = (address) => achievementData.get(address)?.unlocked?.size || 0;
+
+const getServerRangerXpBreakdown = (sources = {}) => {
+  let gameBestScores = 0;
+  if (sources.gameBestScores) {
+    for (const [mode, score] of Object.entries(sources.gameBestScores)) {
+      const cfg = SERVER_GAME_XP_CONFIG[mode] || { mult: 2, cap: 1000 };
+      gameBestScores += Math.min(Math.floor((Number(score) || 0) * cfg.mult), cfg.cap);
+    }
+  }
+
+  let gamesPlayed = 0;
+  const stats = sources.gameStats || {};
+  if (stats.orbit) gamesPlayed += Number(stats.orbit.gamesPlayed) || 0;
+  if (stats.defender) gamesPlayed += Number(stats.defender.gamesPlayed) || 0;
+  if (stats.gravity) gamesPlayed += Number(stats.gravity.gamesPlayed) || 0;
+
+  return {
+    gameBestScores,
+    gamesPlayed,
+    achievements: (Number(sources.achievementCount) || 0) * 200,
+    coinsEarned: Number(sources.totalCoins) || 0,
+  };
+};
+
 const getServerRangerSnapshot = (address, walletEntry = walletDatabase.get(address) || {}) => {
   const sources = buildServerRangerSources(address, walletEntry);
   const xp = computeServerRangerXP(sources);
@@ -1689,10 +1713,27 @@ const prunePendingMints = () => {
   }
 };
 
-const storePendingMint = ({ requestId, owner, assetId, assetSecret, transaction, score, tier, traits, stats, metadataUri, isRemint }) => {
+const storePendingMint = ({
+  requestId,
+  owner,
+  ownerAddress,
+  assetId,
+  assetSecret,
+  transaction,
+  score,
+  tier,
+  traits,
+  stats,
+  metadataUri,
+  isRemint,
+  unsignedMessageHash,
+  blockhash,
+  lastValidBlockHeight,
+}) => {
   prunePendingMints();
   pendingMintSigners.set(requestId, {
     owner,
+    ownerAddress,
     assetId,
     assetSecret,
     transaction,
@@ -1702,6 +1743,9 @@ const storePendingMint = ({ requestId, owner, assetId, assetSecret, transaction,
     stats,
     metadataUri,
     isRemint,
+    unsignedMessageHash,
+    blockhash,
+    lastValidBlockHeight,
     createdAt: Date.now(),
   });
 };
@@ -3674,12 +3718,22 @@ async function handleGameLeaderboardV1(req, res, url) {
 }
 
 // ═══ V2 MIGRATION: lazy account state seeding on first v2 request ════════════
-const V2_MIGRATION_REV = 1;
+const V2_MIGRATION_REV = 2;
 
 function ensureV2AccountState(address) {
-  const wallet = walletDatabase.get(address);
-  if (!wallet) return;
-  if (wallet._migrations?.apiV2 === V2_MIGRATION_REV) return wallet;
+  let wallet = walletDatabase.get(address);
+  if (!wallet) {
+    wallet = { address, source: 'v2-migration' };
+  }
+
+  const previousRev = Math.max(0, Number(wallet._migrations?.apiV2) || 0);
+  if (previousRev >= V2_MIGRATION_REV) return wallet;
+
+  const previousXp = Math.max(
+    0,
+    Number(wallet.rangerSnapshot?.xp) || Number(wallet._v2MigrationResult?.totalXP) || 0,
+  );
+  const isMigrationRerun = previousRev > 0;
 
   const ranger = getServerRangerSnapshot(address, wallet);
 
@@ -3688,42 +3742,115 @@ function ensureV2AccountState(address) {
   const hasMint = mintedAddresses.has(address);
   const scans = Number(wallet.scanCount) || 0;
 
-  const seedQuest = (existing, progress, completed) =>
-    existing || { progress, completed: completed ?? progress > 0, claimed: false };
+  if (!isMigrationRerun) {
+    const seedQuest = (existing, progress, completed) =>
+      existing || { progress, completed: completed ?? progress > 0, claimed: false };
 
-  const qp = questProgress.get(address) || { quests: {}, streakDays: 0 };
-  qp.quests = {
-    ...qp.quests,
-    ot_first_scan: seedQuest(qp.quests?.ot_first_scan, Math.min(1, scans)),
-    ot_first_mint: seedQuest(qp.quests?.ot_first_mint, hasMint ? 1 : 0),
-    ot_first_game: seedQuest(qp.quests?.ot_first_game, playerEntries.length > 0 ? 1 : 0),
-    ot_score1000: seedQuest(qp.quests?.ot_score1000, bestScore, bestScore >= 1000),
-  };
-  questProgress.set(address, { ...qp, updatedAt: new Date().toISOString() });
+    const qp = questProgress.get(address) || { quests: {}, streakDays: 0 };
+    qp.quests = {
+      ...qp.quests,
+      ot_first_scan: seedQuest(qp.quests?.ot_first_scan, Math.min(1, scans)),
+      ot_first_mint: seedQuest(qp.quests?.ot_first_mint, hasMint ? 1 : 0),
+      ot_first_game: seedQuest(qp.quests?.ot_first_game, playerEntries.length > 0 ? 1 : 0),
+      ot_score1000: seedQuest(qp.quests?.ot_score1000, bestScore, bestScore >= 1000),
+    };
+    questProgress.set(address, { ...qp, updatedAt: new Date().toISOString() });
+    invalidateQuestProgressCache(address);
+    persistQuestProgress();
+  }
 
   wallet.rangerSnapshot = { xp: ranger.xp, rank: ranger.rank, sources: ranger.sources, updatedAt: new Date().toISOString() };
-  wallet.forgeState = wallet.forgeState || createEmptyForgeLoadout(address);
+  if (!isMigrationRerun) {
+    wallet.forgeState = wallet.forgeState || createEmptyForgeLoadout(address);
+  }
   wallet._migrations = { ...(wallet._migrations || {}), apiV2: V2_MIGRATION_REV, migratedAt: new Date().toISOString() };
 
   // Store migration result so the welcome-back modal can display past achievements
+  const achievementCount = getServerAchievementCount(address);
   wallet._v2MigrationResult = {
+    migrationRev: V2_MIGRATION_REV,
     rangerRank: ranger.rank,
     totalXP: ranger.xp,
-    xpBreakdown: {
-      gameBestScores: ranger.sources?.gameBestScores || 0,
-      gamesPlayed: ranger.sources?.gamesPlayed || 0,
-      achievements: ranger.sources?.achievements || 0,
-      coinsEarned: ranger.sources?.coinsEarned || 0,
-    },
+    previousXP: previousXp,
+    xpDelta: ranger.xp - previousXp,
+    xpBreakdown: getServerRangerXpBreakdown(ranger.sources),
     coinBalance: getCoinBalance(address),
     gamesPlayed: playerEntries.length,
-    achievementCount: Object.keys((walletDatabase.get(address)?._achievements?.unlocked) || {}).length,
+    achievementCount,
   };
 
   walletDatabase.set(address, wallet);
   saveWalletDatabaseDebounced();
 
   return wallet;
+}
+
+function handleMigrationStatus(req, res, url, pathname) {
+  if (req.method !== 'GET' || pathname !== '/api/migration-status') return false;
+
+  const address = normalizePubkey(url.searchParams.get('address') || '');
+  if (!address) {
+    respondJson(res, 400, { error: 'Invalid address' });
+    return true;
+  }
+
+  const auth = optionalJwt(req, null);
+  if (!auth?.ok || !auth.address) {
+    respondJson(res, 401, { error: 'Auth required' });
+    return true;
+  }
+  if (auth.address !== address) {
+    respondJson(res, 403, { error: 'Wallet mismatch' });
+    return true;
+  }
+
+  const wallet = ensureV2AccountState(address);
+  const migrationData = wallet?._v2MigrationResult || null;
+  respondJson(res, 200, {
+    migrated: Boolean(migrationData),
+    migrationRev: V2_MIGRATION_REV,
+    migrationData,
+  });
+  return true;
+}
+
+function handleXpStatus(req, res, url, pathname) {
+  if (req.method !== 'GET' || pathname !== '/api/xp') return false;
+
+  const address = normalizePubkey(url.searchParams.get('address') || '');
+  if (!address) {
+    respondJson(res, 400, { error: 'Invalid address' });
+    return true;
+  }
+
+  const auth = optionalJwt(req, null);
+  if (!auth?.ok) {
+    respondJson(res, 401, { error: 'Invalid auth token' });
+    return true;
+  }
+  if (auth.address && auth.address !== address) {
+    respondJson(res, 403, { error: 'Wallet mismatch' });
+    return true;
+  }
+
+  const wallet = auth.address === address
+    ? ensureV2AccountState(address)
+    : (walletDatabase.get(address) || { address });
+  const snapshot = getServerRangerSnapshot(address, wallet);
+
+  respondJson(res, 200, {
+    address,
+    sources: snapshot.sources,
+    computedXP: snapshot.xp,
+    computedRank: snapshot.rank,
+    rank: snapshot.rank,
+    rangerSnapshot: {
+      xp: snapshot.xp,
+      rank: snapshot.rank,
+      sources: snapshot.sources,
+    },
+  });
+  return true;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -3766,6 +3893,14 @@ const server = http.createServer(async (req, res) => {
     if (await gameV1Handler(req, res, url, pathname)) return;
   }
   // ─────────────────────────────────────────────────────────────────────────
+
+  if (handleMigrationStatus(req, res, url, pathname)) {
+    return;
+  }
+
+  if (handleXpStatus(req, res, url, pathname)) {
+    return;
+  }
 
   if (await utilityHandler(req, res, url, pathname)) {
     return;
@@ -4975,7 +5110,8 @@ const TOURNAMENT_TIERS = {
   weekly:  { entryFee: 5000,  durationMs: 7 * 24 * 3600000,  label: 'Weekly',  burnRate: 0.10 },
   monthly: { entryFee: 25000, durationMs: 30 * 24 * 3600000, label: 'Monthly', burnRate: 0.10 },
 };
-const TOURNAMENT_MODES = ['orbit', 'gravity', 'destroyer'];
+const TOURNAMENT_MODES = ['orbit', 'destroyer', 'gravity'];
+const TOURNAMENT_RESPONSE_MODES = Array.from(new Set([...TOURNAMENT_MODES, 'wars']));
 const PRIZE_SHARES = {
   daily:   [0.50, 0.30, 0.20],                                         // top-3
   weekly:  [0.35, 0.22, 0.15, 0.10, 0.10, 0.08],                     // top-6
@@ -4984,9 +5120,9 @@ const PRIZE_SHARES = {
 // Base prizes per place — paid by platform on top of player pool (index = place-1)
 // Modest guarantees so platform stays sustainable with low participation
 const TOURNAMENT_BASE_PRIZES = {
-  daily:   [500, 250, 100],                                                     // total 850
-  weekly:  [2000, 1500, 1000, 500, 250, 100],                                  // total 5,350
-  monthly: [10000, 5000, 3000, 2000, 1500, 1000, 750, 500, 250, 100],         // total 24,100
+  daily:   [600, 300, 120],                                                      // total 1,020 (+20%)
+  weekly:  [2400, 1800, 1200, 600, 300, 120],                                   // total 6,420 (+20%)
+  monthly: [12000, 6000, 3600, 2400, 1800, 1200, 900, 600, 300, 120],          // total 28,920 (+20%)
 };
 const TOURNAMENT_BASE_PRIZE_SCALING = {
   daily: { targetParticipants: 8, minScale: 0.35 },
@@ -4999,9 +5135,53 @@ const TOURNAMENT_XP_REWARDS = {
   weekly:  [600, 500, 400, 300, 200, 100],                                     // step 100
   monthly: [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100],               // step 100
 };
-const activeTournaments = { daily: null, weekly: null, monthly: null };
+const normalizeTournamentMode = (mode) => {
+  if (mode === 'defender') return 'destroyer';
+  return TOURNAMENT_MODES.includes(mode) ? mode : null;
+};
+
+const createEmptyTournamentTierState = () => {
+  const state = {};
+  for (const mode of TOURNAMENT_MODES) state[mode] = null;
+  return state;
+};
+
+const isTournamentRecord = (value) =>
+  !!value && typeof value === 'object' && typeof value.id === 'string' && typeof value.tier === 'string';
+
+function normalizeTournamentRecord(tier, mode, tournament) {
+  if (!tournament) return null;
+  return {
+    ...tournament,
+    tier,
+    mode,
+    entries: tournament.entries && typeof tournament.entries === 'object' ? tournament.entries : {},
+  };
+}
+
+function normalizeTournamentTierState(tier, value) {
+  const state = createEmptyTournamentTierState();
+  if (!value || typeof value !== 'object') return state;
+
+  if (isTournamentRecord(value)) {
+    const mode = tier === 'daily' ? 'orbit' : normalizeTournamentMode(value.mode) || TOURNAMENT_MODES[0];
+    state[mode] = normalizeTournamentRecord(tier, mode, value);
+    return state;
+  }
+
+  for (const mode of TOURNAMENT_MODES) {
+    const tournament = value[mode];
+    if (isTournamentRecord(tournament)) {
+      state[mode] = normalizeTournamentRecord(tier, mode, tournament);
+    }
+  }
+  return state;
+}
+
+const activeTournaments = Object.fromEntries(
+  Object.keys(TOURNAMENT_TIERS).map((tier) => [tier, createEmptyTournamentTierState()]),
+);
 const tournamentHistory = [];
-let tournamentModeIndex = 0;
 const tournamentStore = createJsonColumnStore({
   jsonPath: TOURNAMENT_FILE,
   tableName: 'tournaments',
@@ -5009,35 +5189,36 @@ const tournamentStore = createJsonColumnStore({
   readJson: (parsed) => {
     const entries = new Map();
     for (const tier of Object.keys(TOURNAMENT_TIERS)) {
-      entries.set(tier, parsed?.active?.[tier] ?? null);
+      entries.set(tier, normalizeTournamentTierState(tier, parsed?.active?.[tier] ?? null));
     }
     entries.set(TOURNAMENT_HISTORY_KEY, Array.isArray(parsed?.history) ? parsed.history.slice(0, 50) : []);
-    entries.set(TOURNAMENT_META_KEY, {
-      modeIndex: typeof parsed?.modeIndex === 'number' ? parsed.modeIndex : 0,
-    });
     return entries;
   },
   writeJson: (entries) => ({
     active: {
-      daily: entries.get('daily') ?? null,
-      weekly: entries.get('weekly') ?? null,
-      monthly: entries.get('monthly') ?? null,
+      daily: normalizeTournamentTierState('daily', entries.get('daily')),
+      weekly: normalizeTournamentTierState('weekly', entries.get('weekly')),
+      monthly: normalizeTournamentTierState('monthly', entries.get('monthly')),
     },
     history: Array.isArray(entries.get(TOURNAMENT_HISTORY_KEY)) ? entries.get(TOURNAMENT_HISTORY_KEY).slice(0, 50) : [],
-    modeIndex: typeof entries.get(TOURNAMENT_META_KEY)?.modeIndex === 'number' ? entries.get(TOURNAMENT_META_KEY).modeIndex : 0,
   }),
   debounceMs: 500,
   logLabel: 'tournament',
 });
 
+function ensureTournamentTierState(tier) {
+  const normalized = normalizeTournamentTierState(tier, activeTournaments[tier]);
+  activeTournaments[tier] = normalized;
+  return normalized;
+}
+
 function saveTournament() {
   try {
     tournamentStore.replaceAll(new Map([
-      ['daily', activeTournaments.daily],
-      ['weekly', activeTournaments.weekly],
-      ['monthly', activeTournaments.monthly],
+      ['daily', normalizeTournamentTierState('daily', activeTournaments.daily)],
+      ['weekly', normalizeTournamentTierState('weekly', activeTournaments.weekly)],
+      ['monthly', normalizeTournamentTierState('monthly', activeTournaments.monthly)],
       [TOURNAMENT_HISTORY_KEY, tournamentHistory.slice(0, 50)],
-      [TOURNAMENT_META_KEY, { modeIndex: tournamentModeIndex }],
     ]));
   } catch (e) {
     console.warn('[tournament] save error', e.message);
@@ -5058,29 +5239,43 @@ function getTournamentBasePrizes(tier, participantCount = 0) {
   ));
 }
 
-function createTournamentForTier(tier) {
+function createTournamentForTierMode(tier, mode, { persist = true } = {}) {
   const cfg = TOURNAMENT_TIERS[tier];
   if (!cfg) return;
-  const mode = TOURNAMENT_MODES[tournamentModeIndex % TOURNAMENT_MODES.length];
-  tournamentModeIndex++;
-  activeTournaments[tier] = {
-    id: `t_${tier}_${Date.now()}`,
+  const tournamentMode = normalizeTournamentMode(mode);
+  if (!tournamentMode) return;
+  const now = Date.now();
+  const state = ensureTournamentTierState(tier);
+  state[tournamentMode] = {
+    id: `t_${tier}_${tournamentMode}_${now}`,
     tier,
-    mode,
+    mode: tournamentMode,
     entryFee: cfg.entryFee,
     prizePool: 0,
-    startTime: Date.now(),
-    endTime: Date.now() + cfg.durationMs,
+    startTime: now,
+    endTime: now + cfg.durationMs,
     entries: {},
     status: 'active',
     label: cfg.label,
   };
-  console.log(`[tournament] Created ${tier} tournament: ${activeTournaments[tier].id} mode=${mode}`);
+  console.log(`[tournament] Created ${tier}/${tournamentMode} tournament: ${state[tournamentMode].id}`);
+  if (persist) saveTournament();
+}
+
+function createTournamentsForTier(tier) {
+  const cfg = TOURNAMENT_TIERS[tier];
+  if (!cfg) return;
+  for (const mode of TOURNAMENT_MODES) {
+    createTournamentForTierMode(tier, mode, { persist: false });
+  }
   saveTournament();
 }
 
-function finalizeTournamentTier(tier) {
-  const t = activeTournaments[tier];
+function finalizeTournamentTierMode(tier, mode) {
+  const tournamentMode = normalizeTournamentMode(mode);
+  if (!tournamentMode) return;
+  const state = ensureTournamentTierState(tier);
+  const t = state[tournamentMode];
   if (!t || t.status !== 'active') return;
   t.status = 'ended';
   const sorted = Object.entries(t.entries)
@@ -5119,7 +5314,7 @@ function finalizeTournamentTier(tier) {
     }
     winners.push({ address: sorted[i].address, score: sorted[i].score, prize: totalPrize, poolPrize, basePrize, place: i + 1, xp: xpAmount });
     if (totalPrize > 0) {
-      pushNotification(sorted[i].address, 'tournament_result', `${tier} tournament ended — #${i + 1}, +${totalPrize} coins`, { tier, placement: i + 1, prize: totalPrize });
+      pushNotification(sorted[i].address, 'tournament_result', `${tier} ${tournamentMode} tournament ended — #${i + 1}, +${totalPrize} coins`, { tier, mode: tournamentMode, placement: i + 1, prize: totalPrize });
     }
   }
   // Any remaining pool dust (fewer participants than prize slots) is burned
@@ -5132,16 +5327,19 @@ function finalizeTournamentTier(tier) {
   tournamentHistory.unshift({ ...t });
   if (tournamentHistory.length > 50) tournamentHistory.length = 50;
   console.log(`[tournament] Finalized ${t.id}, ${winners.length} winners, pool=${pool}, basePrizes=${basePrizes.slice(0, maxWinners).join('/')}`);
-  activeTournaments[tier] = null;
+  state[tournamentMode] = null;
   saveTournament();
 }
 
 function checkTournaments() {
   const now = Date.now();
   for (const tier of Object.keys(TOURNAMENT_TIERS)) {
-    const t = activeTournaments[tier];
-    if (t && now > t.endTime) finalizeTournamentTier(tier);
-    if (!activeTournaments[tier]) createTournamentForTier(tier);
+    const state = ensureTournamentTierState(tier);
+    for (const mode of TOURNAMENT_MODES) {
+      const t = state[mode];
+      if (t && now > t.endTime) finalizeTournamentTierMode(tier, mode);
+      if (!activeTournaments[tier]?.[mode]) createTournamentForTierMode(tier, mode);
+    }
   }
 }
 // Backward compat alias
@@ -5555,6 +5753,8 @@ const ctx = createContext({
   getEffectiveRate,
   getRateSchedule,
   tournamentTiers: TOURNAMENT_TIERS,
+  tournamentModes: TOURNAMENT_MODES,
+  tournamentResponseModes: TOURNAMENT_RESPONSE_MODES,
   tournamentXpRewards: TOURNAMENT_XP_REWARDS,
   leaderboardStoreFile: LEADERBOARD_STORE_FILE,
   leaderboardMaxEntries: LEADERBOARD_MAX_ENTRIES,
@@ -5623,10 +5823,8 @@ const initOrchestrator = createInitOrchestrator({
   challengesFile: CHALLENGES_FILE,
   tournamentFile: TOURNAMENT_FILE,
   tournamentTiers: TOURNAMENT_TIERS,
+  tournamentModes: TOURNAMENT_MODES,
   saveMintedAddresses,
-  setTournamentModeIndex: (value) => {
-    tournamentModeIndex = value;
-  },
   fs,
 });
 const authHandler = registerAuthRoute(ctx);

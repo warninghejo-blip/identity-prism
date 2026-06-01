@@ -150,12 +150,31 @@ function registerMarketRoute(ctx) {
         return true;
       }
       try {
-        const jupResp = await fetch(`https://api.jup.ag/price/v2?ids=${encodeURIComponent(ids)}`, { signal: AbortSignal.timeout(10000) });
+        // Jupiter retired api.jup.ag/price/v2; current endpoint is lite-api.jup.ag/price/v3 with a flatter schema.
+        // We convert v3 → legacy v2 shape so existing frontend code keeps working unchanged.
+        const jupResp = await fetch(`https://lite-api.jup.ag/price/v3?ids=${encodeURIComponent(ids)}`, { signal: AbortSignal.timeout(10000) });
         if (!jupResp.ok) {
           respondJson(res, jupResp.status, { error: `Jupiter API returned ${jupResp.status}` });
           return true;
         }
-        respondJson(res, 200, await jupResp.json());
+        const v3 = await jupResp.json();
+        const data = {};
+        for (const [mint, info] of Object.entries(v3 || {})) {
+          if (!info || typeof info !== 'object') continue;
+          const price = info.usdPrice ?? info.price;
+          if (price == null) continue;
+          data[mint] = {
+            id: mint,
+            type: 'derivedPrice',
+            price: String(price),
+            usdPrice: Number(price),
+            liquidity: info.liquidity,
+            decimals: info.decimals,
+            blockId: info.blockId,
+            updatedAt: info.createdAt,
+          };
+        }
+        respondJson(res, 200, { data });
       } catch (error) {
         console.warn('[market] Jupiter price proxy failed', error);
         respondJson(res, 502, { error: 'Jupiter price fetch failed' });

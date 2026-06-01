@@ -28,6 +28,8 @@ function registerWalletRoute(ctx) {
       walletDatabase,
       getCoinBalance,
     },
+    getOrCreateForgeState,
+    sanitizeForgeLoadout,
   } = ctx;
 
   return async function handleWalletRoute(req, res, url, pathname) {
@@ -229,10 +231,25 @@ function registerWalletRoute(ctx) {
         const trustScore = Number(sybilDetails?.trustScore ?? sybilDetails?.effectiveTrust);
         const publicScore = Number.isFinite(compositeScore) ? compositeScore : (wallet.score || 0);
         const publicTier = compositeTier || wallet.tier || 'mercury';
+        const forgeStateInfo =
+          typeof getOrCreateForgeState === 'function' ? getOrCreateForgeState(address, wallet) : { forgeState: null };
+        const sanitizedLoadout =
+          forgeStateInfo?.forgeState && typeof sanitizeForgeLoadout === 'function'
+            ? sanitizeForgeLoadout(address, wallet.userData?.loadout, forgeStateInfo.forgeState)
+            : null;
         const publicData = {
           address,
           tier: publicTier,
           score: publicScore,
+          mint: wallet.mint
+            ? {
+                minted: Boolean(wallet.mint.minted),
+                assetId: wallet.mint.assetId || null,
+                metadataUri: wallet.mint.metadataUri || null,
+              }
+            : null,
+          userData: sanitizedLoadout ? { loadout: sanitizedLoadout } : null,
+          forgeState: forgeStateInfo?.forgeState || null,
           coins: typeof getCoinBalance === 'function' ? getCoinBalance(address) : (wallet.coins || 0),
           scanCount: Number(wallet.scanCount) || Number(details?.engagement?.scanCount) || 0,
           sybil: sybilDetails

@@ -5,6 +5,7 @@ import path from 'node:path';
 function registerMetadataRoute(ctx) {
   const {
     requireJwt,
+    optionalJwt,
     readBody,
     respondJson,
     ipRateLimit,
@@ -114,8 +115,12 @@ function registerMetadataRoute(ctx) {
     if (pathname.startsWith('/metadata')) {
       if (req.method === 'POST' && (pathname === '/metadata' || pathname === '/metadata/')) {
         if (!ipRateLimit('metadata_post', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
-        const jwtAuth = requireJwt(req, res);
-        if (!jwtAuth.ok) return true;
+        const hasAuthHeader = typeof req.headers['authorization'] === 'string' && req.headers['authorization'].startsWith('Bearer ');
+        const jwtAuth = optionalJwt ? optionalJwt(req, res) : hasAuthHeader ? requireJwt(req, res) : { ok: true, address: null };
+        if (!jwtAuth.ok) {
+          respondJson(res, 401, { error: 'Invalid or expired auth token' });
+          return true;
+        }
         try {
           const body = await readBody(req);
           let payload = {};

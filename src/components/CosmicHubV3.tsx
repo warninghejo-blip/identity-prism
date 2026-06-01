@@ -11,15 +11,60 @@ import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { trackInternalNavigation } from '@/lib/safeNavigate';
 import { startFadeTransition } from '@/lib/fadeTransition';
 import { getHeliusProxyUrl } from '@/constants';
-import { getTierIcon } from '@/lib/constants/tierColors';
+import { getCompositeTierFromScore, getTierIcon } from '@/lib/constants/tierColors';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { getBoostedCompositeScore } from '@/lib/shipStats';
 import { fetchApiJson, fetchSybilAnalysis, getCachedJwt } from '@/components/prism/shared';
 import { writeCachedNotifications, type CachedNotification } from '@/lib/notificationCache';
+import { prefetchBlackHoleForAddress } from '@/hooks/useBlackHolePrefetch';
 import TrustGradeBadge from '@/components/TrustGradeBadge';
 import type { PlanetTier } from '@/hooks/useWalletData';
 import { ArrowRight, Eye, Zap, LogOut, Bell, ChevronDown, Users } from 'lucide-react';
 import { useRangerProgress } from '@/hooks/useRangerProgress';
+
+type DailyLimitsData = {
+  game: { earned: number; cap: number };
+  hunt: { earned: number; cap: number };
+  scan: { earned: number; cap: number };
+  quiz: { earned: number; cap: number };
+  nonGame: { earned: number; cap: number };
+  blackHole?: { earned: number; cap: number };
+  blackHoleCap?: number;
+};
+
+const dailyLimitsMemory = new Map<string, DailyLimitsData>();
+const getDailyLimitsDateKey = () => new Date().toISOString().slice(0, 10);
+const getDailyLimitsCacheKey = (address: string) => `identity-prism:daily-limits:${address}:${getDailyLimitsDateKey()}`;
+
+const readCachedDailyLimits = (address: string): DailyLimitsData | null => {
+  if (!address) return null;
+  const memory = dailyLimitsMemory.get(getDailyLimitsCacheKey(address));
+  if (memory) return memory;
+  if (typeof window === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(getDailyLimitsCacheKey(address)) || 'null') as {
+      date?: string;
+      data?: DailyLimitsData;
+    } | null;
+    if (parsed?.date !== getDailyLimitsDateKey() || !parsed.data) return null;
+    dailyLimitsMemory.set(getDailyLimitsCacheKey(address), parsed.data);
+    return parsed.data;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedDailyLimits = (address: string, data: DailyLimitsData) => {
+  if (!address) return;
+  const key = getDailyLimitsCacheKey(address);
+  dailyLimitsMemory.set(key, data);
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ date: getDailyLimitsDateKey(), data }));
+  } catch {
+    /* storage can be unavailable */
+  }
+};
 
 /* ── Tier color map ── */
 const TIER_COLORS: Record<string, { text: string; glow: string; bg: string }> = {
@@ -696,9 +741,10 @@ export default function CosmicHub({
   }, [compositeData.breakdown, compositeData.score, frameLoadout]);
   const hasCompositePassport = compositeData.hasComposite;
   const fallbackIdentityScore = typeof identityScore === 'number' ? Math.max(identityScore, 0) : 0;
+  const hasCompositeScaleFallback = !hasCompositePassport && fallbackIdentityScore > 400;
   const fallbackPassportBreakdown = useMemo(
     () =>
-      fallbackIdentityScore > 0
+      fallbackIdentityScore > 0 && !hasCompositeScaleFallback
         ? {
             onchain: Math.min(Math.round(fallbackIdentityScore), 400),
             sybilTrust: 0,
@@ -707,12 +753,15 @@ export default function CosmicHub({
             engagement: 0,
           }
         : null,
-    [fallbackIdentityScore],
+    [fallbackIdentityScore, hasCompositeScaleFallback],
   );
   const passportScore = hasCompositePassport ? boostedComposite.score : fallbackIdentityScore;
-  const passportTier = hasCompositePassport ? compositeData.tier : (planetTier ?? 'mercury');
+  const passportTier =
+    hasCompositePassport || hasCompositeScaleFallback
+      ? getCompositeTierFromScore(passportScore, planetTier ?? 'mercury')
+      : (planetTier ?? 'mercury');
   const passportBreakdown = hasCompositePassport ? boostedComposite.breakdown : fallbackPassportBreakdown;
-  const passportMaxScore = hasCompositePassport ? 1000 : 400;
+  const passportMaxScore = hasCompositePassport || hasCompositeScaleFallback ? 1000 : 400;
   const addressQuery = walletAddress ? `?address=${encodeURIComponent(walletAddress)}` : '';
 
   // Poll unread notification count
@@ -741,6 +790,16 @@ export default function CosmicHub({
     fetchCount();
     const interval = setInterval(fetchCount, 60000);
     return () => clearInterval(interval);
+  }, [walletAddress]);
+
+  useEffect(() => {
+    if (!walletAddress) return;
+    const timeout = window.setTimeout(() => {
+      void prefetchBlackHoleForAddress(walletAddress, { source: 'hub' }).catch((error) => {
+        console.warn('[BH prefetch] hub failed', error);
+      });
+    }, 100);
+    return () => window.clearTimeout(timeout);
   }, [walletAddress]);
 
   // Fetch sybil grade (shared deduped — same promise as CelestialCard)
@@ -829,18 +888,6 @@ export default function CosmicHub({
                 </span>
               )}
             </Link>
-            {onSwitchSeedAccount && (
-              <button
-                type="button"
-                onClick={onSwitchSeedAccount}
-                className="flex h-10 min-w-10 items-center justify-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.06] px-2 transition-colors hover:border-purple-400/25 hover:bg-purple-400/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
-                title="Switch Seed Vault account"
-                aria-label="Switch Seed Vault account"
-              >
-                <Users className="h-4 w-4 text-white/45 transition-colors" />
-                <span className="text-[10px] font-black text-white/45">S{(seedAccountIndex ?? 0) + 1}</span>
-              </button>
-            )}
             {onDisconnect && (
               <button
                 type="button"
@@ -916,38 +963,50 @@ export default function CosmicHub({
         </motion.div>
 
         {/* Daily Limits Table */}
-        {walletAddress && <DailyLimitsTable address={walletAddress} />}
+        {walletAddress && (
+          <DailyLimitsTable
+            address={walletAddress}
+            initialValue={readCachedDailyLimits(walletAddress)}
+            onData={(nextData) => writeCachedDailyLimits(walletAddress, nextData)}
+          />
+        )}
       </div>
     </motion.div>
   );
 }
 
 /* ── Daily Limits Table ── */
-function DailyLimitsTable({ address }: { address: string }) {
+function DailyLimitsTable({
+  address,
+  initialValue,
+  onData,
+}: {
+  address: string;
+  initialValue?: DailyLimitsData | null;
+  onData?: (data: DailyLimitsData) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const [data, setData] = useState<{
-    game: { earned: number; cap: number };
-    hunt: { earned: number; cap: number };
-    scan: { earned: number; cap: number };
-    quiz: { earned: number; cap: number };
-    nonGame: { earned: number; cap: number };
-    blackHole?: { earned: number; cap: number };
-    blackHoleCap?: number;
-  } | null>(null);
+  const [data, setData] = useState<DailyLimitsData | null>(() => initialValue ?? readCachedDailyLimits(address));
 
   useEffect(() => {
     const base = getHeliusProxyUrl() || '';
     if (!base || !address) return;
+    const cached = readCachedDailyLimits(address);
+    if (cached) setData(cached);
     const jwt = getCachedJwt(address);
     fetch(`${base}/api/daily-limits?address=${encodeURIComponent(address)}`, {
       headers: jwt ? { Authorization: `Bearer ${jwt}` } : undefined,
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) setData(d);
+        if (d) {
+          setData(d);
+          writeCachedDailyLimits(address, d);
+          onData?.(d);
+        }
       })
       .catch(() => {});
-  }, [address]);
+  }, [address, onData]);
 
   const fmt = (n: number | null | undefined) => (n != null ? n.toLocaleString() : '—');
 

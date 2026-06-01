@@ -33,8 +33,8 @@ function createInitOrchestrator({
   challengesFile,
   tournamentFile,
   tournamentTiers,
+  tournamentModes,
   saveMintedAddresses,
-  setTournamentModeIndex,
   fs,
 }) {
   const replaceMap = (target, source) => {
@@ -100,12 +100,12 @@ function createInitOrchestrator({
       fs,
       tournamentFile,
       tournamentTiers,
+      tournamentModes,
     });
     for (const tier of Object.keys(activeTournaments)) {
       activeTournaments[tier] = tournamentState.activeTournaments[tier];
     }
     completedTournaments.splice(0, completedTournaments.length, ...tournamentState.tournamentHistory);
-    setTournamentModeIndex(tournamentState.tournamentModeIndex);
 
     let backfilled = 0;
     for (const [addr, entry] of walletDatabase.entries()) {

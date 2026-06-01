@@ -118,7 +118,32 @@ const withNativeWalletDismissDetection = async <T,>(operation: () => Promise<T>,
   });
 };
 
-const readPersistedAddress = (includeLocal = false) => {
+const parseStoredJwtAddress = (raw: string | null) => {
+  if (!raw || raw[0] !== '{') return '';
+  try {
+    const parsed = JSON.parse(raw) as { address?: string; expiresAt?: number };
+    if (!looksLikeSolanaAddress(parsed.address)) return '';
+    if (typeof parsed.expiresAt !== 'number' || parsed.expiresAt <= Date.now() + 60_000) return '';
+    return parsed.address ?? '';
+  } catch {
+    return '';
+  }
+};
+
+const readStoredJwtAddress = () => {
+  const readers = [() => sessionStorage.getItem('ip_auth_jwt'), () => localStorage.getItem('ip_auth_jwt')];
+  for (const read of readers) {
+    try {
+      const address = parseStoredJwtAddress(read());
+      if (address) return address;
+    } catch {
+      /* ignore */
+    }
+  }
+  return '';
+};
+
+const readPersistedAddress = (includeLocal = false, requiredAddress?: string) => {
   const storageReaders = [
     () => sessionStorage.getItem('prism_active_address'),
     () => sessionStorage.getItem('ip_auth_jwt'),
@@ -129,10 +154,10 @@ const readPersistedAddress = (includeLocal = false) => {
   for (const read of storageReaders) {
     try {
       const raw = read();
-      if (looksLikeSolanaAddress(raw)) return raw ?? '';
+      if (looksLikeSolanaAddress(raw) && (!requiredAddress || raw === requiredAddress)) return raw ?? '';
       if (!raw || raw[0] !== '{') continue;
-      const parsed = JSON.parse(raw) as { address?: string };
-      if (looksLikeSolanaAddress(parsed.address)) return parsed.address ?? '';
+      const parsedAddress = parseStoredJwtAddress(raw);
+      if (parsedAddress && (!requiredAddress || parsedAddress === requiredAddress)) return parsedAddress;
     } catch {
       /* ignore */
     }
@@ -294,7 +319,8 @@ export const CustomWalletProvider = ({
   const isUnloadingRef = useRef(false);
   const isNativePlatform = Capacitor.isNativePlatform();
   const nativeRestoreArmed = hasNativeSessionRestoreMarker();
-  const nativeRestoreAllowed = !isNativePlatform || nativeRestoreArmed;
+  const nativeJwtRestoreAddress = isNativePlatform ? readStoredJwtAddress() : '';
+  const nativeRestoreAllowed = !isNativePlatform || nativeRestoreArmed || Boolean(nativeJwtRestoreAddress);
   const armWalletReturnGuard = useCallback(() => {
     if (isNativePlatform) {
       armExternalWalletReturnGuard();
@@ -389,7 +415,9 @@ export const CustomWalletProvider = ({
     );
     const cachedAuthorization = await mwaAuthorizationCache.get();
     const internalAddress =
-      adapterAuthorization || extractMwaAddress(cachedAuthorization) || readPersistedAddress(nativeRestoreArmed);
+      adapterAuthorization ||
+      extractMwaAddress(cachedAuthorization) ||
+      readPersistedAddress(nativeRestoreAllowed, nativeJwtRestoreAddress || undefined);
     const resolvedPublicKey = adapter.publicKey ?? (internalAddress ? new PublicKey(internalAddress) : null);
     if (!resolvedPublicKey) return null;
     writeProviderAuthDebug({
@@ -399,14 +427,16 @@ export const CustomWalletProvider = ({
         ? 'adapter_public_key'
         : adapterAuthorization
           ? 'adapter_authorization'
-          : 'recent_wallet_return_cache',
+          : nativeJwtRestoreAddress
+            ? 'jwt_cache'
+            : 'recent_wallet_return_cache',
     });
     setConnected(true);
     setPublicKey(resolvedPublicKey);
     setConnecting(false);
     setDisconnecting(false);
     return resolvedPublicKey;
-  }, [adapter, disconnecting]);
+  }, [adapter, disconnecting, nativeJwtRestoreAddress, nativeRestoreAllowed]);
 
   // Sync adapter state
   useEffect(() => {
@@ -504,7 +534,7 @@ export const CustomWalletProvider = ({
     const restoreWalletSelection = async () => {
       const cachedAuthorization = await mwaAuthorizationCache.get();
       const hasMwaAddress = Boolean(extractMwaAddress(cachedAuthorization));
-      const persistedAddress = readPersistedAddress(nativeRestoreArmed);
+      const persistedAddress = readPersistedAddress(nativeRestoreAllowed, nativeJwtRestoreAddress || undefined);
       if (cancelled || (!hasMwaAddress && !persistedAddress)) return;
       setWalletName(SolanaMobileWalletAdapterWalletName);
     };
@@ -521,6 +551,7 @@ export const CustomWalletProvider = ({
     mobileWalletAdapter,
     setWalletName,
     nativeRestoreAllowed,
+    nativeJwtRestoreAddress,
   ]);
 
   // Preserve wallet selection across reloads/navigation. Explicit Disconnect is the

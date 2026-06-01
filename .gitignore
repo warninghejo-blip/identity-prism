@@ -124,3 +124,18 @@ android/local.properties
 *.log
 android/keystore.properties
 android/*.jks
+
+# Local recovery & scratch artifacts (not part of the app)
+/build/
+/_cleanup_*/
+/_recovery_landing/
+*.bak.*
+carve.exe
+carve.go
+carve.rs
+carve-c.ps1
+run-carve.bat
+check-all-pw.sh
+check-candidates.sh
+mount-shadow.ps1
+e2e-proxy.mjs

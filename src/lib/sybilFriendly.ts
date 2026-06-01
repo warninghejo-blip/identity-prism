@@ -55,6 +55,10 @@ export interface FriendlyMetrics {
   clusterSimilarity?: number;
   balance?: number;
   txCount?: number;
+  // Graph-derived cluster truth (reliable) — preferred over clusterSimilarity for the
+  // "Linked wallets" friendly signal.
+  knownClusterSize?: number;
+  knownSiblingCount?: number;
 }
 
 export interface FriendlySignal {
@@ -80,12 +84,14 @@ export function describeVariety(uniquePrograms: number): { headline: string; val
   return { headline: 'Barely uses anything', valueText: `${uniquePrograms} protocols` };
 }
 
-export function describeTiming(activeRatio: number): { headline: string; valueText: string } {
-  const pct = Math.round(activeRatio * 100);
-  if (pct >= 60) return { headline: 'Always-on (suspicious)', valueText: `${pct}% active days` };
-  if (pct >= 12) return { headline: 'Irregular, human-like timing', valueText: 'Natural' };
-  if (pct >= 4) return { headline: 'Sporadic activity', valueText: `${pct}% active days` };
-  return { headline: 'Dormant most days', valueText: `${pct}% active days` };
+// Activity from txs/day over the wallet's whole life (unbiased; activeDaysRatio was sampled
+// and falsely read ~100% for active whales). Extremely high sustained rates read as scripted.
+export function describeTiming(txPerDay: number): { headline: string; valueText: string } {
+  const rate = txPerDay >= 10 ? `${Math.round(txPerDay)}/day` : `${txPerDay.toFixed(1)}/day`;
+  if (txPerDay >= 50) return { headline: 'Very high, machine-like volume', valueText: rate };
+  if (txPerDay >= 1) return { headline: 'Steady, human-like activity', valueText: rate };
+  if (txPerDay >= 0.1) return { headline: 'Occasional activity', valueText: rate };
+  return { headline: 'Barely active', valueText: rate };
 }
 
 export function describeFunding(primary: string): { headline: string; valueText: string } {
@@ -99,11 +105,13 @@ export function describeFunding(primary: string): { headline: string; valueText:
   return { headline: `Funded from ${primary}`, valueText: 'On-chain origin' };
 }
 
-export function describeLinks(siblings: number, similarity: number): { headline: string; valueText: string } {
-  if (siblings === 0) return { headline: 'No suspicious clusters', valueText: '0 matches' };
-  if (siblings < 3 && similarity < 40) return { headline: 'A few weak overlaps', valueText: `${siblings} matches` };
-  if (siblings >= 5 || similarity >= 70) return { headline: 'Strong cluster ties', valueText: `${siblings} matches` };
-  return { headline: 'Some cluster overlap', valueText: `${siblings} matches` };
+// Cluster ties from the persistent graph (reliable): known flagged-cluster membership +
+// linked-wallet count. clusterSimilarity (the live cosine) is ~always 0, so it's not used here.
+export function describeLinks(linkedWallets: number, inFlaggedCluster: boolean): { headline: string; valueText: string } {
+  if (inFlaggedCluster) return { headline: 'In a flagged sybil cluster', valueText: `${linkedWallets} linked` };
+  if (linkedWallets === 0) return { headline: 'No suspicious clusters', valueText: '0 matches' };
+  if (linkedWallets >= 5) return { headline: 'Strong cluster ties', valueText: `${linkedWallets} linked` };
+  return { headline: 'Some cluster overlap', valueText: `${linkedWallets} linked` };
 }
 
 export function describeValue(balanceSol: number, txCount: number): { headline: string; valueText: string } {
@@ -115,12 +123,17 @@ export function describeValue(balanceSol: number, txCount: number): { headline: 
 
 /** Returns the 6 friendly signals in the canonical order used by both surfaces. */
 export function buildFriendlySignals(m: FriendlyMetrics): FriendlySignal[] {
+  const txPerDay = (m.txCount || 0) / Math.max(1, Math.round(m.walletAgeDays || 0));
+  const inFlaggedCluster = (m.knownClusterSize || 0) > 0;
+  const linkedWallets = inFlaggedCluster
+    ? Math.max(0, (m.knownClusterSize || 1) - 1)
+    : (m.knownSiblingCount || 0);
   return [
     { label: 'Wallet age',         ...describeAge(m.walletAgeDays || 0) },
     { label: 'Activity variety',   ...describeVariety(m.uniquePrograms || 0) },
-    { label: 'Transaction timing', ...describeTiming(m.activeDaysRatio || 0) },
+    { label: 'Transaction timing', ...describeTiming(txPerDay) },
     { label: 'Funding source',     ...describeFunding(m.primaryFundingSourceLabel || '') },
-    { label: 'Linked wallets',     ...describeLinks(m.siblingCount || 0, m.clusterSimilarity || 0) },
+    { label: 'Linked wallets',     ...describeLinks(linkedWallets, inFlaggedCluster) },
     { label: 'On-chain value',     ...describeValue(m.balance || 0, m.txCount || 0) },
   ];
 }

@@ -6,7 +6,14 @@ import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapt
 import { WalletReadyState } from '@solana/wallet-adapter-base';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Button } from '@/components/ui/button';
-import { getApiBase, getCachedJwt, obtainJwt, setAuthWallet, type WalletPreview } from '@/components/prism/shared';
+import {
+  fetchWalletPreview,
+  getApiBase,
+  getCachedJwt,
+  obtainJwt,
+  setAuthWallet,
+  type WalletPreview,
+} from '@/components/prism/shared';
 import { invalidateCompositeCache, useCompositeScore } from '@/hooks/useCompositeScore';
 import { invalidateBalanceCache } from '@/lib/prefetch';
 import { toast } from 'sonner';
@@ -114,6 +121,7 @@ import {
 } from '@/lib/magicblock';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { goBack } from '@/lib/safeNavigate';
+import HubReturnButton from '@/components/HubReturnButton';
 import { trackGameStart, trackGameOver } from '@/lib/analytics';
 // earnPrism removed — unified economy uses coins directly
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
@@ -164,7 +172,7 @@ type LeagueApiResponse<T = unknown> = {
 async function leagueApiJson<T = unknown>(
   url: string,
   options: {
-    method?: 'GET' | 'POST';
+    method?: 'GET' | 'POST' | 'PUT';
     headers?: Record<string, string>;
     body?: unknown;
     timeoutMs?: number;
@@ -192,8 +200,8 @@ async function leagueApiJson<T = unknown>(
       readTimeout: options.timeoutMs ?? 15_000,
     };
     const response =
-      method === 'POST'
-        ? await CapacitorHttp.post({
+      method === 'POST' || method === 'PUT'
+        ? await CapacitorHttp[method === 'PUT' ? 'put' : 'post']({
             ...request,
             headers: { 'Content-Type': 'application/json', ...headers },
             data: body ?? {},
@@ -446,11 +454,11 @@ async function syncUnlockedToServer(walletAddress: string, unlockedIds: string[]
     if (!base || !unlockedIds.length) return;
     const jwt = getChallengeJwt(walletAddress);
     if (!jwt) return; // Require JWT
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
-    await fetch(`${base}/api/game/achievements`, {
+    const headers: Record<string, string> = { Authorization: `Bearer ${jwt}` };
+    await leagueApiJson(`${base}/api/game/achievements`, {
       method: 'PUT',
       headers,
-      body: JSON.stringify({ address: walletAddress, unlocked: unlockedIds }),
+      body: { address: walletAddress, unlocked: unlockedIds },
     });
   } catch {
     /* silent */
@@ -461,9 +469,12 @@ async function fetchServerAchievements(walletAddress: string): Promise<{ unlocke
   try {
     const base = getServerBase();
     if (!base) return { unlocked: [], claimed: [] };
-    const res = await fetch(`${base}/api/game/achievements?address=${encodeURIComponent(walletAddress)}`);
+    const res = await leagueApiJson<{ unlocked?: unknown; claimed?: unknown }>(
+      `${base}/api/game/achievements?address=${encodeURIComponent(walletAddress)}`,
+      { timeoutMs: 6_000 },
+    );
     if (!res.ok) return { unlocked: [], claimed: [] };
-    const data = await res.json();
+    const data = res.data;
     return {
       unlocked: Array.isArray(data?.unlocked) ? data.unlocked : [],
       claimed: Array.isArray(data?.claimed) ? data.claimed : [],
@@ -471,6 +482,240 @@ async function fetchServerAchievements(walletAddress: string): Promise<{ unlocke
   } catch {
     return { unlocked: [], claimed: [] };
   }
+}
+
+type LeagueAchievement = Achievement | DefenderAchievement | GravityAchievement;
+
+type StoredAchievementState = {
+  unlocked?: boolean;
+  unlockedAt?: string | null;
+  claimed?: boolean;
+  claimedAt?: string | null;
+  mintTxSignature?: string;
+};
+
+const ACHIEVEMENT_STORAGE = {
+  orbit: {
+    key: 'orbit_survival_achievements_v1',
+    legacyPrefixes: ['prism_orbit_achievements', 'orbit_achievements'],
+  },
+  defender: {
+    key: 'cosmic_defender_achievements_v1',
+    legacyPrefixes: ['prism_defender_achievements', 'defender_achievements', 'cosmic_defender_achievements'],
+  },
+  gravity: {
+    key: 'gravity_rush_achievements_v1',
+    legacyPrefixes: ['prism_gravity_achievements', 'gravity_achievements', 'gravity_rush_achievements'],
+  },
+} as const;
+
+function mergeStoredAchievementState(
+  states: Map<string, StoredAchievementState>,
+  id: string,
+  patch: StoredAchievementState,
+) {
+  const prev = states.get(id) || {};
+  states.set(id, {
+    ...prev,
+    ...patch,
+    unlocked: Boolean(prev.unlocked || patch.unlocked || patch.claimed),
+    claimed: Boolean(prev.claimed || patch.claimed),
+  });
+}
+
+function ingestAchievementStorageValue(states: Map<string, StoredAchievementState>, value: unknown) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry === 'string') {
+        mergeStoredAchievementState(states, entry, { unlocked: true });
+      } else if (entry && typeof entry === 'object') {
+        const raw = entry as StoredAchievementState & { id?: unknown };
+        if (typeof raw.id === 'string') {
+          mergeStoredAchievementState(states, raw.id, {
+            unlocked: raw.unlocked === true || raw.claimed === true,
+            unlockedAt: raw.unlockedAt,
+            claimed: raw.claimed === true,
+            claimedAt: raw.claimedAt,
+            mintTxSignature: raw.mintTxSignature,
+          });
+        }
+      }
+    }
+    return;
+  }
+
+  if (!value || typeof value !== 'object') return;
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record.unlocked)) {
+    for (const id of record.unlocked) {
+      if (typeof id === 'string') mergeStoredAchievementState(states, id, { unlocked: true });
+    }
+  }
+  if (Array.isArray(record.claimed)) {
+    for (const id of record.claimed) {
+      if (typeof id === 'string') mergeStoredAchievementState(states, id, { unlocked: true, claimed: true });
+    }
+  }
+  for (const [id, entry] of Object.entries(record)) {
+    if (id === 'unlocked' || id === 'claimed') continue;
+    if (entry === true) {
+      mergeStoredAchievementState(states, id, { unlocked: true });
+    } else if (entry && typeof entry === 'object') {
+      const raw = entry as StoredAchievementState;
+      mergeStoredAchievementState(states, id, {
+        unlocked: raw.unlocked === true || raw.claimed === true,
+        unlockedAt: raw.unlockedAt,
+        claimed: raw.claimed === true,
+        claimedAt: raw.claimedAt,
+        mintTxSignature: raw.mintTxSignature,
+      });
+    }
+  }
+}
+
+function readStoredAchievementStates(
+  currentKey: string,
+  legacyPrefixes: readonly string[],
+): Map<string, StoredAchievementState> {
+  const states = new Map<string, StoredAchievementState>();
+  try {
+    const keys = new Set<string>([currentKey]);
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key === currentKey || legacyPrefixes.some((prefix) => key.startsWith(prefix))) keys.add(key);
+    }
+    for (const key of keys) {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        ingestAchievementStorageValue(states, JSON.parse(raw));
+      } catch {
+        /* ignore malformed legacy values */
+      }
+    }
+  } catch {
+    /* ignore storage failures */
+  }
+  return states;
+}
+
+function applyAchievementStates<T extends LeagueAchievement>(
+  list: T[],
+  states: Map<string, StoredAchievementState>,
+  now: string,
+): boolean {
+  let changed = false;
+  for (const ach of list) {
+    const stored = states.get(ach.id);
+    if (!stored) continue;
+    if ((stored.unlocked || stored.claimed) && !ach.unlocked) {
+      ach.unlocked = true;
+      ach.unlockedAt = stored.unlockedAt || now;
+      changed = true;
+    }
+    if (stored.claimed && !ach.claimed) {
+      ach.unlocked = true;
+      ach.unlockedAt = ach.unlockedAt || stored.unlockedAt || now;
+      ach.claimed = true;
+      ach.claimedAt = stored.claimedAt || now;
+      changed = true;
+    }
+    if ('mintTxSignature' in ach && stored.mintTxSignature && ach.mintTxSignature !== stored.mintTxSignature) {
+      ach.mintTxSignature = stored.mintTxSignature;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function applyServerAchievementIds<T extends LeagueAchievement>(
+  list: T[],
+  unlockedIds: Set<string>,
+  claimedIds: Set<string>,
+  now: string,
+): boolean {
+  let changed = false;
+  for (const ach of list) {
+    if ((unlockedIds.has(ach.id) || claimedIds.has(ach.id)) && !ach.unlocked) {
+      ach.unlocked = true;
+      ach.unlockedAt = ach.unlockedAt || now;
+      changed = true;
+    }
+    if (claimedIds.has(ach.id) && !ach.claimed) {
+      ach.unlocked = true;
+      ach.unlockedAt = ach.unlockedAt || now;
+      ach.claimed = true;
+      ach.claimedAt = ach.claimedAt || now;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function unlockAchievementFromEvidence<T extends LeagueAchievement>(ach: T, now: string): boolean {
+  if (ach.unlocked) return false;
+  ach.unlocked = true;
+  ach.unlockedAt = ach.unlockedAt || now;
+  return true;
+}
+
+function rediscoverAchievementsFromStats(
+  orbitList: Achievement[],
+  defList: DefenderAchievement[],
+  gravList: GravityAchievement[],
+  now: string,
+): { orbitChanged: boolean; defChanged: boolean; gravChanged: boolean } {
+  const orbitStats = getPlayerStats();
+  const defStats = getDefenderStats();
+  const gravStats = getGravityStats();
+  let orbitChanged = false;
+  let defChanged = false;
+  let gravChanged = false;
+
+  for (const ach of orbitList) {
+    const met =
+      (ach.thresholdType === 'survival_time' && orbitStats.bestScore >= ach.threshold) ||
+      (ach.thresholdType === 'games_played' && orbitStats.gamesPlayed >= ach.threshold) ||
+      (ach.thresholdType === 'total_time' && orbitStats.totalSurvivalTime >= ach.threshold);
+    if (met && unlockAchievementFromEvidence(ach, now)) orbitChanged = true;
+  }
+
+  for (const ach of defList) {
+    const met =
+      (ach.thresholdType === 'level_reached' && defStats.bestLevel >= ach.threshold) ||
+      (ach.thresholdType === 'games_played' && defStats.gamesPlayed >= ach.threshold) ||
+      (ach.thresholdType === 'total_kills' && defStats.totalKills >= ach.threshold) ||
+      (ach.thresholdType === 'best_score' && defStats.bestScore >= ach.threshold);
+    if (met && unlockAchievementFromEvidence(ach, now)) defChanged = true;
+  }
+
+  for (const ach of gravList) {
+    const met =
+      (ach.thresholdType === 'survival_time' && gravStats.bestSurvivalTime >= ach.threshold) ||
+      (ach.thresholdType === 'columns_passed' && gravStats.bestColumns >= ach.threshold) ||
+      (ach.thresholdType === 'crystals_collected' && gravStats.totalCrystals >= ach.threshold) ||
+      (ach.thresholdType === 'best_score' && gravStats.bestScore >= ach.threshold) ||
+      (ach.thresholdType === 'total_play_time' && gravStats.totalPlayTime >= ach.threshold) ||
+      (ach.thresholdType === 'total_columns' && gravStats.totalColumns >= ach.threshold) ||
+      (ach.thresholdType === 'total_crystals' && gravStats.totalCrystals >= ach.threshold);
+    if (met && unlockAchievementFromEvidence(ach, now)) gravChanged = true;
+  }
+
+  return { orbitChanged, defChanged, gravChanged };
+}
+
+function persistAchievementList<T extends LeagueAchievement>(key: string, list: T[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(list));
+  } catch {
+    /* ignore */
+  }
+}
+
+function hasUsableCompositeBreakdown(breakdown: WalletPreview['compositeBreakdown'] | null | undefined): boolean {
+  if (!breakdown) return false;
+  return Object.values(breakdown).some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
 }
 
 async function fetchServerRevives(
@@ -720,6 +965,9 @@ function WaitingForOpponentBanner({
 
 type PlayMode = 'free' | 'tournament';
 type TournamentTierKey = 'daily' | 'weekly' | 'monthly';
+type TournamentModeKey = ArcadeGameMode;
+type TournamentModeMap = Record<TournamentModeKey, ActiveTournament | null>;
+type ActiveTournamentState = Record<TournamentTierKey, TournamentModeMap>;
 
 interface TournamentEntry {
   address: string;
@@ -732,6 +980,7 @@ interface ActiveTournament {
   id: string;
   tier?: string;
   mode: string;
+  status?: string;
   label?: string;
   entryFee?: number;
   endsAt: string;
@@ -751,6 +1000,42 @@ const TOURNAMENT_TIERS: { key: TournamentTierKey; label: string; fee: number; sh
   { key: 'weekly', label: 'Weekly 5k', fee: 5000, shortLabel: 'Weekly' },
   { key: 'monthly', label: 'Monthly 25k', fee: 25000, shortLabel: 'Monthly' },
 ];
+
+const TOURNAMENT_MODE_KEYS: TournamentModeKey[] = ['orbit', 'destroyer', 'gravity'];
+
+const createEmptyTournamentModeMap = (): TournamentModeMap => ({
+  orbit: null,
+  destroyer: null,
+  gravity: null,
+});
+
+const createEmptyTournamentState = (): ActiveTournamentState => ({
+  daily: createEmptyTournamentModeMap(),
+  weekly: createEmptyTournamentModeMap(),
+  monthly: createEmptyTournamentModeMap(),
+});
+
+const normalizeTournamentModeKey = (mode: unknown): TournamentModeKey | null =>
+  typeof mode === 'string' && isArcadeGameMode(mode) ? mode : null;
+
+const isTournamentPayload = (value: unknown): value is ActiveTournament =>
+  !!value && typeof value === 'object' && typeof (value as ActiveTournament).id === 'string';
+
+const normalizeTournamentTierPayload = (value: unknown): TournamentModeMap => {
+  const next = createEmptyTournamentModeMap();
+  if (!value || typeof value !== 'object') return next;
+  if (isTournamentPayload(value)) {
+    const mode = normalizeTournamentModeKey(value.mode);
+    if (mode) next[mode] = value;
+    return next;
+  }
+  const byMode = value as Record<string, unknown>;
+  for (const mode of TOURNAMENT_MODE_KEYS) {
+    const tournament = byMode[mode];
+    next[mode] = isTournamentPayload(tournament) ? tournament : null;
+  }
+  return next;
+};
 
 const PRIZE_DIST: Record<TournamentTierKey, { place: string; pct: string; xp: number; base: number }[]> = {
   daily: [
@@ -780,6 +1065,80 @@ const PRIZE_DIST: Record<TournamentTierKey, { place: string; pct: string; xp: nu
   ],
 };
 
+type TournamentSubmitResponse = {
+  success?: boolean;
+  tier?: TournamentTierKey;
+  score?: number;
+  previousScore?: number;
+  improved?: boolean;
+  error?: string;
+  reason?: string;
+  expected?: string;
+  got?: string;
+};
+
+type PendingTournamentSubmit = {
+  address: string;
+  score: number;
+  tier: TournamentTierKey;
+  mode: TournamentModeKey;
+  gameSessionId: string;
+  queuedAt: number;
+};
+
+const PENDING_TOURNAMENT_SUBMITS_KEY = 'prism_pending_tournament_submits_v1';
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function readPendingTournamentSubmits(): PendingTournamentSubmit[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PENDING_TOURNAMENT_SUBMITS_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is PendingTournamentSubmit =>
+        item &&
+        typeof item.address === 'string' &&
+        typeof item.score === 'number' &&
+        (item.tier === 'daily' || item.tier === 'weekly' || item.tier === 'monthly') &&
+        normalizeTournamentModeKey(item.mode) !== null &&
+        typeof item.gameSessionId === 'string' &&
+        typeof item.queuedAt === 'number',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writePendingTournamentSubmits(items: PendingTournamentSubmit[]) {
+  localStorage.setItem(PENDING_TOURNAMENT_SUBMITS_KEY, JSON.stringify(items));
+}
+
+function queuePendingTournamentSubmit(item: PendingTournamentSubmit) {
+  const current = readPendingTournamentSubmits();
+  const exists = current.some(
+    (queued) =>
+      queued.address === item.address &&
+      queued.tier === item.tier &&
+      queued.mode === item.mode &&
+      queued.gameSessionId === item.gameSessionId,
+  );
+  if (!exists) writePendingTournamentSubmits([...current, item]);
+}
+
+function removePendingTournamentSubmit(item: PendingTournamentSubmit) {
+  writePendingTournamentSubmits(
+    readPendingTournamentSubmits().filter(
+      (queued) =>
+        !(
+          queued.address === item.address &&
+          queued.tier === item.tier &&
+          queued.mode === item.mode &&
+          queued.gameSessionId === item.gameSessionId
+        ),
+    ),
+  );
+}
+
 function formatTournamentTimeLeft(endsAt: string): string {
   try {
     const diff = new Date(endsAt).getTime() - Date.now();
@@ -805,6 +1164,14 @@ const PrismLeague = () => {
   const [searchParams] = useSearchParams();
   const locationState = location.state as { fromAppJump?: boolean; returnAddress?: string } | null;
   const fromAppJump = Boolean(locationState?.fromAppJump);
+
+  // Preload medal icons once so re-renders never trigger a network/disk fetch flash
+  useEffect(() => {
+    ['/icons/tiers/tier_gold.png', '/icons/tiers/tier_silver.png', '/icons/tiers/tier_bronze.png'].forEach((src) => {
+      const img = new Image();
+      img.src = src;
+    });
+  }, []);
 
   // ── Challenge integration ──
   const rawChallengeId = searchParams.get('challengeId');
@@ -858,30 +1225,79 @@ const PrismLeague = () => {
   // Composite score — cached in sessionStorage, loads instantly on revisit
   const composite = useCompositeScore(address || null);
 
-  // Build WalletPreview from composite data (instant — no extra HTTP calls for ship stats)
-  const walletPreview = useMemo<WalletPreview | null>(() => {
-    if (!address || (composite.isLoading && !composite.breakdown)) return null;
-    if (!composite.breakdown || (composite.score === 0 && !composite.breakdown.onchain)) return null;
-    return {
-      address,
-      score: composite.score,
-      tier: composite.tier,
-      badges: [],
-      solBalance: 0,
-      txCount: 0,
-      walletAgeDays: 0,
-      tokenCount: 0,
-      nftCount: 0,
-      trustGrade: null,
-      trustScore: null,
-      riskLevel: null,
-      topPrograms: [],
-      compositeScore: composite.score,
-      compositeTier: composite.tier,
-      compositeBadgeCount: 0,
-      compositeBreakdown: composite.breakdown,
+  const [fallbackWalletPreview, setFallbackWalletPreview] = useState<WalletPreview | null>(null);
+  const [fallbackWalletPreviewLoading, setFallbackWalletPreviewLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setFallbackWalletPreview(null);
+    if (!address) {
+      setFallbackWalletPreviewLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setFallbackWalletPreviewLoading(true);
+    fetchWalletPreview(address)
+      .then((preview) => {
+        if (!cancelled) setFallbackWalletPreview(preview);
+      })
+      .catch(() => {
+        if (!cancelled) setFallbackWalletPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setFallbackWalletPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
     };
-  }, [address, composite.score, composite.tier, composite.breakdown, composite.isLoading]);
+  }, [address]);
+
+  // Build WalletPreview from composite data; fall back to wallet-database preview if summary is stale/incomplete.
+  const walletPreview = useMemo<WalletPreview | null>(() => {
+    if (!address) return null;
+    if (
+      composite.breakdown &&
+      (composite.hasComposite || composite.score > 0 || hasUsableCompositeBreakdown(composite.breakdown))
+    ) {
+      return {
+        address,
+        score: composite.score,
+        tier: composite.tier,
+        badges: [],
+        solBalance: 0,
+        txCount: 0,
+        walletAgeDays: 0,
+        tokenCount: 0,
+        nftCount: 0,
+        trustGrade: null,
+        trustScore: null,
+        riskLevel: null,
+        topPrograms: [],
+        compositeScore: composite.score,
+        compositeTier: composite.tier,
+        compositeBadgeCount: 0,
+        compositeBreakdown: composite.breakdown,
+      };
+    }
+    if (
+      fallbackWalletPreview &&
+      (fallbackWalletPreview.compositeScore > 0 ||
+        hasUsableCompositeBreakdown(fallbackWalletPreview.compositeBreakdown))
+    ) {
+      return fallbackWalletPreview;
+    }
+    if (composite.isLoading || fallbackWalletPreviewLoading) return null;
+    return null;
+  }, [
+    address,
+    composite.score,
+    composite.tier,
+    composite.breakdown,
+    composite.hasComposite,
+    composite.isLoading,
+    fallbackWalletPreview,
+    fallbackWalletPreviewLoading,
+  ]);
 
   // Load forge loadout from the server-sanitized state, with local cache as an instant fallback.
   const [forgeLoadout, setForgeLoadout] = useState<ForgeLoadout | null>(null);
@@ -937,6 +1353,41 @@ const PrismLeague = () => {
 
   // Derive ship stats from compositeScore + forge loadout
   const shipStats = useMemo(() => computeShipStats(walletPreview, forgeLoadout), [walletPreview, forgeLoadout]);
+  const shipStatsLoading = Boolean(address && !walletPreview && (composite.isLoading || fallbackWalletPreviewLoading));
+  const shipStatsUnavailable = Boolean(address && !walletPreview && !shipStatsLoading);
+
+  useEffect(() => {
+    const walletAddr = walletPreview?.address;
+    if (!walletAddr) return;
+    let cancelled = false;
+    fetchServerAchievements(walletAddr).then(({ unlocked, claimed }) => {
+      if (cancelled || (!unlocked.length && !claimed.length)) return;
+      const now = new Date().toISOString();
+      const unlockedSet = new Set(unlocked);
+      const claimedSet = new Set(claimed);
+      const orbitList = getAchievements();
+      const defList = getDefenderAchievements();
+      const gravList = getGravityAchievements();
+      const orbitChanged = applyServerAchievementIds(orbitList, unlockedSet, claimedSet, now);
+      const defChanged = applyServerAchievementIds(defList, unlockedSet, claimedSet, now);
+      const gravChanged = applyServerAchievementIds(gravList, unlockedSet, claimedSet, now);
+      if (orbitChanged) {
+        persistAchievementList(ACHIEVEMENT_STORAGE.orbit.key, orbitList);
+        setAchievements([...orbitList]);
+      }
+      if (defChanged) {
+        persistAchievementList(ACHIEVEMENT_STORAGE.defender.key, defList);
+        setDefenderAchievements([...defList]);
+      }
+      if (gravChanged) {
+        persistAchievementList(ACHIEVEMENT_STORAGE.gravity.key, gravList);
+        setGravityAchievements([...gravList]);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [walletPreview?.address, composite.details?.humanProof.achievementCount]);
 
   // Minimal traits adapter for game scenes (they only use planetTier)
   const traits = useMemo(
@@ -1060,7 +1511,9 @@ const PrismLeague = () => {
     setTotalCoins(readWalletCoins(address || 'anonymous'));
   }, [address]);
 
-  // Sync coins & achievements from server when wallet connects
+  // Sync coins & achievements from server when wallet connects.
+  // Achievements are recovered from server, user-data/localStorage snapshots, and
+  // local game stats so an empty achievement store does not wipe earned state.
   useEffect(() => {
     if (!address) return;
     let cancelled = false;
@@ -1070,84 +1523,98 @@ const PrismLeague = () => {
       writeWalletCoins(address, srv);
       setTotalCoins(srv);
     });
-    // Sync unlocked + claimed achievements from server
-    fetchServerAchievements(address).then(({ unlocked: srvUnlocked, claimed: srvClaimed }) => {
-      if (cancelled || (!srvUnlocked.length && !srvClaimed.length)) return;
+
+    const recoverAchievements = async () => {
+      try {
+        const { loadFromServer } = await import('@/lib/userDataSync');
+        loadFromServer(address).catch(() => {});
+      } catch {
+        /* local/server achievement recovery continues below */
+      }
+      if (cancelled) return;
+
       const now = new Date().toISOString();
+      const srvUnlockedSet = new Set<string>();
+      const srvClaimedSet = new Set<string>();
 
-      // Orbit achievements
       const orbitList = getAchievements();
-      let orbitChanged = false;
-      // Defender achievements
       const defList = getDefenderAchievements();
-      let defChanged = false;
-      // Gravity achievements
       const gravList = getGravityAchievements();
-      let gravChanged = false;
 
-      const applyToList = <
-        T extends {
-          id: string;
-          unlocked: boolean;
-          unlockedAt?: string | null;
-          claimed: boolean;
-          claimedAt?: string | null;
-        },
-      >(
-        list: T[],
-        id: string,
-        mode: 'unlock' | 'claim',
-      ): boolean => {
-        const ach = list.find((a) => a.id === id);
-        if (!ach) return false;
-        let dirty = false;
-        if (mode === 'unlock' && !ach.unlocked) {
-          ach.unlocked = true;
-          ach.unlockedAt = ach.unlockedAt || now;
-          dirty = true;
-        }
-        if (mode === 'claim' && !ach.claimed) {
-          ach.unlocked = true;
-          ach.unlockedAt = ach.unlockedAt || now;
-          ach.claimed = true;
-          ach.claimedAt = ach.claimedAt || now;
-          dirty = true;
-        }
-        return dirty;
-      };
+      const orbitStates = readStoredAchievementStates(
+        ACHIEVEMENT_STORAGE.orbit.key,
+        ACHIEVEMENT_STORAGE.orbit.legacyPrefixes,
+      );
+      const defStates = readStoredAchievementStates(
+        ACHIEVEMENT_STORAGE.defender.key,
+        ACHIEVEMENT_STORAGE.defender.legacyPrefixes,
+      );
+      const gravStates = readStoredAchievementStates(
+        ACHIEVEMENT_STORAGE.gravity.key,
+        ACHIEVEMENT_STORAGE.gravity.legacyPrefixes,
+      );
 
-      for (const id of srvUnlocked) {
-        if (id.startsWith('def_')) {
-          if (applyToList(defList, id, 'unlock')) defChanged = true;
-        } else if (id.startsWith('grav_')) {
-          if (applyToList(gravList, id, 'unlock')) gravChanged = true;
-        } else {
-          if (applyToList(orbitList, id, 'unlock')) orbitChanged = true;
-        }
-      }
-      for (const id of srvClaimed) {
-        if (id.startsWith('def_')) {
-          if (applyToList(defList, id, 'claim')) defChanged = true;
-        } else if (id.startsWith('grav_')) {
-          if (applyToList(gravList, id, 'claim')) gravChanged = true;
-        } else {
-          if (applyToList(orbitList, id, 'claim')) orbitChanged = true;
-        }
+      let orbitChanged = applyAchievementStates(orbitList, orbitStates, now);
+      let defChanged = applyAchievementStates(defList, defStates, now);
+      let gravChanged = applyAchievementStates(gravList, gravStates, now);
+
+      if (applyServerAchievementIds(orbitList, srvUnlockedSet, srvClaimedSet, now)) orbitChanged = true;
+      if (applyServerAchievementIds(defList, srvUnlockedSet, srvClaimedSet, now)) defChanged = true;
+      if (applyServerAchievementIds(gravList, srvUnlockedSet, srvClaimedSet, now)) gravChanged = true;
+
+      const rediscovered = rediscoverAchievementsFromStats(orbitList, defList, gravList, now);
+      if (rediscovered.orbitChanged) orbitChanged = true;
+      if (rediscovered.defChanged) defChanged = true;
+      if (rediscovered.gravChanged) gravChanged = true;
+
+      if (orbitChanged) persistAchievementList(ACHIEVEMENT_STORAGE.orbit.key, orbitList);
+      if (defChanged) persistAchievementList(ACHIEVEMENT_STORAGE.defender.key, defList);
+      if (gravChanged) persistAchievementList(ACHIEVEMENT_STORAGE.gravity.key, gravList);
+
+      setPlayerStats(getPlayerStats());
+      setDefenderStats(getDefenderStats());
+      setAchievements([...orbitList]);
+      setDefenderAchievements([...defList]);
+      setGravityAchievements([...gravList]);
+
+      const allUnlockedIds = [...orbitList, ...defList, ...gravList].filter((a) => a.unlocked).map((a) => a.id);
+      const serverHasAllUnlocked = allUnlockedIds.every((id) => srvUnlockedSet.has(id) || srvClaimedSet.has(id));
+      if (allUnlockedIds.length > 0 && !serverHasAllUnlocked) {
+        syncUnlockedToServer(address, allUnlockedIds);
+        import('@/lib/userDataSync')
+          .then(({ syncToServer }) => {
+            syncToServer({
+              achievements: {
+                [ACHIEVEMENT_STORAGE.orbit.key]: orbitList,
+                [ACHIEVEMENT_STORAGE.defender.key]: defList,
+                [ACHIEVEMENT_STORAGE.gravity.key]: gravList,
+              },
+            });
+          })
+          .catch(() => {});
       }
 
-      if (orbitChanged) {
-        localStorage.setItem('orbit_survival_achievements_v1', JSON.stringify(orbitList));
-        setAchievements([...orbitList]);
-      }
-      if (defChanged) {
-        localStorage.setItem('cosmic_defender_achievements_v1', JSON.stringify(defList));
-        setDefenderAchievements([...defList]);
-      }
-      if (gravChanged) {
-        localStorage.setItem('gravity_rush_achievements_v1', JSON.stringify(gravList));
-        setGravityAchievements([...gravList]);
-      }
-    });
+      fetchServerAchievements(address).then(({ unlocked: srvUnlocked, claimed: srvClaimed }) => {
+        if (cancelled || (!srvUnlocked.length && !srvClaimed.length)) return;
+        const serverNow = new Date().toISOString();
+        const unlockedSet = new Set(srvUnlocked);
+        const claimedSet = new Set(srvClaimed);
+        const serverOrbitList = getAchievements();
+        const serverDefList = getDefenderAchievements();
+        const serverGravList = getGravityAchievements();
+        const serverOrbitChanged = applyServerAchievementIds(serverOrbitList, unlockedSet, claimedSet, serverNow);
+        const serverDefChanged = applyServerAchievementIds(serverDefList, unlockedSet, claimedSet, serverNow);
+        const serverGravChanged = applyServerAchievementIds(serverGravList, unlockedSet, claimedSet, serverNow);
+        if (serverOrbitChanged) persistAchievementList(ACHIEVEMENT_STORAGE.orbit.key, serverOrbitList);
+        if (serverDefChanged) persistAchievementList(ACHIEVEMENT_STORAGE.defender.key, serverDefList);
+        if (serverGravChanged) persistAchievementList(ACHIEVEMENT_STORAGE.gravity.key, serverGravList);
+        if (serverOrbitChanged) setAchievements([...serverOrbitList]);
+        if (serverDefChanged) setDefenderAchievements([...serverDefList]);
+        if (serverGravChanged) setGravityAchievements([...serverGravList]);
+      });
+    };
+
+    void recoverAchievements();
     return () => {
       cancelled = true;
     };
@@ -1206,11 +1673,7 @@ const PrismLeague = () => {
     if (gameMode === 'text_quest' && playMode === 'tournament') setPlayModeRaw('free');
   }, [gameMode, playMode]);
   const [tournamentTier, setTournamentTier] = useState<TournamentTierKey>('daily');
-  const [tournaments, setTournaments] = useState<Record<TournamentTierKey, ActiveTournament | null>>({
-    daily: null,
-    weekly: null,
-    monthly: null,
-  });
+  const [tournaments, setTournaments] = useState<ActiveTournamentState>(() => createEmptyTournamentState());
   const [tournamentLoading, setTournamentLoading] = useState(false);
   const [joinLoading, setJoinLoading] = useState(false);
   const [joinMessage, setJoinMessage] = useState<string | null>(null);
@@ -1218,18 +1681,14 @@ const PrismLeague = () => {
   const tournamentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Derived: currently selected tournament & backward-compat alias
-  const activeTournament = tournaments[tournamentTier];
-  const activeTournamentMode = useMemo<GameMode | null>(() => {
-    const mode = activeTournament?.mode;
-    return typeof mode === 'string' && isArcadeGameMode(mode) ? mode : null;
-  }, [activeTournament?.mode]);
-  const activeTournamentModeLabel = useMemo(
+  const tournamentMode = isArcadeGameMode(gameMode) ? gameMode : null;
+  const activeTournament = tournamentMode ? tournaments[tournamentTier]?.[tournamentMode] ?? null : null;
+  const currentTournamentModeLabel = useMemo(
     () =>
-      activeTournamentMode
-        ? GAME_MODES.find((mode) => mode.id === activeTournamentMode)?.name || activeTournamentMode
+      tournamentMode
+        ? GAME_MODES.find((mode) => mode.id === tournamentMode)?.name || tournamentMode
         : null,
-    [activeTournamentMode],
+    [tournamentMode],
   );
   const tournamentPrizeRows = useMemo(
     () =>
@@ -1240,27 +1699,12 @@ const PrismLeague = () => {
       })),
     [tournamentTier, activeTournament?.basePrizes, activeTournament?.xpRewards],
   );
-  const tournamentModeLocked = playMode === 'tournament' && activeTournamentMode !== null;
-
   const handleModeSelect = useCallback(
     (nextMode: GameMode) => {
-      if (tournamentModeLocked && activeTournamentMode && nextMode !== activeTournamentMode) {
-        const tierLabel = TOURNAMENT_TIERS.find((tier) => tier.key === tournamentTier)?.shortLabel || 'Current';
-        const modeLabel = activeTournamentModeLabel || activeTournamentMode;
-        setJoinMessage(`${tierLabel} tournament is locked to ${modeLabel}.`);
-        return;
-      }
       setGameMode(nextMode);
     },
-    [tournamentModeLocked, activeTournamentMode, activeTournamentModeLabel, tournamentTier],
+    [],
   );
-
-  useEffect(() => {
-    if (!tournamentModeLocked || !activeTournamentMode) return;
-    if (gameMode !== activeTournamentMode) {
-      setGameMode(activeTournamentMode);
-    }
-  }, [tournamentModeLocked, activeTournamentMode, gameMode]);
 
   const fetchTournaments = useCallback(async () => {
     const base = getServerBase();
@@ -1271,19 +1715,25 @@ const PrismLeague = () => {
       const jwt = getChallengeJwt(address);
       if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
       const res = await leagueApiJson<{
-        tournaments?: Record<TournamentTierKey, ActiveTournament | null>;
+        tournaments?: Partial<Record<TournamentTierKey, unknown>>;
         tournament?: ActiveTournament | null;
       }>(`${base}/api/tournament/active?_=${Date.now()}`, { headers });
       if (res.ok) {
         const data = res.data;
         if (data?.tournaments) {
           setTournaments({
-            daily: data.tournaments.daily || null,
-            weekly: data.tournaments.weekly || null,
-            monthly: data.tournaments.monthly || null,
+            daily: normalizeTournamentTierPayload(data.tournaments.daily),
+            weekly: normalizeTournamentTierPayload(data.tournaments.weekly),
+            monthly: normalizeTournamentTierPayload(data.tournaments.monthly),
           });
         } else if (data?.tournament) {
-          setTournaments((prev) => ({ ...prev, daily: data.tournament }));
+          const mode = normalizeTournamentModeKey(data.tournament.mode);
+          if (mode) {
+            setTournaments((prev) => ({
+              ...prev,
+              daily: { ...prev.daily, [mode]: data.tournament },
+            }));
+          }
         }
       }
     } catch {
@@ -1341,7 +1791,7 @@ const PrismLeague = () => {
 
   // Countdown ticker
   useEffect(() => {
-    const t = tournaments[tournamentTier];
+    const t = activeTournament;
     if (t && !t.isEnded) {
       setTimeLeft(formatTournamentTimeLeft(t.endsAt));
       countdownRef.current = setInterval(() => setTimeLeft(formatTournamentTimeLeft(t.endsAt)), 1000);
@@ -1351,19 +1801,23 @@ const PrismLeague = () => {
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-  }, [tournaments, tournamentTier]);
+  }, [activeTournament]);
 
   // Clear join message on tier switch
   useEffect(() => {
     setJoinMessage(null);
-  }, [tournamentTier]);
+  }, [tournamentTier, tournamentMode]);
 
   const handleJoinTournament = useCallback(
-    async (tier: TournamentTierKey = tournamentTier) => {
+    async (tier: TournamentTierKey = tournamentTier, mode: TournamentModeKey | null = tournamentMode) => {
       const base = getServerBase();
       const jwt = getChallengeJwt(address);
       if (!base || !address || !jwt) {
         toast.error('Connect wallet & sign in first');
+        return;
+      }
+      if (!mode) {
+        toast.error('Tournament mode required');
         return;
       }
       setJoinLoading(true);
@@ -1372,7 +1826,7 @@ const PrismLeague = () => {
         const res = await leagueApiJson<{ error?: string; newBalance?: number }>(`${base}/api/tournament/join`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${jwt}` },
-          body: { tier },
+          body: { tier, mode },
         });
         const data = res.data;
         if (res.ok) {
@@ -1410,31 +1864,126 @@ const PrismLeague = () => {
       }
       setJoinLoading(false);
     },
-    [address, tournamentTier, fetchTournaments, refreshLeagueCoinsFromServer],
+    [address, tournamentTier, tournamentMode, fetchTournaments, refreshLeagueCoinsFromServer],
   );
 
   const submitToTournament = useCallback(
     async (score: number, gameSessionId?: string) => {
-      try {
-        const base = getServerBase();
-        const jwt = getChallengeJwt(address);
-        if (!base || !jwt) return;
-        await leagueApiJson(`${base}/api/tournament/submit`, {
+      const base = getServerBase();
+      const jwt = getChallengeJwt(address);
+      if (!base || !address || !jwt || !gameSessionId || !tournamentMode) return;
+      const mode = tournamentMode;
+      const pendingSubmit = { address, score, tier: tournamentTier, mode, gameSessionId, queuedAt: Date.now() };
+      const submitOnce = () =>
+        leagueApiJson<TournamentSubmitResponse>(`${base}/api/tournament/submit`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${jwt}` },
-          body: { score, tier: tournamentTier, gameSessionId },
+          body: { score, tier: tournamentTier, mode, gameSessionId },
         });
+
+      try {
+        let res = await submitOnce();
+        let data = res.data;
+
+        if (res.ok) {
+          if (data?.improved) toast.success(`Tournament score submitted: ${score}`);
+          await fetchTournaments();
+          return;
+        }
+
+        if (res.status === 400 && data?.reason === 'unverified_session') {
+          await wait(3500);
+          res = await submitOnce();
+          data = res.data;
+          if (res.ok) {
+            if (data?.improved) toast.success(`Tournament score submitted: ${score}`);
+            await fetchTournaments();
+            return;
+          }
+          if (res.status === 400 && data?.reason === 'unverified_session') {
+            queuePendingTournamentSubmit(pendingSubmit);
+            toast.warning('Tournament submit pending — MagicBlock verification slow, will retry');
+            return;
+          }
+        }
+
+        if (res.status === 400 && data?.reason === 'mode_mismatch') {
+          toast.error(`Tournament submit mode mismatch: expected ${data.expected}`);
+          return;
+        }
+
+        const reason = data?.reason;
+        const error = data?.error;
+        toast.error(error || 'Tournament submit failed');
+        console.warn('[tournament-submit] rejected', { reason, error });
       } catch {
-        /* silent */
+        queuePendingTournamentSubmit(pendingSubmit);
+        toast.warning('Network error — will retry tournament submit on next page load');
       }
     },
-    [tournamentTier],
+    [address, tournamentTier, tournamentMode, fetchTournaments],
   );
+
+  useEffect(() => {
+    if (!address) return;
+    const queued = readPendingTournamentSubmits().filter((item) => item.address === address);
+    if (queued.length === 0) return;
+    const base = getServerBase();
+    const jwt = getChallengeJwt(address);
+    if (!base || !jwt) return;
+    let cancelled = false;
+
+    const retryQueuedSubmits = async () => {
+      for (const item of queued) {
+        if (cancelled) return;
+        const tournament = tournaments[item.tier]?.[item.mode] ?? null;
+        if (!tournament) continue;
+        const tournamentActive =
+          !tournament.isEnded &&
+          tournament.status !== 'ended' &&
+          new Date(tournament.endsAt).getTime() > Date.now();
+        if (!tournamentActive) {
+          removePendingTournamentSubmit(item);
+          continue;
+        }
+
+        try {
+          const res = await leagueApiJson<TournamentSubmitResponse>(`${base}/api/tournament/submit`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${jwt}` },
+            body: { score: item.score, tier: item.tier, mode: item.mode, gameSessionId: item.gameSessionId },
+          });
+          if (cancelled) return;
+          const data = res.data;
+          if (res.ok) {
+            removePendingTournamentSubmit(item);
+            if (data?.improved) toast.success(`Tournament score submitted: ${item.score}`);
+            await fetchTournaments();
+          } else if (data?.reason !== 'unverified_session') {
+            removePendingTournamentSubmit(item);
+            if (res.status === 400 && data?.reason === 'mode_mismatch') {
+              toast.error(`Tournament submit mode mismatch: expected ${data.expected}`);
+            } else {
+              console.warn('[tournament-submit] queued rejected', { reason: data?.reason, error: data?.error });
+            }
+          }
+        } catch {
+          return;
+        }
+      }
+    };
+
+    void retryQueuedSubmits();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, tournaments, fetchTournaments]);
 
   // Continue/Revive feature — free revives for ID holders: 3 per DAY (persisted)
   const FREE_REVIVES_PER_DAY = 3;
+  const PAID_REVIVES_PER_GAME = 3;
   const reviveRef = useRef(false);
-  const continueUsed = useRef(false);
+  const paidRevivesUsed = useRef(0);
   const freeRevivesLeft = useRef(0);
   const [showContinue, setShowContinue] = useState(false);
   const [revivePaying, setRevivePaying] = useState(false);
@@ -1710,17 +2259,14 @@ const PrismLeague = () => {
       startFadeTransition(() => navigate('/text-quest'));
       return;
     }
-    // Tournament mode: must join first and use the configured tournament mode.
+    if (shipStatsLoading) {
+      toast.info('Ship stats are still loading.');
+      return;
+    }
+    // Tournament mode: current arcade mode must have its own joined tournament.
     if (playMode === 'tournament') {
       if (!activeTournament?.userJoined) {
         toast.error('Join the tournament first!');
-        return;
-      }
-      if (activeTournamentMode && gameMode !== activeTournamentMode) {
-        const tierLabel = TOURNAMENT_TIERS.find((tier) => tier.key === tournamentTier)?.shortLabel || 'This';
-        const modeLabel = activeTournamentModeLabel || activeTournamentMode;
-        setGameMode(activeTournamentMode);
-        toast.error(`${tierLabel} tournament is currently ${modeLabel}.`);
         return;
       }
     }
@@ -1734,7 +2280,7 @@ const PrismLeague = () => {
     setSessionProof(null);
     setSessionProofStatus('idle');
     setNewAchievements([]);
-    continueUsed.current = false;
+    paidRevivesUsed.current = 0;
     defenderLevel.current = 0;
     defenderKills.current = 0;
     // Init free revives from localStorage as immediate fallback
@@ -2014,13 +2560,15 @@ const PrismLeague = () => {
           });
         }
 
-        // Submit to tournament only when in tournament mode, joined, and on the configured mode.
-        if (
-          playMode === 'tournament' &&
+        const tournamentEligible =
           activeTournament?.userJoined &&
-          (!activeTournamentMode || activeTournamentMode === gameMode)
-        ) {
-          submitToTournament(finalScore, proof?.id ?? undefined);
+          tournamentMode &&
+          proof?.id &&
+          proof.verified &&
+          finalScore > 0 &&
+          activeTournament?.status !== 'ended';
+        if (tournamentEligible) {
+          submitToTournament(finalScore, proof.id);
         }
 
         // Challenge submit — must be inside verifyAndPublish to have proof.id
@@ -2185,9 +2733,8 @@ const PrismLeague = () => {
       highScore,
       activeChallengeId,
       activeTournament,
-      activeTournamentMode,
+      tournamentMode,
       submitToTournament,
-      playMode,
     ],
   );
 
@@ -2198,8 +2745,8 @@ const PrismLeague = () => {
         finalizeDeath(finalScore, finalCoins, true);
         return;
       }
-      // Show continue if: has free revives OR (hasn't used paid continue yet AND connected)
-      if (freeRevivesLeft.current > 0 || (!continueUsed.current && connected)) {
+      // Show continue if: has free revives OR paid revives remain for this game.
+      if (freeRevivesLeft.current > 0 || (paidRevivesUsed.current < PAID_REVIVES_PER_GAME && connected)) {
         pendingGameOver.current = { score: finalScore, coins: finalCoins, endedAtMs: Date.now() };
         setScore(finalScore);
         setCoins(finalCoins);
@@ -2268,11 +2815,11 @@ const PrismLeague = () => {
       const { payForRevive, REVIVE_SKR_AMOUNT } = await import('@/lib/payForRevive');
       const result = await payForRevive(wallet, address);
       if (result.success) {
-        continueUsed.current = true;
+        paidRevivesUsed.current += 1;
         setShowContinue(false);
         reviveRef.current = true;
         pendingGameOver.current = null;
-        toast.success(`Revived! (-${REVIVE_SKR_AMOUNT} SKR)`);
+        toast.success(`Revived! (-${REVIVE_SKR_AMOUNT} SKR, ${paidRevivesUsed.current}/${PAID_REVIVES_PER_GAME} used)`);
         hapticSuccess();
       } else if (result.error) {
         const e = result.error;
@@ -2700,38 +3247,11 @@ const PrismLeague = () => {
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            className={`league-jumpgate shrink-0 ${isJumpingBack ? 'is-active' : ''}`}
+          <HubReturnButton
+            className={`shrink-0 ${isJumpingBack ? 'is-active' : ''}`}
             onClick={handleJumpBackToPrism}
             disabled={isJumpingBack}
-          >
-            <span className="league-jumpgate__halo" />
-            <span className="league-jumpgate__ship" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path
-                  d="M12 2C12 2 8.1 6.1 8.1 12.1C8.1 15.9 9.5 18.8 10.1 20L12 22L13.9 20C14.5 18.8 15.9 15.9 15.9 12.1C15.9 6.1 12 2 12 2Z"
-                  fill="url(#leagueShipGrad)"
-                  stroke="rgba(56,189,248,0.55)"
-                  strokeWidth="0.6"
-                />
-                <path d="M8.2 12L4.2 15L8.2 14Z" fill="rgba(56,189,248,0.4)" />
-                <path d="M15.8 12L19.8 15L15.8 14Z" fill="rgba(56,189,248,0.4)" />
-                <circle cx="12" cy="8.8" r="1.6" fill="rgba(34,211,238,0.95)" />
-                <path d="M10.8 18.2L12 20.6L13.2 18.2" fill="rgba(251,146,60,0.95)" />
-                <defs>
-                  <linearGradient id="leagueShipGrad" x1="12" y1="2" x2="12" y2="22" gradientUnits="userSpaceOnUse">
-                    <stop offset="0" stopColor="rgba(34,211,238,0.95)" />
-                    <stop offset="0.45" stopColor="rgba(148,163,184,0.95)" />
-                    <stop offset="1" stopColor="rgba(100,116,139,0.9)" />
-                  </linearGradient>
-                </defs>
-              </svg>
-            </span>
-            <span className="league-jumpgate__text hidden sm:inline-flex">
-              <strong>{gameState === 'playing' ? 'Game Menu' : gameState === 'gameover' ? 'Home' : 'Home'}</strong>
-            </span>
-          </button>
+          />
 
           <div className="flex items-center gap-1.5 shrink-0">
             <Button
@@ -2956,7 +3476,6 @@ const PrismLeague = () => {
                 {/* Floating carousel arrows — outside card, on screen edges */}
                 <button
                   className="fixed left-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-black/50 disabled:hover:text-white/60"
-                  disabled={tournamentModeLocked}
                   aria-label="Previous game mode"
                   onClick={() => {
                     const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
@@ -2968,7 +3487,6 @@ const PrismLeague = () => {
                 </button>
                 <button
                   className="fixed right-2 top-1/2 -translate-y-1/2 z-30 w-11 h-11 flex items-center justify-center rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-white/60 hover:text-white hover:bg-white/15 active:scale-90 transition-all shadow-lg disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-black/50 disabled:hover:text-white/60"
-                  disabled={tournamentModeLocked}
                   aria-label="Next game mode"
                   onClick={() => {
                     const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
@@ -3007,7 +3525,6 @@ const PrismLeague = () => {
                         (e.currentTarget as unknown as Record<string, number>)._swipeStartY = touch.clientY;
                       }}
                       onTouchEnd={(e) => {
-                        if (tournamentModeLocked) return;
                         const startX = (e.currentTarget as unknown as Record<string, number>)._swipeStartX;
                         const startY = (e.currentTarget as unknown as Record<string, number>)._swipeStartY;
                         if (startX == null) return;
@@ -3049,11 +3566,6 @@ const PrismLeague = () => {
                               <div className="text-sm font-black text-cyan-200 tracking-wide mb-1">{mode.name}</div>
                               <div className="text-[11px] text-white/40 leading-relaxed">{mode.desc}</div>
                               <div className="mt-2 text-[10px] text-cyan-400/50 font-medium">{mode.controls}</div>
-                              {tournamentModeLocked && activeTournamentModeLabel && (
-                                <div className="mt-2 inline-flex items-center rounded-full border border-purple-500/25 bg-purple-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-purple-300">
-                                  Tournament locked to {activeTournamentModeLabel}
-                                </div>
-                              )}
                             </div>
                           </div>
                         );
@@ -3066,7 +3578,6 @@ const PrismLeague = () => {
                             key={mode.id}
                             className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/35 disabled:cursor-not-allowed disabled:opacity-35"
                             onClick={() => handleModeSelect(mode.id)}
-                            disabled={tournamentModeLocked && mode.id !== activeTournamentMode}
                             aria-label={`Select ${mode.name}`}
                           >
                             <span
@@ -3080,6 +3591,51 @@ const PrismLeague = () => {
                         ))}
                       </div>
                     </div>
+
+                    {/* ═══ PLAY BUTTON — prominent, directly under the game card (no scrolling to find it) ═══ */}
+                    <Button
+                      size="lg"
+                      className={`w-full h-14 text-lg font-black uppercase tracking-[0.2em] transition-all duration-300 transform hover:scale-[1.03] active:scale-[0.97] rounded-xl mb-3 shrink-0 ${
+                        activeChallengeId
+                          ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:via-amber-300 hover:to-yellow-300 text-black shadow-[0_0_40px_rgba(245,158,11,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-amber-300/30'
+                          : playMode === 'tournament'
+                            ? 'bg-gradient-to-r from-purple-500 via-purple-400 to-fuchsia-400 hover:from-purple-400 hover:via-purple-300 hover:to-fuchsia-300 text-white shadow-[0_0_40px_rgba(168,85,247,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-purple-300/30'
+                            : 'bg-gradient-to-r from-cyan-500 via-cyan-400 to-teal-400 hover:from-cyan-400 hover:via-cyan-300 hover:to-teal-300 text-black shadow-[0_0_40px_rgba(6,182,212,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-cyan-300/30'
+                      }`}
+                      onClick={handleStart}
+                      disabled={shipStatsLoading}
+                    >
+                      {shipStatsLoading ? (
+                        <>
+                          <RotateCw className="w-5 h-5 mr-2 animate-spin" /> Loading Stats
+                        </>
+                      ) : activeChallengeId ? (
+                        <>
+                          <Swords className="w-5 h-5 mr-2" /> Start Challenge
+                        </>
+                      ) : playMode === 'tournament' ? (
+                        <>
+                          <Trophy className="w-5 h-5 mr-2" />{' '}
+                          {activeTournament?.userJoined ? 'Enter Tournament' : 'Join First'}
+                        </>
+                      ) : gameMode === 'text_quest' ? (
+                        <>
+                          <BookOpen className="w-5 h-5 mr-2" /> Explore
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-5 h-5 mr-2 fill-current" /> {connected ? 'Play' : 'Play as Guest'}
+                        </>
+                      )}
+                    </Button>
+                    {!connected && (
+                      <button
+                        className="mb-3 text-xs text-cyan-400/60 hover:text-cyan-300 transition-colors"
+                        onClick={handleWalletConnect}
+                      >
+                        Connect wallet for on-chain leaderboard
+                      </button>
+                    )}
 
                     {/* ═══ PLAY MODE SELECTOR ═══ */}
                     {gameMode !== 'text_quest' && (
@@ -3261,7 +3817,7 @@ const PrismLeague = () => {
                                                 : null;
                                         return (
                                           <div
-                                            key={`${entry.address}-${idx}`}
+                                            key={entry.address}
                                             className={`flex items-center gap-2 px-4 py-1.5 text-xs ${isMine ? 'bg-purple-500/10' : ''}`}
                                           >
                                             {medal ? (
@@ -3269,7 +3825,6 @@ const PrismLeague = () => {
                                                 src={medal}
                                                 alt=""
                                                 className="w-5 h-5 object-contain"
-                                                loading="lazy"
                                               />
                                             ) : (
                                               <span className="w-5 text-center text-[10px] text-white/30">
@@ -3296,21 +3851,22 @@ const PrismLeague = () => {
                                   )}
                                 {/* Join / Joined */}
                                 <div className="px-4 py-3 flex flex-col gap-2">
-                                  {activeTournamentModeLabel && (
+                                  {currentTournamentModeLabel && (
                                     <p className="text-center text-[10px] text-white/40">
-                                      This tier is running in{' '}
-                                      <span className="font-semibold text-cyan-300">{activeTournamentModeLabel}</span>.
-                                      Joining only unlocks verified runs in that mode.
+                                      This mode has its own{' '}
+                                      {TOURNAMENT_TIERS.find((t) => t.key === tournamentTier)?.shortLabel.toLowerCase()}{' '}
+                                      tournament for{' '}
+                                      <span className="font-semibold text-cyan-300">{currentTournamentModeLabel}</span>.
                                     </p>
                                   )}
                                   {activeTournament.userJoined ? (
                                     <div className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-center bg-purple-500/15 text-purple-300">
-                                      Joined{activeTournamentModeLabel ? ` for ${activeTournamentModeLabel}` : ''} —
+                                      Joined{currentTournamentModeLabel ? ` for ${currentTournamentModeLabel}` : ''} —
                                       good luck!
                                     </div>
                                   ) : (
                                     <button
-                                      onClick={() => handleJoinTournament(tournamentTier)}
+                                      onClick={() => handleJoinTournament(tournamentTier, tournamentMode)}
                                       disabled={joinLoading || !connected}
                                       className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-2 text-white"
                                       style={{ backgroundColor: '#A855F7', boxShadow: '0 0 20px rgba(168,85,247,0.3)' }}
@@ -3360,7 +3916,7 @@ const PrismLeague = () => {
                               <Zap className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
                               <p className="text-[10px] text-white/40 leading-relaxed">
                                 Scores are submitted automatically when your game ends. Only verified{' '}
-                                {activeTournamentModeLabel || 'tournament'} runs count for this window, and your best
+                                {currentTournamentModeLabel || 'tournament'} runs count for this window, and your best
                                 one is kept.
                               </p>
                             </div>
@@ -3765,59 +4321,71 @@ const PrismLeague = () => {
                           <span className="text-xs font-bold text-white/80 uppercase tracking-wider">Ship Stats</span>
                         </div>
                         <div className="space-y-1.5">
-                          {(
-                            [
-                              {
-                                key: 'speed',
-                                label: 'Speed',
-                                icon: '/icons/stats/stat_speed.svg',
-                                color: '#22d3ee',
-                                value: shipStats.speed,
-                              },
-                              {
-                                key: 'shield',
-                                label: 'Shield',
-                                icon: '/icons/stats/stat_shield.svg',
-                                color: '#3b82f6',
-                                value: shipStats.shield,
-                              },
-                              {
-                                key: 'firepower',
-                                label: 'Firepower',
-                                icon: '/icons/stats/stat_firepower.svg',
-                                color: '#ef4444',
-                                value: shipStats.firepower,
-                              },
-                              {
-                                key: 'luck',
-                                label: 'Luck',
-                                icon: '/icons/stats/stat_luck.svg',
-                                color: '#22c55e',
-                                value: shipStats.luck,
-                              },
-                            ] as const
-                          ).map((stat) => (
-                            <div key={stat.key} className="flex items-center gap-2">
-                              <img
-                                src={stat.icon}
-                                alt=""
-                                className="w-3.5 h-3.5 object-contain shrink-0"
-                                loading="lazy"
-                              />
-                              <span className="text-[10px] text-white/50 w-14">{stat.label}</span>
-                              <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all duration-500"
-                                  style={{
-                                    width: `${stat.value}%`,
-                                    background: stat.color,
-                                    boxShadow: `0 0 6px ${stat.color}40`,
-                                  }}
-                                />
-                              </div>
-                              <span className="text-[10px] text-white/40 w-6 text-right font-mono">{stat.value}</span>
+                          {shipStatsLoading ? (
+                            <div className="py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-cyan-300/60">
+                              Loading wallet stats...
                             </div>
-                          ))}
+                          ) : shipStatsUnavailable ? (
+                            <div className="py-2 text-[10px] font-medium text-amber-300/70">
+                              Ship stats unavailable. Open Scanner once to refresh composite data.
+                            </div>
+                          ) : (
+                            (
+                              [
+                                {
+                                  key: 'speed',
+                                  label: 'Speed',
+                                  icon: '/icons/stats/stat_speed.svg',
+                                  color: '#22d3ee',
+                                  value: shipStats.speed,
+                                },
+                                {
+                                  key: 'shield',
+                                  label: 'Shield',
+                                  icon: '/icons/stats/stat_shield.svg',
+                                  color: '#3b82f6',
+                                  value: shipStats.shield,
+                                },
+                                {
+                                  key: 'firepower',
+                                  label: 'Firepower',
+                                  icon: '/icons/stats/stat_firepower.svg',
+                                  color: '#ef4444',
+                                  value: shipStats.firepower,
+                                },
+                                {
+                                  key: 'luck',
+                                  label: 'Luck',
+                                  icon: '/icons/stats/stat_luck.svg',
+                                  color: '#22c55e',
+                                  value: shipStats.luck,
+                                },
+                              ] as const
+                            ).map((stat) => (
+                              <div key={stat.key} className="flex items-center gap-2">
+                                <img
+                                  src={stat.icon}
+                                  alt=""
+                                  className="w-3.5 h-3.5 object-contain shrink-0"
+                                  loading="lazy"
+                                />
+                                <span className="text-[10px] text-white/50 w-14">{stat.label}</span>
+                                <div className="flex-1 h-2 rounded-full bg-white/5 overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full transition-all duration-500"
+                                    style={{
+                                      width: `${stat.value}%`,
+                                      background: stat.color,
+                                      boxShadow: `0 0 6px ${stat.color}40`,
+                                    }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-white/40 w-6 text-right font-mono">
+                                  {stat.value}
+                                </span>
+                              </div>
+                            ))
+                          )}
                         </div>
                         {(forgeLoadout?.equippedShipSkin ||
                           forgeLoadout?.equippedFrame ||
@@ -3852,45 +4420,6 @@ const PrismLeague = () => {
                       </div>
                     )}
 
-                    {/* ═══ PLAY BUTTON — above achievements ═══ */}
-                    <Button
-                      size="lg"
-                      className={`w-full h-14 text-lg font-black uppercase tracking-[0.2em] transition-all duration-300 transform hover:scale-[1.03] active:scale-[0.97] rounded-xl mb-2 shrink-0 ${
-                        activeChallengeId
-                          ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:via-amber-300 hover:to-yellow-300 text-black shadow-[0_0_40px_rgba(245,158,11,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-amber-300/30'
-                          : playMode === 'tournament'
-                            ? 'bg-gradient-to-r from-purple-500 via-purple-400 to-fuchsia-400 hover:from-purple-400 hover:via-purple-300 hover:to-fuchsia-300 text-white shadow-[0_0_40px_rgba(168,85,247,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-purple-300/30'
-                            : 'bg-gradient-to-r from-cyan-500 via-cyan-400 to-teal-400 hover:from-cyan-400 hover:via-cyan-300 hover:to-teal-300 text-black shadow-[0_0_40px_rgba(6,182,212,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-cyan-300/30'
-                      }`}
-                      onClick={handleStart}
-                    >
-                      {activeChallengeId ? (
-                        <>
-                          <Swords className="w-5 h-5 mr-2" /> Start Challenge
-                        </>
-                      ) : playMode === 'tournament' ? (
-                        <>
-                          <Trophy className="w-5 h-5 mr-2" />{' '}
-                          {activeTournament?.userJoined ? 'Enter Tournament' : 'Join First'}
-                        </>
-                      ) : gameMode === 'text_quest' ? (
-                        <>
-                          <BookOpen className="w-5 h-5 mr-2" /> Explore
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-5 h-5 mr-2 fill-current" /> {connected ? 'Play' : 'Play as Guest'}
-                        </>
-                      )}
-                    </Button>
-                    {!connected && (
-                      <button
-                        className="mb-3 text-xs text-cyan-400/60 hover:text-cyan-300 transition-colors"
-                        onClick={handleWalletConnect}
-                      >
-                        Connect wallet for on-chain leaderboard
-                      </button>
-                    )}
 
                     {/* Achievements toggle — mode-aware, hidden for text_quest */}
                     {gameMode !== 'text_quest' &&
@@ -4010,7 +4539,7 @@ const PrismLeague = () => {
                   <div className="text-xs text-white/40 mb-5">
                     {freeRevivesLeft.current > 0
                       ? `Free revive available (${freeRevivesLeft.current}/${FREE_REVIVES_PER_DAY} left) — ID Holder perk`
-                      : 'Wallet approval transfers 5 SKR to the Identity Prism treasury'}
+                      : `Paid revives used ${paidRevivesUsed.current}/${PAID_REVIVES_PER_GAME}. Wallet approval transfers 5 SKR to the Identity Prism treasury`}
                   </div>
                   <Button
                     className={`w-full h-12 mb-3 font-bold text-sm uppercase tracking-wider disabled:opacity-50 ${
@@ -4038,7 +4567,7 @@ const PrismLeague = () => {
                           className="w-5 h-5 mr-1.5 object-contain"
                           loading="lazy"
                         />{' '}
-                        Revive for 5 SKR
+                        Revive for 5 SKR ({PAID_REVIVES_PER_GAME - paidRevivesUsed.current} left)
                       </>
                     )}
                   </Button>
@@ -4438,7 +4967,6 @@ const PrismLeague = () => {
                               border: '1px solid rgba(6,182,212,0.2)',
                               color: 'rgba(34,211,238,0.7)',
                             }}
-                            disabled={tournamentModeLocked}
                             onClick={() => {
                               stopAllAudio();
                               const idx = GAME_MODES.findIndex((m) => m.id === gameMode);
@@ -4461,8 +4989,7 @@ const PrismLeague = () => {
                             onClick={handleJumpBackToPrism}
                             disabled={isJumpingBack}
                           >
-                            <ArrowLeft className="w-3.5 h-3.5" />
-                            {isJumpingBack ? '...' : 'Home'}
+                            {isJumpingBack ? '...' : 'HUB'}
                           </button>
                         </div>
                       </>

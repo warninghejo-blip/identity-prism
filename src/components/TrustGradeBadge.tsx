@@ -1,4 +1,4 @@
-type TrustGradeBadgeSize = 'xs' | 'sm' | 'md';
+type TrustGradeBadgeSize = 'xs' | 'sm' | 'md' | 'lg';
 
 const TRUST_GRADE_META: Record<string, { color: string; glow: string; label: string }> = {
   'A+': { color: '#22c55e', glow: 'rgba(34,197,94,0.42)', label: 'Elite trust' },
@@ -16,9 +16,10 @@ const TRUST_GRADE_META: Record<string, { color: string; glow: string; label: str
 };
 
 const SIZE_CLASS: Record<TrustGradeBadgeSize, { box: string; icon: number; text: string; label: string }> = {
-  xs: { box: 'gap-0', icon: 40, text: 'text-[9px]', label: 'hidden' },
+  xs: { box: 'gap-0', icon: 24, text: 'text-[8px]', label: 'hidden' },
   sm: { box: 'gap-1.5', icon: 30, text: 'text-[10px]', label: 'text-[9px]' },
   md: { box: 'gap-2', icon: 36, text: 'text-xs', label: 'text-[10px]' },
+  lg: { box: 'gap-0', icon: 36, text: 'text-[8px]', label: 'hidden' },
 };
 
 const TRUST_GRADE_ICON: Record<string, string> = {
@@ -57,6 +58,7 @@ export default function TrustGradeBadge({
   const scoreLabel = typeof score === 'number' && Number.isFinite(score) ? `${Math.round(score)}/100` : null;
   const primaryText = size === 'xs' ? normalizedGrade : (scoreLabel ?? normalizedGrade);
   const icon = TRUST_GRADE_ICON[normalizedGrade] ?? TRUST_GRADE_ICON['N/A'];
+  const showText = size !== 'xs' && size !== 'lg';
 
   return (
     <span
@@ -75,7 +77,7 @@ export default function TrustGradeBadge({
         style={{ filter: `drop-shadow(0 0 8px ${meta.glow}) drop-shadow(0 2px 5px rgba(0,0,0,0.45))` }}
         loading="lazy"
       />
-      {size !== 'xs' && (
+      {showText && (
         <span className="flex min-w-0 flex-col leading-none">
           <span className={`font-black tracking-[0.08em] ${sizeClass.text}`}>{primaryText}</span>
           <span className={`mt-0.5 uppercase tracking-[0.12em] text-white/35 ${sizeClass.label}`}>{meta.label}</span>

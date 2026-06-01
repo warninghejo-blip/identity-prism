@@ -76,8 +76,12 @@ interface SybilMetrics {
   topFunderPct?: number;
   siblingCount?: number;
   siblingAddresses?: string[];
-  topPrograms?: { programId?: string; name?: string | null; interactions?: number }[];
+  topPrograms?: { programId?: string; name?: string | null; category?: string | null; interactions?: number }[];
   dayBuckets?: Record<string, number> | number[];
+  // Graph-derived cluster truth (reliable; from the persistent sybil graph). Use these for
+  // the cluster panel/graph instead of clusterSimilarity (the live cosine that's ~always 0).
+  knownCluster?: { label?: string | null; size?: number; funder?: string | null } | null;
+  knownSiblings?: string[];
 }
 
 interface SybilResult {
@@ -125,6 +129,7 @@ interface GraphNode {
   side?: 'in' | 'out';
   small?: boolean;
   cluster?: boolean;
+  category?: string | null; // protocol category for program nodes (DEX/NFT/Lending/...)
 }
 
 interface GraphEdge {
@@ -221,9 +226,31 @@ function categorySignals(signals: SybilSignal[], category: string, ids: string[]
   return [...picked, ...fallback].slice(0, category === 'network' ? 5 : 6);
 }
 
+// Authoritative backend verdict.key → display label. The backend classification factors the
+// cluster hard-cap, ID bonus and looksEstablished logic that a pure riskScore threshold misses,
+// so for definite sybil-class verdicts we trust the backend over the risk-derived label.
+const VERDICT_KEY_LABEL: Record<string, string> = {
+  confirmed_sybil: 'Confirmed Sybil',
+  probable_sybil: 'Probable Sybil',
+  cluster_linked: 'Cluster Linked',
+};
 function verdictCopy(data: SybilResult | null, flaggedCount: number) {
   const riskScore = Math.round(data?.riskScore ?? 0);
   const trustScore = Math.round(data?.trustScore ?? Math.max(0, 100 - riskScore));
+  const vkey = String(data?.verdict?.key || '').toLowerCase();
+  // If the backend made a definite sybil-class call, surface THAT (don't let a capped/low
+  // riskScore show "Low Risk" for a known cluster member).
+  if (VERDICT_KEY_LABEL[vkey]) {
+    const label = VERDICT_KEY_LABEL[vkey];
+    return {
+      tag: `Verdict - ${label}`,
+      title: vkey === 'cluster_linked'
+        ? `${label} - linked to a flagged cluster.`
+        : `${label} - ${flaggedCount} active risk signal${flaggedCount === 1 ? '' : 's'}.`,
+      summary: data?.verdict?.summary
+        || `Backend classification: ${label}. Trust ${trustScore}/100 with ${flaggedCount} flagged checks.`,
+    };
+  }
   const label = verdictFromScore(riskScore);
   if (riskScore >= 80) {
     return {
@@ -258,7 +285,11 @@ function buildGraphData(address: string, data: SybilResult | null, funding: Fund
   const walletAge = Math.round(metrics.walletAgeDays ?? 0);
   const txCount = Math.round(metrics.txCount ?? 0);
   const topPrograms = metrics.topPrograms || [];
-  const siblings = metrics.siblingAddresses || [];
+  // Prefer graph-derived known siblings (real cluster members) over the live-discovered list,
+  // which is empty for most wallets — so the cluster graph actually shows the network.
+  const siblings = (Array.isArray(metrics.knownSiblings) && metrics.knownSiblings.length > 0)
+    ? metrics.knownSiblings
+    : (metrics.siblingAddresses || []);
   const primarySource = primaryFundingAsSource(data?.primaryFundingSource);
   const sources = (funding.length > 0 ? funding : primarySource ? [primarySource] : []).slice(0, 5);
   const nodes: GraphNode[] = [];
@@ -320,6 +351,7 @@ function buildGraphData(address: string, data: SybilResult | null, funding: Fund
       amt: `${program.interactions || 0} calls`,
       pct: Math.min(40, Math.max(8, program.interactions || 0)),
       label: 'Program interaction',
+      category: program.category || null,
       side: 'out',
     });
     edges.push({ a: hub.id, b: node.id, type: 'tx', amt: node.amt, pct: node.pct });
@@ -800,10 +832,13 @@ function ClusterGraph({ address, data, funding }: { address: string; data: Sybil
       const badgeBg = found.hub ? 'rgba(34,211,238,.16)' : found.type === 'suspect' ? 'rgba(248,113,113,.16)' : found.type === 'flagged' ? 'rgba(251,146,60,.16)' : found.type === 'verified' ? 'rgba(52,211,153,.16)' : 'rgba(167,139,250,.16)';
       const fillCol = found.risk >= 70 ? 'linear-gradient(90deg,#dc2626,#f87171)' : found.risk >= 30 ? 'linear-gradient(90deg,#ea580c,#fb923c)' : 'linear-gradient(90deg,#059669,#34d399)';
       tooltip.innerHTML = `
-        <div class="tt-head"><span class="addr">${found.addr}</span><span class="badge" style="background:${badgeBg};color:${badgeColor}">${found.hub ? 'Hub - You' : found.type}</span></div>
-        <div class="tt-row"><span>Risk score</span><span>${found.risk}/100</span></div>
+        <div class="tt-head"><span class="addr">${found.addr}</span><span class="badge" style="background:${badgeBg};color:${badgeColor}">${found.hub ? 'Hub - You' : (found.category || found.type)}</span></div>
+        ${found.category
+          ? `<div class="tt-row"><span>Type</span><span>${found.category} app</span></div>
+        <div class="tt-row"><span>Calls</span><span>${found.tx}</span></div>`
+          : `<div class="tt-row"><span>Risk score</span><span>${found.risk}/100</span></div>
         <div class="tt-row"><span>Wallet age</span><span>${found.age} days</span></div>
-        <div class="tt-row"><span>Tx count</span><span>${found.tx}</span></div>
+        <div class="tt-row"><span>Tx count</span><span>${found.tx}</span></div>`}
         <div class="tt-bar"><div class="fill" style="width:${found.risk}%;background:${fillCol}"></div></div>`;
     };
 
@@ -1014,7 +1049,9 @@ function Radar({ metrics }: { metrics?: SybilMetrics }) {
   const age = Math.min(1, (metrics?.walletAgeDays || 0) / 1460);
   const defi = Math.min(1, (metrics?.uniquePrograms || 0) / 30);
   const diversity = Math.min(1, ((metrics?.tokenDiversityCount || 0) + (metrics?.nftCount || 0)) / 120);
-  const activity = Math.min(1, (metrics?.activeDaysRatio || 0) * 10);
+  // Activity = txs/day over full life (10+/day = max), unbiased vs the sampled activeDaysRatio.
+  const txDay = (metrics?.txCount || 0) / Math.max(1, Math.round(metrics?.walletAgeDays || 0));
+  const activity = Math.min(1, txDay / 10);
   const flow = Math.max(0, 1 - Math.abs((metrics?.flowRatio || 50) - 50) / 50);
   const values = [age, defi, diversity, activity, flow].map((v) => 22 + Math.max(0.08, v) * 58);
   const angles = [-Math.PI / 2, -Math.PI / 2 + (2 * Math.PI) / 5, -Math.PI / 2 + (4 * Math.PI) / 5, -Math.PI / 2 + (6 * Math.PI) / 5, -Math.PI / 2 + (8 * Math.PI) / 5];
@@ -1063,16 +1100,18 @@ function Heatmap({ metrics }: { metrics?: SybilMetrics }) {
     return [];
   }, [metrics]);
   if (heights.length === 0 || !buckets) return null;
-  const activePct = Math.round((metrics?.activeDaysRatio || 0) * 100);
+  // dayBuckets is a 7-element day-of-week distribution (Sun-Sat), NOT a 30-day timeline —
+  // label it honestly. A flat profile across all 7 days is a mild bot tell.
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return (
     <div className="heat">
       <div className="heat-head">
-        <div className="l"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>Activity Heatmap - 30 days</div>
-        <div className="mono-muted">{activePct}% active days</div>
+        <div className="l"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>Activity by day of week</div>
+        <div className="mono-muted">{heights.length}-day pattern</div>
       </div>
       <div className="heat-bars">
         {heights.map((height, idx) => (
-          <div key={idx} className="heat-bar" style={{ height: `${height}%` }} title={`${Math.round(height)}% - day ${idx + 1}`} />
+          <div key={idx} className="heat-bar" style={{ height: `${height}%` }} title={`${DOW[idx % 7]}`} />
         ))}
       </div>
     </div>
@@ -1114,6 +1153,8 @@ function SimplePanel({
     primaryFundingSourceLabel: primarySource,
     siblingCount: metrics.siblingCount,
     clusterSimilarity: metrics.clusterSimilarity,
+    knownClusterSize: metrics.knownCluster?.size,
+    knownSiblingCount: Array.isArray(metrics.knownSiblings) ? metrics.knownSiblings.length : 0,
     balance: metrics.balance,
     txCount: metrics.txCount,
   });
@@ -1342,6 +1383,19 @@ export default function SybilCheckerPage() {
   const severity = severityLabel(data?.riskLevel, riskScore);
   const band = riskBand(riskScore);
   const activeRatio = Math.round((metrics.activeDaysRatio || 0) * 100);
+  // Unbiased activity proxy: txs/day over the wallet's full life (vs activeDaysRatio, which
+  // is computed over the sampled window and falsely reads ~100% for sampled whales). Uses
+  // only data we already have — zero extra RPC.
+  const ageDaysForRate = Math.max(1, Math.round(metrics.walletAgeDays || 0));
+  const txPerDay = (metrics.txCount || 0) / ageDaysForRate;
+  const txPerDayLabel = txPerDay >= 10 ? `${Math.round(txPerDay)}/d`
+    : txPerDay >= 1 ? `${txPerDay.toFixed(1)}/d`
+    : `${txPerDay.toFixed(2)}/d`;
+  // Cluster truth from the persistent graph (reliable), not the live cosine (~always 0).
+  const knownCluster = metrics.knownCluster || null;
+  const knownSiblingsList = Array.isArray(metrics.knownSiblings) ? metrics.knownSiblings : [];
+  const clusterMemberCount = knownCluster?.size ? Math.max(0, knownCluster.size - 1) : knownSiblingsList.length;
+  const inKnownCluster = Boolean(knownCluster);
   const primarySource = typeof data?.primaryFundingSource === 'string'
     ? shortAddress(data.primaryFundingSource, 6, 4)
     : data?.primaryFundingSource?.label || shortAddress(data?.primaryFundingSource?.address, 6, 4);
@@ -1350,10 +1404,14 @@ export default function SybilCheckerPage() {
     {
       name: 'Cluster Membership',
       signal: signalById(data?.signals || [], 'cluster_similarity'),
-      value: `${metrics.clusterSimilarity || 0} / 100`,
-      width: metrics.clusterSimilarity || 0,
-      good: (metrics.clusterSimilarity || 0) < 30,
-      note: signalById(data?.signals || [], 'cluster_similarity')?.description || `Cluster similarity ${metrics.clusterSimilarity || 0}%`,
+      value: inKnownCluster ? `In cluster (${knownCluster?.size ?? clusterMemberCount + 1})` : 'No known links',
+      width: inKnownCluster ? 80 : Math.min(60, knownSiblingsList.length * 8),
+      good: !inKnownCluster && knownSiblingsList.length === 0,
+      note: inKnownCluster
+        ? `Member of flagged cluster${knownCluster?.label ? ` "${knownCluster.label}"` : ''} - ${clusterMemberCount} linked wallet${clusterMemberCount === 1 ? '' : 's'}`
+        : knownSiblingsList.length > 0
+          ? `${knownSiblingsList.length} linked wallet${knownSiblingsList.length === 1 ? '' : 's'} in the sybil graph`
+          : 'No links to known sybil clusters',
     },
     {
       name: 'Known Sybil Network',
@@ -1372,12 +1430,12 @@ export default function SybilCheckerPage() {
       note: `In ${formatSol(metrics.incomingVolume)} SOL - Out ${formatSol(metrics.outgoingVolume)} SOL`,
     },
     {
-      name: 'Low Activity Ratio',
+      name: 'Activity Rate',
       signal: signalById(data?.signals || [], 'low_activity_ratio'),
-      value: signalById(data?.signals || [], 'low_activity_ratio')?.detected ? `+${signalById(data?.signals || [], 'low_activity_ratio')?.weight || 0} risk` : 'ok',
-      width: Math.max(8, 100 - activeRatio),
+      value: signalById(data?.signals || [], 'low_activity_ratio')?.detected ? `+${signalById(data?.signals || [], 'low_activity_ratio')?.weight || 0} risk` : txPerDayLabel,
+      width: Math.max(8, Math.min(100, 100 - txPerDay * 8)),
       good: !signalById(data?.signals || [], 'low_activity_ratio')?.detected,
-      note: `Active ${metrics.activeDaysCount || 0} / ${metrics.walletAgeDays || 0} days (${activeRatio}%)`,
+      note: `~${txPerDayLabel} over ${metrics.txCount ? formatNumber(metrics.txCount) : 0} txns / ${metrics.walletAgeDays || 0} days`,
     },
     {
       name: 'Wallet Age',
@@ -1514,11 +1572,11 @@ export default function SybilCheckerPage() {
                 <div className="stat"><div className="k">Tokens</div><div className="v">{formatNumber(metrics.tokenDiversityCount)}</div></div>
                 <div className="stat"><div className="k">NFTs</div><div className="v">{formatNumber(metrics.nftCount)}</div></div>
                 <div className="stat"><div className="k">Programs</div><div className="v">{formatNumber(metrics.uniquePrograms)}</div></div>
-                <div className="stat"><div className="k">Active Days</div><div className="v">{activeRatio}%</div></div>
+                <div className="stat"><div className="k">Activity</div><div className="v">{txPerDayLabel}</div></div>
                 <div className="stat"><div className="k">In Vol</div><div className="v">{formatSol(metrics.incomingVolume)}<small>SOL</small></div></div>
                 <div className="stat"><div className="k">Out Vol</div><div className="v">{formatSol(metrics.outgoingVolume)}<small>SOL</small></div></div>
                 <div className="stat"><div className="k">Dust Ratio</div><div className="v">{formatNumber(metrics.dustRatio)}%</div></div>
-                <div className="stat"><div className="k">Cluster Sim</div><div className="v">{formatNumber(metrics.clusterSimilarity)}%</div></div>
+                <div className="stat"><div className="k">Cluster</div><div className="v">{inKnownCluster ? `${knownCluster?.size ?? clusterMemberCount + 1}` : knownSiblingsList.length > 0 ? `${knownSiblingsList.length}` : 'None'}</div></div>
                 <div className="stat"><div className="k">Siblings</div><div className="v">{formatNumber(metrics.siblingCount)}</div></div>
               </div>
             </div>

@@ -12,7 +12,6 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import {
-  ArrowLeft,
   Plus,
   X,
   Swords,
@@ -35,9 +34,9 @@ import { toast } from 'sonner';
 import PageShell from '@/components/PageShell';
 import ChallengeReadyModal from '@/components/ChallengeReadyModal';
 import BattleResultOverlay, { type ChallengeResult } from '@/components/BattleResultOverlay';
-import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { trackChallengeCreate, trackChallengeAccept } from '@/lib/analytics';
+import HubReturnButton from '@/components/HubReturnButton';
 import {
   getApiBase,
   getCachedJwt,
@@ -69,16 +68,14 @@ async function arenaApiJson<T = unknown>(
   const headers = { Accept: 'application/json', ...(options.headers ?? {}) };
 
   if (Capacitor.isNativePlatform()) {
-    const body =
+    // Pass body as raw JSON string — CapacitorHttp double-serializes object `data`,
+    // which we've observed cause silent dropped POSTs on this WebView.
+    const bodyStr =
       typeof options.body === 'string'
-        ? (() => {
-            try {
-              return JSON.parse(options.body as string);
-            } catch {
-              return options.body;
-            }
-          })()
-        : options.body;
+        ? options.body
+        : options.body !== undefined
+          ? JSON.stringify(options.body)
+          : '';
     const request = {
       url,
       headers,
@@ -91,7 +88,7 @@ async function arenaApiJson<T = unknown>(
         ? await CapacitorHttp.post({
             ...request,
             headers: { 'Content-Type': 'application/json', ...headers },
-            data: body ?? {},
+            data: bodyStr,
           })
         : await CapacitorHttp.get(request);
     const data = typeof response.data === 'string' ? JSON.parse(response.data || 'null') : response.data;
@@ -788,15 +785,7 @@ export default function PrismArena() {
       {/* Header */}
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button
-            onClick={() => {
-              startFadeTransition(() => goBack(navigate));
-            }}
-            className="flex items-center gap-2 text-white/50 hover:text-white transition-colors text-sm min-h-[44px]"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </button>
+          <HubReturnButton />
           <h1 className="text-sm font-bold bg-gradient-to-r from-pink-500 to-rose-400 bg-clip-text text-transparent">
             PRISM ARENA
           </h1>

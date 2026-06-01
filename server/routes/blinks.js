@@ -41,6 +41,9 @@ function registerBlinksRoute(ctx) {
       parsePublicKey,
       requireAdminKey,
     },
+    auth: {
+      optionalJwt,
+    } = {},
     wallet: {
       getCoinBalance,
       setCoinBalance,
@@ -810,6 +813,26 @@ function registerBlinksRoute(ctx) {
         }
 
         const isFinalize = Boolean(payloadRequestId && signedTransaction);
+        if (!isFinalize && payloadRequestId) {
+          const pendingPrepare = getPendingMintFinalizeFallback(payloadRequestId);
+          if (pendingPrepare?.transaction && pendingPrepare?.assetId) {
+            if (pendingPrepare.ownerAddress && pendingPrepare.ownerAddress !== jwtAuth.address) {
+              respondJson(res, 403, { error: 'Forbidden: mint request belongs to a different wallet', requestId: payloadRequestId });
+              return true;
+            }
+            console.info('[mint-cnft] idempotent prepare hit', { requestId: payloadRequestId });
+            storePendingMint({ ...pendingPrepare, requestId: payloadRequestId });
+            storePendingMintFinalizeFallback({ ...pendingPrepare, requestId: payloadRequestId });
+            respondJson(res, 200, {
+              transaction: pendingPrepare.transaction,
+              assetId: pendingPrepare.assetId,
+              blockhash: pendingPrepare.blockhash,
+              requestId: payloadRequestId,
+              finalize: true,
+            });
+            return true;
+          }
+        }
         if (isFinalize) {
           // FIX 2: peek at pending mint WITHOUT consuming it yet — consume only after all checks pass
           const pendingRaw = consumePendingMint(payloadRequestId)
@@ -1304,13 +1327,37 @@ function registerBlinksRoute(ctx) {
         console.info('[mint-cnft] required signers', { requestId, requiredSigners });
 
         const signerPool = [];
-        if (requiredSigners.includes(assetKeypair.publicKey.toBase58())) signerPool.push(assetKeypair);
-        if (requiredSigners.includes(collectionAuthorityKeypair.publicKey.toBase58())) signerPool.push(collectionAuthorityKeypair);
-        if (adminMode && treasuryKeypair && requiredSigners.includes(treasuryKeypair.publicKey.toBase58())) signerPool.push(treasuryKeypair);
+        const assetSignerKey = assetKeypair.publicKey.toBase58();
+        const collectionAuthorityKey = collectionAuthorityKeypair.publicKey.toBase58();
+        const treasurySignerKey = treasuryKeypair?.publicKey?.toBase58?.() ?? null;
+        console.info('[mint-cnft] signerPool asset check', { requestId, signer: assetSignerKey, required: requiredSigners.includes(assetSignerKey) });
+        if (requiredSigners.includes(assetSignerKey)) {
+          console.info('[mint-cnft] signerPool asset pre-push', { requestId });
+          signerPool.push(assetKeypair);
+          console.info('[mint-cnft] signerPool asset post-push', { requestId, count: signerPool.length });
+        }
+        console.info('[mint-cnft] signerPool collectionAuthority check', { requestId, signer: collectionAuthorityKey, required: requiredSigners.includes(collectionAuthorityKey) });
+        if (requiredSigners.includes(collectionAuthorityKey)) {
+          console.info('[mint-cnft] signerPool collectionAuthority pre-push', { requestId });
+          signerPool.push(collectionAuthorityKeypair);
+          console.info('[mint-cnft] signerPool collectionAuthority post-push', { requestId, count: signerPool.length });
+        }
+        console.info('[mint-cnft] signerPool treasury check', { requestId, signer: treasurySignerKey, adminMode, required: Boolean(treasurySignerKey && requiredSigners.includes(treasurySignerKey)) });
+        if (adminMode && treasuryKeypair && treasurySignerKey && requiredSigners.includes(treasurySignerKey)) {
+          console.info('[mint-cnft] signerPool treasury pre-push', { requestId });
+          signerPool.push(treasuryKeypair);
+          console.info('[mint-cnft] signerPool treasury post-push', { requestId, count: signerPool.length });
+        }
         const attachServerSignatures = adminMode || !coinsPaymentReserved;
+        console.info('[mint-cnft] post-attachServerSignatures', { requestId, attachServerSignatures });
+        console.info('[mint-cnft] signerPool', { requestId, count: signerPool.length, attachServerSignatures, adminMode, coinsPaymentReserved });
+        console.info('[mint-cnft] pre-partialSign', { requestId, willPartialSign: Boolean(attachServerSignatures && signerPool.length), signerCount: signerPool.length });
         if (attachServerSignatures && signerPool.length) transaction.partialSign(...signerPool);
+        console.info('[mint-cnft] post-partialSign', { requestId });
 
+        console.info('[mint-cnft] pre-serialize', { requestId });
         const serialized = transaction.serialize({ requireAllSignatures: false }).toString('base64');
+        console.info('[mint-cnft] serialized', { requestId, bytes: serialized.length });
         if (adminMode) {
           const signature = await connection.sendRawTransaction(transaction.serialize(), {
             preflightCommitment: 'confirmed',
@@ -1354,16 +1401,20 @@ function registerBlinksRoute(ctx) {
         }
 
         // FIX 2: compute sha256 of the unsigned tx message bytes for finalize verification
+        console.info('[mint-cnft] pre-sha256 tx-buffer', { requestId, serializedChars: serialized.length });
         const _txBufForHash = Buffer.from(serialized, 'base64');
         let _sigCountForHash = 0;
         let _byteOffsetForHash = 0;
+        console.info('[mint-cnft] pre-sha256 sig-varint', { requestId, txBytes: _txBufForHash.length });
         for (let _shift = 0; ; _shift += 7) {
           const _byte = _txBufForHash[_byteOffsetForHash++];
           _sigCountForHash |= (_byte & 0x7f) << _shift;
           if ((_byte & 0x80) === 0) break;
         }
         const _msgBytesForHash = _txBufForHash.slice(_byteOffsetForHash + _sigCountForHash * 64);
+        console.info('[mint-cnft] pre-sha256 digest', { requestId, sigCount: _sigCountForHash, byteOffset: _byteOffsetForHash, messageBytes: _msgBytesForHash.length });
         const unsignedMessageHash = crypto.createHash('sha256').update(_msgBytesForHash).digest('hex');
+        console.info('[mint-cnft] post-sha256 digest', { requestId, unsignedMessageHash: unsignedMessageHash.slice(0, 16) });
 
         const pendingMintEntry = {
           requestId,
@@ -1379,9 +1430,14 @@ function registerBlinksRoute(ctx) {
           blockhash: latestBlockhash.blockhash,
           lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
         };
+        console.info('[mint-cnft] pre-storePendingMint', { requestId });
         storePendingMint(pendingMintEntry);
+        console.info('[mint-cnft] post-storePendingMint', { requestId });
+        console.info('[mint-cnft] pre-storePendingMintFinalizeFallback', { requestId });
         storePendingMintFinalizeFallback(pendingMintEntry);
+        console.info('[mint-cnft] post-storePendingMintFinalizeFallback', { requestId });
 
+        console.info('[mint-cnft] pre-respondJson', { requestId });
         respondJson(res, 200, {
           transaction: serialized,
           assetId: assetSigner.publicKey,
@@ -1389,6 +1445,7 @@ function registerBlinksRoute(ctx) {
           requestId,
           finalize: true,
         });
+        console.info('[mint-cnft] post-respondJson', { requestId });
       } catch (error) {
         console.error('[mint-cnft] failed', error);
         // Rollback: if coins were deducted in this finalize call but the Helius send/confirm
@@ -1431,9 +1488,6 @@ function registerBlinksRoute(ctx) {
         respondJson(res, 429, { error: 'Too many requests' });
         return true;
       }
-      const jwtAuth = requireJwt(req, res);
-      if (!jwtAuth.ok) return true;
-
       try {
         const body = await readBody(req);
         // FIX 4: body size cap — reject bodies over 2 MB
@@ -1450,6 +1504,15 @@ function registerBlinksRoute(ctx) {
 
         if (!ownerAddress || !assetId || !metadataUri || !newName) {
           respondJson(res, 400, { error: 'Missing required fields: ownerAddress, assetId, metadataUri, name' });
+          return true;
+        }
+        const jwtAuth = optionalJwt ? optionalJwt(req, res) : { ok: true, address: null };
+        if (!jwtAuth.ok) {
+          respondJson(res, 401, { error: 'Invalid or expired auth token' });
+          return true;
+        }
+        if (jwtAuth.address && jwtAuth.address !== ownerAddress) {
+          respondJson(res, 403, { error: 'Auth token does not match ownerAddress' });
           return true;
         }
         if (!collectionAuthoritySecret) {
@@ -1522,6 +1585,20 @@ function registerBlinksRoute(ctx) {
               skipPreflight: false,
             });
             await connection.confirmTransaction(signature, 'confirmed');
+            const walletEntry = walletDatabase.get(ownerAddress) || { address: ownerAddress };
+            const currentMint = walletEntry.mint && typeof walletEntry.mint === 'object' ? walletEntry.mint : {};
+            walletEntry.mint = {
+              ...currentMint,
+              minted: true,
+              assetId,
+              metadataUri,
+              lastRemintAt: new Date().toISOString(),
+              remints: Number(currentMint.remints || 0) + 1,
+              updateTxSignature: signature,
+            };
+            walletDatabase.set(ownerAddress, walletEntry);
+            saveWalletDatabaseDebounced();
+            triggerCompositeUpdate(ownerAddress);
             respondJson(res, 200, { signature, assetId, finalized: true });
           } catch (error) {
             console.error('[update-card] submit failed', error?.message ?? error);
@@ -1620,6 +1697,7 @@ function registerBlinksRoute(ctx) {
         const transaction = new Transaction().add(feeIx, ...updateInstructions);
         transaction.feePayer = ownerKey;
         transaction.recentBlockhash = latestBlockhash.blockhash;
+        transaction.partialSign(collectionAuthorityKeypair);
         respondJson(res, 200, {
           transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64'),
           feeSol: updateFeeSol,

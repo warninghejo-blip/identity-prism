@@ -23,8 +23,11 @@ const RANK_COLORS: Record<string, string> = {
 };
 
 export interface MigrationData {
+  migrationRev?: number;
   rangerRank: string;
   totalXP: number;
+  previousXP?: number;
+  xpDelta?: number;
   xpBreakdown: {
     gameBestScores: number;
     gamesPlayed: number;
@@ -72,7 +75,8 @@ const prefersReducedMotion =
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export default function WelcomeBackModal({ open, onClose, migrationData }: WelcomeBackModalProps) {
-  const { rangerRank, totalXP, xpBreakdown, coinBalance, gamesPlayed, achievementCount } = migrationData;
+  const { rangerRank, totalXP, xpDelta, xpBreakdown, gamesPlayed, achievementCount } = migrationData;
+  const hasXpDelta = Number(xpDelta) > 0;
 
   const rankColor = RANK_COLORS[rangerRank] ?? '#7C3AED';
   const rankLabel = (RANK_NAMES[rangerRank] ?? rangerRank).toUpperCase();
@@ -246,6 +250,11 @@ export default function WelcomeBackModal({ open, onClose, migrationData }: Welco
                 >
                   {displayXP.toLocaleString()} <span className="text-2xl">XP</span>
                 </p>
+                {hasXpDelta && (
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">
+                    +{Number(xpDelta).toLocaleString()} XP added from past achievements
+                  </p>
+                )}
               </motion.div>
 
               {/* Stat breakdown 2×2 grid */}

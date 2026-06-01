@@ -180,11 +180,14 @@ export function getAppHubFallback(): string {
 
 export function goBack(navigate: NavigateFunction, fallback = getAppHubFallback()) {
   cleanupOverlays();
+  let fromBlackHole = false;
   try {
     sessionStorage.setItem('returnedFromSubPage', '1');
+    fromBlackHole = window.location.pathname.toLowerCase().includes('blackhole');
+    if (fromBlackHole) sessionStorage.setItem('fromBlackHole', '1');
   } catch {}
   setInternalNavDepth(0);
-  navigate(fallback, { replace: true, state: { fromSubPage: true } });
+  navigate(fallback, { replace: true, state: { fromSubPage: true, ...(fromBlackHole ? { fromBlackHole: true } : {}) } });
 }
 
 export function cleanupOverlays() {

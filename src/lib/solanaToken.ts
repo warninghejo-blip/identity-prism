@@ -16,8 +16,6 @@ const UNKNOWN_TOKEN_CACHE_KEY = 'identity-prism:unknown-token-resolver:v1';
 const UNKNOWN_TOKEN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 let jupiterTokenListPromise: Promise<Map<string, UnknownTokenResolution>> | null = null;
 
-const truncateMint = (mint: string) => `${mint.slice(0, 4)}...${mint.slice(-4)}`;
-
 const readUnknownTokenCache = () => {
   if (typeof window === 'undefined') return {};
   try {
@@ -52,7 +50,7 @@ const getJupiterTokenList = async () => {
       if (!token.address) return;
       map.set(token.address, {
         mint: token.address,
-        name: token.name || token.symbol || `Unknown ${truncateMint(token.address)}`,
+        name: token.name || token.symbol || `Token ${token.address.slice(0, 4)}...`,
         symbol: token.symbol,
         image: token.logoURI,
         source: 'jupiter',
@@ -87,7 +85,7 @@ export async function resolveUnknownToken(mint: string): Promise<UnknownTokenRes
       if (token?.address) {
         const resolved: UnknownTokenResolution = {
           mint,
-          name: token.name || token.symbol || `Unknown ${truncateMint(mint)}`,
+          name: token.name || token.symbol || `Token ${mint.slice(0, 4)}...`,
           symbol: token.symbol,
           image: token.logoURI,
           source: 'registry',
@@ -102,7 +100,7 @@ export async function resolveUnknownToken(mint: string): Promise<UnknownTokenRes
 
   const fallback: UnknownTokenResolution = {
     mint,
-    name: `Unknown ${truncateMint(mint)}`,
+    name: `Token ${mint.slice(0, 4)}...`,
     source: 'fallback',
   };
   writeUnknownTokenCache({ ...cache, [mint]: fallback });

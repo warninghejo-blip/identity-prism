@@ -6,8 +6,8 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { friendlyVerdict } from '@/lib/sybilFriendly';
 import {
-  ArrowLeft,
   Loader2,
   Swords,
   ChevronRight,
@@ -42,8 +42,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PageShell from '@/components/PageShell';
-import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
+import HubReturnButton from '@/components/HubReturnButton';
 import {
   fetchWalletPreview,
   formatWalletAge,
@@ -60,7 +60,7 @@ import { getProgramLabel, PROGRAM_LABELS } from '@/lib/solanaPrograms';
 const RECENT_WALLETS_KEY = 'prism_recent_scans';
 const SCAN_HISTORY_KEY = 'prism_scan_history_v1';
 const BASE = () => getApiBase();
-const SYBIL_FETCH_TIMEOUT_MS = 8_000;
+const SYBIL_FETCH_TIMEOUT_MS = 20_000;
 
 async function fetchJsonWithTimeout(url: string, init: RequestInit = {}, timeoutMs = SYBIL_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -69,6 +69,19 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit = {}, timeout
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     window.clearTimeout(timeout);
+  }
+}
+
+async function readJsonSafe<T>(response: Response, label: string): Promise<T> {
+  const contentType = response.headers.get('content-type') || '';
+  const text = await response.text();
+  if (!contentType.includes('application/json')) {
+    throw new Error(`${label} returned a non-JSON response`);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${label} returned invalid JSON`);
   }
 }
 
@@ -311,6 +324,9 @@ function resolveAnalysisVerdict(data: SybilAnalysis): SybilVerdictSummary {
     evidence: baseEvidence,
   };
 }
+
+const isSybilReportVerdict = (key?: string | null) =>
+  key === 'confirmed_sybil' || key === 'probable_sybil' || key === 'suspicious' || key === 'cluster_linked';
 
 function getVerdictTheme(key: SybilVerdictSummary['key']) {
   switch (key) {
@@ -676,12 +692,12 @@ export default function PrismScanner() {
         return;
       }
       if (!r.ok) {
-        const data = await r.json().catch(() => null);
+        const data = await readJsonSafe<{ error?: string }>(r, 'Sybil analysis').catch(() => null);
         setSybilData(null);
         setError('Sybil analysis failed: ' + (data?.error || 'unknown error'));
         return;
       }
-      const data = await r.json();
+      const data = await readJsonSafe<SybilAnalysis>(r, 'Sybil analysis');
       sybilClientCache.set(addr, { data, ts: Date.now() });
       setSybilData(data);
       processHuntVerdict(data, addr);
@@ -692,7 +708,7 @@ export default function PrismScanner() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ addresses: [addr] }),
         });
-        const batchData = batchRes.ok ? await batchRes.json() : null;
+        const batchData = batchRes.ok ? await readJsonSafe<any>(batchRes, 'Sybil fallback') : null;
         const fallback = buildFallbackAnalysis(batchData?.results?.[addr] || {});
         if (fallback) {
           sybilClientCache.set(addr, { data: fallback, ts: Date.now() });
@@ -759,7 +775,7 @@ export default function PrismScanner() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({
           target_address: result.address,
-          report_type: 'false_positive',
+          report_type: isSybilReportVerdict(huntVerdict.key) ? 'sybil' : 'false_positive',
           notes: `Verdict: ${huntVerdict.key}. ${feedbackText.trim()}`.slice(0, 1000),
         }),
       });
@@ -768,7 +784,7 @@ export default function PrismScanner() {
       toast('Feedback failed, try again');
       return;
     }
-    toast('Thanks, flagged for review');
+    toast(isSybilReportVerdict(huntVerdict.key) ? 'Sybil report submitted' : 'Thanks, flagged for review');
     setShowFeedbackModal(false);
     setFeedbackText('');
   }, [feedbackText, huntVerdict, result?.address]);
@@ -832,7 +848,7 @@ export default function PrismScanner() {
     try {
       const r = await fetchJsonWithTimeout(`${BASE()}/api/sybil/funding-sources?address=${encodeURIComponent(addr)}`);
       if (r.ok) {
-        const d = await r.json();
+        const d = await readJsonSafe<{ sources?: FundingSource[] }>(r, 'Funding source lookup');
         setFundingSources(d.sources || []);
       }
     } catch {}
@@ -919,12 +935,7 @@ export default function PrismScanner() {
     <PageShell>
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-amber-500/[0.08]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button
-            onClick={() => startFadeTransition(() => goBack(navigate))}
-            className="flex items-center gap-2 text-white/50 hover:text-white transition-colors text-sm min-h-[44px]"
-          >
-            <ArrowLeft className="w-4 h-4" /> Back
-          </button>
+          <HubReturnButton />
           <h1 className="text-sm font-bold bg-gradient-to-r from-amber-400 to-red-500 bg-clip-text text-transparent flex items-center gap-1.5">
             <Crosshair className="w-4 h-4 text-amber-400" />
             SYBIL HUNT
@@ -1113,7 +1124,7 @@ export default function PrismScanner() {
           result.address !== myAddress &&
           (() => {
             const verdictTheme = getVerdictTheme(huntVerdict.key);
-            const isBounty = huntVerdict.rewardPath === 'sybil_hunt';
+            const isBounty = isSybilReportVerdict(huntVerdict.key);
             const isClean = huntVerdict.key === 'clean';
             const isUnknown = huntVerdict.key === 'unknown';
 
@@ -1137,7 +1148,7 @@ export default function PrismScanner() {
                     <span
                       className={`block text-base font-black leading-tight tracking-wide ${verdictTheme.titleClass}`}
                     >
-                      {huntVerdict.label.toUpperCase()}
+                      {friendlyVerdict(sybilData?.trustScore ?? 0).title}
                     </span>
                     <p className={`text-xs leading-relaxed mt-1 ${verdictTheme.summaryClass}`}>
                       Trust {sybilData?.trustScore ?? '?'}/100 · {huntVerdict.summary}
@@ -1148,7 +1159,7 @@ export default function PrismScanner() {
                   <span
                     className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide ${verdictTheme.badgeClass}`}
                   >
-                    {huntVerdict.label}
+                    {friendlyVerdict(sybilData?.trustScore ?? 0).title}
                   </span>
                   <span
                     className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wide ${verdictTheme.chipClass}`}
@@ -1173,14 +1184,14 @@ export default function PrismScanner() {
                     +{huntCoinsEarned} Coins {isBounty ? 'Bounty' : isClean ? '(clear scan)' : '(intel scan)'}
                   </span>
                 </div>
-                {['probable_sybil', 'confirmed_sybil', 'suspicious'].includes(huntVerdict.key) && (
+                {isSybilReportVerdict(huntVerdict.key) && (
                   <div className="mt-3 border-t border-white/[0.06] pt-3">
                     <button
                       onClick={() => setShowFeedbackModal(true)}
                       className="inline-flex min-h-10 items-center gap-2 rounded-full border border-amber-300/20 bg-amber-300/[0.08] px-3.5 py-2 text-xs font-bold text-amber-100/80 transition-colors hover:border-amber-200/35 hover:bg-amber-300/[0.13] hover:text-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/35"
                     >
                       <Flag className="h-3.5 w-3.5" />
-                      <span>Report false flag</span>
+                      <span>{isBounty ? 'Submit sybil report' : 'Report false flag'}</span>
                     </button>
                   </div>
                 )}
@@ -1259,7 +1270,7 @@ export default function PrismScanner() {
                             </span>
                           )}
                           <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${verdictTheme.badgeClass}`}>
-                            {verdict.label}
+                            {friendlyVerdict(trustScore).title}
                           </span>
                           <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${verdictTheme.chipClass}`}>
                             {formatConfidence(verdict.confidence)}
@@ -1314,12 +1325,12 @@ export default function PrismScanner() {
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
                       {[
                         {
-                          label: 'Age',
+                          label: 'Wallet age',
                           value: formatWalletAge(Number(metrics.walletAgeDays) || result.walletAgeDays),
                           color: 'text-green-400/70',
                         },
                         {
-                          label: 'Txns',
+                          label: 'Transactions',
                           value: (() => {
                             const n = Number(metrics.txCount) || result.txCount;
                             return n >= 10000 ? '10 000+' : n.toLocaleString();
@@ -1327,22 +1338,22 @@ export default function PrismScanner() {
                           color: 'text-cyan-400/70',
                         },
                         {
-                          label: 'Balance',
+                          label: 'SOL balance',
                           value: `${(Number(metrics.balance) || result.solBalance).toFixed(2)}◎`,
                           color: 'text-yellow-400/70',
                         },
                         {
-                          label: 'Tokens',
+                          label: 'Tokens held',
                           value: String(Number(metrics.tokenDiversityCount) || result.tokenCount),
                           color: 'text-blue-400/70',
                         },
                         {
-                          label: 'NFTs',
+                          label: 'NFTs held',
                           value: String(Number(metrics.nftCount) || result.nftCount),
                           color: 'text-purple-400/70',
                         },
                         {
-                          label: 'Programs',
+                          label: 'Apps used',
                           value: String(Number(metrics.uniquePrograms) || 0),
                           color: 'text-orange-400/70',
                         },
@@ -1573,9 +1584,13 @@ export default function PrismScanner() {
                 <Flag className="h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-bold text-white/85">Report false flag</h3>
+                <h3 className="text-sm font-bold text-white/85">
+                  {huntVerdict && isSybilReportVerdict(huntVerdict.key) ? 'Submit sybil report' : 'Report false flag'}
+                </h3>
                 <p className="mt-1 text-xs leading-relaxed text-white/40">
-                  Tell us why this wallet should not be treated as sybil-linked.
+                  {huntVerdict && isSybilReportVerdict(huntVerdict.key)
+                    ? 'Send this suspicious wallet to the community signal.'
+                    : 'Tell us why this wallet should not be treated as sybil-linked.'}
                 </p>
               </div>
               <button
@@ -1588,7 +1603,11 @@ export default function PrismScanner() {
             </div>
             <textarea
               className="h-28 w-full resize-none rounded-xl border border-white/10 bg-white/[0.045] p-3 text-sm leading-relaxed text-white/75 placeholder:text-white/25 focus:border-cyan-400/35 focus:outline-none focus:ring-2 focus:ring-cyan-400/15"
-              placeholder="Describe why this verdict seems incorrect..."
+              placeholder={
+                huntVerdict && isSybilReportVerdict(huntVerdict.key)
+                  ? 'Optional note for reviewers...'
+                  : 'Describe why this verdict seems incorrect...'
+              }
               value={feedbackText}
               onChange={(e) => setFeedbackText(e.target.value)}
             />
@@ -1601,7 +1620,7 @@ export default function PrismScanner() {
               </button>
               <button
                 onClick={handleFeedbackSubmit}
-                disabled={!feedbackText.trim()}
+                disabled={huntVerdict ? !isSybilReportVerdict(huntVerdict.key) && !feedbackText.trim() : true}
                 className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-cyan-400/25 bg-cyan-400/[0.12] px-3 py-2 text-sm font-bold text-cyan-100 transition-colors hover:bg-cyan-400/[0.18] disabled:cursor-not-allowed disabled:border-white/[0.06] disabled:bg-white/[0.03] disabled:text-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/35"
               >
                 <Send className="h-3.5 w-3.5" />
@@ -1675,12 +1694,15 @@ function SybilReportPanel({
   const network = data.signals.filter((s) => s.category === 'network');
   const flagged = data.signals.filter((s) => s.detected);
 
+  // Activity = txs/day over full life (unbiased; activeDaysRatio is sampled and reads ~100%
+  // for active whales). 10+/day = full axis. Zero extra calls — uses existing metrics.
+  const txPerDayRadar = (Number(metrics.txCount) || 0) / Math.max(1, Math.round(Number(metrics.walletAgeDays) || 0));
   // Radar chart data (5 axes, 0-1 normalized)
   const radarAxes = [
     { label: 'Age', value: Math.min(1, (Number(metrics.walletAgeDays) || 0) / 730) },
     { label: 'DeFi', value: Math.min(1, (Number(metrics.defiDepth) || 0) / 4) },
     { label: 'Diversity', value: Math.min(1, (Number(metrics.uniquePrograms) || 0) / 15) },
-    { label: 'Activity', value: Math.min(1, (profile.activeDaysRatio || 0) / 0.5) },
+    { label: 'Activity', value: Math.min(1, txPerDayRadar / 10) },
     { label: 'Flow Balance', value: 1 - Math.abs((Number(metrics.flowRatio) || 50) - 50) / 50 },
   ];
 

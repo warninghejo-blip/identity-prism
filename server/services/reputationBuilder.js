@@ -78,8 +78,17 @@ function createReputationBuilderService({
 
   function getTournamentParticipationCount(address) {
     const seen = new Set();
+    const activeList = [];
+    for (const value of Object.values(activeTournaments || {})) {
+      if (!value) continue;
+      if (value.id) {
+        activeList.push(value);
+      } else if (typeof value === 'object') {
+        activeList.push(...Object.values(value).filter(Boolean));
+      }
+    }
     const allTournaments = [
-      ...Object.values(activeTournaments || {}).filter(Boolean),
+      ...activeList,
       ...(Array.isArray(tournamentHistory) ? tournamentHistory : []),
     ];
     for (const tournament of allTournaments) {

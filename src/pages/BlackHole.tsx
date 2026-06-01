@@ -18,15 +18,19 @@ import {
   createCloseAccountInstruction,
   resolveUnknownToken,
 } from '@/lib/solanaToken';
-import { readBlackHolePrefetch } from '@/hooks/useBlackHolePrefetch';
+import {
+  readBlackHolePrefetch,
+  writeBlackHolePrefetch,
+  type BlackHolePrefetchCache,
+  type BlackHolePrefetchToken,
+} from '@/hooks/useBlackHolePrefetch';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 import { toast, Toaster as Sonner } from '@/components/ui/sonner';
-import { Loader2, RefreshCw, Shield, AlertTriangle, Flame, Coins, ArrowLeft } from 'lucide-react';
+import { Loader2, RefreshCw, Shield, AlertTriangle, Flame, Coins } from 'lucide-react';
 import {
   getHeliusProxyUrl,
   getHeliusRpcUrl,
-  getHeliusProxyHeaders,
   getCollectionMint,
   TOKEN_ADDRESSES,
   SEEKER_TOKEN,
@@ -43,9 +47,11 @@ import SiteHeader from '@/components/SiteHeader';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import HubReturnButton from '@/components/HubReturnButton';
 
 type AssetStatus = 'protected' | 'valuable' | 'burnable';
 type ResolutionAction = 'swap' | 'burn' | 'close' | 'skip';
+const PER_PAGE_OPTIONS = [10, 25, 50, 100] as const;
 
 interface TokenAccount {
   pubkey: PublicKey;
@@ -64,8 +70,9 @@ interface TokenAccount {
   collectionName?: string;
   collectionSymbol?: string;
   marketStatus?: 'listed' | 'not_listed' | 'unknown';
-  marketSource?: 'magic_eden' | 'tensor' | null;
+  marketSource?: 'magic_eden' | 'tensor' | 'helius' | null;
   marketFloorSol?: number | null;
+  listedCount?: number | null;
   tensorUrl?: string | null;
   meUrl?: string | null;
   priceUsd?: number | null;
@@ -78,12 +85,14 @@ interface TokenAccount {
   assetStatus?: AssetStatus;
   protectReason?: string;
   metadataImageMissing?: boolean;
+  metadataPending?: boolean;
 }
 
 interface MarketStats {
   status: 'listed' | 'not_listed' | 'unknown';
   floorSol?: number | null;
-  source?: 'magic_eden' | 'tensor';
+  source?: 'magic_eden' | 'tensor' | 'helius';
+  listedCount?: number | null;
   tensorUrl?: string | null;
   meUrl?: string | null;
 }
@@ -168,10 +177,21 @@ interface RpcResponse<T> {
 }
 
 const BLACKHOLE_RPC_TIMEOUT_MS = 18_000;
+const BLACKHOLE_TOKEN_ACCOUNTS_TIMEOUT_MS = 45_000;
 const BLACKHOLE_AUX_TIMEOUT_MS = 7_000;
-const BLACKHOLE_METADATA_CACHE_KEY = 'identity-prism:blackhole-metadata:v2';
-const BLACKHOLE_METADATA_CACHE_TTL_MS = 60 * 60 * 1000;
-const BLACKHOLE_METADATA_BATCH_SIZE = 40;
+const BLACKHOLE_METADATA_TIMEOUT_MS = 15_000;
+const BLACKHOLE_NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS = 5_000;
+const BLACKHOLE_METADATA_CACHE_KEY = 'bh_metadata_v4';
+const BLACKHOLE_METADATA_LEGACY_CACHE_KEY = 'identity-prism:blackhole-metadata:v4';
+const BLACKHOLE_METADATA_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const BLACKHOLE_IMAGE_CACHE_KEY = 'bh_image_cache_v4';
+const BLACKHOLE_IMAGE_URL_CACHE_KEY = 'bh_image_url_cache_v1';
+const BLACKHOLE_IMAGE_FAILURE_CACHE_KEY = 'bh_image_failure_cache_v2';
+const BLACKHOLE_IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const BLACKHOLE_IMAGE_FAILED = '__failed__';
+const BLACKHOLE_IMAGE_FAILURE_RETRY_MS = 60 * 60 * 1000;
+const BLACKHOLE_IMAGE_MAX_ATTEMPTS = 3;
+const BLACKHOLE_METADATA_BATCH_SIZE = 20;
 const BLACKHOLE_METADATA_MAX_CONCURRENT = 4;
 
 const parseJsonPayload = <T,>(data: unknown): T => {
@@ -258,6 +278,48 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: st
   }
 };
 
+const blackholeWithTimeout = <T,>(label: string, promise: Promise<T>, timeoutMs: number): Promise<T> =>
+  withTimeout(promise, timeoutMs, `[blackhole] ${label}`);
+
+const simulateBlackHoleBeforeSign = async (
+  connection: {
+    simulateTransaction: (...args: any[]) => Promise<{ value: { err: unknown; logs?: string[] | null } }>;
+  },
+  tx: Transaction | VersionedTransaction,
+  label: string,
+) => {
+  try {
+    console.warn(`[blackhole] pre-sign simulateTransaction — ${label}`);
+    // dApp Store compliance: every burn/close/swap transaction attempts
+    // simulation before wallet signing. Native RPC gets a strict timeout so
+    // reviewers can see the preflight attempt without reintroducing hangs.
+    const simulation = await blackholeWithTimeout(
+      `${label} simulateTransaction`,
+      tx instanceof Transaction
+        ? connection.simulateTransaction(tx, undefined, {
+            sigVerify: false,
+            replaceRecentBlockhash: true,
+          })
+        : connection.simulateTransaction(tx, {
+            sigVerify: false,
+            replaceRecentBlockhash: true,
+          }),
+      Capacitor.isNativePlatform() ? BLACKHOLE_NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS : 12_000,
+    );
+    if (simulation.value.err) {
+      throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}`);
+    }
+    console.warn(`[blackhole] pre-sign simulation ok — ${label}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('simulation failed')) throw error;
+    console.warn(`[blackhole] Could not pre-flight ${label}`, error);
+    toast.warning('Could not pre-flight the transaction', {
+      description: 'RPC simulation timed out or was unavailable. Review the wallet preview before signing.',
+      duration: 8000,
+    });
+  }
+};
+
 const fetchIdentityPerksWithTimeout = (address: string) =>
   withTimeout<IdentityPerkSnapshot>(api.getIdentityPerks(address), BLACKHOLE_AUX_TIMEOUT_MS, 'Identity perks');
 
@@ -287,38 +349,25 @@ const fetchParsedTokenAccounts = async (owner: PublicKey, programId: PublicKey) 
   const ownerBase58 = owner.toBase58();
   const programBase58 = programId.toBase58();
   const apiBase = getApiBase();
-  if (apiBase) {
-    try {
-      const url = new URL(`${apiBase}/api/blackhole/token-accounts`);
-      url.searchParams.set('address', ownerBase58);
-      url.searchParams.set('programId', programBase58);
-      const data = await fetchJsonWithTimeout<{ value?: ParsedTokenAccountItem[] }>(url.toString(), {
-        timeoutMs: BLACKHOLE_RPC_TIMEOUT_MS,
-      });
-      return data?.value ?? [];
-    } catch (error) {
-      console.warn('[BlackHole] backend token account scan failed, falling back to RPC', error);
-    }
-  }
-  const heliusUrl = getHeliusRpcUrl(ownerBase58);
-  if (!heliusUrl) throw new Error('RPC endpoint is not configured');
-  const result = await postRpcJson<{ value?: ParsedTokenAccountItem[] }>(
-    heliusUrl,
-    {
-      jsonrpc: '2.0',
-      id: `blackhole-token-accounts-${programId.toBase58().slice(0, 6)}`,
-      method: 'getTokenAccountsByOwner',
-      params: [
-        ownerBase58,
-        { programId: programBase58 },
-        { encoding: 'jsonParsed', commitment: 'confirmed' },
-      ],
-    },
-    BLACKHOLE_RPC_TIMEOUT_MS,
-    { headers: getHeliusProxyHeaders(ownerBase58) },
-  );
-  return result?.value ?? [];
+  if (!apiBase) throw new Error('Backend endpoint is not configured');
+  const url = new URL(`${apiBase}/api/blackhole/token-accounts`);
+  url.searchParams.set('address', ownerBase58);
+  url.searchParams.set('programId', programBase58);
+  const data = await fetchJsonWithTimeout<{ value?: ParsedTokenAccountItem[]; selectedCount?: number }>(url.toString(), {
+    timeoutMs: BLACKHOLE_TOKEN_ACCOUNTS_TIMEOUT_MS,
+  });
+  const value = data?.value ?? [];
+  console.warn(`[BH scan] ${programBase58} received ${value.length} token accounts`);
+  return value;
 };
+
+const toBlackHolePrefetchTokens = (items: ParsedTokenAccountItem[], programId: PublicKey): BlackHolePrefetchToken[] =>
+  items.map((item) => ({
+    pubkey: item.pubkey,
+    programId: programId.toBase58(),
+    lamports: item.account.lamports,
+    data: item.account.data.parsed,
+  }));
 
 const formatUsd = (value?: number | null) => {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
@@ -422,9 +471,17 @@ const formatSolCompact = (value?: number | null): string | null => {
   return `${parseFloat(value.toFixed(6))}`;
 };
 
+const getNftFloorLabel = (token: Pick<TokenAccount, 'isNft' | 'marketFloorSol'>, solUsd?: number | null) => {
+  if (!token.isNft || token.marketFloorSol === null || token.marketFloorSol === undefined || token.marketFloorSol <= 0) {
+    return null;
+  }
+  const usd = solUsd ? formatUsd(token.marketFloorSol * solUsd) : null;
+  return usd ? `Floor ${usd}` : `Floor ${formatSolCompact(token.marketFloorSol)} SOL`;
+};
+
 const getAssetDisplayName = (token: Pick<TokenAccount, 'symbol' | 'name' | 'mint'>) => {
   const name = (token.name || token.symbol || '').trim();
-  return name || `Unknown ${token.mint.slice(0, 4)}...${token.mint.slice(-4)}`;
+  return name || `Token ${token.mint.slice(0, 4)}...`;
 };
 
 const getTokenProgramLabel = (token: Pick<TokenAccount, 'programId'>) =>
@@ -461,8 +518,19 @@ const fetchCollectionMarketStats = async (
     });
     const status = data?.status === 'listed' || data?.status === 'not_listed' ? data.status : 'unknown';
     const floorSol = parseNumber(data?.floorSol);
-    const source = data?.source === 'magic_eden' || data?.source === 'tensor' ? data.source : undefined;
-    return { status, floorSol, source, tensorUrl: data?.tensorUrl ?? null, meUrl: data?.meUrl ?? null };
+    const source =
+      data?.source === 'magic_eden' || data?.source === 'tensor' || data?.source === 'helius'
+        ? data.source
+        : undefined;
+    const listedCount = parseNumber(data?.listedCount);
+    return {
+      status,
+      floorSol,
+      source,
+      listedCount,
+      tensorUrl: data?.tensorUrl ?? null,
+      meUrl: data?.meUrl ?? null,
+    };
   } catch {
     return { status: 'unknown' };
   }
@@ -495,12 +563,21 @@ type BlackHoleMetadataAsset = {
   mint?: string;
   name?: string;
   symbol?: string;
-  image?: string;
+  image?: string | null;
+  imageUrl?: string | null;
+  imageSource?: 'helius' | 'magic_eden' | 'birdeye' | 'jupiter' | 'metaplex' | 'ipfs_gateway' | null;
   isNft?: boolean;
   collectionId?: string;
   collectionName?: string;
   collectionSymbol?: string;
   priceUsd?: number | null;
+  floorSol?: number | null;
+  marketFloorSol?: number | null;
+  marketStatus?: 'listed' | 'not_listed' | 'unknown';
+  marketSource?: 'magic_eden' | 'tensor' | 'helius' | null;
+  listedCount?: number | null;
+  tensorUrl?: string | null;
+  meUrl?: string | null;
 };
 
 type BlackHoleMetadataResponse = {
@@ -515,9 +592,15 @@ type CachedBlackHoleMetadata = {
 const readBlackHoleMetadataCache = () => {
   if (typeof window === 'undefined') return {};
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(BLACKHOLE_METADATA_CACHE_KEY) || '{}') as CachedBlackHoleMetadata;
-    if (!parsed?.timestamp || Date.now() - parsed.timestamp > BLACKHOLE_METADATA_CACHE_TTL_MS) return {};
-    return parsed.assets && typeof parsed.assets === 'object' ? parsed.assets : {};
+    const readCache = (key: string) => {
+      const parsed = JSON.parse(window.localStorage.getItem(key) || '{}') as CachedBlackHoleMetadata;
+      if (!parsed?.timestamp || Date.now() - parsed.timestamp > BLACKHOLE_METADATA_CACHE_TTL_MS) return {};
+      return parsed.assets && typeof parsed.assets === 'object' ? parsed.assets : {};
+    };
+    return {
+      ...readCache(BLACKHOLE_METADATA_LEGACY_CACHE_KEY),
+      ...readCache(BLACKHOLE_METADATA_CACHE_KEY),
+    };
   } catch {
     return {};
   }
@@ -528,6 +611,10 @@ const writeBlackHoleMetadataCache = (assets: Record<string, BlackHoleMetadataAss
   try {
     window.localStorage.setItem(
       BLACKHOLE_METADATA_CACHE_KEY,
+      JSON.stringify({ timestamp: Date.now(), assets } satisfies CachedBlackHoleMetadata),
+    );
+    window.localStorage.setItem(
+      BLACKHOLE_METADATA_LEGACY_CACHE_KEY,
       JSON.stringify({ timestamp: Date.now(), assets } satisfies CachedBlackHoleMetadata),
     );
   } catch {
@@ -543,7 +630,7 @@ const fetchBlackHoleMetadataBatch = async (
     method: 'POST' as const,
     headers: { 'Content-Type': 'application/json' },
     data: { address, mints },
-    timeoutMs: BLACKHOLE_AUX_TIMEOUT_MS,
+    timeoutMs: BLACKHOLE_METADATA_TIMEOUT_MS,
   };
   const url = `${getApiBase()}/api/blackhole/metadata`;
 
@@ -667,7 +754,170 @@ const nativeResponseToDataUrl = async (
 const tokenImageDataUrlCache = new Map<string, string>();
 const tokenImagePendingCache = new Map<string, Promise<string | null>>();
 
-const fetchTokenImageDataUrl = async (url: string, timeoutMs = 8000) => {
+type CachedBlackHoleImages = {
+  timestamp: number;
+  images: Record<string, string>;
+};
+
+type CachedBlackHoleImageFailures = {
+  timestamp: number;
+  failures: Record<string, { count: number; lastFailedAt: number }>;
+};
+
+const readBlackHoleImageCache = (key = BLACKHOLE_IMAGE_CACHE_KEY): CachedBlackHoleImages => {
+  if (typeof window === 'undefined') return { timestamp: 0, images: {} };
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || '{}') as CachedBlackHoleImages;
+    if (!parsed?.timestamp || Date.now() - parsed.timestamp > BLACKHOLE_IMAGE_CACHE_TTL_MS) {
+      window.localStorage.removeItem(key);
+      return { timestamp: 0, images: {} };
+    }
+    const images = parsed.images && typeof parsed.images === 'object' ? parsed.images : {};
+    return {
+      timestamp: parsed.timestamp,
+      images: Object.fromEntries(Object.entries(images).filter(([, value]) => value && value !== BLACKHOLE_IMAGE_FAILED)),
+    };
+  } catch {
+    return { timestamp: 0, images: {} };
+  }
+};
+
+const readBlackHoleImageFailureCache = (): CachedBlackHoleImageFailures => {
+  if (typeof window === 'undefined') return { timestamp: 0, failures: {} };
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(BLACKHOLE_IMAGE_FAILURE_CACHE_KEY) || '{}') as CachedBlackHoleImageFailures;
+    if (!parsed?.timestamp || Date.now() - parsed.timestamp > BLACKHOLE_IMAGE_CACHE_TTL_MS) {
+      window.localStorage.removeItem(BLACKHOLE_IMAGE_FAILURE_CACHE_KEY);
+      return { timestamp: 0, failures: {} };
+    }
+    return { timestamp: parsed.timestamp, failures: parsed.failures && typeof parsed.failures === 'object' ? parsed.failures : {} };
+  } catch {
+    return { timestamp: 0, failures: {} };
+  }
+};
+
+const writeBlackHoleImageCache = (key: string, images: Record<string, string>) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), images } satisfies CachedBlackHoleImages));
+};
+
+const readBlackHoleImageCacheEntry = (mint: string) =>
+  readBlackHoleImageCache(BLACKHOLE_IMAGE_URL_CACHE_KEY).images[mint] ?? readBlackHoleImageCache(BLACKHOLE_IMAGE_CACHE_KEY).images[mint];
+
+const writeBlackHoleImageCacheEntry = (mint: string, value: string) => {
+  if (typeof window === 'undefined' || !mint) return;
+  try {
+    const currentUrls = readBlackHoleImageCache(BLACKHOLE_IMAGE_URL_CACHE_KEY).images;
+    const currentLegacy = readBlackHoleImageCache(BLACKHOLE_IMAGE_CACHE_KEY).images;
+    writeBlackHoleImageCache(BLACKHOLE_IMAGE_URL_CACHE_KEY, { ...currentUrls, [mint]: value });
+    writeBlackHoleImageCache(BLACKHOLE_IMAGE_CACHE_KEY, { ...currentLegacy, [mint]: value });
+    clearBlackHoleImageFailure(mint);
+  } catch {
+    /* image cache is opportunistic */
+  }
+};
+
+const isBlackHoleImageFailureCoolingDown = (mint: string) => {
+  const entry = readBlackHoleImageFailureCache().failures[mint];
+  return Boolean(entry && entry.count >= BLACKHOLE_IMAGE_MAX_ATTEMPTS && Date.now() - entry.lastFailedAt < BLACKHOLE_IMAGE_FAILURE_RETRY_MS);
+};
+
+const clearBlackHoleImageFailure = (mint: string) => {
+  if (typeof window === 'undefined' || !mint) return;
+  try {
+    const current = readBlackHoleImageFailureCache().failures;
+    if (!current[mint]) return;
+    const { [mint]: _removed, ...next } = current;
+    window.localStorage.setItem(
+      BLACKHOLE_IMAGE_FAILURE_CACHE_KEY,
+      JSON.stringify({ timestamp: Date.now(), failures: next } satisfies CachedBlackHoleImageFailures),
+    );
+  } catch {
+    /* image cache is opportunistic */
+  }
+};
+
+const recordBlackHoleImageFailure = (mint: string) => {
+  if (typeof window === 'undefined' || !mint) return false;
+  try {
+    const cache = readBlackHoleImageFailureCache();
+    const previous = cache.failures[mint];
+    const count = (previous?.count ?? 0) + 1;
+    const failures = { ...cache.failures, [mint]: { count, lastFailedAt: Date.now() } };
+    window.localStorage.setItem(
+      BLACKHOLE_IMAGE_FAILURE_CACHE_KEY,
+      JSON.stringify({ timestamp: Date.now(), failures } satisfies CachedBlackHoleImageFailures),
+    );
+    if (count >= BLACKHOLE_IMAGE_MAX_ATTEMPTS) {
+      const currentLegacy = readBlackHoleImageCache(BLACKHOLE_IMAGE_CACHE_KEY).images;
+      writeBlackHoleImageCache(BLACKHOLE_IMAGE_CACHE_KEY, { ...currentLegacy, [mint]: BLACKHOLE_IMAGE_FAILED });
+      return true;
+    }
+  } catch {
+    /* image cache is opportunistic */
+  }
+  return false;
+};
+
+const getMintGradientStyle = (mint: string): React.CSSProperties => {
+  let hash = 0;
+  for (let i = 0; i < mint.length; i += 1) hash = ((hash << 5) - hash + mint.charCodeAt(i)) | 0;
+  const hue = Math.abs(hash) % 360;
+  return {
+    background: `linear-gradient(135deg, hsl(${hue} 72% 32%), hsl(${(hue + 52) % 360} 78% 18%))`,
+  };
+};
+
+const appendImageRetryParam = (url: string, attempt: number) => {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('retry', String(attempt));
+    parsed.searchParams.set('t', String(Date.now()));
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}retry=${attempt}&t=${Date.now()}`;
+  }
+};
+
+function GenericAssetAvatar({
+  mint,
+  isNft,
+  className,
+  title,
+}: {
+  mint: string;
+  isNft?: boolean;
+  className: string;
+  title: string;
+}) {
+  return (
+    <div
+      className={`${className} blackhole-token-avatar--missing`}
+      title={title}
+      style={getMintGradientStyle(mint)}
+      aria-label={title}
+    >
+      <svg viewBox="0 0 32 32" className="h-[70%] w-[70%]" aria-hidden="true">
+        {isNft ? (
+          <>
+            <rect x="7" y="6" width="18" height="20" rx="3" fill="none" stroke="rgba(255,255,255,.78)" strokeWidth="2" />
+            <path d="M11 20l3.5-4 3 3 2-2.3L23 20" fill="none" stroke="rgba(255,255,255,.72)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="20.5" cy="11.5" r="1.8" fill="rgba(255,255,255,.72)" />
+          </>
+        ) : (
+          <>
+            <path d="M8.5 11.5h13.8a2.4 2.4 0 0 1 1.7 4.1l-6.2 6.2a2.4 2.4 0 0 1-1.7.7H2.3a2.4 2.4 0 0 1-1.7-4.1l6.2-6.2a2.4 2.4 0 0 1 1.7-.7Z" transform="translate(3 1)" fill="rgba(20,241,149,.82)" />
+            <path d="M9.7 6.5h13.8a2.4 2.4 0 0 1 1.7 4.1L19 16.8a2.4 2.4 0 0 1-1.7.7H3.5a2.4 2.4 0 0 1-1.7-4.1L8 7.2a2.4 2.4 0 0 1 1.7-.7Z" transform="translate(2 1)" fill="rgba(153,69,255,.82)" />
+            <path d="M8.5 16.5h13.8a2.4 2.4 0 0 1 1.7 4.1l-6.2 6.2a2.4 2.4 0 0 1-1.7.7H2.3a2.4 2.4 0 0 1-1.7-4.1l6.2-6.2a2.4 2.4 0 0 1 1.7-.7Z" transform="translate(3 -1)" fill="rgba(0,194,255,.82)" />
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+const fetchTokenImageDataUrl = async (url: string, timeoutMs = 5000) => {
   const cached = tokenImageDataUrlCache.get(url);
   if (cached) return cached;
   const pending = tokenImagePendingCache.get(url);
@@ -712,47 +962,106 @@ const fetchTokenImageDataUrl = async (url: string, timeoutMs = 8000) => {
 };
 
 function TokenAvatar({
+  mint,
   imageUrl,
   alt,
   className,
+  isNft,
   onFail,
+  onLoad,
 }: {
+  mint: string;
   imageUrl?: string;
   alt: string;
   className: string;
-  onFail: () => void;
+  isNft?: boolean;
+  onFail: () => boolean;
+  onLoad: () => void;
 }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(() => (imageUrl ? tokenImageDataUrlCache.get(imageUrl) ?? null : null));
+  const [attempt, setAttempt] = useState(0);
+  const effectiveImageUrl = imageUrl && attempt > 0 ? appendImageRetryParam(imageUrl, attempt) : imageUrl;
+  const [dataUrl, setDataUrl] = useState<string | null>(() => (effectiveImageUrl ? tokenImageDataUrlCache.get(effectiveImageUrl) ?? null : null));
+  const [showFallback, setShowFallback] = useState(false);
+  const retryTimeoutRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (retryTimeoutRef.current !== undefined) window.clearTimeout(retryTimeoutRef.current);
+    setAttempt(0);
+    setShowFallback(false);
+    retryTimeoutRef.current = undefined;
+  }, [imageUrl]);
+
+  useEffect(
+    () => () => {
+      if (retryTimeoutRef.current !== undefined) window.clearTimeout(retryTimeoutRef.current);
+    },
+    [],
+  );
+
+  const handleFail = useCallback(() => {
+    if (attempt < BLACKHOLE_IMAGE_MAX_ATTEMPTS - 1) {
+      setAttempt((value) => value + 1);
+      return;
+    }
+    console.warn('[BlackHole image] failed after retries', { mint, imageUrl });
+    setShowFallback(true);
+    const coolingDown = onFail();
+    if (!coolingDown) {
+      retryTimeoutRef.current = window.setTimeout(() => {
+        setAttempt(0);
+        setShowFallback(false);
+      }, 10_000);
+    }
+  }, [attempt, imageUrl, mint, onFail]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!imageUrl) return;
-    const cached = tokenImageDataUrlCache.get(imageUrl);
+    setDataUrl(effectiveImageUrl ? tokenImageDataUrlCache.get(effectiveImageUrl) ?? null : null);
+    if (!effectiveImageUrl) return;
+    const cached = tokenImageDataUrlCache.get(effectiveImageUrl);
     if (cached) {
       setDataUrl(cached);
+      onLoad();
       return;
     }
-    void fetchTokenImageDataUrl(imageUrl).then((nextUrl) => {
+    void fetchTokenImageDataUrl(effectiveImageUrl).then((nextUrl) => {
       if (cancelled) return;
       if (nextUrl) {
         setDataUrl(nextUrl);
+        console.info('[BlackHole image] loaded', { mint, imageUrl: effectiveImageUrl, attempt: attempt + 1 });
+        onLoad();
       } else {
-        onFail();
+        console.warn('[BlackHole image] attempt failed', { mint, imageUrl: effectiveImageUrl, attempt: attempt + 1 });
+        handleFail();
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [imageUrl, onFail]);
+  }, [attempt, effectiveImageUrl, handleFail, imageUrl, mint, onLoad]);
 
   if (!imageUrl) return null;
 
+  if (showFallback) {
+    return <GenericAssetAvatar mint={mint} isNft={isNft} className={className} title={alt} />;
+  }
+
   return (
-    <div className={className}>
+    <div className={className} style={getMintGradientStyle(mint)}>
       {dataUrl ? (
-        <img src={dataUrl} alt={alt} className="blackhole-token-avatar__image" loading="lazy" decoding="async" />
+        <img
+          key={`${mint}:${effectiveImageUrl}`}
+          src={dataUrl}
+          alt={alt}
+          className="blackhole-token-avatar__image"
+          loading="lazy"
+          decoding="async"
+          onError={handleFail}
+        />
       ) : (
-        <div className="blackhole-token-avatar__loading" aria-hidden="true" />
+        <div className="blackhole-token-avatar__loading" aria-hidden="true">
+          <div className="blackhole-token-avatar__spinner" />
+        </div>
       )}
     </div>
   );
@@ -772,12 +1081,28 @@ const normalizeBlackHoleImageUrl = (image?: string | null) => {
   return trimmed;
 };
 
-const getBlackHoleImageUrl = (image?: string | null) => {
+const getBlackHoleImageUrl = (image?: string | null, mint?: string | null) => {
+  const normalized = normalizeBlackHoleImageUrl(image);
+  const base = getApiBase();
+  if (!normalized) {
+    return base && mint ? `${base}/api/blackhole/image?size=96&v=pngmatte4&mint=${encodeURIComponent(mint)}` : undefined;
+  }
+  if (!base) return normalized;
+  return `${base}/api/blackhole/image?size=96&v=pngmatte4&url=${encodeURIComponent(normalized)}`;
+};
+
+const getRawBlackHoleImageUrl = (image?: string | null) => {
   const normalized = normalizeBlackHoleImageUrl(image);
   if (!normalized) return undefined;
-  const base = getApiBase();
-  if (!base) return normalized;
-  return `${base}/api/blackhole/image?size=96&v=pngmatte3&url=${encodeURIComponent(normalized)}`;
+  try {
+    const url = new URL(normalized);
+    if (url.pathname === '/api/blackhole/image') {
+      return url.searchParams.get('url') ?? normalized;
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
 };
 
 const fetchFallbackPrices = async (mints: string[]): Promise<Map<string, number>> => {
@@ -906,46 +1231,37 @@ const buildSwapTransaction = async (userPublicKey: string, quoteResponse: SwapQu
   // Extract from quoteResponse — supports both synthetic order_execute ({mode,inputMint,outputMint,amount})
   // and full Jupiter legacy_raw response ({inputMint,outputMint,inAmount,...}).
   const amountStr = String(quoteResponse?.amount ?? quoteResponse?.inAmount ?? '');
-  // FIX (2026-05-17): Removed AbortController — Capacitor backgrounds WebView during MWA,
-  // delayed setTimeout fires on resume and aborts in-flight fetch with "signal aborted".
-  const response = await fetch(`${base}/api/market/build-swap`, {
+  return fetchJsonWithTimeout<PreparedSwapTransaction>(`${base}/api/market/build-swap`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${jwt}`,
     },
-    body: JSON.stringify({
+    data: {
       userPublicKey,
       inputMint: quoteResponse?.inputMint,
       outputMint: quoteResponse?.outputMint,
       amount: amountStr,
       slippageBps: 100,
-    }),
+    },
+    timeoutMs: BLACKHOLE_RPC_TIMEOUT_MS,
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload?.swapTransaction) {
-    throw new Error(payload?.error || 'Failed to build swap transaction');
-  }
-  return payload as PreparedSwapTransaction;
 };
 
 const executeSwapTransaction = async (signedTransaction: string, requestId: string) => {
   const jwt = await ensureJwt();
   if (!jwt) throw new Error('Wallet authorization required');
   const base = getApiBase();
-  // FIX (2026-05-17): Removed AbortController (MWA-background-resume abort bug).
-  const response = await fetch(`${base}/api/market/execute-swap`, {
+  const payload = await fetchJsonWithTimeout<{ signature?: string; status?: string }>(`${base}/api/market/execute-swap`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${jwt}`,
     },
-    body: JSON.stringify({ signedTransaction, requestId }),
+    data: { signedTransaction, requestId },
+    timeoutMs: BLACKHOLE_RPC_TIMEOUT_MS,
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload?.signature) {
-    throw new Error(payload?.error || 'Failed to execute swap transaction');
-  }
+  if (!payload?.signature) throw new Error('Failed to execute swap transaction');
   return payload as { signature: string; status?: string };
 };
 
@@ -1008,11 +1324,38 @@ const buildMemoInstruction = (memo: string) =>
   });
 
 const estimateBlackHoleReward = (fungibleResolved: number, nftResolved: number, netResolvedSol: number) => {
-  if (netResolvedSol <= 0) return 0;
   return Math.min(
     BLACKHOLE_PRISM_REWARD_CAP,
-    fungibleResolved * 8 + nftResolved * 15 + Math.floor(netResolvedSol / 0.001) * 8,
+    fungibleResolved * 8 + nftResolved * 15 + Math.max(0, Math.floor(netResolvedSol / 0.001)) * 8,
   );
+};
+
+const areResolutionPlansEqual = (
+  current: Record<string, ResolutionPlanItem>,
+  next: Record<string, ResolutionPlanItem>,
+) => {
+  const currentKeys = Object.keys(current);
+  const nextKeys = Object.keys(next);
+  if (currentKeys.length !== nextKeys.length) return false;
+
+  return nextKeys.every((key) => {
+    const currentPlan = current[key];
+    const nextPlan = next[key];
+    if (!currentPlan || !nextPlan) return false;
+    return (
+      currentPlan.token.pubkey.toBase58() === nextPlan.token.pubkey.toBase58() &&
+      currentPlan.token.mint === nextPlan.token.mint &&
+      currentPlan.token.amount === nextPlan.token.amount &&
+      currentPlan.token.rentSol === nextPlan.token.rentSol &&
+      currentPlan.action === nextPlan.action &&
+      currentPlan.reason === nextPlan.reason &&
+      currentPlan.estimatedNetSol === nextPlan.estimatedNetSol &&
+      currentPlan.estimatedBurnNetSol === nextPlan.estimatedBurnNetSol &&
+      currentPlan.estimatedSwapNetSol === nextPlan.estimatedSwapNetSol &&
+      currentPlan.swapQuote?.outLamports === nextPlan.swapQuote?.outLamports &&
+      currentPlan.swapQuote?.transport === nextPlan.swapQuote?.transport
+    );
+  });
 };
 
 const isWalletRejectError = (error: unknown) => {
@@ -1039,6 +1382,9 @@ const PROTECTED_NAME_PATTERNS = [
   /identity\s*prism/i,
 ];
 
+const hasRecognizedCollection = (token: TokenAccount) =>
+  Boolean(token.collectionId || token.collectionName || token.collectionSymbol);
+
 const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: string } => {
   if (token.closeable === false) {
     return { status: 'protected', reason: token.frozen ? 'Account is frozen' : 'Account cannot be closed' };
@@ -1055,16 +1401,132 @@ const classifyAsset = (token: TokenAccount): { status: AssetStatus; reason?: str
   if (token.name && PROTECTED_NAME_PATTERNS.some((p) => p.test(token.name!))) {
     return { status: 'protected', reason: 'Ecosystem asset' };
   }
-  if (token.isNft && token.marketStatus === 'listed') {
-    return { status: 'protected', reason: 'Listed on marketplace' };
+  if (token.isNft && token.marketFloorSol !== null && token.marketFloorSol !== undefined && token.marketFloorSol >= 0.05) {
+    return { status: 'protected', reason: `Floor ~${token.marketFloorSol.toFixed(2)} SOL` };
   }
-  if (token.isNft && token.marketFloorSol && token.marketFloorSol > 0.1) {
-    return { status: 'valuable', reason: `Floor ~${token.marketFloorSol.toFixed(2)} SOL` };
+  if (token.isNft && (token.marketStatus === 'listed' || (token.listedCount !== null && token.listedCount !== undefined && token.listedCount > 0))) {
+    return { status: 'protected', reason: 'Listed on marketplace' };
   }
   if (token.valueSol !== null && token.valueSol !== undefined && token.valueSol > VALUE_THRESHOLD_SOL) {
     return { status: 'valuable', reason: `Worth ~${token.valueSol.toFixed(4)} SOL` };
   }
+  if (token.isNft && hasRecognizedCollection(token)) {
+    return { status: 'valuable', reason: 'Collection NFT needs review' };
+  }
   return { status: 'burnable' };
+};
+
+const applyPrefetchClassification = (cache: BlackHolePrefetchCache): TokenAccount[] => {
+  const solUsd = parseNumber(cache.solUsd);
+  const commissionRate =
+    parseNumber(cache.identityPerks?.blackHoleCommissionRate) ??
+    (cache.identityPerks?.hasIdentityPrism ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT);
+  const persistentMetadata = readBlackHoleMetadataCache();
+
+  return cache.tokenAccounts
+    .map((item): TokenAccount | null => {
+      try {
+        const info = item.data?.info;
+        if (!info?.mint) return null;
+        const programId = item.programId === TOKEN_2022_PROGRAM_ID.toBase58() ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+        const isFrozen = info.state === 'frozen';
+        const exts: unknown[] = info.extensions ?? [];
+        let hasWithheldFees = false;
+        try {
+          hasWithheldFees = exts.some((e: unknown) => {
+            const ext = e as Record<string, unknown>;
+            return (
+              ext.extension === 'transferFeeAmount' &&
+              (ext.state as Record<string, unknown>)?.withheldAmount &&
+              BigInt(String((ext.state as Record<string, unknown>).withheldAmount)) > 0n
+            );
+          });
+        } catch {
+          /* best effort */
+        }
+        const canClose = !isFrozen && !hasWithheldFees;
+        const meta = cache.metadata?.[info.mint] ?? persistentMetadata[info.mint];
+        const amount = BigInt(info.tokenAmount?.amount ?? '0');
+        const uiAmount = Number(info.tokenAmount?.uiAmount ?? 0);
+        const token: TokenAccount = {
+          pubkey: new PublicKey(item.pubkey),
+          programId,
+          mint: info.mint,
+          amount,
+          decimals: info.tokenAmount?.decimals ?? 0,
+          uiAmount,
+          lamports: item.lamports,
+          rentSol: item.lamports / LAMPORTS_PER_SOL,
+          frozen: isFrozen,
+          closeable: canClose,
+          name: meta?.name,
+          symbol: meta?.symbol,
+          image: getBlackHoleImageUrl(meta?.image ?? meta?.imageUrl, info.mint),
+          isNft: meta?.isNft ?? (info.tokenAmount?.decimals === 0 && uiAmount <= 1),
+          collectionId: meta?.collectionId,
+          collectionName: meta?.collectionName,
+          collectionSymbol: meta?.collectionSymbol,
+          priceUsd: meta?.priceUsd ?? null,
+          marketFloorSol: meta?.marketFloorSol ?? meta?.floorSol ?? null,
+          marketStatus: meta?.marketStatus ?? undefined,
+          marketSource: meta?.marketSource ?? null,
+          listedCount: meta?.listedCount ?? null,
+          tensorUrl: meta?.tensorUrl ?? null,
+          meUrl: meta?.meUrl ?? null,
+          metadataImageMissing: !(meta?.image ?? meta?.imageUrl),
+          metadataPending: !meta?.name && !meta?.symbol,
+        };
+
+        if (token.isNft && token.marketFloorSol !== null && token.marketFloorSol !== undefined && token.marketFloorSol > 0) {
+          token.valueSol = token.marketFloorSol;
+          if (solUsd) token.valueUsd = token.marketFloorSol * solUsd;
+        } else if (!token.isNft && token.priceUsd != null) {
+          token.valueUsd = token.priceUsd * token.uiAmount;
+          if (solUsd) token.valueSol = token.valueUsd / solUsd;
+        } else if (token.isNft && token.priceUsd != null && solUsd) {
+          token.valueUsd = token.priceUsd;
+          token.valueSol = token.priceUsd / solUsd;
+        }
+
+        const rentAfterFees = token.rentSol * (1 - commissionRate) - ESTIMATED_FEE_SOL;
+        token.netGainSol =
+          token.valueSol !== null && token.valueSol !== undefined ? rentAfterFees - token.valueSol : rentAfterFees;
+
+        const classification = classifyAsset(token);
+        token.assetStatus = classification.status;
+        token.protectReason = classification.reason;
+
+        if (classification.status !== 'burnable') {
+          token.isCandidate = false;
+        } else if (token.closeable === false) {
+          token.isCandidate = false;
+        } else if (token.uiAmount === 0) {
+          token.isCandidate = rentAfterFees >= MIN_NET_RETURN_SOL;
+        } else if (token.isNft) {
+          const hasCollection = Boolean(token.collectionId || token.collectionSymbol);
+          const valueKnown = token.valueSol !== null && token.valueSol !== undefined;
+          const valueLow = valueKnown ? token.valueSol! <= VALUE_THRESHOLD_SOL : false;
+          const netGainPositive = token.netGainSol !== null && token.netGainSol !== undefined && token.netGainSol >= 0;
+          token.isCandidate = (!hasCollection && (netGainPositive || !valueKnown)) || valueLow;
+        } else if (token.valueSol !== null && token.valueSol !== undefined) {
+          token.isCandidate = token.netGainSol != null && (token.netGainSol >= 0 || token.valueSol <= VALUE_THRESHOLD_SOL);
+        } else {
+          token.isCandidate = token.uiAmount > 0 && token.uiAmount < 0.0001;
+        }
+
+        return token;
+      } catch {
+        return null;
+      }
+    })
+    .filter((token): token is TokenAccount => Boolean(token));
+};
+
+const getDisplayedScanCount = (list: TokenAccount[], filter: 'all' | 'nft' | 'token') => {
+  let closeable = [...list];
+  if (filter === 'nft') closeable = closeable.filter((token) => token.isNft);
+  else if (filter === 'token') closeable = closeable.filter((token) => !token.isNft);
+  return closeable.length;
 };
 
 const BlackHole = () => {
@@ -1132,19 +1594,20 @@ const BlackHole = () => {
   const [commissionRate, setCommissionRate] = useState(COMMISSION_RATE_DEFAULT);
   const [holderCommissionRate, setHolderCommissionRate] = useState(COMMISSION_RATE_MINTED);
   const [standardCommissionRate, setStandardCommissionRate] = useState(COMMISSION_RATE_DEFAULT);
-  const [showAllAssets, setShowAllAssets] = useState(false);
   const [incinerationTokens, setIncinerationTokens] = useState<IncinerationToken[]>([]);
   const [_wormholeBack, _setWormholeBack] = useState(false);
   const [solPriceUsd, setSolPriceUsd] = useState<number | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [scanStep, setScanStep] = useState('Preparing scan');
   const [failedImageMints, setFailedImageMints] = useState<Set<string>>(new Set());
+  const tokensRef = useRef<TokenAccount[]>([]);
   const collectionMarketCache = useRef(new Map<string, MarketStats>());
   const lastOwnerRef = useRef<string | null>(null);
   const scanRequestIdRef = useRef(0);
   const addressErrorShown = useRef(false);
   const publicKeyRef = useRef(publicKey);
   publicKeyRef.current = publicKey;
+  tokensRef.current = tokens;
   const addressParam = searchParams.get('address');
   const [ownerPublicKey, setOwnerPublicKey] = useState<PublicKey | null>(() => {
     if (publicKey) return publicKey;
@@ -1166,16 +1629,23 @@ const BlackHole = () => {
   const [sortField, setSortField] = useState<'value' | 'return' | 'status' | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [assetFilter, setAssetFilter] = useState<'all' | 'nft' | 'token'>('all');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState<(typeof PER_PAGE_OPTIONS)[number]>(25);
+  const [perPageMenuOpen, setPerPageMenuOpen] = useState(false);
   const swapQuoteCache = useRef(new Map<string, SwapQuoteResult | null>());
   const [resolutionPlan, setResolutionPlan] = useState<Record<string, ResolutionPlanItem>>({});
   const [isPlanning, setIsPlanning] = useState(false);
 
-  const isSelectableToken = useCallback((token: TokenAccount) => {
-    if (!canResolveScan) return false;
+  const isResolvableSelectionTarget = useCallback((token: TokenAccount) => {
     if (token.closeable === false || token.assetStatus === 'protected') return false;
     if (token.isNft && token.assetStatus === 'valuable') return false;
     return true;
-  }, [canResolveScan]);
+  }, []);
+
+  const isSelectableToken = useCallback((token: TokenAccount) => {
+    if (!canResolveScan) return false;
+    return isResolvableSelectionTarget(token);
+  }, [canResolveScan, isResolvableSelectionTarget]);
 
   const estimateCloseNetSol = useCallback(
     (token: TokenAccount, txFeeSol: number = ESTIMATED_FEE_SOL) =>
@@ -1245,17 +1715,13 @@ const BlackHole = () => {
   }, [incinerationTokens.length]);
 
   const getVisibleTokens = useCallback(
-    (list: TokenAccount[] = tokens, showAll = showAllAssets) => {
-      let closeable = list.filter((token) => token.closeable !== false);
-      if (!showAll) {
-        const candidates = closeable.filter((token) => token.isCandidate);
-        closeable = candidates.length === 0 && isLoading ? closeable : candidates;
-      }
+    (list: TokenAccount[] = tokens) => {
+      let closeable = [...list];
       if (assetFilter === 'nft') closeable = closeable.filter((token) => token.isNft);
       else if (assetFilter === 'token') closeable = closeable.filter((token) => !token.isNft);
       return closeable;
     },
-    [showAllAssets, tokens, assetFilter, isLoading],
+    [tokens, assetFilter],
   );
 
   // Total recoverable SOL from all burnable tokens (shown at top before selection)
@@ -1272,13 +1738,13 @@ const BlackHole = () => {
     const requestId = scanRequestIdRef.current + 1;
     scanRequestIdRef.current = requestId;
     const isStaleRequest = () => requestId !== scanRequestIdRef.current;
-    setIsLoading(true);
     setSelectedTokens(new Set());
     setFailedImageMints(new Set());
     tokenImagePendingCache.clear();
     setFetchError(null);
 
     let fetchStep = 'init';
+    let renderedUsefulCache = false;
     const updateScanStep = (step: string, label: string) => {
       fetchStep = step;
       setScanStep(label);
@@ -1287,52 +1753,51 @@ const BlackHole = () => {
       updateScanStep('getParsedTokenAccounts', 'Reading token accounts');
       const prefetched = readBlackHolePrefetch(targetOwner.toBase58());
       if (prefetched?.tokenAccounts.length) {
-        const cachedTokens = prefetched.tokenAccounts
-          .map((item): TokenAccount | null => {
-            try {
-              const info = item.data?.info;
-              if (!info?.mint) return null;
-              const programId = item.programId === TOKEN_2022_PROGRAM_ID.toBase58() ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-              const isFrozen = info.state === 'frozen';
-              return {
-                pubkey: new PublicKey(item.pubkey),
-                programId,
-                mint: info.mint,
-                amount: BigInt(info.tokenAmount?.amount ?? '0'),
-                decimals: info.tokenAmount?.decimals ?? 0,
-                uiAmount: Number(info.tokenAmount?.uiAmount ?? 0),
-                lamports: item.lamports,
-                rentSol: item.lamports / LAMPORTS_PER_SOL,
-                frozen: isFrozen,
-                closeable: !isFrozen,
-                assetStatus: isFrozen ? 'protected' : undefined,
-                isCandidate: false,
-                protectReason: isFrozen ? 'Frozen account cannot be closed' : undefined,
-              };
-            } catch {
-              return null;
-            }
-          })
-          .filter((token): token is TokenAccount => Boolean(token));
+        const cachedTokens = applyPrefetchClassification(prefetched);
         if (cachedTokens.length && !isStaleRequest()) {
+          const cachedPerks = prefetched.identityPerks;
+          const ownsCard = Boolean(cachedPerks?.hasIdentityPrism);
+          const cachedCommissionRate =
+            parseNumber(cachedPerks?.blackHoleCommissionRate) ??
+            (ownsCard ? COMMISSION_RATE_MINTED : COMMISSION_RATE_DEFAULT);
+          setHasMintedCard(ownsCard);
+          setCommissionRate(cachedCommissionRate);
+          setHolderCommissionRate(parseNumber(cachedPerks?.holderBlackHoleCommissionRate) ?? COMMISSION_RATE_MINTED);
+          setStandardCommissionRate(parseNumber(cachedPerks?.standardBlackHoleCommissionRate) ?? COMMISSION_RATE_DEFAULT);
+          if (prefetched.solUsd != null) setSolPriceUsd(prefetched.solUsd);
           setTokens(sortTokensForDisplay(cachedTokens));
           setFetchError(null);
+          renderedUsefulCache = cachedTokens.length > 0;
+          console.warn(
+            `[BH scan] cache received ${cachedTokens.length} tokens, displayed ${getDisplayedScanCount(
+              cachedTokens,
+              assetFilter,
+            )}`,
+          );
           updateScanStep('getParsedTokenAccounts', 'Refreshing cached scan');
         }
       }
+      setIsLoading(!renderedUsefulCache);
       const [splTokensResult, token2022TokensResult] = await Promise.allSettled([
         fetchParsedTokenAccounts(targetOwner, TOKEN_PROGRAM_ID),
         fetchParsedTokenAccounts(targetOwner, TOKEN_2022_PROGRAM_ID),
       ]);
-      if (splTokensResult.status === 'rejected' && token2022TokensResult.status === 'rejected') {
+      if (splTokensResult.status === 'rejected') {
         throw new Error(
-          `${splTokensResult.reason instanceof Error ? splTokensResult.reason.message : 'SPL scan failed'}; ${
-            token2022TokensResult.reason instanceof Error ? token2022TokensResult.reason.message : 'Token-2022 scan failed'
+          `SPL scan failed; refusing partial Token-2022-only result: ${
+            splTokensResult.reason instanceof Error ? splTokensResult.reason.message : String(splTokensResult.reason)
           }`,
         );
       }
-      const splTokens = splTokensResult.status === 'fulfilled' ? splTokensResult.value : [];
+      const splTokens = splTokensResult.value;
       const token2022Tokens = token2022TokensResult.status === 'fulfilled' ? token2022TokensResult.value : [];
+      if (token2022TokensResult.status === 'rejected') {
+        console.warn('[BH scan] Token-2022 scan failed; continuing with SPL result', token2022TokensResult.reason);
+      }
+      console.warn(
+        `[BH scan] combined received ${splTokens.length + token2022Tokens.length} token accounts ` +
+          `(SPL ${splTokens.length}, Token-2022 ${token2022Tokens.length})`,
+      );
 
       const parsedTokens: TokenAccount[] = [
         ...splTokens.map((item) => {
@@ -1416,8 +1881,16 @@ const BlackHole = () => {
       });
 
       if (isStaleRequest()) return;
-      setTokens(sortTokensForDisplay([...parsedTokens]));
-      setFetchError(null);
+      if (!renderedUsefulCache) {
+        setTokens(sortTokensForDisplay([...parsedTokens]));
+        setFetchError(null);
+      }
+      console.warn(
+        `[BH scan] received ${parsedTokens.length} tokens, displayed ${getDisplayedScanCount(
+          parsedTokens,
+          assetFilter,
+        )} before metadata`,
+      );
 
       updateScanStep('fetchSolPrice', 'Pricing SOL');
       const proxyBase = getHeliusProxyUrl();
@@ -1427,6 +1900,7 @@ const BlackHole = () => {
       updateScanStep('getAssetBatch', 'Classifying assets');
       const heliusUrl = getHeliusRpcUrl(targetOwner.toBase58());
       let resolvedCommissionRate = COMMISSION_RATE_DEFAULT;
+      let prefetchIdentityPerks: IdentityPerkSnapshot | null = null;
       if (heliusUrl && parsedTokens.length > 0) {
         const mints = [...new Set(parsedTokens.map((t) => t.mint))];
         const metadataMap = new Map<
@@ -1440,6 +1914,13 @@ const BlackHole = () => {
             collectionName?: string;
             collectionSymbol?: string;
             priceUsd?: number | null;
+            floorSol?: number | null;
+            marketFloorSol?: number | null;
+            marketStatus?: 'listed' | 'not_listed' | 'unknown';
+            marketSource?: 'magic_eden' | 'tensor' | 'helius' | null;
+            listedCount?: number | null;
+            tensorUrl?: string | null;
+            meUrl?: string | null;
           }
         >();
 
@@ -1453,11 +1934,11 @@ const BlackHole = () => {
           });
           const missingImages = mints.filter((mint) => {
             const metadata = metadataMap.get(mint);
-            return !metadata?.image;
+            return !(metadata?.image ?? metadata?.imageUrl);
           });
           missingImages.forEach((mint) => {
             const metadata = metadataMap.get(mint);
-            if (metadata) metadataMap.set(mint, { ...metadata, image: undefined });
+            if (metadata) metadataMap.set(mint, { ...metadata, image: undefined, imageUrl: undefined });
           });
         } catch (metadataError) {
           console.warn('[BlackHole] metadata fetch failed', metadataError);
@@ -1469,14 +1950,21 @@ const BlackHole = () => {
           if (!meta) return;
           t.name = meta.name;
           t.symbol = meta.symbol;
-          t.image = meta.image;
+          t.image = meta.image ?? meta.imageUrl ?? undefined;
           t.isNft = meta.isNft;
           t.collectionId = meta.collectionId;
           t.collectionName = meta.collectionName;
           t.collectionSymbol = meta.collectionSymbol;
           t.priceUsd = meta.priceUsd ?? null;
-          t.image = getBlackHoleImageUrl(meta.image);
+          t.marketFloorSol = meta.marketFloorSol ?? meta.floorSol ?? null;
+          t.marketStatus = meta.marketStatus ?? undefined;
+          t.marketSource = meta.marketSource ?? null;
+          t.listedCount = meta.listedCount ?? null;
+          t.tensorUrl = meta.tensorUrl ?? null;
+          t.meUrl = meta.meUrl ?? null;
+          t.image = getBlackHoleImageUrl(meta.image ?? meta.imageUrl, t.mint);
           t.metadataImageMissing = !t.image;
+          t.metadataPending = false;
         });
 
         const unknownTokens = parsedTokens.filter((token) => !token.name && !token.symbol);
@@ -1491,10 +1979,11 @@ const BlackHole = () => {
           parsedTokens.forEach((token) => {
             if (token.name || token.symbol) return;
             const meta = resolvedMap.get(token.mint);
-            token.name = meta?.name ?? `Unknown ${token.mint.slice(0, 4)}...${token.mint.slice(-4)}`;
+            token.name = meta?.name ?? `Token ${token.mint.slice(0, 4)}...`;
             token.symbol = meta?.symbol;
-            token.image = meta?.image ? getBlackHoleImageUrl(meta.image) : undefined;
+            token.image = getBlackHoleImageUrl(meta?.image ?? meta?.imageUrl, token.mint);
             token.metadataImageMissing = !token.image;
+            token.metadataPending = !meta || meta.source === 'fallback';
           });
         }
 
@@ -1507,6 +1996,7 @@ const BlackHole = () => {
 
         try {
           const perks = await fetchIdentityPerksWithTimeout(targetOwner.toBase58());
+          prefetchIdentityPerks = perks;
           perksFetched = true;
           ownsCard = Boolean(perks?.hasIdentityPrism);
           resolvedCommissionRate =
@@ -1556,6 +2046,7 @@ const BlackHole = () => {
       } else {
         try {
           const perks = await fetchIdentityPerksWithTimeout(targetOwner.toBase58());
+          prefetchIdentityPerks = perks;
           const ownsCard = Boolean(perks?.hasIdentityPrism);
           const resolvedCommissionRate =
             parseNumber(perks?.blackHoleCommissionRate) ??
@@ -1605,7 +2096,13 @@ const BlackHole = () => {
         { symbol?: string; collectionId?: string; collectionName?: string; sampleMint?: string }
       >();
       parsedTokens
-        .filter((token) => token.isNft && token.collectionId)
+        .filter(
+          (token) =>
+            token.isNft &&
+            token.collectionId &&
+            token.marketStatus !== 'listed' &&
+            !(token.marketFloorSol !== null && token.marketFloorSol !== undefined && token.marketFloorSol > 0),
+        )
         .forEach((token) => {
           const key = `${token.collectionSymbol ?? ''}|${token.collectionId}`;
           if (!collectionLookups.has(key)) {
@@ -1639,15 +2136,16 @@ const BlackHole = () => {
           if (!token.isNft || !token.collectionId) return;
           const key = `${token.collectionSymbol ?? ''}|${token.collectionId}`;
           const stats = statusMap.get(key);
-          token.marketStatus = stats?.status ?? 'unknown';
-          token.marketFloorSol = stats?.floorSol ?? null;
-          token.marketSource = stats?.source ?? null;
-          token.tensorUrl = stats?.tensorUrl ?? null;
-          token.meUrl = stats?.meUrl ?? null;
+          token.marketStatus = stats?.status ?? token.marketStatus ?? 'unknown';
+          token.marketFloorSol = stats?.floorSol ?? token.marketFloorSol ?? null;
+          token.marketSource = stats?.source ?? token.marketSource ?? null;
+          token.listedCount = stats?.listedCount ?? token.listedCount ?? null;
+          token.tensorUrl = stats?.tensorUrl ?? token.tensorUrl ?? null;
+          token.meUrl = stats?.meUrl ?? token.meUrl ?? null;
         });
       } else {
         parsedTokens.forEach((token) => {
-          if (token.isNft) token.marketStatus = 'unknown';
+          if (token.isNft) token.marketStatus = token.marketStatus ?? 'unknown';
         });
       }
 
@@ -1723,25 +2221,79 @@ const BlackHole = () => {
         }
       });
 
+      const prefetchMetadata = Object.fromEntries(
+        parsedTokens.map((token) => [
+          token.mint,
+          {
+            mint: token.mint,
+            name: token.name,
+            symbol: token.symbol,
+            image: getRawBlackHoleImageUrl(token.image),
+            isNft: token.isNft,
+            collectionId: token.collectionId,
+            collectionName: token.collectionName,
+            collectionSymbol: token.collectionSymbol,
+            priceUsd: token.priceUsd ?? null,
+            floorSol: token.marketFloorSol ?? null,
+            marketFloorSol: token.marketFloorSol ?? null,
+            marketStatus: token.marketStatus ?? 'unknown',
+            marketSource: token.marketSource ?? null,
+            listedCount: token.listedCount ?? null,
+            tensorUrl: token.tensorUrl ?? null,
+            meUrl: token.meUrl ?? null,
+          },
+        ]),
+      );
+      writeBlackHoleMetadataCache({ ...readBlackHoleMetadataCache(), ...prefetchMetadata });
+      writeBlackHolePrefetch(targetOwner.toBase58(), {
+        tokenAccounts: [
+          ...toBlackHolePrefetchTokens(splTokens, TOKEN_PROGRAM_ID),
+          ...toBlackHolePrefetchTokens(token2022Tokens, TOKEN_2022_PROGRAM_ID),
+        ],
+        timestamp: Date.now(),
+        complete: token2022TokensResult.status === 'fulfilled',
+        programCounts: {
+          [TOKEN_PROGRAM_ID.toBase58()]: splTokens.length,
+          [TOKEN_2022_PROGRAM_ID.toBase58()]: token2022Tokens.length,
+        },
+        metadataStatus: Object.keys(prefetchMetadata).length > 0 && solUsd != null ? 'ready' : 'partial',
+        metadata: prefetchMetadata,
+        solUsd,
+        identityPerks: prefetchIdentityPerks,
+      });
+
       sortTokensForDisplay(parsedTokens);
 
       if (isStaleRequest()) return;
       setTokens([...parsedTokens]);
       setFetchError(null);
+      console.warn(
+        `[BH scan] received ${parsedTokens.length} tokens, displayed ${getDisplayedScanCount(
+          parsedTokens,
+          assetFilter,
+        )}; buckets shielded=${parsedTokens.filter((t) => t.assetStatus === 'protected').length}, caution=${parsedTokens.filter(
+          (t) => t.assetStatus === 'valuable',
+        ).length}, cleanup=${parsedTokens.filter((t) => t.assetStatus === 'burnable').length}`,
+      );
       toast.success(`Found ${parsedTokens.length} token accounts`);
     } catch (err: unknown) {
       if (isStaleRequest()) return;
       const message = (err as Error)?.message ?? String(err);
       console.error(`[BlackHole] fetchTokens error at step "${fetchStep}":`, err);
-      setFetchError(`Failed during ${fetchStep}: ${message}`);
-      toast.error(`Failed to fetch tokens (${fetchStep}): ${message}`);
+      const hasUsefulRenderedTokens = renderedUsefulCache || tokensRef.current.length >= 10;
+      if (hasUsefulRenderedTokens) {
+        console.warn(`[BlackHole] suppressed scan error after rendering cache (${tokensRef.current.length} tokens)`, err);
+      } else {
+        setFetchError(`Failed during ${fetchStep}: ${message}`);
+        toast.error(`Failed to fetch tokens (${fetchStep}): ${message}`);
+      }
     } finally {
       if (!isStaleRequest()) {
         setIsLoading(false);
         setScanStep('Preparing scan');
       }
     }
-  }, []);
+  }, [assetFilter]);
 
   useEffect(() => {
     const ownerBase58 = ownerPublicKey?.toBase58() ?? null;
@@ -1753,7 +2305,7 @@ const BlackHole = () => {
   useEffect(() => {
     const selected = tokens.filter((token) => selectedTokens.has(token.pubkey.toBase58()));
     if (selected.length === 0) {
-      setResolutionPlan({});
+      setResolutionPlan((current) => (Object.keys(current).length === 0 ? current : {}));
       setIsPlanning(false);
       return;
     }
@@ -1875,7 +2427,7 @@ const BlackHole = () => {
       }
 
       if (!cancelled) {
-        setResolutionPlan(nextPlan);
+        setResolutionPlan((current) => (areResolutionPlansEqual(current, nextPlan) ? current : nextPlan));
         setIsPlanning(false);
       }
     })().catch(() => {
@@ -1914,22 +2466,15 @@ const BlackHole = () => {
     }
   };
 
-  const handleShowAllToggle = (value: boolean | 'indeterminate') => {
-    const next = Boolean(value);
-    setShowAllAssets(next);
-    if (!next) {
-      const candidateKeys = new Set(
-        tokens.filter((token) => token.isCandidate && isSelectableToken(token)).map((token) => token.pubkey.toBase58()),
-      );
-      setSelectedTokens((prev) => new Set([...prev].filter((key) => candidateKeys.has(key))));
-    }
-  };
-
   const waitForSignatureConfirmation = useCallback(
     async (signature: string, label: string) => {
       for (let attempt = 0; attempt < 60; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        const status = await connection.getSignatureStatus(signature);
+        const status = await blackholeWithTimeout(
+          `${label} getSignatureStatus attempt ${attempt + 1}`,
+          connection.getSignatureStatus(signature),
+          8_000,
+        );
         const confirmation = status?.value?.confirmationStatus;
         if (status?.value?.err) {
           throw new Error(`${label} failed: ${JSON.stringify(status.value.err)}`);
@@ -1947,32 +2492,17 @@ const BlackHole = () => {
     async (tx: Transaction, label: string) => {
       if (!publicKey) throw new Error('Wallet not connected');
 
-      const bhPromise = connection.getLatestBlockhash('confirmed');
-      const bhTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`${label} blockhash timed out — RPC slow, retry`)), 8_000),
+      console.warn(`[blackhole] step 1/4 — ${label} getLatestBlockhash(confirmed)`);
+      const { blockhash, lastValidBlockHeight } = await blackholeWithTimeout(
+        `${label} getLatestBlockhash(confirmed)`,
+        connection.getLatestBlockhash('confirmed'),
+        8_000,
       );
-      const { blockhash, lastValidBlockHeight } = await Promise.race([bhPromise, bhTimeout]);
       tx.recentBlockhash = blockhash;
       tx.lastValidBlockHeight = lastValidBlockHeight;
       tx.feePayer = publicKey;
 
-      try {
-        const simPromise = connection.simulateTransaction(tx, undefined, {
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-        });
-        const simTimeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`${label} simulation timed out — RPC slow, retry`)), 12_000),
-        );
-        const simulation = await Promise.race([simPromise, simTimeoutPromise]);
-        if (simulation.value.err) {
-          throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}`);
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('simulation failed')) throw error;
-        if (error instanceof Error && error.message.includes('simulation timed out')) throw error;
-        console.warn(`[BlackHole] ${label} simulation skipped`, error);
-      }
+      await simulateBlackHoleBeforeSign(connection, tx, label);
 
       const origSerialize = tx.serialize.bind(tx);
       tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
@@ -1982,15 +2512,20 @@ const BlackHole = () => {
           verifySignatures: false,
         })) as typeof tx.serialize;
 
+      console.warn(`[blackhole] step 3/4 — ${label} wallet signing (popup expected)`);
       const signPromise = signTransaction
         ? signTransaction(tx).then(async (signed) => {
             console.warn(`[BlackHole] ${label} signed — broadcasting`, {
               feePayer: publicKey?.toBase58().slice(0, 8),
               blockhash: blockhash?.slice(0, 8),
             });
-            const sig = await connection.sendRawTransaction(
-              (signed as Transaction).serialize({ requireAllSignatures: false, verifySignatures: false }),
-              { skipPreflight: true, preflightCommitment: 'confirmed' },
+            const sig = await blackholeWithTimeout(
+              `${label} sendRawTransaction`,
+              connection.sendRawTransaction(
+                (signed as Transaction).serialize({ requireAllSignatures: false, verifySignatures: false }),
+                { skipPreflight: true, preflightCommitment: 'confirmed' },
+              ),
+              30_000,
             );
             console.warn(`[BlackHole] ${label} broadcast → ${sig}`);
             return sig;
@@ -2000,10 +2535,11 @@ const BlackHole = () => {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('Wallet signing timed out — please approve or reject in your wallet')),
-          30_000,
+          120_000,
         ),
       );
       const signature = await Promise.race([signPromise, timeoutPromise]);
+      console.warn(`[blackhole] step 4/4 — ${label} signature produced; confirming`);
       await waitForSignatureConfirmation(signature, label);
       return signature;
     },
@@ -2012,40 +2548,30 @@ const BlackHole = () => {
 
   const signAndSendVersionedTransaction = useCallback(
     async (tx: VersionedTransaction, label: string) => {
-      try {
-        const simPromise = connection.simulateTransaction(tx, {
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-        });
-        const simTimeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`${label} simulation timed out — RPC slow, retry`)), 12_000),
-        );
-        const simulation = await Promise.race([simPromise, simTimeoutPromise]);
-        if (simulation.value.err) {
-          throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}`);
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('simulation failed')) throw error;
-        if (error instanceof Error && error.message.includes('simulation timed out')) throw error;
-        console.warn(`[BlackHole] ${label} simulation skipped`, error);
-      }
+      await simulateBlackHoleBeforeSign(connection, tx, label);
 
+      console.warn(`[blackhole] step 2/3 — ${label} wallet signing (popup expected)`);
       const signPromise = signTransaction
         ? signTransaction(tx).then(async (signed) =>
-            connection.sendRawTransaction((signed as VersionedTransaction).serialize(), {
-              skipPreflight: true,
-              preflightCommitment: 'confirmed',
-            }),
+            blackholeWithTimeout(
+              `${label} sendRawTransaction`,
+              connection.sendRawTransaction((signed as VersionedTransaction).serialize(), {
+                skipPreflight: true,
+                preflightCommitment: 'confirmed',
+              }),
+              30_000,
+            ),
           )
         : sendTransaction(tx, connection, { skipPreflight: true, preflightCommitment: 'confirmed' });
 
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('Wallet signing timed out — please approve or reject in your wallet')),
-          30_000,
+          120_000,
         ),
       );
       const signature = await Promise.race([signPromise, timeoutPromise]);
+      console.warn(`[blackhole] step 3/3 — ${label} signature produced; confirming`);
       await waitForSignatureConfirmation(signature, label);
       return signature;
     },
@@ -2054,38 +2580,24 @@ const BlackHole = () => {
 
   const signAndExecuteOrderedTransaction = useCallback(
     async (tx: VersionedTransaction, requestId: string, label: string) => {
-      try {
-        const simPromise = connection.simulateTransaction(tx, {
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-        });
-        const simTimeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`${label} simulation timed out — RPC slow, retry`)), 12_000),
-        );
-        const simulation = await Promise.race([simPromise, simTimeoutPromise]);
-        if (simulation.value.err) {
-          throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}`);
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('simulation failed')) throw error;
-        if (error instanceof Error && error.message.includes('simulation timed out')) throw error;
-        console.warn(`[BlackHole] ${label} simulation skipped`, error);
-      }
+      await simulateBlackHoleBeforeSign(connection, tx, label);
 
       if (!signTransaction) {
         throw new Error('Current wallet does not support direct transaction signing for Jupiter execution');
       }
 
+      console.warn(`[blackhole] step 2/3 — ${label} wallet signing (popup expected)`);
       const signPromise = signTransaction(tx).then((signed) =>
         executeSwapTransaction(encodeVersionedTransaction(signed as VersionedTransaction), requestId),
       );
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('Wallet signing timed out — please approve or reject in your wallet')),
-          30_000,
+          120_000,
         ),
       );
       const result = await Promise.race([signPromise, timeoutPromise]);
+      console.warn(`[blackhole] step 3/3 — ${label} signature produced; confirming`);
       await waitForSignatureConfirmation(result.signature, label);
       return result.signature;
     },
@@ -2131,10 +2643,19 @@ const BlackHole = () => {
       }
 
       const validateTokenPlans = async (plans: ResolutionPlanItem[], mode: 'burn' | 'close') => {
+        if (Capacitor.isNativePlatform()) {
+          console.warn(`[blackhole] validate ${mode} — native RPC validation skipped before signing`);
+          return plans;
+        }
         const checks = await Promise.allSettled(
           plans.map(async (plan) => {
             const token = plan.token;
-            const account = await connection.getParsedAccountInfo(token.pubkey, 'confirmed');
+            console.warn(`[blackhole] validate ${mode} — getParsedAccountInfo ${token.pubkey.toBase58().slice(0, 8)}`);
+            const account = await blackholeWithTimeout(
+              `${mode} validate getParsedAccountInfo(${token.pubkey.toBase58().slice(0, 8)})`,
+              connection.getParsedAccountInfo(token.pubkey, 'confirmed'),
+              8_000,
+            );
             const value = account.value;
             if (!value) throw new Error('account no longer exists');
             if (!value.owner.equals(token.programId)) throw new Error('token program changed');
@@ -2212,7 +2733,7 @@ const BlackHole = () => {
       setIncinerationTokens(animationTargets);
 
       toast.info(`Preparing ${executablePlans.length} cleanup action${executablePlans.length > 1 ? 's' : ''}...`, {
-        description: `${swapPlans.length} swap · ${burnPlans.length} burn · ${closePlans.length} close · ~${estimatedNetSol.toFixed(4)} SOL · ~${estimatedReward} PRISM`,
+        description: `${swapPlans.length} swap · ${burnPlans.length} burn · ${closePlans.length} reclaim rent · ~${estimatedNetSol.toFixed(4)} SOL · ~${estimatedReward} PRISM`,
       });
 
       const operationMap = new Map<string, ResolutionOperation>();
@@ -2285,12 +2806,22 @@ const BlackHole = () => {
             description: `${tokenLabel} → SOL`,
           });
 
-          const preparedSwap = await buildSwapTransaction(publicKey.toBase58(), plan.swapQuote.quoteResponse);
+          console.warn(`[blackhole] step 1/4 — Swap ${index + 1}/${swapPlans.length} build-swap`);
+          const preparedSwap = await blackholeWithTimeout(
+            `Swap ${index + 1}/${swapPlans.length} build-swap`,
+            buildSwapTransaction(publicKey.toBase58(), plan.swapQuote.quoteResponse),
+            BLACKHOLE_RPC_TIMEOUT_MS + 2_000,
+          );
           const { swapTransaction } = preparedSwap;
+          if (!swapTransaction) throw new Error('Failed to build swap transaction');
+          console.warn(
+            `[blackhole] step 2/4 — Swap ${index + 1}/${swapPlans.length} decode transaction (${preparedSwap.transport})`,
+          );
           const versionedTx = decodeVersionedTransaction(swapTransaction);
           if (preparedSwap.transport === 'order_execute' && !preparedSwap.requestId) {
             throw new Error('Missing Jupiter requestId for swap execution');
           }
+          console.warn(`[blackhole] step 3/4 — Swap ${index + 1}/${swapPlans.length} sign path ready`);
           const swapSignature =
             preparedSwap.transport === 'order_execute'
               ? await signAndExecuteOrderedTransaction(
@@ -2453,13 +2984,17 @@ const BlackHole = () => {
     () => visibleTokens.filter(isSelectableToken),
     [isSelectableToken, visibleTokens],
   );
+  const resolvableVisibleTokens = useMemo(
+    () => visibleTokens.filter(isResolvableSelectionTarget),
+    [isResolvableSelectionTarget, visibleTokens],
+  );
   const selectedVisibleCount = useMemo(
     () => selectableVisibleTokens.filter((token) => selectedTokens.has(token.pubkey.toBase58())).length,
     [selectableVisibleTokens, selectedTokens],
   );
   const missingImageCount = useMemo(
-    () => tokens.filter((token) => token.metadataImageMissing || failedImageMints.has(token.mint)).length,
-    [failedImageMints, tokens],
+    () => tokens.filter((token) => token.metadataImageMissing).length,
+    [tokens],
   );
 
   const handleSort = useCallback(
@@ -2495,6 +3030,20 @@ const BlackHole = () => {
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }, [visibleTokens, sortField, sortDir]);
+  const totalPages = Math.max(1, Math.ceil(sortedTokens.length / perPage));
+  const paginatedTokens = useMemo(() => {
+    const start = (page - 1) * perPage;
+    return sortedTokens.slice(start, start + perPage);
+  }, [page, perPage, sortedTokens]);
+  const showPagination = sortedTokens.length > perPage;
+
+  useEffect(() => {
+    setPage(1);
+  }, [assetFilter, perPage]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const selectedPlanItems = useMemo(
     () =>
@@ -2638,6 +3187,7 @@ const BlackHole = () => {
   }, []);
 
   const [returning, setReturning] = useState(false);
+  const isNativeBlackHole = Capacitor.isNativePlatform();
 
   const handleReturnToCard = useCallback(() => {
     if (returning) return;
@@ -2676,8 +3226,8 @@ const BlackHole = () => {
   }, [returning, ownerPublicKey, addressParam, navigate]);
 
   return (
-    <div className={`identity-shell blackhole-shell ${returning ? 'bh-returning' : ''}`}>
-      <SiteHeader />
+    <div className={`identity-shell blackhole-shell ${isNativeBlackHole ? 'blackhole-shell--native' : ''} ${returning ? 'bh-returning' : ''}`}>
+      {!isNativeBlackHole && <SiteHeader />}
       {/* Wormhole tunnel handles transition — no void overlay needed */}
       {/* Background layers */}
       <div className="absolute inset-0 background-base" style={{ background: 'transparent' }} />
@@ -2714,17 +3264,6 @@ const BlackHole = () => {
 
       {/* ══ Hero: Title + Cinematic Black Hole ══ */}
       <div className="blackhole-hero">
-        <div className="mb-4 flex w-full max-w-[760px] items-center justify-start gap-3 px-4">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={handleReturnToCard}
-            className="h-10 rounded-full border border-cyan-500/20 bg-zinc-950/50 px-4 text-xs uppercase tracking-[0.18em] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100 focus-visible:ring-cyan-300"
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to hub
-          </Button>
-        </div>
         <h1 className="blackhole-hero__title">Black Hole</h1>
         <p className="blackhole-hero__sub">Recover rent from dust. Swap what still has value. Protected assets stay untouched.</p>
 
@@ -2758,6 +3297,9 @@ const BlackHole = () => {
               <div key={p.key} className="bh-debris-particle" style={p.style} />
             ))}
           </div>
+        </div>
+        <div className="flex w-full justify-center mt-4">
+          <HubReturnButton onClick={handleReturnToCard} disabled={returning} aria-label="Go to hub" />
         </div>
       </div>
 
@@ -2795,14 +3337,6 @@ const BlackHole = () => {
                 ) : (
                   'Connect wallet'
                 )}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleReturnToCard}
-                className="h-12 rounded-xl border-zinc-800 bg-zinc-950/50 px-6 text-sm text-zinc-200 hover:bg-zinc-900"
-              >
-                Back to hub
               </Button>
             </div>
             <p className="text-xs text-zinc-500">
@@ -2862,7 +3396,7 @@ const BlackHole = () => {
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                {!isReadOnlyScan && !connectedMatchesScan && (
+                {!connectedMatchesScan && (
                   <Button
                     type="button"
                     size="sm"
@@ -2870,7 +3404,7 @@ const BlackHole = () => {
                     disabled={connecting || pendingNativeConnect}
                     className="h-10 rounded-xl border border-zinc-800 bg-zinc-900/80 px-4 text-xs text-zinc-100 hover:bg-zinc-800 disabled:opacity-70"
                   >
-                    {connecting || pendingNativeConnect ? 'Connecting' : 'Connect'}
+                    {connecting || pendingNativeConnect ? 'Connecting' : isReadOnlyScan ? 'Connect matching wallet' : 'Connect'}
                   </Button>
                 )}
               </div>
@@ -2893,15 +3427,6 @@ const BlackHole = () => {
                         className="h-9 rounded-xl bg-zinc-100 px-4 text-xs font-medium text-zinc-950 hover:bg-white"
                       >
                         Try again
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={handleReturnToCard}
-                        className="h-9 rounded-xl border-zinc-800 bg-zinc-950/40 px-4 text-xs text-zinc-200 hover:bg-zinc-900"
-                      >
-                        Back to hub
                       </Button>
                     </div>
                   </div>
@@ -2932,7 +3457,7 @@ const BlackHole = () => {
                 <p className="mt-2 text-xs leading-relaxed text-zinc-400">
                   {tokens.length === 0
                     ? 'Try rescanning after the wallet finishes loading, or open this view with a wallet address.'
-                    : 'Protected and valuable assets are already filtered out. Turn on “Show all” if you want to inspect everything.'}
+                    : 'Switch between All, NFTs, and Tokens to inspect the scanned assets.'}
                 </p>
               </div>
             )}
@@ -3020,122 +3545,106 @@ const BlackHole = () => {
               })()}
 
             {/* Resolution Manifest */}
-            {canResolveScan && selectedTokens.size > 0 && (
-              <div className="manifest-card overflow-hidden rounded-[24px] border border-cyan-300/15 bg-slate-950/70 p-4 shadow-[0_24px_80px_rgba(0,0,0,0.45),0_0_55px_rgba(34,211,238,0.08)] backdrop-blur-xl sm:p-5">
-                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                  <div>
+            {canResolveScan && (
+              <div className="manifest-card blackhole-resolution-manifest rounded-2xl border border-zinc-800/70 bg-zinc-950/45 p-3 shadow-[0_14px_36px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <Flame className="h-4 w-4 text-cyan-300" aria-hidden="true" />
-                      <span className="bg-gradient-to-r from-cyan-300 via-violet-300 to-fuchsia-300 bg-clip-text text-[12px] font-black uppercase tracking-[0.22em] text-transparent">
+                      <Flame className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden="true" />
+                      <span className="truncate text-[11px] font-black uppercase tracking-[0.16em] text-cyan-100">
                         Resolution Manifest
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-400">
-                      Routes, burns, closures, and protected assets are staged before signature.
+                    <p className="mt-1 text-[11px] leading-snug text-zinc-400">
+                      {selectedTokens.size} selected, {summary.totalAccounts} executable, ~
+                      {parseFloat(summary.netReturn.toFixed(4))} SOL salvage
+                      {solPriceUsd ? ` (${formatUsd(summary.netReturn * solPriceUsd)})` : ''}.
                     </p>
                   </div>
                   {isPlanning && (
-                    <span className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-200">
+                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-cyan-200">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                      Analyzing
+                      Planning
                     </span>
                   )}
                 </div>
-                <div className="flex flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-2 text-center md:grid-cols-4 sm:gap-3">
-                    {[
-                      { label: 'Resolved', value: summary.totalAccounts, unit: 'assets', icon: Shield, tone: 'text-slate-200' },
-                      { label: 'Swap', value: summary.swapCount, unit: 'routed', icon: Coins, tone: 'text-cyan-300' },
-                      { label: 'Burn', value: summary.burnCount, unit: 'dust', icon: Flame, tone: 'text-orange-300' },
-                      { label: 'Close', value: summary.closeCount, unit: 'empties', icon: RefreshCw, tone: 'text-slate-200' },
-                      { label: 'Skipped', value: summary.skippedCount, unit: 'shielded', icon: Shield, tone: 'text-emerald-300' },
-                      {
-                        label: 'Rent',
-                        value: parseFloat(summary.grossReclaim.toFixed(4)),
-                        unit: 'SOL',
-                        icon: Coins,
-                        tone: 'text-slate-100',
-                      },
-                      {
-                        label: `Fee ${(commissionRate * 100).toFixed(0)}%`,
-                        value: `-${parseFloat(summary.commission.toFixed(4))}`,
-                        unit: 'SOL',
-                        icon: AlertTriangle,
-                        tone: 'text-slate-400',
-                      },
-                    ].map(({ label, value, unit, icon: Icon, tone }) => (
-                      <div key={label} className="rounded-[18px] border border-white/10 bg-white/[0.035] p-3">
-                        <Icon className="mx-auto mb-2 h-4 w-4 text-cyan-300/70" aria-hidden="true" />
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500">{label}</div>
-                        <div className={`mt-1 font-mono text-lg font-black ${tone}`}>{value}</div>
-                        <div className="text-[10px] uppercase tracking-[0.12em] text-slate-600">{unit}</div>
-                      </div>
-                    ))}
-                    {summary.totalValueLost > 0.001 && (
-                      <div className="rounded-[18px] border border-red-400/20 bg-red-950/30 p-3">
-                        <div className="text-[11px] text-red-400 uppercase tracking-wider flex items-center justify-center gap-1">
-                          <AlertTriangle className="h-3 w-3" /> Value Lost
-                        </div>
-                        <div className="text-lg font-bold font-mono text-red-400 mt-1">
-                          ~{parseFloat(summary.totalValueLost.toFixed(4))} <span className="text-xs">SOL</span>
-                        </div>
-                        {solPriceUsd && (
-                          <div className="text-[11px] text-red-500/70">
-                            {formatUsd(summary.totalValueLost * solPriceUsd)}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <div className="col-span-2 rounded-[20px] border border-cyan-300/35 bg-cyan-400/10 p-4 shadow-[0_0_35px_rgba(34,211,238,0.16)] md:col-span-2">
-                      <div className="text-[11px] text-cyan-200 uppercase tracking-[0.18em]">Est. Return</div>
-                      <div className="mt-1 font-mono text-2xl font-black text-cyan-100">
-                        ~{parseFloat(summary.netReturn.toFixed(4))} <span className="text-xs">SOL</span>
-                      </div>
-                      {solPriceUsd && (
-                        <div className="text-[11px] text-cyan-200/70">{formatUsd(summary.netReturn * solPriceUsd)}</div>
-                      )}
+
+                <div className="mt-3 grid grid-cols-2 gap-1.5 text-center sm:grid-cols-4">
+                  {[
+                    {
+                      label: 'Swap',
+                      displayLabel: 'Swap',
+                      value: summary.swapCount,
+                      tone: 'text-cyan-300',
+                      title: 'Swap liquid tokens to SOL before closing their token accounts.',
+                    },
+                    {
+                      label: 'Burn',
+                      displayLabel: 'Burn',
+                      value: summary.burnCount,
+                      tone: 'text-orange-300',
+                      title: 'Burn dust tokens or unlisted NFTs, then reclaim the account rent.',
+                    },
+                    {
+                      label: 'Reclaim rent',
+                      displayLabel: 'Reclaim rent',
+                      value: summary.closeCount,
+                      tone: 'text-zinc-200',
+                      title: 'Close empty token accounts and return rent to your wallet.',
+                    },
+                    {
+                      label: 'Skipped',
+                      displayLabel: 'Skipped',
+                      value: summary.skippedCount,
+                      tone: 'text-emerald-300',
+                      title: 'Selected assets kept out of execution because they are shielded or not profitable.',
+                    },
+                  ].map(({ label, displayLabel, value, tone, title }) => (
+                    <div key={label} title={title} className="rounded-xl border border-zinc-800/70 bg-zinc-950/35 px-2 py-2">
+                      <div className={`font-mono text-base font-black leading-none ${tone}`}>{value}</div>
+                      <div className="mt-1 text-[9px] font-bold uppercase leading-tight tracking-[0.08em] text-zinc-500">{displayLabel}</div>
                     </div>
-                    <div className="col-span-2 rounded-[20px] border border-amber-300/30 bg-amber-400/10 p-4 md:col-span-2">
-                      <div className="text-[11px] text-amber-200 uppercase tracking-[0.18em]">Est. PRISM</div>
-                      <div className="mt-1 font-mono text-2xl font-black text-amber-200">~{summary.estimatedReward}</div>
-                      <div className="text-[11px] text-amber-200/60">Verified on-chain after cleanup</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                    <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-cyan-200">
-                      <Coins className="h-3.5 w-3.5" /> Swap if routed
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-full border border-orange-300/20 bg-orange-300/10 px-3 py-1 text-orange-200">
-                      <Flame className="h-3.5 w-3.5" /> Burn if optimal
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-full border border-slate-300/15 bg-slate-300/10 px-3 py-1 text-slate-200">
-                      <RefreshCw className="h-3.5 w-3.5" /> Close empties
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-200">
-                      <Shield className="h-3.5 w-3.5" /> Shield valuables
-                    </span>
-                  </div>
-                  <div className="flex justify-center">
-                    <Button
-                      onClick={handleIncinerate}
-                      disabled={isBurning || isPlanning || summary.totalAccounts === 0}
-                      className="h-14 w-full rounded-full bg-gradient-to-r from-cyan-400 via-violet-500 to-fuchsia-500 px-8 text-base font-black text-slate-950 shadow-[0_16px_50px_rgba(167,139,250,0.32)] transition-all duration-200 hover:from-cyan-300 hover:via-violet-400 hover:to-fuchsia-400 disabled:opacity-50"
-                    >
-                      {isBurning ? (
-                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      ) : isPlanning ? (
-                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      ) : (
-                        <Flame className="mr-2 h-5 w-5" />
-                      )}
-                      <span className="hidden sm:inline">
-                        EXECUTE {summary.totalAccounts} action{summary.totalAccounts !== 1 ? 's' : ''} &rarr;{' '}
-                      </span>
-                      <span className="sm:hidden">EXECUTE {summary.totalAccounts} &rarr; </span>~
-                      {parseFloat(summary.netReturn.toFixed(4))} SOL
-                    </Button>
-                  </div>
+                  ))}
                 </div>
+
+                {selectedTokens.size === 0 && (
+                  <div className="mt-3 rounded-xl border border-zinc-800/60 bg-zinc-950/35 px-3 py-2 text-[11px] text-zinc-500">
+                    Select assets below to preview your cleanup plan.
+                  </div>
+                )}
+
+                <div
+                  className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.07] px-3 py-2 text-[11px] text-amber-100"
+                  title="Estimated Prism Coins credited after the cleanup is verified. Daily caps and staking boosts can change the final amount."
+                >
+                  <Coins className="mr-1 inline h-3 w-3 text-amber-300" aria-hidden="true" />
+                  Prism reward: ~{summary.estimatedReward} 🜨
+                </div>
+
+                {summary.totalValueLost > 0.001 && (
+                  <div className="mt-3 rounded-xl border border-red-400/20 bg-red-950/24 px-3 py-2 text-[11px] text-red-300">
+                    <AlertTriangle className="mr-1 inline h-3 w-3" />
+                    Value at risk: ~{parseFloat(summary.totalValueLost.toFixed(4))} SOL
+                  </div>
+                )}
+
+                <Button
+                  onClick={handleIncinerate}
+                  disabled={isBurning || isPlanning || summary.totalAccounts === 0}
+                  title={summary.totalAccounts === 0 ? 'Select assets to execute' : undefined}
+                  className={`mt-3 h-12 w-full rounded-full px-5 text-sm font-black transition-all duration-200 ${
+                    summary.totalAccounts === 0
+                      ? 'border border-zinc-800/70 bg-zinc-900/45 text-zinc-500 shadow-none hover:bg-zinc-900/45 disabled:opacity-100'
+                      : 'bg-gradient-to-r from-cyan-400 via-violet-500 to-fuchsia-500 text-slate-950 shadow-[0_14px_38px_rgba(34,211,238,0.18)] hover:from-cyan-300 hover:via-violet-400 hover:to-fuchsia-400 disabled:opacity-50'
+                  }`}
+                >
+                  {isBurning || isPlanning ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Flame className="mr-2 h-4 w-4" />
+                  )}
+                  EXECUTE {summary.totalAccounts} {'->'} ~{parseFloat(summary.netReturn.toFixed(4))} SOL
+                </Button>
               </div>
             )}
 
@@ -3176,45 +3685,37 @@ const BlackHole = () => {
             )}
 
             {/* Controls */}
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
+            <div className="blackhole-controls">
+              <button
+                type="button"
                 onClick={() => fetchTokens(ownerPublicKey)}
                 disabled={!ownerPublicKey || isLoading}
-                variant="outline"
-                size="sm"
-                className="border-zinc-800 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                className="blackhole-filter-tab blackhole-rescan-button"
               >
                 {isLoading ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
                 ) : (
-                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  <RefreshCw className="mr-1.5 h-3 w-3" />
                 )}
                 Re-scan
-              </Button>
+              </button>
 
               {/* Quick Filters */}
-              <div className="flex rounded-lg border border-zinc-800/60 overflow-hidden">
+              <div className="blackhole-filter-tabs" role="tablist" aria-label="Asset filter">
                 {(['all', 'nft', 'token'] as const).map((f) => (
                   <button
                     key={f}
+                    type="button"
+                    role="tab"
+                    aria-selected={assetFilter === f}
+                    data-state={assetFilter === f ? 'active' : 'inactive'}
                     onClick={() => setAssetFilter(f)}
-                    className={`px-3 py-1.5 text-[11px] font-medium transition-colors ${assetFilter === f ? 'bg-cyan-600/20 text-cyan-300 border-cyan-500/30' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/50'}`}
+                    className="blackhole-filter-tab"
                   >
                     {f === 'all' ? 'All' : f === 'nft' ? 'NFTs' : 'Tokens'}
                   </button>
                 ))}
               </div>
-
-              <button
-                type="button"
-                className="blackhole-show-all-toggle"
-                aria-pressed={showAllAssets}
-                data-state={showAllAssets ? 'checked' : 'unchecked'}
-                onClick={() => handleShowAllToggle(!showAllAssets)}
-              >
-                <span className="blackhole-checkbox blackhole-checkbox-indicator" aria-hidden="true" />
-                <span>Show all</span>
-              </button>
             </div>
 
             {/* ═══ Mobile Token List (< 640px) ═══ */}
@@ -3235,8 +3736,15 @@ const BlackHole = () => {
                       disabled={selectableVisibleTokens.length === 0}
                       className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                     />
+                  ) : resolvableVisibleTokens.length > 0 ? (
+                    <Checkbox
+                      aria-label="Connect matching wallet to select cleanup candidates"
+                      checked={false}
+                      disabled
+                      className="h-4 w-4 rounded-[12px] border-zinc-700 bg-transparent opacity-50"
+                    />
                   ) : (
-                    <Shield className="h-3.5 w-3.5 text-zinc-700" aria-hidden="true" />
+                    <Shield className="h-3.5 w-3.5 text-zinc-700" aria-label="Protected assets only" />
                   )}
                 </div>
                 <span className="text-center">Asset</span>
@@ -3263,24 +3771,28 @@ const BlackHole = () => {
               {visibleTokens.length === 0 ? (
                 <div className="py-4 text-center text-zinc-600 text-sm">
                   {isLoading
-                    ? `${scanStep}...`
-                    : fetchError
-                      ? 'Scan failed. Use Re-scan above to try again.'
-                      : 'No threats detected. Toggle "Show all" to review all assets.'}
+                      ? `${scanStep}...`
+                      : fetchError
+                        ? 'Scan failed. Use Re-scan above to try again.'
+                      : 'No assets found for this filter.'}
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {sortedTokens.map((token) => {
+                  {paginatedTokens.map((token) => {
                     const key = token.pubkey.toBase58();
                     const plan = resolutionPlan[key];
                     const decision = getTokenDecision(token);
                     const selectable = isSelectableToken(token);
+                    const selectionTarget = isResolvableSelectionTarget(token);
                     const netEst = selectedTokens.has(key) && plan ? plan.estimatedNetSol : (token.netGainSol ?? 0);
                      const rawName = getAssetDisplayName(token);
                      const displayName = rawName.length > 10 ? rawName.slice(0, 9) + '…' : rawName;
                      const StatusIcon = decision.icon;
-                     const resolvedImage = token.image;
-                     const imageFailed = failedImageMints.has(token.mint);
+                     const cachedImage = readBlackHoleImageCacheEntry(token.mint);
+                     const imageFailed = failedImageMints.has(token.mint) || isBlackHoleImageFailureCoolingDown(token.mint);
+                     const resolvedImage = imageFailed ? undefined : (cachedImage || token.image);
+                     const metadataLoading = token.metadataPending || (!token.name && !token.symbol);
+                     const floorLabel = getNftFloorLabel(token, solPriceUsd);
                      return (
                        <div
                          key={key}
@@ -3303,37 +3815,65 @@ const BlackHole = () => {
                                 disabled={!selectable}
                                 className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                               />
+                           ) : selectionTarget ? (
+                             <Checkbox
+                               aria-label={`Connect matching wallet to select ${rawName}`}
+                               checked={false}
+                               disabled
+                               className="h-4 w-4 rounded-[12px] border-zinc-700 bg-transparent opacity-50"
+                             />
                            ) : (
-                             <Shield className="h-3.5 w-3.5 text-zinc-500/80" aria-hidden="true" />
+                             <Shield className="h-3.5 w-3.5 text-zinc-500/80" aria-label={`${rawName} is protected`} />
                            )}
                          </div>
                         {/* Asset */}
                         <div className="flex items-center gap-1.5 min-w-0 overflow-hidden pr-1">
                            {resolvedImage && !imageFailed ? (
                               <TokenAvatar
+                                mint={token.mint}
                                 imageUrl={resolvedImage}
                                 alt={`${getAssetDisplayName(token)} icon`}
                                 className="blackhole-token-avatar h-6 w-6 rounded-lg"
-                               onFail={() =>
+                                isNft={token.isNft}
+                               onFail={() => {
+                                 const coolingDown = recordBlackHoleImageFailure(token.mint);
+                                 if (!coolingDown) return false;
                                  setFailedImageMints((prev) => {
                                    if (prev.has(token.mint)) return prev;
                                    const next = new Set(prev);
                                    next.add(token.mint);
                                    return next;
-                                 })
-                               }
+                                 });
+                                 return true;
+                               }}
+                               onLoad={() => {
+                                 writeBlackHoleImageCacheEntry(token.mint, resolvedImage);
+                                 setFailedImageMints((prev) => {
+                                   if (!prev.has(token.mint)) return prev;
+                                   const next = new Set(prev);
+                                   next.delete(token.mint);
+                                   return next;
+                                 });
+                               }}
                              />
                            ) : (
                              <div
-                               className="blackhole-token-avatar blackhole-token-avatar--missing h-6 w-6 rounded-lg"
-                               title={getTokenTooltip(token)}
+                               className="contents"
                              >
-                              <span aria-hidden="true">{getAssetDisplayName(token).slice(0, 1).toUpperCase()}</span>
+                              <GenericAssetAvatar
+                                mint={token.mint}
+                                isNft={token.isNft}
+                                className="blackhole-token-avatar h-6 w-6 rounded-lg"
+                                title={getTokenTooltip(token)}
+                              />
                             </div>
                           )}
                           <div className="min-w-0">
                             <div className="text-[11px] font-medium text-zinc-200 leading-none truncate">
                               {displayName}
+                              {metadataLoading && (
+                                <Loader2 className="ml-1 inline h-2.5 w-2.5 animate-spin text-zinc-500" aria-label="Loading metadata" />
+                              )}
                             </div>
                             <div className="flex items-center gap-1 mt-0.5">
                               <span
@@ -3342,7 +3882,7 @@ const BlackHole = () => {
                                 {token.isNft ? 'NFT' : getTokenProgramLabel(token)}
                               </span>
                               <span className="text-[8px] text-zinc-600 font-mono">
-                                {formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)}◎` : ''}
+                                {floorLabel ?? (formatSolCompact(token.valueSol) ? `${formatSolCompact(token.valueSol)}◎` : '')}
                               </span>
                             </div>
                           </div>
@@ -3378,7 +3918,6 @@ const BlackHole = () => {
                       </div>
                     );
                   })}
-                  <div className="blackhole-mobile-bottom-spacer" aria-hidden="true" />
                 </div>
               )}
             </div>
@@ -3400,8 +3939,15 @@ const BlackHole = () => {
                             disabled={selectableVisibleTokens.length === 0}
                             className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                           />
+                        ) : resolvableVisibleTokens.length > 0 ? (
+                          <Checkbox
+                            aria-label="Connect matching wallet to select cleanup candidates"
+                            checked={false}
+                            disabled
+                            className="h-4 w-4 rounded-[12px] border-zinc-700 bg-transparent opacity-50"
+                          />
                         ) : (
-                          <Shield className="h-3.5 w-3.5 text-zinc-500/80" aria-hidden="true" />
+                          <Shield className="h-3.5 w-3.5 text-zinc-500/80" aria-label="Protected assets only" />
                         )}
                       </div>
                     </TableHead>
@@ -3435,18 +3981,22 @@ const BlackHole = () => {
                           ? `${scanStep}...`
                           : fetchError
                             ? 'Scan failed. Use Re-scan above to try again.'
-                            : 'No threats detected. Toggle "Show all" to review all assets.'}
+                            : 'No assets found for this filter.'}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    sortedTokens.map((token) => {
+                    paginatedTokens.map((token) => {
                       const key = token.pubkey.toBase58();
                       const plan = resolutionPlan[key];
                       const decision = getTokenDecision(token);
                       const selectable = isSelectableToken(token);
+                      const selectionTarget = isResolvableSelectionTarget(token);
                       const StatusIcon = decision.icon;
-                      const resolvedImage = token.image;
-                      const imageFailed = failedImageMints.has(token.mint);
+                      const cachedImage = readBlackHoleImageCacheEntry(token.mint);
+                      const imageFailed = failedImageMints.has(token.mint) || isBlackHoleImageFailureCoolingDown(token.mint);
+                      const resolvedImage = imageFailed ? undefined : (cachedImage || token.image);
+                      const metadataLoading = token.metadataPending || (!token.name && !token.symbol);
+                      const floorLabel = getNftFloorLabel(token, solPriceUsd);
                       const netEst = selectedTokens.has(key) && plan ? plan.estimatedNetSol : (token.netGainSol ?? 0);
                       return (
                         <TableRow key={key} className="h-[58px] border-zinc-800/40 hover:bg-zinc-900/40">
@@ -3459,8 +4009,15 @@ const BlackHole = () => {
                                   disabled={!selectable}
                                   className="h-4 w-4 rounded-[12px] border-zinc-600 bg-transparent data-[state=checked]:border-cyan-500 data-[state=checked]:bg-cyan-500/15 data-[state=checked]:text-cyan-300"
                                 />
+                              ) : selectionTarget ? (
+                                <Checkbox
+                                  aria-label={`Connect matching wallet to select ${getAssetDisplayName(token)}`}
+                                  checked={false}
+                                  disabled
+                                  className="h-4 w-4 rounded-[12px] border-zinc-700 bg-transparent opacity-50"
+                                />
                               ) : (
-                                <Shield className="h-3.5 w-3.5 text-zinc-700" aria-hidden="true" />
+                                <Shield className="h-3.5 w-3.5 text-zinc-700" aria-label={`${getAssetDisplayName(token)} is protected`} />
                               )}
                             </div>
                           </TableCell>
@@ -3468,24 +4025,42 @@ const BlackHole = () => {
                             <div className="flex items-center gap-2">
                               {resolvedImage && !imageFailed ? (
                                 <TokenAvatar
+                                  mint={token.mint}
                                   imageUrl={resolvedImage}
                                   alt={`${getAssetDisplayName(token)} icon`}
                                   className="blackhole-token-avatar h-7 w-7 rounded-lg"
-                                  onFail={() =>
+                                  isNft={token.isNft}
+                                  onFail={() => {
+                                    const coolingDown = recordBlackHoleImageFailure(token.mint);
+                                    if (!coolingDown) return false;
                                     setFailedImageMints((prev) => {
                                       if (prev.has(token.mint)) return prev;
                                       const next = new Set(prev);
                                       next.add(token.mint);
                                       return next;
-                                    })
-                                  }
+                                    });
+                                    return true;
+                                  }}
+                                  onLoad={() => {
+                                    writeBlackHoleImageCacheEntry(token.mint, resolvedImage);
+                                    setFailedImageMints((prev) => {
+                                      if (!prev.has(token.mint)) return prev;
+                                      const next = new Set(prev);
+                                      next.delete(token.mint);
+                                      return next;
+                                    });
+                                  }}
                                 />
                               ) : (
                                 <div
-                                  className="blackhole-token-avatar blackhole-token-avatar--missing h-7 w-7 rounded-lg"
-                                  title={getTokenTooltip(token)}
+                                  className="contents"
                                 >
-                                  <span aria-hidden="true">{getAssetDisplayName(token).slice(0, 1).toUpperCase()}</span>
+                                  <GenericAssetAvatar
+                                    mint={token.mint}
+                                    isNft={token.isNft}
+                                    className="blackhole-token-avatar h-7 w-7 rounded-lg"
+                                    title={getTokenTooltip(token)}
+                                  />
                                 </div>
                               )}
                               <div className="flex flex-col min-w-0">
@@ -3493,6 +4068,9 @@ const BlackHole = () => {
                                   <span className="font-medium text-zinc-200 text-[12px] leading-tight truncate max-w-[90px]">
                                     {getAssetDisplayName(token)}
                                   </span>
+                                  {metadataLoading && (
+                                    <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-zinc-500" aria-label="Loading metadata" />
+                                  )}
                                   <span
                                     className={`text-[8px] px-1 py-px rounded leading-none shrink-0 ${token.isNft ? 'bg-purple-900/30 text-purple-400' : token.programId.equals(TOKEN_2022_PROGRAM_ID) ? 'bg-cyan-950/40 text-cyan-300' : 'bg-zinc-800/60 text-zinc-500'}`}
                                   >
@@ -3529,6 +4107,7 @@ const BlackHole = () => {
                                   {token.symbol ? `${token.symbol} · ` : ''}
                                   {token.mint.slice(0, 4)}...{token.mint.slice(-4)}
                                   {token.isNft && token.collectionName ? ` · ${token.collectionName}` : ''}
+                                  {floorLabel ? ` · ${floorLabel}` : ''}
                                 </span>
                               </div>
                             </div>
@@ -3570,6 +4149,66 @@ const BlackHole = () => {
                   )}
                 </TableBody>
               </Table>
+            </div>
+            <div className="blackhole-pagination" aria-label="Asset pagination">
+              <div className="blackhole-per-page">
+                <span>Per page</span>
+                <div className="blackhole-page-select-wrap" onBlur={() => setPerPageMenuOpen(false)}>
+                  <button
+                    type="button"
+                    className="blackhole-page-select"
+                    aria-label="Rows per page"
+                    aria-haspopup="listbox"
+                    aria-expanded={perPageMenuOpen}
+                    onClick={() => setPerPageMenuOpen((open) => !open)}
+                  >
+                    {perPage}
+                  </button>
+                  {perPageMenuOpen && (
+                    <div className="blackhole-page-select-menu" role="listbox" aria-label="Rows per page options">
+                    {PER_PAGE_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        role="option"
+                        aria-selected={perPage === option}
+                        className="blackhole-page-select-item"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setPerPage(option);
+                          setPerPageMenuOpen(false);
+                        }}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {showPagination && (
+                <div className="blackhole-page-nav">
+                  <button
+                    type="button"
+                    className="blackhole-page-button"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={page <= 1}
+                  >
+                    ‹ Prev
+                  </button>
+                  <span className="blackhole-page-status">
+                    Page {page} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="blackhole-page-button"
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next ›
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

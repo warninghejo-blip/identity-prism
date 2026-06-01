@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { trackCompare } from '@/lib/analytics';
 import { toast } from 'sonner';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Wallet, Search, Trophy, ArrowUpDown, Loader2, Swords, Shield, Zap, Home } from 'lucide-react';
+import { Wallet, Search, Trophy, ArrowUpDown, Loader2, Swords, Shield, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageShell from '@/components/PageShell';
+import HubReturnButton from '@/components/HubReturnButton';
 import {
   TIER_LABELS,
   TIER_TEXT_COLORS as TIER_COLORS,
@@ -338,24 +338,11 @@ export default function Compare() {
       {/* Header */}
       <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button
-            onClick={() => startFadeTransition(() => goBack(navigate))}
-            className="text-white/50 hover:text-white transition-colors"
-            title="Back"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
+          <HubReturnButton title="Hub" />
           <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">
             Compare Wallets
           </h1>
           <div className="flex-1" />
-          <button
-            onClick={() => startFadeTransition(() => goBack(navigate))}
-            className="text-white/50 hover:text-white transition-colors"
-            title="Home"
-          >
-            <Home className="w-5 h-5" />
-          </button>
           {!wallet.connected && (
             <Button
               size="sm"

@@ -127,17 +127,17 @@ describe('getSessionJwt', () => {
     expect(getSessionJwt()).toBeNull();
   });
 
-  it('ignores legacy localStorage JWT entries', () => {
+  it('restores valid localStorage JWT entries', () => {
     localStorage.setItem(
       'ip_auth_jwt',
       JSON.stringify({
-        token: 'legacy-token',
+        token: 'persisted-token',
         address: 'LegacyAddress',
         expiresAt: Date.now() + 60 * 60 * 1000,
       }),
     );
-    expect(getSessionJwt()).toBeNull();
-    expect(sessionStorage.getItem('ip_auth_jwt')).toBeNull();
+    expect(getSessionJwt()).toBe('persisted-token');
+    expect(sessionStorage.getItem('ip_auth_jwt')).toContain('persisted-token');
   });
 });
 
@@ -172,17 +172,17 @@ describe('getCachedJwt', () => {
     expect(getCachedJwt('WalletC')).toBeNull();
   });
 
-  it('does not restore a matching JWT from localStorage', () => {
+  it('restores a matching JWT from localStorage', () => {
     localStorage.setItem(
       'ip_auth_jwt',
       JSON.stringify({
-        token: 'legacy-token',
+        token: 'persisted-token',
         address: 'WalletXYZ',
         expiresAt: Date.now() + 2 * 60 * 60 * 1000,
       }),
     );
-    expect(getCachedJwt('WalletXYZ')).toBeNull();
-    expect(sessionStorage.getItem('ip_auth_jwt')).toBeNull();
+    expect(getCachedJwt('WalletXYZ')).toBe('persisted-token');
+    expect(sessionStorage.getItem('ip_auth_jwt')).toContain('persisted-token');
   });
 });
 

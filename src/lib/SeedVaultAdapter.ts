@@ -166,17 +166,14 @@ export class SeedVaultAdapter extends BaseSignerWalletAdapter {
   }
 
   async disconnect(): Promise<void> {
-    const token = this._authToken;
+    // Clear local state only — keep the SeedVault authorization so the user
+    // doesn't have to re-pick a seed + re-enter PIN the next time they tap
+    // "Connect Wallet". Calling SeedVault.deauthorize() would revoke the
+    // authToken and force the system "Choose a seed" sheet on next connect.
+    // Use signOut/forgetWallet (not implemented) if a true revoke is needed.
     this._publicKey = null;
     this._authToken = null;
     this._derivationPath = null;
-    if (token !== null) {
-      try {
-        await SeedVault.deauthorize({ authToken: token });
-      } catch (e: any) {
-        this.emit('error', new WalletDisconnectionError(e?.message, e));
-      }
-    }
     this.emit('disconnect');
   }
 

@@ -5,6 +5,8 @@
  * NOTE: Composite score is NOT included — it already powers ship stats.
  */
 
+import { fetchApiJson, getApiBase, getCachedJwt } from '@/components/prism/shared';
+
 // ── Types ──
 
 export interface RangerRank {
@@ -218,11 +220,26 @@ export function getRankProgress(xp: number): number {
  */
 export async function fetchServerXP(address: string): Promise<RangerXPSources | null> {
   try {
-    const res = await fetch(`/api/xp?address=${encodeURIComponent(address)}`);
-    if (!res.ok) return null;
-    const data = await res.json();
+    const base = getApiBase();
+    if (!base) {
+      console.warn('[ranger] fetchServerXP: no api base');
+      return null;
+    }
+    const token = getCachedJwt(address);
+    if (!token) {
+      console.warn('[ranger] fetchServerXP: no JWT cached for', address.slice(0, 8));
+      return null;
+    }
+    const data = await fetchApiJson<{ sources?: RangerXPSources }>(
+      `${base}/api/xp?address=${encodeURIComponent(address)}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        timeoutMs: 8000,
+      },
+    );
     return (data.sources as RangerXPSources) ?? null;
-  } catch {
+  } catch (e) {
+    console.warn('[ranger] fetchServerXP failed:', e instanceof Error ? e.message : e);
     return null;
   }
 }
