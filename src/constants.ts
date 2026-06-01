@@ -17,6 +17,14 @@ const getNativeHostedOrigin = () => {
   return null;
 };
 
+// Last-resort base for env-less prod builds: the page's own origin (same-origin
+// nginx → backend). Mirrors getHeliusProxyUrl's window.location.origin fallback so
+// metadata/app URLs resolve on the real domain, not just localhost (APK) / dev.
+const getCurrentHttpsOrigin = () => {
+  if (typeof window === 'undefined' || !window.location?.origin) return null;
+  return normalizeProxyUrl(window.location.origin);
+};
+
 const getLocalDevOrigin = () => {
   if (import.meta.env.DEV && typeof window !== 'undefined' && window.location?.origin) {
     const devHost = window.location.hostname ?? '';
@@ -43,14 +51,14 @@ export const getMetadataBaseUrl = () =>
     ? normalizeProxyUrl(METADATA_BASE_URL)
     : getNativeHostedOrigin()
       ? normalizeProxyUrl(getNativeHostedOrigin()!)
-      : null);
+      : getCurrentHttpsOrigin());
 export const getMetadataImageUrl = () => {
   if (METADATA_IMAGE_URL) return METADATA_IMAGE_URL;
   const baseUrl = getMetadataBaseUrl();
   return baseUrl ? `${baseUrl}/phav.png` : null;
 };
 export const getAppBaseUrl = () =>
-  APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : getNativeHostedOrigin() ? normalizeProxyUrl(getNativeHostedOrigin()!) : null;
+  APP_BASE_URL ? normalizeProxyUrl(APP_BASE_URL) : getNativeHostedOrigin() ? normalizeProxyUrl(getNativeHostedOrigin()!) : getCurrentHttpsOrigin();
 export const getCollectionMint = () => (COLLECTION_MINT ? COLLECTION_MINT : PRODUCTION_CORE_COLLECTION);
 export const getCollectionVerifyUrl = () => (COLLECTION_VERIFY_URL ? normalizeProxyUrl(COLLECTION_VERIFY_URL) : null);
 export const getUpdateAuthorityAddress = () => (UPDATE_AUTHORITY ? UPDATE_AUTHORITY : null);
