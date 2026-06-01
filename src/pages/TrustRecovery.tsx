@@ -7,7 +7,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import {
-  ArrowLeft,
   Shield,
   Gamepad2,
   CheckCircle,
@@ -22,9 +21,9 @@ import {
   Star,
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
-import { goBack } from '@/lib/safeNavigate';
-import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
+import { fadeOutTransition } from '@/lib/fadeTransition';
 import { getApiBase } from '@/components/prism/shared';
+import HubReturnButton from '@/components/HubReturnButton';
 
 const BASE = () => getApiBase();
 
@@ -133,28 +132,13 @@ export default function TrustRecovery() {
       <div className="max-w-lg mx-auto px-4 pb-20 pt-4 space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => goBack(navigate)}
-            className="p-2.5 rounded-xl hover:bg-white/5 transition-colors"
-            title="Back"
-          >
-            <ArrowLeft className="w-5 h-5 text-white/40" />
-          </button>
+          <HubReturnButton />
           <div className="flex-1">
             <h1 className="text-lg font-bold text-white/90 flex items-center gap-2">
               <Shield className="w-5 h-5 text-cyan-400" /> Trust Recovery
             </h1>
             <p className="text-xs text-white/30">Build activity proof for the Sybil Trust scale</p>
           </div>
-          <button
-            onClick={() => {
-              startFadeTransition();
-              navigate('/');
-            }}
-            className="px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-white/30 text-xs hover:bg-white/[0.06] hover:text-white/50 transition-colors"
-          >
-            Home
-          </button>
         </div>
 
         {loading ? (

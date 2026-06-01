@@ -320,6 +320,29 @@ try {
   if (import.meta.env.DEV) console.warn('[BlurPatch] init skipped:', e);
 }
 
+// COLD-START WALLET RE-AUTH: every fresh WebView process must reconnect wallet
+// AND re-sign the auth challenge. The user explicitly picks a Seed Vault account
+// on launch, then JWT is prewarmed once via the existing post-connect flow, so
+// every authenticated action (claim/stake/unstake) is instant.
+try {
+  if (typeof window !== 'undefined') {
+    const SESSION_SENTINEL = 'ip_session_active';
+    if (!window.sessionStorage.getItem(SESSION_SENTINEL)) {
+      // Wallet connection cache
+      try { window.localStorage.removeItem('walletName'); } catch {}
+      try { window.localStorage.removeItem('prism_active_address'); } catch {}
+      try { window.localStorage.removeItem('SolanaMobileWalletAdapterDefaultAuthorizationCache'); } catch {}
+      // App-specific seed vault sticky selection
+      try { window.localStorage.removeItem('ip_last_connected_wallet'); } catch {}
+      try { window.localStorage.removeItem('ip_seed_wallet_index'); } catch {}
+      // JWT must be re-signed so the new connect flow prewarms it once
+      try { window.localStorage.removeItem('ip_auth_jwt'); } catch {}
+      try { window.sessionStorage.removeItem('ip_auth_jwt'); } catch {}
+      window.sessionStorage.setItem(SESSION_SENTINEL, '1');
+    }
+  }
+} catch {}
+
 const mobileWalletAdapter = new SolanaMobileWalletAdapter({
   addressSelector: createDefaultAddressSelector(),
   appIdentity,

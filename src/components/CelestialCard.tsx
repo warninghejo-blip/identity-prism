@@ -650,7 +650,7 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   return (
                     <TrustGradeBadge
                       grade={grade}
-                      size="xs"
+                      size="lg"
                       className="capture-hidden absolute top-3 left-3"
                     />
                   );

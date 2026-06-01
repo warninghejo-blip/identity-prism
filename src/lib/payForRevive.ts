@@ -1,5 +1,5 @@
 import { WalletContextState } from '@solana/wallet-adapter-react';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
@@ -11,9 +11,12 @@ import {
 } from '@/lib/solanaToken';
 import { SEEKER_TOKEN, TREASURY_ADDRESS, getHeliusRpcUrl, getHeliusProxyHeaders } from '@/constants';
 import { SeedVaultAdapter } from '@/lib/SeedVaultAdapter';
+import { toast } from 'sonner';
 
 const REVIVE_SKR_AMOUNT = 5;
 const MIN_SOL_FOR_FEE = 0.003;
+const PUBLIC_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
+const NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS = 5_000;
 
 export type ReviveError =
   | { code: 'INSUFFICIENT_SKR'; skrBalance: number; required: number }
@@ -57,6 +60,205 @@ async function resolveReviveWallet(wallet: WalletContextState, expectedAddress?:
   };
 }
 
+// Per-step timeout so any hung Connection RPC call fails fast with a clear
+// label, instead of stalling the UI on PROCESSING and never reaching signTransaction.
+const reviveWithTimeout = <T,>(label: string, p: Promise<T>, ms: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`[revive] STEP_TIMEOUT ${label} after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+};
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function bytesToBase58(bytes: Uint8Array): string {
+  const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i += 1) {
+      carry += digits[i] << 8;
+      digits[i] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let result = '';
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    result += alphabet[0];
+  }
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    result += alphabet[digits[i]];
+  }
+  return result;
+}
+
+function signedTransactionSignature(tx: Transaction): string | null {
+  return tx.signature ? bytesToBase58(new Uint8Array(tx.signature)) : null;
+}
+
+const isReviveRpcTimeout = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /timeout|timed out|SocketTimeout/i.test(message);
+};
+
+const reviveSleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function reviveNativeRpcRequest<T>(
+  rpcUrl: string,
+  headers: Record<string, string>,
+  method: string,
+  params: unknown[],
+  timeoutMs: number,
+): Promise<T> {
+  const response = await CapacitorHttp.post({
+    url: rpcUrl,
+    headers: { 'Content-Type': 'application/json', ...headers },
+    data: { jsonrpc: '2.0', id: Date.now(), method, params },
+    responseType: 'json',
+    connectTimeout: timeoutMs,
+    readTimeout: timeoutMs,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`[revive] RPC ${method} failed (${response.status})`);
+  }
+  const payload = response.data;
+  if (payload?.error) {
+    throw new Error(payload.error.message || `[revive] RPC ${method} error`);
+  }
+  return payload?.result as T;
+}
+
+async function reviveNativeGetLatestBlockhash(
+  rpcUrl: string,
+  headers: Record<string, string>,
+): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+  const result = await reviveNativeRpcRequest<{ value?: { blockhash?: string; lastValidBlockHeight?: number } }>(
+    rpcUrl,
+    headers,
+    'getLatestBlockhash',
+    [{ commitment: 'confirmed' }],
+    8_000,
+  );
+  const blockhash = result?.value?.blockhash;
+  const lastValidBlockHeight = Number(result?.value?.lastValidBlockHeight);
+  if (!blockhash || !Number.isFinite(lastValidBlockHeight)) {
+    throw new Error('[revive] invalid getLatestBlockhash response');
+  }
+  return { blockhash, lastValidBlockHeight };
+}
+
+async function reviveNativeGetTokenAccountBalance(
+  rpcUrl: string,
+  headers: Record<string, string>,
+  ata: PublicKey,
+) {
+  return reviveNativeRpcRequest<{ value: { uiAmount: number | null; decimals: number } }>(
+    rpcUrl,
+    headers,
+    'getTokenAccountBalance',
+    [ata.toBase58()],
+    8_000,
+  );
+}
+
+async function reviveNativeGetBalance(
+  rpcUrl: string,
+  headers: Record<string, string>,
+  owner: PublicKey,
+) {
+  const result = await reviveNativeRpcRequest<{ value?: number }>(
+    rpcUrl,
+    headers,
+    'getBalance',
+    [owner.toBase58(), { commitment: 'confirmed' }],
+    8_000,
+  );
+  const lamports = Number(result?.value);
+  if (!Number.isFinite(lamports)) {
+    throw new Error('[revive] invalid getBalance response');
+  }
+  return lamports;
+}
+
+async function reviveNativeSendRawTransaction(
+  rpcUrl: string,
+  headers: Record<string, string>,
+  rawTransaction: Uint8Array,
+  options: { skipPreflight: boolean; preflightCommitment: 'confirmed' | 'finalized' },
+  localSignature?: string | null,
+) {
+  const params = [bytesToBase64(rawTransaction), { encoding: 'base64', ...options }];
+  const rpcUrls = Array.from(new Set([rpcUrl, PUBLIC_SOLANA_RPC_URL].filter(Boolean)));
+  let lastError: unknown = null;
+
+  for (const url of rpcUrls) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        console.warn(`[revive] broadcast via ${url === rpcUrl ? 'proxy' : 'public'} attempt ${attempt + 1}`);
+        return await reviveNativeRpcRequest<string>(
+          url,
+          url === rpcUrl ? headers : {},
+          'sendTransaction',
+          params,
+          url === rpcUrl ? 12_000 : 20_000,
+        );
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (localSignature && /already been processed|already processed|Transaction was already processed/i.test(message)) {
+          console.warn('[revive] broadcast reports already processed; using local signature');
+          return localSignature;
+        }
+        if (!isReviveRpcTimeout(error)) throw error;
+        console.warn('[revive] broadcast timeout', message);
+        await reviveSleep(600 * (attempt + 1));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('[revive] sendTransaction timed out');
+}
+
+async function reviveNativeGetSignatureStatuses(
+  rpcUrl: string,
+  headers: Record<string, string>,
+  sig: string,
+) {
+  const rpcUrls = Array.from(new Set([rpcUrl, PUBLIC_SOLANA_RPC_URL].filter(Boolean)));
+  let lastError: unknown = null;
+  for (const url of rpcUrls) {
+    try {
+      return await reviveNativeRpcRequest<{ value: ({ confirmationStatus?: string; err?: unknown } | null)[] }>(
+        url,
+        url === rpcUrl ? headers : {},
+        'getSignatureStatuses',
+        [[sig], { searchTransactionHistory: true }],
+        url === rpcUrl ? 8_000 : 20_000,
+      );
+    } catch (error) {
+      lastError = error;
+      if (!isReviveRpcTimeout(error)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('[revive] signature status unavailable');
+}
+
 export async function payForRevive(wallet: WalletContextState, expectedAddress?: string): Promise<ReviveResult> {
   let reviveWallet: ReviveWallet | null = null;
   try {
@@ -78,9 +280,10 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
     return { success: false, error: { code: 'UNKNOWN', message: 'RPC not configured' } };
   }
 
+  const rpcHeaders = getHeliusProxyHeaders(address);
   const connection = new Connection(heliusRpcUrl, {
     commitment: 'confirmed',
-    httpHeaders: getHeliusProxyHeaders(address),
+    httpHeaders: rpcHeaders,
   });
 
   const skrMint = new PublicKey(SEEKER_TOKEN.MINT);
@@ -92,10 +295,18 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
   let tokenProgramId: PublicKey = TOKEN_PROGRAM_ID;
   let decimals = 9;
 
+  console.warn('[revive] step 1/4 — find SKR ATA');
+  const t1 = Date.now();
   for (const progId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
     try {
       const ata = await getAssociatedTokenAddress(skrMint, payer, false, progId);
-      const info = await connection.getTokenAccountBalance(ata);
+      const info = Capacitor.isNativePlatform()
+        ? await reviveNativeGetTokenAccountBalance(heliusRpcUrl, rpcHeaders, ata)
+        : await reviveWithTimeout(
+            `getTokenAccountBalance(${progId.toBase58().slice(0, 4)})`,
+            connection.getTokenAccountBalance(ata),
+            8000,
+          );
       const bal = Number(info.value.uiAmount ?? 0);
       decimals = info.value.decimals;
       if (bal > 0) {
@@ -104,10 +315,12 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
         tokenProgramId = progId;
         break;
       }
-    } catch {
-      // ATA doesn't exist under this program
+    } catch (e) {
+      // ATA doesn't exist OR timed out
+      console.warn('[revive] skr-ata probe issue', (e as Error).message);
     }
   }
+  console.warn('[revive] step 1/4 done in', Date.now() - t1, 'ms; balance', skrBalance);
 
   if (!sourceAta || skrBalance < REVIVE_SKR_AMOUNT) {
     return {
@@ -117,7 +330,12 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
   }
 
   // 2. Check SOL for fees
-  const solBalance = await connection.getBalance(payer);
+  console.warn('[revive] step 2/4 — getBalance');
+  const t2 = Date.now();
+  const solBalance = Capacitor.isNativePlatform()
+    ? await reviveNativeGetBalance(heliusRpcUrl, rpcHeaders, payer)
+    : await reviveWithTimeout('getBalance', connection.getBalance(payer), 8000);
+  console.warn('[revive] step 2/4 SOL', solBalance, 'lamports in', Date.now() - t2, 'ms');
   const minLamports = Math.round(MIN_SOL_FOR_FEE * LAMPORTS_PER_SOL);
   if (solBalance < minLamports) {
     return {
@@ -135,17 +353,33 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
 
   // Only create treasury ATA if it doesn't exist yet (avoids extra instruction in wallet preview)
   let destAtaExists = false;
-  try {
-    const info = await connection.getAccountInfo(destAta);
-    destAtaExists = info !== null;
-  } catch {
-    /* assume missing */
+  if (!Capacitor.isNativePlatform()) {
+    try {
+      const info = await reviveWithTimeout('getAccountInfo(destAta)', connection.getAccountInfo(destAta), 6000);
+      destAtaExists = info !== null;
+    } catch (e) {
+      console.warn('[revive] dest ATA probe issue', (e as Error).message);
+      /* assume missing */
+    }
+  } else {
+    console.warn('[revive] native dest ATA probe skipped (idempotent create is safe)');
   }
 
   const buildTransaction = async () => {
-    // Use finalized blockhashes: mobile signing can return through a different RPC
-    // backend than the one that served a fresh confirmed blockhash.
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    // On Capacitor native, use 'confirmed' commitment instead of 'finalized'
+    // — finalized RPC calls can hang on Seeker WebView and there's no fallback.
+    const commitment: 'finalized' | 'confirmed' = Capacitor.isNativePlatform() ? 'confirmed' : 'finalized';
+    const { blockhash, lastValidBlockHeight } = Capacitor.isNativePlatform()
+      ? await reviveWithTimeout(
+          'native getLatestBlockhash(confirmed)',
+          reviveNativeGetLatestBlockhash(heliusRpcUrl, rpcHeaders),
+          10_000,
+        )
+      : await reviveWithTimeout(
+          `getLatestBlockhash(${commitment})`,
+          connection.getLatestBlockhash(commitment),
+          8000,
+        );
     const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: payer });
 
     if (!destAtaExists) {
@@ -175,25 +409,43 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
   };
 
   const prepareTransaction = async (): Promise<{ tx?: Transaction; error?: ReviveError }> => {
+    console.warn('[revive] step 3/4 — buildTransaction');
+    const t3 = Date.now();
     const tx = await buildTransaction();
+    console.warn('[revive] step 3/4 build done in', Date.now() - t3, 'ms');
 
-    // Simulate before prompting user to sign (dApp Store requirement)
     try {
-      const sim = await connection.simulateTransaction(tx, undefined, {
-        sigVerify: false,
-        replaceRecentBlockhash: true,
-      });
+      // dApp Store compliance: every signed transaction attempts simulation
+      // before wallet signing. Native RPC is bounded so a WebView stall warns
+      // the user but does not prevent the Seed Vault approval flow.
+      const sim = await reviveWithTimeout(
+        'simulate',
+        connection.simulateTransaction(tx, undefined, {
+          sigVerify: false,
+          replaceRecentBlockhash: true,
+        }),
+        Capacitor.isNativePlatform() ? NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS : 10_000,
+      );
       if (sim.value.err) {
         console.error('[revive] simulation failed', sim.value.err, sim.value.logs);
         return { error: { code: 'SIMULATION_FAILED', message: JSON.stringify(sim.value.err) } };
       }
+      console.warn('[revive] pre-sign simulation ok');
     } catch (e) {
-      console.warn('[revive] simulation skip', e);
+      console.warn('[revive] Could not pre-flight the transaction', e);
+      toast.warning('Could not pre-flight the transaction', {
+        description: 'RPC simulation timed out or was unavailable. Review the wallet preview before signing.',
+        duration: 8000,
+      });
     }
 
-    // Refresh blockhash right before signing. If the native approval takes too long,
-    // sendRawTransaction below retries once with a freshly rebuilt transaction.
-    const freshBH = await connection.getLatestBlockhash('finalized');
+    if (Capacitor.isNativePlatform()) {
+      console.warn('[revive] native second blockhash refresh skipped after bounded pre-sign simulate');
+      return { tx };
+    }
+
+    // Off-native: refresh blockhash right before signing.
+    const freshBH = await reviveWithTimeout('getLatestBlockhash(finalized) refresh', connection.getLatestBlockhash('finalized'), 8000);
     tx.recentBlockhash = freshBH.blockhash;
     tx.lastValidBlockHeight = freshBH.lastValidBlockHeight;
     return { tx };
@@ -201,7 +453,9 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
 
   // 4. Sign and send (with one blockhash-expiry retry)
   try {
-    const sendOptions = { skipPreflight: false, preflightCommitment: 'finalized' as const };
+    const sendOptions = Capacitor.isNativePlatform()
+      ? ({ skipPreflight: true, preflightCommitment: 'confirmed' as const })
+      : ({ skipPreflight: false, preflightCommitment: 'finalized' as const });
     let sig: string | null = null;
     let lastSendError: unknown = null;
 
@@ -217,12 +471,20 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
 
       try {
         if (reviveWallet.signTransaction) {
+          console.warn('[revive] step 4/4 — wallet.signTransaction (popup expected)');
+          const t4 = Date.now();
           const signPromise = reviveWallet.signTransaction(tx);
           const signed = await Promise.race([signPromise, timeoutPromise]);
-          sig = await connection.sendRawTransaction(
-            signed.serialize({ requireAllSignatures: false, verifySignatures: false }),
-            sendOptions,
-          );
+          console.warn('[revive] step 4/4 signed in', Date.now() - t4, 'ms');
+          const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
+          const localSig = signedTransactionSignature(signed);
+          sig = Capacitor.isNativePlatform()
+            ? await reviveNativeSendRawTransaction(heliusRpcUrl, rpcHeaders, raw, sendOptions, localSig)
+            : await reviveWithTimeout(
+                'sendRawTransaction',
+                connection.sendRawTransaction(raw, sendOptions),
+                30_000,
+              );
         } else if (reviveWallet.sendTransaction) {
           sig = (await Promise.race([reviveWallet.sendTransaction(tx, connection, sendOptions), timeoutPromise])) as string;
         } else {
@@ -247,7 +509,16 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
 
     const start = Date.now();
     while (Date.now() - start < 30000) {
-      const status = await connection.getSignatureStatuses([sig], { searchTransactionHistory: true });
+      const status = await (Capacitor.isNativePlatform()
+        ? reviveNativeGetSignatureStatuses(heliusRpcUrl, rpcHeaders, sig)
+        : reviveWithTimeout(
+            'getSignatureStatuses',
+            connection.getSignatureStatuses([sig], { searchTransactionHistory: true }),
+            8_000,
+          )).catch((error) => {
+        console.warn('[revive] signature status poll skipped', error);
+        return null;
+      });
       const s = status?.value?.[0];
       if (s?.err) {
         return { success: false, error: { code: 'SIMULATION_FAILED', message: JSON.stringify(s.err) } };

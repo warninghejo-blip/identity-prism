@@ -177,6 +177,15 @@
     left: 0;
     bottom: 0;
     right: 0;
+    /* Stay BELOW the wrapper (z-index 100010) — without this, since overlay
+       comes after wrapper in the DOM and is position:fixed, it would render
+       on top of the modal content and grey out everything. */
+    z-index: 100005;
+    pointer-events: none;
+}
+
+.wallet-adapter-modal-wrapper {
+    z-index: 100020 !important;
 }
 
 .wallet-adapter-modal-container {

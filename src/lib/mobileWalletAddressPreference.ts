@@ -66,3 +66,13 @@ export function readPreferredMobileWalletAddress(): string | null {
     return null;
   }
 }
+
+/** Persist the user's preferred Seed Vault account address. SeedVaultAdapter
+ * will pick this account on next connect when multiple authorized accounts
+ * exist. */
+export function writePreferredMobileWalletAddress(address: string | null): void {
+  try {
+    if (address) localStorage.setItem(MOBILE_WALLET_ADDRESS_STORAGE_KEY, address);
+    else localStorage.removeItem(MOBILE_WALLET_ADDRESS_STORAGE_KEY);
+  } catch { /* ignore */ }
+}

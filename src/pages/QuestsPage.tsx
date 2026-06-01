@@ -7,11 +7,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
-import { goBack } from '@/lib/safeNavigate';
-import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
-import { ArrowLeft, Gift, Check, Clock, Flame, Star, Rocket } from 'lucide-react';
+import { fadeOutTransition } from '@/lib/fadeTransition';
+import { Gift, Check, Clock, Flame, Star, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import HubReturnButton from '@/components/HubReturnButton';
 import {
   DAILY_QUESTS,
   WEEKLY_QUESTS,
@@ -294,15 +294,7 @@ export default function QuestsPage() {
       {/* Header */}
       <div className="sticky top-0 z-20 backdrop-blur-xl bg-[#050510]/80 border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <button
-            onClick={() => {
-              startFadeTransition(() => goBack(navigate));
-            }}
-            className="flex items-center gap-2 text-white/50 hover:text-white text-sm transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </button>
+          <HubReturnButton />
           <div className="flex items-center gap-3">
             {unclaimedCount > 0 && (
               <span className="bg-green-500 text-black text-[10px] font-bold px-2 py-0.5 rounded-full">

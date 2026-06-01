@@ -27,6 +27,38 @@ const PAY_OPTIONS: Array<{ key: PayCurrency; label: string; iconUrl?: string; em
 
 const demoAddress = '11111111111111111111111111111111';
 
+/** Map mint/update errors to a clear, user-friendly toast (mirrors the web's messaging). */
+function reportIdentityTxError(error: unknown, fallbackTitle: string): void {
+  const code = (error as { code?: string })?.code;
+  if (code === 'INSUFFICIENT_SOL') {
+    const req = (error as { requiredLamports?: number })?.requiredLamports;
+    const bal = (error as { balanceLamports?: number })?.balanceLamports;
+    const need = typeof req === 'number' ? (req / 1_000_000_000).toFixed(4) : null;
+    const have = typeof bal === 'number' ? (bal / 1_000_000_000).toFixed(4) : null;
+    toast.error('Insufficient SOL', {
+      description: need && have
+        ? `Need ~${need} SOL (incl. network fee). You have ${have} SOL.`
+        : 'Top up your wallet with SOL and try again.',
+    });
+    return;
+  }
+  if (code === 'INSUFFICIENT_SKR') {
+    toast.error('Insufficient SKR', {
+      description: 'Buy SKR tokens or switch to SOL payment, then try again.',
+    });
+    return;
+  }
+  if (code === 'SIMULATION_FAILED') {
+    toast.error('Transaction would fail', {
+      description: 'The network rejected this transaction in a pre-check. Check your balance and try again.',
+    });
+    return;
+  }
+  toast.error(fallbackTitle, {
+    description: error instanceof Error ? error.message : 'Try again in a moment.',
+  });
+}
+
 function buildPreviewTraits(tier: PlanetTier): WalletTraits {
   return {
     hasSeeker: true,
@@ -192,9 +224,7 @@ export default function ApkIdentityHub() {
         .then((coins) => setBalances((b) => ({ ...b, COINS: coins.balance ?? b.COINS })))
         .catch(() => {});
     } catch (error) {
-      toast.error('Mint failed', {
-        description: error instanceof Error ? error.message : 'Try again in a moment.',
-      });
+      reportIdentityTxError(error, 'Mint failed');
     } finally {
       setMinting(false);
     }
@@ -222,9 +252,7 @@ export default function ApkIdentityHub() {
         description: `${result.assetId.slice(0, 4)}...${result.assetId.slice(-4)}`,
       });
     } catch (error) {
-      toast.error('Update failed', {
-        description: error instanceof Error ? error.message : 'Try again in a moment.',
-      });
+      reportIdentityTxError(error, 'Update failed');
     } finally {
       setUpdating(false);
     }

@@ -133,6 +133,8 @@ const SYBIL_KEYS = [
 const TOURNAMENT_KEYS = [
   'checkTournaments',
   'tournamentTiers',
+  'tournamentModes',
+  'tournamentResponseModes',
   'activeTournaments',
   'getTournamentBasePrizes',
   'tournamentXpRewards',

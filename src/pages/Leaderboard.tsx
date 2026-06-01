@@ -2,13 +2,36 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
-import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
-import { ArrowLeft, Trophy, RefreshCw, Coins, Crosshair, Orbit, Rocket, Shield } from 'lucide-react';
+import { Trophy, RefreshCw, Coins, Crosshair, Orbit, Rocket, Shield } from 'lucide-react';
 import { TIER_HEX } from '@/lib/constants/tierColors';
 import { getHeliusProxyUrl, getAppBaseUrl } from '@/constants';
 import { getTierIcon } from '@/lib/constants/tierColors';
 import PageShell from '@/components/PageShell';
+import HubReturnButton from '@/components/HubReturnButton';
+import { fetchApiJson } from '@/components/prism/shared';
+
+// Leaderboard fetches over Cloudflare from the device occasionally hit a transient
+// SSL/connection reset (net_error -101) on the FIRST attempt, which left the screen
+// stuck on skeleton placeholders until the user manually hit Refresh. Retry a few
+// times with backoff so the initial load self-heals (the retry succeeds, as a manual
+// refresh proves).
+async function fetchApiJsonRetry<T>(
+  url: string,
+  options: { timeoutMs?: number } = {},
+  attempts = 3,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fetchApiJson<T>(url, options);
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
 
 // ── Types ──
 
@@ -173,17 +196,14 @@ export default function Leaderboard() {
           if (cached) {
             setOverallEntries(cached?.entries || []);
           } else {
-            const res = await fetch(`${base}/api/leaderboard?limit=50`);
-            if (res.ok) {
-              const data = await res.json();
+            try {
+              const data = await fetchApiJsonRetry<{ entries?: OverallEntry[] }>(`${base}/api/leaderboard?limit=50`, { timeoutMs: 12_000 });
               setOverallEntries(data?.entries || []);
-            } else {
+            } catch {
               setError('Failed to load leaderboard');
             }
           }
         } else {
-          // Game tab (orbit/destroyer/gravity) \u2014 never matched 'tournament' (not in TabKey).
-          // Removed stale `currentTab !== 'tournament'` guard that obscured the else branch.
           // Check sessionStorage cache
           const cacheRaw = sessionStorage.getItem(`${CACHE_KEY}:${currentTab}`);
           if (cacheRaw) {
@@ -197,32 +217,23 @@ export default function Leaderboard() {
               /* ignore */
             }
           }
-          // 15s timeout \u2014 without it skeleton stuck forever when network stalls
-          const controller = new AbortController();
-          const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
-          let res: Response;
           try {
-            res = await fetch(`${base}/api/v2/game/leaderboard?gameType=${currentTab}`, {
-              signal: controller.signal,
-            });
-          } finally {
-            clearTimeout(timeoutId);
-          }
-          if (res.ok) {
-            const data = await res.json();
+            const data = await fetchApiJsonRetry<{ entries?: unknown }>(
+              `${base}/api/v2/game/leaderboard?gameType=${currentTab}`,
+              { timeoutMs: 15_000 },
+            );
             const entries = Array.isArray(data?.entries) ? data.entries : [];
             setGameEntries((prev) => ({
               ...prev,
-              [currentTab]: entries,
+              [currentTab]: entries as never,
             }));
             sessionStorage.setItem(`${CACHE_KEY}:${currentTab}`, JSON.stringify({ data: entries, ts: Date.now() }));
-          } else {
+          } catch {
             setError('Failed to load leaderboard');
           }
         }
-      } catch (e: any) {
-        const msg = e?.name === 'AbortError' ? 'Request timed out \u2014 tap retry' : 'Network error \u2014 check your connection';
-        setError(msg);
+      } catch {
+        setError('Network error \u2014 check your connection');
       } finally {
         // ALWAYS reset loading \u2014 guarantees skeleton never sticks even on early return/throw.
         setLoading(false);
@@ -254,15 +265,7 @@ export default function Leaderboard() {
       {/* Header */}
       <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button
-            onClick={() => {
-              startFadeTransition(() => goBack(navigate));
-            }}
-            className="text-white/50 hover:text-white transition-colors"
-            aria-label="Go back"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
+          <HubReturnButton aria-label="Go to hub" />
           <Trophy className="w-5 h-5 text-yellow-400" />
           <div className="flex flex-col">
             <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-amber-300 leading-tight">

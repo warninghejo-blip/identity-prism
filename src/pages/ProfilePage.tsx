@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { goBack } from '@/lib/safeNavigate';
-import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
+import { fadeOutTransition } from '@/lib/fadeTransition';
 import { getHeliusProxyUrl } from '@/constants';
 import { getTierIcon, TIER_HEX, TIER_LABELS } from '@/lib/constants/tierColors';
+import HubReturnButton from '@/components/HubReturnButton';
 
 interface WalletData {
   address: string;
@@ -106,9 +106,7 @@ export default function ProfilePage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <p className="text-white/50">{error || 'Profile not found'}</p>
-        <button onClick={() => startFadeTransition(() => goBack(navigate))} className="text-cyan-400 hover:underline">
-          Go back
-        </button>
+        <HubReturnButton />
       </div>
     );
   }
@@ -139,12 +137,7 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-lg mx-auto px-4 py-8 space-y-6">
-      <button
-        onClick={() => startFadeTransition(() => goBack(navigate))}
-        className="text-white/40 hover:text-white/70 text-sm"
-      >
-        ← Back
-      </button>
+      <HubReturnButton />
 
       <div className="text-center space-y-2">
         <div className="w-16 h-16 mx-auto" style={{ filter: `drop-shadow(0 0 12px ${tierColor}60)` }}>

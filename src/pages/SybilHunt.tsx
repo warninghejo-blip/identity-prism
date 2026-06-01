@@ -1,18 +1,11 @@
-import { FormEvent, useMemo, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Loader2, Radar, Shield, Target, TriangleAlert } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, Loader2, Radar, Shield, Target, TriangleAlert } from 'lucide-react';
 import SiteHeader from '@/components/SiteHeader';
-import { fetchSybilAnalysis, type SybilResult } from '@/components/prism/shared';
+import HubReturnButton from '@/components/HubReturnButton';
+import { fetchSybilAnalysis, getApiBase, type SybilResult } from '@/components/prism/shared';
 import './apk-pages.css';
 
-const bountyTargets = [
-  'BmkPPw7o4K2xq6uEJmH9r5m7fNzVL',
-  'GejR6mK8sw9QpVx2F3sTnA5oG',
-  'E8swCwC1Y3U4v9qJ5aTR9CX5d',
-  '8ne4sDQr7zF9yL2pa6bZPMs',
-  'DkGa72kVT3mD6sFfJaysxH',
-  '6PzQ7oJb2Va8M6SckMo5Q8',
-];
+type HuntTarget = { address: string; source?: string; parentRisk?: number; clusterLabel?: string };
 
 const checklist = [
   'Connecting to Solana RPC',
@@ -58,7 +51,25 @@ export default function SybilHunt() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<ReturnType<typeof normalizeResult>>(null);
+  const [targets, setTargets] = useState<HuntTarget[]>([]);
+  const [targetsLoading, setTargetsLoading] = useState(true);
   const quiz = useMemo(() => quizzes[Math.floor(Math.random() * quizzes.length)], [loading]);
+
+  // Live scan targets from the sybil graph (real flagged cluster members + siblings of
+  // known sybils) — replaces the old hardcoded placeholder addresses.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${getApiBase()}/api/sybil/suggested-targets?limit=8`);
+        if (!res.ok) return;
+        const json = await res.json();
+        if (alive && Array.isArray(json?.targets)) setTargets(json.targets as HuntTarget[]);
+      } catch { /* leave empty; manual input still works */ }
+      finally { if (alive) setTargetsLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   const runHunt = async (value = target) => {
     const next = value.trim();
@@ -90,7 +101,7 @@ export default function SybilHunt() {
       <SiteHeader />
       <main className="apk-main">
         <div className="sybil-head">
-          <Link to="/identity" className="apk-secondary-button"><ArrowLeft size={18} aria-hidden="true" /> Back</Link>
+          <HubReturnButton />
           <h1 className="sybil-title"><Target aria-hidden="true" /> Sybil Hunt</h1>
         </div>
 
@@ -180,11 +191,19 @@ export default function SybilHunt() {
 
           <aside className="apk-panel bounty-board">
             <div className="apk-kicker" style={{ color: '#f87171' }}>Bounty Board</div>
-            {bountyTargets.map((item) => (
-              <button type="button" className="bounty-row" key={item} onClick={() => void runHunt(item)}>
-                <span>{truncate(item)}</span><span className="risk-pill">60 LINKED</span><span className="linked-pill">+20 coins</span>
-              </button>
-            ))}
+            {targetsLoading ? (
+              <p className="apk-muted" style={{ padding: '10px 4px' }}><Loader2 size={14} className="animate-spin" aria-hidden="true" /> Loading live targets…</p>
+            ) : targets.length === 0 ? (
+              <p className="apk-muted" style={{ padding: '10px 4px' }}>No flagged targets right now — paste any wallet above to hunt.</p>
+            ) : (
+              targets.map((t) => (
+                <button type="button" className="bounty-row" key={t.address} onClick={() => void runHunt(t.address)}>
+                  <span>{truncate(t.address)}</span>
+                  <span className="risk-pill">{t.parentRisk ? `${Math.round(t.parentRisk)} RISK` : t.source === 'cluster' ? 'CLUSTER' : 'LINKED'}</span>
+                  <span className="linked-pill">+20 coins</span>
+                </button>
+              ))
+            )}
           </aside>
         </div>
       </main>

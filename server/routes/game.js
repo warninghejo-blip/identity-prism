@@ -499,7 +499,14 @@ function registerGameRoute(ctx) {
         respondJson(res, 400, { error: 'address query param required' });
         return true;
       }
-      const entry = getWalletAchievements(addr);
+      let entry = getWalletAchievements(addr);
+      if (entry.unlocked.size === 0 && entry.claimed.size === 0) {
+        const verifiedIds = Object.keys(achievementRewardsById).filter((id) => isAchievementUnlockVerified(addr, id));
+        if (verifiedIds.length > 0) {
+          markAchievementsUnlocked(addr, verifiedIds);
+          entry = getWalletAchievements(addr);
+        }
+      }
       respondJson(res, 200, { address: addr, unlocked: [...entry.unlocked], claimed: [...entry.claimed] });
       return true;
     }

@@ -146,10 +146,39 @@ function loadQuestProgress({ datastore, fs, questProgressFile }) {
   return questProgress;
 }
 
-function loadTournaments({ datastore, fs, tournamentFile, tournamentTiers }) {
-  const activeTournaments = { daily: null, weekly: null, monthly: null };
+function loadTournaments({ datastore, fs, tournamentFile, tournamentTiers, tournamentModes = ['orbit', 'destroyer', 'gravity'] }) {
+  const modes = Array.isArray(tournamentModes) && tournamentModes.length > 0 ? tournamentModes : ['orbit', 'destroyer', 'gravity'];
+  const normalizeMode = (mode) => {
+    if (mode === 'defender') return 'destroyer';
+    return modes.includes(mode) ? mode : null;
+  };
+  const createEmptyTierState = () => Object.fromEntries(modes.map((mode) => [mode, null]));
+  const isTournamentRecord = (value) =>
+    !!value && typeof value === 'object' && typeof value.id === 'string' && typeof value.tier === 'string';
+  const normalizeRecord = (tier, mode, tournament) => ({
+    ...tournament,
+    tier,
+    mode,
+    entries: tournament.entries && typeof tournament.entries === 'object' ? tournament.entries : {},
+  });
+  const normalizeTierState = (tier, value) => {
+    const state = createEmptyTierState();
+    if (!value || typeof value !== 'object') return state;
+    if (isTournamentRecord(value)) {
+      const mode = tier === 'daily' ? 'orbit' : normalizeMode(value.mode) || modes[0];
+      state[mode] = normalizeRecord(tier, mode, value);
+      return state;
+    }
+    for (const mode of modes) {
+      if (isTournamentRecord(value[mode])) state[mode] = normalizeRecord(tier, mode, value[mode]);
+    }
+    return state;
+  };
+
+  const activeTournaments = Object.fromEntries(
+    Object.keys(tournamentTiers).map((tier) => [tier, createEmptyTierState()]),
+  );
   const tournamentHistory = [];
-  let tournamentModeIndex = 0;
 
   const rawEntries = readJsonEntries({
     datastore,
@@ -159,12 +188,9 @@ function loadTournaments({ datastore, fs, tournamentFile, tournamentTiers }) {
         if (!fs.existsSync(tournamentFile)) return jsonEntries;
         const raw = JSON.parse(fs.readFileSync(tournamentFile, 'utf8'));
         for (const tier of Object.keys(tournamentTiers)) {
-          jsonEntries.set(tier, raw?.active?.[tier] ?? null);
+          jsonEntries.set(tier, normalizeTierState(tier, raw?.active?.[tier] ?? null));
         }
         jsonEntries.set('__history__', Array.isArray(raw?.history) ? raw.history.slice(0, 50) : []);
-        jsonEntries.set('__meta__', {
-          modeIndex: typeof raw?.modeIndex === 'number' ? raw.modeIndex : 0,
-        });
       } catch (error) {
         console.warn('[tournament] Load error:', error.message);
       }
@@ -173,20 +199,17 @@ function loadTournaments({ datastore, fs, tournamentFile, tournamentTiers }) {
   });
 
   for (const tier of Object.keys(tournamentTiers)) {
-    if (rawEntries.has(tier)) activeTournaments[tier] = rawEntries.get(tier);
+    if (rawEntries.has(tier)) activeTournaments[tier] = normalizeTierState(tier, rawEntries.get(tier));
   }
 
   const history = rawEntries.get('__history__');
   if (Array.isArray(history)) tournamentHistory.push(...history.slice(0, 50));
 
-  const meta = rawEntries.get('__meta__');
-  if (typeof meta?.modeIndex === 'number') tournamentModeIndex = meta.modeIndex;
-
   console.log(
-    `[tournament] Loaded from disk, active=${Object.keys(activeTournaments).filter((key) => activeTournaments[key]).join(',')}, history=${tournamentHistory.length}`,
+    `[tournament] Loaded from disk, active=${Object.entries(activeTournaments).flatMap(([tier, byMode]) => Object.entries(byMode || {}).filter(([, tournament]) => tournament).map(([mode]) => `${tier}/${mode}`)).join(',')}, history=${tournamentHistory.length}`,
   );
 
-  return { activeTournaments, tournamentHistory, tournamentModeIndex };
+  return { activeTournaments, tournamentHistory };
 }
 
 function loadNotifications({ datastore, fs, notificationsFile }) {

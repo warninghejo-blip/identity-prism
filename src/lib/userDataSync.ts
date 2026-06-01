@@ -112,6 +112,16 @@ export async function loadFromServer(address: string): Promise<void> {
         localStorage.setItem(key, JSON.stringify(userData.rangerXP));
       }
     }
+
+    // Restore achievement snapshots if missing locally
+    if (userData.achievements && typeof userData.achievements === 'object') {
+      const achievements = userData.achievements as Record<string, unknown>;
+      for (const [key, value] of Object.entries(achievements)) {
+        if (!localStorage.getItem(key) && value) {
+          localStorage.setItem(key, JSON.stringify(value));
+        }
+      }
+    }
   } catch {
     // Silent fail — localStorage is the primary, server is backup
   }
@@ -180,6 +190,23 @@ export function collectLocalData(address: string): Record<string, unknown> {
   } catch {
     /* ignore */
   }
+
+  // Achievements
+  const achievementKeys = [
+    'orbit_survival_achievements_v1',
+    'cosmic_defender_achievements_v1',
+    'gravity_rush_achievements_v1',
+  ];
+  const achievements: Record<string, unknown> = {};
+  for (const key of achievementKeys) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) achievements[key] = JSON.parse(raw);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (Object.keys(achievements).length > 0) data.achievements = achievements;
 
   return data;
 }

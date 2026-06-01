@@ -9,12 +9,12 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 import { WalletReadyState } from '@solana/wallet-adapter-base';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
-import { goBack } from '@/lib/safeNavigate';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
-import { ArrowLeft, Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap, Check } from 'lucide-react';
+import { Loader2, AlertTriangle, Plus, Shield, Clock, TrendingUp, Zap, Check } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import HubReturnButton from '@/components/HubReturnButton';
 import { getPrismBalance, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCoin';
 import { getApiBase, getCachedJwt, obtainJwt, setAuthWallet } from '@/components/prism/shared';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
@@ -23,8 +23,10 @@ import { SEEDVAULT_NAME } from '@/lib/SeedVaultAdapter';
 // ── Buy Coins Section ──
 
 const RPC_STEP_TIMEOUT_MS = 30_000;
+const NATIVE_SEND_RAW_TIMEOUT_MS = 90_000;
 const CONFIRM_TIMEOUT_MS = 120_000;
 const PUBLIC_SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
+const NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS = 5_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
@@ -35,6 +37,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     if (timeoutId) clearTimeout(timeoutId);
   });
 }
+
+const vaultWithTimeout = <T,>(label: string, promise: Promise<T>, ms = RPC_STEP_TIMEOUT_MS): Promise<T> => {
+  let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(`[vault] STEP_TIMEOUT ${label} after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  });
+};
 
 // FIX (2026-05-17): Removed AbortController-based fetch wrapper.
 // Capacitor backgrounds the WebView when MWA opens → setTimeout fires late on resume,
@@ -131,10 +143,15 @@ async function nativeRpcRequest<T>(
   params: unknown[],
   timeoutMs = RPC_STEP_TIMEOUT_MS,
 ): Promise<T> {
+  // Pass body as raw JSON string — CapacitorHttp double-serializes object `data`
+  // and Helius/CF can silently drop the request (especially for sendTransaction,
+  // where the signature is returned from a stale slot/relay node without an
+  // actual broadcast). Forcing string body matches the curl-tested wire format.
+  const bodyStr = JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params });
   const response = await CapacitorHttp.post({
     url: rpcUrl,
     headers: { 'Content-Type': 'application/json' },
-    data: { jsonrpc: '2.0', id: Date.now(), method, params },
+    data: bodyStr,
     responseType: 'json',
     connectTimeout: timeoutMs,
     readTimeout: timeoutMs,
@@ -142,7 +159,7 @@ async function nativeRpcRequest<T>(
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`RPC ${method} failed (${response.status})`);
   }
-  const payload = response.data;
+  const payload = typeof response.data === 'string' ? JSON.parse(response.data || 'null') : response.data;
   if (payload?.error) {
     throw new Error(payload.error.message || `RPC ${method} error`);
   }
@@ -158,20 +175,54 @@ async function nativeSendRawTransaction(
     bytesToBase64(rawTransaction),
     { encoding: 'base64', ...options },
   ];
-  const rpcUrls = Array.from(new Set([rpcUrl, PUBLIC_SOLANA_RPC_URL].filter(Boolean)));
+  // sendTransaction MUST hit a paid RPC. api.mainnet-beta.solana.com silently
+  // accepts and drops without broadcasting (returns a valid-looking signature
+  // but the tx never lands on chain). Stick to the configured Helius proxy and
+  // fail loudly if it's unavailable so the user sees a clear error.
+  if (!rpcUrl) throw new Error('RPC URL not configured for sendTransaction');
   let lastError: unknown = null;
-  for (const url of rpcUrls) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        return await nativeRpcRequest<string>(url, 'sendTransaction', params, attempt === 0 ? 45_000 : 30_000);
-      } catch (error) {
-        lastError = error;
-        if (!isNativeRpcTimeout(error)) throw error;
-        await sleep(600 * (attempt + 1));
-      }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await nativeRpcRequest<string>(rpcUrl, 'sendTransaction', params, attempt === 0 ? 45_000 : 30_000);
+    } catch (error) {
+      lastError = error;
+      if (!isNativeRpcTimeout(error)) throw error;
+      await sleep(600 * (attempt + 1));
     }
   }
   throw lastError instanceof Error ? lastError : new Error('sendTransaction timed out');
+}
+
+async function simulateVaultBeforeSign(
+  conn: { simulateTransaction: (...args: any[]) => Promise<{ value: { err: unknown; logs?: string[] | null } }> },
+  tx: any,
+  label: string,
+  isNativePlatform: boolean,
+): Promise<void> {
+  try {
+    // dApp Store compliance: simulate every Vault purchase before Seed Vault
+    // signing. On native, bound RPC to avoid the historical WebView hang.
+    const sim = await vaultWithTimeout(
+      `simulateTransaction(${label})`,
+      conn.simulateTransaction(tx, undefined, {
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+      }),
+      isNativePlatform ? NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS : 12_000,
+    );
+    if (sim.value.err) {
+      console.error(`[vault] ${label} simulation failed`, sim.value.err, sim.value.logs);
+      throw new Error(`${label} simulation failed: ${JSON.stringify(sim.value.err)}`);
+    }
+    console.warn(`[vault] ${label} pre-sign simulation ok`);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('simulation failed')) throw error;
+    console.warn(`[vault] Could not pre-flight the ${label} transaction`, error);
+    toast.warning('Could not pre-flight the transaction', {
+      description: 'RPC simulation timed out or was unavailable. Review the wallet preview before signing.',
+      duration: 8000,
+    });
+  }
 }
 
 async function nativeGetLatestBlockhash(rpcUrl: string): Promise<string> {
@@ -247,8 +298,8 @@ async function postPurchaseJson(
       headers,
       data: JSON.stringify(body),
       responseType: 'json',
-      connectTimeout: 20_000,
-      readTimeout: 30_000,
+      connectTimeout: 10_000,
+      readTimeout: 12_000,
     });
     return { ok: response.status >= 200 && response.status < 300, status: response.status, data: response.data };
   }
@@ -284,6 +335,111 @@ async function getVaultJson<T = any>(
     status: response.status,
     data: response.ok ? await response.json().catch(() => null) : null,
   };
+}
+
+async function getVaultBalanceAmount(base: string, address: string, headers?: Record<string, string>): Promise<number | null> {
+  const res = await getVaultJson<PrismBalance>(`${base}/api/prism/balance?address=${encodeURIComponent(address)}`, headers);
+  if (!res.ok || !res.data) return null;
+  return Number(res.data.balance ?? 0);
+}
+
+function isRetryablePurchaseError(status: number, message: string): boolean {
+  if (status === 408 || status === 409 || status === 425 || status === 429 || status >= 500) return true;
+  return /not found|wait for confirmation|verification in progress|verification failed|timeout|timed out/i.test(message);
+}
+
+async function postPurchaseWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  label: string,
+  timeoutMs = 60_000,
+): Promise<{ ok: boolean; status: number; data: any }> {
+  const startedAt = Date.now();
+  let last: { status: number; message: string } | null = null;
+  let attempt = 0;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    attempt += 1;
+    console.warn(`[vault] step 4/4 — ${label} server verify attempt ${attempt}`);
+    let res: { ok: boolean; status: number; data: any };
+    try {
+      res = await postPurchaseJson(url, headers, body);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      last = { status: 0, message };
+      console.warn(`[vault] ${label} server verify attempt ${attempt} failed`, message);
+      if (!isRetryablePurchaseError(0, message)) throw error;
+      await sleep(Math.min(4_000, 1_500 * attempt));
+      continue;
+    }
+    if (res.ok) return res;
+
+    const message = String(res.data?.error || `Purchase failed (${res.status})`);
+    last = { status: res.status, message };
+    if (!isRetryablePurchaseError(res.status, message)) {
+      throw new Error(message);
+    }
+    await sleep(Math.min(4_000, 1_500 * attempt));
+  }
+
+  throw new Error(last?.message || `${label} verification timed out`);
+}
+
+async function waitForVaultBalanceCredit(
+  base: string,
+  address: string,
+  headers: Record<string, string>,
+  balanceBefore: number | null,
+  expectedCoins: number,
+  timeoutMs = 30_000,
+): Promise<PrismBalance | null> {
+  const startedAt = Date.now();
+  const target = balanceBefore === null ? null : balanceBefore + expectedCoins;
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const res = await getVaultJson<PrismBalance>(`${base}/api/prism/balance?address=${encodeURIComponent(address)}`, headers);
+      if (res.ok && res.data) {
+        const current = Number(res.data.balance ?? 0);
+        if (target === null || current >= target) return res.data;
+      }
+    } catch (error) {
+      console.warn('[vault] balance reflection poll failed', error);
+    }
+    await sleep(2_000);
+  }
+  return null;
+}
+
+async function finalizeVaultPurchaseCredit(
+  base: string,
+  address: string,
+  headers: Record<string, string>,
+  balanceBefore: number | null,
+  expectedCoins: number,
+  verify: () => Promise<{ ok: boolean; status: number; data: any }>,
+): Promise<PrismBalance | null> {
+  let verifyError: unknown = null;
+  try {
+    const res = await verify();
+    if (!res.ok) {
+      const err = res.data || { error: `Purchase failed (${res.status})` };
+      throw new Error(err.error || 'Purchase failed');
+    }
+    if (res.data?.balance) {
+      return res.data.balance as PrismBalance;
+    }
+  } catch (error) {
+    verifyError = error;
+    console.warn('[vault] server verify did not complete; polling balance reflection', error);
+  }
+
+  const credited = await waitForVaultBalanceCredit(base, address, headers, balanceBefore, expectedCoins, 45_000);
+  if (credited) return credited;
+  if (verifyError) {
+    throw verifyError instanceof Error ? verifyError : new Error(String(verifyError));
+  }
+  return null;
 }
 
 function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string; onPurchased: () => void }) {
@@ -411,8 +567,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             'Content-Type': 'application/json',
             ...(authHeader ? { Authorization: `Bearer ${authHeader}` } : {}),
           };
+          const balanceBefore = await getVaultBalanceAmount(base, signerAddress, jsonHeaders).catch(() => null);
 
           if (payWith === 'skr') {
+            console.warn('[vault] step 1/4 — prepare SKR transaction');
             const skrQuote = skrQuotes?.[selectedIdx];
             if (!skrQuote) {
               toast.error('SKR price unavailable');
@@ -432,10 +590,12 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             // Detect SKR mint owner program (handles Token-2022) and read decimals from on-chain mint.
             // 5s race: if RPC stalls, fall back to legacy TOKEN_PROGRAM_ID + 6 decimals
             // (SKRbvo6... is legacy SPL Token with 6 decimals — verified on-chain).
-            const mintAccountInfo = await Promise.race([
-              conn.getAccountInfo(skrMint),
-              new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
-            ]);
+            const mintAccountInfo = await vaultWithTimeout('getAccountInfo(SKR mint)', conn.getAccountInfo(skrMint), 5_000).catch(
+              (error) => {
+                console.warn('[vault] SKR mint probe skipped', error);
+                return null;
+              },
+            );
             const activeTokenProgramId = mintAccountInfo?.owner.equals(TOKEN_2022_PROGRAM_ID)
               ? TOKEN_2022_PROGRAM_ID
               : TOKEN_PROGRAM_ID;
@@ -462,43 +622,54 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 activeTokenProgramId,
               ),
             );
+            console.warn('[vault] step 2/4 — getLatestBlockhash(confirmed)');
             tx.recentBlockhash = isNativePlatform
-              ? await nativeGetLatestBlockhash(rpcUrl)
-              : (await Promise.race([
-                  conn.getLatestBlockhash('confirmed'),
-                  new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
-                  ),
-                ])).blockhash;
+              ? await vaultWithTimeout('native getLatestBlockhash(confirmed)', nativeGetLatestBlockhash(rpcUrl), 10_000)
+              : (await vaultWithTimeout('getLatestBlockhash(confirmed)', conn.getLatestBlockhash('confirmed'), 30_000)).blockhash;
             tx.feePayer = ownerKey;
+            await simulateVaultBeforeSign(conn, tx, 'SKR', isNativePlatform);
             const origSerializeSKR = tx.serialize.bind(tx);
             tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
               origSerializeSKR({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
             if (wallet.signTransaction) {
-              const signed = await wallet.signTransaction(tx);
+              console.warn('[vault] step 3/4 — wallet.signTransaction SKR (popup expected)');
+              const signed = await vaultWithTimeout('wallet.signTransaction(SKR)', wallet.signTransaction(tx), 120_000);
               const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
+              console.warn('[vault] step 3/4 — signed SKR; sending raw transaction');
               sig = isNativePlatform
-                ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
-                : await conn.sendRawTransaction(raw, sendOptions);
+                ? await vaultWithTimeout('native sendRawTransaction(SKR)', nativeSendRawTransaction(rpcUrl, raw, sendOptions), NATIVE_SEND_RAW_TIMEOUT_MS)
+                : await vaultWithTimeout('sendRawTransaction(SKR)', conn.sendRawTransaction(raw, sendOptions), 45_000);
             } else if (wallet.sendTransaction) {
-              sig = await wallet.sendTransaction(tx, conn, sendOptions);
+              console.warn('[vault] step 3/4 — wallet.sendTransaction SKR (popup expected)');
+              sig = await vaultWithTimeout('wallet.sendTransaction(SKR)', wallet.sendTransaction(tx, conn, sendOptions), 120_000);
             } else {
               throw new Error('Wallet does not support transaction signing');
             }
-            toast.info('Confirming SKR transaction...');
-            const skrConfirmStatus = isNativePlatform
-              ? await waitForConfirmationNative(rpcUrl, sig, CONFIRM_TIMEOUT_MS)
-              : await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
-            if (skrConfirmStatus === 'timeout') {
-              toast.info('Still confirming — credit will be processed when transaction is verified.');
+            console.warn('[vault] step 4/4 — SKR signature produced', sig);
+            if (!isNativePlatform) {
+              toast.info('Confirming SKR transaction...');
+              const skrConfirmStatus = await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
+              if (skrConfirmStatus === 'timeout') {
+                toast.info('Still confirming — credit will be processed when transaction is verified.');
+              }
+            } else {
+              console.warn('[vault] native confirmation uses server verify + /api/prism/balance polling (skip getSignatureStatuses)');
             }
 
-            const res = await postPurchaseJson(`${base}/api/prism/buy/skr`, jsonHeaders, {
-              address: signerAddress,
-              packageIndex: selectedIdx,
-              txSignature: sig,
-            });
-            if (res.ok) {
+            const credited = await finalizeVaultPurchaseCredit(
+              base,
+              signerAddress,
+              jsonHeaders,
+              balanceBefore,
+              pkg.coins,
+              () =>
+                postPurchaseWithRetry(`${base}/api/prism/buy/skr`, jsonHeaders, {
+                  address: signerAddress,
+                  packageIndex: selectedIdx,
+                  txSignature: sig,
+                }, 'SKR purchase'),
+            );
+            if (credited) {
               toast.success(`Purchased ${pkg.coins} Coins for ${skrQuote.skrPrice} SKR!`);
               if (status)
                 setStatus({
@@ -508,10 +679,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 });
               onPurchased();
             } else {
-              const err = res.data || { error: `Purchase failed (${res.status})` };
-              toast.error(err.error || 'Purchase failed');
+              throw new Error('Purchase verification did not update balance');
             }
           } else {
+            console.warn('[vault] step 1/4 — prepare SOL transaction');
             const tx = new SolTx().add(
               SolSP.transfer({
                 fromPubkey: new SolPK(signerAddress),
@@ -519,46 +690,54 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 lamports: Math.floor(pkg.solPrice * 1e9),
               }),
             );
+            console.warn('[vault] step 2/4 — getLatestBlockhash(confirmed)');
             tx.recentBlockhash = isNativePlatform
-              ? await nativeGetLatestBlockhash(rpcUrl)
-              : (await Promise.race([
-                  conn.getLatestBlockhash('confirmed'),
-                  new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error('Recent blockhash timed out')), 30_000),
-                  ),
-                ])).blockhash;
+              ? await vaultWithTimeout('native getLatestBlockhash(confirmed)', nativeGetLatestBlockhash(rpcUrl), 10_000)
+              : (await vaultWithTimeout('getLatestBlockhash(confirmed)', conn.getLatestBlockhash('confirmed'), 30_000)).blockhash;
             tx.feePayer = new SolPK(signerAddress);
-            // Pre-wallet simulate removed: skipPreflight=true is set, MWA does its own simulation.
-            // Earlier simulate call had no timeout and could hang RPC, tripping outer 30s race
-            // before MWA UI opened ("Request timed out — server may be unavailable").
+            await simulateVaultBeforeSign(conn, tx, 'SOL', isNativePlatform);
             const origSerializeSOL = tx.serialize.bind(tx);
             tx.serialize = ((config?: { requireAllSignatures?: boolean; verifySignatures?: boolean }) =>
               origSerializeSOL({ ...config, requireAllSignatures: false })) as typeof tx.serialize;
             if (wallet.signTransaction) {
-              const signed = await wallet.signTransaction(tx);
+              console.warn('[vault] step 3/4 — wallet.signTransaction SOL (popup expected)');
+              const signed = await vaultWithTimeout('wallet.signTransaction(SOL)', wallet.signTransaction(tx), 120_000);
               const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false });
+              console.warn('[vault] step 3/4 — signed SOL; sending raw transaction');
               sig = isNativePlatform
-                ? await nativeSendRawTransaction(rpcUrl, raw, sendOptions)
-                : await conn.sendRawTransaction(raw, sendOptions);
+                ? await vaultWithTimeout('native sendRawTransaction(SOL)', nativeSendRawTransaction(rpcUrl, raw, sendOptions), NATIVE_SEND_RAW_TIMEOUT_MS)
+                : await vaultWithTimeout('sendRawTransaction(SOL)', conn.sendRawTransaction(raw, sendOptions), 45_000);
             } else if (wallet.sendTransaction) {
-              sig = await wallet.sendTransaction(tx, conn, sendOptions);
+              console.warn('[vault] step 3/4 — wallet.sendTransaction SOL (popup expected)');
+              sig = await vaultWithTimeout('wallet.sendTransaction(SOL)', wallet.sendTransaction(tx, conn, sendOptions), 120_000);
             } else {
               throw new Error('Wallet does not support transaction signing');
             }
-            toast.info('Confirming transaction...');
-            const solConfirmStatus = isNativePlatform
-              ? await waitForConfirmationNative(rpcUrl, sig, CONFIRM_TIMEOUT_MS)
-              : await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
-            if (solConfirmStatus === 'timeout') {
-              toast.info('Still confirming — credit will be processed when transaction is verified.');
+            console.warn('[vault] step 4/4 — SOL signature produced', sig);
+            if (!isNativePlatform) {
+              toast.info('Confirming transaction...');
+              const solConfirmStatus = await waitForConfirmation(conn, sig, CONFIRM_TIMEOUT_MS);
+              if (solConfirmStatus === 'timeout') {
+                toast.info('Still confirming — credit will be processed when transaction is verified.');
+              }
+            } else {
+              console.warn('[vault] native confirmation uses server verify + /api/prism/balance polling (skip getSignatureStatuses)');
             }
 
-            const res = await postPurchaseJson(`${base}/api/prism/buy`, jsonHeaders, {
-              address: signerAddress,
-              packageIndex: selectedIdx,
-              txSignature: sig,
-            });
-            if (res.ok) {
+            const credited = await finalizeVaultPurchaseCredit(
+              base,
+              signerAddress,
+              jsonHeaders,
+              balanceBefore,
+              pkg.coins,
+              () =>
+                postPurchaseWithRetry(`${base}/api/prism/buy`, jsonHeaders, {
+                  address: signerAddress,
+                  packageIndex: selectedIdx,
+                  txSignature: sig,
+                }, 'SOL purchase'),
+            );
+            if (credited) {
               toast.success(`Purchased ${pkg.coins} Coins!`);
               if (status)
                 setStatus({
@@ -568,8 +747,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
                 });
               onPurchased();
             } else {
-              const err = res.data || { error: `Purchase failed (${res.status})` };
-              toast.error(err.error || 'Purchase failed');
+              throw new Error('Purchase verification did not update balance');
             }
           }
           setActionMessage(null);
@@ -945,13 +1123,12 @@ function PrismVaultSection({
         return;
       }
       const base = getApiBase();
-      const res = await fetch(`${base}/api/prism/vault/stake`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ amount, tier: selectedTier, lockDays }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Stake failed');
+      const { ok, data } = await postPurchaseJson(
+        `${base}/api/prism/vault/stake`,
+        { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        { amount, tier: selectedTier, lockDays },
+      );
+      if (!ok) throw new Error(data?.error || 'Stake failed');
       toast.success(`Staked ${amount.toLocaleString()} coins in ${tier.label} Vault!`);
       setVaultStatus(data.status || { staked: true, tier: selectedTier, amount });
       setStakeAmount('');
@@ -973,14 +1150,13 @@ function PrismVaultSection({
         return;
       }
       const base = getApiBase();
-      const res = await fetch(`${base}/api/prism/vault/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Claim failed');
-      toast.success(`Claimed ${data.claimed ?? ''} coins!`);
+      const { ok, data } = await postPurchaseJson(
+        `${base}/api/prism/vault/claim`,
+        { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        {},
+      );
+      if (!ok) throw new Error(data?.error || 'Claim failed');
+      toast.success(`Claimed ${data?.claimed ?? ''} coins!`);
       setVaultStatus((v) => (v ? { ...v, unclaimedYield: 0 } : v));
       onBalanceChange();
     } catch (e) {
@@ -1001,17 +1177,16 @@ function PrismVaultSection({
         return;
       }
       const base = getApiBase();
-      const res = await fetch(`${base}/api/prism/vault/unstake`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unstake failed');
+      const { ok, data } = await postPurchaseJson(
+        `${base}/api/prism/vault/unstake`,
+        { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        {},
+      );
+      if (!ok) throw new Error(data?.error || 'Unstake failed');
       toast.success(
-        data.penalty > 0
-          ? `Unstaked: received ${data.returned?.toLocaleString()} coins (${data.penalty?.toLocaleString()} burned as penalty)`
-          : data.message || 'Unstaked successfully',
+        data?.penalty > 0
+          ? `Unstaked: received ${data?.returned?.toLocaleString()} coins (${data?.penalty?.toLocaleString()} burned as penalty)`
+          : data?.message || 'Unstaked successfully',
       );
       setVaultStatus({ staked: false });
       onBalanceChange();
@@ -1442,13 +1617,7 @@ export default function PrismVault() {
     <PageShell className="text-white">
       <header className="flex-none sticky top-0 z-20 bg-[#050510]/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button
-            onClick={() => startFadeTransition(() => goBack(navigate))}
-            className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
-            aria-label="Go back"
-          >
-            <ArrowLeft className="w-4 h-4 text-white/60" />
-          </button>
+          <HubReturnButton aria-label="Go to hub" />
           <img src="/hub/vault.png" alt="" className="w-6 h-6 object-contain" />
           <div className="flex flex-col">
             <h1 className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-300 leading-tight">

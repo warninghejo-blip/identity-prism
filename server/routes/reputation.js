@@ -227,11 +227,28 @@ function registerReputationRoute(ctx) {
         return respondJson(res, 400, { error: 'Invalid report_type' });
       }
 
+      let adminVerified = null;
+      if (reportType === 'sybil') {
+        const cached = sybilCache.get(targetAddress);
+        const analysis = cached?.analysis || cached;
+        const verdict = analysis ? (analysis.verdict || getSybilVerdict(analysis)) : null;
+        const verdictKey = verdict?.key;
+        if (
+          verdictKey === 'confirmed_sybil' ||
+          verdictKey === 'probable_sybil' ||
+          verdictKey === 'suspicious' ||
+          verdictKey === 'cluster_linked'
+        ) {
+          adminVerified = true;
+        }
+      }
+
       const created = submitSybilFeedback({
         targetAddress,
         reportedBy: jwtAuth.address || null,
         reportType,
         notes,
+        adminVerified,
       });
 
       res.writeHead(201, {

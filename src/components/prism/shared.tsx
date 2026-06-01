@@ -87,22 +87,93 @@ export function getApiBase(): string {
   return '';
 }
 
+function isRetryableNativeHttpError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /timeout|timed\s*out|SocketTimeoutException|ECONN|ETIMEDOUT|network|connection|Failed to fetch/i.test(message);
+}
+
+async function browserFetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const upstreamSignal = init.signal;
+  const onAbort = () => controller.abort();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) controller.abort();
+    else upstreamSignal.addEventListener('abort', onAbort, { once: true });
+  }
+  const fetchPromise = (async () => {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const bodyText = await response.text();
+    return new Response(bodyText, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  })();
+  fetchPromise.catch(() => undefined);
+  try {
+    return await Promise.race([
+      fetchPromise,
+      new Promise<Response>((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`fetch timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (upstreamSignal) upstreamSignal.removeEventListener('abort', onAbort);
+  }
+}
+
 export async function fetchApiJson<T = unknown>(
   url: string,
   options: { headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
-  if (Capacitor.isNativePlatform()) {
-    const response = await CapacitorHttp.get({
-      url,
-      headers: { Accept: 'application/json', ...options.headers },
-      responseType: 'json',
-      connectTimeout: options.timeoutMs ?? 3_500,
-      readTimeout: options.timeoutMs ?? 4_500,
-    });
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`API ${response.status}`);
+  // GET-only and idempotent → safe to retry. The device's FIRST request over Cloudflare
+  // intermittently hits an SSL connection-reset (net_error -101) which otherwise left
+  // pages stuck on skeletons / feeling slow (Leaderboard, Arena, League). Retry heals it.
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fetchApiJsonOnce<T>(url, options);
+    } catch (e) {
+      lastErr = e;
+      if (options.signal?.aborted) throw e;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
     }
-    return response.data as T;
+  }
+  throw lastErr;
+}
+
+async function fetchApiJsonOnce<T = unknown>(
+  url: string,
+  options: { headers?: Record<string, string>; timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<T> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const response = await CapacitorHttp.get({
+        url,
+        headers: { Accept: 'application/json', ...options.headers },
+        responseType: 'json',
+        connectTimeout: options.timeoutMs ?? 3_500,
+        readTimeout: options.timeoutMs ?? 4_500,
+      });
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`API ${response.status}`);
+      }
+      return response.data as T;
+    } catch (error) {
+      if (!isRetryableNativeHttpError(error)) throw error;
+      console.warn('[fetchApiJson] CapacitorHttp failed; falling back to fetch', url, error);
+      const response = await browserFetchWithTimeout(url, {
+        headers: { Accept: 'application/json', ...options.headers },
+        signal: options.signal,
+      }, options.timeoutMs ?? 8_000);
+      if (!response.ok) throw new Error(`API ${response.status}`);
+      return response.json() as Promise<T>;
+    }
   }
 
   const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? 4_500);
@@ -121,25 +192,41 @@ export async function postApiJson<T = unknown>(
   options: { headers?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<T> {
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json', ...options.headers };
+  const bodyText = JSON.stringify(body);
   if (Capacitor.isNativePlatform()) {
-    const response = await CapacitorHttp.post({
-      url,
-      headers,
-      data: body,
-      responseType: 'json',
-      connectTimeout: Math.min(options.timeoutMs ?? 8_000, 8_000),
-      readTimeout: options.timeoutMs ?? 20_000,
-    });
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`API ${response.status}`);
+    const nativeTimeoutMs = Math.min(options.timeoutMs ?? 12_000, 12_000);
+    try {
+      const response = await CapacitorHttp.request({
+        url,
+        method: 'POST',
+        headers,
+        data: bodyText,
+        responseType: 'json',
+        connectTimeout: Math.min(nativeTimeoutMs, 5_000),
+        readTimeout: nativeTimeoutMs,
+      });
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`API ${response.status}`);
+      }
+      return response.data as T;
+    } catch (error) {
+      if (!isRetryableNativeHttpError(error)) throw error;
+      console.warn('[postApiJson] CapacitorHttp failed; falling back to fetch', url, error);
+      const response = await browserFetchWithTimeout(url, {
+        method: 'POST',
+        headers,
+        body: bodyText,
+      }, options.timeoutMs ?? 25_000);
+      console.warn('[postApiJson] fallback fetch responded', url, response.status);
+      if (!response.ok) throw new Error(`API ${response.status}`);
+      return response.json() as Promise<T>;
     }
-    return response.data as T;
   }
 
   const response = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify(body),
+    body: bodyText,
   });
   if (!response.ok) throw new Error(`API ${response.status}`);
   return response.json() as Promise<T>;
@@ -227,22 +314,50 @@ export function fetchWalletPreview(address: string): Promise<WalletPreview | nul
   return p;
 }
 
+// Retrying raw fetch (returns a Response). GET-only/idempotent → safe. Heals the device's
+// intermittent Cloudflare SSL connection-reset on the first request. Does NOT retry 4xx.
+async function fetchWithRetry(url: string, attempts = 3): Promise<Response> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const r = await fetch(url);
+      if (r.ok || (r.status >= 400 && r.status < 500)) return r;
+      last = new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      last = e;
+    }
+    if (i < attempts - 1) await new Promise((res) => setTimeout(res, 400 * (i + 1)));
+  }
+  throw last;
+}
+
 async function _fetchWalletPreviewImpl(address: string): Promise<WalletPreview | null> {
   try {
     const base = getApiBase();
-    const [repRes, dbRes] = await Promise.all([
-      fetch(`${base}/api/reputation?address=${address}`),
-      fetch(`${base}/api/wallet-database?address=${address}`).catch(() => null),
+    // Use CapacitorHttp-based fetchApiJson (native + retrying), NOT raw WebView fetch (which
+    // intermittently SSL-resets from capacitor://localhost on-device).
+    //
+    // Ship-stats only need `compositeBreakdown`, which comes from the FAST /api/wallet-database.
+    // /api/reputation runs a full sybil-scan (~12s cold on a busy wallet) and only ENRICHES
+    // sybil-specific fields (trustGrade/verdict/topPrograms) — so don't block the preview on it.
+    // Fetch both in parallel, await the fast wallet-database, then give reputation a short grace
+    // window (it's usually cached/fast). If the slow cold-scan is still running, build the
+    // preview from wallet-database alone — ship-stats render in ~1-2s instead of waiting ~12s.
+    const repPromise = fetchApiJson<any>(`${base}/api/reputation?address=${address}`, { timeoutMs: 20_000 })
+      .catch(() => null);
+    const db = await fetchApiJson<any>(`${base}/api/wallet-database?address=${address}`, { timeoutMs: 12_000 })
+      .catch(() => null);
+    const data: any = await Promise.race([
+      repPromise,
+      new Promise<null>((resolve) => { setTimeout(() => resolve(null), 1200); }),
     ]);
-    if (!repRes.ok) return null;
-    const data = await repRes.json();
+    if (!data && !db) return null;
     let compositeScore = 0;
     let compositeTier = '';
     let compositeBadgeCount = 0;
     let compositeBreakdown: CompositeBreakdown = { onchain: 0, sybilTrust: 0, humanProof: 0, social: 0, engagement: 0 };
-    if (dbRes?.ok) {
+    if (db) {
       try {
-        const db = await dbRes.json();
         const comp = db.composite;
         compositeScore = comp?.compositeScore ?? db.compositeScore ?? 0;
         compositeTier = comp?.compositeTier ?? db.compositeTier ?? 'mercury';
@@ -261,21 +376,25 @@ async function _fetchWalletPreviewImpl(address: string): Promise<WalletPreview |
         /* ignore */
       }
     }
+    // Prefer reputation (`data`, richer) when available; fall back to wallet-database (`db`)
+    // for every field so a db-only fast-path preview is still fully populated.
+    const dbStats = db?.stats ?? {};
+    const dbSybil = db?.sybil ?? {};
     return {
-      address: data.address,
-      score: data.score,
-      tier: data.tier,
-      badges: data.badges ?? [],
-      solBalance: data.stats?.solBalance ?? 0,
-      txCount: data.stats?.txCount ?? 0,
-      walletAgeDays: data.stats?.walletAgeDays ?? 0,
-      tokenCount: data.stats?.tokenCount ?? 0,
-      nftCount: data.stats?.nftCount ?? 0,
-      trustGrade: data.trustGrade ?? null,
-      trustScore: data.trustScore ?? null,
-      riskLevel: data.riskLevel ?? null,
-      sybilVerdict: data.sybilVerdict ?? null,
-      topPrograms: data.topPrograms ?? [],
+      address: data?.address ?? db?.address ?? address,
+      score: data?.score ?? db?.score ?? compositeScore,
+      tier: data?.tier ?? db?.tier ?? compositeTier ?? 'mercury',
+      badges: data?.badges ?? db?.badges ?? [],
+      solBalance: data?.stats?.solBalance ?? dbStats.solBalance ?? 0,
+      txCount: data?.stats?.txCount ?? dbStats.txCount ?? 0,
+      walletAgeDays: data?.stats?.walletAgeDays ?? dbStats.walletAgeDays ?? 0,
+      tokenCount: data?.stats?.tokenCount ?? dbStats.tokenCount ?? 0,
+      nftCount: data?.stats?.nftCount ?? dbStats.nftCount ?? 0,
+      trustGrade: data?.trustGrade ?? dbSybil.trustGrade ?? null,
+      trustScore: data?.trustScore ?? dbSybil.trustScore ?? null,
+      riskLevel: data?.riskLevel ?? dbSybil.riskLevel ?? null,
+      sybilVerdict: data?.sybilVerdict ?? dbSybil.verdict ?? dbSybil.sybilVerdict ?? null,
+      topPrograms: data?.topPrograms ?? db?.topPrograms ?? [],
       compositeScore,
       compositeTier,
       compositeBadgeCount,
@@ -499,7 +618,15 @@ function readStoredAuthJwt(): string | null {
     /* ignore */
   }
   try {
-    localStorage.removeItem(AUTH_JWT_KEY);
+    const localRaw = localStorage.getItem(AUTH_JWT_KEY);
+    if (localRaw) {
+      try {
+        sessionStorage.setItem(AUTH_JWT_KEY, localRaw);
+      } catch {
+        /* ignore */
+      }
+      return localRaw;
+    }
   } catch {
     /* ignore */
   }
@@ -512,14 +639,6 @@ function storeAuthJwt(entry: StoredAuthJwt): void {
     sessionStorage.setItem(AUTH_JWT_KEY, raw);
   } catch {
     /* ignore */
-  }
-  if (Capacitor.isNativePlatform()) {
-    try {
-      localStorage.removeItem(AUTH_JWT_KEY);
-    } catch {
-      /* ignore */
-    }
-    return;
   }
   try {
     localStorage.setItem(AUTH_JWT_KEY, raw);

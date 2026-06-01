@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Trophy, XCircle, Clock, Award, Star, Coins, Bell, Trash2, CheckCheck, ArrowLeft } from 'lucide-react';
+import { Trophy, XCircle, Clock, Award, Star, Coins, Bell, Trash2, CheckCheck } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import { fetchApiJson, getApiBase, getCachedJwt } from '@/components/prism/shared';
 import {
@@ -11,6 +11,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 import { goBack } from '@/lib/safeNavigate';
+import HubReturnButton from '@/components/HubReturnButton';
 
 const TYPE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   challenge_win: Trophy,
@@ -185,14 +186,7 @@ export default function InboxPage() {
       <div className="min-h-screen bg-[#05070a] flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
         {/* Header */}
         <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-white/[0.06]">
-          <button
-            onClick={() => goBack(navigate, address ? `/app?address=${encodeURIComponent(address)}` : '/app')}
-            className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] transition-colors"
-            aria-label="Back"
-            title="Back"
-          >
-            <ArrowLeft className="w-4 h-4 text-white/50" />
-          </button>
+          <HubReturnButton fallback={address ? `/app?address=${encodeURIComponent(address)}` : '/app'} />
           <div className="flex-1">
             <h1 className="text-sm font-bold text-white/90 tracking-wide">Notifications</h1>
             {unreadCount > 0 && <p className="text-[10px] text-cyan-400/70">{unreadCount} unread</p>}
@@ -238,19 +232,17 @@ export default function InboxPage() {
               <p className="mt-1 text-xs leading-relaxed text-white/45">
                 {error ?? 'Return to the hub and sign once to load your inbox instantly.'}
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  if (needsSignIn) {
-                    goBack(navigate, address ? `/app?address=${encodeURIComponent(address)}` : '/app');
-                    return;
-                  }
-                  void fetchNotifications();
-                }}
-                className="mt-4 h-10 rounded-xl bg-white px-4 text-xs font-bold text-zinc-950 transition-colors hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
-              >
-                {needsSignIn ? 'Back to hub' : 'Retry'}
-              </button>
+              {needsSignIn ? (
+                <HubReturnButton className="mt-4" fallback={address ? `/app?address=${encodeURIComponent(address)}` : '/app'} />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void fetchNotifications()}
+                  className="mt-4 h-10 rounded-xl bg-white px-4 text-xs font-bold text-zinc-950 transition-colors hover:bg-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+                >
+                  Retry
+                </button>
+              )}
             </div>
           )}
 

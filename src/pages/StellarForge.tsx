@@ -6,11 +6,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { trackForgePurchase } from '@/lib/analytics';
 import {
-  ArrowLeft,
   ShoppingBag,
   Check,
   Lock,
@@ -28,6 +26,7 @@ import {
 import PageShell from '@/components/PageShell';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import HubReturnButton from '@/components/HubReturnButton';
 import {
   ALL_FORGE_ITEMS,
   RARITY_COLORS,
@@ -71,6 +70,10 @@ import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 
 type TopTab = 'shop' | 'inventory';
 type ShopFilter = ForgeCategory | 'all' | 'module';
+type ServerForgeState = {
+  items?: { itemId?: string; purchasedAt?: string }[];
+  modules?: { moduleId?: string; purchasedAt?: string }[];
+};
 
 const TIER_ORDER: Record<string, number> = { blue: 0, yellow: 1, red: 2 };
 const SORTED_MODULES = [...MICROMODULE_DEFS].sort((a, b) => (TIER_ORDER[a.tier] ?? 0) - (TIER_ORDER[b.tier] ?? 0));
@@ -113,6 +116,74 @@ function AssetIcon({ icon, className = 'w-4 h-4' }: { icon: string; className?: 
     return <img src={icon} alt="" className={`${className} shrink-0 object-contain`} loading="lazy" />;
   }
   return <span className="text-sm">{icon}</span>;
+}
+
+function asLoadoutPatch(value: unknown): Partial<ForgeLoadout> {
+  return value && typeof value === 'object' ? (value as Partial<ForgeLoadout>) : {};
+}
+
+function mergeServerForgeLoadout(
+  address: string,
+  baseLoadout: ForgeLoadout,
+  serverLoadout?: unknown,
+  forgeState?: unknown,
+): ForgeLoadout {
+  const server = asLoadoutPatch(serverLoadout);
+  const state = forgeState && typeof forgeState === 'object' ? (forgeState as ServerForgeState) : {};
+  const merged: ForgeLoadout = {
+    ...baseLoadout,
+    ...server,
+    address,
+    installedModules:
+      server.installedModules && typeof server.installedModules === 'object' && !Array.isArray(server.installedModules)
+        ? server.installedModules
+        : baseLoadout.installedModules,
+    ownedItems: [],
+    ownedModules: [],
+  };
+
+  const itemMap = new Map<string, { itemId: string; purchasedAt: string; equipped: boolean }>();
+  const addItem = (itemId: unknown, purchasedAt?: unknown, equipped = false) => {
+    if (typeof itemId !== 'string' || !getItemById(itemId) || itemMap.has(itemId)) return;
+    itemMap.set(itemId, {
+      itemId,
+      purchasedAt: typeof purchasedAt === 'string' ? purchasedAt : new Date().toISOString(),
+      equipped,
+    });
+  };
+  baseLoadout.ownedItems.forEach((entry) => addItem(entry.itemId, entry.purchasedAt, entry.equipped));
+  if (Array.isArray(server.ownedItems)) {
+    server.ownedItems.forEach((entry) => addItem(entry?.itemId, entry?.purchasedAt, Boolean(entry?.equipped)));
+  }
+  if (Array.isArray(state.items)) {
+    state.items.forEach((entry) => addItem(entry?.itemId, entry?.purchasedAt, false));
+  }
+
+  const moduleIds = new Set<string>();
+  const addModule = (moduleId: unknown) => {
+    if (typeof moduleId === 'string' && getModuleById(moduleId)) moduleIds.add(moduleId);
+  };
+  baseLoadout.ownedModules.forEach(addModule);
+  if (Array.isArray(server.ownedModules)) server.ownedModules.forEach(addModule);
+  if (Array.isArray(state.modules)) state.modules.forEach((entry) => addModule(entry?.moduleId));
+
+  const ownedItemIds = new Set(itemMap.keys());
+  const equipIfOwned = (value: unknown, category: ForgeCategory) => {
+    if (typeof value !== 'string' || !ownedItemIds.has(value)) return null;
+    return getItemById(value)?.category === category ? value : null;
+  };
+
+  merged.equippedFrame = equipIfOwned(server.equippedFrame ?? baseLoadout.equippedFrame, 'frame');
+  merged.equippedAura = equipIfOwned(server.equippedAura ?? baseLoadout.equippedAura, 'aura');
+  merged.equippedShipSkin = equipIfOwned(server.equippedShipSkin ?? baseLoadout.equippedShipSkin, 'ship_skin');
+  merged.equippedTitle = equipIfOwned(server.equippedTitle ?? baseLoadout.equippedTitle, 'title');
+
+  const equippedIds = new Set([merged.equippedFrame, merged.equippedAura, merged.equippedShipSkin, merged.equippedTitle]);
+  merged.ownedItems = [...itemMap.values()].map((entry) => ({ ...entry, equipped: equippedIds.has(entry.itemId) }));
+  merged.ownedModules = [...moduleIds].filter(
+    (moduleId) => !Object.values(merged.installedModules).some((ids) => ids.includes(moduleId)),
+  );
+  return merged;
 }
 
 // ── Visual Preview Renderers ──
@@ -532,6 +603,21 @@ export default function StellarForge() {
   const [hasIdentityCard, setHasIdentityCard] = useState(false);
   const [rangerRank, setRangerRank] = useState<string>('cadet');
 
+  const refreshLoadoutFromServer = useCallback(async () => {
+    if (!walletAddress) return null;
+    const jwt = await obtainJwt(wallet);
+    if (!jwt) return null;
+    const base = getApiBase();
+    const data = await fetchApiJson<{ userData?: { loadout?: Partial<ForgeLoadout> } | null }>(
+      `${base}/api/user-data`,
+      { headers: { Authorization: `Bearer ${jwt}` }, timeoutMs: 8_000 },
+    );
+    const nextLoadout = mergeServerForgeLoadout(walletAddress, getLocalLoadout(walletAddress), data?.userData?.loadout);
+    saveLocalLoadout(nextLoadout);
+    setLoadout(nextLoadout);
+    return nextLoadout;
+  }, [wallet, walletAddress]);
+
   const questState = useMemo(
     () => (walletAddress ? getQuestState(walletAddress) : null),
     [walletAddress, loadout?.ownedItems.length],
@@ -618,12 +704,7 @@ export default function StellarForge() {
         .catch(() => {});
     }
     setLoadout(getLocalLoadout(walletAddress));
-    import('@/lib/userDataSync')
-      .then(async ({ loadFromServer }) => {
-        await loadFromServer(walletAddress);
-        if (!cancelled) setLoadout(getLocalLoadout(walletAddress));
-      })
-      .catch(() => {});
+    refreshLoadoutFromServer().catch(() => {});
     // Check identity card status via wallet-database
     fetchApiJson<{ mint?: { minted?: boolean }; userData?: { loadout?: Partial<ForgeLoadout> }; forgeState?: unknown }>(
       `${base}/api/wallet-database?address=${encodeURIComponent(walletAddress)}`,
@@ -663,15 +744,18 @@ export default function StellarForge() {
                 }
               : null;
         if (restoredLoadout) {
-          saveLocalLoadout(restoredLoadout);
-          setLoadout(restoredLoadout);
+          setLoadout((current) => {
+            const merged = mergeServerForgeLoadout(walletAddress, current ?? getLocalLoadout(walletAddress), restoredLoadout, forgeState);
+            saveLocalLoadout(merged);
+            return merged;
+          });
         }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [walletAddress]);
+  }, [walletAddress, refreshLoadoutFromServer]);
 
   // Shop logic
   const RARITY_ORDER: Record<string, number> = { common: 0, rare: 1, epic: 2, legendary: 3 };
@@ -738,6 +822,11 @@ export default function StellarForge() {
           { itemId: item.id },
         );
         if (!result) {
+          const refreshed = await refreshLoadoutFromServer().catch(() => null);
+          if (refreshed?.ownedItems.some((owned) => owned.itemId === item.id)) {
+            toast.success(`${item.name} is already in Inventory`);
+            return;
+          }
           toast.error('Purchase failed');
           return;
         }
@@ -762,7 +851,7 @@ export default function StellarForge() {
         setPurchasing(null);
       }
     },
-    [walletAddress, loadout, balance, purchasing, rangerRank, isUnlockRequirementMet, syncLoadoutNow],
+    [walletAddress, loadout, balance, purchasing, rangerRank, isUnlockRequirementMet, syncLoadoutNow, refreshLoadoutFromServer],
   );
 
   const handleEquip = useCallback(
@@ -943,14 +1032,7 @@ export default function StellarForge() {
           }}
         >
           <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-            <button
-              onClick={() => {
-                startFadeTransition(() => goBack(navigate));
-              }}
-              className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/[0.04] hover:bg-white/[0.08] transition-all border border-white/[0.06]"
-            >
-              <ArrowLeft className="w-4 h-4 text-white/60" />
-            </button>
+            <HubReturnButton />
             <div className="flex-1">
               <h1
                 className="text-base font-black tracking-tight"
@@ -1037,12 +1119,12 @@ export default function StellarForge() {
               {/* Buy Coins & Staking → moved to /vault page */}
 
               {/* Category filters — glass pills */}
-              <div className="flex flex-wrap items-center gap-2 mb-5 pb-1">
+              <div className="flex flex-nowrap items-center gap-1 mb-5 pb-1 overflow-x-auto scrollbar-thin">
                 {SHOP_FILTERS.map((f) => (
                   <button
                     key={f.id}
                     onClick={() => setShopFilter(f.id)}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[11px] font-bold whitespace-nowrap transition-all duration-300"
+                    className="flex shrink-0 items-center gap-1 px-3 py-1.5 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all duration-300"
                     style={
                       shopFilter === f.id
                         ? {
@@ -1058,13 +1140,13 @@ export default function StellarForge() {
                           }
                     }
                   >
-                    <AssetIcon icon={f.icon} className="w-4 h-4" /> {f.label}
+                    <AssetIcon icon={f.icon} className="w-3.5 h-3.5" /> {f.label}
                   </button>
                 ))}
                 <div className="shrink-0">
                   <button
                     onClick={() => setShowOnlyAvailable((prev) => !prev)}
-                    className={`px-3 py-1.5 rounded-full text-[10px] font-bold transition-all whitespace-nowrap ${
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all whitespace-nowrap ${
                       showOnlyAvailable
                         ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
                         : 'bg-white/[0.03] text-white/30 border border-white/5'
@@ -1450,6 +1532,42 @@ export default function StellarForge() {
                                         >
                                           {item.preview}
                                         </span>
+                                      </div>
+                                    ) : cat === 'aura' ? (
+                                      // Distinct per-aura preview: ship silhouette with the aura's glow color
+                                      <div
+                                        className="w-12 h-12 rounded-lg flex items-center justify-center"
+                                        style={{ background: `${rc}10` }}
+                                      >
+                                        <img
+                                          src="/textures/ship.png"
+                                          alt=""
+                                          style={{
+                                            width: 26,
+                                            height: 34,
+                                            objectFit: 'contain',
+                                            filter: `drop-shadow(0 0 5px ${(AURA_STYLES[item.preview]?.color || rc)}) drop-shadow(0 0 9px ${(AURA_STYLES[item.preview]?.color || rc)}90)`,
+                                          }}
+                                        />
+                                      </div>
+                                    ) : cat === 'frame' ? (
+                                      // Distinct per-frame preview: mini card with the frame's gradient border
+                                      <div
+                                        className="w-12 h-12 rounded-lg flex items-center justify-center"
+                                        style={{ background: `${rc}10` }}
+                                      >
+                                        <div
+                                          style={{
+                                            width: 30,
+                                            height: 38,
+                                            borderRadius: 6,
+                                            padding: 3,
+                                            background: FRAME_STYLES[item.id]?.gradient || `${rc}55`,
+                                            boxShadow: FRAME_STYLES[item.id]?.boxShadow || 'none',
+                                          }}
+                                        >
+                                          <div style={{ width: '100%', height: '100%', borderRadius: 4, background: 'linear-gradient(135deg,#0a1020,#0d1428)' }} />
+                                        </div>
                                       </div>
                                     ) : (
                                       <div

@@ -14,10 +14,15 @@ import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapt
 import { Capacitor } from '@capacitor/core';
 // mintIdentityPrism loaded dynamically in handleMint()
 import { extractMwaAddress, mwaAuthorizationCache } from '@/lib/mwaAuthorizationCache';
+import { SEEDVAULT_NAME } from '@/lib/SeedVaultAdapter';
+import { writePreferredMobileWalletAddress } from '@/lib/mobileWalletAddressPreference';
+import SeedVaultAccountPicker from '@/components/SeedVaultAccountPicker';
+import '@/components/SeedVaultAccountPicker.css';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, ArrowLeft, Coins, Loader2, Share2 } from 'lucide-react';
+import { AlertCircle, Coins, Loader2, Share2 } from 'lucide-react';
 import LandingOverlay from '@/components/LandingOverlay';
+import HubReturnButton from '@/components/HubReturnButton';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
 import { hasRecentExternalWalletBackground } from '@/lib/safeNavigate';
 import {
@@ -219,6 +224,13 @@ const readPersistedActiveAddress = () => {
         return null;
       }
     })(),
+    (() => {
+      try {
+        return localStorage.getItem('ip_auth_jwt');
+      } catch {
+        return null;
+      }
+    })(),
   ]) {
     if (!raw) continue;
     try {
@@ -227,6 +239,12 @@ const readPersistedActiveAddress = () => {
     } catch {
       /* ignore */
     }
+  }
+  try {
+    const localAddress = localStorage.getItem('prism_active_address');
+    if (localAddress) return localAddress;
+  } catch {
+    /* ignore */
   }
   return '';
 };
@@ -408,15 +426,6 @@ const Index = () => {
     };
   }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.removeItem('ip_auth_jwt');
-      localStorage.removeItem('prism_active_address');
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
   const wallet = useWallet();
   const {
     publicKey: connectedAddress,
@@ -429,6 +438,38 @@ const Index = () => {
   } = wallet;
   useBlackHolePrefetch(connectedAddress ?? wallet.publicKey ?? null);
   const { setVisible: setWalletModalVisible } = useWalletModal();
+  // Custom Seed Vault address picker (replaces the generic wallet-adapter modal
+  // on Capacitor native — shows actual authorized addresses instead of one
+  // abstract "Seed Vault Detected" entry).
+  const [seedPickerVisible, setSeedPickerVisible] = useState(false);
+  const isNativeRef = useRef(false);
+  isNativeRef.current = Capacitor.isNativePlatform();
+  const openConnectPicker = useCallback(() => {
+    if (isNativeRef.current) {
+      setSeedPickerVisible(true);
+    } else {
+      setWalletModalVisible(true);
+    }
+  }, [setWalletModalVisible]);
+
+  // Handle pick from custom Seed Vault picker — set preferred address, select
+  // Seed Vault adapter, trigger connect (Seed Vault is already authorized for
+  // this account so no fresh PIN prompt is expected).
+  const handleSeedAccountPicked = useCallback(
+    async (address: string) => {
+      setSeedPickerVisible(false);
+      try {
+        writePreferredMobileWalletAddress(address);
+        select(SEEDVAULT_NAME);
+        await new Promise((r) => setTimeout(r, 0));
+        await connect();
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[index] seed-vault connect after pick failed', e);
+      }
+    },
+    [select, connect],
+  );
 
   const prewarmJwt = useCallback(
     async (authWallet: AuthWalletLike, targetAddress: string, options?: { forceFresh?: boolean }) => {
@@ -540,7 +581,6 @@ const Index = () => {
         localStorage.setItem('prism_active_address', activeAddress);
       } else {
         sessionStorage.removeItem('prism_active_address');
-        localStorage.removeItem('prism_active_address');
       }
     } catch {
       /* ignore */
@@ -1290,7 +1330,7 @@ const Index = () => {
     window.setTimeout(() => {
       if (viewStateRef.current !== 'landing' || isDisconnectingRef.current) return;
       void mwaAuthorizationCache.clear();
-      setWalletModalVisible(true);
+      openConnectPicker();
     }, 650);
   }, [
     isCapacitor,
@@ -1345,7 +1385,7 @@ const Index = () => {
       }
 
       if (!desktopWalletReady) {
-        setWalletModalVisible(true);
+        openConnectPicker();
         return;
       }
 
@@ -1670,12 +1710,26 @@ const Index = () => {
         setShowOnboarding(true);
       }
       // Show Welcome Back modal for v1→v2 migrated users (once per address)
-      if (resolvedAddress && !localStorage.getItem(`prism_welcome_shown_${resolvedAddress}`)) {
-        const base = getHeliusProxyUrl() || (typeof window !== 'undefined' ? window.location.origin : '');
-        if (base) {
-          fetch(`${base}/api/v2/migration-status?address=${encodeURIComponent(resolvedAddress)}`)
-            .then((r) => (r.ok ? r.json() : null))
+      if (resolvedAddress) {
+        const token = getCachedJwt(resolvedAddress);
+        const base = getApiBase();
+        if (token && base) {
+          fetchApiJson<{
+            migrated?: boolean;
+            migrationRev?: number;
+            migrationData?: import('@/components/WelcomeBackModal').MigrationData;
+          }>(`${base}/api/v2/migration-status?address=${encodeURIComponent(resolvedAddress)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeoutMs: 5_000,
+          })
             .then((data) => {
+              const migrationRev = String(data?.migrationData?.migrationRev ?? data?.migrationRev ?? 'legacy');
+              const shownKey = `welcome_back_shown_${resolvedAddress}`;
+              try {
+                if (sessionStorage.getItem(shownKey) === migrationRev || localStorage.getItem(shownKey) === migrationRev) return;
+              } catch {
+                /* ignore */
+              }
               if (data?.migrated && data.migrationData) {
                 setWelcomeBackData(data.migrationData);
                 setShowWelcomeBack(true);
@@ -1775,20 +1829,22 @@ const Index = () => {
     const run = async () => {
       const { getCachedJwt } = await import('@/components/prism/shared');
       if (cancelled) return;
-      if (!getCachedJwt(connectedResolved)) {
-        writeAuthFlowDebug({ stage: 'auto_enter_fallback_no_cached_jwt', address: connectedResolved.slice(0, 8) });
-        setJwtDeclined(true);
-        setViewState('landing');
+      if (getCachedJwt(connectedResolved)) {
+        writeAuthFlowDebug({ stage: 'auto_enter_fallback_cached', address: connectedResolved.slice(0, 8) });
+        setPendingAutoEnterAddress(null);
+        setActiveAddress(connectedResolved);
+        setIsWarping(true);
+        setViewState('scanning');
+        clearTimeout(warpTimerRef.current);
+        warpTimerRef.current = setTimeout(() => setIsWarping(false), 900);
         return;
       }
 
-      writeAuthFlowDebug({ stage: 'auto_enter_fallback_cached', address: connectedResolved.slice(0, 8) });
-      setPendingAutoEnterAddress(null);
-      setActiveAddress(connectedResolved);
-      setIsWarping(true);
-      setViewState('scanning');
-      clearTimeout(warpTimerRef.current);
-      warpTimerRef.current = setTimeout(() => setIsWarping(false), 900);
+      // No cached JWT — auto-trigger the Enter Cosmos flow so the user goes
+      // straight from wallet pick → SIWS approve → hub, skipping the
+      // intermediate "ENTER COSMOS" landing screen.
+      writeAuthFlowDebug({ stage: 'auto_enter_invoke_handle_enter', address: connectedResolved.slice(0, 8) });
+      void handleEnter();
     };
 
     run();
@@ -1870,6 +1926,12 @@ const Index = () => {
     setPendingAutoEnterAddress(null);
     jwtPrewarmedRef.current = null;
     setViewState('landing');
+    // Re-arm the cold-launch account picker and forget the preferred address so that
+    // CONNECT after logout lets the user RE-SELECT any Seed Vault account instead of
+    // silently resuming the last one. This is the account-switch path now that the
+    // in-hub S1/S2 switcher was removed.
+    coldLaunchPickerAttemptedRef.current = false;
+    writePreferredMobileWalletAddress(null);
     // Clear URL ?address= param so the urlAddress sync effect (line ~264) doesn't
     // immediately re-set activeAddress from the stale URL
     const next = new URLSearchParams(searchParams);
@@ -1911,6 +1973,7 @@ const Index = () => {
   const handleSwitchSeedAccount = async () => {
     const nextIndex = readSeedWalletIndex() === 0 ? 1 : 0;
     writeSeedWalletIndex(nextIndex);
+    writePreferredMobileWalletAddress(null);
     setSeedAccountIndex(nextIndex);
     await handleDisconnect();
   };
@@ -2244,9 +2307,13 @@ const Index = () => {
         const code = (err as { code?: string })?.code ?? '';
         const errName = (err as { name?: string })?.name ?? '';
         try {
-          console.error('Mint error detail:', JSON.stringify({ message: msg, code, name: errName }));
-        } catch {
-          console.error('Mint error detail:', msg);
+          const rawKeys = err && typeof err === 'object' ? Object.getOwnPropertyNames(err) : [];
+          const rawDump: Record<string, unknown> = {};
+          for (const k of rawKeys) rawDump[k] = String((err as Record<string, unknown>)[k]).slice(0, 400);
+          const stack = err instanceof Error && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : '';
+          console.error('Mint error detail:', JSON.stringify({ message: msg, code, name: errName, rawKeys, rawDump, stack }));
+        } catch (logErr) {
+          console.error('Mint error detail (raw):', msg, '| logErr:', String(logErr));
         }
         const isUserCancel =
           /reject|cancel|denied|abort|dismiss|decline|user.?reject|user.?decline|4001|USER_REJECTED|SIGN_TIMEOUT/i.test(
@@ -2584,6 +2651,11 @@ const Index = () => {
       ref={shellRef}
       className={`identity-shell relative min-h-screen ${previewMode && !isNftMode ? 'preview-scroll' : ''} ${isScrollEnabled ? 'scrollable-shell' : ''} ${isNftMode ? 'is-nft-view nft-kiosk-mode' : ''}`}
     >
+      <SeedVaultAccountPicker
+        visible={seedPickerVisible}
+        onClose={() => setSeedPickerVisible(false)}
+        onSelect={(addr) => { void handleSeedAccountPicked(addr); }}
+      />
       {viewState === 'hub' && !activeAddress ? (
         // Transitional: hub state but wallet address not synced yet.
         // Show dark bg — preloader or fade overlay covers this briefly.
@@ -2789,8 +2861,7 @@ const Index = () => {
                           <Share2 className="h-4 w-4 mr-2" />
                           SHARE ON X
                         </Button>
-                        <Button
-                          variant="ghost"
+                        <HubReturnButton
                           onClick={() => {
                             startFadeTransition(() => {
                               setViewState('hub');
@@ -2798,10 +2869,7 @@ const Index = () => {
                             });
                           }}
                           className="mint-secondary-btn"
-                        >
-                          <ArrowLeft className="h-4 w-4 mr-2" />
-                          BACK TO HUB
-                        </Button>
+                        />
                       </div>
                     </div>
                   )}
@@ -2862,7 +2930,14 @@ const Index = () => {
               setShowWelcomeBack(false);
               if (resolvedAddress) {
                 try {
-                  localStorage.setItem(`prism_welcome_shown_${resolvedAddress}`, '1');
+                  sessionStorage.setItem(
+                    `welcome_back_shown_${resolvedAddress}`,
+                    String(welcomeBackData.migrationRev ?? 'legacy'),
+                  );
+                  localStorage.setItem(
+                    `welcome_back_shown_${resolvedAddress}`,
+                    String(welcomeBackData.migrationRev ?? 'legacy'),
+                  );
                 } catch {
                   /* ignore */
                 }

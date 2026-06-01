@@ -7,9 +7,146 @@ import {
   SystemProgram,
   Transaction,
 } from '@solana/web3.js';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@/lib/solanaToken';
+
+const headersToRecord = (input?: HeadersInit): Record<string, string> => {
+  const headers: Record<string, string> = {};
+  if (!input) return headers;
+  if (input instanceof Headers) {
+    input.forEach((v, k) => { headers[k] = v; });
+  } else if (Array.isArray(input)) {
+    for (const [k, v] of input) headers[k] = v;
+  } else {
+    Object.assign(headers, input);
+  }
+  return headers;
+};
+
+const isNativeHttpRetryableError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /timeout|timed\s*out|SocketTimeoutException|ECONN|ETIMEDOUT|network|connection|Failed to fetch/i.test(message);
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const upstreamSignal = init.signal;
+  const onAbort = () => controller.abort();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) controller.abort();
+    else upstreamSignal.addEventListener('abort', onAbort, { once: true });
+  }
+  try {
+    const fetchPromise = (async () => {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      const bodyText = await response.text();
+      return new Response(bodyText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    })();
+    fetchPromise.catch(() => undefined);
+    return await Promise.race([
+      fetchPromise,
+      new Promise<Response>((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`fetch timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (upstreamSignal) upstreamSignal.removeEventListener('abort', onAbort);
+  }
+}
+
+// Drop-in fetch replacement that routes through CapacitorHttp on native, then
+// falls back to WebView fetch when the native connection pool times out.
+async function nativeAwareFetch(url: string, init?: RequestInit): Promise<Response> {
+  if (!Capacitor.isNativePlatform()) return fetch(url, init);
+  const method = (init?.method || 'GET').toUpperCase();
+  const headers = headersToRecord(init?.headers);
+  // Pass the body as a raw string and force JSON Content-Type. CapacitorHttp
+  // double-serializes object `data` which silently breaks large mint payloads.
+  const bodyStr = typeof init?.body === 'string' ? init.body : init?.body ? JSON.stringify(init.body) : undefined;
+  if (bodyStr && !headers['Content-Type'] && !headers['content-type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+  const isMetadataPost = method === 'POST' && /\/metadata(?:$|[/?#])/.test(url);
+  const isMintCnftPost = method === 'POST' && /\/mint-cnft(?:$|[/?#])/.test(url);
+  const t0 = Date.now();
+  console.warn('[nativeAwareFetch] →', method, url, `bodyLen=${bodyStr?.length ?? 0}`);
+  if (isMintCnftPost) {
+    const fetchInit: RequestInit = {
+      ...init,
+      method,
+      headers,
+      body: bodyStr,
+    };
+    try {
+      const response = await fetchWithTimeout(url, fetchInit, 30_000);
+      console.warn('[nativeAwareFetch] fetch-first ←', response.status, url, `${Date.now() - t0}ms`);
+      return response;
+    } catch (fetchFirstError) {
+      console.warn(
+        '[nativeAwareFetch] fetch-first FAIL; falling back to CapacitorHttp',
+        url,
+        fetchFirstError instanceof Error ? fetchFirstError.message : String(fetchFirstError),
+        `${Date.now() - t0}ms`,
+      );
+      if (!isNativeHttpRetryableError(fetchFirstError)) throw fetchFirstError;
+    }
+  }
+  try {
+    const response = await CapacitorHttp.request({
+      url,
+      method,
+      headers,
+      data: bodyStr,
+      responseType: 'json',
+      connectTimeout: isMetadataPost ? 5_000 : 15_000,
+      readTimeout: isMetadataPost ? 12_000 : 60_000,
+    });
+    console.warn('[nativeAwareFetch] ←', response.status, url, `${Date.now() - t0}ms`);
+    const bodyText = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+    return new Response(bodyText, {
+      status: response.status,
+      statusText: '',
+      headers: response.headers as Record<string, string>,
+    });
+  } catch (e) {
+    console.error('[nativeAwareFetch] FAIL', url, e instanceof Error ? e.message : String(e), `${Date.now() - t0}ms`);
+    if (!isNativeHttpRetryableError(e)) throw e;
+    await sleep(100 + Math.floor(Math.random() * 250));
+    const fallbackInit: RequestInit = {
+      ...init,
+      method,
+      headers,
+      body: bodyStr,
+    };
+    const fallbackStart = Date.now();
+    console.warn('[nativeAwareFetch] fallback fetch →', method, url, `bodyLen=${bodyStr?.length ?? 0}`);
+    try {
+      const fallbackResponse = await fetchWithTimeout(url, fallbackInit, 60_000);
+      console.warn('[nativeAwareFetch] fallback fetch ←', fallbackResponse.status, url, `${Date.now() - fallbackStart}ms`);
+      return fallbackResponse;
+    } catch (fallbackError) {
+      console.error(
+        '[nativeAwareFetch] fallback fetch FAIL',
+        url,
+        fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        `${Date.now() - fallbackStart}ms`,
+      );
+      throw e;
+    }
+  }
+}
 import { Buffer } from 'buffer';
-import { Capacitor } from '@capacitor/core';
 import {
   getAppBaseUrl,
   getHeliusProxyHeaders,
@@ -79,10 +216,9 @@ function encodeBase64(value: string): string {
   return Buffer.from(value, 'utf-8').toString('base64');
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const TX_FEE_BUFFER_SOL = 0.003;
 const MIN_REQUIRED_SOL = 0.02;
+const NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS = 5_000;
 
 const stringifyLog = (value: unknown) => {
   try {
@@ -109,6 +245,71 @@ const buildPreflightError = (
   if (details) Object.assign(error, details);
   return error;
 };
+
+/**
+ * Throw the right error for a failed server-side simulation. Insufficient-funds failures
+ * (the most common, e.g. not enough SOL to cover the fee/transfer) are surfaced as the
+ * friendly INSUFFICIENT_SOL code instead of a raw SIMULATION_FAILED JSON dump.
+ */
+const throwSimulationError = (sim: { err: unknown; logs: string[] | null }): never => {
+  const haystack = `${JSON.stringify(sim.err ?? '')} ${(sim.logs ?? []).join(' ')}`.toLowerCase();
+  if (
+    haystack.includes('insufficient')
+    || haystack.includes('debit an account but found no record of a prior credit')
+  ) {
+    throw buildPreflightError('INSUFFICIENT_SOL', 'Insufficient SOL for transaction', {
+      simulationError: sim.err,
+      logs: sim.logs ?? undefined,
+    });
+  }
+  throw buildPreflightError(
+    'SIMULATION_FAILED',
+    `Transaction simulation failed: ${JSON.stringify(sim.err)}`,
+    { simulationError: sim.err, logs: sim.logs ?? undefined },
+  );
+};
+
+async function simulateBeforeWalletSign(
+  label: string,
+  connection: Connection,
+  transaction: Transaction,
+  timeoutMs: number,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const simulation = await Promise.race([
+      connection.simulateTransaction(transaction, undefined, {
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('PRE_SIGN_SIMULATION_TIMEOUT')), timeoutMs);
+      }),
+    ]);
+    if (simulation.value.err) {
+      console.error(`[${label}] simulation failed`, simulation.value.err, simulation.value.logs);
+      throw buildPreflightError(
+        'SIMULATION_FAILED',
+        `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`,
+        { simulationError: simulation.value.err, logs: simulation.value.logs },
+      );
+    }
+    console.warn(`[${label}] pre-sign simulation ok`);
+  } catch (simError) {
+    if (simError instanceof Error && (simError as any).code === 'SIMULATION_FAILED') {
+      throw simError;
+    }
+    // dApp Store compliance fallback: attempt pre-sign simulation on native too,
+    // but allow signing if RPC preflight itself times out or is unavailable.
+    console.warn(`[${label}] Could not pre-flight the transaction`, simError);
+    toast.warning('Could not pre-flight the transaction', {
+      description: 'RPC simulation timed out or was unavailable. Review the wallet preview before signing.',
+      duration: 8000,
+    });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 async function confirmTransactionWithPolling(
   connection: Connection,
@@ -327,7 +528,7 @@ export async function mintIdentityPrism({
     }
     console.warn('[mint-for-coins] sending request', { address, baseUrl: coreMintUrl, ts: Date.now() });
     const t0 = performance.now();
-    const coinsMintRes = await fetch(`${coreMintUrl}/api/prism/mint-for-coins`, {
+    const coinsMintRes = await nativeAwareFetch(`${coreMintUrl}/api/prism/mint-for-coins`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -435,7 +636,7 @@ export async function mintIdentityPrism({
       hasAuthToken: Boolean(authToken),
     }),
   );
-  const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
+  const metadataResponse = await nativeAwareFetch(`${metadataBaseUrl}/metadata`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
     body: JSON.stringify(metadataJson),
@@ -496,7 +697,12 @@ export async function mintIdentityPrism({
     }
   }
 
+  const prepareRequestId = coinReservationRequestId
+    || (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `mint_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
   const mintPayload = {
+    requestId: prepareRequestId,
     owner: address,
     metadataUri,
     name: metadataJson.name,
@@ -513,7 +719,6 @@ export async function mintIdentityPrism({
       ? { remint: true, ...(burnSignature ? { burnSignature } : {}), ...(burnAssetId ? { burnAssetId } : {}) }
       : {}),
     ...(paidWithCoins ? { paidWithCoins: true } : {}),
-    ...(coinReservationRequestId ? { requestId: coinReservationRequestId } : {}),
   };
   console.warn(
     '[mint] sending mint-cnft payload',
@@ -533,7 +738,7 @@ export async function mintIdentityPrism({
   if (authToken) authHeaders['Authorization'] = `Bearer ${authToken}`;
 
   toast.warning('STAGE: mint-cnft request', { duration: 8000 });
-  const cnftResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
+  const cnftResponse = await nativeAwareFetch(`${coreMintUrl}/mint-cnft`, {
     method: 'POST',
     headers: authHeaders,
     body: JSON.stringify(mintPayload),
@@ -562,6 +767,7 @@ export async function mintIdentityPrism({
     requestId?: string;
     finalize?: boolean;
     finalized?: boolean;
+    simulation?: { ok: boolean; err: unknown; logs: string[] | null };
   };
   console.warn(
     '[mint] mint-cnft response',
@@ -620,70 +826,66 @@ export async function mintIdentityPrism({
     throw new Error('Mint requestId missing from server response');
   }
 
-  if (requiresWalletTx && !Capacitor.isNativePlatform()) {
-    const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
-    const feeLamports = feeForMessage.value ?? 0;
-    // Remint and coins-paid modes have no SOL payment — only rent + tx fee are required
-    const configuredLamports =
-      remint || paidWithCoins ? 0 : paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0;
-    const transferLamports = transaction.instructions.reduce((total, instruction) => {
-      if (!instruction.programId.equals(SystemProgram.programId)) return total;
-      try {
-        const type = SystemInstruction.decodeInstructionType(instruction);
-        if (type === 'Transfer') {
-          const decoded = SystemInstruction.decodeTransfer(instruction);
-          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+  if (requiresWalletTx) {
+    if (!Capacitor.isNativePlatform()) {
+      const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
+      const feeLamports = feeForMessage.value ?? 0;
+      // Remint and coins-paid modes have no SOL payment — only rent + tx fee are required
+      const configuredLamports =
+        remint || paidWithCoins ? 0 : paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0;
+      const transferLamports = transaction.instructions.reduce((total, instruction) => {
+        if (!instruction.programId.equals(SystemProgram.programId)) return total;
+        try {
+          const type = SystemInstruction.decodeInstructionType(instruction);
+          if (type === 'Transfer') {
+            const decoded = SystemInstruction.decodeTransfer(instruction);
+            return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+          }
+          if (type === 'TransferWithSeed') {
+            const decoded = SystemInstruction.decodeTransferWithSeed(instruction);
+            return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+          }
+          if (type === 'CreateAccount') {
+            const decoded = SystemInstruction.decodeCreateAccount(instruction);
+            return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+          }
+          if (type === 'CreateAccountWithSeed') {
+            const decoded = SystemInstruction.decodeCreateAccountWithSeed(instruction);
+            return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
+          }
+        } catch {
+          return total;
         }
-        if (type === 'TransferWithSeed') {
-          const decoded = SystemInstruction.decodeTransferWithSeed(instruction);
-          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
-        }
-        if (type === 'CreateAccount') {
-          const decoded = SystemInstruction.decodeCreateAccount(instruction);
-          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
-        }
-        if (type === 'CreateAccountWithSeed') {
-          const decoded = SystemInstruction.decodeCreateAccountWithSeed(instruction);
-          return decoded.fromPubkey.equals(payer) ? total + decoded.lamports : total;
-        }
-      } catch {
         return total;
+      }, 0);
+      const baseLamports = Math.max(configuredLamports, transferLamports);
+      const bufferedLamports = baseLamports + feeLamports + Math.round(TX_FEE_BUFFER_SOL * LAMPORTS_PER_SOL);
+      const minRequiredLamports = Math.round(MIN_REQUIRED_SOL * LAMPORTS_PER_SOL);
+      const requiredLamports = Math.max(bufferedLamports, minRequiredLamports);
+      const balanceLamports = await connection.getBalance(payer);
+      if (balanceLamports < requiredLamports) {
+        throw buildPreflightError('INSUFFICIENT_SOL', 'Insufficient SOL for transaction', {
+          requiredLamports,
+          balanceLamports,
+          feeLamports,
+        });
       }
-      return total;
-    }, 0);
-    const baseLamports = Math.max(configuredLamports, transferLamports);
-    const bufferedLamports = baseLamports + feeLamports + Math.round(TX_FEE_BUFFER_SOL * LAMPORTS_PER_SOL);
-    const minRequiredLamports = Math.round(MIN_REQUIRED_SOL * LAMPORTS_PER_SOL);
-    const requiredLamports = Math.max(bufferedLamports, minRequiredLamports);
-    const balanceLamports = await connection.getBalance(payer);
-    if (balanceLamports < requiredLamports) {
-      throw buildPreflightError('INSUFFICIENT_SOL', 'Insufficient SOL for transaction', {
-        requiredLamports,
-        balanceLamports,
-        feeLamports,
-      });
     }
 
-    try {
-      const simulation = await connection.simulateTransaction(transaction, undefined, {
-        sigVerify: false,
-        replaceRecentBlockhash: true,
-      });
-      if (simulation.value.err) {
-        console.error('[mint] simulation failed', simulation.value.err, simulation.value.logs);
-        throw buildPreflightError(
-          'SIMULATION_FAILED',
-          `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`,
-          { simulationError: simulation.value.err, logs: simulation.value.logs },
-        );
+    // Prefer the server-side simulation verdict (the on-device simulate times out on throttled
+    // mobile networks); fall back to an on-device simulate only if the server didn't supply one.
+    if (cnftPayload.simulation) {
+      if (!cnftPayload.simulation.ok) {
+        throwSimulationError(cnftPayload.simulation);
       }
-    } catch (simError) {
-      // Re-throw our own preflight errors (simulation failed)
-      if (simError instanceof Error && (simError as any).code === 'SIMULATION_FAILED') {
-        throw simError;
-      }
-      // Network / RPC errors — log but allow through (server already validated the tx)
-      console.warn('[mint] simulateTransaction network error', simError);
+      console.warn('[mint] server-side simulation OK; skipping client preflight');
+    } else {
+      await simulateBeforeWalletSign(
+        'mint',
+        connection,
+        transaction,
+        Capacitor.isNativePlatform() ? NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS : 20_000,
+      );
     }
   }
 
@@ -732,7 +934,7 @@ export async function mintIdentityPrism({
         signatures: signedSignatures,
       }),
     );
-    const finalizeResponse = await fetch(`${coreMintUrl}/mint-cnft`, {
+    const finalizeResponse = await nativeAwareFetch(`${coreMintUrl}/mint-cnft`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({
@@ -889,47 +1091,60 @@ export async function updateIdentityPrism({
   const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;
   if (!coreMintUrl) throw new Error('Core mint endpoint is not configured');
 
-  // Obtain JWT auth token via shared SIWS one-shot (primes MWA session)
-  const { ensureJwt } = await import('@/components/prism/shared');
-  const authToken = await ensureJwt();
+  // Update is authorized by the owner's transaction signature. On Seeker/MWA,
+  // forcing a fresh SIWS popup here can hang before the update transaction appears.
+  const { fetchApiJson, getCachedJwt, postApiJson } = await import('@/components/prism/shared');
+  const authToken = getCachedJwt(address);
   const updateAuthHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) updateAuthHeaders['Authorization'] = `Bearer ${authToken}`;
 
   const heliusRpcUrl = getHeliusRpcUrl(address);
   if (!heliusRpcUrl) throw new Error('Helius API key required');
 
-  // 1. Find existing Core NFT via DAS
-  const dasResponse = await fetch(heliusRpcUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(getHeliusProxyHeaders(address) ?? {}),
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 'update-find',
-      method: 'getAssetsByOwner',
-      params: { ownerAddress: address, page: 1, limit: 1000 },
-    }),
-  });
-  if (!dasResponse.ok) throw new Error(`DAS API error: ${dasResponse.status}`);
-  const dasData = (await dasResponse.json()) as {
-    result?: {
-      items: Array<{ id: string; interface?: string; grouping?: Array<{ group_key: string; group_value: string }> }>;
-    };
+  // Per-step timeout helper — any hung step throws after N seconds with a clear
+  // tag so the UI surfaces which step failed instead of sitting on UPDATING.
+  const withTimeout = async <T,>(label: string, p: Promise<T>, ms: number): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const result = await Promise.race([
+        p,
+        new Promise<T>((_, rej) => {
+          timer = setTimeout(() => rej(new Error(`[update] STEP_TIMEOUT ${label} after ${ms}ms`)), ms);
+        }),
+      ]);
+      return result;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   };
-  const coreAsset = (dasData.result?.items ?? []).find(
-    (a) =>
-      a.interface === 'MplCoreAsset' &&
-      a.grouping?.some((g) => g.group_key === 'collection' && g.group_value === collectionMintAddress),
+
+  // 1. Find existing Core NFT. On Seeker WebView, the direct client DAS
+  // fetch can hang indefinitely even when the same RPC succeeds off-device.
+  // Use the server summary as the fast path; /api/update-card still verifies
+  // ownership with DAS before preparing the transaction.
+  console.warn('[update] step 1/5 — GET /api/prism/summary');
+  const t0 = Date.now();
+  const summaryData = await withTimeout(
+    'summary_fetch',
+    fetchApiJson<{ mint?: { minted?: boolean; assetId?: string | null; metadataUri?: string | null } }>(
+      `${coreMintUrl}/api/prism/summary?address=${encodeURIComponent(address)}`,
+      {
+        headers: updateAuthHeaders,
+        timeoutMs: 20_000,
+      },
+    ),
+    22_000,
   );
-  if (!coreAsset) {
+  console.warn('[update] step 1/5 summary responded in', Date.now() - t0, 'ms status 200');
+  const assetId = summaryData.mint?.assetId;
+  if (!summaryData.mint?.minted || !assetId) {
+    console.warn('[update] summary had no minted Core asset', stringifyLog(summaryData.mint));
     throw new Error('No existing Identity Prism Core NFT found. Use regular mint instead.');
   }
-  const assetId = coreAsset.id;
-  console.warn('[update] found Core asset', { assetId });
+  console.warn('[update] found Core asset from summary', { assetId });
 
-  // 2. Build metadata and upload
+  // 2. Upload fresh metadata so the in-place Core update changes metadataUri
+  // and reflects current score/traits in the NFT JSON.
   const resolvedImageUrl = cardImageUrl || `${appBaseUrl}/phav.png`;
   const resolvedExternalUrl = `${appBaseUrl}/?address=${address}`;
   const resolvedAnimationUrl = `${appBaseUrl}/?address=${address}&mode=nft`;
@@ -967,46 +1182,68 @@ export async function updateIdentityPrism({
     },
   };
 
-  const metadataResponse = await fetch(`${metadataBaseUrl}/metadata`, {
-    method: 'POST',
-    headers: updateAuthHeaders,
-    body: JSON.stringify(metadataJson),
-  });
-  if (!metadataResponse.ok) {
-    const errorText = await metadataResponse.text();
-    throw new Error(`Metadata upload failed: ${metadataResponse.status} ${errorText}`);
-  }
-  const metadataPayload = (await metadataResponse.json()) as { uri?: string };
-  const metadataUri = metadataPayload.uri;
+  console.warn('[update] step 2/5 — POST /metadata');
+  const t2 = Date.now();
+  const metadataUpload = await withTimeout(
+    'metadata_upload',
+    postApiJson<{ uri?: string }>(`${metadataBaseUrl}/metadata`, metadataJson, {
+      headers: updateAuthHeaders,
+      timeoutMs: 30_000,
+    }),
+    45_000,
+  );
+  const metadataUri = metadataUpload.uri;
   if (!metadataUri) throw new Error('Metadata URI not returned');
+  console.warn('[update] step 2/5 metadata URI ready in', Date.now() - t2, 'ms', metadataUri);
 
   // 3. Phase 1: get partially-signed tx from server
-  console.warn('[update] requesting tx from /api/update-card', { assetId: assetId.slice(0, 16), name: displayName });
-  const prepareResponse = await fetch(`${coreMintUrl}/api/update-card`, {
-    method: 'POST',
-    headers: updateAuthHeaders,
-    body: JSON.stringify({ ownerAddress: address, assetId, metadataUri, name: displayName }),
-  });
-  if (!prepareResponse.ok) {
-    const errorText = await prepareResponse.text();
-    throw new Error(`Update prepare failed: ${prepareResponse.status} ${errorText}`);
-  }
-  const prepareData = (await prepareResponse.json()) as { transaction?: string; feeSol?: number };
+  console.warn('[update] step 3/5 — POST /api/update-card prepare', { assetId: assetId.slice(0, 16), name: displayName });
+  const t3 = Date.now();
+  const prepareData = await withTimeout(
+    'prepare_fetch',
+    postApiJson<{ transaction?: string; feeSol?: number; simulation?: { ok: boolean; err: unknown; logs: string[] | null } }>(
+      `${coreMintUrl}/api/update-card`,
+      { ownerAddress: address, assetId, metadataUri, name: displayName },
+      { headers: updateAuthHeaders, timeoutMs: 30_000 },
+    ),
+    45_000,
+  );
+  console.warn('[update] step 3/5 prepare responded in', Date.now() - t3, 'ms status 200');
   if (!prepareData.transaction) throw new Error('Update transaction missing from server');
 
   // 4. User signs the transaction (pays service fee + network fee)
   const transaction = Transaction.from(Buffer.from(prepareData.transaction, 'base64'));
 
   // Simulate before signing (dApp Store compliance)
+  console.warn('[update] step 4/5 — simulate + getLatestBlockhash');
+  const t4 = Date.now();
   const updateConn = new Connection(heliusRpcUrl, 'confirmed');
-  const updateSim = await updateConn.simulateTransaction(transaction, undefined, {
-    sigVerify: false,
-    replaceRecentBlockhash: true,
-  });
-  if (updateSim.value.err) {
-    throw buildPreflightError('SIMULATION_FAILED', `Update simulation failed: ${JSON.stringify(updateSim.value.err)}`);
+  // Prefer the server-side simulation verdict: the on-device web3.js simulate goes over the
+  // WebView fetch on a throttled mobile network and times out (PRE_SIGN_SIMULATION_TIMEOUT),
+  // so it can never actually validate. The server simulated this exact tx with its fast RPC.
+  // Only fall back to an on-device simulate if the server didn't include a result.
+  if (prepareData.simulation) {
+    if (!prepareData.simulation.ok) {
+      throwSimulationError(prepareData.simulation);
+    }
+    console.warn('[update] step 4/5 server-side simulation OK; skipping client preflight');
+  } else {
+    await simulateBeforeWalletSign(
+      'update',
+      updateConn,
+      transaction,
+      Capacitor.isNativePlatform() ? NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS : 20_000,
+    );
   }
-  transaction.recentBlockhash = (await updateConn.getLatestBlockhash()).blockhash;
+  if (!Capacitor.isNativePlatform()) {
+    const latestBh = await withTimeout('latest_blockhash', updateConn.getLatestBlockhash(), 15_000);
+    transaction.recentBlockhash = latestBh.blockhash;
+    console.warn('[update] step 4/5 simulate+blockhash done in', Date.now() - t4, 'ms; calling signTransaction next');
+  } else {
+    // dApp Store compliance fallback: native simulation was attempted above with
+    // a strict timeout; keep the server-prepared blockhash if RPC preflight stalls.
+    console.warn('[update] step 4/5 native simulate attempted; using server-prepared blockhash');
+  }
 
   // Patch serialize so wallet adapter doesn't reject due to missing colAuth sig
   // (same pattern as mint-cnft — MWA internally calls serialize())
@@ -1017,26 +1254,28 @@ export async function updateIdentityPrism({
       requireAllSignatures: false,
       verifySignatures: false,
     })) as typeof transaction.serialize;
+  console.warn('[update] step 5/5 — wallet.signTransaction (popup expected)');
+  const t5 = Date.now();
   const signed = await signWithDismissDetection(wallet, transaction);
+  console.warn('[update] step 5/5 signed in', Date.now() - t5, 'ms; finalizing');
 
   // 5. Phase 2: send signed tx back to server for co-signing & submission
   const serialized = signed.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
-  const finalizeResponse = await fetch(`${coreMintUrl}/api/update-card`, {
-    method: 'POST',
-    headers: updateAuthHeaders,
-    body: JSON.stringify({
+  const result = await withTimeout(
+    'finalize_fetch',
+    postApiJson<{ signature?: string; assetId?: string }>(
+      `${coreMintUrl}/api/update-card`,
+      {
       ownerAddress: address,
       assetId,
       metadataUri,
       name: displayName,
       signedTransaction: serialized,
-    }),
-  });
-  if (!finalizeResponse.ok) {
-    const errorText = await finalizeResponse.text();
-    throw new Error(`Update finalize failed: ${finalizeResponse.status} ${errorText}`);
-  }
-  const result = (await finalizeResponse.json()) as { signature?: string; assetId?: string };
+      },
+      { headers: updateAuthHeaders, timeoutMs: 35_000 },
+    ),
+    55_000,
+  );
   if (!result.signature) throw new Error('Update signature missing');
 
   return { signature: result.signature, assetId, metadataUri };

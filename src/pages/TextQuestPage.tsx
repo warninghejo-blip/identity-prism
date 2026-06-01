@@ -3,7 +3,7 @@
  * Typewriter text effect, glass-card choices, quest list with status.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
@@ -102,6 +102,33 @@ function isImagePath(src?: string): boolean {
   return !!src && src.startsWith('/quests/');
 }
 
+// Quest scene illustrations (`/quests/*.jpg`) are not bundled in the APK and 404 on web
+// (the SPA returns index.html for them) — without a fallback the reader shows an ugly
+// broken-image icon. Render a themed gradient placeholder on load error instead.
+function QuestImage({
+  src, alt, className, style, fallbackEmoji = '🪐',
+}: {
+  src: string; alt?: string; className?: string; style?: CSSProperties; fallbackEmoji?: string;
+}) {
+  const [errored, setErrored] = useState(false);
+  if (errored) {
+    return (
+      <div
+        className={className}
+        style={{
+          ...style,
+          background: 'radial-gradient(ellipse at center, rgba(168,85,247,0.14), rgba(5,7,10,0.95))',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+        aria-label={alt}
+      >
+        <span className="opacity-60 text-2xl">{fallbackEmoji}</span>
+      </div>
+    );
+  }
+  return <img src={src} alt={alt} className={className} style={style} onError={() => setErrored(true)} loading="lazy" />;
+}
+
 // ── Typewriter Hook ──
 function useTypewriter(text: string, speed = 25) {
   const [displayed, setDisplayed] = useState('');
@@ -170,11 +197,12 @@ function QuestListCard({
       {/* Header with image */}
       <div className="p-4 pb-2 flex items-start gap-3">
         {isImagePath(quest.image) ? (
-          <img
-            src={quest.image}
+          <QuestImage
+            src={quest.image!}
             alt={quest.title}
             className="w-14 h-14 rounded-xl object-cover flex-shrink-0"
             style={{ border: `1px solid ${diffColor}30` }}
+            fallbackEmoji="📖"
           />
         ) : (
           <div
@@ -415,6 +443,8 @@ export default function TextQuestPage() {
     startFadeTransition(() => navigate('/game'));
   }, [navigate]);
 
+  const tapRef = useRef<{ x: number; y: number; t: number } | null>(null);
+
   // Auto-start random quest on mount (if no active quest)
   const autoStarted = useRef(false);
   useEffect(() => {
@@ -514,8 +544,14 @@ export default function TextQuestPage() {
             {/* Text + image layout */}
             <div className={`flex gap-4 ${currentNode.image && isImagePath(currentNode.image) ? '' : ''}`}>
               <div
-                className="flex-1 p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] max-h-[42vh] sm:max-h-none overflow-y-auto overscroll-contain cursor-pointer"
-                onClick={() => !done && skip()}
+                className="flex-1 p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] max-h-[42vh] sm:max-h-none overflow-y-auto cursor-pointer"
+                style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch' }}
+                onPointerDown={(e) => { tapRef.current = { x: e.clientX, y: e.clientY, t: Date.now() }; }}
+                onPointerUp={(e) => {
+                  const s = tapRef.current; tapRef.current = null;
+                  if (!s || done) return;
+                  if (Math.abs(e.clientX - s.x) < 10 && Math.abs(e.clientY - s.y) < 10) skip();
+                }}
               >
                 {/* Emoji image inline */}
                 {currentNode.image && !isImagePath(currentNode.image) && (
@@ -533,7 +569,7 @@ export default function TextQuestPage() {
                 {!done && <span className="animate-pulse text-purple-400">|</span>}
               </div>
               {currentNode.image && isImagePath(currentNode.image) && (
-                <img
+                <QuestImage
                   src={currentNode.image}
                   alt=""
                   className="w-36 h-36 rounded-2xl object-cover flex-shrink-0 self-start"
@@ -541,6 +577,7 @@ export default function TextQuestPage() {
                     border: '1px solid rgba(168,85,247,0.15)',
                     boxShadow: '0 0 40px rgba(168,85,247,0.1)',
                   }}
+                  fallbackEmoji="🪐"
                 />
               )}
             </div>

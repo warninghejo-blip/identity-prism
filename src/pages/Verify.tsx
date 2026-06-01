@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getHeliusRpcUrl } from '@/constants';
-import { goBack } from '@/lib/safeNavigate';
-import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
+import { fadeOutTransition } from '@/lib/fadeTransition';
 import { getTierIcon, TIER_HEX } from '@/lib/constants/tierColors';
+import HubReturnButton from '@/components/HubReturnButton';
 
 interface AttestationData {
   protocol: string;
@@ -147,15 +147,7 @@ const Verify: React.FC = () => {
   return (
     <div className="verify-page-scroll relative z-10 min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
       {/* Header */}
-      <button
-        onClick={() => startFadeTransition(() => goBack(navigate))}
-        className="mb-8 flex items-center gap-3 hover:opacity-80 transition-opacity"
-      >
-        <img src="/phav.png" alt="Identity Prism" className="w-10 h-10 rounded-full" />
-        <span className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-          Identity Prism
-        </span>
-      </button>
+      <HubReturnButton className="mb-8" />
 
       <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-center mb-2">Verify On-Chain Attestation</h1>
       <p className="text-gray-400 text-center mb-6 sm:mb-8 max-w-lg text-sm sm:text-base">

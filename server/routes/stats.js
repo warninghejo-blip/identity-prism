@@ -13,7 +13,7 @@ function buildStats() {
     idsMinted: count(appDb, 'SELECT COUNT(*) AS c FROM minted_addresses'),
     walletsScanned: count(appDb, 'SELECT COUNT(*) AS c FROM sybil_verdicts'),
     sybilsCaught: count(appDb, "SELECT COUNT(*) AS c FROM sybil_verdicts WHERE risk_level IN ('high','critical')"),
-    sybilsReported: count(appDb, 'SELECT COUNT(*) AS c FROM sybil_feedback WHERE admin_verified = 1'),
+    sybilsReported: count(appDb, "SELECT COUNT(*) AS c FROM sybil_feedback WHERE report_type = 'sybil' AND (admin_verified IS NULL OR admin_verified = 1)"),
     blackHoleOps: count(appDb, 'SELECT COUNT(*) AS c FROM black_hole_signatures'),
     clusters: count(appDb, 'SELECT COUNT(*) AS c FROM sybil_clusters'),
     updatedAt: new Date().toISOString(),
