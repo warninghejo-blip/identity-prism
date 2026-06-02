@@ -11,6 +11,7 @@ import { useWalletData, type PlanetTier, type WalletData, type WalletTraits } fr
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { TIER_LABELS, getCompositeTierFromScore } from '@/lib/constants/tierColors';
 import { mintIdentityPrism, updateIdentityPrism } from '@/lib/mintIdentityPrism';
+import { useMintCost } from '@/lib/mintPricing';
 import { getPrismBalance } from '@/lib/prismCoin';
 import { getHeliusRpcUrl, getHeliusProxyHeaders, SEEKER_TOKEN } from '@/constants';
 import { fetchApiJson, getApiBase } from '@/components/prism/shared';
@@ -20,7 +21,7 @@ import './apk-pages.css';
 type PayCurrency = 'SOL' | 'SKR' | 'COINS';
 
 const PAY_OPTIONS: Array<{ key: PayCurrency; label: string; iconUrl?: string; emoji?: string }> = [
-  { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
+  { key: 'SOL', label: 'SOL', iconUrl: '/tokens/sol-icon.png' },
   { key: 'SKR', label: 'SKR', iconUrl: '/tokens/skr-icon.png' },
   { key: 'COINS', label: 'PRISM', iconUrl: '/tokens/prism-icon.png' },
 ];
@@ -188,12 +189,15 @@ export default function ApkIdentityHub() {
   );
   const canUpdateIdentity = Boolean(hasIdentityPrism || walletData.isMinted);
   const tierLabel = TIER_LABELS[(cardData.traits?.planetTier || 'saturn') as PlanetTier];
+  // Wallet balance of the selected currency — shown in the .identity-pay-price row above the button.
   const activePaymentAmount =
     payWith === 'SOL'
       ? `${balances.SOL == null ? '—' : balances.SOL.toFixed(3)} SOL`
       : payWith === 'SKR'
         ? `${balances.SKR == null ? '—' : Math.floor(balances.SKR).toLocaleString()} SKR`
         : `${balances.COINS == null ? '—' : Math.floor(balances.COINS).toLocaleString()} PRISM`;
+  // Cost to mint with the selected currency — shown on the mint button.
+  const mintCost = useMintCost(payWith);
 
   const handleMint = async () => {
     if (!wallet.connected) {
@@ -352,7 +356,7 @@ export default function ApkIdentityHub() {
                 disabled={minting || updating}
               >
                 {minting ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <BadgeCheck size={18} aria-hidden="true" />}
-                {minting ? 'MINTING' : wallet.connected ? 'MINT IDENTITY' : 'CONNECT WALLET'}
+                {minting ? 'MINTING' : wallet.connected ? `MINT IDENTITY · ${mintCost}` : 'CONNECT WALLET'}
               </button>
 
               {canUpdateIdentity ? (

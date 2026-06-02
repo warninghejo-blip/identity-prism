@@ -69,14 +69,18 @@ function registerSpendRoute(ctx) {
         const moduleDef = forgeModuleMap.get(moduleId);
         if (!moduleDef) return respondJson(res, 400, { error: 'Valid moduleId required for forge module purchase' });
         if (spent !== Number(moduleDef.price)) return respondJson(res, 400, { error: 'Forge module price mismatch' });
-        if (forgeState.modules.some((entry) => entry.moduleId === moduleId)) {
-          return respondJson(res, 400, { error: 'Forge module already owned' });
+        // Up to 3 copies of each module may be purchased (installed permanently, no uninstall).
+        const MAX_MODULE_COPIES = 3;
+        const ownedCopies = forgeState.modules.filter((entry) => entry.moduleId === moduleId).length;
+        if (ownedCopies >= MAX_MODULE_COPIES) {
+          return respondJson(res, 400, { error: `Max ${MAX_MODULE_COPIES} of this module` });
         }
         const rangerSnapshot = getServerRangerSnapshot(address, walletEntry);
         if (!meetsForgeRequiredRank(rangerSnapshot.rank, moduleDef.requiredRank)) {
           return respondJson(res, 400, { error: `Requires ${moduleDef.requiredRank} rank` });
         }
-        forgeState.modules = mergeForgeEntries(forgeState.modules, [{ moduleId, purchasedAt: purchaseTimestamp }], 'moduleId');
+        // Allow duplicate moduleId entries (one per purchased copy) — do NOT dedupe.
+        forgeState.modules = [...forgeState.modules, { moduleId, purchasedAt: purchaseTimestamp }];
       } else if (sanitizedSource.startsWith('forge_')) {
         const itemDef = forgeItemMap.get(itemId);
         if (!itemDef) return respondJson(res, 400, { error: 'Valid itemId required for forge purchase' });

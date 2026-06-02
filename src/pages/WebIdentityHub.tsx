@@ -13,6 +13,7 @@ import { useWebComposite } from '@/hooks/useWebComposite';
 import { useSeo } from '@/hooks/useSeo';
 import { TIER_LABELS, TIER_HEX, getCompositeTierFromScore } from '@/lib/constants/tierColors';
 import { mintIdentityPrism, updateIdentityPrism } from '@/lib/mintIdentityPrism';
+import { useMintCost } from '@/lib/mintPricing';
 import { getPrismBalance } from '@/lib/prismCoin';
 import { getHeliusRpcUrl, getHeliusProxyHeaders, SEEKER_TOKEN } from '@/constants';
 import { fetchApiJson, getApiBase } from '@/components/prism/shared';
@@ -38,7 +39,7 @@ function percentileLabel(score: number): string {
 // PRISM (COINS) payment is a Seeker-only privilege — APK uses ApkIdentityHub.tsx
 // which keeps all three options. Web users see only SOL + SKR.
 const PAY_OPTIONS: Array<{ key: PayCurrency; label: string; iconUrl?: string; emoji?: string }> = [
-  { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
+  { key: 'SOL', label: 'SOL', iconUrl: '/tokens/sol-icon.png' },
   { key: 'SKR', label: 'SKR', iconUrl: '/tokens/skr-icon.png' },
 ];
 
@@ -202,12 +203,8 @@ export default function WebIdentityHub() {
   );
   const canUpdateIdentity = Boolean(hasIdentityPrism || walletData.isMinted);
   const tierLabel = TIER_LABELS[(cardData.traits?.planetTier || 'saturn') as PlanetTier];
-  const activePaymentAmount =
-    payWith === 'SOL'
-      ? `${balances.SOL == null ? '—' : balances.SOL.toFixed(3)} SOL`
-      : payWith === 'SKR'
-        ? `${balances.SKR == null ? '—' : Math.floor(balances.SKR).toLocaleString()} SKR`
-        : `${balances.COINS == null ? '—' : Math.floor(balances.COINS).toLocaleString()} PRISM`;
+  // Cost to mint (button); the wallet balance is shown per-currency on the pay chips above.
+  const mintCost = useMintCost(payWith);
 
   const handleMint = async () => {
     if (!wallet.connected) {
@@ -369,34 +366,6 @@ export default function WebIdentityHub() {
               </div>
             </div>
 
-            {liveScore > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const text = `🪐 My Identity Prism passport — ${tierLabel} tier · ${liveScore}/1000.\n\nSybil-resistant on-chain reputation on Solana, earned not bought. What's your score?`;
-                  window.open(
-                    `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent('https://identityprism.xyz/identity')}`,
-                    '_blank',
-                    'noopener,noreferrer',
-                  );
-                }}
-                style={{
-                  width: '100%',
-                  marginTop: 10,
-                  padding: '9px 14px',
-                  borderRadius: 10,
-                  border: '1px solid rgba(34,211,238,0.3)',
-                  background: 'linear-gradient(135deg, rgba(34,211,238,0.12), rgba(167,139,250,0.12))',
-                  color: '#67e8f9',
-                  fontWeight: 600,
-                  fontSize: 13,
-                  cursor: 'pointer',
-                }}
-              >
-                𝕏&nbsp;&nbsp;Share my identity
-              </button>
-            )}
-
             {/* Card status row */}
             <div className="mc-card-row">
               <div>
@@ -442,26 +411,40 @@ export default function WebIdentityHub() {
                 {minting ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <BadgeCheck size={18} aria-hidden="true" />}
                 {minting ? 'MINTING' : 'MINT IDENTITY'}
               </span>
-              <span className="mc-mint-r">{activePaymentAmount}</span>
+              <span className="mc-mint-r">{mintCost}</span>
             </button>
 
-            {/* 3 secondary buttons */}
-            <div className="mc-actions">
-              {canUpdateIdentity && (
-                <button type="button" className="mc-act" onClick={handleUpdate} disabled={updating || minting}>
+            {/* Secondary actions — full-width buttons matching the MINT button */}
+            {canUpdateIdentity && (
+              <button
+                type="button"
+                className="mc-mint mc-mint-secondary"
+                onClick={handleUpdate}
+                disabled={updating || minting}
+              >
+                <span className="mc-mint-l">
                   {updating ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <RefreshCw size={18} aria-hidden="true" />}
-                  <span>UPDATE</span>
-                </button>
-              )}
-              <button type="button" className="mc-act" onClick={() => setVisible(true)}>
-                <Wallet size={18} aria-hidden="true" />
-                <span>WALLET</span>
+                  {updating ? 'UPDATING' : 'UPDATE IDENTITY'}
+                </span>
               </button>
-              <Link to="/blackhole" className="mc-act">
+            )}
+            <button
+              type="button"
+              className="mc-mint mc-mint-secondary"
+              onClick={() => {
+                const text = `🪐 My Identity Prism passport — ${tierLabel} tier · ${liveScore}/1000.\n\nSybil-resistant on-chain reputation on Solana, earned not bought. What's your score?`;
+                window.open(
+                  `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent('https://identityprism.xyz/identity')}`,
+                  '_blank',
+                  'noopener,noreferrer',
+                );
+              }}
+            >
+              <span className="mc-mint-l">
                 <Share2 size={18} aria-hidden="true" />
-                <span>SHARE</span>
-              </Link>
-            </div>
+                SHARE
+              </span>
+            </button>
           </aside>
         </section>
         )}

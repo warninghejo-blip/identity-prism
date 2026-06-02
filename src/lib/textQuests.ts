@@ -3945,6 +3945,28 @@ export function resetQuest(questId: string, address: string): void {
   } catch {}
 }
 
+/**
+ * True when the wallet has already used its 1-per-day text quest and has no in-progress quest
+ * to resume. Gate entry with this BEFORE opening the reader so we never show a dead "loading"
+ * screen. Mirrors hasCompletedQuestToday() in TextQuestPage (same `text_quest_daily_` key).
+ */
+export function isTextQuestLockedToday(address: string | null | undefined): boolean {
+  if (!address) return false;
+  // An in-progress (saved, not completed) quest can always be resumed → not locked.
+  const hasInProgress = TEXT_QUEST_DATA.some((q) => {
+    const save = getQuestSave(q.id, address);
+    return save != null && !save.completed;
+  });
+  if (hasInProgress) return false;
+  try {
+    const raw = localStorage.getItem(`text_quest_daily_${address}`);
+    if (!raw) return false;
+    return new Date(raw).toDateString() === new Date().toDateString();
+  } catch {
+    return false;
+  }
+}
+
 function checkCondition(condition: QuestChoice['condition'], variables: Record<string, number>): boolean {
   if (!condition) return true;
   const val = variables[condition.variable] ?? 0;

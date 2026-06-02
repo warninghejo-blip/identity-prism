@@ -1089,35 +1089,6 @@ function Radar({ metrics }: { metrics?: SybilMetrics }) {
   );
 }
 
-function Heatmap({ metrics }: { metrics?: SybilMetrics }) {
-  const buckets = metrics?.dayBuckets;
-  const heights = useMemo(() => {
-    const buckets = metrics?.dayBuckets;
-    if (Array.isArray(buckets) && buckets.length > 0) return buckets.slice(-30).map((value) => Math.max(5, Math.min(95, Number(value) * 8)));
-    if (buckets && typeof buckets === 'object') {
-      return Object.values(buckets).slice(-30).map((value) => Math.max(5, Math.min(95, Number(value) * 8)));
-    }
-    return [];
-  }, [metrics]);
-  if (heights.length === 0 || !buckets) return null;
-  // dayBuckets is a 7-element day-of-week distribution (Sun-Sat), NOT a 30-day timeline —
-  // label it honestly. A flat profile across all 7 days is a mild bot tell.
-  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  return (
-    <div className="heat">
-      <div className="heat-head">
-        <div className="l"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>Activity by day of week</div>
-        <div className="mono-muted">{heights.length}-day pattern</div>
-      </div>
-      <div className="heat-bars">
-        {heights.map((height, idx) => (
-          <div key={idx} className="heat-bar" style={{ height: `${height}%` }} title={`${DOW[idx % 7]}`} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ===== Simple-mode panel: rich, plain-language verdict for non-technical users.
 // All friendly mapping lives in @/lib/sybilFriendly so the APK PrismScanner uses
 // the exact same headlines and tone-based phrasing.
@@ -1400,6 +1371,19 @@ export default function SybilCheckerPage() {
     ? shortAddress(data.primaryFundingSource, 6, 4)
     : data?.primaryFundingSource?.label || shortAddress(data?.primaryFundingSource?.address, 6, 4);
 
+  // Transparency: a cluster link only drags the verdict down when one of these corroborating
+  // factors is present. Surface them so "in a cluster of N but Trust X" stops looking contradictory.
+  const sigOn = (id: string) => Boolean(signalById(data?.signals || [], id)?.detected);
+  const escalationFactors = [
+    { label: 'Non-exchange shared funder', on: sigOn('repeated_funder') || sigOn('concentrated_funding') },
+    { label: 'Temporal cohort (same-window creation)', on: sigOn('temporal_cohort') },
+    { label: 'Hub-and-spoke funding fan-out', on: sigOn('hub_spoke') },
+    { label: 'Known sybil-graph match', on: sigOn('graph_intelligence') || sigOn('known_sybil_network') },
+    { label: 'Farming / automated behavior', on: sigOn('airdrop_farming') || sigOn('timing_pattern') || sigOn('activity_burst') },
+  ];
+  const escalationCount = escalationFactors.filter((f) => f.on).length;
+  const clusterLinkCount = inKnownCluster ? (knownCluster?.size ?? clusterMemberCount + 1) : (metrics.siblingCount ?? 0);
+
   const breakdownRows = [
     {
       name: 'Cluster Membership',
@@ -1631,15 +1615,6 @@ export default function SybilCheckerPage() {
               )}
             </div>
 
-            <div className="card">
-              <div className="ch">What to do</div>
-              <div className="actions">
-                <a className="action" href={`/profile/${address}`}><div className="ai">→</div><div className="at">Open reputation profile</div></a>
-                <a className="action" href={`/sybil-hunt?target=${address}`}><div className="ai">+</div><div className="at">Report to community</div></a>
-                <a className="action" href={`${getApiBase()}/api/sybil/analysis?address=${address}`}><div className="ai">↗</div><div className="at">Export cluster JSON</div></a>
-                <a className="action" href="/app"><div className="ai">⌘</div><div className="at">Query via app</div></a>
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -1658,7 +1633,28 @@ export default function SybilCheckerPage() {
             ))}
           </div>
 
-          <Heatmap metrics={metrics} />
+          <div className="card why-card">
+            <div className="ch">Why this verdict</div>
+            <p className="why-lead">
+              {clusterLinkCount > 0
+                ? `Linked to ${clusterLinkCount} wallet${clusterLinkCount === 1 ? '' : 's'} via shared funding. A shared funder by itself is NOT proof of a sybil — real users share exchanges, airdrops and faucets. It only lowers the score when backed by the factors below.`
+                : 'No cluster links found — the score reflects this wallet’s own on-chain behavior.'}
+            </p>
+            <div className="why-factors">
+              {escalationFactors.map((f) => (
+                <div className={`why-f${f.on ? ' on' : ''}`} key={f.label}>
+                  <span className="why-i">{f.on ? '!' : '✓'}</span>
+                  <span className="why-l">{f.label}</span>
+                  <span className="why-s">{f.on ? 'raises risk' : 'clear'}</span>
+                </div>
+              ))}
+            </div>
+            <p className="why-note">
+              {escalationCount === 0
+                ? `None of these are present → the cluster link is weak, so the verdict stays "${verdict.title}" and Trust ${trustScore}/100 reflects real activity rather than a cluster penalty.`
+                : `${escalationCount} escalating factor${escalationCount === 1 ? '' : 's'} present → that's what drives the "${verdict.title}" verdict.`}
+            </p>
+          </div>
         </div>
       </section>
       </>

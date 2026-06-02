@@ -7,7 +7,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 12px clamp(16px, 4vw, 48px);
+  /* Align header content edges with the standard 1240px page shell (logo/wallet line up with
+     page content instead of stretching to the viewport edges). The bar background stays full-bleed. */
+  padding: 12px max(clamp(16px, 4vw, 32px), calc((100% - 1240px) / 2 + 32px));
   border-bottom: 1px solid rgba(34, 211, 238, 0.16);
   background: rgba(5, 7, 10, 0.86);
   backdrop-filter: blur(18px) saturate(130%);
@@ -75,6 +77,37 @@
   background: linear-gradient(135deg, #22d3ee, #a78bfa);
 }
 
+.site-header__social {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.site-header__social a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  color: rgba(241, 245, 249, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+
+.site-header__social a:hover,
+.site-header__social a:focus-visible {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(167, 139, 250, 0.3);
+  outline: none;
+}
+
+.site-header__social a:focus-visible {
+  box-shadow: 0 0 0 2px #a78bfa, 0 0 0 5px rgba(167, 139, 250, 0.18);
+}
+
 .site-header__wallet {
   display: flex;
   justify-content: flex-end;
@@ -129,24 +162,77 @@
    re-collapse all three layers to one z-index here (that puts overlay on top
    of wrapper because it's later in the DOM and the modal becomes "dimmed"). */
 
+/* Burger — hidden on desktop, shown on mobile */
+.site-header__burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #e8f8ff;
+  cursor: pointer;
+}
+.site-header__burger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #a78bfa, 0 0 0 5px rgba(167, 139, 250, 0.18);
+}
+
 @media (max-width: 860px) {
+  /* Bar stays a single row: brand (left) · Connect · burger (right) */
   .site-header {
-    flex-direction: column;
-    justify-items: stretch;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
     gap: 10px;
+    min-height: 60px;
+    padding: 10px clamp(14px, 4vw, 28px);
   }
+  .site-header__brand { order: 0; }
+  .site-header__social { order: 1; margin-left: auto; }
+  .site-header__social a { width: 36px; height: 36px; }
+  .site-header__wallet { order: 2; justify-content: flex-end; }
+  .site-header__burger { display: inline-flex; order: 3; }
 
-  .site-header__brand {
-    justify-content: center;
-  }
-
+  /* Nav becomes a dropdown panel anchored under the sticky bar */
   .site-header__nav {
-    width: 100%;
-    overflow-x: auto;
-    justify-content: flex-start;
+    order: 4;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    padding: 8px clamp(14px, 4vw, 28px) 12px;
+    border: 0;
+    border-bottom: 1px solid rgba(34, 211, 238, 0.16);
+    border-radius: 0;
+    background: rgba(5, 7, 10, 0.98);
+    backdrop-filter: blur(18px) saturate(130%);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
   }
+  .site-header.is-menu-open .site-header__nav { display: flex; }
+  .site-header__nav a {
+    justify-content: flex-start;
+    min-height: 48px;
+    padding: 0 14px;
+    font-size: 15px;
+  }
+}
 
-  .site-header__wallet {
-    justify-content: center;
+/* Very narrow phones: drop the brand wordmark to free room for Connect + burger */
+@media (max-width: 480px) {
+  .site-header__brand span { display: none; }
+  .site-header__wallet .wallet-adapter-button,
+  .site-header__wallet .web-wallet-button,
+  .site-header__wallet .web-wallet-button-host .wallet-adapter-button-trigger {
+    padding: 0 12px;
+    font-size: 12px;
   }
 }

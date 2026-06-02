@@ -1059,18 +1059,32 @@ export function getModuleById(id: string): Micromodule | undefined {
 }
 
 /** Purchase a module — adds to ownedModules (not yet installed). */
+/** Each module type can be bought up to this many times (installed + uninstalled combined). */
+export const MAX_MODULE_COPIES = 3;
+
+/** Total copies of a module the wallet owns — uninstalled (ownedModules) plus installed across all ships. */
+export function getModuleOwnedCount(loadout: ForgeLoadout, moduleId: string): number {
+  const owned = loadout.ownedModules.filter((id) => id === moduleId).length;
+  const installed = Object.values(loadout.installedModules).reduce(
+    (sum, ids) => sum + ids.filter((id) => id === moduleId).length,
+    0,
+  );
+  return owned + installed;
+}
+
 export function purchaseModule(loadout: ForgeLoadout, moduleId: string, prismBalance: number): ForgeLoadout | null {
   const mod = getModuleById(moduleId);
   if (!mod) return null;
   if (prismBalance < mod.price) return null;
-  // Already owned (in inventory or installed somewhere)
-  if (loadout.ownedModules.includes(moduleId)) return null;
-  const alreadyInstalled = Object.values(loadout.installedModules).some((mods) => mods.includes(moduleId));
-  if (alreadyInstalled) return null;
+  // Up to MAX_MODULE_COPIES of each module may be owned (installed + uninstalled combined).
+  if (getModuleOwnedCount(loadout, moduleId) >= MAX_MODULE_COPIES) return null;
   return { ...loadout, ownedModules: [...loadout.ownedModules, moduleId] };
 }
 
-/** Install a module from ownedModules into a ship slot. */
+/**
+ * Install one owned copy of a module into a ship slot. Modules install PERMANENTLY (no uninstall).
+ * One slot holds one module; the same module may be stacked across a ship's slots (1 copy per slot).
+ */
 export function installModule(
   loadout: ForgeLoadout,
   itemId: string,
@@ -1087,27 +1101,20 @@ export function installModule(
   // Check ownership of item
   if (!loadout.ownedItems.some((o) => o.itemId === itemId)) return null;
 
-  // Module must be in ownedModules
-  if (!loadout.ownedModules.includes(moduleId)) return null;
+  // Must have an uninstalled copy available
+  const ownedIdx = loadout.ownedModules.indexOf(moduleId);
+  if (ownedIdx === -1) return null;
 
   const currentModules = loadout.installedModules[itemId] || [];
 
-  // Slot limit: use item's maxModuleSlots (default 3)
+  // Slot limit: use item's maxModuleSlots (default 3). Duplicate modules ARE allowed (one per slot).
   const maxSlots = item.maxModuleSlots ?? 3;
   if (currentModules.length >= maxSlots) return null;
 
-  // No duplicate module on same item
-  if (currentModules.includes(moduleId)) return null;
-
-  // No duplicate module across ALL items (prevent stacking same module on multiple items)
-  const alreadyInstalledElsewhere = Object.entries(loadout.installedModules).some(
-    ([key, mods]) => key !== itemId && mods.includes(moduleId),
-  );
-  if (alreadyInstalledElsewhere) return null;
-
   return {
     ...loadout,
-    ownedModules: loadout.ownedModules.filter((id) => id !== moduleId),
+    // Remove exactly ONE copy from the uninstalled pool
+    ownedModules: loadout.ownedModules.filter((_, i) => i !== ownedIdx),
     installedModules: {
       ...loadout.installedModules,
       [itemId]: [...currentModules, moduleId],

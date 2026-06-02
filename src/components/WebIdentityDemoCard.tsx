@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { Suspense, useMemo, useState, type CSSProperties } from 'react';
 import { CelestialCard as WebCelestialCard } from '@/components/WebCelestialCard';
 import type { PlanetTier, WalletData, WalletTraits } from '@/hooks/useWalletData';
 import type { ScoreDetails } from '@/hooks/useCompositeScore';
@@ -158,18 +158,20 @@ export default function WebIdentityDemoCard() {
   return (
     <div className="web-id-demo" style={{ '--tier': TIER_HEX[activeTier] } as TierStyle}>
       <div className="web-id-card-shell" aria-label={`${TIER_LABELS[activeTier]} demo identity card`}>
-        <WebCelestialCard
-          key={`${activeTier}-${demoVariant}`}
-          data={cardData}
-          staticFront
-          liveData={false}
-          compositeOverride={{
-            score: activeScore,
-            tier: activeTier,
-            breakdown: compositeBreakdown,
-            details: compositeDetails,
-          }}
-        />
+        <Suspense fallback={null}>
+          <WebCelestialCard
+            key={`${activeTier}-${demoVariant}`}
+            data={cardData}
+            staticFront
+            liveData={false}
+            compositeOverride={{
+              score: activeScore,
+              tier: activeTier,
+              breakdown: compositeBreakdown,
+              details: compositeDetails,
+            }}
+          />
+        </Suspense>
       </div>
 
       <div className="web-id-tier-switcher" role="group" aria-label="Preview identity tier">

@@ -484,9 +484,11 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
         const rawValue = breakdown[bar.key] || 0;
         const value = scaled ? Math.round(rawValue * WEB_SCALE) : rawValue;
         const max = scaled ? Math.round(bar.max * WEB_SCALE) : bar.max;
-        const pct = Math.min(100, (value / max) * 100);
-        const finalValue = Math.min(value, max);
         const appOnly = webMode && !isWebCounted(bar.key);
+        // App-only metrics (Games/Social/Engagement on web) aren't earned on the web —
+        // show no number/progress, just an "In app" tag so it's clear they're Seeker-only.
+        const pct = appOnly ? 0 : Math.min(100, (value / max) * 100);
+        const finalValue = Math.min(value, max);
         const rowExpandable = canExpand && !appOnly;
         const isExpanded = expandedBar === bar.key;
         const barLabel = webMode && bar.key === 'sybilTrust' ? 'Sybil Trust' : bar.label;
@@ -520,17 +522,20 @@ export default function CompositeScoreBreakdown({ breakdown, details, compact = 
                     style={{ filter: `drop-shadow(0 0 5px ${bar.color}66)` }}
                   />
                   <span>{barLabel}</span>
-                  {appOnly && (
-                    <span className="ml-1 rounded border border-white/15 px-1 py-px text-[7.5px] font-bold uppercase tracking-wider text-white/45">
-                      in app
-                    </span>
-                  )}
                 </span>
                 <span className="flex items-center gap-1">
-                  <InfoTooltip text={bar.tooltip} color={bar.color} />
-                  <span style={{ color: bar.color }} className="font-mono">
-                    {finalValue}/{max}
-                  </span>
+                  {appOnly ? (
+                    <span className="rounded border border-white/15 px-1.5 py-px text-[8.5px] font-bold uppercase tracking-wider text-white/45">
+                      In app only
+                    </span>
+                  ) : (
+                    <>
+                      <InfoTooltip text={bar.tooltip} color={bar.color} />
+                      <span style={{ color: bar.color }} className="font-mono">
+                        {finalValue}/{max}
+                      </span>
+                    </>
+                  )}
                 </span>
               </div>
               <div className={`${compact ? 'h-1.5' : 'h-2'} bg-white/10 rounded-full overflow-hidden`}>

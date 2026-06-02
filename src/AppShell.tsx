@@ -484,7 +484,7 @@ export default function AppShell() {
       </WalletModalProvider>
     </DevWalletProvider>
   ) : (
-    <CustomWalletProvider wallets={wallets} autoConnect={false} localStorageKey="walletAdapter">
+    <CustomWalletProvider wallets={wallets} autoConnect={!isCapacitorNative} localStorageKey="walletAdapter">
       <DebugWallet />
       <WalletModalProvider>
         <React.Suspense

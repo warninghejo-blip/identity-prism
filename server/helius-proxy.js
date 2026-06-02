@@ -929,12 +929,16 @@ const sanitizeForgeLoadout = (address, candidateLoadout, forgeState) => {
     .filter((entry) => FORGE_ITEM_MAP.has(entry.itemId))
     .map((entry) => ({ itemId: entry.itemId, purchasedAt: entry.purchasedAt, equipped: false }));
   const ownedItemIds = new Set(ownedItems.map((entry) => entry.itemId));
-  const allModuleIds = forgeState.modules
-    .map((entry) => entry.moduleId)
-    .filter((moduleId) => FORGE_MODULE_MAP.has(moduleId));
+  // Purchased copies per module (forgeState.modules is a multiset — up to 3 entries per module).
+  const purchasedCount = new Map();
+  for (const entry of forgeState.modules) {
+    if (FORGE_MODULE_MAP.has(entry.moduleId)) {
+      purchasedCount.set(entry.moduleId, (purchasedCount.get(entry.moduleId) || 0) + 1);
+    }
+  }
 
   const installedModules = {};
-  const usedModules = new Set();
+  const installedCount = new Map();
   if (raw.installedModules && typeof raw.installedModules === 'object' && !Array.isArray(raw.installedModules)) {
     for (const [itemId, moduleIds] of Object.entries(raw.installedModules)) {
       const itemDef = FORGE_ITEM_MAP.get(itemId);
@@ -943,18 +947,27 @@ const sanitizeForgeLoadout = (address, candidateLoadout, forgeState) => {
       const accepted = [];
       for (const moduleId of moduleIds) {
         if (accepted.length >= maxSlots) break;
-        if (typeof moduleId !== 'string' || usedModules.has(moduleId) || !allModuleIds.includes(moduleId)) continue;
+        if (typeof moduleId !== 'string' || !FORGE_MODULE_MAP.has(moduleId)) continue;
+        // Modules install permanently and may be stacked, but only as many copies as were purchased.
+        const remaining = (purchasedCount.get(moduleId) || 0) - (installedCount.get(moduleId) || 0);
+        if (remaining <= 0) continue;
         const moduleDef = FORGE_MODULE_MAP.get(moduleId);
         if (!moduleDef || !Array.isArray(moduleDef.compatibleCategories) || !moduleDef.compatibleCategories.includes(itemDef.category)) continue;
         accepted.push(moduleId);
-        usedModules.add(moduleId);
+        installedCount.set(moduleId, (installedCount.get(moduleId) || 0) + 1);
       }
       if (accepted.length > 0) installedModules[itemId] = accepted;
     }
   }
 
   sanitized.installedModules = installedModules;
-  sanitized.ownedModules = allModuleIds.filter((moduleId) => !usedModules.has(moduleId));
+  // Uninstalled copies = purchased − installed, per module.
+  const ownedModules = [];
+  for (const [moduleId, count] of purchasedCount.entries()) {
+    const remaining = Math.max(0, count - (installedCount.get(moduleId) || 0));
+    for (let i = 0; i < remaining; i++) ownedModules.push(moduleId);
+  }
+  sanitized.ownedModules = ownedModules;
   sanitized.ownedItems = ownedItems;
 
   for (const [field, category] of FORGE_EQUIP_FIELDS) {

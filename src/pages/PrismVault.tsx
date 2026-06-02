@@ -604,6 +604,25 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             const amountBaseUnits = BigInt(skrQuote.skrPrice) * 10n ** BigInt(decimals);
             const ownerAta = await getAssociatedTokenAddress(skrMint, ownerKey, false, activeTokenProgramId);
             const treasuryAta = await getAssociatedTokenAddress(skrMint, treasuryKey, false, activeTokenProgramId);
+            // SKR balance preflight — show a clear "Insufficient SKR" instead of an "account not found"
+            // simulation error when the wallet has no SKR token account / not enough SKR.
+            {
+              let skrBalanceBase = -1n; // -1 = unknown (RPC issue) → don't block, let simulation handle it
+              try {
+                const bal = await vaultWithTimeout('getTokenAccountBalance(SKR preflight)', conn.getTokenAccountBalance(ownerAta), 8_000);
+                skrBalanceBase = BigInt(bal?.value?.amount ?? '0');
+              } catch (e) {
+                const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+                // ATA missing → no SKR at all (treat as 0); a timeout/RPC error stays "unknown".
+                skrBalanceBase = m.includes('could not find') || m.includes('not found') || m.includes('invalid param') ? 0n : -1n;
+              }
+              if (skrBalanceBase >= 0n && skrBalanceBase < amountBaseUnits) {
+                const have = Number(skrBalanceBase) / 10 ** decimals;
+                toast.error('Insufficient SKR', { description: `Need ${skrQuote.skrPrice} SKR. You have ${have.toLocaleString()} SKR.` });
+                setActionMessage('Insufficient SKR');
+                return;
+              }
+            }
             const tx = new SolTx();
             // Always use idempotent ATA create — safe whether treasury ATA exists or not.
             // (Plain create + getAccountInfo race / proxy null-result caused Custom:1 AccountAlreadyInUse.)
@@ -683,6 +702,24 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             }
           } else {
             console.warn('[vault] step 1/4 — prepare SOL transaction');
+            // SOL balance preflight — show a clear "Insufficient SOL" instead of an opaque
+            // simulation/RPC error when the wallet can't cover the package price + fees.
+            {
+              const requiredLamports = Math.floor(pkg.solPrice * 1e9) + 5_000_000; // price + ~0.005 SOL buffer
+              let solLamports = -1;
+              try {
+                solLamports = await vaultWithTimeout('getBalance(SOL preflight)', conn.getBalance(new SolPK(signerAddress)), 8_000);
+              } catch {
+                solLamports = -1; // unknown — don't block, let simulation handle it
+              }
+              if (solLamports >= 0 && solLamports < requiredLamports) {
+                const need = (requiredLamports / 1e9).toFixed(3);
+                const have = (solLamports / 1e9).toFixed(3);
+                toast.error('Insufficient SOL', { description: `Need ~${need} SOL (incl. fee). You have ${have} SOL.` });
+                setActionMessage('Insufficient SOL');
+                return;
+              }
+            }
             const tx = new SolTx().add(
               SolSP.transfer({
                 fromPubkey: new SolPK(signerAddress),

@@ -517,7 +517,6 @@ export async function mintIdentityPrism({
   // on Seeker/MWA a second auth/signMessage popup can hang after approval.
   const { ensureJwt, getCachedJwt } = await import('@/components/prism/shared');
   const authToken = paidWithCoins ? await ensureJwt() : getCachedJwt(address);
-  toast.warning(`STAGE: authToken=${authToken ? 'YES' : 'NO'}`, { duration: 4000 });
 
   let coinReservationRequestId: string | null = null;
 
@@ -626,7 +625,6 @@ export async function mintIdentityPrism({
     },
   };
 
-  toast.warning('STAGE: metadata upload', { duration: 8000 });
   const metadataUploadStartedAt = performance.now();
   console.warn(
     '[mint] metadata upload start',
@@ -737,7 +735,6 @@ export async function mintIdentityPrism({
   const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) authHeaders['Authorization'] = `Bearer ${authToken}`;
 
-  toast.warning('STAGE: mint-cnft request', { duration: 8000 });
   const cnftResponse = await nativeAwareFetch(`${coreMintUrl}/mint-cnft`, {
     method: 'POST',
     headers: authHeaders,
@@ -827,9 +824,20 @@ export async function mintIdentityPrism({
   }
 
   if (requiresWalletTx) {
-    if (!Capacitor.isNativePlatform()) {
-      const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
-      const feeLamports = feeForMessage.value ?? 0;
+    {
+      // SOL balance preflight — runs on web AND native so an empty wallet gets a clear
+      // "Insufficient SOL" toast instead of an opaque RPC/simulation error. getFeeForMessage is
+      // slow/unreliable on the throttled native WebView, so use a fixed fee estimate there.
+      const isNative = Capacitor.isNativePlatform();
+      let feeLamports = 5000;
+      if (!isNative) {
+        try {
+          const feeForMessage = await connection.getFeeForMessage(transaction.compileMessage());
+          feeLamports = feeForMessage.value ?? 5000;
+        } catch {
+          feeLamports = 5000;
+        }
+      }
       // Remint and coins-paid modes have no SOL payment — only rent + tx fee are required
       const configuredLamports =
         remint || paidWithCoins ? 0 : paymentToken === 'SOL' ? Math.round(MINT_CONFIG.PRICE_SOL * LAMPORTS_PER_SOL) : 0;
@@ -862,8 +870,13 @@ export async function mintIdentityPrism({
       const bufferedLamports = baseLamports + feeLamports + Math.round(TX_FEE_BUFFER_SOL * LAMPORTS_PER_SOL);
       const minRequiredLamports = Math.round(MIN_REQUIRED_SOL * LAMPORTS_PER_SOL);
       const requiredLamports = Math.max(bufferedLamports, minRequiredLamports);
-      const balanceLamports = await connection.getBalance(payer);
-      if (balanceLamports < requiredLamports) {
+      let balanceLamports = -1;
+      try {
+        balanceLamports = await connection.getBalance(payer);
+      } catch {
+        balanceLamports = -1; // balance unknown (RPC failed) → don't block, let simulation handle it
+      }
+      if (balanceLamports >= 0 && balanceLamports < requiredLamports) {
         throw buildPreflightError('INSUFFICIENT_SOL', 'Insufficient SOL for transaction', {
           requiredLamports,
           balanceLamports,
@@ -898,7 +911,6 @@ export async function mintIdentityPrism({
         requireAllSignatures: false,
         verifySignatures: false,
       })) as typeof transaction.serialize;
-    toast.warning('STAGE: signTransaction (MWA dialog?)', { description: 'should see wallet now', duration: 60000 });
     const signedTransaction = await signWithDismissDetection(wallet, transaction);
     const signedSignatures = describeTransactionSignatures(signedTransaction);
     const signatureVerify =
@@ -921,7 +933,6 @@ export async function mintIdentityPrism({
       }
     }
 
-    toast.warning('STAGE: finalize submit', { duration: 8000 });
     const signedTransactionBase64 = signedTransaction
       .serialize({ requireAllSignatures: false, verifySignatures: false })
       .toString('base64');
@@ -963,7 +974,6 @@ export async function mintIdentityPrism({
     }
     signature = finalizePayload.signature;
   } catch (error) {
-    toast.error(`STAGE: ERROR ${error instanceof Error ? error.message : 'unknown'}`, { duration: 30000 });
     await logSendTransactionError(error);
     throw error;
   }

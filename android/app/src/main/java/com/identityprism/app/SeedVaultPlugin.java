@@ -38,7 +38,7 @@ import java.util.ArrayList;
 )
 public class SeedVaultPlugin extends Plugin {
 
-  private static final int MAX_DERIVED_ACCOUNTS = 2;
+  private static final int MAX_DERIVED_ACCOUNTS = 6;
   private static final String DEFAULT_SEED_NAME = "Seeker Seed";
 
   private long pendingAuthToken = -1;
@@ -225,6 +225,10 @@ public class SeedVaultPlugin extends Plugin {
       call.resolve(ret);
       return;
     }
+    // Derive the first MAX_DERIVED_ACCOUNTS wallets from the (already-authorized) seed via
+    // requestPublicKeys — this returns silently for an authorized seed and reliably yields a
+    // LIST so the picker shows wallets to choose FIRST (no re-auth). getAccounts() was tried but
+    // returns 0 until the ACCOUNTS table is populated, which made the picker auto-authorize.
     try {
       ArrayList<Uri> paths = new ArrayList<>();
       for (int i = 0; i < MAX_DERIVED_ACCOUNTS; i++) {
