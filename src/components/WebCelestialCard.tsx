@@ -810,7 +810,11 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
                   </Suspense>
                 </Float>
 
-                {!IS_MOBILE && <Environment preset="city" />}
+                {!IS_MOBILE && (
+                  <Suspense fallback={null}>
+                    <Environment preset="city" />
+                  </Suspense>
+                )}
                 <OrbitControls
                   enableZoom
                   enableRotate

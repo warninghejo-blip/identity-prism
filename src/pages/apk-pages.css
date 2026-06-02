@@ -711,7 +711,9 @@
 }
 
 .identity-web-shell {
-  width: min(1240px, calc(100% - 56px));
+  /* Standard shell: 1176px content box (matches landing's 1240 − 64 padding) so every page
+     and the header line up to the same edges. */
+  width: min(1176px, calc(100% - 64px));
   margin: 0 auto;
   padding: 34px 0 76px;
 }
@@ -1049,7 +1051,7 @@
 }
 
 .identity-card-web-shell {
-  width: min(1240px, calc(100% - 48px));
+  width: min(1176px, calc(100% - 64px));
   margin: 0 auto;
   padding: 28px 0 72px;
 }
@@ -1772,10 +1774,14 @@
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   width: 100%;
-  /* Match the card frame size + vertical-center the content. */
-  min-height: min(72vh, 700px);
-  justify-self: stretch;
-  align-self: stretch;
+  /* Match the card frame size EXACTLY (mirror .celestial-card-shell width + height) so the
+     right frame is the same size as the card instead of being wider/taller than it. */
+  max-width: min(46vw, 430px);
+  height: min(72vh, 700px);
+  min-height: 640px;
+  overflow-y: auto;
+  justify-self: center;
+  align-self: center;
 }
 
 /* Top row: address + status */
@@ -1985,6 +1991,19 @@
   color: #06111d;
   opacity: 0.85;
 }
+/* Secondary actions (Update / Share) — same size/shape as MINT, muted tone */
+.mint-card-v2 .mc-mint.mc-mint-secondary {
+  justify-content: center;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #d7e3ee;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: none;
+}
+.mint-card-v2 .mc-mint.mc-mint-secondary:hover {
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: none;
+}
 
 /* Action row */
 .mint-card-v2 .mc-actions {
@@ -2019,7 +2038,7 @@
 .mint-card-v2 .mc-act:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
 @media (max-width: 980px) {
-  .mint-card-v2 { justify-self: center; }
+  .mint-card-v2 { justify-self: center; max-width: min(100%, 430px); height: auto; min-height: 0; align-self: stretch; overflow-y: visible; }
   .mint-card-v2 .mc-score-row { grid-template-columns: 110px 1fr; }
   .mint-card-v2 .mc-ring { width: 110px; height: 110px; }
   .mint-card-v2 .mc-ring-score { font-size: 30px; }

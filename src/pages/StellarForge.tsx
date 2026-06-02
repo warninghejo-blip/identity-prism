@@ -11,6 +11,7 @@ import { trackForgePurchase } from '@/lib/analytics';
 import {
   ShoppingBag,
   Check,
+  ChevronRight,
   Lock,
   Sparkles,
   Coins,
@@ -43,9 +44,10 @@ import {
   MICROMODULE_DEFS,
   MODULE_TIER_COLORS,
   installModule,
-  uninstallModule,
   getItemModules,
   getModuleById,
+  getModuleOwnedCount,
+  MAX_MODULE_COPIES,
   meetsRequiredRank,
   RANK_LABELS,
   type ForgeCategory,
@@ -159,13 +161,20 @@ function mergeServerForgeLoadout(
     state.items.forEach((entry) => addItem(entry?.itemId, entry?.purchasedAt, false));
   }
 
-  const moduleIds = new Set<string>();
-  const addModule = (moduleId: unknown) => {
-    if (typeof moduleId === 'string' && getModuleById(moduleId)) moduleIds.add(moduleId);
+  // Count total purchased copies per module. forgeState.modules (server) is the authoritative
+  // purchase ledger — up to MAX_MODULE_COPIES entries per module; fall back to local counts offline.
+  const totalCopies = new Map<string, number>();
+  const bumpTotal = (moduleId: unknown) => {
+    if (typeof moduleId !== 'string' || !getModuleById(moduleId)) return;
+    totalCopies.set(moduleId, (totalCopies.get(moduleId) ?? 0) + 1);
   };
-  baseLoadout.ownedModules.forEach(addModule);
-  if (Array.isArray(server.ownedModules)) server.ownedModules.forEach(addModule);
-  if (Array.isArray(state.modules)) state.modules.forEach((entry) => addModule(entry?.moduleId));
+  if (Array.isArray(state.modules) && state.modules.length > 0) {
+    state.modules.forEach((entry) => bumpTotal(entry?.moduleId));
+  } else {
+    baseLoadout.ownedModules.forEach(bumpTotal);
+    Object.values(baseLoadout.installedModules).forEach((ids) => ids.forEach(bumpTotal));
+    if (Array.isArray(server.ownedModules)) server.ownedModules.forEach(bumpTotal);
+  }
 
   const ownedItemIds = new Set(itemMap.keys());
   const equipIfOwned = (value: unknown, category: ForgeCategory) => {
@@ -180,9 +189,17 @@ function mergeServerForgeLoadout(
 
   const equippedIds = new Set([merged.equippedFrame, merged.equippedAura, merged.equippedShipSkin, merged.equippedTitle]);
   merged.ownedItems = [...itemMap.values()].map((entry) => ({ ...entry, equipped: equippedIds.has(entry.itemId) }));
-  merged.ownedModules = [...moduleIds].filter(
-    (moduleId) => !Object.values(merged.installedModules).some((ids) => ids.includes(moduleId)),
+  // Uninstalled copies = total purchased − installed, clamped to MAX_MODULE_COPIES per module.
+  const installedCount = new Map<string, number>();
+  Object.values(merged.installedModules).forEach((ids) =>
+    ids.forEach((id) => installedCount.set(id, (installedCount.get(id) ?? 0) + 1)),
   );
+  const ownedModulesList: string[] = [];
+  totalCopies.forEach((total, moduleId) => {
+    const remaining = Math.max(0, Math.min(total, MAX_MODULE_COPIES) - (installedCount.get(moduleId) ?? 0));
+    for (let i = 0; i < remaining; i++) ownedModulesList.push(moduleId);
+  });
+  merged.ownedModules = ownedModulesList;
   return merged;
 }
 
@@ -593,6 +610,7 @@ export default function StellarForge() {
 
   const [topTab, setTopTab] = useState<TopTab>('shop');
   const [shopFilter, setShopFilter] = useState<ShopFilter>('all');
+  const categoryScrollRef = useRef<HTMLDivElement>(null);
   const [showOnlyAvailable, setShowOnlyAvailable] = useState(false);
   const [balance, setBalance] = useState<PrismBalance | null>(null);
   const [loadout, setLoadout] = useState<ForgeLoadout | null>(null);
@@ -897,9 +915,13 @@ export default function StellarForge() {
         toast.error('Not enough Coins');
         return;
       }
+      if (getModuleOwnedCount(loadout, moduleId) >= MAX_MODULE_COPIES) {
+        toast.error(`Max ${MAX_MODULE_COPIES} of this module`);
+        return;
+      }
       const newLoadout = purchaseModule(loadout, moduleId, balance.balance);
       if (!newLoadout) {
-        toast.error('Module already owned');
+        toast.error('Purchase unavailable');
         return;
       }
       setInstallingModule(true);
@@ -947,17 +969,7 @@ export default function StellarForge() {
         toast.error(`All ${maxSlots} module slot${maxSlots > 1 ? 's' : ''} are full on this ship`);
         return;
       }
-      if (currentModules.includes(moduleId)) {
-        toast.error('This module is already installed on this ship');
-        return;
-      }
-      const alreadyElsewhere = Object.entries(loadout.installedModules).some(
-        ([key, mods]) => key !== itemId && mods.includes(moduleId),
-      );
-      if (alreadyElsewhere) {
-        toast.error('This module is already installed on another ship — uninstall it first');
-        return;
-      }
+      // Modules install permanently and the same module MAY be stacked across a ship's slots.
       const newLoadout = installModule(loadout, itemId, moduleId, hasIdentityCard);
       if (!newLoadout) {
         toast.error('Cannot install module');
@@ -1118,8 +1130,9 @@ export default function StellarForge() {
             <>
               {/* Buy Coins & Staking → moved to /vault page */}
 
-              {/* Category filters — glass pills */}
-              <div className="flex flex-nowrap items-center gap-1 mb-5 pb-1 overflow-x-auto scrollbar-thin">
+              {/* Category filters — glass pills (scrollable; chevron hints more categories) */}
+              <div className="relative mb-5">
+                <div ref={categoryScrollRef} className="flex flex-nowrap items-center gap-1 pb-1 pr-7 overflow-x-auto scrollbar-thin">
                 {SHOP_FILTERS.map((f) => (
                   <button
                     key={f.id}
@@ -1155,6 +1168,16 @@ export default function StellarForge() {
                     ✓ Available
                   </button>
                 </div>
+                </div>
+                {/* scroll arrow — tap to page the category strip by ~one category */}
+                <button
+                  type="button"
+                  aria-label="More categories"
+                  onClick={() => categoryScrollRef.current?.scrollBy({ left: 120, behavior: 'smooth' })}
+                  className="absolute right-0 top-0 bottom-1 flex items-center pl-5 pr-0.5 bg-gradient-to-l from-black/85 via-black/40 to-transparent active:scale-95 transition-transform"
+                >
+                  <ChevronRight className="w-4 h-4 text-purple-300/80" />
+                </button>
               </div>
 
               {/* Hint: how to earn coins */}
@@ -1218,9 +1241,9 @@ export default function StellarForge() {
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                           {visibleModules.map((mod) => {
                             const tierColor = MODULE_TIER_COLORS[mod.tier];
-                            const isModOwned =
-                              loadout?.ownedModules.includes(mod.id) ||
-                              Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
+                            const ownedCount = loadout ? getModuleOwnedCount(loadout, mod.id) : 0;
+                            const isModOwned = ownedCount > 0;
+                            const isModMaxed = ownedCount >= MAX_MODULE_COPIES;
                             const canAfford = (balance?.balance ?? 0) >= mod.price;
                             const rankMet = meetsRequiredRank(rangerRank, mod.requiredRank);
                             const modLocked = !rankMet && !isModOwned;
@@ -1233,16 +1256,18 @@ export default function StellarForge() {
                                   border: `1px solid ${isModOwned ? `${tierColor}35` : `${tierColor}25`}`,
                                 }}
                               >
-                                {isModOwned && (
-                                  <div
-                                    className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-                                    style={{ background: `${tierColor}25` }}
-                                  >
-                                    <Check className="w-3 h-3" style={{ color: tierColor }} />
-                                  </div>
-                                )}
                                 <div className="flex items-center gap-2 mb-1.5">
-                                  <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                                  <div className="relative shrink-0">
+                                    <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                                    {isModOwned && (
+                                      <span
+                                        className="absolute -top-2 -right-2 h-4 min-w-[18px] px-1 rounded-full flex items-center justify-center text-[8px] font-black leading-none"
+                                        style={{ background: tierColor, color: '#06111d' }}
+                                      >
+                                        {ownedCount}/{MAX_MODULE_COPIES}
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5">
                                       <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
@@ -1274,7 +1299,7 @@ export default function StellarForge() {
                                     rank
                                   </div>
                                 )}
-                                {!isModOwned && (
+                                {!isModMaxed && (
                                   <button
                                     onClick={() => (canAfford && !modLocked ? handlePurchaseModule(mod.id) : undefined)}
                                     disabled={!canAfford || installingModule || modLocked}
@@ -1310,9 +1335,9 @@ export default function StellarForge() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {(showOnlyAvailable ? SORTED_MODULES.filter(isModuleAvailable) : SORTED_MODULES).map((mod) => {
                     const tierColor = MODULE_TIER_COLORS[mod.tier];
-                    const isModOwned =
-                      loadout?.ownedModules.includes(mod.id) ||
-                      Object.values(loadout?.installedModules ?? {}).some((mods) => mods.includes(mod.id));
+                    const ownedCount = loadout ? getModuleOwnedCount(loadout, mod.id) : 0;
+                    const isModOwned = ownedCount > 0;
+                    const isModMaxed = ownedCount >= MAX_MODULE_COPIES;
                     const canAfford = (balance?.balance ?? 0) >= mod.price;
                     const rankMet = meetsRequiredRank(rangerRank, mod.requiredRank);
                     const modLocked = !rankMet && !isModOwned;
@@ -1325,16 +1350,18 @@ export default function StellarForge() {
                           border: `1px solid ${isModOwned ? `${tierColor}35` : `${tierColor}25`}`,
                         }}
                       >
-                        {isModOwned && (
-                          <div
-                            className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-                            style={{ background: `${tierColor}25` }}
-                          >
-                            <Check className="w-3 h-3" style={{ color: tierColor }} />
-                          </div>
-                        )}
                         <div className="flex items-center gap-2 mb-1.5">
-                          <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                          <div className="relative shrink-0">
+                            <img src={mod.image} alt={mod.name} className="w-8 h-8 object-contain" />
+                            {isModOwned && (
+                              <span
+                                className="absolute -top-2 -right-2 h-4 min-w-[18px] px-1 rounded-full flex items-center justify-center text-[8px] font-black leading-none"
+                                style={{ background: tierColor, color: '#06111d' }}
+                              >
+                                {ownedCount}/{MAX_MODULE_COPIES}
+                              </span>
+                            )}
+                          </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span className="text-white text-[11px] font-bold truncate">{mod.name}</span>
@@ -1365,7 +1392,7 @@ export default function StellarForge() {
                             <Lock className="w-3 h-3" /> {RANK_LABELS[mod.requiredRank!] || mod.requiredRank} rank
                           </div>
                         )}
-                        {!isModOwned && (
+                        {!isModMaxed && (
                           <button
                             onClick={() => (canAfford && !modLocked ? handlePurchaseModule(mod.id) : undefined)}
                             disabled={!canAfford || installingModule || modLocked}
@@ -1447,18 +1474,6 @@ export default function StellarForge() {
               const ownedShips = ALL_FORGE_ITEMS.filter(
                 (i) => i.category === 'ship_skin' && loadout.ownedItems.some((o) => o.itemId === i.id),
               );
-
-              const handleRemoveModule = (moduleId: string) => {
-                if (!displayShipId) return;
-                const updated = uninstallModule(loadout, displayShipId, moduleId);
-                if (updated) {
-                  saveLocalLoadout(updated);
-                  syncLoadoutNow(updated).catch(() => {});
-                  setLoadout(updated);
-                  const mod = getModuleById(moduleId);
-                  toast.success(`Removed ${mod?.name ?? 'module'}`);
-                }
-              };
 
               const handleSwitchShip = (shipId: string) => {
                 const updated = equipItem(loadout, shipId);
@@ -1702,11 +1717,11 @@ export default function StellarForge() {
                           Installed Modules
                         </h4>
                         <div className="space-y-2">
-                          {shipModules.map((mod) => {
+                          {shipModules.map((mod, i) => {
                             const tierColor = MODULE_TIER_COLORS[mod.tier];
                             return (
                               <div
-                                key={mod.id}
+                                key={`${mod.id}-${i}`}
                                 className="flex items-center gap-3 p-2.5 rounded-xl"
                                 style={{ background: `${tierColor}08`, border: `1px solid ${tierColor}20` }}
                               >
@@ -1722,12 +1737,6 @@ export default function StellarForge() {
                                     </span>
                                   )}
                                 </div>
-                                <button
-                                  onClick={() => handleRemoveModule(mod.id)}
-                                  className="px-2 py-1 rounded-xl text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:bg-red-500/10 transition-colors"
-                                >
-                                  ✕
-                                </button>
                               </div>
                             );
                           })}

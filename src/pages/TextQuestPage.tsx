@@ -494,8 +494,8 @@ export default function TextQuestPage() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
-        {/* ═══ LOADING (auto-start picks quest) ═══ */}
-        {!activeQuest && (
+        {/* ═══ LOADING (auto-start picks quest) — hidden when the daily limit is reached ═══ */}
+        {!activeQuest && !(walletAddress && hasCompletedQuestToday(walletAddress)) && (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-400 rounded-full animate-spin" />
             <p className="text-white/30 text-xs">Loading quest...</p>

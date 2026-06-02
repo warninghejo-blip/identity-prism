@@ -20,7 +20,7 @@ import SeedVaultAccountPicker from '@/components/SeedVaultAccountPicker';
 import '@/components/SeedVaultAccountPicker.css';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, Coins, Loader2, Share2 } from 'lucide-react';
+import { AlertCircle, Coins, Loader2, RefreshCw, Share2 } from 'lucide-react';
 import LandingOverlay from '@/components/LandingOverlay';
 import HubReturnButton from '@/components/HubReturnButton';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
@@ -30,6 +30,7 @@ import {
   getHeliusProxyUrl,
   getMetadataBaseUrl,
   getHeliusRpcUrl,
+  getHeliusProxyHeaders,
   getCollectionMint,
   MINT_CONFIG,
   SEEKER_TOKEN,
@@ -48,6 +49,7 @@ import {
   type PrismBalance,
 } from '@/lib/prismCoin';
 import { trackWalletConnect, trackWalletDisconnect, trackMint } from '@/lib/analytics';
+import { formatMintCost } from '@/lib/mintPricing';
 const OnboardingModal = React.lazy(() => import('@/components/OnboardingModal'));
 const WelcomeBackModal = React.lazy(() => import('@/components/WelcomeBackModal'));
 
@@ -442,6 +444,11 @@ const Index = () => {
   // on Capacitor native — shows actual authorized addresses instead of one
   // abstract "Seed Vault Detected" entry).
   const [seedPickerVisible, setSeedPickerVisible] = useState(false);
+  // On the native (Seeker) build, always present the wallet picker on launch instead of silently
+  // resuming the last session — one seed can hold several wallets and the user wants to choose.
+  // (We can't cheaply count wallets without launching a Seed Vault activity, so we don't gate on it.)
+  // true = resume the last session (web); false = always show the picker (native).
+  const [resumeAllowed] = useState<boolean>(() => !Capacitor.isNativePlatform());
   const isNativeRef = useRef(false);
   isNativeRef.current = Capacitor.isNativePlatform();
   const openConnectPicker = useCallback(() => {
@@ -458,6 +465,10 @@ const Index = () => {
   const handleSeedAccountPicked = useCallback(
     async (address: string) => {
       setSeedPickerVisible(false);
+      // Deliberate pick → re-arm auto-enter so we go straight to the scan (no intermediate
+      // "ENTER COSMOS" tap) and drop any prior declined-sign flag.
+      autoEnterAttemptedRef.current = null;
+      setJwtDeclined(false);
       try {
         writePreferredMobileWalletAddress(address);
         select(SEEDVAULT_NAME);
@@ -620,6 +631,10 @@ const Index = () => {
   }, [activeAddress, isConnected, jwtSigning, connectedAddress, wallet.publicKey, forceIdentityCardRoute, setViewState]);
 
   useEffect(() => {
+    // Only auto-resume the last session when the seed exposes ≤1 wallet. With 2+ wallets
+    // (resumeAllowed === false) skip the resume so the cold-launch picker lets the user choose.
+    // null = wallet count not yet resolved → hold off until it is.
+    if (resumeAllowed !== true) return;
     if (activeAddress || jwtSigning || isDisconnectingRef.current) return;
     const restoredAddress = readPersistedActiveAddress();
     if (!looksLikeSolanaAddress(restoredAddress) || !getCachedJwt(restoredAddress)) return;
@@ -630,7 +645,7 @@ const Index = () => {
     if (viewStateRef.current === 'landing') {
       setViewState(forceIdentityCardRoute ? 'ready' : 'scanning');
     }
-  }, [activeAddress, jwtSigning, forceIdentityCardRoute, setViewState]);
+  }, [activeAddress, jwtSigning, forceIdentityCardRoute, setViewState, resumeAllowed]);
 
   const recentWalletRestoreRef = useRef(hasRecentExternalWalletBackground() || hasRecentNativeWalletRestore());
   const [walletStable, setWalletStable] = useState(
@@ -693,21 +708,12 @@ const Index = () => {
       setSkrBalance(null);
       return;
     }
-    const isNativeShell = Boolean(
-      (
-        globalThis as typeof globalThis & { Capacitor?: { isNativePlatform?: () => boolean } }
-      ).Capacitor?.isNativePlatform?.(),
-    );
-    if (isNativeShell) {
-      setSkrBalance(null);
-      return;
-    }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       const owner = new PublicKey(balanceAddress);
       const conn = new Connection(
         getHeliusRpcUrl(balanceAddress) || 'https://api.mainnet-beta.solana.com',
-        'confirmed',
+        { commitment: 'confirmed', httpHeaders: getHeliusProxyHeaders(balanceAddress) },
       );
       conn
         .getBalance(owner)
@@ -731,7 +737,7 @@ const Index = () => {
       } catch {
         setSkrBalance(null);
       }
-    }, 8_000);
+    }, 1_500);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
@@ -1931,6 +1937,10 @@ const Index = () => {
     // silently resuming the last one. This is the account-switch path now that the
     // in-hub S1/S2 switcher was removed.
     coldLaunchPickerAttemptedRef.current = false;
+    // NOTE: do NOT re-arm autoEnterAttemptedRef here — doing so makes auto-enter fire during the
+    // disconnect window (while isConnected is still true), which silently re-connects the last
+    // wallet instead of returning to the landing/picker. Re-arming happens on a deliberate pick
+    // (handleSeedAccountPicked) instead.
     writePreferredMobileWalletAddress(null);
     // Clear URL ?address= param so the urlAddress sync effect (line ~264) doesn't
     // immediately re-set activeAddress from the stale URL
@@ -1984,7 +1994,7 @@ const Index = () => {
   const [paymentToken, setPaymentToken] = useState<PaymentToken>('SOL');
   const [skrQuote, setSkrQuote] = useState<{ skrAmount: number } | null>(null);
   const [skrQuoteError, setSkrQuoteError] = useState<string | null>(null);
-  const [skrQuoteLoading, setSkrQuoteLoading] = useState(false);
+  const [, setSkrQuoteLoading] = useState(false);
   const proxyBase = getHeliusProxyUrl();
 
   // Check if the wallet already owns an Identity Prism (to gate Update button)
@@ -2614,14 +2624,16 @@ const Index = () => {
   }, [viewState]);
 
   const showOverlay = !curtainDone && !suppressLoadingRef.current;
+  // Wallet balance of the selected currency — shown in the .identity-pay-price row above the button.
+  // (SKR balance is unavailable on the native shell, so it reads "—" there.)
   const activePaymentAmount =
     paymentToken === 'SOL'
       ? `${solBalance == null ? '—' : Number(solBalance).toFixed(3)} SOL`
       : paymentToken === 'SKR'
-        ? skrQuoteLoading && !skrQuote
-          ? 'Loading SKR'
-          : `${skrQuote?.skrAmount == null ? '—' : Math.floor(Number(skrQuote.skrAmount)).toLocaleString()} SKR`
+        ? `${skrBalance == null ? '—' : Math.floor(skrBalance).toLocaleString()} SKR`
         : `${prismBalance?.balance == null ? '—' : Math.floor(Number(prismBalance.balance)).toLocaleString()} PRISM`;
+  // Cost to mint with the selected currency — shown on the mint button (SKR = live ~0.03 SOL quote).
+  const mintCost = formatMintCost(paymentToken, skrQuote?.skrAmount ?? null);
 
   // Prevent accidental auto-scroll on main page
   useEffect(() => {
@@ -2775,7 +2787,7 @@ const Index = () => {
                         {/* Pay-selector — chips with icon, shows balance for active currency */}
                         <div className="identity-pay-selector" role="group" aria-label="Select payment currency">
                           {([
-                            { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
+                            { key: 'SOL', label: 'SOL', iconUrl: '/tokens/sol-icon.png' },
                             { key: 'SKR', label: 'SKR', iconUrl: '/tokens/skr-icon.png' },
                             { key: 'COINS', label: 'PRISM', iconUrl: '/tokens/prism-icon.png' },
                           ] as const).map((opt) => {
@@ -2811,17 +2823,17 @@ const Index = () => {
                           </div>
                         </div>
 
-                        {/* MINT button */}
+                        {/* MINT button — always at the top, always shows the price */}
                         <Button
                           variant="ghost"
-                          onClick={hasMintedIdentity ? handleRemint : paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
+                          onClick={paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
                           className="mint-primary-btn"
                           disabled={isMintStatusChecking || mintState === 'minting' || remintState === 'updating'}
                         >
-                          {mintState === 'minting' || remintState === 'updating' ? (
+                          {mintState === 'minting' ? (
                             <>
                               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              {remintState === 'updating' ? 'UPDATING' : 'MINTING'}
+                              MINTING
                             </>
                           ) : isMintStatusChecking ? (
                             <>
@@ -2831,27 +2843,28 @@ const Index = () => {
                           ) : (
                             <>
                               <Coins className="h-4 w-4 mr-2" />
-                              {hasMintedIdentity ? 'UPDATE IDENTITY' : isNewWallet ? 'Mint Identity to Activate Score' : 'MINT IDENTITY'}
+                              {isNewWallet ? `Mint to Activate · ${mintCost}` : `MINT IDENTITY · ${mintCost}`}
                             </>
                           )}
                         </Button>
 
+                        {/* Update existing card — secondary (only when an identity already exists) */}
                         {hasMintedIdentity && (
                           <Button
                             variant="ghost"
-                            onClick={paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
+                            onClick={handleRemint}
                             className="mint-secondary-btn"
                             disabled={isMintStatusChecking || mintState === 'minting' || remintState === 'updating'}
                           >
-                            {mintState === 'minting' ? (
+                            {remintState === 'updating' ? (
                               <>
                                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                MINTING
+                                UPDATING
                               </>
                             ) : (
                               <>
-                                <Coins className="h-4 w-4 mr-2" />
-                                MINT NEW IDENTITY
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                                UPDATE IDENTITY
                               </>
                             )}
                           </Button>

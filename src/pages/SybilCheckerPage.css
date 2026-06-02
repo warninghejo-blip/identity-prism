@@ -83,9 +83,9 @@
 }
 
 .sybil-check-page .container {
-  max-width: 1500px;
+  max-width: 1240px;
   margin: 0 auto;
-  padding: 0 28px;
+  padding: 0 32px;
 }
 
 .sybil-check-page section,
@@ -101,7 +101,7 @@
   left: 0;
   right: 0;
   z-index: 100;
-  padding: 14px 0;
+  /* padding handled by the shared .site-header rule (1240px-aligned); don't override to 0 here */
   background: rgba(5,5,8,.78);
   backdrop-filter: blur(28px) saturate(140%);
   -webkit-backdrop-filter: blur(28px) saturate(140%);
@@ -1049,8 +1049,17 @@
   height: 100%;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-color: rgba(255,255,255,.1) transparent;
+  scrollbar-color: rgba(34, 211, 238, 0.3) transparent;
   scrollbar-width: thin;
+}
+
+/* The dossier is a fixed-height flex column. .profile has overflow:hidden, which zeroes its
+   flex min-height, so flexbox SHRANK it to fit the column and clipped the green grade-ring at
+   the top (no scrollbar appeared because the shrink absorbed the overflow). Pin every card to
+   its natural height so nothing is squeezed; the dossier's overflow-y:auto scrolls instead. */
+.sybil-check-page .dossier > .profile,
+.sybil-check-page .dossier > .card {
+  flex-shrink: 0;
 }
 
 .sybil-check-page .card,
@@ -1083,6 +1092,60 @@
   border-radius: 50%;
   background: var(--cy);
   box-shadow: 0 0 6px var(--cy);
+}
+
+/* "Why this verdict" transparency block */
+.sybil-check-page .why-lead {
+  margin: 0 0 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.sybil-check-page .why-factors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sybil-check-page .why-f {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+.sybil-check-page .why-f .why-i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 900;
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--gn);
+}
+.sybil-check-page .why-f.on .why-i {
+  background: rgba(251, 191, 36, 0.18);
+  color: var(--yl);
+}
+.sybil-check-page .why-f .why-l { flex: 1; }
+.sybil-check-page .why-f.on .why-l { color: rgba(255, 255, 255, 0.82); }
+.sybil-check-page .why-f .why-s {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.3);
+}
+.sybil-check-page .why-f.on .why-s { color: var(--yl); }
+.sybil-check-page .why-note {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .sybil-check-page .profile {

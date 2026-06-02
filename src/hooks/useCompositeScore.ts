@@ -136,22 +136,36 @@ const INITIAL_COMPOSITE_DATA: CompositeData = {
 };
 
 async function fetchCompositeWallet(url: string, signal: AbortSignal): Promise<any | null> {
-  if (Capacitor.isNativePlatform()) {
-    const response = await CapacitorHttp.get({
-      url,
-      responseType: 'json',
-      connectTimeout: 3_500,
-      readTimeout: 4_500,
-      headers: { Accept: 'application/json' },
-    });
-    if (signal.aborted || response.status < 200 || response.status >= 300) return null;
-    return response.data;
+  // GET is idempotent → safe to retry. The device's FIRST fetch over Cloudflare intermittently
+  // hits an SSL connection-reset (net_error -101); a single attempt left composite null →
+  // onchain-only fallback breakdown (e.g. "onchain 400, rest 0") + missing trust/game badges,
+  // even though the endpoint is fast and returns the full composite. 3 attempts heal it.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (signal.aborted) return null;
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const response = await CapacitorHttp.get({
+          url,
+          responseType: 'json',
+          connectTimeout: 3_500,
+          readTimeout: 4_500,
+          headers: { Accept: 'application/json' },
+        });
+        if (signal.aborted) return null;
+        if (response.status >= 200 && response.status < 300) return response.data;
+      } else {
+        const response = await fetch(url, {
+          signal: AbortSignal.any([signal, AbortSignal.timeout(4_500)]),
+        });
+        if (response.ok) return await response.json();
+      }
+    } catch {
+      if (signal.aborted) return null;
+      // transient (SSL reset / timeout) — fall through and retry
+    }
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
   }
-
-  const response = await fetch(url, {
-    signal: AbortSignal.any([signal, AbortSignal.timeout(4_500)]),
-  });
-  return response.ok ? response.json() : null;
+  return null;
 }
 
 export function invalidateCompositeCache(address: string) {

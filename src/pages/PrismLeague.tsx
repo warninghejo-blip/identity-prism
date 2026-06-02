@@ -51,6 +51,7 @@ import GravityRunnerScene from '@/components/game/GravityRunnerScene';
 import { FpsOverlay } from '@/components/game/GameShared';
 import { computeShipStats, getEquipmentBonusLabel } from '@/lib/shipStats';
 import type { ForgeLoadout } from '@/lib/forgeItems';
+import { isTextQuestLockedToday } from '@/lib/textQuests';
 import { api } from '@/lib/api';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 
@@ -2256,6 +2257,12 @@ const PrismLeague = () => {
 
   const handleStart = () => {
     if (gameMode === 'text_quest') {
+      // Gate BEFORE opening the reader: if the daily quest is used up (and none in progress),
+      // tell the player right here instead of opening a dead loading screen.
+      if (isTextQuestLockedToday(address)) {
+        toast.error('Daily limit reached — 1 text quest per day. Come back tomorrow!');
+        return;
+      }
       startFadeTransition(() => navigate('/text-quest'));
       return;
     }

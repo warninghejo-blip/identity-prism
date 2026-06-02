@@ -475,7 +475,10 @@
 .ipl .scroll-rail .dot.active{background:linear-gradient(135deg,#22d3ee,#a78bfa);box-shadow:0 0 14px rgba(167,139,250,.6);transform:scale(1.5)}
 .ipl .scroll-rail .dot::after{content:attr(data-l);position:absolute;left:18px;top:50%;transform:translateY(-50%);font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:.22em;color:rgba(255,255,255,.4);text-transform:uppercase;opacity:0;transition:opacity .3s;white-space:nowrap;pointer-events:none}
 .ipl .scroll-rail .dot:hover::after,.ipl .scroll-rail .dot.active::after{opacity:1}
-@media (max-width:900px){.ipl .scroll-rail{display:none}}
+/* Content is max-width 1240px centered; the rail (dot + category label) needs ~110px of gutter,
+   so only show it when the viewport is wide enough that it can't overlap the text. Below this it
+   hides instead of crowding the content (this is what was happening when zooming in). */
+@media (max-width:1440px){.ipl .scroll-rail{display:none}}
 
 /* ========== SYBIL CLUSTER — PREMIUM ========== */
 .ipl .sybil-stage{aspect-ratio:1;border-radius:24px;background:radial-gradient(ellipse at center,rgba(248,113,113,.06),transparent 70%);border:1px solid rgba(248,113,113,.1);position:relative;overflow:hidden;box-shadow:inset 0 0 80px rgba(248,113,113,.05)}
@@ -923,3 +926,48 @@
 .ipl .eco-head .eco-icon{width:44px;height:44px;margin-bottom:0;flex-shrink:0}
 .ipl .eco-head h3{margin-bottom:0;text-align:left}
 .ipl .eco-feats{align-items:flex-start}
+
+/* ═══════════ PHONE breakpoints — quality mobile (≤640 / ≤400) ═══════════ */
+/* The landing only had a 900px tablet layer; clamp() minimums (hero 48px, sec 40px,
+   cta 48px) are tablet-sized and far too large on a ~390px phone, and 140px section
+   padding wastes vertical space. This layer tunes type + rhythm for phones. */
+@media (max-width:640px){
+  .ipl{overflow-x:hidden}
+  .ipl .container{padding:0 18px}
+
+  /* vertical rhythm */
+  .ipl .sec,
+  .ipl #problem,.ipl #solution,.ipl #sybil-catch,.ipl #badges,
+  .ipl #tiers,.ipl #games,.ipl #ecosystem,.ipl #ranks,.ipl #explode{padding:64px 0}
+  .ipl #hero{min-height:auto;padding:92px 0 56px}
+  .ipl #cta{padding:72px 0 56px}
+  .ipl .sec-divider{height:72px}
+  .ipl .sec-divider .ribbon::before,.ipl .sec-divider .ribbon::after{width:54px}
+  .ipl .sec-divider .ribbon{gap:14px;font-size:9px;letter-spacing:.4em}
+  .ipl footer{padding:48px 0 36px;margin-top:40px}
+
+  /* typography (override the tablet-sized clamp minimums) */
+  .ipl .hero-eyebrow{font-size:10px;letter-spacing:.26em;margin-bottom:14px}
+  .ipl h1.hero-title{font-size:34px;line-height:1.04;margin-bottom:18px}
+  .ipl .hero-desc{font-size:15px;line-height:1.6;margin-bottom:22px}
+  .ipl .hero-desc2{font-size:14px}
+  .ipl h2.sec-title{font-size:30px;line-height:1.06;margin-bottom:16px}
+  .ipl .sec-sub{font-size:15px}
+  .ipl .sol-text h3{font-size:28px}
+  .ipl .sc-hero h3{font-size:30px}
+  .ipl .cta h2{font-size:34px}
+  .ipl .cta-sub{font-size:15px;margin-bottom:32px}
+
+  /* card + stats */
+  .ipl .cc-stage{max-width:300px}
+  .ipl .hero-stats{gap:22px 28px}
+  .ipl .hero-stat .n{font-size:30px}
+}
+
+@media (max-width:400px){
+  .ipl .container{padding:0 14px}
+  .ipl h1.hero-title{font-size:30px}
+  .ipl h2.sec-title{font-size:26px}
+  .ipl .cta h2{font-size:30px}
+  .ipl .cc-stage{max-width:268px}
+}

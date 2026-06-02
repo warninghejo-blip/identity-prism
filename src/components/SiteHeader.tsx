@@ -1,8 +1,14 @@
+import { useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
+import { Menu, X } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useBlackHolePrefetch } from '@/hooks/useBlackHolePrefetch';
 import WebWalletButton from './WebWalletButton';
 import './SiteHeader.css';
+
+// Twitter/GitHub links only make sense on the website — hide them inside the APK.
+const IS_NATIVE = Capacitor.isNativePlatform();
 
 const navItems = [
   { to: '/', label: 'Home' },
@@ -14,25 +20,67 @@ const navItems = [
 export default function SiteHeader() {
   const { publicKey } = useWallet();
   useBlackHolePrefetch(publicKey ?? null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <header className="site-header">
-      <Link to="/" className="site-header__brand" aria-label="Identity Prism home">
+    <header className={`site-header${menuOpen ? ' is-menu-open' : ''}`}>
+      <Link to="/" className="site-header__brand" aria-label="Identity Prism home" onClick={() => setMenuOpen(false)}>
         <img src="/phav.png" alt="" />
         <span>IDENTITY PRISM</span>
       </Link>
+
+      {/* Burger — visible on mobile only (CSS) */}
+      <button
+        type="button"
+        className="site-header__burger"
+        aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+        aria-expanded={menuOpen}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        {menuOpen ? <X size={22} aria-hidden="true" /> : <Menu size={22} aria-hidden="true" />}
+      </button>
+
       <nav className="site-header__nav" aria-label="Primary navigation">
         {navItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === '/'}
+            onClick={() => setMenuOpen(false)}
             className={({ isActive }) => (isActive ? 'is-active' : undefined)}
           >
             {item.label}
           </NavLink>
         ))}
       </nav>
+
+      {!IS_NATIVE && (
+      <div className="site-header__social">
+        <a
+          href="https://x.com/Identity_Prism"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Identity Prism on X (Twitter)"
+          title="X (Twitter)"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+          </svg>
+        </a>
+        <a
+          href="https://github.com/warninghejo-blip/identity-prism"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Identity Prism on GitHub"
+          title="GitHub"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+            <path d="M12 .5C5.37.5 0 5.78 0 12.292c0 5.211 3.438 9.63 8.205 11.188.6.111.82-.254.82-.567 0-.28-.01-1.022-.015-2.005-3.338.711-4.042-1.582-4.042-1.582-.546-1.361-1.335-1.725-1.335-1.725-1.087-.731.084-.716.084-.716 1.205.082 1.838 1.215 1.838 1.215 1.07 1.803 2.809 1.282 3.495.981.108-.763.417-1.282.76-1.577-2.665-.295-5.466-1.309-5.466-5.827 0-1.287.465-2.339 1.235-3.164-.135-.298-.54-1.497.105-3.121 0 0 1.005-.316 3.3 1.209.96-.262 1.98-.392 3-.398 1.02.006 2.04.136 3 .398 2.28-1.525 3.285-1.209 3.285-1.209.645 1.624.24 2.823.12 3.121.765.825 1.23 1.877 1.23 3.164 0 4.53-2.805 5.527-5.475 5.817.42.354.81 1.077.81 2.182 0 1.578-.015 2.846-.015 3.229 0 .315.21.683.825.566C20.565 21.917 24 17.495 24 12.292 24 5.78 18.63.5 12 .5z" />
+          </svg>
+        </a>
+      </div>
+      )}
+
       <div className="site-header__wallet">
         <WebWalletButton />
       </div>
