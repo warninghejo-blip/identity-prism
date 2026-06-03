@@ -151,17 +151,21 @@ body:has(.prism-league-page) #root > * {
   min-height: 100vh !important;
 }
 
-/* Allow scrolling on any page-shell page */
+/* Single scroll container for page-shell pages. Previously body, #root, #root>* AND .page-shell
+   were ALL overflow-y:auto — 4 nested scrollers. On Android WebView the first touch couldn't latch
+   onto a scroller (did nothing); only the 2nd gesture scrolled. Now ONLY .page-shell scrolls; the
+   ancestors are clipped to the viewport so there's exactly one scroll context. */
 body:has(.page-shell) {
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
+  overflow: hidden !important;
+  height: 100vh !important;
+  height: 100svh !important;
 }
 body:has(.page-shell) #root,
 body:has(.page-shell) #root > * {
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  height: auto !important;
-  min-height: 100vh !important;
+  overflow: hidden !important;
+  height: 100vh !important;
+  height: 100svh !important;
+  min-height: 0 !important;
 }
 
 .identity-shell {
@@ -326,12 +330,15 @@ body:has(.page-shell) #root > * {
 /* ── PageShell — shared cosmic background ── */
 .page-shell {
   position: relative;
-  min-height: 100vh;
-  min-height: 100svh;
+  /* Fixed viewport height + overflow-y:auto makes THIS the single scroll container
+     (ancestors are clipped) so the first touch scrolls immediately. */
+  height: 100vh;
+  height: 100svh;
   background: #050510;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -3350,7 +3357,8 @@ body:has(.page-shell) #root > * {
 .blackhole-content {
   position: relative;
   z-index: 3;
-  max-width: min(96vw, 820px);
+  /* Match the standard page content box (1176px, like landing/sybil/identity) instead of 820px. */
+  max-width: min(1176px, calc(100% - 64px));
   margin: 0 auto;
   padding: 0 8px calc(clamp(60px, 8vh, 120px) + env(safe-area-inset-bottom, 0px));
   margin-top: 8px;

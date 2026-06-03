@@ -1664,8 +1664,8 @@ export default function SybilCheckerPage() {
         <div className="container foot-row">
           <div>© 2026 Identity Prism - Sybil-Resistant Identity on Solana</div>
           <div>
-            <a href="/privacy">Privacy</a>
-            <a href="/terms">Terms</a>
+            <a href="/privacy.html">Privacy</a>
+            <a href="/terms.html">Terms</a>
             <a href={`${getApiBase()}/api/sybil/analysis?address=${address}`}>API Docs</a>
           </div>
         </div>

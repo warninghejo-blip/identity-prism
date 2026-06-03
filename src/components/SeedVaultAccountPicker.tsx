@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Wallet, Loader2, Plus, X } from 'lucide-react';
 import { SeedVault } from '@/lib/seedVaultPlugin';
 import { writePreferredMobileWalletAddress } from '@/lib/mobileWalletAddressPreference';
+import LegalModal from '@/components/LegalModal';
 
 interface AuthorizedAccount {
   authToken: number;
@@ -41,6 +42,7 @@ export default function SeedVaultAccountPicker({
   const [loading, setLoading] = useState(true);
   const [authorizing, setAuthorizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [legalSlug, setLegalSlug] = useState<string | null>(null);
 
   // Guard against React effect re-runs re-triggering authorize() in a loop.
   const autoAuthInFlightRef = useRef(false);
@@ -196,7 +198,21 @@ export default function SeedVaultAccountPicker({
             {error && <div className="seed-picker-error">{error}</div>}
           </>
         )}
+        <div className="seed-picker-legal">
+          <span>By connecting, you agree to our</span>
+          <span className="seed-picker-legal-links">
+            <button type="button" onClick={() => setLegalSlug('terms')}>Terms</button>
+            <span className="dot" aria-hidden="true">·</span>
+            <button type="button" onClick={() => setLegalSlug('privacy')}>Privacy</button>
+            <span className="dot" aria-hidden="true">·</span>
+            <button type="button" onClick={() => setLegalSlug('cookies')}>Cookies</button>
+            <span className="dot" aria-hidden="true">·</span>
+            <button type="button" onClick={() => setLegalSlug('disclaimer')}>Disclaimer</button>
+          </span>
+        </div>
       </div>
+
+      <LegalModal slug={legalSlug} onClose={() => setLegalSlug(null)} />
     </div>
   );
 }

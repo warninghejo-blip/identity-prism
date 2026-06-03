@@ -11,27 +11,11 @@ import PageShell from '@/components/PageShell';
 import HubReturnButton from '@/components/HubReturnButton';
 import { fetchApiJson } from '@/components/prism/shared';
 
-// Leaderboard fetches over Cloudflare from the device occasionally hit a transient
-// SSL/connection reset (net_error -101) on the FIRST attempt, which left the screen
-// stuck on skeleton placeholders until the user manually hit Refresh. Retry a few
-// times with backoff so the initial load self-heals (the retry succeeds, as a manual
-// refresh proves).
-async function fetchApiJsonRetry<T>(
-  url: string,
-  options: { timeoutMs?: number } = {},
-  attempts = 3,
-): Promise<T> {
-  let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fetchApiJson<T>(url, options);
-    } catch (e) {
-      lastErr = e;
-      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
-    }
-  }
-  throw lastErr;
-}
+// Leaderboard loads via fetchApiJson, which already retries 3× with backoff and uses a
+// fast default timeout (CapacitorHttp connect 3.5s / read 4.5s). Previously this passed an
+// explicit timeoutMs of 12-15s which CapacitorHttp applied to BOTH connect AND read, so a
+// transient connection stall (net_error -101) hung the skeleton for up to 15s × retries.
+// A short timeout fails fast and the built-in retry self-heals in ~1 attempt.
 
 // ── Types ──
 
@@ -197,7 +181,7 @@ export default function Leaderboard() {
             setOverallEntries(cached?.entries || []);
           } else {
             try {
-              const data = await fetchApiJsonRetry<{ entries?: OverallEntry[] }>(`${base}/api/leaderboard?limit=50`, { timeoutMs: 12_000 });
+              const data = await fetchApiJson<{ entries?: OverallEntry[] }>(`${base}/api/leaderboard?limit=50`, { timeoutMs: 4_000 });
               setOverallEntries(data?.entries || []);
             } catch {
               setError('Failed to load leaderboard');
@@ -218,9 +202,9 @@ export default function Leaderboard() {
             }
           }
           try {
-            const data = await fetchApiJsonRetry<{ entries?: unknown }>(
+            const data = await fetchApiJson<{ entries?: unknown }>(
               `${base}/api/v2/game/leaderboard?gameType=${currentTab}`,
-              { timeoutMs: 15_000 },
+              { timeoutMs: 4_000 },
             );
             const entries = Array.isArray(data?.entries) ? data.entries : [];
             setGameEntries((prev) => ({

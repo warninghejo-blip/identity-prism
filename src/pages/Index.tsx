@@ -367,7 +367,11 @@ const Index = () => {
   );
   const [showWelcomeBack, setShowWelcomeBack] = useState(false);
   const [viewState, _setViewState] = useState<ViewState>(
-    (shouldOpenCard || forceIdentityCardRoute) && urlAddress
+    // Only init to the card view for a LIVE in-app "open card" nav. On a cold reopen the
+    // /identity route + stale ?address= used to flash the ID card before the connection
+    // check reset it to landing — gate that out (the route still reaches 'ready' after
+    // connect via the post-scan logic).
+    shouldOpenCard && urlAddress
       ? 'ready'
       : returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current
         ? 'hub'
@@ -466,7 +470,11 @@ const Index = () => {
     async (address: string) => {
       setSeedPickerVisible(false);
       // Deliberate pick → re-arm auto-enter so we go straight to the scan (no intermediate
-      // "ENTER COSMOS" tap) and drop any prior declined-sign flag.
+      // "ENTER COSMOS" tap) and drop any prior declined-sign flag. (NOTE: do NOT queue
+      // pendingAutoEnterAddress here — that effect prefers the MWA adapter and fires before
+      // the Seed Vault wallet is ready, which breaks the SeedVault connect with an MWA
+      // "can't find a wallet" error. The passive auto-enter below uses the SeedVault `wallet`
+      // once it's stable, which is the correct path.)
       autoEnterAttemptedRef.current = null;
       setJwtDeclined(false);
       try {
@@ -1332,12 +1340,9 @@ const Index = () => {
     if (!(isCapacitor || isAndroidDevice || isSeekerDevice) || !useMobileWallet || !mobileConnectReady) return;
     if (availableWallets.length === 0) return;
     if (isConnected || activeAddress || jwtSigning || viewState !== 'landing') return;
+    // Cold-launch auto-pop REMOVED — the landing screen now shows a CONNECT WALLET
+    // button first; tapping it opens the picker (no duplicate picker+ENTER COSMOS gate).
     coldLaunchPickerAttemptedRef.current = true;
-    window.setTimeout(() => {
-      if (viewStateRef.current !== 'landing' || isDisconnectingRef.current) return;
-      void mwaAuthorizationCache.clear();
-      openConnectPicker();
-    }, 650);
   }, [
     isCapacitor,
     isAndroidDevice,
@@ -2010,17 +2015,20 @@ const Index = () => {
     let cancelled = false;
     (async () => {
       try {
-        if (proxyBase) {
-          const summaryRes = await fetch(`${proxyBase}/api/prism/summary?address=${encodeURIComponent(addr)}`);
-          if (cancelled) return;
-          if (summaryRes.ok) {
-            const summary = await summaryRes.json();
-            if (cancelled) return;
-            if (summary?.mint?.minted === true) {
-              setHasExistingId(true);
-              return;
-            }
-          }
+        // Authoritative mint check via the prism summary endpoint. Use fetchApiJson
+        // (CapacitorHttp-backed + retrying) — raw fetch() is unreliable from the native WebView,
+        // which left owners undetected so the MINT button wrongly showed for ID holders.
+        const summary = await fetchApiJson<{ mint?: { minted?: boolean } }>(
+          `${getApiBase()}/api/prism/summary?address=${encodeURIComponent(addr)}`,
+        ).catch(() => null);
+        if (cancelled) return;
+        if (summary?.mint?.minted === true) {
+          setHasExistingId(true);
+          return;
+        }
+        if (summary?.mint && summary.mint.minted === false) {
+          setHasExistingId(false);
+          return;
         }
         if (!heliusUrl || !collectionMint) return;
         const res = await fetch(heliusUrl, {
@@ -2823,7 +2831,8 @@ const Index = () => {
                           </div>
                         </div>
 
-                        {/* MINT button — always at the top, always shows the price */}
+                        {/* MINT button — only when the wallet does NOT already own an identity (owners get UPDATE instead) */}
+                        {!hasMintedIdentity && (
                         <Button
                           variant="ghost"
                           onClick={paymentToken === 'COINS' ? handleMintWithCoins : handleMint}
@@ -2847,8 +2856,9 @@ const Index = () => {
                             </>
                           )}
                         </Button>
+                        )}
 
-                        {/* Update existing card — secondary (only when an identity already exists) */}
+                        {/* Update existing card — shown when the wallet already owns an identity */}
                         {hasMintedIdentity && (
                           <Button
                             variant="ghost"
@@ -2902,7 +2912,12 @@ const Index = () => {
               onDisconnect={handleDisconnect}
               connectedAddress={walletStable ? connectedAddress?.toBase58() : undefined}
               useMobileWallet={useMobileWallet}
-              onMobileConnect={handleMobileConnect}
+              onMobileConnect={() => {
+                // Native CONNECT WALLET → our custom Seed Vault picker (the 6-account
+                // "Choose your wallet" with the legal footer), not the system MWA sheet.
+                if (Capacitor.isNativePlatform()) openConnectPicker();
+                else void handleMobileConnect();
+              }}
               mobileWalletReady={mobileConnectReady}
               onDesktopConnect={handleDesktopConnect}
               desktopWalletReady={desktopWalletReady}
