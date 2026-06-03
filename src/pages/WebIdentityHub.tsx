@@ -400,7 +400,8 @@ export default function WebIdentityHub() {
               </div>
             </div>
 
-            {/* Big MINT IDENTITY button */}
+            {/* MINT button — only when the wallet does NOT already own an identity (owners get UPDATE instead) */}
+            {!canUpdateIdentity && (
             <button
               type="button"
               className="mc-mint"
@@ -413,6 +414,7 @@ export default function WebIdentityHub() {
               </span>
               <span className="mc-mint-r">{mintCost}</span>
             </button>
+            )}
 
             {/* Secondary actions — full-width buttons matching the MINT button */}
             {canUpdateIdentity && (

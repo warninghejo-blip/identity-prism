@@ -2873,6 +2873,10 @@ const BlackHole = () => {
             });
           });
         } catch (batchError) {
+          // User rejected the signature / disconnected / switched wallets → abort the ENTIRE flow.
+          // Retrying here re-opened the wallet sign sheet after the user explicitly cancelled.
+          if (isWalletRejectError(batchError)) throw batchError;
+          if (batchError instanceof Error && batchError.message.includes('Wallet changed')) throw batchError;
           console.warn('[BlackHole] burn batch failed, retrying individual assets', batchError);
           for (let retryIndex = 0; retryIndex < batch.chunk.length; retryIndex += 1) {
             const retryPlan = batch.chunk[retryIndex];
@@ -2889,6 +2893,7 @@ const BlackHole = () => {
                 closeSignature: signature,
               });
             } catch (assetError) {
+              if (isWalletRejectError(assetError)) throw assetError;
               console.warn('[BlackHole] burn asset skipped after retry', {
                 account: retryPlan.token.pubkey.toBase58(),
                 mint: retryPlan.token.mint,

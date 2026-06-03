@@ -49,6 +49,7 @@ import {
   formatWalletAge,
   ensureJwt,
   getApiBase,
+  fetchApiJson,
   setAuthWallet,
   type SybilVerdictSummary,
   type WalletPreview,
@@ -668,10 +669,15 @@ export default function PrismScanner() {
     if (suggestedTargetExclusions.length > 0) {
       params.set('exclude', suggestedTargetExclusions.join(','));
     }
-    fetchJsonWithTimeout(`${BASE()}/api/sybil/suggested-targets?${params.toString()}`)
-      .then((r) => (r.ok ? r.json() : null))
+    // fetchApiJson = CapacitorHttp-backed + 3 retries. The old raw fetch() left the
+    // bounty board empty on the APK whenever the device's first Cloudflare request
+    // reset (net_error -101) — exact same native-fetch flakiness as everywhere else.
+    fetchApiJson<{ targets?: { address: string; source: string; parentRisk?: number; parent?: string }[] }>(
+      `${BASE()}/api/sybil/suggested-targets?${params.toString()}`,
+      { timeoutMs: 8_000 },
+    )
       .then((d) => {
-        if (d?.targets) setSuggestedTargets(d.targets);
+        if (Array.isArray(d?.targets)) setSuggestedTargets(d.targets);
       })
       .catch(() => {});
   }, [suggestedTargetExclusions]);

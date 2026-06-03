@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Loader2, Radar, Shield, Target, TriangleAlert } from 'lucide-react';
 import SiteHeader from '@/components/SiteHeader';
 import HubReturnButton from '@/components/HubReturnButton';
-import { fetchSybilAnalysis, getApiBase, type SybilResult } from '@/components/prism/shared';
+import { fetchApiJson, fetchSybilAnalysis, getApiBase, type SybilResult } from '@/components/prism/shared';
 import './apk-pages.css';
 
 type HuntTarget = { address: string; source?: string; parentRisk?: number; clusterLabel?: string };
@@ -61,9 +61,12 @@ export default function SybilHunt() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch(`${getApiBase()}/api/sybil/suggested-targets?limit=8`);
-        if (!res.ok) return;
-        const json = await res.json();
+        // Use fetchApiJson (CapacitorHttp-backed + retrying) — raw fetch() is unreliable from the
+        // native WebView and left the target list empty on the APK.
+        const json = await fetchApiJson<{ targets?: HuntTarget[] }>(
+          `${getApiBase()}/api/sybil/suggested-targets?limit=8`,
+          { timeoutMs: 4_000 },
+        );
         if (alive && Array.isArray(json?.targets)) setTargets(json.targets as HuntTarget[]);
       } catch { /* leave empty; manual input still works */ }
       finally { if (alive) setTargetsLoading(false); }

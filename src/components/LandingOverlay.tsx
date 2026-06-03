@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { LogOut } from 'lucide-react';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
 import ScanProgress from '@/components/ScanProgress';
+import LegalModal from '@/components/LegalModal';
 
 export interface LandingOverlayProps {
   fadeOut?: boolean;
@@ -38,6 +40,7 @@ export default function LandingOverlay({
 }: LandingOverlayProps) {
   const showScanning = isScanning;
   const showContent = !isScanning;
+  const [legalSlug, setLegalSlug] = useState<string | null>(null);
 
   return (
     <div className={`landing-persistent-shell${passthrough ? ' passthrough' : ''}${fadeOut ? ' fade-out' : ''}`}>
@@ -102,17 +105,18 @@ export default function LandingOverlay({
         </div>
       </div>
 
-      {/* Footer — always at bottom of screen */}
+      {/* Footer — always at bottom of screen. Legal links open IN-APP (LegalModal),
+          not the external browser (which auto-translated them on the APK). */}
       <div className="landing-v3-footer">
-        <a href="/privacy.html" className="landing-v3-link">
+        <a href="#privacy" className="landing-v3-link" onClick={(e) => { e.preventDefault(); setLegalSlug('privacy'); }}>
           Privacy
         </a>
         <span className="landing-v3-sep" />
-        <a href="/terms.html" className="landing-v3-link">
+        <a href="#terms" className="landing-v3-link" onClick={(e) => { e.preventDefault(); setLegalSlug('terms'); }}>
           Terms
         </a>
         <span className="landing-v3-sep" />
-        <a href="/copyright.html" className="landing-v3-link">
+        <a href="#copyright" className="landing-v3-link" onClick={(e) => { e.preventDefault(); setLegalSlug('copyright'); }}>
           Copyright
         </a>
         <span className="landing-v3-sep" />
@@ -120,6 +124,8 @@ export default function LandingOverlay({
           Twitter
         </a>
       </div>
+
+      <LegalModal slug={legalSlug} onClose={() => setLegalSlug(null)} />
 
       {/* Scan progress overlay */}
       <div className={`vortex-overlay${showScanning ? ' visible' : ''}`}>

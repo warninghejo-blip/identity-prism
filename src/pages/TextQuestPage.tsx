@@ -443,8 +443,6 @@ export default function TextQuestPage() {
     startFadeTransition(() => navigate('/game'));
   }, [navigate]);
 
-  const tapRef = useRef<{ x: number; y: number; t: number } | null>(null);
-
   // Auto-start random quest on mount (if no active quest)
   const autoStarted = useRef(false);
   useEffect(() => {
@@ -544,14 +542,13 @@ export default function TextQuestPage() {
             {/* Text + image layout */}
             <div className={`flex gap-4 ${currentNode.image && isImagePath(currentNode.image) ? '' : ''}`}>
               <div
-                className="flex-1 p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] max-h-[42vh] sm:max-h-none overflow-y-auto cursor-pointer"
-                style={{ touchAction: 'pan-y', WebkitOverflowScrolling: 'touch' }}
-                onPointerDown={(e) => { tapRef.current = { x: e.clientX, y: e.clientY, t: Date.now() }; }}
-                onPointerUp={(e) => {
-                  const s = tapRef.current; tapRef.current = null;
-                  if (!s || done) return;
-                  if (Math.abs(e.clientX - s.x) < 10 && Math.abs(e.clientY - s.y) < 10) skip();
-                }}
+                className="flex-1 p-5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/80 text-sm leading-relaxed min-h-[120px] cursor-pointer"
+                /* Tap-to-skip via onClick only. The previous onPointerDown/onPointerUp listeners made
+                   Android WebView hold the first touch for tap-vs-scroll disambiguation, which blocked
+                   the page from scrolling on the first gesture (every other PageShell page scrolls fine
+                   precisely because it has no pointer-down listener on its content). onClick fires only
+                   on a genuine tap and never during a scroll-swipe, so scrolling works on the first touch. */
+                onClick={() => { if (!done) skip(); }}
               >
                 {/* Emoji image inline */}
                 {currentNode.image && !isImagePath(currentNode.image) && (

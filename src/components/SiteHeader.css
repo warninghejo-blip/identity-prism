@@ -81,6 +81,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Push the social icons to the right so they sit right next to the wallet button
+     (nav stays on the left next to the brand). */
+  margin-left: auto;
 }
 
 .site-header__social a {
