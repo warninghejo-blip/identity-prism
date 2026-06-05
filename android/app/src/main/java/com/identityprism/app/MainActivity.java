@@ -20,7 +20,6 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        registerPlugin(SeedVaultPlugin.class);
         super.onCreate(savedInstanceState);
 
         // Disable Android WebView force-dark mode — it darkens the entire card/UI
