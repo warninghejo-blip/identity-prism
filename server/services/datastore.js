@@ -100,9 +100,21 @@ class DataStore {
 
     const snapshot = new Map(this.loadJsonEntries());
     const payload = this.writeJson(snapshot);
-    const tmp = `${this.jsonPath}.tmp`;
-    await fs.promises.writeFile(tmp, JSON.stringify(payload, null, 2), 'utf8');
-    await fs.promises.rename(tmp, this.jsonPath);
+    // Unique temp name per flush: two concurrent flushJson() calls on the same store must
+    // not share one .tmp path — the first rename consumes it and the second throws ENOENT,
+    // silently dropping that flush's writes. pid + monotonic counter guarantees a distinct tmp.
+    const tmp = `${this.jsonPath}.tmp.${process.pid}.${(this._flushSeq = (this._flushSeq || 0) + 1)}`;
+    // Compact (no pretty-print): JSON.stringify is synchronous and blocks the event loop;
+    // pretty-printing a multi-MB mirror (the sybil-verdicts / wallet-db stores grow large)
+    // costs ~2-3× the CPU and disk vs compact, stalling in-flight scans for seconds. The
+    // mirror is a machine-read fallback for SQLite, so whitespace has no value here.
+    try {
+      await fs.promises.writeFile(tmp, JSON.stringify(payload), 'utf8');
+      await fs.promises.rename(tmp, this.jsonPath);
+    } catch (error) {
+      await fs.promises.unlink(tmp).catch(() => {});
+      throw error;
+    }
   }
 
   hasRows() {
