@@ -13,7 +13,6 @@ import { startFadeTransition } from '@/lib/fadeTransition';
 import { getHeliusProxyUrl } from '@/constants';
 import { getCompositeTierFromScore, getTierIcon } from '@/lib/constants/tierColors';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
-import { getBoostedCompositeScore } from '@/lib/shipStats';
 import { fetchApiJson, fetchSybilAnalysis, getCachedJwt } from '@/components/prism/shared';
 import { writeCachedNotifications, type CachedNotification } from '@/lib/notificationCache';
 import { prefetchBlackHoleForAddress } from '@/hooks/useBlackHolePrefetch';
@@ -731,14 +730,6 @@ export default function CosmicHub({
       }
     } catch {}
   }, [walletAddress]);
-  const frameLoadout = useMemo(
-    () => (forgeFrame ? { equippedShipSkin: null, equippedFrame: forgeFrame, equippedAura: null } : null),
-    [forgeFrame],
-  );
-  const boostedComposite = useMemo(() => {
-    const result = getBoostedCompositeScore(compositeData.breakdown, frameLoadout);
-    return result ?? { score: compositeData.score, breakdown: compositeData.breakdown };
-  }, [compositeData.breakdown, compositeData.score, frameLoadout]);
   const hasCompositePassport = compositeData.hasComposite;
   const fallbackIdentityScore = typeof identityScore === 'number' ? Math.max(identityScore, 0) : 0;
   const hasCompositeScaleFallback = !hasCompositePassport && fallbackIdentityScore > 400;
@@ -755,12 +746,17 @@ export default function CosmicHub({
         : null,
     [fallbackIdentityScore, hasCompositeScaleFallback],
   );
-  const passportScore = hasCompositePassport ? boostedComposite.score : fallbackIdentityScore;
+  // Show the canonical server composite (sum of the 5 sub-scores), NOT a
+  // frame-boosted total — otherwise the hub mini-passport (e.g. 608 with a
+  // Nebula frame) diverges from the full card's composite (597). Frame bonuses
+  // are cosmetic and must not leak into the displayed score, mirroring
+  // WebCelestialCard.tsx.
+  const passportScore = hasCompositePassport ? compositeData.score : fallbackIdentityScore;
   const passportTier =
     hasCompositePassport || hasCompositeScaleFallback
       ? getCompositeTierFromScore(passportScore, planetTier ?? 'mercury')
       : (planetTier ?? 'mercury');
-  const passportBreakdown = hasCompositePassport ? boostedComposite.breakdown : fallbackPassportBreakdown;
+  const passportBreakdown = hasCompositePassport ? compositeData.breakdown : fallbackPassportBreakdown;
   const passportMaxScore = hasCompositePassport || hasCompositeScaleFallback ? 1000 : 400;
   const addressQuery = walletAddress ? `?address=${encodeURIComponent(walletAddress)}` : '';
 
