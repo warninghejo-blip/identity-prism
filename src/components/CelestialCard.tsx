@@ -28,6 +28,7 @@ import CompositeScoreBreakdown from '@/components/CompositeScoreBreakdown';
 import TrustGradeBadge from '@/components/TrustGradeBadge';
 import { useCompositeScore, type ScoreDetails } from '@/hooks/useCompositeScore';
 import { FRAME_STYLES, AURA_GLOW_MAP } from '@/lib/forgeItems';
+import { getBoostedCompositeScore } from '@/lib/shipStats';
 import { CosmicStarfield } from '@/components/CosmicStarfield';
 import { gatherXPSourcesMerged, computeRangerXP, getRangerRank, getRankProgress } from '@/lib/rangerRanks';
 
@@ -526,8 +527,16 @@ export const CelestialCard = forwardRef<HTMLDivElement, CelestialCardProps>(func
     social: 0,
     engagement: 0,
   };
-  const displayScore = hasCompositeDisplay ? compositeData.score : fallbackIdentityScore;
-  const displayBreakdown = hasCompositeDisplay ? compositeData.breakdown : fallbackBreakdown;
+  // Apply equipped Forge Frame boost so the full card matches the hub mini-passport.
+  const frameLoadout = forgeFrame ? { equippedShipSkin: null, equippedFrame: forgeFrame, equippedAura: null } : null;
+  const boostedComposite = hasCompositeDisplay
+    ? getBoostedCompositeScore(compositeData.breakdown, frameLoadout) ?? {
+        score: compositeData.score,
+        breakdown: compositeData.breakdown,
+      }
+    : null;
+  const displayScore = hasCompositeDisplay ? boostedComposite!.score : fallbackIdentityScore;
+  const displayBreakdown = hasCompositeDisplay ? boostedComposite!.breakdown : fallbackBreakdown;
   const maxDisplayScore = hasCompositeDisplay ? 1000 : 400;
   const effectiveTier = (
     hasCompositeDisplay
