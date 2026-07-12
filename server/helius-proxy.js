@@ -3819,6 +3819,15 @@ function handleMigrationStatus(req, res, url, pathname) {
 
   const wallet = ensureV2AccountState(address);
   const migrationData = wallet?._v2MigrationResult || null;
+  // One-shot: clear the migration result after it is read once, so the
+  // "Welcome Back" recap does not reappear on every launch. (This handler
+  // shadowed the self-clearing routes/utility.js version and never deleted
+  // the flag, so the server returned migrated:true forever.)
+  if (migrationData && wallet) {
+    delete wallet._v2MigrationResult;
+    walletDatabase.set(address, wallet);
+    saveWalletDatabaseDebounced();
+  }
   respondJson(res, 200, {
     migrated: Boolean(migrationData),
     migrationRev: V2_MIGRATION_REV,
