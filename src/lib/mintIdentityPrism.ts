@@ -9,6 +9,7 @@ import {
 } from '@solana/web3.js';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@/lib/solanaToken';
+import { cleanupWalletModals } from '@/lib/safeNavigate';
 
 const headersToRecord = (input?: HeadersInit): Record<string, string> => {
   const headers: Record<string, string> = {};
@@ -357,7 +358,7 @@ async function signWithDismissDetection(
   }
 
   const HARD_TIMEOUT_MS = Capacitor.isNativePlatform() ? 300_000 : 120_000;
-  const DISMISS_GRACE_MS = Capacitor.isNativePlatform() ? 60_000 : 20_000;
+  const DISMISS_GRACE_MS = Capacitor.isNativePlatform() ? 2_000 : 20_000;
 
   return new Promise<Transaction>((resolve, reject) => {
     let settled = false;
@@ -370,6 +371,7 @@ async function signWithDismissDetection(
       if (hardTimer) clearTimeout(hardTimer);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('identityprism:nativeResume', onNativeResume);
     };
 
     const settle = (fn: () => void) => {
@@ -401,8 +403,19 @@ async function signWithDismissDetection(
       }
     };
 
+    const onNativeResume = () => {
+      if (!wentToBackground || settled) return;
+      setTimeout(() => {
+        if (!settled) {
+          settle(() => reject(new Error('USER_REJECTED: Wallet dialog dismissed')));
+          cleanupWalletModals();
+        }
+      }, 1_000);
+    };
+
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('focus', onFocus);
+    window.addEventListener('identityprism:nativeResume', onNativeResume);
 
     hardTimer = setTimeout(() => {
       settle(() => reject(new Error('USER_REJECTED: Signing timed out')));
@@ -1101,12 +1114,19 @@ export async function updateIdentityPrism({
   const coreMintUrl = getCnftMintUrl() ?? metadataBaseUrl;
   if (!coreMintUrl) throw new Error('Core mint endpoint is not configured');
 
-  // Update is authorized by the owner's transaction signature. On Seeker/MWA,
-  // forcing a fresh SIWS popup here can hang before the update transaction appears.
-  const { fetchApiJson, getCachedJwt, postApiJson } = await import('@/components/prism/shared');
-  const authToken = getCachedJwt(address);
-  const updateAuthHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (authToken) updateAuthHeaders['Authorization'] = `Bearer ${authToken}`;
+  // /api/update-card now REQUIRES a JWT bound to the owner address (the server
+  // co-signs with the collection authority — anonymous access was a security
+  // hole). Prefer the cached token to avoid a fresh SIWS popup on Seeker/MWA;
+  // fall back to ensureJwt() only when no cached token exists.
+  const { ensureJwt, fetchApiJson, getCachedJwt, postApiJson } = await import('@/components/prism/shared');
+  const authToken = getCachedJwt(address) ?? (await ensureJwt());
+  if (!authToken) {
+    throw new Error('Authentication required to update your card. Please reconnect your wallet and try again.');
+  }
+  const updateAuthHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${authToken}`,
+  };
 
   const heliusRpcUrl = getHeliusRpcUrl(address);
   if (!heliusRpcUrl) throw new Error('Helius API key required');
@@ -1245,15 +1265,11 @@ export async function updateIdentityPrism({
       Capacitor.isNativePlatform() ? NATIVE_PRE_SIGN_SIMULATION_TIMEOUT_MS : 20_000,
     );
   }
-  if (!Capacitor.isNativePlatform()) {
-    const latestBh = await withTimeout('latest_blockhash', updateConn.getLatestBlockhash(), 15_000);
-    transaction.recentBlockhash = latestBh.blockhash;
-    console.warn('[update] step 4/5 simulate+blockhash done in', Date.now() - t4, 'ms; calling signTransaction next');
-  } else {
-    // dApp Store compliance fallback: native simulation was attempted above with
-    // a strict timeout; keep the server-prepared blockhash if RPC preflight stalls.
-    console.warn('[update] step 4/5 native simulate attempted; using server-prepared blockhash');
-  }
+  // IMPORTANT: keep the server-prepared blockhash on ALL platforms. The server
+  // binds the finalize co-signing step to the exact message it prepared (hash
+  // check) — mutating the blockhash here would change the message and the
+  // server would rightly reject the finalize as tampered.
+  console.warn('[update] step 4/5 simulate done in', Date.now() - t4, 'ms; calling signTransaction next');
 
   // Patch serialize so wallet adapter doesn't reject due to missing colAuth sig
   // (same pattern as mint-cnft — MWA internally calls serialize())

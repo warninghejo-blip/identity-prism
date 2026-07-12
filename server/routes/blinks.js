@@ -142,6 +142,58 @@ function registerBlinksRoute(ctx) {
     return entry;
   };
 
+  // ── update-card prepare/finalize binding (P0 fix: no blind co-signing) ──
+  // Prepared update transactions are stored keyed by the sha256 of their
+  // unsigned message bytes. Finalize only ever co-signs a transaction whose
+  // message hash matches a stored entry (same model as mint finalize).
+  const MPL_CORE_PROGRAM_ID = 'CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d';
+  const PENDING_UPDATE_TTL_MS = 10 * 60 * 1000;
+  const PENDING_UPDATE_MAX_ENTRIES = 5000;
+  const pendingUpdateCache = globalThis._identityPrismPendingUpdateCache
+    || (globalThis._identityPrismPendingUpdateCache = new Map());
+
+  const prunePendingUpdateCache = () => {
+    const now = Date.now();
+    for (const [key, entry] of pendingUpdateCache.entries()) {
+      if (!entry?.createdAt || now - entry.createdAt > PENDING_UPDATE_TTL_MS) {
+        pendingUpdateCache.delete(key);
+      }
+    }
+    while (pendingUpdateCache.size > PENDING_UPDATE_MAX_ENTRIES) {
+      const oldestKey = pendingUpdateCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      pendingUpdateCache.delete(oldestKey);
+    }
+  };
+
+  const storePendingUpdate = (messageHash, entry) => {
+    if (!messageHash) return;
+    prunePendingUpdateCache();
+    pendingUpdateCache.set(messageHash, { ...entry, createdAt: Date.now() });
+  };
+
+  const getPendingUpdate = (messageHash) => {
+    prunePendingUpdateCache();
+    return pendingUpdateCache.get(messageHash) ?? null;
+  };
+
+  const deletePendingUpdate = (messageHash) => {
+    pendingUpdateCache.delete(messageHash);
+  };
+
+  // Solana wire format: shortvec signature count, then 64 bytes per signature,
+  // then the message bytes (the part every signer actually signs).
+  const extractMessageBytes = (txBuf) => {
+    let sigCount = 0;
+    let byteOffset = 0;
+    for (let shift = 0; ; shift += 7) {
+      const byte = txBuf[byteOffset++];
+      sigCount |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) break;
+    }
+    return txBuf.slice(byteOffset + sigCount * 64);
+  };
+
   const withOperationTimeout = (promise, timeoutMs, message) => {
     let timeoutId;
     const timeout = new Promise((_, reject) => {
@@ -1351,8 +1403,14 @@ function registerBlinksRoute(ctx) {
         const attachServerSignatures = adminMode || !coinsPaymentReserved;
         console.info('[mint-cnft] post-attachServerSignatures', { requestId, attachServerSignatures });
         console.info('[mint-cnft] signerPool', { requestId, count: signerPool.length, attachServerSignatures, adminMode, coinsPaymentReserved });
-        console.info('[mint-cnft] pre-partialSign', { requestId, willPartialSign: Boolean(attachServerSignatures && signerPool.length), signerCount: signerPool.length });
-        if (attachServerSignatures && signerPool.length) transaction.partialSign(...signerPool);
+        // Phantom's Lighthouse guard flags multi-signer transactions when an additional
+        // signer's signature is already present *before* the wallet signs. For every wallet
+        // flow the server re-attaches these signatures at the finalize step (after the wallet
+        // has signed), so DON'T pre-sign here — only admin mode (which submits directly below,
+        // with no wallet round-trip) needs the signatures attached now.
+        const preSignServer = adminMode;
+        console.info('[mint-cnft] pre-partialSign', { requestId, willPartialSign: Boolean(preSignServer && signerPool.length), signerCount: signerPool.length, attachServerSignatures });
+        if (preSignServer && signerPool.length) transaction.partialSign(...signerPool);
         console.info('[mint-cnft] post-partialSign', { requestId });
 
         console.info('[mint-cnft] pre-serialize', { requestId });
@@ -1506,13 +1564,21 @@ function registerBlinksRoute(ctx) {
           respondJson(res, 400, { error: 'Missing required fields: ownerAddress, assetId, metadataUri, name' });
           return true;
         }
-        const jwtAuth = optionalJwt ? optionalJwt(req, res) : { ok: true, address: null };
-        if (!jwtAuth.ok) {
-          respondJson(res, 401, { error: 'Invalid or expired auth token' });
+        // SECURITY (P0): a valid JWT bound to ownerAddress is REQUIRED — this
+        // endpoint co-signs with the collection authority key and must never be
+        // reachable anonymously (matches the mint-cnft handler contract).
+        const jwtAuth = requireJwt(req, res);
+        if (!jwtAuth.ok) return true;
+        if (jwtAuth.address !== ownerAddress) {
+          respondJson(res, 403, { error: 'Auth token does not match ownerAddress' });
           return true;
         }
-        if (jwtAuth.address && jwtAuth.address !== ownerAddress) {
-          respondJson(res, 403, { error: 'Auth token does not match ownerAddress' });
+        if (newName.length > 64) {
+          respondJson(res, 400, { error: 'Name too long' });
+          return true;
+        }
+        if (metadataUri.length > 512 || !/^https:\/\//i.test(metadataUri)) {
+          respondJson(res, 400, { error: 'Invalid metadata URI' });
           return true;
         }
         if (!collectionAuthoritySecret) {
@@ -1521,6 +1587,10 @@ function registerBlinksRoute(ctx) {
         }
         if (!coreCollection) {
           respondJson(res, 500, { error: 'CORE_COLLECTION is not configured' });
+          return true;
+        }
+        if (!treasuryAddress) {
+          respondJson(res, 500, { error: 'TREASURY_ADDRESS is not configured' });
           return true;
         }
 
@@ -1546,6 +1616,12 @@ function registerBlinksRoute(ctx) {
         const treasuryKey = new PublicKey(treasuryAddress);
 
         if (signedTransaction) {
+          // ── FINALIZE ─────────────────────────────────────────────────────
+          // SECURITY (P0 fix): never blind-sign a client-supplied transaction.
+          // The collection authority only ever co-signs a transaction that THIS
+          // server built at prepare time: the signed message bytes must hash to
+          // a stored pending-update entry (same message-hash binding as the
+          // mint finalize path at /mint-cnft).
           const txBuf = Buffer.from(signedTransaction, 'base64');
           let txParsed;
           try {
@@ -1555,43 +1631,135 @@ function registerBlinksRoute(ctx) {
             return true;
           }
 
-          const collectionAuthPubkey = collectionAuthorityKeypair.publicKey.toBase58();
-          const collectionAuthIndex = txParsed.signatures.findIndex((signature) => signature.publicKey.toBase58() === collectionAuthPubkey);
-          if (collectionAuthIndex === -1) {
-            respondJson(res, 500, { error: 'Collection authority not a required signer' });
+          const messageHash = crypto.createHash('sha256').update(extractMessageBytes(txBuf)).digest('hex');
+          const pending = getPendingUpdate(messageHash);
+          if (!pending) {
+            console.warn('[update-card] finalize: unknown or expired message hash — rejecting', {
+              ownerAddress,
+              messageHash: messageHash.slice(0, 16),
+            });
+            respondJson(res, 400, { error: 'Unknown or expired update transaction. Please retry the update.' });
+            return true;
+          }
+          if (pending.owner !== ownerKey.toBase58()) {
+            respondJson(res, 403, { error: 'Update transaction belongs to a different wallet' });
             return true;
           }
 
-          let signatureCount = 0;
-          let byteOffset = 0;
-          for (let shift = 0; ; shift += 7) {
-            const byte = txBuf[byteOffset++];
-            signatureCount |= (byte & 0x7f) << shift;
-            if ((byte & 0x80) === 0) break;
+          // Defense-in-depth: re-validate instruction contents even though the
+          // hash binding already guarantees the message is byte-identical to
+          // the transaction built at prepare time. Allowed shape: exactly one
+          // owner→treasury fee transfer + mpl-core instruction(s) touching the
+          // prepared asset, collection and collection authority. Nothing else.
+          const systemProgramId = SystemProgram.programId.toBase58();
+          const expectedFeeLamports = BigInt(Math.round(updateFeeSol * lamportsPerSol));
+          const collectionAuthPubkey = collectionAuthorityKeypair.publicKey.toBase58();
+          let feeTransfers = 0;
+          let coreInstructions = 0;
+          let instructionsValid = txParsed.instructions.length >= 2;
+          for (const ix of (instructionsValid ? txParsed.instructions : [])) {
+            const programId = ix.programId.toBase58();
+            if (programId === systemProgramId) {
+              const data = Buffer.from(ix.data);
+              const isExpectedFeeTransfer = data.length === 12
+                && data.readUInt32LE(0) === 2 // SystemProgram Transfer
+                && data.readBigUInt64LE(4) === expectedFeeLamports
+                && ix.keys.length >= 2
+                && ix.keys[0].pubkey.toBase58() === pending.owner
+                && ix.keys[1].pubkey.toBase58() === treasuryKey.toBase58();
+              if (!isExpectedFeeTransfer) {
+                instructionsValid = false;
+                break;
+              }
+              feeTransfers += 1;
+            } else if (programId === MPL_CORE_PROGRAM_ID) {
+              const keySet = new Set(ix.keys.map((key) => key.pubkey.toBase58()));
+              if (!keySet.has(pending.assetId) || !keySet.has(coreCollection) || !keySet.has(collectionAuthPubkey)) {
+                instructionsValid = false;
+                break;
+              }
+              coreInstructions += 1;
+            } else {
+              instructionsValid = false;
+              break;
+            }
           }
-          const messageBytes = txBuf.slice(byteOffset + signatureCount * 64);
-          const pkcs8Prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
-          const seed = Buffer.from(collectionAuthorityKeypair.secretKey.slice(0, 32));
-          const privateKey = crypto.createPrivateKey({
-            key: Buffer.concat([pkcs8Prefix, seed]),
-            format: 'der',
-            type: 'pkcs8',
-          });
-          crypto.sign(null, messageBytes, privateKey).copy(txBuf, byteOffset + collectionAuthIndex * 64);
+          if (!instructionsValid || feeTransfers !== 1 || coreInstructions < 1
+            || !txParsed.feePayer || txParsed.feePayer.toBase58() !== pending.owner) {
+            console.warn('[update-card] finalize: instruction validation failed', {
+              ownerAddress,
+              assetId: pending.assetId,
+              feeTransfers,
+              coreInstructions,
+            });
+            respondJson(res, 400, { error: 'Transaction does not match the prepared update' });
+            return true;
+          }
+
+          const ownerSigEntry = txParsed.signatures.find((entry) => entry.publicKey.toBase58() === pending.owner);
+          if (!ownerSigEntry || !ownerSigEntry.signature) {
+            respondJson(res, 400, { error: 'Owner signature missing' });
+            return true;
+          }
+
+          // Re-verify on-chain ownership at finalize time (owner could have
+          // transferred the asset between prepare and finalize).
+          try {
+            const dasResponse = await fetch(rpcUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 'update-finalize-verify', method: 'getAsset', params: { id: pending.assetId } }),
+            });
+            const dasJson = await dasResponse.json();
+            const finalizeAsset = dasJson?.result;
+            if (!finalizeAsset?.ownership || finalizeAsset.ownership.owner !== ownerKey.toBase58()) {
+              respondJson(res, 403, { error: 'Asset not owned by this wallet' });
+              return true;
+            }
+          } catch (error) {
+            console.error('[update-card] finalize DAS re-check failed', { assetId: pending.assetId, error: error?.message ?? error });
+            respondJson(res, 502, { error: 'Ownership verification unavailable. Please retry.' });
+            return true;
+          }
+
+          if (pending.blockhash) {
+            const validity = await connection.isBlockhashValid(pending.blockhash, 'confirmed').catch(() => null);
+            if (validity?.value === false) {
+              deletePendingUpdate(messageHash);
+              respondJson(res, 409, { error: 'Update transaction expired. Please retry.', code: 'BLOCKHASH_EXPIRED' });
+              return true;
+            }
+          }
 
           try {
-            const signature = await connection.sendRawTransaction(txBuf, {
+            // partialSign + strict serialize(): serialize() with default options
+            // cryptographically verifies EVERY signature (including the owner's)
+            // and throws if any is missing or invalid.
+            txParsed.partialSign(collectionAuthorityKeypair);
+            let rawTransaction;
+            try {
+              rawTransaction = txParsed.serialize();
+            } catch (error) {
+              console.warn('[update-card] finalize: signature verification failed', {
+                ownerAddress,
+                error: error?.message ?? String(error),
+              });
+              respondJson(res, 400, { error: 'Transaction signature verification failed' });
+              return true;
+            }
+            const signature = await connection.sendRawTransaction(rawTransaction, {
               preflightCommitment: 'confirmed',
               skipPreflight: false,
             });
             await connection.confirmTransaction(signature, 'confirmed');
+            deletePendingUpdate(messageHash);
             const walletEntry = walletDatabase.get(ownerAddress) || { address: ownerAddress };
             const currentMint = walletEntry.mint && typeof walletEntry.mint === 'object' ? walletEntry.mint : {};
             walletEntry.mint = {
               ...currentMint,
               minted: true,
-              assetId,
-              metadataUri,
+              assetId: pending.assetId,
+              metadataUri: pending.metadataUri,
               lastRemintAt: new Date().toISOString(),
               remints: Number(currentMint.remints || 0) + 1,
               updateTxSignature: signature,
@@ -1599,7 +1767,7 @@ function registerBlinksRoute(ctx) {
             walletDatabase.set(ownerAddress, walletEntry);
             saveWalletDatabaseDebounced();
             triggerCompositeUpdate(ownerAddress);
-            respondJson(res, 200, { signature, assetId, finalized: true });
+            respondJson(res, 200, { signature, assetId: pending.assetId, finalized: true });
           } catch (error) {
             console.error('[update-card] submit failed', error?.message ?? error);
             respondJson(res, 500, { error: 'Transaction submission failed' });
@@ -1632,6 +1800,12 @@ function registerBlinksRoute(ctx) {
         }
         if (dasAsset.interface !== 'MplCoreAsset') {
           respondJson(res, 400, { error: 'Asset is not an mpl-core NFT' });
+          return true;
+        }
+        const inCoreCollection = Array.isArray(dasAsset.grouping)
+          && dasAsset.grouping.some((group) => group.group_key === 'collection' && group.group_value === coreCollection);
+        if (!inCoreCollection) {
+          respondJson(res, 403, { error: 'Asset is not part of the Identity Prism collection' });
           return true;
         }
 
@@ -1693,15 +1867,56 @@ function registerBlinksRoute(ctx) {
           toPubkey: treasuryKey,
           lamports: Math.round(updateFeeSol * lamportsPerSol),
         });
+        // Defense-in-depth: assert the builder produced only mpl-core
+        // instructions — the finalize allowlist depends on this invariant.
+        const unexpectedProgram = updateInstructions.find((ix) => ix.programId.toBase58() !== MPL_CORE_PROGRAM_ID);
+        if (unexpectedProgram) {
+          console.error('[update-card] prepare: updateV1 produced an unexpected program id', {
+            programId: unexpectedProgram.programId.toBase58(),
+          });
+          respondJson(res, 500, { error: 'Update card failed' });
+          return true;
+        }
+
         const latestBlockhash = await connection.getLatestBlockhash('finalized');
         const transaction = new Transaction().add(feeIx, ...updateInstructions);
         transaction.feePayer = ownerKey;
         transaction.recentBlockhash = latestBlockhash.blockhash;
-        transaction.partialSign(collectionAuthorityKeypair);
+        // Do NOT pre-sign with the collection authority here: Phantom's Lighthouse guard warns
+        // when an additional signer has already signed before the wallet does. The finalize
+        // branch above (signedTransaction path) co-signs the collection authority after the
+        // wallet has signed, so the wallet always sees an unsigned-by-others transaction.
+        const serializedUpdate = transaction.serialize({ requireAllSignatures: false });
+        // SECURITY (P0 fix): bind this exact message to the finalize step. The
+        // finalize branch only co-signs a transaction whose message bytes hash
+        // to a stored entry, so the collection authority can never be tricked
+        // into signing a transaction this server did not build.
+        const unsignedMessageHash = crypto.createHash('sha256').update(extractMessageBytes(serializedUpdate)).digest('hex');
+        storePendingUpdate(unsignedMessageHash, {
+          owner: ownerKey.toBase58(),
+          assetId,
+          metadataUri,
+          name: newName,
+          blockhash: latestBlockhash.blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        });
+
+        // Server-side preflight so mobile clients (throttled WebView RPC) can
+        // skip the on-device simulation before the wallet popup.
+        let simulation;
+        try {
+          const sim = await connection.simulateTransaction(transaction);
+          simulation = { ok: !sim.value.err, err: sim.value.err ?? null, logs: sim.value.logs ?? null };
+        } catch (error) {
+          console.warn('[update-card] prepare simulation unavailable', { error: error?.message ?? String(error) });
+          simulation = undefined;
+        }
+
         respondJson(res, 200, {
-          transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64'),
+          transaction: serializedUpdate.toString('base64'),
           feeSol: updateFeeSol,
           blockhash: latestBlockhash.blockhash,
+          ...(simulation ? { simulation } : {}),
         });
       } catch (error) {
         console.error('[update-card] failed', error);
