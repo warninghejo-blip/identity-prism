@@ -993,7 +993,8 @@ const Index = () => {
           writeAuthFlowDebug({ stage: 'connect_event_auto_enter_pending', address: resolved.slice(0, 8) });
           setJwtDeclined(false);
           setPendingAutoEnterAddress(resolved);
-          setViewState('scanning');
+          // Do NOT set viewState('scanning') here. It causes the dark bouncy dots overlay
+          // to appear prematurely while the user is still signing the message via MWA.
         }
       }
     };
@@ -1396,7 +1397,11 @@ const Index = () => {
       }
 
       if (!desktopWalletReady) {
-        openConnectPicker();
+        if (Capacitor.isNativePlatform()) {
+          void handleMobileConnect();
+        } else {
+          setWalletModalVisible(true);
+        }
         return;
       }
 
@@ -1742,6 +1747,10 @@ const Index = () => {
                 /* ignore */
               }
               if (data?.migrated && data.migrationData) {
+                // Persist the "shown" flag immediately on display, not only on
+                // dismissal, so an unclean close (app killed / WebView reclaimed)
+                // can't leave the gate open and reshow the modal next launch.
+                try { localStorage.setItem(shownKey, migrationRev); } catch { /* ignore */ }
                 setWelcomeBackData(data.migrationData);
                 setShowWelcomeBack(true);
               }
@@ -1788,8 +1797,8 @@ const Index = () => {
   useEffect(() => {
     if (!pendingAutoEnterAddress) return;
     if (suppressPassiveAuthRef.current) return;
+    if (siwsInProgressRef.current) return;
     const connectedResolved = connectedAddress?.toBase58() ?? wallet.publicKey?.toBase58();
-    if (connectedResolved && connectedResolved !== pendingAutoEnterAddress) return;
     const adapterAuthWallet = mobileWallet?.adapter
       ? makeAdapterAuthWallet(mobileWallet.adapter as AuthCapableAdapter, pendingAutoEnterAddress)
       : null;
@@ -1801,7 +1810,14 @@ const Index = () => {
     const run = async () => {
       writeAuthFlowDebug({ stage: 'auto_enter_sign_start', address: pendingAutoEnterAddress.slice(0, 8) });
       setJwtDeclined(false);
-      setViewState('scanning');
+      
+      // Android Intent Collision Fix:
+      // If we just finished a connection (e.g. via MWA performAuthorization), the MWA intent is still closing.
+      // We must delay slightly before requesting the signature to ensure the second popup can open.
+      if (Capacitor.isNativePlatform() || /android/i.test(navigator.userAgent)) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      
       const signed = await prewarmJwt(authWallet, pendingAutoEnterAddress, { forceFresh: true });
       if (cancelled) return;
       if (!signed) {
@@ -1830,6 +1846,7 @@ const Index = () => {
   useEffect(() => {
     if (activeAddress || !walletStable || !isConnected || jwtDeclined) return;
     if (suppressPassiveAuthRef.current) return;
+    if (siwsInProgressRef.current) return;
     const connectedResolved = connectedAddress?.toBase58() ?? wallet.publicKey?.toBase58();
     if (!connectedResolved) return;
     if (autoEnterAttemptedRef.current === connectedResolved) return;
@@ -2913,10 +2930,7 @@ const Index = () => {
               connectedAddress={walletStable ? connectedAddress?.toBase58() : undefined}
               useMobileWallet={useMobileWallet}
               onMobileConnect={() => {
-                // Native CONNECT WALLET → our custom Seed Vault picker (the 6-account
-                // "Choose your wallet" with the legal footer), not the system MWA sheet.
-                if (Capacitor.isNativePlatform()) openConnectPicker();
-                else void handleMobileConnect();
+                void handleMobileConnect();
               }}
               mobileWalletReady={mobileConnectReady}
               onDesktopConnect={handleDesktopConnect}
