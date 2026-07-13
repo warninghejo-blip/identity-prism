@@ -190,7 +190,42 @@ export function goBack(navigate: NavigateFunction, fallback = getAppHubFallback(
   navigate(fallback, { replace: true, state: { fromSubPage: true, ...(fromBlackHole ? { fromBlackHole: true } : {}) } });
 }
 
+export function cleanupWalletModals() {
+  // 1. Standard wallet-adapter overlay elements (light DOM)
+  ['.wallet-adapter-modal', '.wallet-adapter-modal-overlay', '.wallet-adapter-modal-container'].forEach(sel => {
+    try { document.querySelectorAll(sel).forEach(el => el.remove()); } catch {}
+  });
+
+  // 2. MWA closed Shadow DOM hosts — only direct children of body
+  //    MWA host <div>s have no id and no className, so skip app elements cheaply.
+  try {
+    const children = Array.from(document.body.children);
+    for (const el of children) {
+      if (el.nodeName !== 'DIV') continue;
+      const div = el as HTMLDivElement;
+      if (div.id || div.className) continue;
+
+      // Spinner host: --spinner-color CSS custom property
+      if (div.style.getPropertyValue('--spinner-color')) {
+        div.remove();
+        continue;
+      }
+
+      // Modal host: contains <link> children pointing to googleapis (font preconnect)
+      for (let i = 0; i < div.children.length; i++) {
+        const child = div.children[i];
+        if (child.tagName === 'LINK' && (child as HTMLLinkElement).href?.includes('googleapis')) {
+          div.remove();
+          break;
+        }
+      }
+    }
+  } catch {}
+}
+
 export function cleanupOverlays() {
+  // Also remove any stuck MWA wallet overlays (dots/dimming)
+  cleanupWalletModals();
   // Remove legacy transition overlays immediately
   for (const id of ['wormhole-tunnel', 'bh-forward-blackout', 'bh-transition-veil', 'app-preloader']) {
     const el = document.getElementById(id);
@@ -204,3 +239,4 @@ export function cleanupOverlays() {
     if (opacity < 0.01) fadeEl.remove();
   }
 }
+
