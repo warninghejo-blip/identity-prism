@@ -1495,6 +1495,18 @@ function registerBlinksRoute(ctx) {
         storePendingMintFinalizeFallback(pendingMintEntry);
         console.info('[mint-cnft] post-storePendingMintFinalizeFallback', { requestId });
 
+        // Server-side preflight so mobile clients (throttled WebView RPC) can
+        // skip the on-device simulation before the wallet popup. (Restores prod
+        // hotfix: prod additionally simulated the mint-cnft prepare tx here.)
+        let simulation;
+        try {
+          const sim = await connection.simulateTransaction(transaction);
+          simulation = { ok: !sim.value.err, err: sim.value.err ?? null, logs: sim.value.logs ?? null };
+        } catch (error) {
+          console.warn('[mint-cnft] prepare simulation unavailable', { requestId, error: error?.message ?? String(error) });
+          simulation = undefined;
+        }
+
         console.info('[mint-cnft] pre-respondJson', { requestId });
         respondJson(res, 200, {
           transaction: serialized,
@@ -1502,6 +1514,7 @@ function registerBlinksRoute(ctx) {
           blockhash: latestBlockhash.blockhash,
           requestId,
           finalize: true,
+          ...(simulation ? { simulation } : {}),
         });
         console.info('[mint-cnft] post-respondJson', { requestId });
       } catch (error) {
