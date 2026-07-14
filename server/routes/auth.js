@@ -60,8 +60,10 @@ function createAuthRouteHandler({
         const parsed = safeParseJson(req.method === 'GET' ? '' : await readBody(req));
         const address = getAuthParam(parsed, url, 'address');
         const nonce = getAuthParam(parsed, url, 'nonce');
-        const signature = getAuthParam(parsed, url, 'signature');
-        const signedMessage = getAuthParam(parsed, url, 'signedMessage') || undefined;
+        // P0-5: credentials must come from the POST body ONLY — never from the query
+        // string (GET/query acceptance made signed-message replay scriptable via URL).
+        const signature = typeof parsed?.signature === 'string' ? parsed.signature.trim() : '';
+        const signedMessage = (typeof parsed?.signedMessage === 'string' && parsed.signedMessage.trim()) ? parsed.signedMessage.trim() : undefined;
         if (!address || !nonce || !signature) {
           respondJson(res, 400, { error: 'address, nonce, and signature required' }); return true;
         }
@@ -82,10 +84,10 @@ function createAuthRouteHandler({
           if (authChallenges.has(usedKey)) {
             respondJson(res, 401, { error: 'Replay detected' }); return true;
           }
-          // Register synthetically so the burn at end of flow marks it used.
+          // Register synthetically; the nonce is burned only AFTER successful signature
+          // verification (P0-5) so a transient sign failure does not poison a retry.
           challenge = { address, message: '', expiresAt: Date.now() + authChallengeTtlMs, siws: true };
           authChallenges.set(nonce, challenge);
-          authChallenges.set(usedKey, { burnedAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
           siwsMode = true;
         }
         if (!challenge) {
@@ -103,6 +105,9 @@ function createAuthRouteHandler({
         let verified = false;
         let messagesMatch = true;
         let challengeMessage = challenge.message;
+        // P0-5: effective anti-replay nonce (wallet-generated if the wallet injected its
+        // own) — hoisted so it can be burned after successful verification below.
+        let effectiveNonceForBurn = null;
 
         if (typeof signedMessage === 'string' && signedMessage.trim()) {
           const signedMessageBytes = Buffer.from(signedMessage, 'base64');
@@ -130,14 +135,14 @@ function createAuthRouteHandler({
             });
             respondJson(res, 401, { error: 'Invalid sign-in message' }); return true;
           }
-          // Anti-replay using the EFFECTIVE nonce (wallet-generated if present)
-          if (siwsMode && walletNonce && walletNonce !== String(nonce)) {
-            const walletUsedKey = `siws:${walletNonce}`;
-            if (authChallenges.has(walletUsedKey)) {
-              respondJson(res, 401, { error: 'Replay detected' }); return true;
-            }
-            authChallenges.set(walletUsedKey, { burnedAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+          // P0-5: anti-replay using the EFFECTIVE nonce for ALL paths (not only siwsMode).
+          // Any previously-seen signed message carries an already-burned nonce and is
+          // rejected here even if the attacker obtained a fresh server challenge for the
+          // victim's address. Burn happens after successful verification (below).
+          if (authChallenges.has(`siws:${effectiveNonce}`)) {
+            respondJson(res, 401, { error: 'Replay detected' }); return true;
           }
+          effectiveNonceForBurn = String(effectiveNonce);
           challengeMessage = signedMessageText;
           verified = verifyWalletSignature(address, signedMessageBytes, signature);
         } else {
@@ -168,6 +173,15 @@ function createAuthRouteHandler({
           respondJson(res, 401, { error: 'Invalid signature' }); return true;
         }
         authChallenges.delete(nonce); // one-time use
+        // P0-5: burn the effective nonce (and the request nonce if different) now that the
+        // signature verified — the same signed message can never mint a JWT again.
+        if (effectiveNonceForBurn) {
+          const burnRecord = { burnedAt: Date.now(), expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
+          authChallenges.set(`siws:${effectiveNonceForBurn}`, burnRecord);
+          if (effectiveNonceForBurn !== String(nonce)) {
+            authChallenges.set(`siws:${nonce}`, burnRecord);
+          }
+        }
         const token = createJwt({ address });
         console.info('[auth] JWT issued', { address: address.slice(0, 8) });
         respondJson(res, 200, { token, expiresIn: jwtTtl });
