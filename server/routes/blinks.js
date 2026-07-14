@@ -85,6 +85,7 @@ function registerBlinksRoute(ctx) {
     loadSecretKeyFromFile,
     storePendingMint,
     consumePendingMint,
+    claimRemintBurn,
     saveMintedAddresses,
     tokenMetadataProgramId,
   } = ctx;
@@ -106,6 +107,7 @@ function registerBlinksRoute(ctx) {
     return details;
   };
   const CORE_COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000;
+  const REMINT_BURN_MAX_AGE_MS = 30 * 60 * 1000;
   const coreCollectionCache = new Map();
   const PENDING_MINT_FALLBACK_TTL_MS = 10 * 60 * 1000;
   const pendingMintFinalizeCache = globalThis._identityPrismPendingMintFinalizeCache
@@ -288,6 +290,64 @@ function registerBlinksRoute(ctx) {
     const publicKeyValue = typeof value.publicKey === 'string' ? value.publicKey : value.publicKey?.toString?.();
     if (publicKeyValue) return publicKeyValue;
     return value.toString?.() ?? null;
+  };
+
+  const verifyMplCoreBurnTransaction = ({ burnTx, burnAssetId, walletAddress, collectionAddress }) => {
+    if (!burnTx?.meta || burnTx.meta.err || !burnTx.transaction?.message) {
+      return { ok: false, reason: 'Burn transaction failed on-chain' };
+    }
+    const blockTimeMs = Number(burnTx.blockTime) * 1000;
+    const now = Date.now();
+    if (!Number.isFinite(blockTimeMs) || blockTimeMs > now + 30_000 || now - blockTimeMs > REMINT_BURN_MAX_AGE_MS) {
+      return { ok: false, reason: 'Burn transaction is too old' };
+    }
+
+    const message = burnTx.transaction.message;
+    let accountKeys;
+    try {
+      accountKeys = message.getAccountKeys({ accountKeysFromLookups: burnTx.meta.loadedAddresses ?? null });
+    } catch {
+      return { ok: false, reason: 'Unable to resolve burn transaction accounts' };
+    }
+    const keyAt = (index) => accountKeys.get(index)?.toBase58?.() ?? '';
+    if (keyAt(0) !== walletAddress || !message.isAccountSigner(0)) {
+      return { ok: false, reason: 'Burn transaction was not signed by your wallet' };
+    }
+
+    const burnInstructions = (message.compiledInstructions || []).filter((instruction) => {
+      const data = instruction?.data;
+      return keyAt(instruction?.programIdIndex) === MPL_CORE_PROGRAM_ID
+        && data instanceof Uint8Array
+        && data.length >= 2
+        && data[0] === 12
+        && data[1] === 0;
+    });
+    if (burnInstructions.length !== 1) {
+      return { ok: false, reason: 'Transaction must contain exactly one MPL-Core BurnV1 instruction' };
+    }
+
+    const burnInstruction = burnInstructions[0];
+    const indexes = burnInstruction.accountKeyIndexes || [];
+    if (indexes.length < 4) return { ok: false, reason: 'Malformed MPL-Core burn instruction' };
+    const [assetIndex, collectionIndex, payerIndex, authorityIndex] = indexes;
+    if (keyAt(assetIndex) !== burnAssetId) {
+      return { ok: false, reason: 'Burn transaction does not burn the specified asset' };
+    }
+    if (keyAt(collectionIndex) !== collectionAddress) {
+      return { ok: false, reason: 'Burned asset is not from the Identity Prism collection' };
+    }
+    if (keyAt(payerIndex) !== walletAddress || keyAt(authorityIndex) !== walletAddress) {
+      return { ok: false, reason: 'Burn transaction is not bound to your wallet' };
+    }
+    if (!message.isAccountSigner(authorityIndex)) {
+      return { ok: false, reason: 'Burn authority signature is missing' };
+    }
+    const assetPreBalance = Number(burnTx.meta.preBalances?.[assetIndex]);
+    const assetPostBalance = Number(burnTx.meta.postBalances?.[assetIndex]);
+    if (!Number.isFinite(assetPreBalance) || !Number.isFinite(assetPostBalance) || assetPostBalance >= assetPreBalance) {
+      return { ok: false, reason: 'Specified asset account was not burned' };
+    }
+    return { ok: true, blockTimeMs };
   };
 
   return async function handleBlinksRoute(req, res, url, pathname) {
@@ -1107,6 +1167,14 @@ function registerBlinksRoute(ctx) {
           respondJson(res, 400, { error: 'Invalid public keys in mint request', requestId });
           return true;
         }
+        if (remintMode && ownerKey.toBase58() !== jwtAuth.address) {
+          respondJson(res, 403, { error: 'Remint owner must match authenticated wallet', requestId });
+          return true;
+        }
+        if (remintMode && (!coreCollection || collectionMintKey.toBase58() !== coreCollection)) {
+          respondJson(res, 400, { error: 'Remint requires the Identity Prism collection', requestId });
+          return true;
+        }
 
         const rpcUrl = getRpcUrl(ownerKey.toBase58());
         if (!rpcUrl) {
@@ -1202,6 +1270,16 @@ function registerBlinksRoute(ctx) {
             respondJson(res, 400, { error: 'remint requires a valid burnSignature' });
             return true;
           }
+          if (!burnAssetId) {
+            respondJson(res, 400, { error: 'remint requires burnAssetId', requestId });
+            return true;
+          }
+          try {
+            if (new PublicKey(burnAssetId).toBase58() !== burnAssetId) throw new Error('non-canonical key');
+          } catch {
+            respondJson(res, 400, { error: 'remint requires a valid burnAssetId', requestId });
+            return true;
+          }
 
           let burnVerified = false;
           try {
@@ -1220,29 +1298,18 @@ function registerBlinksRoute(ctx) {
               return true;
             }
 
-            // Verify burner wallet matches authenticated address
-            const accountKeys = burnTx.transaction.message.staticAccountKeys
-              ?? burnTx.transaction.message.accountKeys
-              ?? [];
-            const accountKeyStrings = accountKeys.map((k) => (typeof k === 'string' ? k : k?.toBase58?.() ?? String(k)));
-            const feePayer = accountKeyStrings[0] ?? '';
-            if (feePayer !== jwtAuth.address) {
-              console.warn('[mint-cnft] remint: burn tx feePayer does not match jwt wallet', {
+            const verification = verifyMplCoreBurnTransaction({
+              burnTx,
+              burnAssetId,
+              walletAddress: jwtAuth.address,
+              collectionAddress: coreCollection,
+            });
+            if (!verification.ok) {
+              console.warn('[mint-cnft] remint: exact burn verification failed', {
                 requestId,
-                feePayer: feePayer.slice(0, 16),
-                jwtAddress: jwtAuth.address.slice(0, 16),
+                reason: verification.reason,
               });
-              respondJson(res, 400, { error: 'Burn transaction was not signed by your wallet' });
-              return true;
-            }
-
-            // Verify burned asset matches burnAssetId if provided
-            if (burnAssetId && !accountKeyStrings.includes(burnAssetId)) {
-              console.warn('[mint-cnft] remint: burnAssetId not found in burn tx accounts', {
-                requestId,
-                burnAssetId: burnAssetId.slice(0, 16),
-              });
-              respondJson(res, 400, { error: 'Burn transaction does not reference the specified asset' });
+              respondJson(res, 400, { error: verification.reason, requestId });
               return true;
             }
 
@@ -1250,7 +1317,7 @@ function registerBlinksRoute(ctx) {
             console.info('[mint-cnft] remint burn verified on-chain', {
               requestId,
               burnSignature: burnSignature.slice(0, 16),
-              feePayer: feePayer.slice(0, 16),
+              burnAssetId: burnAssetId.slice(0, 16),
             });
           } catch (error) {
             console.warn('[mint-cnft] remint: burn verification threw', { requestId, error: error?.message });
@@ -1260,6 +1327,21 @@ function registerBlinksRoute(ctx) {
 
           if (!burnVerified) {
             respondJson(res, 400, { error: 'Burn verification did not pass' });
+            return true;
+          }
+          const burnClaim = claimRemintBurn({
+            signature: burnSignature,
+            assetId: burnAssetId,
+            wallet: jwtAuth.address,
+            requestId,
+          });
+          if (!burnClaim.ok) {
+            respondJson(res, 409, {
+              error: burnClaim.reason === 'burn_asset_consumed'
+                ? 'Burned asset was already used for a remint'
+                : 'Burn transaction was already used for a remint',
+              requestId,
+            });
             return true;
           }
           remintPaymentSkipped = true;
@@ -1321,55 +1403,9 @@ function registerBlinksRoute(ctx) {
           }
         }
 
+        // Remint uses a separately finalized burn proof. The exact BurnV1 was verified and
+        // durably consumed above, so the already-burned asset must not be added to this tx.
         const burnInstructions = [];
-        let burnAssetIsValid = false;
-        if (remintMode && burnAssetId) {
-          try {
-            new PublicKey(burnAssetId);
-            burnAssetIsValid = true;
-          } catch {
-            console.warn('[mint-cnft] burnAssetId is not a valid public key (legacy cNFT?) — skipping burn instructions', {
-              requestId,
-              burnAssetId: burnAssetId.slice(0, 16),
-            });
-          }
-          if (burnAssetIsValid) {
-            try {
-              const assetAccount = await fetchAsset(umi, publicKey(burnAssetId)).catch(() => null);
-              if (!assetAccount) {
-                console.warn('[mint-cnft] burnAssetId not found on-chain or not a Core asset — skipping burn', { requestId, burnAssetId: burnAssetId.slice(0, 16) });
-                burnAssetIsValid = false;
-              } else if (assetAccount.owner?.toString() !== ownerKey.toBase58()) {
-                console.warn('[mint-cnft] burn asset owner mismatch — skipping burn', {
-                  requestId,
-                  assetOwner: assetAccount.owner?.toString(),
-                  expectedOwner: ownerKey.toBase58(),
-                });
-                burnAssetIsValid = false;
-              }
-            } catch (error) {
-              console.warn('[mint-cnft] failed to fetch burn asset — skipping burn', { requestId, error: error?.message });
-              burnAssetIsValid = false;
-            }
-          }
-          if (burnAssetIsValid) {
-            try {
-              const burnOwnerSigner = createNoopSigner(publicKey(ownerKey.toBase58()));
-              const burnBuilder = burnV1(umi, {
-                asset: publicKey(burnAssetId),
-                collection: publicKey(collectionMintKey.toBase58()),
-                authority: burnOwnerSigner,
-              });
-              for (const instruction of burnBuilder.getInstructions()) {
-                burnInstructions.push(toWeb3JsInstruction(instruction));
-              }
-            } catch (error) {
-              console.error('[mint-cnft] failed to build burn instructions', error);
-              respondJson(res, 500, { error: 'Failed to build burn instructions', requestId });
-              return true;
-            }
-          }
-        }
 
         const latestBlockhash = await connection.getLatestBlockhash('confirmed');
         const instructions = [

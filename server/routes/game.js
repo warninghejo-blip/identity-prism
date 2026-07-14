@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
 
+const GAME_SESSION_RESULT_PURPOSE = 'game_result';
+const MAX_SERVER_GAME_DURATION_MS = 15 * 60 * 1000;
+const MAX_GAME_WINDOW_MS = 20 * 60 * 1000;
+const LEGACY_DURATION_GRACE_MS = 120_000; // = maxSeedStartDriftMs
+const REQUIRE_SESSION_TOKEN = process.env.GAME_SESSION_REQUIRE_TOKEN === 'true';
+
 function registerGameV1Route(ctx) {
   const { core, auth, wallet, game } = ctx;
   const { ipRateLimit, getClientIp, respondJson, readBody, requireJwt } = core;
@@ -45,7 +51,9 @@ function registerGameV1Route(ctx) {
           const gameSessionId = parsed.gameSessionId;
           if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for earning coins' });
           const session = gameSessionProofs?.get(gameSessionId);
-          if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+          if (!session || !session.verified || !session.timingVerified || !session.sessionTokenId) {
+            return respondJson(res, 400, { error: 'Invalid or unverified game session timing' });
+          }
           if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
           if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
 
@@ -174,9 +182,67 @@ function registerGameRoute(ctx) {
     getRevivesLeft,
     freeRevivesPerDay,
     useRevive,
+    issueGameSessionToken,
+    verifyGameSessionToken,
+    bindGameSessionTokenProof,
+    redeemGameSessionToken,
   } = game;
 
   return async function handleGameRoute(req, res, url, pathname) {
+    if (pathname === '/api/game/session/start' && req.method === 'POST') {
+      if (!ipRateLimit('game_session_start', getClientIp(req), 15, 60000)) {
+        return respondJson(res, 429, { error: 'Too many game session starts' });
+      }
+      const jwtAuth = requireJwt(req, res);
+      if (!jwtAuth.ok) return true;
+      try {
+        const raw = await readBody(req);
+        const parsed = safeParseJson(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          return respondJson(res, 400, { error: 'Invalid JSON' });
+        }
+
+        const walletAddress = typeof parsed.walletAddress === 'string' && parsed.walletAddress.trim()
+          ? parsed.walletAddress.trim()
+          : jwtAuth.address;
+        if (walletAddress !== jwtAuth.address) {
+          return respondJson(res, 403, { error: 'Wallet address mismatch' });
+        }
+        const validGameModes = new Set(['orbit', 'destroyer', 'gravity']);
+        const gameMode = typeof parsed.gameMode === 'string' ? parsed.gameMode.trim() : 'orbit';
+        if (!validGameModes.has(gameMode)) {
+          return respondJson(res, 400, { error: 'invalid gameMode' });
+        }
+        const seed = String(parsed.seed ?? '').trim();
+        const slot = Number(parsed.slot);
+        if (!seed || seed.length < 16) {
+          return respondJson(res, 400, { error: 'seed is required' });
+        }
+        if (!Number.isInteger(slot) || slot <= 0) {
+          return respondJson(res, 400, { error: 'slot must be a positive integer' });
+        }
+
+        const issued = issueGameSessionToken({
+          walletAddress,
+          gameMode,
+          purpose: GAME_SESSION_RESULT_PURPOSE,
+          seed,
+          slot,
+        });
+        respondJson(res, 201, {
+          sessionToken: issued.token,
+          startedAtMs: issued.issuedAtMs,
+          expiresAtMs: issued.expiresAtMs,
+          seed,
+          slot,
+          gameMode,
+        });
+      } catch {
+        respondJson(res, 500, { error: 'Failed to start game session' });
+      }
+      return true;
+    }
+
     if (pathname === '/api/game/session' && req.method === 'POST') {
       if (!ipRateLimit('game_session', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many session registrations' });
       const jwtAuth = requireJwt(req, res);
@@ -188,6 +254,15 @@ function registerGameRoute(ctx) {
           respondJson(res, 400, { error: 'Invalid JSON' });
           return true;
         }
+        const submittedAtMs = Date.now();
+        const sessionToken = typeof parsed.sessionToken === 'string' ? parsed.sessionToken.trim() : '';
+        if (!sessionToken && REQUIRE_SESSION_TOKEN) {
+          return respondJson(res, 428, {
+            error: 'sessionToken required; call /api/game/session/start before the game',
+            code: 'GAME_SESSION_START_REQUIRED',
+          });
+        }
+        const legacyMode = !sessionToken;
 
         let payload;
         try {
@@ -200,7 +275,56 @@ function registerGameRoute(ctx) {
           return respondJson(res, 403, { error: 'Wallet address mismatch' });
         }
 
+        let tokenRecord = null;
+        if (!legacyMode) {
+          const tokenVerification = verifyGameSessionToken(sessionToken);
+          if (!tokenVerification.ok) {
+            return respondJson(res, 409, {
+              error: 'Invalid, expired, or already used game session token',
+              reason: tokenVerification.reason,
+            });
+          }
+          tokenRecord = tokenVerification.record;
+          if (
+            tokenRecord.walletAddress !== jwtAuth.address
+            || tokenRecord.gameMode !== payload.gameMode
+            || tokenRecord.purpose !== GAME_SESSION_RESULT_PURPOSE
+            || tokenRecord.seed !== payload.seed
+            || tokenRecord.slot !== payload.slot
+          ) {
+            return respondJson(res, 403, { error: 'Game session token does not match submitted result' });
+          }
+        }
+
         pruneGameSessionProofs();
+
+        const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
+
+        let serverStartedAtMs;
+        let serverEndedAtMs;
+        let durationMs;
+        let timingVerified;
+        if (!legacyMode) {
+          serverStartedAtMs = tokenRecord.issuedAtMs;
+          serverEndedAtMs = submittedAtMs;
+          durationMs = Math.max(0, serverEndedAtMs - serverStartedAtMs);
+          timingVerified = serverEndedAtMs >= serverStartedAtMs && durationMs <= MAX_SERVER_GAME_DURATION_MS;
+        } else {
+          serverStartedAtMs = payload.startedAtMs;
+          serverEndedAtMs = payload.endedAtMs;
+          const serverReceiptMs = Date.now();
+          const clientDurationMs = payload.endedAtMs - payload.startedAtMs; // normalize guarantees >=0
+          durationMs = clientDurationMs;
+          if (Number.isFinite(Number(verification.slotBlockTimeMs))) {
+            const slotMs = Number(verification.slotBlockTimeMs);
+            const authElapsedMs = Math.min(payload.endedAtMs, serverReceiptMs) - slotMs;
+            const windowValid = (serverReceiptMs - slotMs) <= MAX_GAME_WINDOW_MS && authElapsedMs > 0;
+            const durationValid = clientDurationMs <= authElapsedMs + LEGACY_DURATION_GRACE_MS;
+            timingVerified = windowValid && durationValid;
+          } else {
+            timingVerified = true; // fail-open like existing seedTimeValid; attacker doesn't control missing blockTime
+          }
+        }
 
         const canonical = JSON.stringify({
           walletAddress: payload.walletAddress,
@@ -208,14 +332,14 @@ function registerGameRoute(ctx) {
           survivalTime: payload.survivalTime,
           seed: payload.seed,
           slot: payload.slot,
-          startedAtMs: payload.startedAtMs,
-          endedAtMs: payload.endedAtMs,
+          startedAtMs: serverStartedAtMs,
+          endedAtMs: serverEndedAtMs,
           txSignature: payload.txSignature,
           gameMode: payload.gameMode,
+          sessionTokenId: legacyMode ? null : tokenRecord.tokenId,
         });
         const hash = crypto.createHash('sha256').update(canonical).digest('hex');
         const id = createGameSessionProofId(payload.slot, hash);
-        const durationMs = Math.max(0, payload.endedAtMs - payload.startedAtMs);
         const isDestroyerMode = payload.gameMode === 'destroyer';
         const isGravityMode = payload.gameMode === 'gravity';
         const durationSec = Math.max(1, durationMs / 1000);
@@ -228,30 +352,60 @@ function registerGameRoute(ctx) {
           modeScoreValid = payload.score <= maxDestroyerScore;
         } else if (isGravityMode) {
           modeScoreValid = payload.score <= maxGravityScore;
+        } else if (!legacyMode) {
+          scoreDelta = Math.max(0, payload.score - expectedScore); // only over-claim is penalized
         } else {
           scoreDelta = Math.abs(expectedScore - payload.score);
         }
         const scoreDeltaToleranceSec = 8;
-        const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
         const maxSeedStartDriftMs = 120_000;
         const seedStartDeltaMs = Number.isFinite(Number(verification.slotBlockTimeMs))
-          ? Math.abs(payload.startedAtMs - Number(verification.slotBlockTimeMs))
+          ? Math.abs(serverStartedAtMs - Number(verification.slotBlockTimeMs))
           : 0;
         const seedTimeValid = !Number.isFinite(Number(verification.slotBlockTimeMs)) || seedStartDeltaMs <= maxSeedStartDriftMs;
         const verified =
-          verification.seedMatchesSlot && seedTimeValid && scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
+          timingVerified && verification.seedMatchesSlot && seedTimeValid && scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
         const nowIso = new Date().toISOString();
         const baseUrl = getBaseUrl(req);
         const proofUrl = baseUrl ? `${baseUrl}/api/game/session/${encodeURIComponent(id)}` : null;
 
         const seedDeltaReason = seedTimeValid ? '' : `; seed/start delta=${Math.round(seedStartDeltaMs / 1000)}s`;
+        const timingReason = timingVerified ? '' : '; server-timed duration exceeds maximum';
         const reason = verified
-          ? 'Seed matches MagicBlock slot and score delta is within tolerance'
-          : `${verification.reason}; score delta=${scoreDelta}s${seedDeltaReason}`;
+          ? 'Seed matches MagicBlock slot and score is valid for server-authoritative duration'
+          : `${verification.reason}; score delta=${scoreDelta}s${seedDeltaReason}${timingReason}`;
+
+        for (const [key, prev] of gameSessionProofs) {
+          if (prev && prev.walletAddress === payload.walletAddress && prev.slot === payload.slot && key !== id) {
+            if ((Number(prev.coinsCredited) || 0) > 0 || prev.usedForTournament || prev.usedForChallenge || prev.usedForLeaderboard) {
+              return respondJson(res, 409, { error: 'A session for this slot was already registered and used', reason: 'slot_already_used' });
+            }
+            gameSessionProofs.delete(key); // honest retry / re-register of an UNUSED session — replace it
+          }
+        }
 
         const existingSession = gameSessionProofs.get(id);
         if (existingSession && (existingSession.usedForTournament || existingSession.usedForChallenge || existingSession.usedForLeaderboard)) {
           return respondJson(res, 409, { error: 'Session already registered and used competitively' });
+        }
+
+        if (!legacyMode) {
+          const tokenBinding = bindGameSessionTokenProof({ token: sessionToken, proofId: id });
+          if (!tokenBinding.ok) {
+            return respondJson(res, 409, { error: 'Game session token cannot be bound to this result', reason: tokenBinding.reason });
+          }
+          const tokenRedemption = redeemGameSessionToken({
+            token: sessionToken,
+            proofId: id,
+            walletAddress: payload.walletAddress,
+            gameMode: payload.gameMode,
+            purpose: GAME_SESSION_RESULT_PURPOSE,
+            seed: payload.seed,
+            slot: payload.slot,
+          });
+          if (!tokenRedemption.ok) {
+            return respondJson(res, 409, { error: 'Game session token was already used', reason: tokenRedemption.reason });
+          }
         }
 
         const entry = {
@@ -262,12 +416,13 @@ function registerGameRoute(ctx) {
           survivalTime: payload.survivalTime,
           seed: payload.seed,
           slot: payload.slot,
-          startedAtMs: payload.startedAtMs,
-          endedAtMs: payload.endedAtMs,
+          startedAtMs: serverStartedAtMs,
+          endedAtMs: serverEndedAtMs,
           durationMs,
           scoreDelta,
           seedStartDeltaMs,
           verified,
+          timingVerified,
           gameMode: payload.gameMode,
           proofUrl,
           verification: {
@@ -284,6 +439,10 @@ function registerGameRoute(ctx) {
           usedForTournament: existingSession?.usedForTournament ?? null,
           usedForChallenge: existingSession?.usedForChallenge ?? null,
           usedForLeaderboard: existingSession?.usedForLeaderboard ?? null,
+          sessionTokenId: legacyMode ? null : tokenRecord.tokenId,
+          sessionPurpose: legacyMode ? null : tokenRecord.purpose,
+          sessionReferenceId: legacyMode ? null : tokenRecord.referenceId,
+          sessionTokenExpiresAtMs: legacyMode ? null : tokenRecord.expiresAtMs,
         };
 
         if (gameSessionProofs.size >= maxGameSessionProofs) {
@@ -359,7 +518,11 @@ function registerGameRoute(ctx) {
           : existing.seedStartDeltaMs ?? 0;
         const seedTimeValid = !Number.isFinite(Number(verification.slotBlockTimeMs)) || seedStartDeltaMs <= maxSeedStartDriftMs;
         const verified =
-          verification.seedMatchesSlot && seedTimeValid && existing.scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
+          existing.timingVerified !== false
+          && verification.seedMatchesSlot
+          && seedTimeValid
+          && existing.scoreDelta <= scoreDeltaToleranceSec
+          && modeScoreValid;
         const seedDeltaReason = seedTimeValid ? '' : `; seed/start delta=${Math.round(seedStartDeltaMs / 1000)}s`;
         const reason = verified
           ? 'Seed matches MagicBlock slot and score delta is within tolerance'
@@ -422,7 +585,9 @@ function registerGameRoute(ctx) {
           const gameSessionId = parsed.gameSessionId;
           if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for earning coins' });
           const session = gameSessionProofs.get(gameSessionId);
-          if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+          if (!session || !session.verified || !session.timingVerified) {
+            return respondJson(res, 400, { error: 'Invalid or unverified game session timing' });
+          }
           if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
           if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
           const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);

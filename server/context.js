@@ -201,6 +201,10 @@ const GAME_KEYS = [
   'getIdentityHolderPerks',
   'hasCoreCollectionAsset',
   'achievements',
+  'issueGameSessionToken',
+  'verifyGameSessionToken',
+  'bindGameSessionTokenProof',
+  'redeemGameSessionToken',
 ];
 
 function createFrozenSlice(rawConfig, keys, extras = {}) {

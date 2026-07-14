@@ -86,8 +86,13 @@ function initAppDbSchema(db) {
       address TEXT PRIMARY KEY
     );
 
-     CREATE TABLE IF NOT EXISTS game_session_proofs (
+      CREATE TABLE IF NOT EXISTS game_session_proofs (
        session_id TEXT PRIMARY KEY,
+       data TEXT NOT NULL
+     );
+
+     CREATE TABLE IF NOT EXISTS security_events (
+       event_key TEXT PRIMARY KEY,
        data TEXT NOT NULL
      );
 
