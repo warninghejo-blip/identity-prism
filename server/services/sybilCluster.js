@@ -54,6 +54,7 @@ function createSybilClusterService({ fs, sybilGraphFile }) {
 
   function checkGraphForKnownSybils(address, fundingSources, siblings) {
     let graphRisk = 0;
+    let clusterConfirmed = false;
     const graphDetails = [];
     const now = Date.now();
     for (const funder of fundingSources) {
@@ -70,16 +71,35 @@ function createSybilClusterService({ fs, sybilGraphFile }) {
     }
     if (flaggedSiblings >= 2) {
       graphRisk += 10;
+      // NOTE: flagged siblings add (cancellable) risk but DO NOT hard-cap trust —
+      // sharing a funder with flagged wallets is passively reachable (e.g. via a hub)
+      // and is not by itself proof of sybil. Only actual flagged-cluster membership
+      // (below) sets clusterConfirmed and triggers the non-cancellable floor.
       graphDetails.push(`${flaggedSiblings} sibling wallets previously flagged as sybil`);
     }
+    let clusterInfo = null;
     for (const cluster of sybilGraph.flaggedClusters) {
       if (cluster.members.includes(address)) {
         graphRisk += 20;
+        clusterConfirmed = true;
+        clusterInfo = {
+          label: cluster.label || null,
+          funder: cluster.funder || null,
+          size: cluster.members.length,
+          // co-members for the cluster graph / "linked wallets" display (RPC-free, from the
+          // persistent graph — this is the accumulated truth that live cross-sibling misses)
+          members: cluster.members.filter((m) => m !== address).slice(0, 30),
+        };
         graphDetails.push(`Part of flagged cluster "${cluster.label}" (${cluster.members.length} members)`);
         break;
       }
     }
-    return { graphRisk: Math.min(40, graphRisk), graphDetails };
+    // Accumulated graph-node siblings (known links even when not a flagged cluster member).
+    const selfNode = sybilGraph.nodes[address];
+    const graphSiblings = Array.isArray(selfNode?.siblings)
+      ? selfNode.siblings.filter((s) => s && s !== address).slice(0, 30)
+      : [];
+    return { graphRisk: Math.min(40, graphRisk), graphDetails, clusterConfirmed, clusterInfo, graphSiblings };
   }
 
   return {

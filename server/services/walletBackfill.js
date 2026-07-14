@@ -130,22 +130,35 @@ const backfillWalletDatabaseAsync = async (ctx) => {
     console.warn('[wallet-db] DAS backfill failed', error.message || error);
   }
 
+  // Startup sybil pre-warm. DISABLED by default: sybil results live in the sybil_verdicts
+  // table (not on wallet.sybil), so every wallet perpetually "needs analysis" and this loop
+  // re-scans the ENTIRE wallet DB on every restart. Once the DB grew large (1000+ wallets),
+  // that self-inflicted scan storm pegged SQLite/disk I/O and blocked the event loop, taking
+  // the whole server down on each boot. On-demand scans cover real traffic; this pre-warm is
+  // an optional optimization, not essential. Enable explicitly with ENABLE_SYBIL_BACKFILL=1,
+  // and even then it is hard-capped + gently paced so it can never storm the box again.
+  if (process.env.ENABLE_SYBIL_BACKFILL !== '1') {
+    return;
+  }
+  const SYBIL_BACKFILL_MAX = Math.max(0, Number(process.env.SYBIL_BACKFILL_MAX) || 25);
+  const SYBIL_BACKFILL_DELAY_MS = Math.max(1000, Number(process.env.SYBIL_BACKFILL_DELAY_MS) || 3000);
   const walletsNeedingSybil = [];
   for (const [addr, wallet] of walletDatabase) {
     if (!wallet.sybil && addr.length >= 32) walletsNeedingSybil.push(addr);
   }
-  if (walletsNeedingSybil.length > 0) {
-    console.log(`[wallet-db] Sybil backfill: ${walletsNeedingSybil.length} wallets need analysis`);
+  const batch = walletsNeedingSybil.slice(0, SYBIL_BACKFILL_MAX);
+  if (batch.length > 0) {
+    console.log(`[wallet-db] Sybil backfill: ${batch.length}/${walletsNeedingSybil.length} this run (capped, ${SYBIL_BACKFILL_DELAY_MS}ms apart)`);
     let sybilCount = 0;
-    for (const addr of walletsNeedingSybil) {
+    for (const addr of batch) {
       try {
         if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr)) continue;
         const sybilRes = await fetch(`http://127.0.0.1:${port}/api/sybil/analysis?address=${encodeURIComponent(addr)}`);
         if (sybilRes.ok) sybilCount++;
       } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, SYBIL_BACKFILL_DELAY_MS));
     }
-    console.log(`[wallet-db] Sybil backfill complete: ${sybilCount}/${walletsNeedingSybil.length} analyzed`);
+    console.log(`[wallet-db] Sybil backfill complete: ${sybilCount}/${batch.length} analyzed`);
   }
 };
 

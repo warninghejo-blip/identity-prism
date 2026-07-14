@@ -127,7 +127,6 @@ function createAuthRouteHandler({
               hasAddress,
               hasIdentity,
               msgLen: signedMessageText.length,
-              msgPreview: signedMessageText.slice(0, 400),
             });
             respondJson(res, 401, { error: 'Invalid sign-in message' }); return true;
           }

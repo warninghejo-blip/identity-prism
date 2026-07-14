@@ -13,7 +13,7 @@ const VERDICT_META = {
   },
   cluster_linked: {
     label: 'Cluster Linked',
-    summary: 'This wallet is linked to risky funding neighbors, but the evidence is still short of a bounty-grade verdict.',
+    summary: 'This wallet is linked to a known sybil cluster.',
   },
   probable_sybil: {
     label: 'Probable Sybil',
@@ -54,8 +54,8 @@ const SIGNAL_REASON_MAP = {
 const COMPOSITE_TRUST_RULES = {
   legacy: { useRaw: true, floor: 0, ceil: 100, recoveryCap: 25, allowBadges: true },
   clean: { useRaw: true, floor: 0, ceil: 100, recoveryCap: 25, allowBadges: true },
-  unknown: { useRaw: false, floor: 50, ceil: 55, recoveryCap: 10, allowBadges: false },
-  suspicious: { useRaw: false, floor: 45, ceil: 60, recoveryCap: 10, allowBadges: false },
+  unknown: { useRaw: false, floor: 35, ceil: 55, recoveryCap: 10, allowBadges: false },
+  suspicious: { useRaw: false, floor: 30, ceil: 60, recoveryCap: 10, allowBadges: false },
   cluster_linked: { useRaw: false, floor: 35, ceil: 50, recoveryCap: 6, allowBadges: false },
   probable_sybil: { useRaw: false, floor: 15, ceil: 35, recoveryCap: 2, allowBadges: false },
   confirmed_sybil: { useRaw: false, floor: 0, ceil: 20, recoveryCap: 0, allowBadges: false },
@@ -162,7 +162,9 @@ export function deriveSybilVerdictFromAnalysis(analysis) {
   const topFunderTxCount = toNumber(metrics.topFunderTxCount);
   const topFunderPct = toNumber(metrics.topFunderPct);
   const riskScore = toNumber(analysis.riskScore);
-  const trustScore = toNumber(analysis.trustScore, 100 - riskScore);
+  // Classify on the PRE-bonus trust: the paid ID lifts the displayed score but must
+  // not change the sybil verdict (otherwise a $0.03 mint downgrades a real sybil).
+  const trustScore = toNumber(analysis.baseTrustScore, toNumber(analysis.trustScore, 100 - riskScore));
   const flaggedSignals = signals.filter((signal) => signal?.detected);
   const strongNetworkCount = flaggedSignals.filter(
     (signal) => signal.category === 'network' && (signal.id === 'graph_intelligence' || signal.severity === 'danger' || toNumber(signal.weight) >= 12),
@@ -185,28 +187,49 @@ export function deriveSybilVerdictFromAnalysis(analysis) {
     toNumber(metrics.defiDepth) >= 2,
   ].filter(Boolean).length;
 
+  // age + tx + protocol variety are reliable; activeDaysCount is sample-biased (heavy
+  // wallets sample few distinct days) and falsely de-established real humans — dropped.
+  // For heavy wallets walletAgeDays is an under-estimate (the first-tx walk is time-bounded
+  // to keep the scan ≤10s), so a high-volume multi-program wallet is established on the
+  // tx-volume proxy regardless of measured age — mirrors scanOrchestrator's looksEstablished.
+  const looksEstablished = (toNumber(metrics.walletAgeDays) > 180
+    && txCount >= 50
+    && toNumber(metrics.uniquePrograms) >= 5)
+    || (Boolean(metrics.heavyWallet) && toNumber(metrics.uniquePrograms) >= 8 && txCount >= 500);
   const legacySybilFlag = trustScore < 50;
   const networkConfirmed = flaggedSignals.some((signal) => signal.id === 'graph_intelligence')
     || strongNetworkCount >= 2
     || (strongNetworkCount >= 1 && siblingCount >= 5)
     || (fundingChainDepth >= 2 && supportingNetworkCount >= 1);
+  // topFunderPct alone (e.g. 40% of inflow from one exchange) is normal for someone
+  // who funds from a single CEX — only treat it as cluster evidence with corroborating
+  // siblings, so a thin one-exchange user isn't auto-tagged cluster_linked.
   const clusterLinked = siblingCount >= 2
     || supportingNetworkCount >= 1
     || fundingChainDepth >= 1
     || topFunderTxCount >= 3
-    || topFunderPct >= 40;
+    || (topFunderPct >= 40 && siblingCount >= 2);
+  const lowRiskOrganicContext = riskScore < 30
+    && positiveIdentityCount >= 4
+    && siblingCount === 0
+    && fundingChainDepth === 0
+    && topFunderPct < 40;
   const insufficientData = txCount === 0
     || (txCount < 10 && strongNetworkCount === 0 && strongBehaviorCount === 0 && riskScore < 60);
 
   let key = 'clean';
-  if (networkConfirmed && (legacySybilFlag || strongBehaviorCount >= 1 || riskScore >= 45)) {
+  if (lowRiskOrganicContext) {
+    key = 'clean';
+  } else if (networkConfirmed && riskScore >= 80) {
     key = 'confirmed_sybil';
   } else if (
-    (legacySybilFlag && (supportingNetworkCount >= 1 || strongBehaviorCount >= 2 || (strongBehaviorCount >= 1 && riskScore >= 55) || riskScore >= 70))
-    || (supportingNetworkCount >= 1 && strongBehaviorCount >= 1 && riskScore >= 40)
+    riskScore >= 80 &&
+    ((legacySybilFlag && (supportingNetworkCount >= 1 || strongBehaviorCount >= 1)) ||
+      (supportingNetworkCount >= 1 && strongBehaviorCount >= 1) ||
+      strongBehaviorCount >= 2)
   ) {
     key = 'probable_sybil';
-  } else if (clusterLinked && (riskScore >= 30 || strongBehaviorCount >= 1 || legacySybilFlag)) {
+  } else if (clusterLinked && !looksEstablished && (riskScore >= 30 || strongBehaviorCount >= 1 || legacySybilFlag)) {
     key = 'cluster_linked';
   } else if (insufficientData) {
     key = 'unknown';
@@ -271,8 +294,10 @@ export function deriveSybilVerdictFromAnalysis(analysis) {
     dataQuality: txCount === 0 ? 'none' : txCount < 10 ? 'thin' : txCount < 50 ? 'sampled' : 'rich',
     networkConfirmed,
     legacySybilFlag,
-    bountyEligible: key === 'probable_sybil' || key === 'confirmed_sybil',
-    rewardPath: key === 'probable_sybil' || key === 'confirmed_sybil' ? 'sybil_hunt' : 'scan_wallet',
+    // Caught/bounty = a clear risk-score line (Risk >= 60 / Trust <= 40), regardless of
+    // whether the nuanced key landed on cluster_linked or suspicious. clean/unknown never pay.
+    bountyEligible: riskScore >= 60 && key !== 'clean' && key !== 'unknown',
+    rewardPath: riskScore >= 60 && key !== 'clean' && key !== 'unknown' ? 'sybil_hunt' : 'scan_wallet',
     reasons,
     evidence: {
       flaggedSignals: flaggedSignals.length,
@@ -286,8 +311,39 @@ export function deriveSybilVerdictFromAnalysis(analysis) {
 }
 
 export function getSybilVerdict(analysis) {
-  if (analysis?.verdict?.key) return analysis.verdict;
-  return deriveSybilVerdictFromAnalysis(analysis);
+  const hasAnalysis = analysis && typeof analysis === 'object';
+  let result = analysis?.verdict?.key
+    ? analysis.verdict
+    : deriveSybilVerdictFromAnalysis(analysis);
+  // Sanity guard — remap stale severe verdicts when riskScore doesn't justify them
+  const rs = typeof analysis?.riskScore === 'number' ? analysis.riskScore : null;
+  if (rs !== null && result?.key) {
+    const staleSevereVerdict =
+      (result.key === 'confirmed_sybil' && rs < 90) ||
+      (result.key === 'probable_sybil' && rs < 80);
+    const staleLowRiskClusterVerdict = result.key === 'cluster_linked' && rs < 30;
+    if (staleSevereVerdict || staleLowRiskClusterVerdict) {
+      const derived = hasAnalysis ? deriveSybilVerdictFromAnalysis({ ...analysis, verdict: null }) : null;
+      result = derived || {
+        ...result,
+        key: 'cluster_linked',
+        label: VERDICT_META.cluster_linked.label,
+        summary: VERDICT_META.cluster_linked.summary,
+        bountyEligible: false,
+        rewardPath: 'scan_wallet',
+      };
+    }
+  }
+  // Recompute the bounty gate from the current risk-score threshold so that
+  // already-cached verdicts (baked before the threshold change) credit catches
+  // consistently — and so the client's verdict matches what earn.js will approve.
+  if (rs !== null && result?.key) {
+    const bounty = rs >= 60 && result.key !== 'clean' && result.key !== 'unknown';
+    if (result.bountyEligible !== bounty || result.rewardPath !== (bounty ? 'sybil_hunt' : 'scan_wallet')) {
+      result = { ...result, bountyEligible: bounty, rewardPath: bounty ? 'sybil_hunt' : 'scan_wallet' };
+    }
+  }
+  return result;
 }
 
 export function getSybilRewardPath(analysis) {
@@ -331,7 +387,7 @@ export function getSybilQuickVerdict(node) {
     }
   }
   const riskScore = clamp(toNumber(node.riskScore), 0, 100);
-  if (riskScore >= 60) {
+  if (riskScore >= 80) {
     return {
       key: 'probable_sybil',
       label: VERDICT_META.probable_sybil.label,
@@ -379,7 +435,7 @@ export function getSybilQuickVerdict(node) {
       },
     };
   }
-  if (riskScore >= 30) {
+  if (riskScore >= 40) {
     return {
       key: 'suspicious',
       label: VERDICT_META.suspicious.label,

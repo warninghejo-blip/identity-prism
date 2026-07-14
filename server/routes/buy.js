@@ -71,8 +71,16 @@ function registerBuyRoute(ctx) {
       if (!ipRateLimit('prism_buy', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
       const jwtAuth = requireJwt(req, res);
       if (!jwtAuth.ok) return true;
+      let payload;
       try {
-        const { address: bodyAddress, packageIndex, txSignature } = JSON.parse(await readBody(req));
+        payload = JSON.parse(await readBody(req));
+      } catch (error) {
+        console.warn('[buy] Invalid request body:', error?.message || error);
+        respondJson(res, 400, { error: 'Invalid request body' });
+        return true;
+      }
+      try {
+        const { address: bodyAddress, packageIndex, txSignature } = payload;
         const address = typeof bodyAddress === 'string' ? bodyAddress.trim() : jwtAuth.address;
         if (!address) return respondJson(res, 400, { error: 'address required' });
         if (address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
@@ -142,8 +150,12 @@ function registerBuyRoute(ctx) {
 
         const walletEntry = walletDatabase.get(address);
         if (walletEntry) {
-          walletEntry.coins = prevBuyBal + pkg.coins;
-          saveWalletDatabaseDebounced();
+          try {
+            walletEntry.coins = prevBuyBal + pkg.coins;
+            saveWalletDatabaseDebounced();
+          } catch (error) {
+            console.warn('[buy] wallet database sync failed after successful SOL purchase:', error?.message || error);
+          }
         }
 
         dailyPurchases.set(dayKey, currentPurchasedSol + pkg.coins);
@@ -174,21 +186,36 @@ function registerBuyRoute(ctx) {
           timestamp: new Date().toISOString(),
           solTx: txSignature,
         };
-        const txs = prismTransactions.get(address) || [];
-        txs.unshift(txLog);
-        if (txs.length > 500) txs.length = 500;
-        prismTransactions.set(address, txs);
-        savePrismDataDebounced();
-        pushNotification(address, 'system', `Purchased ${pkg.coins.toLocaleString()} Coins for ${pkg.solPrice} SOL`, {
-          source: 'sol_purchase',
-          coins: pkg.coins,
-          solPaid: pkg.solPrice,
-          txSignature,
-        });
+        try {
+          const txs = prismTransactions.get(address) || [];
+          txs.unshift(txLog);
+          if (txs.length > 500) txs.length = 500;
+          prismTransactions.set(address, txs);
+          savePrismDataDebounced();
+        } catch (error) {
+          console.warn('[buy] transaction log failed after successful SOL purchase:', error?.message || error);
+        }
+        try {
+          pushNotification(address, 'system', `Purchased ${pkg.coins.toLocaleString()} Coins for ${pkg.solPrice} SOL`, {
+            source: 'sol_purchase',
+            coins: pkg.coins,
+            solPaid: pkg.solPrice,
+            txSignature,
+          });
+        } catch (error) {
+          console.warn('[buy] push notification failed after successful SOL purchase:', error?.message || error);
+        }
 
-        respondJson(res, 200, { balance: getPrismBalance(address), purchased: pkg.coins, solPaid: pkg.solPrice });
-      } catch {
-        respondJson(res, 400, { error: 'Invalid request body' });
+        let balance = { address, balance: prevBuyBal + pkg.coins, lastUpdated: new Date().toISOString() };
+        try {
+          balance = getPrismBalance(address);
+        } catch (error) {
+          console.warn('[buy] balance read failed after successful SOL purchase:', error?.message || error);
+        }
+        respondJson(res, 200, { balance, purchased: pkg.coins, solPaid: pkg.solPrice });
+      } catch (error) {
+        console.error('[buy] Purchase processing failed:', error?.stack || error?.message || error);
+        respondJson(res, 500, { error: 'Purchase processing failed' });
       }
       return true;
     }
@@ -214,8 +241,16 @@ function registerBuyRoute(ctx) {
       if (!ipRateLimit('prism_buy_skr', getClientIp(req), 10, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
       const jwtAuth = requireJwt(req, res);
       if (!jwtAuth.ok) return true;
+      let payload;
       try {
-        const { address: bodyAddress, packageIndex, txSignature } = JSON.parse(await readBody(req));
+        payload = JSON.parse(await readBody(req));
+      } catch (error) {
+        console.warn('[buy-skr] Invalid request body:', error?.message || error);
+        respondJson(res, 400, { error: 'Invalid request body' });
+        return true;
+      }
+      try {
+        const { address: bodyAddress, packageIndex, txSignature } = payload;
         const address = typeof bodyAddress === 'string' ? bodyAddress.trim() : jwtAuth.address;
         if (!address) return respondJson(res, 400, { error: 'address required' });
         if (address !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
@@ -324,8 +359,12 @@ function registerBuyRoute(ctx) {
 
         const walletEntry = walletDatabase.get(address);
         if (walletEntry) {
-          walletEntry.coins = prevBuyBal + pkg.coins;
-          saveWalletDatabaseDebounced();
+          try {
+            walletEntry.coins = prevBuyBal + pkg.coins;
+            saveWalletDatabaseDebounced();
+          } catch (error) {
+            console.warn('[buy-skr] wallet database sync failed after successful SKR purchase:', error?.message || error);
+          }
         }
 
         dailyPurchases.set(dayKey, currentPurchasedSkr + pkg.coins);
@@ -356,21 +395,36 @@ function registerBuyRoute(ctx) {
           timestamp: new Date().toISOString(),
           solTx: txSignature,
         };
-        const txs = prismTransactions.get(address) || [];
-        txs.unshift(txLog);
-        if (txs.length > 500) txs.length = 500;
-        prismTransactions.set(address, txs);
-        savePrismDataDebounced();
-        pushNotification(address, 'system', `Purchased ${pkg.coins.toLocaleString()} Coins for ${expectedSkrAmount} SKR`, {
-          source: 'skr_purchase',
-          coins: pkg.coins,
-          skrPaid: expectedSkrAmount,
-          txSignature,
-        });
+        try {
+          const txs = prismTransactions.get(address) || [];
+          txs.unshift(txLog);
+          if (txs.length > 500) txs.length = 500;
+          prismTransactions.set(address, txs);
+          savePrismDataDebounced();
+        } catch (error) {
+          console.warn('[buy-skr] transaction log failed after successful SKR purchase:', error?.message || error);
+        }
+        try {
+          pushNotification(address, 'system', `Purchased ${pkg.coins.toLocaleString()} Coins for ${expectedSkrAmount} SKR`, {
+            source: 'skr_purchase',
+            coins: pkg.coins,
+            skrPaid: expectedSkrAmount,
+            txSignature,
+          });
+        } catch (error) {
+          console.warn('[buy-skr] push notification failed after successful SKR purchase:', error?.message || error);
+        }
 
-        respondJson(res, 200, { balance: getPrismBalance(address), purchased: pkg.coins, skrPaid: expectedSkrAmount });
-      } catch {
-        respondJson(res, 400, { error: 'Invalid request body' });
+        let balance = { address, balance: prevBuyBal + pkg.coins, lastUpdated: new Date().toISOString() };
+        try {
+          balance = getPrismBalance(address);
+        } catch (error) {
+          console.warn('[buy-skr] balance read failed after successful SKR purchase:', error?.message || error);
+        }
+        respondJson(res, 200, { balance, purchased: pkg.coins, skrPaid: expectedSkrAmount });
+      } catch (error) {
+        console.error('[buy-skr] Purchase processing failed:', error?.stack || error?.message || error);
+        respondJson(res, 500, { error: 'Purchase processing failed' });
       }
       return true;
     }

@@ -335,7 +335,15 @@ function startSchedulers(ctx) {
     }
   }, CACHE_CLEANUP_MS));
 
-  handles.push(setTimeout(backfillCompositeScores, 3000));
+  // Startup composite-score backfill. DISABLED by default: it loops EVERY wallet in the DB
+  // calling triggerCompositeUpdate + walletDatabase.set, and once the DB grew to 1000+ wallets
+  // (calibration), the per-mutation full wallet-DB persist amplified into gigabytes of disk
+  // writes 3s after boot, pegging I/O and blocking the event loop (server unresponsive on every
+  // restart). Composite scores update on-demand per scan/view, so this bulk pass is optional.
+  // Re-enable with ENABLE_COMPOSITE_BACKFILL=1 only after the per-wallet persist is debounced.
+  if (process.env.ENABLE_COMPOSITE_BACKFILL === '1') {
+    handles.push(setTimeout(backfillCompositeScores, 3000));
+  }
 
   const louvainState = getLouvainCommunityDetectionState();
   if (!louvainState?.lastRunAt) {
