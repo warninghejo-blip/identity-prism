@@ -799,6 +799,9 @@ function registerBlinksRoute(ctx) {
 
       // Hoist payloadRequestId so it is accessible in the catch block for FIX 5 rollback
       let payloadRequestId = '';
+      // P0-1: coins are debited ONLY in the finalize branch. The catch-block refund must
+      // never fire for prepare-path failures (no debit happened) or it mints free coins.
+      let coinsDebitedThisRequest = false;
       try {
         const fallbackRequestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const body = await readBody(req);
@@ -978,6 +981,12 @@ function registerBlinksRoute(ctx) {
           const reservationKey = `mintres_${payloadRequestId}`;
           const reservation = globalThis._mintReservations?.get(reservationKey);
           const reservationOwner = owner || pending.owner;
+          // P0-2 guard 2: a reservation tied to a different wallet must HARD-FAIL, not
+          // silently skip the coin debit and co-sign a free mint.
+          if (reservation && reservation.wallet !== reservationOwner) {
+            respondJson(res, 400, { error: 'Coins reservation belongs to a different wallet', requestId: payloadRequestId });
+            return true;
+          }
           let coinDeducted = false;
           let pendingCoinSpendRecord = null;
           if (reservation && reservation.status === 'reserved' && reservation.wallet === reservationOwner) {
@@ -988,6 +997,8 @@ function registerBlinksRoute(ctx) {
             }
             const { burned } = applyBurnFee(reservation.coinsReserved);
             setCoinBalance(reservation.wallet, currentBalance - reservation.coinsReserved);
+            coinsDebitedThisRequest = true; // P0-1: real debit happened — catch may refund
+
             const walletEntryFC = walletDatabase.get(reservation.wallet);
             if (walletEntryFC) {
               walletEntryFC.coins = currentBalance - reservation.coinsReserved;
@@ -1170,6 +1181,13 @@ function registerBlinksRoute(ctx) {
             reservationAge > 10 * 60 * 1000
           ) {
             respondJson(res, 400, { error: 'Coins reservation expired or missing', requestId });
+            return true;
+          }
+          // P0-2 guard 1: the mint recipient must be the wallet that reserved (and will pay)
+          // the coins. Otherwise a JWT holder could mint to another owner and the finalize
+          // debit would be skipped → free NFT.
+          if (reservation.wallet !== owner) {
+            respondJson(res, 403, { error: 'Coins reservation belongs to a different wallet', requestId });
             return true;
           }
           coinsPaymentReserved = true;
@@ -1524,7 +1542,9 @@ function registerBlinksRoute(ctx) {
         // after confirmTransaction), so this check is safe against double-restore.
         // Note: if the server restarts before finalize, no coins were deducted (they are taken
         // at finalize time, not at mint-for-coins time), so there is nothing to restore.
-        if (payloadRequestId) {
+        if (payloadRequestId && coinsDebitedThisRequest) {
+          // P0-1: refund ONLY if this request actually debited coins (finalize path).
+          // Prepare-path failures never debit, so refunding there credits coins from thin air.
           const reservationKey = `mintres_${payloadRequestId}`;
           const reservation = globalThis._mintReservations?.get(reservationKey);
           if (reservation && reservation.status === 'reserved') {
