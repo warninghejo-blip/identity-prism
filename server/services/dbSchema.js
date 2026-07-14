@@ -19,6 +19,13 @@ function ensureAppDbDirectory(dbPath = getAppDbPath()) {
 
 function initAppDbSchema(db) {
   db.pragma('journal_mode = WAL');
+  // synchronous=FULL fsyncs on every commit AND blocks the writer on the synchronous
+  // WAL→DB checkpoint — on this contended VPS that stalled in-flight sybil scans for
+  // ~3s twice per scan (verdict + wallet writes). NORMAL is the SQLite-recommended
+  // setting under WAL: same crash-safety against corruption, only risks losing the
+  // very last committed txn on a power loss — acceptable for cache/scan data.
+  db.pragma('synchronous = NORMAL');
+  db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
 
   const currentVersion = db.pragma('user_version', { simple: true });

@@ -116,6 +116,7 @@ import { formatActionAddress, isFungibleAsset } from './utils/formatters.js';
 import { TRUSTED_PROXIES, getClientIp } from './utils/getClientIp.js';
 import { ipRateLimit } from './utils/ipRateLimit.js';
 import { readBody } from './utils/readBody.js';
+import { paymentHandler } from './payment.js';
 import { respondJson } from './utils/respondJson.js';
 import { extractSolTransfers, isProgramAddress, resolveAccountKey } from './utils/txHelpers.js';
 import * as Sentry from '@sentry/node';
@@ -3903,6 +3904,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url ?? '/', 'http://localhost');
   const pathname = url.pathname;
+  if (await paymentHandler(req, res, url, pathname)) return;
 
   if (_apiMeta.apiVersion === 'v1') {
     // V1: intercept only the remaining breaking routes — everything else falls through
@@ -4502,7 +4504,11 @@ async function findFirstTxTime(conn, pubkey, firstPageSigs, cachedFirstTx, rpcUr
   // Binary search: fallback for extreme cases (>10K txs, ~7s)
 
   const SOLANA_GENESIS = 1584000000; // ~March 2020, filter out invalid blockTimes
-  const MAX_PAGES = 30; // 30 pages × 1000 sigs = 30,000 txs max via pagination
+  // Phase 1 paginates exactly for wallets up to MAX_PAGES×1000 txs; heavier wallets drop to
+  // the (parallelized) binary search, which is O(log timespan) and far faster than walking
+  // dozens of sequential pages. 8 pages (~2.4s) covers the vast majority exactly while keeping
+  // the worst case bounded — the first-ever scan of a 30k+ tx whale stays well under 10s.
+  const MAX_PAGES = 8;
   let before = firstPageSigs[firstPageSigs.length - 1]?.signature;
   let bestOldest = firstPageSigs[firstPageSigs.length - 1]?.blockTime || 0;
   let totalSigs = firstPageSigs.length;
@@ -4593,27 +4599,38 @@ async function findFirstTxTime(conn, pubkey, firstPageSigs, cachedFirstTx, rpcUr
     return null;
   }
 
-  // Probe backwards from oldest paginated time
+  // Probe backwards from oldest paginated time. The geometric probes are INDEPENDENT
+  // "does a tx exist before time T?" existence checks, so fire them ALL IN PARALLEL
+  // (was sequential ≈ 6×0.6s) and then derive the bracket from the ordered results.
   const DAY = 86400;
   const probeOffsets = [90, 180, 365, 730, 1460, 2190];
   const probeTimes = probeOffsets
     .map(d => bestOldest - d * DAY)
-    .filter(t => t > 1584000000);
+    .filter(t => t > SOLANA_GENESIS);
 
   let upperTime = bestOldest;
-  let lowerTime = 1584000000;
+  let lowerTime = SOLANA_GENESIS;
 
-  for (const probeTime of probeTimes) {
+  const probeResults = await Promise.all(probeTimes.map(async (probeTime) => {
     const ref = await getRefSig(probeTime);
-    if (!ref) continue;
+    if (!ref) return { probeTime, status: 'skip' };
     const found = await hasTxBefore(ref.sig);
-    if (found === null) continue;
-    if (found) {
-      const txTime = found.blockTime || probeTime;
-      if (txTime < bestOldest) bestOldest = txTime;
-      upperTime = probeTime;
-    } else {
-      lowerTime = probeTime;
+    if (found === null) return { probeTime, status: 'skip' };
+    return found
+      ? { probeTime, status: 'found', txTime: found.blockTime || probeTime }
+      : { probeTime, status: 'empty' };
+  }));
+
+  // probeTimes run newest→oldest. Walk in that order: each 'found' (wallet existed before
+  // that time) pushes upperTime/bestOldest older; the FIRST 'empty' (wallet didn't exist
+  // yet) sets lowerTime and brackets the first tx between lowerTime and upperTime. 'skip'
+  // (RPC miss) just widens the bracket — the narrowing pass below handles it.
+  for (const r of probeResults) {
+    if (r.status === 'found') {
+      if (r.txTime < bestOldest) bestOldest = r.txTime;
+      upperTime = r.probeTime;
+    } else if (r.status === 'empty') {
+      lowerTime = r.probeTime;
       break;
     }
   }
@@ -4904,40 +4921,51 @@ const VALID_TEXT_QUEST_IDS = new Set(['abandoned_station', 'pirate_ambush', 'dar
 const PRISM_EARN_COOLDOWN_DEFAULT = 5 * 60 * 1000;
 
 // Known program IDs → human-readable names (used for wallet profiling)
+// Curated Solana program id → { name, category } for human-readable "what & who" in the UI.
+// Categories: DEX | NFT | Lending | Perps | Staking | Bridge | Memecoin | Oracle | Tooling | Wallet | Core.
+// This is the high-confidence static layer; Helius enhanced `source`/`type` codes cover the
+// long tail (prettified + categorised in scanOrchestrator). Unknown ids fall back to an honest
+// "unknown" rather than a bare base58.
 const PROGRAM_LABELS = {
-  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': 'Jupiter',
-  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX9t': 'Jupiter V4',
-  'DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M': 'Jupiter DCA',
-  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': 'Orca',
-  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK': 'Raydium CLMM',
-  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': 'Raydium AMM',
-  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo': 'Meteora',
-  'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY': 'Phoenix',
-  'SSwpkEEcbUqx4vtoEByFjSkhKdCT862DNVb52nZg1UZ': 'Saber',
-  'SSwapUtytfBdBn1b9NUGG6foMVPtcWgpRU32HToDUZr': 'Step Finance',
-  'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68': 'Marinade',
-  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': 'Marinade Finance',
-  'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD': 'Marinade',
-  'jCebN34bUfdeUhR6bhNixjhCSnx9CY23HsmUkT7XjVV': 'Jito',
-  'So1endDq2YkqhipRh3WViPa8hFb7GVEtcEMF3CBAK8h': 'Solend',
-  'CMZYPASGWeTz7RNGHaRJfCq2XQ5pYK6nDvVQxzkH51zb': 'Solend',
-  'KLend2g3cP87ber41GXWsSZQz9R1hGT2bVBaeEdnKHR': 'Kamino',
-  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': 'marginfi',
-  'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1': 'Tensor',
-  'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN': 'Tensor Swap',
-  'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K': 'Magic Eden V2',
-  'hadeK9DLv9eA7ya5KnRSb4dTSitisSCRoB68Y8hmjtR': 'Magic Eden V3',
-  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s': 'Metaplex',
-  'BGUMAp9Gq7iTEuizy4pqAxsTkFQ1XyUbSreFdn6YqwPc': 'Bubblegum',
-  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA': 'Token Program',
-  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL': 'ATA Program',
-  'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb': 'Wormhole',
-  'FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH': 'Pyth Oracle',
-  'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy': 'Stake Pool',
-  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr': 'Memo',
-  'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB': 'Phantom',
-  'ComputeBudget111111111111111111111111111111': 'Compute Budget',
-  '11111111111111111111111111111111': 'System Program',
+  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4': { name: 'Jupiter', category: 'DEX' },
+  'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcPX9t': { name: 'Jupiter V4', category: 'DEX' },
+  'DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M': { name: 'Jupiter DCA', category: 'DEX' },
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc': { name: 'Orca', category: 'DEX' },
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK': { name: 'Raydium CLMM', category: 'DEX' },
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': { name: 'Raydium AMM', category: 'DEX' },
+  'CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C': { name: 'Raydium CPMM', category: 'DEX' },
+  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo': { name: 'Meteora DLMM', category: 'DEX' },
+  'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY': { name: 'Phoenix', category: 'DEX' },
+  'SSwpkEEcbUqx4vtoEByFjSkhKdCT862DNVb52nZg1UZ': { name: 'Saber', category: 'DEX' },
+  '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin': { name: 'OpenBook', category: 'DEX' },
+  'SSwapUtytfBdBn1b9NUGG6foMVPtcWgpRU32HToDUZr': { name: 'Step Finance', category: 'Tooling' },
+  'mv3ekLzLbnVPNxjSKvqBpU3ZeZXPQdEC3bp5MDEBG68': { name: 'Marinade', category: 'Staking' },
+  'MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD': { name: 'Marinade', category: 'Staking' },
+  'jCebN34bUfdeUhR6bhNixjhCSnx9CY23HsmUkT7XjVV': { name: 'Jito', category: 'Staking' },
+  'So1endDq2YkqhipRh3WViPa8hFb7GVEtcEMF3CBAK8h': { name: 'Solend', category: 'Lending' },
+  'CMZYPASGWeTz7RNGHaRJfCq2XQ5pYK6nDvVQxzkH51zb': { name: 'Solend', category: 'Lending' },
+  'KLend2g3cP87ber41GXWsSZQz9R1hGT2bVBaeEdnKHR': { name: 'Kamino', category: 'Lending' },
+  'MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA': { name: 'marginfi', category: 'Lending' },
+  'dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcozatx': { name: 'Drift', category: 'Perps' },
+  'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1': { name: 'Tensor', category: 'NFT' },
+  'TSWAPaqyCSx2KABk68Shruf4rp7CxcNi8hAsbdwmHbN': { name: 'Tensor Swap', category: 'NFT' },
+  'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K': { name: 'Magic Eden V2', category: 'NFT' },
+  'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s': { name: 'Metaplex', category: 'NFT' },
+  'BGUMAp9Gq7iTEuizy4pqAxsTkFQ1XyUbSreFdn6YqwPc': { name: 'Bubblegum (cNFT)', category: 'NFT' },
+  '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P': { name: 'Pump.fun', category: 'Memecoin' },
+  'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA': { name: 'Token Program', category: 'Core' },
+  'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb': { name: 'Token-2022', category: 'Core' },
+  'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL': { name: 'Associated Token', category: 'Core' },
+  'wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb': { name: 'Wormhole', category: 'Bridge' },
+  'FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH': { name: 'Pyth Oracle', category: 'Oracle' },
+  'SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy': { name: 'Stake Pool', category: 'Staking' },
+  'Stake11111111111111111111111111111111111111': { name: 'Stake Program', category: 'Staking' },
+  'Vote111111111111111111111111111111111111111': { name: 'Vote Program', category: 'Core' },
+  'namesLPneVptA9Z5rqUDD9tMTWEJwofgaYwp8cawRkX': { name: 'SNS (.sol domains)', category: 'Tooling' },
+  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr': { name: 'Memo', category: 'Core' },
+  'ComputeBudget111111111111111111111111111111': { name: 'Compute Budget', category: 'Core' },
+  'BPFLoaderUpgradeab1e11111111111111111111111': { name: 'BPF Loader', category: 'Core' },
+  '11111111111111111111111111111111': { name: 'System Program', category: 'Core' },
 };
 
 // Known scam contracts / rug-pull deployers

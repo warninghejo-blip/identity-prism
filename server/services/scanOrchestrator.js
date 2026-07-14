@@ -1,5 +1,44 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 
+// Helius enhanced-tx `source`/`type` codes (e.g. PUMP_FUN, MAGIC_EDEN) → human label + category.
+// These complement the curated PROGRAM_LABELS id map so unknown raw program ids are rare.
+const PROTOCOL_CODE_CATEGORY = {
+  JUPITER: 'DEX', RAYDIUM: 'DEX', ORCA: 'DEX', PHOENIX: 'DEX', METEORA: 'DEX', LIFINITY: 'DEX',
+  ALDRIN: 'DEX', SABER: 'DEX', SERUM: 'DEX', OPENBOOK: 'DEX', CREMA: 'DEX', INVARIANT: 'DEX',
+  PUMP_FUN: 'Memecoin', PUMP_AMM: 'Memecoin', MOONSHOT: 'Memecoin', BONKSWAP: 'Memecoin',
+  MAGIC_EDEN: 'NFT', TENSOR: 'NFT', SOLANART: 'NFT', HADESWAP: 'NFT', HYPERSPACE: 'NFT',
+  METAPLEX: 'NFT', CANDY_MACHINE: 'NFT', FORM_FUNCTION: 'NFT', EXCHANGE_ART: 'NFT',
+  SOLEND: 'Lending', KAMINO: 'Lending', MARGINFI: 'Lending', MANGO: 'Lending', PORT: 'Lending',
+  DRIFT: 'Perps', ZETA: 'Perps', JUPITER_PERPS: 'Perps',
+  MARINADE: 'Staking', JITO: 'Staking', LIDO: 'Staking', SANCTUM: 'Staking', STAKE_PROGRAM: 'Staking',
+  WORMHOLE: 'Bridge', ALLBRIDGE: 'Bridge', DEBRIDGE: 'Bridge', MAYAN: 'Bridge',
+  SYSTEM_PROGRAM: 'Core', TOKEN_PROGRAM: 'Core', STAKE: 'Staking',
+  // generic Helius `type:` action codes (when no protocol source is attached)
+  SWAP: 'DEX', ADD_LIQUIDITY: 'DEX', REMOVE_LIQUIDITY: 'DEX', CREATE_POOL: 'DEX',
+  NFT_SALE: 'NFT', NFT_MINT: 'NFT', NFT_LISTING: 'NFT', NFT_BID: 'NFT', NFT_CANCEL_LISTING: 'NFT', COMPRESSED_NFT_MINT: 'NFT',
+  STAKE_SOL: 'Staking', UNSTAKE_SOL: 'Staking', STAKE_TOKEN: 'Staking',
+  BORROW: 'Lending', REPAY: 'Lending', DEPOSIT: 'Lending', WITHDRAW: 'Lending',
+};
+function prettifyProtocolCode(code) {
+  if (!code) return null;
+  // SNAKE_CASE / UPPER → Title Case ("PUMP_FUN" → "Pump Fun", "MAGIC_EDEN" → "Magic Eden")
+  const pretty = String(code).toLowerCase().split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  // common fixups
+  return pretty
+    .replace('Pump Amm', 'Pump.fun AMM')
+    .replace('Pump Fun', 'Pump.fun')
+    .replace('Marginfi', 'marginfi')
+    .replace('Magic Eden', 'Magic Eden')
+    .replace(/\bAmm\b/, 'AMM').replace(/\bNft\b/, 'NFT').replace(/\bDex\b/, 'DEX');
+}
+function protocolCodeCategory(code) {
+  if (!code) return null;
+  return PROTOCOL_CODE_CATEGORY[String(code).toUpperCase()] || null;
+}
+
 function createScanOrchestrator(ctx) {
   const {
     getRpcUrl,
@@ -36,10 +75,21 @@ function createScanOrchestrator(ctx) {
     programLabels,
     treasuryWallets,
     knownLabels,
+    mintedAddresses,
   } = ctx;
 
   return async function runSybilAnalysis(address, { isOwnWalletScan = false } = {}) {
     const conn = new Connection(getRpcUrl(address) || 'https://api.mainnet-beta.solana.com', 'confirmed');
+    // Hard time budget so a full analysis (app + site) never exceeds ~10s: fast wallets
+    // get the complete walk; heavy wallets bound the expensive optional work (deep
+    // signature pagination + multi-level funding-chain) once the budget is spent and
+    // return a sampled-but-complete result. Cheap cache reads are not gated.
+    const _deadline = Date.now() + 8500;
+    const _overBudget = () => Date.now() > _deadline;
+    const _p = () => {};
+    // Heavy = couldn't paginate the full history within the page cap. Gates the live
+    // funding walk (its main cost) so heavy wallets stay within the time budget.
+    let _heavyWallet = false;
     const pubkey = new PublicKey(address);
     const cachedBaseline = loadSybilCacheEntry(address);
     const [balanceResult, tokenAccountsResult] = await Promise.allSettled([
@@ -74,7 +124,8 @@ function createScanOrchestrator(ctx) {
       ? sampleMeta
       : null;
 
-    const sampledHistory = await fetchSybilSampleFor(address, conn, pubkey, normalizedSampleMeta, balance).catch(() => null);
+    const sampledHistory = await fetchSybilSampleFor(address, conn, pubkey, normalizedSampleMeta, balance, _deadline).catch(() => null);
+    _p('after-sample');
     if (sampledHistory?.incremental && sampledHistory.reuseCached && cachedBaseline?.analysis) {
       const refreshedEntry = refreshCachedSybilAnalysis(address, cachedBaseline, isOwnWalletScan);
       return refreshedEntry?.analysis || cachedBaseline.analysis;
@@ -100,6 +151,10 @@ function createScanOrchestrator(ctx) {
       if (bestTxCount > (cachedWallet?.stats?.transactions || 0)) {
         updateWalletEntry(address, { stats: { ...(cachedWallet?.stats || {}), transactions: bestTxCount } });
       }
+      // High-volume wallet on the enhanced-sample path: gate the optional live funding
+      // walk (cost) and let looksEstablished fall back to the tx-volume proxy in case the
+      // first-tx walk was time-bounded (under-estimated age).
+      _heavyWallet = totalSigCount >= 5000;
     } else {
       const signatures = await conn.getSignaturesForAddress(pubkey, { limit: 1000 });
       allSignatures = [...signatures];
@@ -110,7 +165,7 @@ function createScanOrchestrator(ctx) {
 
       if (signatures.length >= 1000) {
         let cursor = signatures[signatures.length - 1]?.signature;
-        for (let page = 1; page < 10 && cursor; page += 1) {
+        for (let page = 1; page < 2 && cursor && !_overBudget(); page += 1) {
           try {
             const moreSigs = await conn.getSignaturesForAddress(pubkey, { before: cursor, limit: 1000 });
             if (moreSigs.length === 0) {
@@ -134,6 +189,7 @@ function createScanOrchestrator(ctx) {
         }
       }
       totalSigCount = allSignatures.length;
+      _heavyWallet = !paginationReachedEnd;
 
       const SOLANA_GENESIS = 1584000000;
       if (paginationReachedEnd && allSignatures.length > 0) {
@@ -158,7 +214,11 @@ function createScanOrchestrator(ctx) {
       const recentSet = new Set(recentSigBatch);
       const dedupedEarlySigBatch = earlySigBatch.filter((signature) => !recentSet.has(signature));
 
-      const needsBinarySearch = !paginationReachedEnd;
+      // Skip the (multi-RPC, ~12s) binary search for HEAVY wallets (>=2000 paginated
+      // sigs) or when over budget — the oldest paginated sig is a fine lower-bound age
+      // estimate for sybil scoring. This was the main cause of 15-17s scans on busy
+      // wallets. Light wallets (<2000 sigs) still get an exact first-tx time.
+      const needsBinarySearch = !paginationReachedEnd && !_overBudget() && allSignatures.length < 2000;
       const firstTxPromise = needsBinarySearch
         ? findFirstTxTime(conn, pubkey, allSignatures.slice(-1000), cachedFirstTx, sybilRpcUrl)
         : Promise.resolve({ firstTxTime: firstTxBlockTime, totalSigs: totalSigCount });
@@ -214,7 +274,18 @@ function createScanOrchestrator(ctx) {
     const uniqueDays = new Set(timestamps.map((timestamp) => new Date(timestamp).toISOString().slice(0, 10)));
     const activeDaysCount = uniqueDays.size;
     const totalLifespanDays = Math.max(walletAgeDays, 1);
-    const activeDaysRatio = activeDaysCount / totalLifespanDays;
+    // F-4: divide active-days by the window we ACTUALLY observed (the sampled tx span),
+    // not the full lifetime — otherwise a long-lived wallet whose history is only
+    // partially sampled reports a spuriously low activity ratio (false low_activity +
+    // lost trust bonus).
+    let observedSpanDays = totalLifespanDays;
+    if (timestamps.length >= 2) {
+      let minTs = timestamps[0];
+      let maxTs = timestamps[0];
+      for (const t of timestamps) { if (t < minTs) minTs = t; if (t > maxTs) maxTs = t; }
+      observedSpanDays = Math.min(totalLifespanDays, Math.max(1, (maxTs - minTs) / 86400000));
+    }
+    const activeDaysRatio = Math.min(1, activeDaysCount / Math.max(observedSpanDays, 1));
 
     const uniqueTokenMints = new Set();
     let nftCount = 0;
@@ -383,7 +454,10 @@ function createScanOrchestrator(ctx) {
           };
         }
 
-        if (topFunder && topFunderPct > 0.7 && topAmount > 0.05) {
+        // Heavy wallets (>=5000 tx) skip the live multi-RPC funding walk to stay within
+        // the time budget — their cluster membership still comes from the (RPC-free) graph
+        // + cross-sibling cache, and fresh farms are almost always thin (full walk runs).
+        if (topFunder && topFunderPct > 0.7 && topAmount > 0.05 && !_overBudget() && !_heavyWallet) {
           persistFundingEdge(topFunder, address, topFundingMint, topAmount, 1);
           const known = knownLabels[topFunder];
           if (known && (known.type === 'cex' || known.type === 'bridge')) {
@@ -420,6 +494,21 @@ function createScanOrchestrator(ctx) {
               }
             }
 
+            // Hub guard: a funder that fans out to many distinct recipients (a CEX
+            // hot wallet, an airdrop/distributor, a project payout wallet) is NOT
+            // evidence that its recipients are a sybil farm. Receiving money from a
+            // busy hub must not sibling-link or cluster innocent passive recipients —
+            // otherwise one incoming transfer brands a wallet (and, with the cluster
+            // hard-cap, near-permanently).
+            // Only skip clustering for true MEGA-hubs (a CEX/major distributor fans
+            // out to hundreds+). Mid-size fan-out (an airdrop vs a 50-wallet farm) is
+            // NOT decided here — funder shape can't tell them apart — the per-wallet
+            // looksEstablished behavior gate (below) does.
+            const funderOutDegree = topFunderSummary?.outgoing?.size || 0;
+            if (funderOutDegree > 150 || siblingCandidates.size > 150) {
+              siblingCandidates.clear();
+            }
+
             for (const sibling of siblingCandidates) {
               allSiblings.add(sibling);
               sameDepthSiblings.add(sibling);
@@ -431,7 +520,7 @@ function createScanOrchestrator(ctx) {
             }
             if (siblingCount >= 3 && topFunderPct >= 0.8) adaptiveThresholdTriggered = true;
 
-            if (topFunderSummary?.incoming?.size && topFunderPct > 0.75) {
+            if (topFunderSummary?.incoming?.size && topFunderPct > 0.75 && !_overBudget()) {
               const grandDominant = getDominantFundingSource(topFunderSummary.incoming, 'totalSol');
               const grandShare = grandDominant.share || 0;
               const grandFunder = grandDominant.address;
@@ -441,7 +530,7 @@ function createScanOrchestrator(ctx) {
                   persistFundingEdge(grandFunder, topFunder, solMint, topFunderSummary.incoming.get(grandFunder), 2);
                   const grandFunderHistory = await fetchEnhancedTxHistory(grandFunder, { limit: 100 });
                   const grandFunderSummary = grandFunderHistory?.txs?.length ? summarizeEnhancedTxHistory(grandFunderHistory.txs, grandFunder, 0) : null;
-                  if (grandFunderSummary?.outgoing?.size) {
+                  if (grandFunderSummary?.outgoing?.size && grandFunderSummary.outgoing.size <= 150) {
                     const sameDepthList = [...grandFunderSummary.outgoing.entries()]
                       .filter(([candidate]) => candidate !== topFunder && candidate !== address && !treasuryWallets.has(candidate))
                       .sort((a, b) => b[1].totalSol - a[1].totalSol)
@@ -496,7 +585,8 @@ function createScanOrchestrator(ctx) {
                   }
                 }
                 if (allSiblings.size >= 2) {
-                  clusterSimilarity = Math.min(1, allSiblings.size / 12);
+                  // clusterSimilarity is now computed as REAL cross-sibling behavioral
+                  // similarity (hour-profile cosine) further below, not a sibling count.
                 }
               }
             }
@@ -527,6 +617,7 @@ function createScanOrchestrator(ctx) {
     })();
 
     await Promise.allSettled([fundingGraphPromise, domainCheckPromise]);
+    _p('after-funding');
 
     const hourBuckets = new Array(24).fill(0);
     const dayBuckets = new Array(7).fill(0);
@@ -548,11 +639,20 @@ function createScanOrchestrator(ctx) {
       const sorted = [...timestamps].sort((a, b) => a - b);
       const intervals = [];
       for (let index = 1; index < sorted.length; index += 1) intervals.push(sorted[index] - sorted[index - 1]);
-      const sortedIntervals = [...intervals].sort((a, b) => a - b);
-      const binSize = Math.max(1, Math.floor(sortedIntervals.length / 10));
+      // Bin intervals by VALUE (log-scaled, to span the wide range of human inter-tx
+      // gaps), then entropy of bin counts. Low entropy = intervals concentrated in a
+      // few value ranges = regular/scripted cadence; high = varied/human.
+      // (Previously this binned by array POSITION, which made entropy a near-constant
+      // ~3.32 and the metric useless.)
+      let minIv = intervals[0];
+      let maxIv = intervals[0];
+      for (const iv of intervals) { if (iv < minIv) minIv = iv; if (iv > maxIv) maxIv = iv; }
+      const logMin = Math.log(Math.max(1, minIv));
+      const logRange = Math.max(1e-9, Math.log(Math.max(1, maxIv)) - logMin);
       const bins = new Array(10).fill(0);
-      for (let index = 0; index < intervals.length; index += 1) {
-        const bin = Math.min(9, Math.floor(index / binSize));
+      for (const iv of intervals) {
+        const norm = (Math.log(Math.max(1, iv)) - logMin) / logRange;
+        const bin = Math.min(9, Math.max(0, Math.floor(norm * 10)));
         bins[bin] += 1;
       }
       for (const count of bins) {
@@ -562,6 +662,38 @@ function createScanOrchestrator(ctx) {
         }
       }
     }
+
+    // ---- Cross-sibling behavioral similarity (the REAL clusterSimilarity) ----
+    // Per-wallet metrics can't separate a sybil farm from a CEX/airdrop, but whether
+    // the SIBLINGS (same-funder wallets) behave IDENTICALLY can: a coordinated farm
+    // runs on one schedule, so the wallet's hour-of-day activity profile is near-
+    // identical to its siblings' (high cosine). Independent airdrop/CEX recipients are
+    // not synchronized. This is the signal that catches even AGED/active farms that
+    // pass the looksEstablished gate. (Replaces the old useless count = siblings/12.)
+    // Async-cache design: every scan already stores its own hour-of-day profile in
+    // metrics.hourBuckets, so a sibling's "fingerprint" is read from the cached scan —
+    // ZERO extra RPC on the hot path (the inline-fetch version exhausted the rate limit
+    // and hung scans). Similarity is computed only over siblings already scanned (the
+    // pool grows over time); it degrades to 0 otherwise. Never blocks.
+    let behavioralSimilarity = 0;
+    if (allSiblings.size >= 2) {
+      const selfNorm = Math.sqrt(hourBuckets.reduce((s, v) => s + v * v, 0));
+      const sims = [];
+      for (const sib of [...allSiblings].slice(0, 12)) {
+        let sv;
+        try { sv = loadSybilCacheEntry(sib)?.analysis?.metrics?.hourBuckets; } catch (e) { sv = null; }
+        if (!Array.isArray(sv) || sv.length !== 24) continue;
+        const sNorm = Math.sqrt(sv.reduce((s2, v) => s2 + (v * v), 0));
+        if (selfNorm === 0 || sNorm === 0) continue;
+        let dot = 0;
+        for (let h = 0; h < 24; h += 1) dot += hourBuckets[h] * sv[h];
+        sims.push(dot / (selfNorm * sNorm));
+      }
+      if (sims.length >= 2) behavioralSimilarity = sims.reduce((a, b) => a + b, 0) / sims.length;
+    }
+    clusterSimilarity = behavioralSimilarity;
+    _p('after-crosssibling');
+
     const weekendTxs = dayBuckets[0] + dayBuckets[6];
     const weekendRatio = totalTs > 20 ? weekendTxs / totalTs : 0.28;
 
@@ -782,7 +914,10 @@ function createScanOrchestrator(ctx) {
       description: oneDirectional ? 'Heavily one-directional SOL flow (suspicious)' : 'Balanced SOL flow',
     });
 
-    const highClusterSim = clusterSimilarity > 0.3;
+    // clusterSimilarity is now an hour-profile cosine (0..1) vs siblings; only a
+    // high value means a synchronized/coordinated farm (unrelated wallets overlap
+    // partially by timezone, so the bar must be high).
+    const highClusterSim = clusterSimilarity > 0.85;
     signals.push({
       id: 'cluster_similarity',
       name: 'Cluster Similarity',
@@ -879,7 +1014,11 @@ function createScanOrchestrator(ctx) {
         : 'Counterparty distribution looks healthy',
     });
 
-    const repeatedFunder = topFunderTxCount >= 3 && topFunderPctExport >= 0.75;
+    // Exclude labelled CEX/bridge funders: someone who always withdraws from the same
+    // exchange hot wallet is not a "sybil relay" — that's normal human behavior.
+    const topFunderLabelType = resolvedTopFunder ? knownLabels[resolvedTopFunder]?.type : null;
+    const repeatedFunder = topFunderTxCount >= 3 && topFunderPctExport >= 0.75
+      && topFunderLabelType !== 'cex' && topFunderLabelType !== 'bridge';
     const repeatedFunderWeight = topFunderTxCount >= 5 ? 16 : 10;
     signals.push({
       id: 'repeated_funder',
@@ -894,7 +1033,10 @@ function createScanOrchestrator(ctx) {
         : topFunderTxCount <= 1 ? 'No repeated funding from same wallet' : `Top funder sent ${topFunderTxCount} txs (within normal range)`,
     });
 
-    const botlikeHours = timestamps.length >= 20 && hourEntropy > 4.2;
+    // High hour-entropy means activity is spread evenly across the day — that's a
+    // normal globally-active human, NOT a bot. Only flag it as bot-like when the hour
+    // spread is near-maximal AND the inter-tx intervals are also unnaturally uniform.
+    const botlikeHours = timestamps.length >= 20 && hourEntropy > 4.5 && timingCV < 0.3;
     const nightOwlHours = timestamps.length >= 20 && hourEntropy < 1.5;
     signals.push({
       id: 'hour_distribution',
@@ -1052,7 +1194,20 @@ function createScanOrchestrator(ctx) {
       ...incomingSenders,
       ...(resolvedTopFunder ? [resolvedTopFunder] : []),
     ])].filter((candidate) => !treasuryWallets.has(candidate));
-    const { graphRisk, graphDetails } = checkGraphForKnownSybils(address, fundingSources, [...allSiblings]);
+    const { graphRisk, graphDetails, clusterConfirmed, clusterInfo, graphSiblings } = checkGraphForKnownSybils(address, fundingSources, [...allSiblings]);
+    // Display-facing cluster truth from the persistent graph (NOT the live cross-sibling
+    // cosine, which degrades to 0 without cached siblings). Union the live-discovered
+    // siblings with the graph's accumulated knowledge so real cluster members actually
+    // show their network. Kept SEPARATE from siblingCount/clusterSimilarity (which feed
+    // scoring) so this is purely additive and changes no scores.
+    const knownSiblings = [...new Set([
+      ...allSiblings,
+      ...(graphSiblings || []),
+      ...((clusterInfo && clusterInfo.members) || []),
+    ])].filter((s) => s && s !== address).slice(0, 30);
+    const knownCluster = clusterInfo
+      ? { label: clusterInfo.label, size: clusterInfo.size, funder: clusterInfo.funder }
+      : null;
     if (graphRisk > 0) {
       riskScore = Math.min(100, riskScore + graphRisk);
     }
@@ -1073,7 +1228,42 @@ function createScanOrchestrator(ctx) {
     if (hasSolDomain) trustBonus += 4;
     if (defiDepth >= 2) trustBonus += 2;
     if (defiDepth >= 3) trustBonus += 2;
-    const graphFloor = Math.max(10, Math.floor(graphRisk * 0.6));
+    // F-8: a cheap .sol domain + farmable token/NFT diversity shouldn't let a wallet
+    // cancel real sybil risk and slip below the verdict thresholds. Cap the bonus, and
+    // void it entirely when the wallet already shows >=2 danger-severity sybil signals.
+    {
+      const dangerSignalCount = signals.filter((sig) => sig.detected && sig.severity === 'danger').length;
+      trustBonus = dangerSignalCount >= 2 ? 0 : Math.min(25, trustBonus);
+    }
+    // Funding correlation alone NEVER hard-caps — we can't tell a sybil farm from a
+    // CEX/airdrop by funder shape (both fan out). The discriminator is the wallet's
+    // OWN behavior: a real independent history (age + tx volume + protocol variety +
+    // active days) means a human, even if it shares a funder with flagged wallets.
+    // Only a "thin"/scripted wallet that is ALSO a confirmed cluster member gets the
+    // non-cancellable floor — i.e. a farm bot, caught where the funding heuristic is blind.
+    // age + tx + protocol variety are RELIABLE establishment signals. (activeDaysCount
+    // was dropped: it's sample-biased — heavy wallets with 30k+ tx sample few distinct
+    // days → wrongly read as not-established → falsely hard-capped. A sophisticated aged
+    // farm that meets this bar but behaves identically to its siblings is still caught
+    // by the synchronizedFarm cross-sibling override below.)
+    // _heavyWallet means we couldn't paginate to the end within the time budget, so the
+    // first-tx walk was bounded → walletAgeDays is an UNDER-estimate. But a wallet with
+    // that many txs across 5+ programs is established by definition regardless of the
+    // (uncertain) measured age, so accept it on the tx-volume proxy. This is what lets
+    // the ≤10s age-walk bound never false-cap a genuinely old high-volume wallet.
+    const looksEstablished =
+      (walletAgeDays > 180 && totalSigCount >= 50 && uniquePrograms >= 5) ||
+      (_heavyWallet && uniquePrograms >= 8 && totalSigCount >= 500);
+    // Hard-cap a confirmed cluster member when EITHER it's a thin/scripted wallet
+    // (the common farm), OR — even if it looks established — it behaves near-identically
+    // to several siblings (a sophisticated aged farm: same funder + synchronized
+    // hour-profile across >=3 siblings). The latter is what catches farms the
+    // looksEstablished gate would otherwise wave through.
+    const synchronizedFarm = behavioralSimilarity > 0.9 && allSiblings.size >= 3;
+    const hardCapCluster = clusterConfirmed && (!looksEstablished || synchronizedFarm);
+    const graphFloor = hardCapCluster
+      ? Math.max(65, Math.floor(graphRisk * 0.6))
+      : Math.max(10, Math.floor(graphRisk * 0.6));
     riskScore = Math.max(graphFloor, riskScore - trustBonus);
 
     if (graphRisk > 0) {
@@ -1098,17 +1288,43 @@ function createScanOrchestrator(ctx) {
     } else {
       trustScore = Math.max(0, 100 - riskScore);
     }
+    // Holding a (paid, ~0.03 SOL) Identity Prism ID is an out-of-band commitment
+    // signal: add a fixed bonus on top of the DISPLAYED trust, capped at 100.
+    // IMPORTANT: keep the pre-bonus value (baseTrustScore) for sybil verdict
+    // CLASSIFICATION — the $0.03 ID must lift the shown score, but must NOT flip
+    // legacySybilFlag (trust<50) and downgrade a real sybil's verdict.
+    const baseTrustScore = trustScore;
+    if (mintedAddresses && typeof mintedAddresses.has === 'function' && mintedAddresses.has(address)) {
+      trustScore = Math.min(100, trustScore + 15);
+    }
     const trustGrade = trustScore >= 90 ? 'A+' : trustScore >= 80 ? 'A' : trustScore >= 70 ? 'B' : trustScore >= 60 ? 'C' : trustScore >= 50 ? 'D' : 'F';
 
+    // Helius buckets each tx under both a `type:` and a `source:` pseudo-code; the generic
+    // ones (UNKNOWN/TRANSFER/NONE) are noise, not real protocol usage — drop them so the
+    // "programs/protocols" display shows actual apps, not a giant "Unknown" bucket.
+    const NOISE_PROGRAM_CODES = new Set(['UNKNOWN', 'TRANSFER', 'NONE', '']);
     const topProgramsList = [...programInteractionCounts.entries()]
+      .filter(([pid]) => {
+        const code = (pid.startsWith('source:') || pid.startsWith('type:')) ? pid.split(':')[1] : null;
+        return !(code && NOISE_PROGRAM_CODES.has(String(code).toUpperCase()));
+      })
       .sort((a, b) => b[1] - a[1])
       .slice(0, 15)
       .map(([pid, count]) => {
-        const derivedName = pid.startsWith('source:') || pid.startsWith('type:')
+        // Helius already classifies many interactions by protocol (source:/type: JUPITER,
+        // PUMP_FUN, MAGIC_EDEN, …) — prettify those; fall back to our curated id→{name,
+        // category} map; else honest "unknown" so the UI never shows a bare base58.
+        const sourceCode = (pid.startsWith('source:') || pid.startsWith('type:'))
           ? pid.split(':')[1]
           : null;
-        const name = programLabels[pid];
-        return { programId: pid, name: name || derivedName || null, interactions: count };
+        const labelEntry = programLabels[pid] || null;
+        const name = (labelEntry && labelEntry.name)
+          || (sourceCode ? prettifyProtocolCode(sourceCode) : null)
+          || null;
+        const category = (labelEntry && labelEntry.category)
+          || (sourceCode ? protocolCodeCategory(sourceCode) : null)
+          || (name ? null : 'unknown');
+        return { programId: pid, name, category, interactions: count };
       });
 
     const analysis = {
@@ -1116,6 +1332,7 @@ function createScanOrchestrator(ctx) {
       riskScore,
       riskLevel,
       trustScore,
+      baseTrustScore,
       trustGrade,
       signals,
       metrics: {
@@ -1150,6 +1367,9 @@ function createScanOrchestrator(ctx) {
         hourBuckets,
         dayBuckets,
         hubSpokeScore: Math.round(hubSpokeScore * 100),
+        intervalEntropy: Math.round(intervalEntropy * 1000) / 1000,
+        hourEntropy: Math.round(hourEntropy * 1000) / 1000,
+        timingCV: timingCV < 999 ? Math.round(timingCV * 1000) / 1000 : null,
         siblingCount: allSiblings.size,
         hourEntropy: Math.round(hourEntropy * 100) / 100,
         intervalEntropy: Math.round(intervalEntropy * 100) / 100,
@@ -1164,6 +1384,11 @@ function createScanOrchestrator(ctx) {
         rapidCycleCount,
         siblingAddresses: [...allSiblings].slice(0, 30),
         topPrograms: topProgramsList,
+        heavyWallet: _heavyWallet,
+        // Graph-derived cluster truth for the UI (RPC-free). Lets the cluster panel/graph
+        // show real membership even when the live cross-sibling cosine is 0.
+        knownCluster,
+        knownSiblings,
       },
       behaviorProfile: {
         txTimingVariance: timingVariance,
@@ -1193,6 +1418,7 @@ function createScanOrchestrator(ctx) {
       timestamp: new Date().toISOString(),
     };
     analysis.verdict = getSybilVerdict(analysis);
+    _p('before-clusters');
     persistAutoDetectedScanClusters({
       address,
       temporalCohort,
@@ -1200,6 +1426,7 @@ function createScanOrchestrator(ctx) {
       fundingChainDepth,
       sameDepthSiblings,
     });
+    _p('after-clusters');
     analysis.walletType = (() => {
       if (analysis.verdict?.key === 'confirmed_sybil' || analysis.verdict?.key === 'probable_sybil') return 'sybil';
       if (analysis.verdict?.key === 'cluster_linked') return 'sybil_cluster';
@@ -1329,7 +1556,9 @@ function createScanOrchestrator(ctx) {
       firstSeenAt: walletDatabase.get(address)?.firstSeenAt || new Date().toISOString(),
     };
     updateWalletEntry(address, walletProfile);
+    _p('before-composite');
     triggerCompositeUpdate(address);
+    _p('after-composite');
 
     updateSybilGraphNode(address, {
       riskScore: analysis.riskScore,
@@ -1344,22 +1573,33 @@ function createScanOrchestrator(ctx) {
       confidence: analysis.verdict?.confidence || null,
       networkConfirmed: Boolean(analysis.verdict?.networkConfirmed),
     });
-    for (const sibling of allSiblings) {
-      const existingNode = sybilGraph.nodes[sibling];
-      const inferredRisk = Math.max(50, Math.floor(riskScore * 0.7));
-      if (!existingNode || existingNode.riskScore < inferredRisk) {
-        updateSybilGraphNode(sibling, {
-          inferredFromCluster: address,
-          riskScore: inferredRisk,
-          fundedBy: resolvedTopFunder ? [resolvedTopFunder] : [],
-          siblings: [address, ...[...allSiblings].filter((candidate) => candidate !== sibling).slice(0, 10)],
-          verdictKey: existingNode?.verdictKey || 'cluster_linked',
-          bountyEligible: Boolean(existingNode?.bountyEligible),
-          confidence: existingNode?.confidence || 'low',
-        });
+    // Only persist co-recipients as inferred siblings when the SCANNED wallet itself
+    // looks like a farm bot (thin/scripted). If it's an established wallet, its
+    // co-recipients are just fellow CEX/airdrop customers — don't pollute the graph.
+    // And write them BELOW the 50 "flagged" threshold so they aren't auto-counted as
+    // confirmed sybils on each other's next scan (the cascade that branded innocents).
+    if (!looksEstablished) {
+      for (const sibling of allSiblings) {
+        const existingNode = sybilGraph.nodes[sibling];
+        const inferredRisk = Math.min(48, Math.max(30, Math.floor(riskScore * 0.7)));
+        if (!existingNode || existingNode.riskScore < inferredRisk) {
+          updateSybilGraphNode(sibling, {
+            inferredFromCluster: address,
+            riskScore: inferredRisk,
+            fundedBy: resolvedTopFunder ? [resolvedTopFunder] : [],
+            siblings: [address, ...[...allSiblings].filter((candidate) => candidate !== sibling).slice(0, 10)],
+            verdictKey: existingNode?.verdictKey || 'cluster_linked',
+            bountyEligible: Boolean(existingNode?.bountyEligible),
+            confidence: existingNode?.confidence || 'low',
+          });
+        }
       }
     }
-    if (allSiblings.size >= 5 && riskScore >= 40) {
+    // Never form a flagged cluster around a labelled CEX/bridge funder — its
+    // recipients are exchange customers, not a farm. (F-2: stop the cascade where a
+    // mid-size CEX/airdrop fanout brands its passive recipients.)
+    if (allSiblings.size >= 5 && riskScore >= 40 && !looksEstablished
+        && topFunderLabelType !== 'cex' && topFunderLabelType !== 'bridge') {
       const clusterKey = resolvedTopFunder || fundingSources[0] || address;
       const existing = sybilGraph.flaggedClusters.find((cluster) => cluster.funder === clusterKey);
       if (existing) {
@@ -1375,7 +1615,9 @@ function createScanOrchestrator(ctx) {
         });
       }
     }
+    _p('before-savegraph');
     saveSybilGraph();
+    _p('END');
 
     return analysis;
   };

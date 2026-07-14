@@ -59,7 +59,10 @@ function registerSybilRoute(ctx) {
     const isOwnWalletScan = Boolean(jwtAuth.address && jwtAuth.address === address);
     const cachedEntry = loadSybilCacheEntry(address);
     if (isFreshSybilCacheEntry(cachedEntry, isOwnWalletScan)) {
-      return respondJson(res, 200, cachedEntry.analysis);
+      // Recompute the verdict on read so bounty/rewardPath honors the current risk
+      // threshold even for verdicts baked before it — keeps the client's verdict in
+      // sync with what earn.js will approve (avoids scan_wallet/sybil_hunt mismatch).
+      return respondJson(res, 200, { ...cachedEntry.analysis, verdict: getSybilVerdict(cachedEntry.analysis) });
     }
     // In-flight dedup: if the same address is already being analyzed, wait for it
     if (sybilInFlight.has(address)) {
