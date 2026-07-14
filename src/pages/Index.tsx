@@ -2621,7 +2621,9 @@ const Index = () => {
   const [curtainOpen, setCurtainOpen] = useState(skipCurtain);
   const [curtainDone, setCurtainDone] = useState(skipCurtain);
 
-  const everythingReady = showReadyView && sceneReady;
+  // Additive: existing-wallet path routes scanning -> hub, skipping 'ready', so
+  // also treat reaching 'hub' as readiness. Does not remove the original condition.
+  const everythingReady = (showReadyView && sceneReady) || viewState === 'hub';
 
   useEffect(() => {
     // Once curtains have started, never reset them here
@@ -2638,6 +2640,18 @@ const Index = () => {
     const t = setTimeout(() => setCurtainDone(true), 500);
     return () => clearTimeout(t);
   }, [curtainOpen, curtainDone]);
+
+  // Safety net: if the curtain is up but never gets dismissed via the normal
+  // readiness paths above, force it closed after a bounded timeout so users
+  // are never stuck behind the loading curtain forever.
+  useEffect(() => {
+    if (curtainDone) return;
+    const t = setTimeout(() => {
+      setCurtainOpen(true);
+      setCurtainDone(true);
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [curtainDone]);
 
   // Only reset everything when explicitly going back to landing
   useEffect(() => {
