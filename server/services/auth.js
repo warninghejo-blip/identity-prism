@@ -34,6 +34,23 @@ function createJwt(payload, walletDatabase) {
   return jwt.sign({ ...payload, tokenVersion }, JWT_SECRET, { expiresIn: JWT_TTL, algorithm: 'HS256', issuer: 'identity-prism', audience: 'identity-prism-api' });
 }
 
+function signGameSessionToken(payload, expiresInSeconds) {
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: expiresInSeconds,
+    algorithm: 'HS256',
+    issuer: 'identity-prism',
+    audience: 'identity-prism-game-session',
+  });
+}
+
+function verifyGameSessionTokenSignature(token) {
+  return jwt.verify(token, JWT_SECRET, {
+    algorithms: ['HS256'],
+    issuer: 'identity-prism',
+    audience: 'identity-prism-game-session',
+  });
+}
+
 function createRequireJwt({ walletIpLog, getClientIp, respondJson, walletDatabase }) {
   return function requireJwt(req, res) {
     const authHeader = req.headers['authorization'] ?? '';
@@ -99,4 +116,13 @@ function createAuthServices(ctx) {
   };
 }
 
-export { JWT_TTL, createAuthServices, createJwt, createOptionalJwt, createRequireJwt, verifyJwt };
+export {
+  JWT_TTL,
+  createAuthServices,
+  createJwt,
+  createOptionalJwt,
+  createRequireJwt,
+  signGameSessionToken,
+  verifyGameSessionTokenSignature,
+  verifyJwt,
+};

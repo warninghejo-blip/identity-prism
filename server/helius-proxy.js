@@ -26,7 +26,14 @@ import { getToday } from './utils/date.js';
 import { toWeb3JsInstruction, toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters';
 import { createRequire } from 'node:module';
 import { calculateBlackHoleReward } from './services/blackHoleRewards.js';
-import { JWT_TTL, createAuthServices, createJwt, verifyJwt } from './services/auth.js';
+import {
+  JWT_TTL,
+  createAuthServices,
+  createJwt,
+  signGameSessionToken,
+  verifyGameSessionTokenSignature,
+  verifyJwt,
+} from './services/auth.js';
 import { calculateIdentity } from './services/scoring.js';
 import {
   loadAchievementData,
@@ -278,6 +285,13 @@ const GAME_SESSION_TTL_MS = Number.isFinite(GAME_SESSION_TTL_RAW) && GAME_SESSIO
 const GAME_SESSION_STORE_FILE = process.env.GAME_SESSION_STORE_FILE
   ? path.resolve(process.env.GAME_SESSION_STORE_FILE)
   : path.join(METADATA_DIR, 'game-session-proofs.json');
+const SECURITY_EVENT_STORE_FILE = process.env.SECURITY_EVENT_STORE_FILE
+  ? path.resolve(process.env.SECURITY_EVENT_STORE_FILE)
+  : path.join(METADATA_DIR, 'security-events.json');
+const GAME_START_TOKEN_TTL_RAW = Number(process.env.GAME_START_TOKEN_TTL_MS ?? String(20 * 60 * 1000));
+const GAME_START_TOKEN_TTL_MS = Number.isFinite(GAME_START_TOKEN_TTL_RAW) && GAME_START_TOKEN_TTL_RAW >= 60_000
+  ? Math.min(GAME_START_TOKEN_TTL_RAW, 30 * 60 * 1000)
+  : 20 * 60 * 1000;
 const LEADERBOARD_STORE_FILE = process.env.LEADERBOARD_STORE_FILE
   ? path.resolve(process.env.LEADERBOARD_STORE_FILE)
   : path.join(METADATA_DIR, 'leaderboard.json');
@@ -1717,6 +1731,195 @@ const gameSessionProofStore = createJsonColumnStore({
   debounceMs: 2000,
   logLabel: 'game-session',
 });
+const securityEventStore = createJsonColumnStore({
+  jsonPath: SECURITY_EVENT_STORE_FILE,
+  tableName: 'security_events',
+  keyColumn: 'event_key',
+  readJson: (parsed) => Object.entries(parsed?.events || {}),
+  writeJson: (entries) => ({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    events: Object.fromEntries(entries),
+  }),
+  debounceMs: 500,
+  logLabel: 'security-events',
+});
+
+const selectSecurityEvent = appDb.prepare('SELECT data FROM security_events WHERE event_key = ?');
+const insertSecurityEvent = appDb.prepare('INSERT INTO security_events (event_key, data) VALUES (?, ?)');
+const updateSecurityEvent = appDb.prepare('UPDATE security_events SET data = ? WHERE event_key = ?');
+const parseSecurityEventRow = (row) => row ? parseJsonText(row.data) : null;
+
+const claimRemintBurnTx = appDb.transaction(({ signature, assetId, wallet, requestId }) => {
+  const signatureKey = `remint-burn-signature:${signature}`;
+  const assetKey = `remint-burn-asset:${assetId}`;
+  const existingSignature = parseSecurityEventRow(selectSecurityEvent.get(signatureKey));
+  const existingAsset = parseSecurityEventRow(selectSecurityEvent.get(assetKey));
+
+  if (existingSignature || existingAsset) {
+    return {
+      ok: false,
+      reason: existingSignature ? 'burn_signature_consumed' : 'burn_asset_consumed',
+    };
+  }
+
+  const record = { signature, assetId, wallet, requestId, consumedAt: Date.now() };
+  insertSecurityEvent.run(signatureKey, JSON.stringify({ ...record, keyType: 'signature' }));
+  insertSecurityEvent.run(assetKey, JSON.stringify({ ...record, keyType: 'asset' }));
+  return { ok: true, idempotent: false, record };
+});
+
+const claimRemintBurn = (claim) => {
+  const result = claimRemintBurnTx.immediate(claim);
+  if (result.ok) {
+    securityEventStore.set(`remint-burn-signature:${claim.signature}`, { ...result.record, keyType: 'signature' });
+    securityEventStore.set(`remint-burn-asset:${claim.assetId}`, { ...result.record, keyType: 'asset' });
+  }
+  return result;
+};
+
+const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId = null, seed, slot }) => {
+  const tokenId = crypto.randomUUID();
+  const issuedAtMs = Date.now();
+  const expiresAtMs = issuedAtMs + GAME_START_TOKEN_TTL_MS;
+  const token = signGameSessionToken({
+    type: 'game-session',
+    tokenId,
+    walletAddress,
+    gameMode,
+    purpose,
+    referenceId,
+    seed,
+    slot,
+    issuedAtMs,
+  }, Math.ceil(GAME_START_TOKEN_TTL_MS / 1000));
+  const record = {
+    tokenId,
+    tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
+    walletAddress,
+    gameMode,
+    purpose,
+    referenceId,
+    seed,
+    slot,
+    issuedAtMs,
+    expiresAtMs,
+    proofId: null,
+    redeemedAt: null,
+    redeemedPurpose: null,
+  };
+  securityEventStore.set(`game-session-token:${tokenId}`, record);
+  return { token, tokenId, issuedAtMs, expiresAtMs, gameMode, purpose, referenceId, seed, slot };
+};
+
+const verifyGameSessionToken = (token) => {
+  if (typeof token !== 'string' || token.length < 32 || token.length > 4096) {
+    return { ok: false, reason: 'invalid_token' };
+  }
+  let payload;
+  try {
+    payload = verifyGameSessionTokenSignature(token);
+  } catch (error) {
+    return { ok: false, reason: error?.name === 'TokenExpiredError' ? 'expired_token' : 'invalid_token' };
+  }
+  if (payload?.type !== 'game-session' || typeof payload?.tokenId !== 'string') {
+    return { ok: false, reason: 'invalid_token' };
+  }
+  const record = securityEventStore.get(`game-session-token:${payload.tokenId}`);
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  if (!record || record.tokenHash !== tokenHash || record.expiresAtMs < Date.now()) {
+    return { ok: false, reason: record?.expiresAtMs < Date.now() ? 'expired_token' : 'invalid_token' };
+  }
+  if (
+    record.walletAddress !== payload.walletAddress
+    || record.gameMode !== payload.gameMode
+    || record.purpose !== payload.purpose
+    || (record.referenceId || null) !== (payload.referenceId || null)
+    || record.seed !== payload.seed
+    || record.slot !== payload.slot
+  ) {
+    return { ok: false, reason: 'token_binding_mismatch' };
+  }
+  return { ok: true, payload, record };
+};
+
+const bindGameSessionTokenProofTx = appDb.transaction(({ tokenId, tokenHash, proofId }) => {
+  const key = `game-session-token:${tokenId}`;
+  const record = parseSecurityEventRow(selectSecurityEvent.get(key));
+  if (!record || record.tokenHash !== tokenHash) return { ok: false, reason: 'invalid_token' };
+  if (record.expiresAtMs < Date.now()) return { ok: false, reason: 'expired_token' };
+  if (record.redeemedAt) return { ok: false, reason: 'token_redeemed' };
+  if (record.proofId && record.proofId !== proofId) return { ok: false, reason: 'token_already_bound' };
+  const updated = { ...record, proofId, proofBoundAt: record.proofBoundAt || Date.now() };
+  updateSecurityEvent.run(JSON.stringify(updated), key);
+  return { ok: true, idempotent: record.proofId === proofId, record: updated };
+});
+
+const bindGameSessionTokenProof = ({ token, proofId }) => {
+  const verified = verifyGameSessionToken(token);
+  if (!verified.ok) return verified;
+  const result = bindGameSessionTokenProofTx.immediate({
+    tokenId: verified.record.tokenId,
+    tokenHash: verified.record.tokenHash,
+    proofId,
+  });
+  if (result.ok) securityEventStore.set(`game-session-token:${verified.record.tokenId}`, result.record);
+  return result.ok ? { ...result, token: verified.record } : result;
+};
+
+const redeemGameSessionTokenTx = appDb.transaction((expected) => {
+  const key = `game-session-token:${expected.tokenId}`;
+  const record = parseSecurityEventRow(selectSecurityEvent.get(key));
+  if (!record || record.tokenHash !== expected.tokenHash) return { ok: false, reason: 'invalid_token' };
+  if (record.expiresAtMs < Date.now()) return { ok: false, reason: 'expired_token' };
+  if (record.redeemedAt) return { ok: false, reason: 'token_redeemed' };
+  if (!record.proofId || record.proofId !== expected.proofId) return { ok: false, reason: 'proof_binding_mismatch' };
+  if (
+    record.walletAddress !== expected.walletAddress
+    || record.gameMode !== expected.gameMode
+    || record.seed !== expected.seed
+    || record.slot !== expected.slot
+  ) {
+    return { ok: false, reason: 'token_binding_mismatch' };
+  }
+  if (record.purpose !== expected.purpose || (record.referenceId || null) !== (expected.referenceId || null)) {
+    return { ok: false, reason: 'token_purpose_mismatch' };
+  }
+  const updated = {
+    ...record,
+    redeemedAt: Date.now(),
+    redeemedPurpose: expected.purpose,
+  };
+  updateSecurityEvent.run(JSON.stringify(updated), key);
+  return { ok: true, record: updated };
+});
+
+const redeemGameSessionToken = ({
+  token,
+  proofId,
+  walletAddress,
+  gameMode,
+  purpose,
+  referenceId = null,
+  seed,
+  slot,
+}) => {
+  const verified = verifyGameSessionToken(token);
+  if (!verified.ok) return verified;
+  const result = redeemGameSessionTokenTx.immediate({
+    tokenId: verified.record.tokenId,
+    tokenHash: verified.record.tokenHash,
+    proofId,
+    walletAddress,
+    gameMode,
+    purpose,
+    referenceId,
+    seed,
+    slot,
+  });
+  if (result.ok) securityEventStore.set(`game-session-token:${verified.record.tokenId}`, result.record);
+  return result;
+};
 
 const prunePendingMints = () => {
   const now = Date.now();
@@ -1857,6 +2060,13 @@ const normalizeStoredGameSessionEntry = (raw) => {
     usedForTournament: raw.usedForTournament || null,
     usedForChallenge: raw.usedForChallenge || null,
     usedForLeaderboard: raw.usedForLeaderboard || null,
+    sessionTokenId: typeof raw.sessionTokenId === 'string' ? raw.sessionTokenId : null,
+    sessionPurpose: typeof raw.sessionPurpose === 'string' ? raw.sessionPurpose : null,
+    sessionReferenceId: typeof raw.sessionReferenceId === 'string' ? raw.sessionReferenceId : null,
+    sessionTokenExpiresAtMs: Number.isFinite(Number(raw.sessionTokenExpiresAtMs))
+      ? Math.floor(Number(raw.sessionTokenExpiresAtMs))
+      : null,
+    timingVerified: raw.timingVerified === true ? true : (raw.timingVerified === false ? false : null),
   };
 };
 
@@ -2965,6 +3175,7 @@ const toPublicGameSessionProof = (entry) => ({
   verification: entry.verification,
   createdAt: entry.createdAt,
   lastVerifiedAt: entry.lastVerifiedAt,
+  timingVerified: entry.timingVerified === true,
 });
 
 const callMagicBlockRpc = async (method, params = []) => {
@@ -5587,6 +5798,11 @@ const ctx = createContext({
   blackHoleUsedSignatures,
   pendingMintSigners,
   gameSessionProofs,
+  claimRemintBurn,
+  issueGameSessionToken,
+  verifyGameSessionToken,
+  bindGameSessionTokenProof,
+  redeemGameSessionToken,
   prismTransactions,
   feedItems,
   sybilInFlight,
@@ -5847,6 +6063,7 @@ const initOrchestrator = createInitOrchestrator({
   walletStore,
   sybilVerdictStore,
   gameSessionProofStore,
+  securityEventStore,
   achievementStore,
   reviveStore,
   questProgressStore,
