@@ -114,10 +114,12 @@ import {
   type PlayerStats,
 } from '@/lib/gameAchievements';
 import {
-  generateFairSeed,
   verifyGameSessionSeed,
   getMagicBlockHealth,
   registerGameSessionProof,
+  startGameSession,
+  generateFairSeed,
+  HttpStatusError,
   type GameSessionProof,
 } from '@/lib/magicblock';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
@@ -1621,7 +1623,9 @@ const PrismLeague = () => {
     };
   }, [address]);
   const [sessionProof, setSessionProof] = useState<GameSessionProof | null>(null);
-  const [sessionProofStatus, setSessionProofStatus] = useState<'idle' | 'generating' | 'failed'>('idle');
+  const [sessionProofStatus, setSessionProofStatus] = useState<
+    'idle' | 'submitting' | 'verified' | 'unverified' | 'failed_network' | 'auth_required'
+  >('idle');
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
   const [playerStats, setPlayerStats] = useState<PlayerStats>(() => getPlayerStats());
   const [achievements, setAchievements] = useState<Achievement[]>(() => getAchievements());
@@ -2144,8 +2148,12 @@ const PrismLeague = () => {
   const [mbVerified, setMbVerified] = useState<boolean>(false);
   const mbSeedRef = useRef<string | null>(null);
   const mbSlotRef = useRef<number>(0);
+  const mbTokenRef = useRef<string | null>(null);
   mbSeedRef.current = mbSeed;
   mbSlotRef.current = mbSlot;
+  // Re-submits the last game-over payload (idempotent server-side) — wired to the
+  // Retry / "Sign in & claim" actions in the results panel.
+  const submitSessionRef = useRef<() => Promise<void>>(async () => {});
 
   /* Fetch server leaderboard when gameMode changes and merge with local */
   useEffect(() => {
@@ -2316,6 +2324,7 @@ const PrismLeague = () => {
     // Reset refs immediately (don't wait for re-render)
     mbSeedRef.current = null;
     mbSlotRef.current = 0;
+    mbTokenRef.current = null;
     runStartedAtRef.current = Date.now();
 
     /* Start game — countdown for challenges, instant for normal play */
@@ -2327,22 +2336,41 @@ const PrismLeague = () => {
       setGameState('playing');
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    generateFairSeed()
-      .then((seedResult) => {
-        clearTimeout(timeout);
-        if (seedResult) {
+    // Prefetch JWT in the background if not cached — an interactive wallet signature is
+    // appropriate here at game START, never at game-over (that path must stay non-blocking).
+    // startGameSession() needs a JWT to succeed, so wait for either the cached JWT or this
+    // fetch before calling it (but never block gameplay — the game is already rendering above).
+    const jwtReady: Promise<unknown> = getChallengeJwt(address)
+      ? Promise.resolve()
+      : obtainJwt(wallet).catch(() => null);
+
+    // Server issues seed+slot+single-use token up front, taking the slow MagicBlock RPC
+    // off the coin-crediting critical path at game-over.
+    jwtReady
+      .then(() => startGameSession({ gameMode: getArcadeGameMode(gameMode), walletAddress: address }))
+      .then((sessionResult) => {
+        if (sessionResult) {
           // Update refs immediately so finalizeDeath always sees latest values
+          mbTokenRef.current = sessionResult.sessionToken;
+          mbSeedRef.current = sessionResult.seed;
+          mbSlotRef.current = sessionResult.slot;
+          setMbSeed(sessionResult.seed);
+          setMbSlot(sessionResult.slot);
+          return;
+        }
+        // Fallback: startGameSession failed (still no JWT, /start down, etc). If the network
+        // is up, fetch a seed directly so a legacy tokenless submit can still credit at
+        // game-over — never leave the game with no seed at all while online.
+        if (mbSeedRef.current) return; // already populated by a slower-resolving path
+        return generateFairSeed().then((seedResult) => {
+          if (!seedResult || mbSeedRef.current) return;
           mbSeedRef.current = seedResult.seed;
           mbSlotRef.current = seedResult.slot;
           setMbSeed(seedResult.seed);
           setMbSlot(seedResult.slot);
-        }
+        });
       })
-      .catch(() => {
-        clearTimeout(timeout);
-      });
+      .catch(() => {});
   };
 
   // Countdown 3-2-1 for challenge mode
@@ -2431,30 +2459,57 @@ const PrismLeague = () => {
       };
 
       const verifyAndPublish = async () => {
-        let proof: GameSessionProof | null = null;
-        setSessionProofStatus('generating');
         const actualDurationSec = Math.round((endedAtMs - startedAtMs) / 1000);
         const sessionSurvivalTime = gameMode === 'destroyer' ? formatTime(actualDurationSec) : formatTime(finalScore);
-        // Wait for seed if not ready yet. Short games can end before MagicBlock
-        // responds, especially on mobile network handoff.
-        let curSeed = mbSeedRef.current;
-        let curSlot = mbSlotRef.current;
+        // Seed/token are known from game START (startGameSession) — never wait for them here.
+        const curSeed = mbSeedRef.current;
+        const curSlot = mbSlotRef.current;
+        const curToken = mbTokenRef.current;
+
         if (!curSeed || curSlot <= 0) {
-          for (let i = 0; i < 100; i++) {
-            await new Promise((r) => setTimeout(r, 150));
-            curSeed = mbSeedRef.current;
-            curSlot = mbSlotRef.current;
-            if (curSeed && curSlot > 0) break;
+          // No seed at all (offline at start, or session/start never resolved) — terminal, no waiting.
+          setSessionProofStatus('unverified');
+          setMbVerified(false);
+          if (finalCoins > 0 && !activeChallengeId && playerAddr !== 'anonymous') {
+            void restoreServerCoins(playerAddr).then((serverCoins) => {
+              if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+            });
           }
+          return;
         }
-        if (curSeed && curSlot > 0) {
-          let lastProofError: unknown = null;
-          for (let attempt = 0; attempt < 3 && !proof; attempt += 1) {
+
+        const walletAddr = address || playerAddr;
+        const hasWallet = walletAddr !== 'anonymous';
+
+        const runSubmit = async () => {
+          if (!hasWallet) {
+            // No wallet connected — no server proof/credit is possible; decorative-only.
+            setSessionProofStatus('unverified');
+            verifyGameSessionSeed(curSeed, curSlot)
+              .then((ok) => setMbVerified(ok))
+              .catch(() => setMbVerified(false));
+            return;
+          }
+
+          // Critical path uses ONLY the cached JWT — never awaits an interactive sign here.
+          if (!getChallengeJwt(walletAddr)) {
+            setSessionProofStatus('auth_required');
+            verifyGameSessionSeed(curSeed, curSlot)
+              .then((ok) => setMbVerified(ok))
+              .catch(() => setMbVerified(false));
+            return;
+          }
+
+          setSessionProofStatus('submitting');
+          let proof: GameSessionProof | null = null;
+          let credit: import('@/lib/magicblock').GameCoinsCreditResult | null = null;
+          let networkFailed = false;
+          let httpStatus: number | null = null;
+          const backoffMs = [0, 500, 1500];
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            if (backoffMs[attempt]) await new Promise((r) => setTimeout(r, backoffMs[attempt]));
             try {
-              if (address && !getChallengeJwt(address)) {
-                await obtainJwt(wallet);
-              }
-              proof = await registerGameSessionProof({
+              const result = await registerGameSessionProof({
                 walletAddress: address,
                 score: finalScore,
                 survivalTime: sessionSurvivalTime,
@@ -2463,78 +2518,78 @@ const PrismLeague = () => {
                 startedAtMs,
                 endedAtMs,
                 gameMode,
+                sessionToken: curToken ?? undefined,
+                coinsDelta: finalCoins > 0 && !activeChallengeId ? finalCoins : undefined,
               });
+              proof = result?.session ?? null;
+              credit = result?.credit ?? null;
+              networkFailed = false;
+              httpStatus = null;
+              break; // idempotent server (S3) — a successful response never needs retrying
             } catch (error) {
-              lastProofError = error;
-              if (attempt < 2) await new Promise((r) => setTimeout(r, 1_000 * (attempt + 1)));
+              if (error instanceof HttpStatusError && error.status >= 400 && error.status < 500) {
+                // Non-retryable client error (e.g. 409 already-redeemed, 403 forbidden) —
+                // retrying 3x won't change the outcome, resolve from server state instead.
+                networkFailed = false;
+                httpStatus = error.status;
+                console.warn('[game-session] proof registration client error', error.status, error);
+                break;
+              }
+              networkFailed = true;
+              httpStatus = error instanceof HttpStatusError ? error.status : null;
+              console.warn('[game-session] proof registration attempt failed', attempt, error);
             }
           }
-          if (!proof && lastProofError) console.warn('[game-session] proof registration failed', lastProofError);
-        }
 
-        if (proof) {
-          setSessionProof(proof);
-          setSessionProofStatus('idle');
-          // Server-side proof is the real verification.
-          setMbVerified(Boolean(proof.verified));
-        } else if (curSeed) {
-          setSessionProofStatus('failed');
-          // Verify seed against MagicBlock — timeout fallback to false
-          const verifyTimeout = setTimeout(() => setMbVerified(false), 6000);
-          verifyGameSessionSeed(curSeed, curSlot)
-            .then((ok) => {
-              clearTimeout(verifyTimeout);
-              setMbVerified(ok);
-            })
-            .catch(() => {
-              clearTimeout(verifyTimeout);
-              setMbVerified(false);
-            });
-        } else {
-          // No seed was generated — unverified
-          setSessionProofStatus('failed');
-          setMbVerified(false);
-        }
-
-        // Sync coins to server with verified session proof
-        // Skip coin earning when playing a challenge — earnings come from challenge result
-        console.info('[coins-sync] CHECK', {
-          proofId: proof?.id,
-          proofVerified: proof?.verified,
-          finalCoins,
-          activeChallengeId,
-          playerAddr: playerAddr === 'anonymous' ? playerAddr : playerAddr.slice(0, 8),
-        });
-        if (proof?.id && proof.verified && finalCoins > 0 && !activeChallengeId) {
-          const walletAddr = proof.walletAddress || playerAddr;
-          if (!getChallengeJwt(walletAddr)) {
-            await obtainJwt(wallet);
-          }
-          if (!getChallengeJwt(walletAddr)) {
-            console.warn('[coins-sync] SKIP auth_jwt_missing', walletAddr.slice(0, 8));
-            toast.warning('Coins not credited: auth_jwt_missing');
-            void restoreServerCoins(walletAddr).then((serverCoins) => {
-              if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
-            });
+          if (networkFailed && !proof) {
+            setSessionProofStatus('failed_network');
+            // Decorative-only client verify — never gates coins/session state.
+            verifyGameSessionSeed(curSeed, curSlot)
+              .then((ok) => setMbVerified(ok))
+              .catch(() => setMbVerified(false));
+            // The submit may actually have credited coins server-side before the response
+            // was lost (network died after the server committed) — re-sync the balance so
+            // the UI never implies coins were lost while the server thinks otherwise.
+            if (finalCoins > 0 && !activeChallengeId && walletAddr !== 'anonymous') {
+              void restoreServerCoins(walletAddr).then((serverCoins) => {
+                if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+              });
+            }
             return;
           }
-          const prev = (await restoreServerCoins(walletAddr)) ?? readWalletCoins(walletAddr);
-          syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id)
-            .then((serverResult) => {
-              if (serverResult && typeof serverResult.coins === 'number') {
-                writeWalletCoins(walletAddr, serverResult.coins);
-                setTotalCoins(serverResult.coins);
-                window.dispatchEvent(new CustomEvent('identity-prism-balance-updated'));
+
+          if (httpStatus !== null && !proof) {
+            // Non-retryable 4xx (e.g. 409 already-redeemed) — resolve from server state
+            // instead of surfacing a fake retry loop.
+            setSessionProofStatus('unverified');
+            verifyGameSessionSeed(curSeed, curSlot)
+              .then((ok) => setMbVerified(ok))
+              .catch(() => setMbVerified(false));
+            if (finalCoins > 0 && !activeChallengeId && walletAddr !== 'anonymous') {
+              void restoreServerCoins(walletAddr).then((serverCoins) => {
+                if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+              });
+            }
+            return;
+          }
+
+          setSessionProof(proof);
+          setSessionProofStatus(proof?.verified ? 'verified' : 'unverified');
+          // Server-side proof is the real verification.
+          setMbVerified(Boolean(proof?.verified));
+
+          // Coin credit — prefer the atomic credit returned by the submit itself.
+          // Skip coin earning when playing a challenge — earnings come from challenge result.
+          if (finalCoins > 0 && !activeChallengeId) {
+            if (credit && typeof credit.coins === 'number') {
+              writeWalletCoins(walletAddr, credit.coins);
+              setTotalCoins(credit.coins);
+              window.dispatchEvent(new CustomEvent('identity-prism-balance-updated'));
+              if (credit.earned) {
+                toast.success(`+${credit.earned} coins credited`);
+              } else if (credit.capped) {
+                toast.warning('Daily coin cap reached — ' + (credit.reason || 'no credit'));
               }
-              if (serverResult?.failed) {
-                toast.warning('Coins not credited: ' + (serverResult.error || serverResult.status));
-                void restoreServerCoins(walletAddr).then((serverCoins) => {
-                  if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
-                });
-              } else if (serverResult?.capped && !serverResult?.earned) {
-                toast.warning('Daily coin cap reached — ' + (serverResult.reason || 'no credit'));
-              }
-              // Refresh prism_balance_v1 in localStorage so gatherXPSources sees updated totalEarned
               if (walletAddr !== 'anonymous') {
                 import('@/lib/prismCoin')
                   .then(({ getPrismBalance }) => {
@@ -2544,78 +2599,107 @@ const PrismLeague = () => {
                   })
                   .catch(() => {});
               }
-            })
-            .catch(() => {
-              void restoreServerCoins(walletAddr).then((serverCoins) => {
-                if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
-              });
+            } else if (proof?.id && proof.verified) {
+              // Fallback ONLY for an old server that doesn't return `credit` in the submit response.
+              const prev = readWalletCoins(walletAddr);
+              syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id)
+                .then((serverResult) => {
+                  if (serverResult && typeof serverResult.coins === 'number') {
+                    writeWalletCoins(walletAddr, serverResult.coins);
+                    setTotalCoins(serverResult.coins);
+                    window.dispatchEvent(new CustomEvent('identity-prism-balance-updated'));
+                    if (serverResult.earned) toast.success(`+${serverResult.earned} coins credited`);
+                  }
+                  if (serverResult?.failed) {
+                    toast.warning('Coins not credited: ' + (serverResult.error || serverResult.status));
+                    void restoreServerCoins(walletAddr).then((serverCoins) => {
+                      if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+                    });
+                  } else if (serverResult?.capped && !serverResult?.earned) {
+                    toast.warning('Daily coin cap reached — ' + (serverResult.reason || 'no credit'));
+                  }
+                  if (walletAddr !== 'anonymous') {
+                    import('@/lib/prismCoin')
+                      .then(({ getPrismBalance }) => {
+                        getPrismBalance(walletAddr)
+                          .then(() => window.dispatchEvent(new CustomEvent('identity-prism-balance-updated')))
+                          .catch(() => {});
+                      })
+                      .catch(() => {});
+                  }
+                })
+                .catch(() => {
+                  void restoreServerCoins(walletAddr).then((serverCoins) => {
+                    if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
+                  });
+                });
+            }
+          }
+
+          // Submit to server leaderboard with verified session proof (skip for challenges)
+          if (proof?.id && !activeChallengeId) {
+            submitToServerLeaderboard({
+              address: playerAddr,
+              score: finalScore,
+              playedAt: newEntry.playedAt,
+              gameType: gameMode,
+              gameSessionId: proof.id,
             });
-        } else if (finalCoins > 0 && !activeChallengeId && playerAddr !== 'anonymous') {
-          void restoreServerCoins(playerAddr).then((serverCoins) => {
-            if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
-          });
-        }
+          }
 
-        // Submit to server leaderboard with verified session proof (skip for challenges)
-        if (proof?.id && !activeChallengeId) {
-          submitToServerLeaderboard({
-            address: playerAddr,
-            score: finalScore,
-            playedAt: newEntry.playedAt,
-            gameType: gameMode,
-            gameSessionId: proof.id,
-          });
-        }
+          const tournamentEligible =
+            activeTournament?.userJoined &&
+            tournamentMode &&
+            proof?.id &&
+            proof.verified &&
+            finalScore > 0 &&
+            activeTournament?.status !== 'ended';
+          if (tournamentEligible) {
+            submitToTournament(finalScore, proof.id);
+          }
 
-        const tournamentEligible =
-          activeTournament?.userJoined &&
-          tournamentMode &&
-          proof?.id &&
-          proof.verified &&
-          finalScore > 0 &&
-          activeTournament?.status !== 'ended';
-        if (tournamentEligible) {
-          submitToTournament(finalScore, proof.id);
-        }
-
-        // Challenge submit — must be inside verifyAndPublish to have proof.id
-        if (activeChallengeId && !challengeSubmittedRef.current) {
-          challengeSubmittedRef.current = true;
-          sessionStorage.setItem('ip_challenge_submitted', activeChallengeId);
-          setChallengeSubmitting(true);
-          submitChallengeScore(activeChallengeId, finalScore, address, proof?.id)
-            .then((result) => {
-              setChallengeSubmitting(false);
-              sessionStorage.removeItem('ip_active_challenge');
-              if (result.ok && result.challenge) {
-                setChallengeResult(result.challenge);
-                // Increment arena quests
-                if (playerAddr) {
-                  import('@/lib/prismQuests')
-                    .then(({ getQuestState, incrementQuest }) => {
-                      let qs = getQuestState(playerAddr);
-                      qs = incrementQuest(qs, 'weekly_arena').state;
-                      incrementQuest(qs, 'ot_arena_wins');
-                    })
-                    .catch(() => {});
-                }
-                if (result.challenge.status === 'completed') {
-                  if (playerAddr) invalidateBalanceCache(playerAddr);
-                  setTimeout(() => setShowBattleResult(true), 1500);
-                  if (result.challenge.winner === playerAddr) hapticSuccess();
-                  else hapticError();
+          // Challenge submit — must be inside runSubmit to have proof.id
+          if (activeChallengeId && !challengeSubmittedRef.current) {
+            challengeSubmittedRef.current = true;
+            sessionStorage.setItem('ip_challenge_submitted', activeChallengeId);
+            setChallengeSubmitting(true);
+            submitChallengeScore(activeChallengeId, finalScore, address, proof?.id)
+              .then((result) => {
+                setChallengeSubmitting(false);
+                sessionStorage.removeItem('ip_active_challenge');
+                if (result.ok && result.challenge) {
+                  setChallengeResult(result.challenge);
+                  // Increment arena quests
+                  if (playerAddr) {
+                    import('@/lib/prismQuests')
+                      .then(({ getQuestState, incrementQuest }) => {
+                        let qs = getQuestState(playerAddr);
+                        qs = incrementQuest(qs, 'weekly_arena').state;
+                        incrementQuest(qs, 'ot_arena_wins');
+                      })
+                      .catch(() => {});
+                  }
+                  if (result.challenge.status === 'completed') {
+                    if (playerAddr) invalidateBalanceCache(playerAddr);
+                    setTimeout(() => setShowBattleResult(true), 1500);
+                    if (result.challenge.winner === playerAddr) hapticSuccess();
+                    else hapticError();
+                  } else {
+                    toast.success('Score submitted! Waiting for opponent...');
+                  }
                 } else {
-                  toast.success('Score submitted! Waiting for opponent...');
+                  toast.error(result.error || 'Failed to submit challenge score');
                 }
-              } else {
-                toast.error(result.error || 'Failed to submit challenge score');
-              }
-            })
-            .catch(() => {
-              setChallengeSubmitting(false);
-              toast.error('Failed to submit challenge score');
-            });
-        }
+              })
+              .catch(() => {
+                setChallengeSubmitting(false);
+                toast.error('Failed to submit challenge score');
+              });
+          }
+        };
+
+        submitSessionRef.current = runSubmit;
+        await runSubmit();
       };
 
       void verifyAndPublish();
@@ -4797,26 +4881,36 @@ const PrismLeague = () => {
                       <span className={`text-[10px] flex-1 ${mbVerified ? 'text-purple-300/60' : 'text-white/20'}`}>
                         {mbVerified && mbSeed
                           ? `Seed ${mbSeed.slice(0, 6)}… · #${mbSlot}`
-                          : mbSeed
+                          : sessionProofStatus === 'submitting'
                             ? 'verifying…'
-                            : 'pending…'}
+                            : mbSeed
+                              ? 'not verified'
+                              : 'pending…'}
                       </span>
                       {mbVerified && <span className="text-green-400 text-[10px]">✓</span>}
                     </div>
 
-                    {/* Session Proof — separate line with color */}
+                    {/* Session Proof — separate line with color, explicit state machine.
+                        "verifying…" shows ONLY while a request is in flight (see runSubmit); a
+                        server verified:false is a terminal `unverified`, never eternal verifying. */}
                     <div
-                      className={`w-full mb-2 flex items-center gap-1.5 px-3 py-2 rounded-xl border ${sessionProof ? 'border-cyan-500/15 bg-cyan-500/5' : 'border-white/[0.06] bg-white/[0.02]'}`}
+                      className={`w-full mb-2 flex items-center gap-1.5 px-3 py-2 rounded-xl border ${
+                        sessionProofStatus === 'verified'
+                          ? 'border-cyan-500/15 bg-cyan-500/5'
+                          : sessionProofStatus === 'failed_network' || sessionProofStatus === 'auth_required'
+                            ? 'border-amber-500/20 bg-amber-500/5'
+                            : 'border-white/[0.06] bg-white/[0.02]'
+                      }`}
                     >
                       <Shield
-                        className={`w-3 h-3 flex-shrink-0 ${sessionProof ? 'text-cyan-400/60' : 'text-white/20'}`}
+                        className={`w-3 h-3 flex-shrink-0 ${sessionProofStatus === 'verified' ? 'text-cyan-400/60' : 'text-white/20'}`}
                       />
                       <span
-                        className={`text-[10px] font-medium ${sessionProof ? 'text-cyan-300/70' : 'text-white/30'}`}
+                        className={`text-[10px] font-medium ${sessionProofStatus === 'verified' ? 'text-cyan-300/70' : 'text-white/30'}`}
                       >
                         Session Proof
                       </span>
-                      {sessionProof ? (
+                      {sessionProofStatus === 'verified' && sessionProof ? (
                         <>
                           <span className="text-[10px] font-mono text-cyan-200/50 flex-1 truncate">
                             {sessionProof.id}
@@ -4832,14 +4926,38 @@ const PrismLeague = () => {
                             </a>
                           )}
                         </>
-                      ) : (
-                        <span className="text-[10px] text-white/20 flex-1">
-                          {sessionProofStatus === 'failed'
-                            ? 'unavailable'
-                            : sessionProofStatus === 'generating'
-                              ? 'generating…'
-                              : 'pending…'}
+                      ) : sessionProofStatus === 'submitting' ? (
+                        <span className="text-[10px] text-white/30 flex-1">verifying…</span>
+                      ) : sessionProofStatus === 'unverified' ? (
+                        <span className="text-[10px] text-white/30 flex-1 truncate">
+                          not verified{sessionProof?.verification?.reason ? ` — ${sessionProof.verification.reason}` : ''}
                         </span>
+                      ) : sessionProofStatus === 'failed_network' ? (
+                        <>
+                          <span className="text-[10px] text-amber-300/70 flex-1">network error</span>
+                          <button
+                            type="button"
+                            className="text-[10px] font-semibold text-amber-300 underline underline-offset-2 flex-shrink-0"
+                            onClick={() => void submitSessionRef.current()}
+                          >
+                            Retry
+                          </button>
+                        </>
+                      ) : sessionProofStatus === 'auth_required' ? (
+                        <>
+                          <span className="text-[10px] text-amber-300/70 flex-1">sign-in required</span>
+                          <button
+                            type="button"
+                            className="text-[10px] font-semibold text-amber-300 underline underline-offset-2 flex-shrink-0"
+                            onClick={() => {
+                              void obtainJwt(wallet).then(() => submitSessionRef.current());
+                            }}
+                          >
+                            Sign in & claim
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-[10px] text-white/20 flex-1">pending…</span>
                       )}
                     </div>
 
@@ -4853,13 +4971,13 @@ const PrismLeague = () => {
                           boxShadow: '0 0 20px rgba(147,51,234,0.3)',
                         }}
                         onClick={handleCommitOnchain}
-                        disabled={isCommitting || sessionProofStatus === 'generating'}
+                        disabled={isCommitting || sessionProofStatus === 'submitting'}
                       >
                         {isCommitting ? (
                           <>
                             <Clock className="w-4 h-4 animate-spin" /> Committing...
                           </>
-                        ) : sessionProofStatus === 'generating' ? (
+                        ) : sessionProofStatus === 'submitting' ? (
                           <>
                             <Clock className="w-4 h-4 animate-spin" /> Preparing...
                           </>
