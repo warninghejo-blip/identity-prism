@@ -1778,7 +1778,7 @@ const claimRemintBurn = (claim) => {
   return result;
 };
 
-const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId = null, seed, slot }) => {
+const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId = null, seed, slot, seedSource = 'client' }) => {
   const tokenId = crypto.randomUUID();
   const issuedAtMs = Date.now();
   const expiresAtMs = issuedAtMs + GAME_START_TOKEN_TTL_MS;
@@ -1791,6 +1791,7 @@ const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId =
     referenceId,
     seed,
     slot,
+    seedSource,
     issuedAtMs,
   }, Math.ceil(GAME_START_TOKEN_TTL_MS / 1000));
   const record = {
@@ -1802,6 +1803,7 @@ const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId =
     referenceId,
     seed,
     slot,
+    seedSource,
     issuedAtMs,
     expiresAtMs,
     proofId: null,
@@ -1809,7 +1811,7 @@ const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId =
     redeemedPurpose: null,
   };
   securityEventStore.set(`game-session-token:${tokenId}`, record);
-  return { token, tokenId, issuedAtMs, expiresAtMs, gameMode, purpose, referenceId, seed, slot };
+  return { token, tokenId, issuedAtMs, expiresAtMs, gameMode, purpose, referenceId, seed, slot, seedSource };
 };
 
 const verifyGameSessionToken = (token) => {
@@ -1837,6 +1839,7 @@ const verifyGameSessionToken = (token) => {
     || (record.referenceId || null) !== (payload.referenceId || null)
     || record.seed !== payload.seed
     || record.slot !== payload.slot
+    || (record.seedSource || 'client') !== (payload.seedSource || 'client')
   ) {
     return { ok: false, reason: 'token_binding_mismatch' };
   }
@@ -3199,6 +3202,42 @@ const callMagicBlockRpc = async (method, params = []) => {
     throw new Error(payload?.error?.message ?? 'MagicBlock RPC error');
   }
   return payload?.result;
+};
+
+// S1: server-issued seed for /api/game/session/start — takes MagicBlock RPC off the money
+// critical path. Cached 2s (module-level) to absorb bursts; 3s timeout; synthetic fallback
+// (crypto seed + Date.now() slot) if the RPC is unreachable/slow, so game start never blocks.
+let cachedServerGameSeed = null; // { seed, slot, expiresAtMs }
+const SERVER_GAME_SEED_CACHE_MS = 2000;
+const SERVER_GAME_SEED_RPC_TIMEOUT_MS = 3000;
+
+const getServerIssuedGameSeed = async () => {
+  const now = Date.now();
+  if (cachedServerGameSeed && cachedServerGameSeed.expiresAtMs > now) {
+    return { seed: cachedServerGameSeed.seed, slot: cachedServerGameSeed.slot, seedSource: 'server' };
+  }
+  try {
+    let timeoutHandle;
+    const result = await Promise.race([
+      callMagicBlockRpc('getLatestBlockhash', [{ commitment: 'confirmed' }]),
+      new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('getLatestBlockhash timeout')), SERVER_GAME_SEED_RPC_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timeoutHandle));
+    const blockhash = typeof result?.value?.blockhash === 'string' ? result.value.blockhash : '';
+    const slot = Number(result?.context?.slot);
+    if (!blockhash || !Number.isInteger(slot) || slot <= 0) {
+      throw new Error('invalid getLatestBlockhash result');
+    }
+    cachedServerGameSeed = { seed: blockhash, slot, expiresAtMs: now + SERVER_GAME_SEED_CACHE_MS };
+    return { seed: blockhash, slot, seedSource: 'server' };
+  } catch {
+    return {
+      seed: crypto.randomBytes(32).toString('hex'),
+      slot: Date.now(),
+      seedSource: 'synthetic',
+    };
+  }
 };
 
 const verifyMagicBlockSeedSlot = async (seed, slot) => {
@@ -5803,6 +5842,7 @@ const ctx = createContext({
   verifyGameSessionToken,
   bindGameSessionTokenProof,
   redeemGameSessionToken,
+  getServerIssuedGameSeed,
   prismTransactions,
   feedItems,
   sybilInFlight,

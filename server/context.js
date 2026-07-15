@@ -205,6 +205,7 @@ const GAME_KEYS = [
   'verifyGameSessionToken',
   'bindGameSessionTokenProof',
   'redeemGameSessionToken',
+  'getServerIssuedGameSeed',
 ];
 
 function createFrozenSlice(rawConfig, keys, extras = {}) {
