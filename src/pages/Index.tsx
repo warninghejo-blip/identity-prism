@@ -2641,18 +2641,6 @@ const Index = () => {
     return () => clearTimeout(t);
   }, [curtainOpen, curtainDone]);
 
-  // Safety net: if the curtain is up but never gets dismissed via the normal
-  // readiness paths above, force it closed after a bounded timeout so users
-  // are never stuck behind the loading curtain forever.
-  useEffect(() => {
-    if (curtainDone) return;
-    const t = setTimeout(() => {
-      setCurtainOpen(true);
-      setCurtainDone(true);
-    }, 8000);
-    return () => clearTimeout(t);
-  }, [curtainDone]);
-
   // Only reset everything when explicitly going back to landing
   useEffect(() => {
     if (viewState === 'landing') {
