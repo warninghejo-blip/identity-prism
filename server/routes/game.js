@@ -186,7 +186,85 @@ function registerGameRoute(ctx) {
     verifyGameSessionToken,
     bindGameSessionTokenProof,
     redeemGameSessionToken,
+    getServerIssuedGameSeed,
   } = game;
+
+  // S4: shared coin-credit core, used by both POST /api/game/coins (v1/v2 legacy earn call)
+  // and the S4 same-request credit path in POST /api/game/session. Never calls respondJson —
+  // callers translate { status, body } into their own response shape.
+  async function creditGameCoins(addr, delta, mode, session) {
+    // NTH-6: session.id keys the allowance ledger write below (gameSessionProofs.set(id, ...)).
+    // Guard against an old/legacy persisted record missing `id` — without this, a falsy id
+    // would silently write the credited-allowance update under an undefined key instead of the
+    // real session, letting coinsCredited accounting for that session go unrecorded (and
+    // potentially clobber whatever else lives under the `undefined` key in the map).
+    const sessionId = session?.id;
+    if (!sessionId) {
+      return { status: 500, body: { error: 'Invalid session record (missing id)' } };
+    }
+    if (session.usedForChallenge) {
+      return { status: 400, body: { error: 'Challenge game — coins earned from challenge result' } };
+    }
+    const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
+    const requestedMode = mode || session.gameMode || 'orbit';
+    const gameMode = VALID_GAME_MODES.has(requestedMode) ? requestedMode : 'orbit';
+    if (session.gameMode && session.gameMode !== gameMode) {
+      return { status: 400, body: { error: 'Session mode mismatch', reason: 'mode_mismatch' } };
+    }
+    let pinnedIdentityGameCoinMultiplier = Number.isFinite(Number(session.identityGameCoinMultiplier))
+      ? Math.max(1, Math.floor(Number(session.identityGameCoinMultiplier)))
+      : null;
+    if (!pinnedIdentityGameCoinMultiplier) {
+      const holderPerks = await getIdentityHolderPerks(addr);
+      pinnedIdentityGameCoinMultiplier = Math.max(1, Math.floor(Number(holderPerks.gameCoinMultiplier) || 1));
+      session.identityGameCoinMultiplier = pinnedIdentityGameCoinMultiplier;
+    }
+    const normalizedRequestedDelta = normalizeGameCoinDeltaForCap(delta, pinnedIdentityGameCoinMultiplier);
+    const maxDelta = Math.round((maxDeltaPerGame[gameMode] || 500) * gameSessionOnchainBonusMultiplier);
+    if (normalizedRequestedDelta > maxDelta) {
+      return { status: 400, body: { error: 'Delta exceeds maximum for game mode' } };
+    }
+    const alreadyCredited = Number(session.coinsCredited) || 0;
+    const remainingSessionAllowance = Math.max(0, Math.floor(maxDelta - alreadyCredited));
+    if (remainingSessionAllowance <= 0) {
+      return { status: 400, body: { error: 'Session coin allowance exhausted', reason: 'session_allowance_exhausted' } };
+    }
+    const todayCoins = getGameCoinsToday(addr);
+    const isHolder = mintedAddresses.has(addr);
+    const gameCap = isHolder ? dailyGameCoinCap : Math.floor(dailyGameCoinCap / 2);
+    if (todayCoins >= gameCap) {
+      return {
+        status: 200,
+        body: { address: addr, coins: getCoinBalance(addr), earned: 0, capped: true, reason: 'daily_cap_exceeded', dailyRemaining: 0 },
+      };
+    }
+    const requestedDelta = Math.min(delta, remainingSessionAllowance * pinnedIdentityGameCoinMultiplier);
+    let appliedDelta = requestedDelta;
+    if (todayCoins + requestedDelta > gameCap) {
+      appliedDelta = gameCap - todayCoins;
+    }
+    addGameCoinsToday(addr, appliedDelta);
+    session.coinsCredited = alreadyCredited + Math.ceil(appliedDelta / pinnedIdentityGameCoinMultiplier);
+    gameSessionProofs.set(sessionId, session);
+    persistGameSessionProofs();
+    const boost = getStakingBoost(addr);
+    const effectiveDelta = boost > 0 ? Math.floor(appliedDelta * (1 + boost)) : appliedDelta;
+    const current = getCoinBalance(addr);
+    const newBalance = current + effectiveDelta;
+    setCoinBalance(addr, newBalance);
+    addCoinEarned(addr, effectiveDelta);
+    return {
+      status: 200,
+      body: {
+        address: addr,
+        coins: newBalance,
+        earned: effectiveDelta,
+        dailyRemaining: Math.max(0, gameCap - getGameCoinsToday(addr)),
+        boost: boost > 0 ? boost : undefined,
+        idMultiplier: pinnedIdentityGameCoinMultiplier > 1 ? pinnedIdentityGameCoinMultiplier : undefined,
+      },
+    };
+  }
 
   return async function handleGameRoute(req, res, url, pathname) {
     if (pathname === '/api/game/session/start' && req.method === 'POST') {
@@ -213,13 +291,28 @@ function registerGameRoute(ctx) {
         if (!validGameModes.has(gameMode)) {
           return respondJson(res, 400, { error: 'invalid gameMode' });
         }
-        const seed = String(parsed.seed ?? '').trim();
-        const slot = Number(parsed.slot);
-        if (!seed || seed.length < 16) {
-          return respondJson(res, 400, { error: 'seed is required' });
-        }
-        if (!Number.isInteger(slot) || slot <= 0) {
-          return respondJson(res, 400, { error: 'slot must be a positive integer' });
+        // S1: seed/slot are now OPTIONAL. Legacy clients that still send both keep the
+        // exact old behavior (client-supplied seed, byte-for-byte). If omitted, the server
+        // issues its own seed via getServerIssuedGameSeed() (RPC blockhash, 2s cache, 3s
+        // timeout, synthetic crypto-random fallback on RPC failure).
+        let seed;
+        let slot;
+        let seedSource;
+        if (parsed.seed !== undefined || parsed.slot !== undefined) {
+          seed = String(parsed.seed ?? '').trim();
+          slot = Number(parsed.slot);
+          if (!seed || seed.length < 16) {
+            return respondJson(res, 400, { error: 'seed is required' });
+          }
+          if (!Number.isInteger(slot) || slot <= 0) {
+            return respondJson(res, 400, { error: 'slot must be a positive integer' });
+          }
+          seedSource = 'client';
+        } else {
+          const serverSeed = await getServerIssuedGameSeed();
+          seed = serverSeed.seed;
+          slot = serverSeed.slot;
+          seedSource = serverSeed.seedSource; // 'server' or 'synthetic' (RPC fallback)
         }
 
         const issued = issueGameSessionToken({
@@ -228,6 +321,7 @@ function registerGameRoute(ctx) {
           purpose: GAME_SESSION_RESULT_PURPOSE,
           seed,
           slot,
+          seedSource,
         });
         respondJson(res, 201, {
           sessionToken: issued.token,
@@ -236,6 +330,7 @@ function registerGameRoute(ctx) {
           seed,
           slot,
           gameMode,
+          seedSource,
         });
       } catch {
         respondJson(res, 500, { error: 'Failed to start game session' });
@@ -298,7 +393,23 @@ function registerGameRoute(ctx) {
 
         pruneGameSessionProofs();
 
-        const verification = await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
+        // S2: token-mode with a server-issued (or synthetic-fallback) seed skips the
+        // MagicBlock RPC wait entirely — the seed's authenticity is already guaranteed by
+        // the token binding (tokenRecord.seed/slot === payload.seed/slot, checked above),
+        // not by an RPC round-trip. Legacy mode and token-mode with a client-supplied seed
+        // are UNCHANGED (still await verifyMagicBlockSeedSlot) for byte-for-byte compat.
+        const serverIssuedFastPath = !legacyMode && (tokenRecord.seedSource === 'server' || tokenRecord.seedSource === 'synthetic');
+        const verification = serverIssuedFastPath
+          ? {
+              rpcHealthy: false,
+              slotFound: false,
+              seedMatchesSlot: false, // honest: not RPC-checked synchronously; NOT claimed true
+              slotBlockhash: null,
+              slotBlockTimeMs: null,
+              seedIssuedByServer: true,
+              reason: 'unverified',
+            }
+          : await verifyMagicBlockSeedSlot(payload.seed, payload.slot);
 
         let serverStartedAtMs;
         let serverEndedAtMs;
@@ -340,6 +451,41 @@ function registerGameRoute(ctx) {
         });
         const hash = crypto.createHash('sha256').update(canonical).digest('hex');
         const id = createGameSessionProofId(payload.slot, hash);
+
+        // S3 (MF-2 fix): idempotent re-submit keyed on the TOKEN, not the freshly recomputed
+        // proof id. `id` is derived from a canonical hash that embeds endedAtMs/serverEndedAtMs
+        // = Date.now(), so it is DIFFERENT on every request and can never equal
+        // tokenRecord.proofId from the first successful submission — the old
+        // `tokenRecord.proofId === id` check was unreachable, meaning a lost-response retry
+        // (coins already credited) always fell through to bind/redeem and got a spurious 409
+        // token_redeemed. Fix: if this token was already redeemed, load the ORIGINAL saved
+        // entry by tokenRecord.proofId and compare the request-stable fields (everything that
+        // isn't wall-clock timing, which legitimately differs between the original request and
+        // a retry). If they match, this is a genuine retry of the same result — replay the
+        // saved session+credit as 200, no double-credit. If they DON'T match (e.g. a different
+        // score/txSignature reusing a spent token), fall through to the normal bind/redeem path
+        // below, which correctly 409s.
+        if (!legacyMode && tokenRecord.redeemedAt && tokenRecord.proofId) {
+          const savedEntry = gameSessionProofs.get(tokenRecord.proofId);
+          if (
+            savedEntry
+            && savedEntry.walletAddress === payload.walletAddress
+            && savedEntry.seed === payload.seed
+            && savedEntry.slot === payload.slot
+            && savedEntry.gameMode === payload.gameMode
+            && savedEntry.score === payload.score
+            && savedEntry.survivalTime === payload.survivalTime
+            && (savedEntry.txSignature ?? null) === (payload.txSignature ?? null)
+          ) {
+            const idempotentBody = { session: toPublicGameSessionProof(savedEntry) };
+            if (savedEntry.creditResult) {
+              idempotentBody.credit = { ...savedEntry.creditResult.body, alreadyCredited: true };
+            }
+            respondJson(res, 200, idempotentBody);
+            return true;
+          }
+        }
+
         const isDestroyerMode = payload.gameMode === 'destroyer';
         const isGravityMode = payload.gameMode === 'gravity';
         const durationSec = Math.max(1, durationMs / 1000);
@@ -363,24 +509,42 @@ function registerGameRoute(ctx) {
           ? Math.abs(serverStartedAtMs - Number(verification.slotBlockTimeMs))
           : 0;
         const seedTimeValid = !Number.isFinite(Number(verification.slotBlockTimeMs)) || seedStartDeltaMs <= maxSeedStartDriftMs;
-        const verified =
-          timingVerified && verification.seedMatchesSlot && seedTimeValid && scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
         const nowIso = new Date().toISOString();
         const baseUrl = getBaseUrl(req);
         const proofUrl = baseUrl ? `${baseUrl}/api/game/session/${encodeURIComponent(id)}` : null;
 
-        const seedDeltaReason = seedTimeValid ? '' : `; seed/start delta=${Math.round(seedStartDeltaMs / 1000)}s`;
-        const timingReason = timingVerified ? '' : '; server-timed duration exceeds maximum';
-        const reason = verified
-          ? 'Seed matches MagicBlock slot and score is valid for server-authoritative duration'
-          : `${verification.reason}; score delta=${scoreDelta}s${seedDeltaReason}${timingReason}`;
+        let verified;
+        let reason;
+        if (serverIssuedFastPath) {
+          // Seed is authentic by construction (server issued it and bound it to the token);
+          // local, server-authoritative checks only — no RPC round-trip on the money path.
+          verified = timingVerified && scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
+          const timingReason = timingVerified ? '' : '; server-timed duration exceeds maximum';
+          reason = verified
+            ? 'Server-issued seed; server-authoritative timing verified'
+            : `Server-issued seed; server-authoritative timing verified but result rejected; score delta=${scoreDelta}s${timingReason}`;
+        } else {
+          verified =
+            timingVerified && verification.seedMatchesSlot && seedTimeValid && scoreDelta <= scoreDeltaToleranceSec && modeScoreValid;
+          const seedDeltaReason = seedTimeValid ? '' : `; seed/start delta=${Math.round(seedStartDeltaMs / 1000)}s`;
+          const timingReason = timingVerified ? '' : '; server-timed duration exceeds maximum';
+          reason = verified
+            ? 'Seed matches MagicBlock slot and score is valid for server-authoritative duration'
+            : `${verification.reason}; score delta=${scoreDelta}s${seedDeltaReason}${timingReason}`;
+        }
 
-        for (const [key, prev] of gameSessionProofs) {
-          if (prev && prev.walletAddress === payload.walletAddress && prev.slot === payload.slot && key !== id) {
-            if ((Number(prev.coinsCredited) || 0) > 0 || prev.usedForTournament || prev.usedForChallenge || prev.usedForLeaderboard) {
-              return respondJson(res, 409, { error: 'A session for this slot was already registered and used', reason: 'slot_already_used' });
+        // S2: slot-dedup only applies to legacy submissions. Token-mode single-use is
+        // already guaranteed by the bind/redeem below; applying this here too would give
+        // false 'slot_already_used' on fast restarts against the 2s server-seed cache
+        // (two legitimate sessions could share a cached seed/slot pair).
+        if (legacyMode) {
+          for (const [key, prev] of gameSessionProofs) {
+            if (prev && prev.walletAddress === payload.walletAddress && prev.slot === payload.slot && key !== id) {
+              if ((Number(prev.coinsCredited) || 0) > 0 || prev.usedForTournament || prev.usedForChallenge || prev.usedForLeaderboard) {
+                return respondJson(res, 409, { error: 'A session for this slot was already registered and used', reason: 'slot_already_used' });
+              }
+              gameSessionProofs.delete(key); // honest retry / re-register of an UNUSED session — replace it
             }
-            gameSessionProofs.delete(key); // honest retry / re-register of an UNUSED session — replace it
           }
         }
 
@@ -424,6 +588,7 @@ function registerGameRoute(ctx) {
           verified,
           timingVerified,
           gameMode: payload.gameMode,
+          txSignature: payload.txSignature ?? null, // MF-2: needed to compare stable fields on idempotent replay
           proofUrl,
           verification: {
             ...verification,
@@ -443,6 +608,8 @@ function registerGameRoute(ctx) {
           sessionPurpose: legacyMode ? null : tokenRecord.purpose,
           sessionReferenceId: legacyMode ? null : tokenRecord.referenceId,
           sessionTokenExpiresAtMs: legacyMode ? null : tokenRecord.expiresAtMs,
+          seedSource: legacyMode ? 'client' : (tokenRecord.seedSource || 'client'),
+          creditResult: null, // S4: filled below on first creation only; replay returns this saved value
         };
 
         if (gameSessionProofs.size >= maxGameSessionProofs) {
@@ -461,7 +628,48 @@ function registerGameRoute(ctx) {
         }
         gameSessionProofs.set(id, entry);
         persistGameSessionProofs();
-        respondJson(res, 200, { session: toPublicGameSessionProof(entry) });
+
+        // S4: atomic same-request credit. Only on FIRST creation of this entry (the S3
+        // idempotent-replay branch above already returned before this point on retries),
+        // only when verified and not a challenge session, and only when the client asked
+        // for a delta at all (legacy clients that don't send coinsDelta keep using the
+        // separate /api/game/coins call — unaffected).
+        const coinsDelta = Number(parsed.coinsDelta);
+        let creditResult = null;
+        // NTH-2: only token-mode submits credit atomically here; legacy clients keep using the
+        // separate /api/game/coins endpoint (unaffected — this never ran for them anyway since
+        // legacy clients don't send coinsDelta, but this is explicit defense-in-depth).
+        if (!legacyMode && verified && !entry.usedForChallenge && Number.isInteger(coinsDelta) && coinsDelta > 0) {
+          creditResult = await creditGameCoins(payload.walletAddress, coinsDelta, payload.gameMode, entry);
+          entry.creditResult = creditResult;
+          gameSessionProofs.set(id, entry);
+          persistGameSessionProofs();
+        }
+
+        const responseBody = { session: toPublicGameSessionProof(entry) };
+        if (creditResult) {
+          responseBody.credit = { ...creditResult.body };
+        }
+        respondJson(res, 200, responseBody);
+
+        // S2: fire-and-forget MagicBlock decoration. Only for a genuine server-issued seed
+        // (seedSource === 'server' — a synthetic seed has nothing real to check against RPC).
+        // Purely cosmetic: updates entry.verification for the next GET /api/game/session/:id
+        // badge read; NEVER touches verified/coinsCredited/credit — money is already settled.
+        if (!legacyMode && tokenRecord.seedSource === 'server') {
+          verifyMagicBlockSeedSlot(payload.seed, payload.slot)
+            .then((decoration) => {
+              const current = gameSessionProofs.get(id);
+              if (!current) return;
+              gameSessionProofs.set(id, {
+                ...current,
+                verification: { ...current.verification, ...decoration },
+                lastVerifiedAt: new Date().toISOString(),
+              });
+              persistGameSessionProofs();
+            })
+            .catch(() => {});
+        }
       } catch {
         respondJson(res, 500, { error: 'Failed to register game session' });
       }
@@ -517,16 +725,28 @@ function registerGameRoute(ctx) {
           ? Math.abs((existing.startedAtMs || 0) - Number(verification.slotBlockTimeMs))
           : existing.seedStartDeltaMs ?? 0;
         const seedTimeValid = !Number.isFinite(Number(verification.slotBlockTimeMs)) || seedStartDeltaMs <= maxSeedStartDriftMs;
-        const verified =
+        const recomputedVerified =
           existing.timingVerified !== false
           && verification.seedMatchesSlot
           && seedTimeValid
           && existing.scoreDelta <= scoreDeltaToleranceSec
           && modeScoreValid;
+        // NTH-1: server/synthetic-issued seeds (seedSource !== 'client') were never picked by
+        // the client from a live MagicBlock block — their slot is a server-issued value (or
+        // Date.now() for the synthetic fallback), so this periodic getBlock re-check can
+        // legitimately fail to match even though the original submission was correctly
+        // verified server-side via the S2 fast path. Never let this re-verify DOWNGRADE an
+        // already-verified non-client-seed session (that would wrongly strip on-chain bonus
+        // eligibility); still allow an upgrade (false -> true) for any session.
+        const isNonClientSeed = Boolean(existing.seedSource) && existing.seedSource !== 'client';
+        const downgradeGuarded = isNonClientSeed && existing.verified === true && !recomputedVerified;
+        const verified = downgradeGuarded ? true : recomputedVerified;
         const seedDeltaReason = seedTimeValid ? '' : `; seed/start delta=${Math.round(seedStartDeltaMs / 1000)}s`;
-        const reason = verified
-          ? 'Seed matches MagicBlock slot and score delta is within tolerance'
-          : `${verification.reason}; score delta=${existing.scoreDelta}s${seedDeltaReason}`;
+        const reason = downgradeGuarded
+          ? 'Server-issued seed; keeping prior verified result (RPC re-check is not authoritative for non-client seeds)'
+          : verified
+            ? 'Seed matches MagicBlock slot and score delta is within tolerance'
+            : `${verification.reason}; score delta=${existing.scoreDelta}s${seedDeltaReason}`;
 
         const refreshed = {
           ...existing,
@@ -589,60 +809,12 @@ function registerGameRoute(ctx) {
             return respondJson(res, 400, { error: 'Invalid or unverified game session timing' });
           }
           if (session.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-          if (session.usedForChallenge) return respondJson(res, 400, { error: 'Challenge game — coins earned from challenge result' });
-          const VALID_GAME_MODES = new Set(['orbit', 'destroyer', 'gravity', 'wars', 'territory']);
-          const requestedMode = mode || session.gameMode || 'orbit';
-          const gameMode = VALID_GAME_MODES.has(requestedMode) ? requestedMode : 'orbit';
-          if (session.gameMode && session.gameMode !== gameMode) {
-            return respondJson(res, 400, { error: 'Session mode mismatch', reason: 'mode_mismatch' });
-          }
-          let pinnedIdentityGameCoinMultiplier = Number.isFinite(Number(session.identityGameCoinMultiplier))
-            ? Math.max(1, Math.floor(Number(session.identityGameCoinMultiplier)))
-            : null;
-          if (!pinnedIdentityGameCoinMultiplier) {
-            const holderPerks = await getIdentityHolderPerks(addr);
-            pinnedIdentityGameCoinMultiplier = Math.max(1, Math.floor(Number(holderPerks.gameCoinMultiplier) || 1));
-            session.identityGameCoinMultiplier = pinnedIdentityGameCoinMultiplier;
-          }
-          const normalizedRequestedDelta = normalizeGameCoinDeltaForCap(delta, pinnedIdentityGameCoinMultiplier);
-          const maxDelta = Math.round((maxDeltaPerGame[gameMode] || 500) * gameSessionOnchainBonusMultiplier);
-          if (normalizedRequestedDelta > maxDelta) {
-            return respondJson(res, 400, { error: 'Delta exceeds maximum for game mode' });
-          }
-          const alreadyCredited = Number(session.coinsCredited) || 0;
-          const remainingSessionAllowance = Math.max(0, Math.floor(maxDelta - alreadyCredited));
-          if (remainingSessionAllowance <= 0) {
-            return respondJson(res, 400, { error: 'Session coin allowance exhausted', reason: 'session_allowance_exhausted' });
-          }
-          const todayCoins = getGameCoinsToday(addr);
-          const isHolder = mintedAddresses.has(addr);
-          const gameCap = isHolder ? dailyGameCoinCap : Math.floor(dailyGameCoinCap / 2);
-          if (todayCoins >= gameCap) {
-            return respondJson(res, 200, { address: addr, coins: getCoinBalance(addr), earned: 0, capped: true, reason: 'daily_cap_exceeded', dailyRemaining: 0 });
-          }
-          const requestedDelta = Math.min(delta, remainingSessionAllowance * pinnedIdentityGameCoinMultiplier);
-          let appliedDelta = requestedDelta;
-          if (todayCoins + requestedDelta > gameCap) {
-            appliedDelta = gameCap - todayCoins;
-          }
-          addGameCoinsToday(addr, appliedDelta);
-          session.coinsCredited = alreadyCredited + Math.ceil(appliedDelta / pinnedIdentityGameCoinMultiplier);
-          gameSessionProofs.set(gameSessionId, session);
-          persistGameSessionProofs();
-          const boost = getStakingBoost(addr);
-          const effectiveDelta = boost > 0 ? Math.floor(appliedDelta * (1 + boost)) : appliedDelta;
-          const current = getCoinBalance(addr);
-          const newBalance = current + effectiveDelta;
-          setCoinBalance(addr, newBalance);
-          addCoinEarned(addr, effectiveDelta);
-          respondJson(res, 200, {
-            address: addr,
-            coins: newBalance,
-            earned: effectiveDelta,
-            dailyRemaining: Math.max(0, gameCap - getGameCoinsToday(addr)),
-            boost: boost > 0 ? boost : undefined,
-            idMultiplier: pinnedIdentityGameCoinMultiplier > 1 ? pinnedIdentityGameCoinMultiplier : undefined,
-          });
+          // S4: shared allowance core (also used by POST /api/game/session's same-request
+          // credit). session.coinsCredited is the single allowance ledger for this session
+          // id, so a same-request S4 credit and a follow-up /api/game/coins call (e.g. the
+          // on-chain ×1.5 bonus) can never double-spend — both draw from the same field.
+          const creditResult = await creditGameCoins(addr, delta, mode, session);
+          respondJson(res, creditResult.status, creditResult.body);
         } else {
           const absDelta = Math.abs(delta);
           const current = getCoinBalance(addr);
