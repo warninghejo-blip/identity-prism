@@ -17,6 +17,13 @@ const BLACKHOLE_METADATA_MAX_MINTS = 120;
 const BLACKHOLE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const BLACKHOLE_IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const BLACKHOLE_IMAGE_CACHE_MAX = 320;
+const BLACKHOLE_IMAGE_CACHE_ENTRY_MAX_BYTES = 2 * 1024 * 1024;
+// 1x1 transparent PNG served when every upstream image gateway/candidate fails,
+// so the UI shows a blank tile instead of a broken-image icon / hard error.
+const BLACKHOLE_IMAGE_PLACEHOLDER_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+  'base64',
+);
 const BLACKHOLE_IMAGE_FLATTEN_BG = { r: 96, g: 104, b: 120, alpha: 1 };
 const BLACKHOLE_IMAGE_ALLOWED_HOSTS = [
   'arweave.net',
@@ -592,6 +599,7 @@ const getCachedImage = (key) => {
 };
 
 const setCachedImage = (key, entry) => {
+  if (!entry?.buffer || entry.buffer.byteLength > BLACKHOLE_IMAGE_CACHE_ENTRY_MAX_BYTES) return;
   if (imageCache.size >= BLACKHOLE_IMAGE_CACHE_MAX) {
     const oldestKey = imageCache.keys().next().value;
     if (oldestKey) imageCache.delete(oldestKey);
@@ -655,6 +663,21 @@ const writeImageResponse = (res, entry) => {
     'X-Content-Type-Options': 'nosniff',
   });
   res.end(entry.buffer);
+};
+
+// Total upstream failure (every gateway/candidate for this image rejected or timed out): respond
+// 200 with a tiny placeholder instead of 502 so the client renders a blank tile, not a broken-image
+// icon. Short/no cache so the client retries soon and can pick up a real image once available.
+// Never written into imageCache — only genuine 2xx upstream bytes are cached there.
+const writeImagePlaceholderResponse = (res) => {
+  res.writeHead(200, {
+    'Content-Type': 'image/png',
+    'Content-Length': String(BLACKHOLE_IMAGE_PLACEHOLDER_PNG.byteLength),
+    'Cache-Control': 'public, max-age=60',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Image-Placeholder': '1',
+  });
+  res.end(BLACKHOLE_IMAGE_PLACEHOLDER_PNG);
 };
 
 const makeThumbnail = async (buffer, contentType) => {
@@ -1162,7 +1185,11 @@ function registerBlackholeRoute(ctx) {
             timeout: Boolean(imageResult.timeout),
             reason,
           });
-          respondJson(res, 502, { error: imageResult.timeout ? 'Image warming; retry shortly' : reason || 'Image fetch failed' });
+          // All gateway candidates failed/timed out (or the fast-response window elapsed while the
+          // background job is still racing them) — serve a placeholder instead of a hard 502 so the
+          // UI never shows a broken-image icon. The background job (if still running) will populate
+          // imageCache on success and a later request will get the real bytes.
+          writeImagePlaceholderResponse(res);
           return true;
         }
         const responseEntry = imageResult.value;
@@ -1171,7 +1198,7 @@ function registerBlackholeRoute(ctx) {
       } catch (error) {
         const reason = error?.errors?.find?.((entry) => entry?.message)?.message || error?.message;
         console.warn('[blackhole-image] failed', { mint: rawMint || undefined, elapsedMs: Date.now() - startedAt, reason });
-        respondJson(res, 502, { error: reason || 'Image fetch failed' });
+        writeImagePlaceholderResponse(res);
       }
       return true;
     }
