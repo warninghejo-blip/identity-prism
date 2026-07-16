@@ -2719,6 +2719,21 @@ const Index = () => {
     return () => clearTimeout(t);
   }, [curtainOpen, curtainDone]);
 
+  // Safety net: never leave the loading curtain (the 3 bouncing dots) up forever.
+  // Some paths (e.g. a freshly-minted wallet routing scanning -> 'ready' where the 3D
+  // scene never signals sceneReady) never satisfy everythingReady, so force-dismiss
+  // after a bounded timeout. Gated on viewState !== 'landing': on landing the same
+  // overlay renders the CONNECT WALLET screen and must stay (forcing it there blanks
+  // the landing). This only fires on scanning/ready/hub, where a stuck curtain is a bug.
+  useEffect(() => {
+    if (curtainDone || viewState === 'landing') return;
+    const t = setTimeout(() => {
+      setCurtainOpen(true);
+      setCurtainDone(true);
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [curtainDone, viewState]);
+
   // Only reset everything when explicitly going back to landing
   useEffect(() => {
     if (viewState === 'landing') {
