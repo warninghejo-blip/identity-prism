@@ -11,7 +11,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletReadyState } from '@solana/wallet-adapter-base';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 // mintIdentityPrism loaded dynamically in handleMint()
 import { extractMwaAddress, mwaAuthorizationCache } from '@/lib/mwaAuthorizationCache';
 import { SEEDVAULT_NAME } from '@/lib/SeedVaultAdapter';
@@ -711,13 +711,75 @@ const Index = () => {
   // Use the live adapter key when available, but fall back to the persisted
   // active address so balances still render if the mobile adapter drops state.
   useEffect(() => {
-    if (!balanceAddress) {
-      setSolBalance(null);
-      setSkrBalance(null);
-      return;
-    }
+    // Reset immediately on ANY change (including wallet→wallet switches, not just
+    // full disconnect) so the previous wallet's balance never renders stale while
+    // the new one is being fetched.
+    setSolBalance(null);
+    setSkrBalance(null);
+    if (!balanceAddress) return;
     let cancelled = false;
-    const timer = window.setTimeout(() => {
+
+    // Native-only JSON-RPC POST via CapacitorHttp — raw web3.js Connection uses the
+    // global fetch(), which is unreliable on the native Android WebView (see
+    // fetchFastProfileJson in useWalletData.ts). Retries a couple of times before
+    // giving up, so a single transient flake / proxy rate-limit blip doesn't
+    // permanently blank the balance.
+    const rpcCallNative = async (method: string, params: unknown[]): Promise<unknown> => {
+      const url = getHeliusRpcUrl(balanceAddress) || 'https://api.mainnet-beta.solana.com';
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const proxyHeaders = getHeliusProxyHeaders(balanceAddress);
+      if (proxyHeaders) Object.assign(headers, proxyHeaders);
+      const attempts = 2;
+      let lastError: unknown;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+          const response = await CapacitorHttp.post({
+            url,
+            headers,
+            data: { jsonrpc: '2.0', id: method, method, params },
+            responseType: 'json',
+            connectTimeout: 3_500,
+            readTimeout: 4_500,
+          });
+          if (response.status < 200 || response.status >= 300) {
+            throw new Error(`RPC_${method}_${response.status}`);
+          }
+          const data =
+            typeof response.data === 'string' ? JSON.parse(response.data || 'null') : response.data;
+          if (data?.error) throw new Error(`RPC_${method}_ERROR`);
+          return data?.result;
+        } catch (error) {
+          lastError = error;
+          if (attempt < attempts - 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 600));
+          }
+        }
+      }
+      throw lastError;
+    };
+
+    const fetchNative = async () => {
+      try {
+        const result = (await rpcCallNative('getBalance', [balanceAddress])) as { value?: number } | undefined;
+        if (!cancelled && typeof result?.value === 'number') setSolBalance(result.value / 1e9);
+        else if (!cancelled) setSolBalance(null);
+      } catch {
+        if (!cancelled) setSolBalance(null);
+      }
+      try {
+        const result = (await rpcCallNative('getTokenAccountsByOwner', [
+          balanceAddress,
+          { mint: SEEKER_TOKEN.MINT },
+          { encoding: 'jsonParsed' },
+        ])) as { value?: Array<{ account: { data: { parsed: { info: { tokenAmount: { uiAmount: number } } } } } }> } | undefined;
+        const amount = result?.value?.[0]?.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+        if (!cancelled) setSkrBalance(amount);
+      } catch {
+        if (!cancelled) setSkrBalance(null);
+      }
+    };
+
+    const fetchWeb = () => {
       const owner = new PublicKey(balanceAddress);
       const conn = new Connection(
         getHeliusRpcUrl(balanceAddress) || 'https://api.mainnet-beta.solana.com',
@@ -745,12 +807,28 @@ const Index = () => {
       } catch {
         setSkrBalance(null);
       }
+    };
+
+    const timer = window.setTimeout(() => {
+      if (Capacitor.isNativePlatform()) {
+        fetchNative();
+      } else {
+        fetchWeb();
+      }
     }, 1_500);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
   }, [balanceAddress]);
+
+  // Reset PRISM balance immediately on wallet/address change so the PRISM tab
+  // doesn't keep showing the previous wallet's stale balance while the fresh
+  // one is fetched below. Kept as its own effect (keyed only on activeAddress)
+  // so it doesn't fire — and flicker the balance — on every viewState change.
+  useEffect(() => {
+    setPrismBalance(null);
+  }, [activeAddress]);
 
   // Refresh coin balance when returning to hub/card (e.g. after challenge/game)
   // Direct server fetch — bypasses prefetch cache to always show real balance
@@ -2652,7 +2730,8 @@ const Index = () => {
 
   const showOverlay = !curtainDone && !suppressLoadingRef.current;
   // Wallet balance of the selected currency — shown in the .identity-pay-price row above the button.
-  // (SKR balance is unavailable on the native shell, so it reads "—" there.)
+  // (SOL/SKR are fetched via CapacitorHttp with retry on the native shell — see the
+  // balanceAddress effect above — so "—" here just means the fetch hasn't resolved yet.)
   const activePaymentAmount =
     paymentToken === 'SOL'
       ? `${solBalance == null ? '—' : Number(solBalance).toFixed(3)} SOL`
