@@ -145,9 +145,12 @@ function registerBlinksRoute(ctx) {
   };
 
   // ── update-card prepare/finalize binding (P0 fix: no blind co-signing) ──
-  // Prepared update transactions are stored keyed by the sha256 of their
-  // unsigned message bytes. Finalize only ever co-signs a transaction whose
-  // message hash matches a stored entry (same model as mint finalize).
+  // Prepared update transactions are stored keyed by `${owner}:${assetId}`
+  // (NOT the message hash — real MWA/Seed Vault wallets legitimately append
+  // their own instructions when signing, so the message hash changes and a
+  // hash-keyed lookup would never find the pending entry). Finalize looks the
+  // entry up by owner+asset, then runs the same semantic verify used by mint
+  // finalize (fast-path raw hash match, else verifySignedAgainstPrepared).
   const MPL_CORE_PROGRAM_ID = 'CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d';
   const PENDING_UPDATE_TTL_MS = 10 * 60 * 1000;
   const PENDING_UPDATE_MAX_ENTRIES = 5000;
@@ -168,20 +171,22 @@ function registerBlinksRoute(ctx) {
     }
   };
 
-  const storePendingUpdate = (messageHash, entry) => {
-    if (!messageHash) return;
+  const storePendingUpdate = (key, entry) => {
+    if (!key) return;
     prunePendingUpdateCache();
-    pendingUpdateCache.set(messageHash, { ...entry, createdAt: Date.now() });
+    pendingUpdateCache.set(key, { ...entry, createdAt: Date.now() });
   };
 
-  const getPendingUpdate = (messageHash) => {
+  const getPendingUpdate = (key) => {
     prunePendingUpdateCache();
-    return pendingUpdateCache.get(messageHash) ?? null;
+    return pendingUpdateCache.get(key) ?? null;
   };
 
-  const deletePendingUpdate = (messageHash) => {
-    pendingUpdateCache.delete(messageHash);
+  const deletePendingUpdate = (key) => {
+    pendingUpdateCache.delete(key);
   };
+
+  const pendingUpdateKey = (owner, assetId) => `${owner}:${assetId}`;
 
   // Solana wire format: shortvec signature count, then 64 bytes per signature,
   // then the message bytes (the part every signer actually signs).
@@ -195,6 +200,156 @@ function registerBlinksRoute(ctx) {
     }
     return txBuf.slice(byteOffset + sigCount * 64);
   };
+
+  // Real MWA/Seed Vault wallets legitimately append their own instructions
+  // (guard / ComputeBudget, ~+114 bytes) when the user approves a transaction,
+  // so a raw whole-message byte hash can never match after signing on those
+  // wallets. These program ids are the ONLY ones a wallet is allowed to add on
+  // top of the server-prepared instructions — see verifySignedAgainstPrepared.
+  const DEFAULT_EXTRA_PROGRAM_ALLOWLIST = [
+    'ComputeBudget111111111111111111111111111111',
+    'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', // Memo v2
+    'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo', // Memo v1
+    'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95', // Lighthouse guard
+  ];
+  const EXTRA_PROGRAM_ALLOWLIST = new Set([
+    ...DEFAULT_EXTRA_PROGRAM_ALLOWLIST,
+    ...String(process.env.MINT_EXTRA_PROGRAM_ALLOWLIST || '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  ]);
+
+  // ── Semantic tamper-check (replaces the raw whole-message byte hash) ──
+  // SECURITY: this function IS the boundary that keeps free-mint / signature
+  // hijack impossible once the raw byte-hash fast-path no longer applies
+  // (i.e. the wallet mutated the tx, e.g. by adding its own guard ix). After
+  // this check passes, the server partial-signs the WHOLE message with the
+  // asset + collection-authority keys — so it must be impossible for a signed
+  // tx to reach that partialSign unless:
+  //   1. every server-prepared instruction is present, in order, BYTE-EXACT
+  //      (programId, data, and every key's pubkey/isSigner/isWritable) — a
+  //      wallet can never edit a server instruction, only append new ones;
+  //   2. blockhash, feePayer and the full required-signer set are unchanged;
+  //   3. any instruction the wallet added beyond the prepared set has a
+  //      programId on EXTRA_PROGRAM_ALLOWLIST AND does not reference any of
+  //      `protectedAccounts` (the accounts the server is about to co-sign:
+  //      the asset keypair, the collection authority, the collection mint).
+  // Do NOT weaken any of these three checks.
+  function verifySignedAgainstPrepared(preparedTxB64, signedTxB64, { protectedAccounts } = {}) {
+    let prepared;
+    let signed;
+    try {
+      prepared = Transaction.from(Buffer.from(preparedTxB64, 'base64'));
+      signed = Transaction.from(Buffer.from(signedTxB64, 'base64'));
+    } catch (error) {
+      return { ok: false, reason: 'parse_error', diff: { error: error?.message ?? String(error) } };
+    }
+
+    if (!prepared.recentBlockhash || !signed.recentBlockhash || signed.recentBlockhash !== prepared.recentBlockhash) {
+      return {
+        ok: false,
+        reason: 'blockhash_mismatch',
+        diff: { prepared: prepared.recentBlockhash, signed: signed.recentBlockhash },
+      };
+    }
+
+    const preparedFeePayer = prepared.feePayer?.toBase58?.();
+    const signedFeePayer = signed.feePayer?.toBase58?.();
+    if (!preparedFeePayer || !signedFeePayer || preparedFeePayer !== signedFeePayer) {
+      return {
+        ok: false,
+        reason: 'fee_payer_mismatch',
+        diff: { prepared: preparedFeePayer, signed: signedFeePayer },
+      };
+    }
+
+    const requiredSignerSet = (tx) => {
+      const set = new Set();
+      const feePayer = tx.feePayer?.toBase58?.();
+      if (feePayer) set.add(feePayer);
+      for (const ix of tx.instructions) {
+        for (const key of ix.keys) {
+          if (key.isSigner) set.add(key.pubkey.toBase58());
+        }
+      }
+      return set;
+    };
+    const preparedSigners = requiredSignerSet(prepared);
+    const signedSigners = requiredSignerSet(signed);
+    for (const signer of signedSigners) {
+      if (!preparedSigners.has(signer)) {
+        return { ok: false, reason: 'extra_signer', diff: { signer } };
+      }
+    }
+    for (const signer of preparedSigners) {
+      if (!signedSigners.has(signer)) {
+        return { ok: false, reason: 'missing_signer', diff: { signer } };
+      }
+    }
+
+    const instructionsEqual = (a, b) => {
+      if (!a.programId.equals(b.programId)) return false;
+      if (Buffer.compare(Buffer.from(a.data), Buffer.from(b.data)) !== 0) return false;
+      if (a.keys.length !== b.keys.length) return false;
+      for (let i = 0; i < a.keys.length; i += 1) {
+        const keyA = a.keys[i];
+        const keyB = b.keys[i];
+        if (!keyA.pubkey.equals(keyB.pubkey)) return false;
+        if (Boolean(keyA.isSigner) !== Boolean(keyB.isSigner)) return false;
+        if (Boolean(keyA.isWritable) !== Boolean(keyB.isWritable)) return false;
+      }
+      return true;
+    };
+
+    // Walk signed.instructions with a cursor so prepared instructions must
+    // match, byte-exact, as an ORDERED subsequence of signed.instructions.
+    const matchedSigned = new Array(signed.instructions.length).fill(false);
+    let cursor = 0;
+    for (const preparedIx of prepared.instructions) {
+      let foundAt = -1;
+      for (let i = cursor; i < signed.instructions.length; i += 1) {
+        if (matchedSigned[i]) continue;
+        if (instructionsEqual(preparedIx, signed.instructions[i])) {
+          foundAt = i;
+          break;
+        }
+      }
+      if (foundAt === -1) {
+        return {
+          ok: false,
+          reason: 'missing_prepared_ix',
+          diff: { programId: preparedIx.programId.toBase58() },
+        };
+      }
+      matchedSigned[foundAt] = true;
+      cursor = foundAt + 1;
+    }
+
+    const protectedSet = new Set(
+      (protectedAccounts || []).filter(Boolean).map((pubkey) => pubkey.toBase58()),
+    );
+    for (let i = 0; i < signed.instructions.length; i += 1) {
+      if (matchedSigned[i]) continue;
+      const extraIx = signed.instructions[i];
+      const programId = extraIx.programId.toBase58();
+      if (!EXTRA_PROGRAM_ALLOWLIST.has(programId)) {
+        return { ok: false, reason: 'disallowed_extra_ix', diff: { programId } };
+      }
+      for (const key of extraIx.keys) {
+        const pubkeyStr = key.pubkey.toBase58();
+        if (protectedSet.has(pubkeyStr)) {
+          return {
+            ok: false,
+            reason: 'extra_ix_touches_protected_account',
+            diff: { programId, account: pubkeyStr },
+          };
+        }
+      }
+    }
+
+    return { ok: true };
+  }
 
   const withOperationTimeout = (promise, timeoutMs, message) => {
     let timeoutId;
@@ -991,8 +1146,21 @@ function registerBlinksRoute(ctx) {
             return true;
           }
 
-          // FIX 2: verify signed tx message bytes match the unsigned tx stored at prepare time
-          if (pending.unsignedMessageHash) {
+          // FIX 2 / tamper-fix: verify the signed tx against the unsigned tx stored at
+          // prepare time. Fast path: raw whole-message byte hash (browser wallets that
+          // don't mutate the tx). If that doesn't match — which real MWA/Seed Vault
+          // wallets legitimately cause by appending their own guard/ComputeBudget
+          // instructions — fall back to a semantic verify: every server-prepared
+          // instruction must be present byte-exact, and any extra wallet-added
+          // instruction must be allowlisted and must not touch the accounts the
+          // server is about to co-sign with (asset, collection authority, collection).
+          // Fail-closed: a pending mint MUST carry the message-hash binding. If it's
+          // absent we cannot verify the signed tx, so reject rather than blind-co-sign.
+          if (!pending.unsignedMessageHash) {
+            respondJson(res, 400, { error: 'Malformed pending mint', requestId: payloadRequestId });
+            return true;
+          }
+          {
             const txBuf = Buffer.from(signedTransaction, 'base64');
             let sigCount = 0;
             let byteOffset = 0;
@@ -1004,13 +1172,27 @@ function registerBlinksRoute(ctx) {
             const msgBytes = txBuf.slice(byteOffset + sigCount * 64);
             const computedHash = crypto.createHash('sha256').update(msgBytes).digest('hex');
             if (computedHash !== pending.unsignedMessageHash) {
-              console.warn('[mint-cnft] finalize: tx message hash mismatch — possible tampering', {
+              const verifyAssetKeypair = Keypair.fromSecretKey(Uint8Array.from(pending.assetSecret));
+              const verifyCollectionAuthorityKeypair = Keypair.fromSecretKey(collectionSecret);
+              const verifyCollectionMint = pending.collectionMint || coreCollection;
+              const protectedAccounts = [
+                verifyAssetKeypair.publicKey,
+                verifyCollectionAuthorityKeypair.publicKey,
+                ...(verifyCollectionMint ? [new PublicKey(verifyCollectionMint)] : []),
+              ];
+              const verdict = verifySignedAgainstPrepared(pending.transaction, signedTransaction, { protectedAccounts });
+              if (!verdict.ok) {
+                console.warn('[mint-cnft] finalize: signed tx failed semantic verify', {
+                  requestId: payloadRequestId,
+                  reason: verdict.reason,
+                  diff: verdict.diff,
+                });
+                respondJson(res, 400, { error: 'Transaction message tampered', requestId: payloadRequestId });
+                return true;
+              }
+              console.info('[mint-cnft] finalize: accepted via semantic verify (wallet added allowlisted ix)', {
                 requestId: payloadRequestId,
-                expected: pending.unsignedMessageHash,
-                got: computedHash,
               });
-              respondJson(res, 400, { error: 'Transaction message tampered', requestId: payloadRequestId });
-              return true;
             }
           }
 
@@ -1539,6 +1721,9 @@ function registerBlinksRoute(ctx) {
           metadataUri: payload?.metadataUri || metadataUri,
           isRemint: remintMode,
           unsignedMessageHash,
+          // Needed on the finalize path to build `protectedAccounts` for
+          // verifySignedAgainstPrepared (semantic tamper-check fallback).
+          collectionMint: collectionMintKey.toBase58(),
           blockhash: latestBlockhash.blockhash,
           lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
         };
@@ -1700,12 +1885,16 @@ function registerBlinksRoute(ctx) {
             return true;
           }
 
-          const messageHash = crypto.createHash('sha256').update(extractMessageBytes(txBuf)).digest('hex');
-          const pending = getPendingUpdate(messageHash);
+          // Pending entries are keyed by owner+asset, NOT by message hash — a real
+          // MWA/Seed Vault wallet legitimately appends its own instructions when
+          // signing (guard/ComputeBudget), which changes the message bytes and
+          // would make a hash-keyed lookup never find the entry.
+          const pendingKey = pendingUpdateKey(ownerKey.toBase58(), assetId);
+          const pending = getPendingUpdate(pendingKey);
           if (!pending) {
-            console.warn('[update-card] finalize: unknown or expired message hash — rejecting', {
+            console.warn('[update-card] finalize: unknown or expired pending update — rejecting', {
               ownerAddress,
-              messageHash: messageHash.slice(0, 16),
+              assetId,
             });
             respondJson(res, 400, { error: 'Unknown or expired update transaction. Please retry the update.' });
             return true;
@@ -1715,52 +1904,39 @@ function registerBlinksRoute(ctx) {
             return true;
           }
 
-          // Defense-in-depth: re-validate instruction contents even though the
-          // hash binding already guarantees the message is byte-identical to
-          // the transaction built at prepare time. Allowed shape: exactly one
-          // owner→treasury fee transfer + mpl-core instruction(s) touching the
-          // prepared asset, collection and collection authority. Nothing else.
-          const systemProgramId = SystemProgram.programId.toBase58();
-          const expectedFeeLamports = BigInt(Math.round(updateFeeSol * lamportsPerSol));
-          const collectionAuthPubkey = collectionAuthorityKeypair.publicKey.toBase58();
-          let feeTransfers = 0;
-          let coreInstructions = 0;
-          let instructionsValid = txParsed.instructions.length >= 2;
-          for (const ix of (instructionsValid ? txParsed.instructions : [])) {
-            const programId = ix.programId.toBase58();
-            if (programId === systemProgramId) {
-              const data = Buffer.from(ix.data);
-              const isExpectedFeeTransfer = data.length === 12
-                && data.readUInt32LE(0) === 2 // SystemProgram Transfer
-                && data.readBigUInt64LE(4) === expectedFeeLamports
-                && ix.keys.length >= 2
-                && ix.keys[0].pubkey.toBase58() === pending.owner
-                && ix.keys[1].pubkey.toBase58() === treasuryKey.toBase58();
-              if (!isExpectedFeeTransfer) {
-                instructionsValid = false;
-                break;
-              }
-              feeTransfers += 1;
-            } else if (programId === MPL_CORE_PROGRAM_ID) {
-              const keySet = new Set(ix.keys.map((key) => key.pubkey.toBase58()));
-              if (!keySet.has(pending.assetId) || !keySet.has(coreCollection) || !keySet.has(collectionAuthPubkey)) {
-                instructionsValid = false;
-                break;
-              }
-              coreInstructions += 1;
-            } else {
-              instructionsValid = false;
-              break;
+          // FIX 2 / tamper-fix: same semantic verify as mint finalize. Fast path:
+          // raw whole-message byte hash (browser wallets that don't mutate the
+          // tx). Otherwise fall back to verifySignedAgainstPrepared, which allows
+          // wallet-added instructions ONLY if their programId is allowlisted AND
+          // they don't touch the accounts the server is about to co-sign with
+          // (asset, collection authority, collection mint) — this replaces the
+          // old hand-rolled "exactly fee-transfer + mpl-core" instruction loop,
+          // which rejected legitimate wallet-added guard/ComputeBudget ix.
+          const messageHash = crypto.createHash('sha256').update(extractMessageBytes(txBuf)).digest('hex');
+          if (!pending.unsignedMessageHash || messageHash !== pending.unsignedMessageHash) {
+            const protectedAccounts = [
+              collectionAuthorityKeypair.publicKey,
+              new PublicKey(pending.assetId),
+              collectionMintKey,
+            ];
+            const verdict = verifySignedAgainstPrepared(pending.transaction, signedTransaction, { protectedAccounts });
+            if (!verdict.ok) {
+              console.warn('[update-card] finalize: signed tx failed semantic verify', {
+                ownerAddress,
+                assetId: pending.assetId,
+                reason: verdict.reason,
+                diff: verdict.diff,
+              });
+              respondJson(res, 400, { error: 'Transaction does not match the prepared update' });
+              return true;
             }
-          }
-          if (!instructionsValid || feeTransfers !== 1 || coreInstructions < 1
-            || !txParsed.feePayer || txParsed.feePayer.toBase58() !== pending.owner) {
-            console.warn('[update-card] finalize: instruction validation failed', {
+            console.info('[update-card] finalize: accepted via semantic verify (wallet added allowlisted ix)', {
               ownerAddress,
               assetId: pending.assetId,
-              feeTransfers,
-              coreInstructions,
             });
+          }
+
+          if (!txParsed.feePayer || txParsed.feePayer.toBase58() !== pending.owner) {
             respondJson(res, 400, { error: 'Transaction does not match the prepared update' });
             return true;
           }
@@ -1794,7 +1970,7 @@ function registerBlinksRoute(ctx) {
           if (pending.blockhash) {
             const validity = await connection.isBlockhashValid(pending.blockhash, 'confirmed').catch(() => null);
             if (validity?.value === false) {
-              deletePendingUpdate(messageHash);
+              deletePendingUpdate(pendingKey);
               respondJson(res, 409, { error: 'Update transaction expired. Please retry.', code: 'BLOCKHASH_EXPIRED' });
               return true;
             }
@@ -1821,7 +1997,7 @@ function registerBlinksRoute(ctx) {
               skipPreflight: false,
             });
             await connection.confirmTransaction(signature, 'confirmed');
-            deletePendingUpdate(messageHash);
+            deletePendingUpdate(pendingKey);
             const walletEntry = walletDatabase.get(ownerAddress) || { address: ownerAddress };
             const currentMint = walletEntry.mint && typeof walletEntry.mint === 'object' ? walletEntry.mint : {};
             walletEntry.mint = {
@@ -1961,13 +2137,17 @@ function registerBlinksRoute(ctx) {
         // to a stored entry, so the collection authority can never be tricked
         // into signing a transaction this server did not build.
         const unsignedMessageHash = crypto.createHash('sha256').update(extractMessageBytes(serializedUpdate)).digest('hex');
-        storePendingUpdate(unsignedMessageHash, {
+        storePendingUpdate(pendingUpdateKey(ownerKey.toBase58(), assetId), {
           owner: ownerKey.toBase58(),
           assetId,
           metadataUri,
           name: newName,
           blockhash: latestBlockhash.blockhash,
           lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+          // Needed by finalize for the raw-hash fast path and (on mismatch,
+          // i.e. the wallet mutated the tx) the semantic verify fallback.
+          unsignedMessageHash,
+          transaction: serializedUpdate.toString('base64'),
         });
 
         // Server-side preflight so mobile clients (throttled WebView RPC) can
