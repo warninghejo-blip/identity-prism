@@ -311,12 +311,6 @@ function MiniPassport({
 
       {/* ═══ MOBILE: clean compact layout ═══ */}
       <div className="lg:hidden relative p-3">
-        {/* Tap cue: whole card is clickable */}
-        <ChevronRight
-          size={14}
-          aria-hidden="true"
-          className="absolute top-2 right-2 text-cyan-200/40 transition-colors group-hover:text-cyan-200/70"
-        />
 
         {/* Row 1: Score ring + Tier left, Sybil + Coins right */}
         <div className="flex items-start gap-2.5">
@@ -502,8 +496,8 @@ function MiniPassport({
         {/* MRZ */}
         <div className="mt-2 pt-1 border-t border-white/[0.04]">
           <div className="text-[7px] font-mono text-white/[0.06] tracking-[0.08em] truncate select-none">{mrz}</div>
-          <div className="mt-1.5 flex justify-center">
-            <span className="passport-cta-pill inline-flex items-center gap-1 rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-cyan-100 transition-colors group-hover:bg-cyan-400/20 group-hover:border-cyan-300/50">
+          <div className="mt-2">
+            <span className="passport-cta-pill flex w-full items-center justify-center gap-1.5 rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-100 transition-colors group-hover:bg-cyan-400/20 group-hover:border-cyan-300/50">
               <span>Tap to reveal full card</span>
               <ChevronRight size={12} aria-hidden="true" />
             </span>
