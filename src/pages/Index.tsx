@@ -20,7 +20,7 @@ import SeedVaultAccountPicker from '@/components/SeedVaultAccountPicker';
 import '@/components/SeedVaultAccountPicker.css';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { AlertCircle, Coins, Loader2, RefreshCw, Share2 } from 'lucide-react';
+import { AlertCircle, ChevronRight, Coins, Loader2, RefreshCw, Share2 } from 'lucide-react';
 import LandingOverlay from '@/components/LandingOverlay';
 import HubReturnButton from '@/components/HubReturnButton';
 import { fadeOutTransition, startFadeTransition } from '@/lib/fadeTransition';
@@ -366,6 +366,8 @@ const Index = () => {
     null,
   );
   const [showWelcomeBack, setShowWelcomeBack] = useState(false);
+  const [showCardHint, setShowCardHint] = useState(false);
+  const cardHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [viewState, _setViewState] = useState<ViewState>(
     // Only init to the card view for a LIVE in-app "open card" nav. On a cold reopen the
     // /identity route + stale ?address= used to flash the ID card before the connection
@@ -2703,6 +2705,61 @@ const Index = () => {
       });
     }
   }, [viewState, activeAddress]);
+
+  // One-time coach-mark pointing at the mini-passport, for returning users who
+  // already completed onboarding (`ip_onboarding_v1`) but never got a nudge
+  // toward "tap the passport to open the full card". Separate flag so it fires
+  // once independently of the onboarding flow, and never overlaps it.
+  useEffect(() => {
+    if (viewState !== 'hub' || !activeAddress || showOnboarding) return;
+    let alreadySeen = true;
+    try {
+      alreadySeen = Boolean(localStorage.getItem('ip_card_hint_v1'));
+    } catch {
+      /* ignore */
+    }
+    if (alreadySeen) return;
+    const showTimer = setTimeout(() => setShowCardHint(true), 700);
+    return () => clearTimeout(showTimer);
+  }, [viewState, activeAddress, showOnboarding]);
+
+  const dismissCardHint = useCallback(() => {
+    setShowCardHint(false);
+    if (cardHintTimerRef.current) {
+      clearTimeout(cardHintTimerRef.current);
+      cardHintTimerRef.current = null;
+    }
+    try {
+      localStorage.setItem('ip_card_hint_v1', '1');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showCardHint) return;
+    cardHintTimerRef.current = setTimeout(() => dismissCardHint(), 5500);
+    return () => {
+      if (cardHintTimerRef.current) {
+        clearTimeout(cardHintTimerRef.current);
+        cardHintTimerRef.current = null;
+      }
+    };
+  }, [showCardHint, dismissCardHint]);
+
+  // Safety net: if new-user onboarding kicks in after the hint was already
+  // shown (race), hide the hint without burning the flag — it can still show
+  // on a later hub visit.
+  useEffect(() => {
+    if (showOnboarding && showCardHint) {
+      setShowCardHint(false);
+      if (cardHintTimerRef.current) {
+        clearTimeout(cardHintTimerRef.current);
+        cardHintTimerRef.current = null;
+      }
+    }
+  }, [showOnboarding, showCardHint]);
+
   const skipCurtain = isReturning || hasVisitedHub.current;
   const [curtainOpen, setCurtainOpen] = useState(skipCurtain);
   const [curtainDone, setCurtainDone] = useState(skipCurtain);
@@ -2807,6 +2864,23 @@ const Index = () => {
         <div style={{ position: 'fixed', inset: 0, background: '#050510' }} />
       ) : viewState === 'hub' && activeAddress ? (
         <React.Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#050510' }} />}>
+          {showCardHint && !showOnboarding && (
+            <div
+              className="fixed left-1/2 z-40 w-full max-w-xs -translate-x-1/2 px-4 pointer-events-none"
+              style={{ top: 'calc(env(safe-area-inset-top, 0px) + 68px)' }}
+            >
+              <button
+                type="button"
+                onClick={dismissCardHint}
+                className="pointer-events-auto flex w-full items-center gap-2 rounded-xl border border-cyan-300/30 bg-[#0b1220]/95 px-3 py-2.5 text-left shadow-[0_8px_24px_rgba(0,0,0,0.4)] backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+              >
+                <ChevronRight className="h-4 w-4 flex-shrink-0 animate-pulse text-cyan-300" aria-hidden="true" />
+                <span className="text-[11px] font-medium text-cyan-50">
+                  Tap your passport to open your Identity card
+                </span>
+              </button>
+            </div>
+          )}
           <CosmicHub
             walletAddress={activeAddress}
             prismBalance={prismBalance}
