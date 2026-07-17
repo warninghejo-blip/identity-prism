@@ -6,7 +6,7 @@ publisher:
 app:
   name: Identity Prism
   address: AKuwHGvPHVe4E57stGnkd3ciVXs5LeVqBgxUuiDhmV3C
-  android_package: com.identityprism.app
+  android_package: com.identityprism2.app
   urls:
     license_url: https://identityprism.xyz/terms.html
     copyright_url: https://identityprism.xyz/copyright.html
@@ -64,6 +64,12 @@ release:
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
+        v2.0.2: MagicBlock fast game-proof — instant score verification across all 3
+        games (was slow/delayed). Fixed mint and identity-update transaction issues.
+        Fixed loading-overlay getting stuck. Fixed wallet balance display. Fixed Vault
+        buy flow. Coin purchases now verified on-chain. Improved identity-card
+        discoverability with a clearer call-to-action and hint.
+
         v4.0: Cosmic Defender — new top-down shooter mode in Prism League (4 levels,
         bosses, powerups, 9 achievements). Update Card — update NFT metadata in-place
         without burning (~0.0005 SOL), protected by Co-Sign Authority Guard. Custom GLSL
@@ -75,14 +81,14 @@ release:
         reconnection after dismissing connection dialog.
       saga_features: Full MWA support for Seeker — native signing, dismiss detection, optimized mobile UX.
   android_details:
-    cert_fingerprint: 5bbac607efb8bbe986fe0c1e940ae029522a1b3a80c35b26bf543889c3782af0
+    cert_fingerprint: cded72ef5993770a96f7d42840480b190b07cae757655fa7909e8a1f008d9aaa
     min_sdk: 24
-    version: 1.0.32
-    version_code: 43
+    version: 2.0.2
+    version_code: 3
     locales:
       - en-US
 solana_mobile_dapp_publisher_portal:
-  google_store_package: com.identityprism.app
+  google_store_package: com.identityprism2.app
   testing_instructions: |
     1. Open the app and connect any Solana wallet via MWA (Seeker recommended).
     2. Wait for the scan — the space curtain should open to reveal the card.

@@ -9,5 +9,15 @@
         "9E:25:C0:C8:C6:D1:A7:59:CE:1B:49:D2:B7:6B:09:54:CC:51:BD:54:F4:FC:E1:97:A6:37:6F:62:ED:DC:D7:1B"
       ]
     }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.identityprism2.app",
+      "sha256_cert_fingerprints": [
+        "CD:ED:72:EF:59:93:77:0A:96:F7:D4:28:40:48:0B:19:0B:07:CA:E7:57:65:5F:A7:90:9E:8A:1F:00:8D:9A:AA"
+      ]
+    }
   }
 ]
