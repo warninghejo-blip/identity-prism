@@ -836,10 +836,15 @@ const Index = () => {
     if ((viewState !== 'hub' && viewState !== 'ready') || !activeAddress) return;
     const base = getApiBase();
     if (!base) return;
+    let cancelled = false;
+    const requestedAddress = activeAddress;
     fetchApiJson<PrismBalance>(`${base}/api/prism/balance?address=${encodeURIComponent(activeAddress)}`, {
       timeoutMs: 4_500,
     })
       .then((data) => {
+        // Guard against a stale response: if the wallet changed while this
+        // request was in flight, don't overwrite the new wallet's balance.
+        if (cancelled || data?.address !== requestedAddress) return;
         if (data?.balance != null) {
           setPrismBalance(data);
           try {
@@ -848,6 +853,9 @@ const Index = () => {
         }
       })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [viewState, activeAddress]);
 
   useEffect(() => {
@@ -2728,6 +2736,10 @@ const Index = () => {
   useEffect(() => {
     if (curtainDone || viewState === 'landing') return;
     const t = setTimeout(() => {
+      // Guard against a stale closure: if the app transitioned to 'landing'
+      // while this timeout was queued, don't force-dismiss — that would
+      // re-blank the CONNECT WALLET screen after the landing-reset effect ran.
+      if (viewStateRef.current === 'landing') return;
       setCurtainOpen(true);
       setCurtainDone(true);
     }, 8000);

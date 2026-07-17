@@ -705,7 +705,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
             // SOL balance preflight — show a clear "Insufficient SOL" instead of an opaque
             // simulation/RPC error when the wallet can't cover the package price + fees.
             {
-              const requiredLamports = Math.floor(pkg.solPrice * 1e9) + 5_000_000; // price + ~0.005 SOL buffer
+              const requiredLamports = Math.floor(pkg.solPrice * 1e9) + 1_000_000; // price + ~0.001 SOL fee reserve
               let solLamports = -1;
               try {
                 solLamports = await vaultWithTimeout('getBalance(SOL preflight)', conn.getBalance(new SolPK(signerAddress)), 8_000);
@@ -937,7 +937,7 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
               : selectedSkr
                 ? `${selectedSkr.toLocaleString()} SKR`
                 : 'SKR'}{' '}
-            to the Identity Prism treasury. Purchases are final after on-chain confirmation.
+            to the Identity Prism treasury. Purchases are final after on-chain confirmation. Your wallet may show a rounded total.
           </p>
           <Button
             type="button"
