@@ -50,6 +50,7 @@ import {
 } from '@/lib/prismCoin';
 import { trackWalletConnect, trackWalletDisconnect, trackMint } from '@/lib/analytics';
 import { formatMintCost } from '@/lib/mintPricing';
+import { isDemoMode, setDemoModeEnabled } from '@/lib/demoMode';
 const OnboardingModal = React.lazy(() => import('@/components/OnboardingModal'));
 const WelcomeBackModal = React.lazy(() => import('@/components/WelcomeBackModal'));
 
@@ -126,6 +127,7 @@ const NATIVE_SESSION_RESTORE_KEY = 'ip_native_wallet_session';
 const NATIVE_SESSION_RESTORE_WINDOW_MS = 90_000;
 const SEED_WALLET_INDEX_KEY = 'ip_seed_wallet_index';
 // SCANNING_MESSAGES moved to LandingOverlay.tsx
+const DEMO_ADDRESS = 'Gj6yhdjj459mNhokGJ7vbpjwJc9Dxm1WwFQjg1qhq1BQ';
 
 const readSeedWalletIndex = () => {
   try {
@@ -368,12 +370,15 @@ const Index = () => {
   const [showWelcomeBack, setShowWelcomeBack] = useState(false);
   const [showCardHint, setShowCardHint] = useState(false);
   const cardHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [demoMode, setDemoMode] = useState(() => isDemoMode());
   const [viewState, _setViewState] = useState<ViewState>(
     // Only init to the card view for a LIVE in-app "open card" nav. On a cold reopen the
     // /identity route + stale ?address= used to flash the ID card before the connection
     // check reset it to landing — gate that out (the route still reaches 'ready' after
     // connect via the post-scan logic).
-    shouldOpenCard && urlAddress
+    demoMode
+      ? 'hub'
+      : shouldOpenCard && urlAddress
       ? 'ready'
       : returningFromBH.current || returningFromGameJump.current || returningFromSubPage.current
         ? 'hub'
@@ -470,6 +475,8 @@ const Index = () => {
   // this account so no fresh PIN prompt is expected).
   const handleSeedAccountPicked = useCallback(
     async (address: string) => {
+      setDemoModeEnabled(false);
+      setDemoMode(false);
       setSeedPickerVisible(false);
       // Deliberate pick → re-arm auto-enter so we go straight to the scan (no intermediate
       // "ENTER COSMOS" tap) and drop any prior declined-sign flag. (NOTE: do NOT queue
@@ -494,6 +501,7 @@ const Index = () => {
 
   const prewarmJwt = useCallback(
     async (authWallet: AuthWalletLike, targetAddress: string, options?: { forceFresh?: boolean }) => {
+      if (isDemoMode()) return false;
       if (jwtPrewarmPromiseRef.current && jwtPrewarmInFlightAddressRef.current === targetAddress) {
         return jwtPrewarmPromiseRef.current;
       }
@@ -579,7 +587,9 @@ const Index = () => {
   // so the hub renders immediately (prevents blank frame behind fade overlay).
   // Fallback to sessionStorage when connectedAddress is not yet available (race condition fix).
   const [activeAddress, setActiveAddress] = useState<string | undefined>(
-    getJwtBackedAddress(urlAddress) ||
+    demoMode
+      ? DEMO_ADDRESS
+      : getJwtBackedAddress(urlAddress) ||
       (shouldResumeFromSubPage || shouldResumeFromBlackHole || shouldResumeFromGameJump
         ? getJwtBackedAddress(connectedAddress?.toBase58()) ||
           getJwtBackedAddress(
@@ -609,6 +619,38 @@ const Index = () => {
   }, [activeAddress]);
 
   useEffect(() => {
+    setDemoModeEnabled(demoMode);
+  }, [demoMode]);
+
+  const exitDemo = useCallback(() => {
+    setDemoModeEnabled(false);
+    setDemoMode(false);
+    setActiveAddress(undefined);
+    setPendingAutoEnterAddress(null);
+    setJwtDeclined(false);
+    hasReachedHub.current = false;
+    try {
+      sessionStorage.removeItem('prism_active_address');
+      localStorage.removeItem('prism_active_address');
+    } catch {
+      /* ignore */
+    }
+    setViewState('landing');
+  }, [setViewState]);
+
+  const enterDemo = useCallback(() => {
+    isDisconnectingRef.current = false;
+    setDemoModeEnabled(true);
+    setDemoMode(true);
+    setJwtDeclined(false);
+    setPendingAutoEnterAddress(null);
+    setActiveAddress(DEMO_ADDRESS);
+    hasReachedHub.current = true;
+    setViewState('hub');
+  }, [setViewState]);
+
+  useEffect(() => {
+    if (demoMode) return;
     if (!activeAddress || jwtSigning || isDisconnectingRef.current) return;
     if (getCachedJwt(activeAddress)) return;
     // SIWS one-shot just stored JWT для этого address — trust prewarm refs; не reset
@@ -623,9 +665,10 @@ const Index = () => {
     }
     setActiveAddress(undefined);
     setViewState('landing');
-  }, [activeAddress, jwtSigning, setViewState]);
+  }, [activeAddress, jwtSigning, setViewState, demoMode]);
 
   useEffect(() => {
+    if (demoMode) return;
     if (activeAddress || !isConnected || jwtSigning || isDisconnectingRef.current) return;
     const liveAddress = connectedAddress?.toBase58() ?? wallet.publicKey?.toBase58();
     const restoredAddress = liveAddress || readPersistedActiveAddress();
@@ -638,9 +681,10 @@ const Index = () => {
     if (viewStateRef.current === 'landing') {
       setViewState(forceIdentityCardRoute ? 'ready' : 'scanning');
     }
-  }, [activeAddress, isConnected, jwtSigning, connectedAddress, wallet.publicKey, forceIdentityCardRoute, setViewState]);
+  }, [activeAddress, isConnected, jwtSigning, connectedAddress, wallet.publicKey, forceIdentityCardRoute, setViewState, demoMode]);
 
   useEffect(() => {
+    if (demoMode) return;
     // Only auto-resume the last session when the seed exposes ≤1 wallet. With 2+ wallets
     // (resumeAllowed === false) skip the resume so the cold-launch picker lets the user choose.
     // null = wallet count not yet resolved → hold off until it is.
@@ -655,7 +699,7 @@ const Index = () => {
     if (viewStateRef.current === 'landing') {
       setViewState(forceIdentityCardRoute ? 'ready' : 'scanning');
     }
-  }, [activeAddress, jwtSigning, forceIdentityCardRoute, setViewState, resumeAllowed]);
+  }, [activeAddress, jwtSigning, forceIdentityCardRoute, setViewState, resumeAllowed, demoMode]);
 
   const recentWalletRestoreRef = useRef(hasRecentExternalWalletBackground() || hasRecentNativeWalletRestore());
   const [walletStable, setWalletStable] = useState(
@@ -938,6 +982,7 @@ const Index = () => {
   }, [dismissPreloader]);
 
   useEffect(() => {
+    if (demoMode) return;
     if (!urlAddress) return;
     try {
       new PublicKey(urlAddress);
@@ -966,7 +1011,7 @@ const Index = () => {
         setViewState('landing');
       }
     }
-  }, [urlAddress, activeAddress, viewState, jwtSigning, forceIdentityCardRoute]);
+  }, [urlAddress, activeAddress, viewState, jwtSigning, forceIdentityCardRoute, demoMode]);
 
   const userAgent = globalThis.navigator?.userAgent ?? '';
   const isCapacitor = Capacitor.isNativePlatform();
@@ -1116,6 +1161,7 @@ const Index = () => {
   }, [viewState]);
 
   const handleMobileConnect = useCallback(async (options?: { forceWalletPicker?: boolean }) => {
+    if (demoMode) exitDemo();
     let targetWallet = options?.forceWalletPicker ? (mobileWallet ?? availableWallets[0]) : preferredMobileWallet;
     let targetReady = options?.forceWalletPicker ? Boolean(mobileWallet ?? availableWallets[0]) : preferredMobileWalletReady;
 
@@ -1422,6 +1468,8 @@ const Index = () => {
     startMwaAssociationNudge,
     setWalletHandoff,
     prewarmJwt,
+    demoMode,
+    exitDemo,
   ]);
 
   useEffect(() => {
@@ -1447,6 +1495,7 @@ const Index = () => {
   ]);
 
   const handleDesktopConnect = useCallback(async () => {
+    if (demoMode) exitDemo();
     const targetWallet = preferredDesktopWallet;
     if (!targetWallet) {
       toast.error('Wallet not detected');
@@ -1549,6 +1598,8 @@ const Index = () => {
     setWalletModalVisible,
     wallet,
     prewarmJwt,
+    demoMode,
+    exitDemo,
   ]);
 
   const previewMode = import.meta.env.DEV && searchParams.has('preview');
@@ -1566,6 +1617,10 @@ const Index = () => {
   }, [address, balanceAddress, traits]);
 
   useEffect(() => {
+    if (demoMode) {
+      setJwtDeclined(false);
+      return;
+    }
     if (!resolvedAddress) return;
     if (suppressPassiveAuthRef.current) return;
     // Always re-check the JWT cache on resolvedAddress change. The early-return
@@ -1586,10 +1641,11 @@ const Index = () => {
       writeAuthFlowDebug({ stage: 'active_address_no_cached_jwt', address: resolvedAddress.slice(0, 8) });
       setJwtDeclined(true);
     });
-  }, [resolvedAddress]);
+  }, [resolvedAddress, demoMode]);
 
   // Pre-warm JWT right after wallet connects — one signature at connect time, not later in hub
   useEffect(() => {
+    if (demoMode) return;
     if (!resolvedAddress || !walletAddress || (!walletSignMessage && !walletSignIn)) return;
     if (suppressPassiveAuthRef.current) return;
     if (jwtPrewarmedRef.current === resolvedAddress) return;
@@ -1606,7 +1662,7 @@ const Index = () => {
     import('@/lib/prefetch').then(({ runPrefetch }) => runPrefetch(resolvedAddress));
     // Restore server-backed user data (loadout, scores, quests) into localStorage
     import('@/lib/userDataSync').then(({ loadFromServer }) => loadFromServer(resolvedAddress));
-  }, [resolvedAddress, walletAddress, walletSignMessage, walletSignIn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resolvedAddress, walletAddress, walletSignMessage, walletSignIn, demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset hasReachedHub when address changes (new wallet / reconnect)
   useEffect(() => {
@@ -1726,6 +1782,12 @@ const Index = () => {
   useEffect(() => {
     // During disconnect, don't let state machine override landing state
     if (isDisconnectingRef.current) return;
+
+    if (demoMode && resolvedAddress === DEMO_ADDRESS) {
+      setJwtDeclined(false);
+      setViewState(forceIdentityCardRoute ? 'ready' : 'hub');
+      return;
+    }
 
     if (jwtSigning) {
       setViewState('scanning');
@@ -1878,11 +1940,12 @@ const Index = () => {
         }
       }
     }
-  }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable, jwtSigning, forceIdentityCardRoute, isNewWallet]);
+  }, [resolvedAddress, isWarping, traits, fromBlackHole, walletStable, jwtSigning, forceIdentityCardRoute, isNewWallet, demoMode]);
 
   // Removed auto-warp effect
 
   useEffect(() => {
+    if (demoMode) return;
     if (!pendingAutoEnterAddress) return;
     if (suppressPassiveAuthRef.current) return;
     if (siwsInProgressRef.current) return;
@@ -1929,9 +1992,10 @@ const Index = () => {
     return () => {
       cancelled = true;
     };
-  }, [pendingAutoEnterAddress, connectedAddress, wallet, mobileWallet?.adapter, prewarmJwt, setViewState]);
+  }, [pendingAutoEnterAddress, connectedAddress, wallet, mobileWallet?.adapter, prewarmJwt, setViewState, demoMode]);
 
   useEffect(() => {
+    if (demoMode) return;
     if (activeAddress || !walletStable || !isConnected || jwtDeclined) return;
     if (suppressPassiveAuthRef.current) return;
     if (siwsInProgressRef.current) return;
@@ -1977,9 +2041,11 @@ const Index = () => {
     mobileWallet?.adapter,
     prewarmJwt,
     setViewState,
+    demoMode,
   ]);
 
   const handleEnter = async () => {
+    if (demoMode) exitDemo();
     if (!connectedAddress) return;
 
     const nextAddress = connectedAddress.toBase58();
@@ -2027,6 +2093,8 @@ const Index = () => {
   useEffect(() => () => clearTimeout(warpTimerRef.current), []);
 
   const handleDisconnect = async () => {
+    setDemoModeEnabled(false);
+    setDemoMode(false);
     // Set flag BEFORE async disconnect so state machine doesn't override viewState
     isDisconnectingRef.current = true;
     // Fallback: always clear flag after 500ms to prevent state machine lockup on fast reconnect
@@ -2336,6 +2404,10 @@ const Index = () => {
     }
   }, [renderCardImage, uploadCardImage]);
   const handleMint = useCallback(async () => {
+    if (demoMode) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     const signerAddress = wallet.publicKey?.toBase58?.();
     console.warn(
       `[handleMint] start paymentToken=${paymentToken} signer=${signerAddress ?? 'none'} active=${
@@ -2469,9 +2541,14 @@ const Index = () => {
     address,
     viewState,
     isLoading,
+    demoMode,
   ]);
 
   const handleMintWithCoins = useCallback(async () => {
+    if (demoMode) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     const signerAddress = wallet.publicKey?.toBase58?.();
     console.warn(
       `[handleMintWithCoins] start paymentToken=${paymentToken} signer=${signerAddress ?? 'none'} active=${
@@ -2569,6 +2646,7 @@ const Index = () => {
     address,
     viewState,
     isLoading,
+    demoMode,
   ]);
 
   useEffect(() => {
@@ -2580,6 +2658,10 @@ const Index = () => {
     Boolean(resolvedAddress && walletData.traits) && hasExistingId === null && walletData.isMinted !== true;
 
   const handleRemint = useCallback(async () => {
+    if (demoMode) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!wallet || !wallet.publicKey || !traits) return;
     setRemintState('updating');
     let succeeded = false;
@@ -2621,7 +2703,7 @@ const Index = () => {
       clearTimeout(safetyTimer);
       if (!succeeded) setRemintState('idle');
     }
-  }, [wallet, traits, score, captureCardImage, shouldSkipMintCardCapture]);
+  }, [wallet, traits, score, captureCardImage, shouldSkipMintCardCapture, demoMode]);
 
   const shareInsight = useMemo(() => {
     if (!traits) return 'Cosmic insight pending... 🔮';
@@ -2879,6 +2961,8 @@ const Index = () => {
             identityScore={walletData.score}
             planetTier={walletData.traits?.planetTier}
             jwtDeclined={jwtDeclined}
+            demoMode={demoMode}
+            onExitDemo={exitDemo}
             onRequestSign={() => {
               setJwtDeclined(false);
               import('@/components/prism/shared').then(async ({ obtainJwt, setAuthWallet }) => {
@@ -3102,6 +3186,7 @@ const Index = () => {
               desktopWalletReady={desktopWalletReady}
               scanningMessageIndex={scanningMessageIndex}
               jwtSigning={jwtSigning}
+              onDemo={enterDemo}
             />
           )}
 

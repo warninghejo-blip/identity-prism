@@ -19,6 +19,7 @@ import { getPrismBalance, COIN_PACKAGES, type PrismBalance } from '@/lib/prismCo
 import { getApiBase, getCachedJwt, obtainJwt, setAuthWallet } from '@/components/prism/shared';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 import { SEEDVAULT_NAME } from '@/lib/SeedVaultAdapter';
+import { isDemoMode } from '@/lib/demoMode';
 
 // ── Buy Coins Section ──
 
@@ -474,6 +475,10 @@ function BuyCoinsSection({ walletAddress, onPurchased }: { walletAddress: string
   }, [walletAddress]);
 
   const handleBuy = useCallback(async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (selectedIdx === null || buyingIdx !== null) return;
     const signerAddress = wallet.publicKey?.toBase58() || walletAddress;
     const walletReady = Boolean(signerAddress && wallet.connected && (wallet.signTransaction || wallet.sendTransaction));
@@ -1139,6 +1144,10 @@ function PrismVaultSection({
   const getJwt = useCallback(() => obtainJwt(wallet), [wallet]);
 
   const handleStake = useCallback(async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     const amount = Number(stakeAmount);
     if (!amount || amount < tier.min) {
       toast.error(`Minimum stake is ${tier.min.toLocaleString()} coins for ${tier.label}`);
@@ -1178,6 +1187,10 @@ function PrismVaultSection({
   }, [stakeAmount, tier, balance, walletAddress, selectedTier, lockDays, onBalanceChange, wallet, getJwt]);
 
   const handleClaim = useCallback(async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!walletAddress) return;
     setClaiming(true);
     try {
@@ -1204,6 +1217,10 @@ function PrismVaultSection({
   }, [walletAddress, onBalanceChange, wallet, getJwt]);
 
   const handleUnstake = useCallback(async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!walletAddress) return;
     setUnstaking(true);
     setShowUnstakeWarning(false);

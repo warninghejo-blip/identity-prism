@@ -20,6 +20,7 @@ export interface LandingOverlayProps {
   desktopWalletReady?: boolean;
   scanningMessageIndex?: number;
   jwtSigning?: boolean;
+  onDemo?: () => void;
 }
 
 export default function LandingOverlay({
@@ -37,6 +38,7 @@ export default function LandingOverlay({
   desktopWalletReady,
   scanningMessageIndex: _scanningMessageIndex,
   jwtSigning,
+  onDemo,
 }: LandingOverlayProps) {
   const showScanning = isScanning;
   const showContent = !isScanning;
@@ -98,6 +100,11 @@ export default function LandingOverlay({
               ) : (
                 <Button className="landing-v3-connect-btn" onClick={onDesktopConnect}>
                   {desktopWalletReady ? 'CONNECT WALLET' : 'GET WALLET'}
+                </Button>
+              )}
+              {onDemo && (
+                <Button variant="ghost" className="mt-3 w-full border border-white/15 text-white/70 hover:bg-white/10 hover:text-white" onClick={onDemo}>
+                  TRY DEMO (NO WALLET)
                 </Button>
               )}
             </div>

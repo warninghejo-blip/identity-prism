@@ -92,6 +92,8 @@ export interface CosmicHubProps {
   planetTier?: PlanetTier;
   jwtDeclined?: boolean;
   onRequestSign?: () => void;
+  demoMode?: boolean;
+  onExitDemo?: () => void;
 }
 
 /* ── Navigation module definitions ── */
@@ -716,6 +718,8 @@ export default function CosmicHub({
   planetTier,
   jwtDeclined,
   onRequestSign,
+  demoMode,
+  onExitDemo,
 }: CosmicHubProps) {
   const navigate = useNavigate();
   const [sybilGrade, setSybilGrade] = useState<string | null>(null);
@@ -879,6 +883,16 @@ export default function CosmicHub({
             <span className="text-xs lg:text-sm font-bold tracking-wider text-white/90">IDENTITY PRISM</span>
           </div>
           <div className="flex items-center gap-2">
+            {demoMode && (
+              <button
+                type="button"
+                onClick={onExitDemo}
+                className="h-8 rounded-lg border border-amber-400/40 bg-amber-400/10 px-2 text-[10px] font-black tracking-wider text-amber-300 transition-colors hover:bg-amber-400/20"
+                title="Leave demo and connect a wallet"
+              >
+                DEMO · CONNECT
+              </button>
+            )}
             <Link
               to={`/inbox${addressQuery}`}
               onClick={trackInternalNavigation}

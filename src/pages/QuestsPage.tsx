@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { isDemoMode } from '@/lib/demoMode';
 import { fadeOutTransition } from '@/lib/fadeTransition';
 import { Gift, Check, Clock, Flame, Star, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -235,6 +236,10 @@ export default function QuestsPage() {
 
   const handleClaim = useCallback(
     (quest: Quest) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (!walletAddress || !questState || claiming) return;
       // Mark as claimed locally — XP is stored in quest state
       const updatedState = claimQuestReward(questState, quest.id);

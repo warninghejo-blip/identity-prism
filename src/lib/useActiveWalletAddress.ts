@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { getCachedJwt } from '@/components/prism/shared';
+import { isDemoMode } from '@/lib/demoMode';
 
 const AUTH_JWT_KEY = 'ip_auth_jwt';
 
@@ -44,6 +45,14 @@ export function useActiveWalletAddress() {
 
   return useMemo(() => {
     const connectedAddress = publicKey?.toBase58();
+    if (isDemoMode()) {
+      try {
+        const demoAddress = sessionStorage.getItem('prism_active_address');
+        if (looksLikeSolanaAddress(demoAddress)) return demoAddress ?? '';
+      } catch {
+        // ignore sessionStorage failures
+      }
+    }
     if (looksLikeSolanaAddress(connectedAddress) && getCachedJwt(connectedAddress ?? '')) return connectedAddress;
     if (looksLikeSolanaAddress(addressParam) && getCachedJwt(addressParam ?? '')) return addressParam ?? '';
     try {
