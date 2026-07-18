@@ -4,10 +4,9 @@
 
 [![Solana Mobile](https://img.shields.io/badge/Platform-Solana%20Mobile-blue)](https://solanamobile.com/)
 [![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
-[![Tapestry](https://img.shields.io/badge/Reputation-Tapestry-orange)](https://tapestry.network/)
 [![Built with Codex + GPT-5.6](https://img.shields.io/badge/Built%20with-Codex%20%2B%20GPT--5.6-black)](./HACKATHON.md)
 
-**Live:** [identityprism.xyz](https://identityprism.xyz) · **Judge Demo (no wallet needed):** [identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Tapestry Explorer:** [explorer.usetapestry.dev](https://explorer.usetapestry.dev/) · **Solana dApp Store:** `com.identityprism2.app`
+**Live:** [identityprism.xyz](https://identityprism.xyz) · **Judge Demo (no wallet needed):** [identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Solana dApp Store:** `com.identityprism2.app`
 
 ---
 
@@ -28,7 +27,7 @@ Full story, Codex session IDs, and code pointers → **[HACKATHON.md](./HACKATHO
 
 Identity Prism is an **on-chain reputation and identity scoring system** built on Solana. It analyzes wallet activity — transactions, holdings, NFTs, DeFi positions, and wallet age — to produce a **reputation score**, **celestial tier**, and **achievement badges** that represent a user's true on-chain identity.
 
-Unlike simple wallet trackers, Identity Prism turns raw blockchain data into a **composable reputation layer** that dApps, DAOs, and social platforms can use to assess trust and engagement — with an API-first design and a Tapestry social graph integration.
+Unlike simple wallet trackers, Identity Prism turns raw blockchain data into a **composable reputation layer** — combining on-chain fundamentals with behavioral sybil detection — that dApps, DAOs, and social platforms can query via an API-first design to assess trust and engagement.
 
 ### The problem
 - Wallets are anonymous addresses — there's no quick way to assess trust or reputation.
@@ -36,11 +35,11 @@ Unlike simple wallet trackers, Identity Prism turns raw blockchain data into a *
 - dApps lack a standardized way to gate features or rewards based on on-chain behavior.
 
 ### The solution
-1. **Reputation Score (0–1400)** — a composite score based on SOL balance, wallet age, transaction count, NFT holdings, DeFi activity, and special assets.
-2. **Celestial Tiers** — from Mercury (new wallets) through Mars, Earth, Saturn, Jupiter, to Sun (top-tier). Holders of both Seeker Genesis + Chapter 2 Preorder earn the rare **Binary Sun** tier.
-3. **Achievement Badges** — OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early Adopter, and more.
-4. **API-first design** — reputation data is available via a public REST API for integration into any dApp.
-5. **Social graph integration** — publish identity profiles to the Tapestry protocol, making reputation composable across the Solana ecosystem.
+1. **Composite Reputation Score (0–1000)** — blends five signals: on-chain fundamentals (SOL, wallet age, tx count, NFTs, DeFi), sybil-resistance trust, and in-app activity (games, arena, quests). See [Scoring System](#scoring-system).
+2. **Sybil Trust Grade & Risk** — behavioral + on-chain sybil detection yields a **trust grade (A+ → F)** and a **risk level (clean → critical)**, so a wallet's reputation reflects that it's *real*, not just wealthy.
+3. **Celestial Tiers** — Mercury → Mars → Venus → Earth → Neptune → Uranus → Saturn → Jupiter → Sun, plus the rare **Binary Sun** (Seeker Genesis + Chapter 2 Preorder holders).
+4. **Achievement Badges** — identity badges (OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early Adopter) plus activity badges (Verified Human, Clean Record, Trust Pillar, Game Master, Arena Champion, and more).
+5. **API-first design** — every wallet's reputation is available via a public REST API for integration into any dApp.
 
 ---
 
@@ -75,19 +74,20 @@ POST https://identityprism.xyz/api/reputation/batch
 Body: { "addresses": ["addr1", "addr2", ...] }
 ```
 
-**Response:**
+**Response** (fields match the real `/api/reputation` v2.1 payload; values illustrative):
 ```json
 {
-  "address": "vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg",
-  "score": 230,
-  "tier": "mars",
-  "badges": ["collector", "titan"],
-  "stats": {
-    "walletAgeDays": 0,
-    "solBalance": 0,
-    "txCount": 3982,
-    "tokenCount": 6,
-    "nftCount": 11
+  "version": "2.1",
+  "onchainScore": 172,
+  "compositeScore": 640,
+  "compositeTier": "uranus",
+  "identity": { "score": 172, "tier": "earth", "badges": ["collector", "titan"], "badgeCount": 2 },
+  "stats": { "solBalance": 4.2, "walletAgeDays": 810, "transactionCount": 3982, "tokenCount": 6, "nftCount": 11 },
+  "sybilAnalysis": {
+    "trustScore": 86, "trustGrade": "A",
+    "riskScore": 8, "riskLevel": "clean",
+    "verdict": "likely_human",
+    "signalsDetected": 1, "totalSignals": 14
   }
 }
 ```
@@ -138,9 +138,6 @@ In-app crafting/upgrade surface for Identity Prism collectibles.
 ### ♻️ Update Card
 Update your NFT metadata in place without burning the original (~0.0005 SOL), protected by a **Co-Sign Authority Guard** — the server co-signs the transaction to preserve collection integrity while keeping user sovereignty.
 
-### 🌐 Tapestry Social Graph
-Publish wallet identity profiles to the [Tapestry protocol](https://www.usetapestry.dev/) — Solana's social graph — so scores, tiers, and badges are composable across the ecosystem: profile creation, content publishing per scan, cross-app discovery, follows/likes/comments.
-
 ### 📱 Android App
 Native Android app via Capacitor with Solana Mobile Wallet Adapter (Seed Vault) support, built for Seeker/Saga, published on the Solana dApp Store as `com.identityprism2.app`.
 
@@ -167,7 +164,7 @@ The Prism League economy is designed so that **the client is never trusted with 
 | **Backend** | Node.js (custom HTTP server, no framework), `better-sqlite3`, Helius DAS API proxy, Metaplex Core / Umi |
 | **Blockchain** | Solana (`@solana/web3.js`), Metaplex Core NFTs, SPL Tokens, Solana Actions (Blinks), SKR payments |
 | **Gaming** | MagicBlock Ephemeral Rollups (session seeding), Canvas/WebGL game engines |
-| **Social graph** | Tapestry Protocol (REST API) |
+| **Data / RPC** | Helius RPC + DAS (wallet holdings, NFTs, history) |
 | **Mobile** | Capacitor (Android), Solana Mobile Wallet Adapter, Seed Vault, Solana dApp Store |
 | **Observability** | Sentry (`@sentry/react`, `@sentry/node`), Firebase Analytics |
 | **Testing** | Vitest, Testing Library |
@@ -193,11 +190,11 @@ The Prism League economy is designed so that **the client is never trusted with 
         ┌──────────────┼───────────────────┐
         ▼              ▼                   ▼
 ┌──────────────┐ ┌──────────────┐  ┌────────────────┐
-│ Solana        │ │ MagicBlock   │  │ Tapestry        │
-│ mainnet       │ │ Ephemeral    │  │ social graph    │
-│ (Helius DAS,  │ │ Rollups      │  │ (profiles,      │
-│ Metaplex Core,│ │ (game seeds) │  │ content, follows)│
-│ Memo, SKR/SOL)│ │              │  │                 │
+│ Solana        │ │ MagicBlock   │  │ Helius          │
+│ mainnet       │ │ Ephemeral    │  │ RPC + DAS       │
+│ (Metaplex Core│ │ Rollups      │  │ (holdings, NFTs,│
+│  Memo, SKR/SOL│ │ (game seeds) │  │  tx history)    │
+│  payments)    │ │              │  │                 │
 └──────────────┘ └──────────────┘  └────────────────┘
 ```
 
@@ -205,36 +202,33 @@ The Prism League economy is designed so that **the client is never trusted with 
 
 ## Scoring System
 
-| Factor | Max Points | Details |
-|---|---|---|
-| SOL Balance | 100 | 0.1 → 10+ SOL tiers |
-| Wallet Age | 250 | 7 days → 2+ years |
-| Transaction Count | 200 | 50 → 5000+ txns |
-| NFT Holdings | 80 | 5 → 100+ NFTs |
-| Seeker Genesis NFT | 200 | Saga phone holder |
-| Chapter 2 Preorder | 150 | Early supporter |
-| Combo Bonus | 200 | Both Seeker + Preorder |
-| Blue Chip NFT | 50 | Premium collections |
-| DeFi King | 30 | LST/DeFi exposure |
-| Meme Lord | 30 | Meme coin holdings |
-| Diamond Hands | 50 | 60+ day wallet |
-| Hyperactive | 50 | 8+ txn/day average |
-| **Max Score** | **1400** | |
+Identity Prism computes a **Composite Reputation Score (0–1000)** that blends five independent signals — so a high score means a wallet is old **and** real **and** active, not just wealthy:
 
-### Tier mapping
+| Pillar | Max | What it measures |
+|---|---:|---|
+| **On-chain identity** | 400 | Wallet fundamentals — SOL balance, wallet age, transaction count, token/NFT holdings, DeFi protocols, and special traits (OG, Whale, Collector, Seeker Genesis, Chapter 2 Preorder). |
+| **Sybil trust** | 250 | Behavioral + on-chain sybil detection (funding graph, clustering, circular flows) → a **trust grade (A+ → F)** and **risk level (clean → critical)**. |
+| **Human proof** | 150 | In-app Prism League game activity — scores, game diversity, achievements. |
+| **Social** | 100 | Head-to-head Prism Arena challenges, tournaments, community. |
+| **Engagement** | 100 | Quests completed, daily streaks, wallet scans. |
+| **Composite total** | **1000** | |
 
-| Tier | Score Range | Visual |
-|---|---|---|
-| Mercury | 0–100 | Small rocky planet |
-| Mars | 101–250 | Red planet |
-| Venus | 251–400 | Volcanic world |
-| Earth | 401–550 | Blue marble |
-| Neptune | 551–700 | Ice giant |
-| Uranus | 701–850 | Ringed ice world |
-| Saturn | 851–950 | Ringed gas giant |
-| Jupiter | 951–1050 | Gas giant king |
-| Sun | 1051+ | Stellar body |
-| Binary Sun | Combo | Twin star system |
+The **on-chain identity** pillar (0–400) is itself a composite of SOL balance, wallet age, tx count, token/NFT holdings, and DeFi exposure; it maps a wallet to a **celestial tier** and awards **identity badges** (OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early Adopter, Binary). In-app activity unlocks further **badges** — Verified Human, Clean Record, Trust Pillar, Game Master, Arena Champion, Quest Hunter, Streak Lord, Explorer, and more.
+
+### Tier mapping (by composite score)
+
+| Tier | Composite Score |
+|---|---|
+| Mercury | 0–99 |
+| Mars | 100–219 |
+| Venus | 220–349 |
+| Earth | 350–479 |
+| Neptune | 480–599 |
+| Uranus | 600–699 |
+| Saturn | 700–799 |
+| Jupiter | 800–879 |
+| Sun | 880–949 |
+| **Binary Sun** | 950+ (or the Seeker Genesis + Chapter 2 Preorder combo) |
 
 ---
 
@@ -278,7 +272,7 @@ npx cap sync android
 cd android && ./gradlew assembleRelease
 ```
 
-See `.env.example` for required environment variables (Helius API keys, Tapestry API key, treasury address, public base URL, etc.).
+See `.env.example` for required environment variables (Helius API keys, treasury address, public base URL, etc.).
 
 ---
 
@@ -287,7 +281,6 @@ See `.env.example` for required environment variables (Helius API keys, Tapestry
 - **Live app:** [https://identityprism.xyz](https://identityprism.xyz)
 - **Judge demo APK (no wallet):** [https://identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk)
 - **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism)
-- **Tapestry Explorer:** [https://explorer.usetapestry.dev/](https://explorer.usetapestry.dev/)
 - **Reputation API example:** [identityprism.xyz/api/reputation?address=...](https://identityprism.xyz/api/reputation?address=vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg)
 - **Blink:** `solana-action:https://identityprism.xyz/api/actions/share`
 - **Solana dApp Store:** `com.identityprism2.app`
