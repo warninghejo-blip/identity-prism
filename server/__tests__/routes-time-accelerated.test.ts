@@ -272,7 +272,8 @@ const seedWorkspace = () => {
         opponentScore: null,
         winner: null,
         createdAt: nowMs - 10 * 60 * 1000,
-        expiresAt: nowMs - 2_000,
+        // Keep this fixture outside the production 60s game-submit grace.
+        expiresAt: nowMs - 62_000,
         acceptedAt: null,
         completedAt: null,
       },

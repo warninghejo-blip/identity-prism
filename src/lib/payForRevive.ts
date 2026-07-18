@@ -1,17 +1,16 @@
 import { WalletContextState } from '@solana/wallet-adapter-react';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
-import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, LAMPORTS_PER_SOL, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
   createTransferInstruction,
-  createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
 } from '@/lib/solanaToken';
-import { SEEKER_TOKEN, TREASURY_ADDRESS, getHeliusRpcUrl, getHeliusProxyHeaders } from '@/constants';
+import { getHeliusRpcUrl, getHeliusProxyHeaders } from '@/constants';
 import { SeedVaultAdapter } from '@/lib/SeedVaultAdapter';
 import { toast } from 'sonner';
+import { Buffer } from 'buffer';
 
 const REVIVE_SKR_AMOUNT = 5;
 const MIN_SOL_FOR_FEE = 0.003;
@@ -29,6 +28,17 @@ export interface ReviveResult {
   success: boolean;
   signature?: string;
   error?: ReviveError;
+}
+
+/** Payment instructions are issued by the server after it has opened the revive pause. */
+export interface PaidRevivePaymentIntent {
+  paymentIntentId: string;
+  memo: string;
+  mint: string;
+  amountRaw: string;
+  treasury: string;
+  treasuryAta: string;
+  expiresAtMs: number;
 }
 
 type ReviveWallet = Pick<WalletContextState, 'publicKey' | 'signTransaction' | 'sendTransaction'>;
@@ -259,7 +269,11 @@ async function reviveNativeGetSignatureStatuses(
   throw lastError instanceof Error ? lastError : new Error('[revive] signature status unavailable');
 }
 
-export async function payForRevive(wallet: WalletContextState, expectedAddress?: string): Promise<ReviveResult> {
+export async function payForRevive(
+  wallet: WalletContextState,
+  paymentIntent: PaidRevivePaymentIntent,
+  expectedAddress?: string,
+): Promise<ReviveResult> {
   let reviveWallet: ReviveWallet | null = null;
   try {
     reviveWallet = await resolveReviveWallet(wallet, expectedAddress);
@@ -286,14 +300,24 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
     httpHeaders: rpcHeaders,
   });
 
-  const skrMint = new PublicKey(SEEKER_TOKEN.MINT);
-  const treasury = new PublicKey(TREASURY_ADDRESS);
+  let skrMint: PublicKey;
+  let destAta: PublicKey;
+  try {
+    skrMint = new PublicKey(paymentIntent.mint);
+    // The server computes this ATA. Never derive or substitute a destination client-side.
+    destAta = new PublicKey(paymentIntent.treasuryAta);
+    if (!paymentIntent.memo || !/^\d+$/.test(paymentIntent.amountRaw) || BigInt(paymentIntent.amountRaw) <= 0n) {
+      throw new Error('Invalid paid revive intent');
+    }
+  } catch (error) {
+    return { success: false, error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : 'Invalid paid revive intent' } };
+  }
 
   // 1. Find SKR token account and check balance
   let skrBalance = 0;
+  let skrDecimals = 6;
   let sourceAta: PublicKey | null = null;
   let tokenProgramId: PublicKey = TOKEN_PROGRAM_ID;
-  let decimals = 9;
 
   console.warn('[revive] step 1/4 — find SKR ATA');
   const t1 = Date.now();
@@ -308,8 +332,9 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
             8000,
           );
       const bal = Number(info.value.uiAmount ?? 0);
-      decimals = info.value.decimals;
       if (bal > 0) {
+        const decimals = Number(info.value.decimals);
+        if (Number.isInteger(decimals) && decimals >= 0) skrDecimals = decimals;
         skrBalance = bal;
         sourceAta = ata;
         tokenProgramId = progId;
@@ -322,10 +347,12 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
   }
   console.warn('[revive] step 1/4 done in', Date.now() - t1, 'ms; balance', skrBalance);
 
-  if (!sourceAta || skrBalance < REVIVE_SKR_AMOUNT) {
+  const amount = BigInt(paymentIntent.amountRaw);
+  const requiredSkr = Number(amount) / 10 ** skrDecimals;
+  if (!sourceAta || skrBalance < requiredSkr) {
     return {
       success: false,
-      error: { code: 'INSUFFICIENT_SKR', skrBalance, required: REVIVE_SKR_AMOUNT },
+      error: { code: 'INSUFFICIENT_SKR', skrBalance, required: requiredSkr },
     };
   }
 
@@ -348,23 +375,6 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
     };
   }
 
-  const destAta = await getAssociatedTokenAddress(skrMint, treasury, true, tokenProgramId);
-  const amount = BigInt(REVIVE_SKR_AMOUNT) * BigInt(10 ** decimals);
-
-  // Only create treasury ATA if it doesn't exist yet (avoids extra instruction in wallet preview)
-  let destAtaExists = false;
-  if (!Capacitor.isNativePlatform()) {
-    try {
-      const info = await reviveWithTimeout('getAccountInfo(destAta)', connection.getAccountInfo(destAta), 6000);
-      destAtaExists = info !== null;
-    } catch (e) {
-      console.warn('[revive] dest ATA probe issue', (e as Error).message);
-      /* assume missing */
-    }
-  } else {
-    console.warn('[revive] native dest ATA probe skipped (idempotent create is safe)');
-  }
-
   const buildTransaction = async () => {
     // On Capacitor native, use 'confirmed' commitment instead of 'finalized'
     // — finalized RPC calls can hang on Seeker WebView and there's no fallback.
@@ -382,19 +392,14 @@ export async function payForRevive(wallet: WalletContextState, expectedAddress?:
         );
     const tx = new Transaction({ blockhash, lastValidBlockHeight, feePayer: payer });
 
-    if (!destAtaExists) {
-      tx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          payer,
-          destAta,
-          treasury,
-          skrMint,
-          tokenProgramId,
-          ASSOCIATED_TOKEN_PROGRAM_ID,
-        ),
-      );
-    }
     tx.add(createTransferInstruction(sourceAta, destAta, payer, amount, [], tokenProgramId));
+    tx.add(
+      new TransactionInstruction({
+        programId: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+        keys: [],
+        data: Buffer.from(paymentIntent.memo, 'utf8'),
+      }),
+    );
 
     // Patch serialize to skip signature verification (same pattern as mint/BlackHole/score)
     const origSerialize = tx.serialize.bind(tx);

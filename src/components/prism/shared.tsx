@@ -1053,12 +1053,22 @@ export async function obtainJwt(
       }
 
       writeAuthDebug({ stage: 'token_start' });
-      const tokenRes = await postAuthEndpoint(`${base}/api/auth/token`, {
+      let tokenRes = await postAuthEndpoint(`${base}/api/auth/token`, {
         address,
         nonce,
         signature: signatureHex,
         signedMessage: signedMessageBase64,
       });
+      if (tokenRes.status === 429) {
+        writeAuthDebug({ stage: 'token_rate_limited_retry', address: address.slice(0, 8) });
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        tokenRes = await postAuthEndpoint(`${base}/api/auth/token`, {
+          address,
+          nonce,
+          signature: signatureHex,
+          signedMessage: signedMessageBase64,
+        });
+      }
       if (!tokenRes.ok) {
         setAuthState('declined');
         const body = await tokenRes.text().catch(() => '');
@@ -1155,13 +1165,24 @@ export async function obtainJwtViaAdapterSignIn(adapter: {
     }
     const signatureHex = bytesToHex(sigArr);
     const signedMessageBase64 = bytesToBase64(msgArr);
-    const tokenRes = await postAuthEndpoint(`${base}/api/auth/token`, {
+    let tokenRes = await postAuthEndpoint(`${base}/api/auth/token`, {
       address: resolvedAddress,
       nonce: clientNonce,
       signature: signatureHex,
       signedMessage: signedMessageBase64,
       siws: true,
     });
+    if (tokenRes.status === 429) {
+      writeAuthDebug({ stage: 'siws_token_rate_limited_retry', address: resolvedAddress.slice(0, 8) });
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      tokenRes = await postAuthEndpoint(`${base}/api/auth/token`, {
+        address: resolvedAddress,
+        nonce: clientNonce,
+        signature: signatureHex,
+        signedMessage: signedMessageBase64,
+        siws: true,
+      });
+    }
     if (!tokenRes.ok) {
       const body = await tokenRes.text().catch(() => '');
       writeAuthDebug({ stage: 'siws_token_failed', status: tokenRes.status, body: body.slice(0, 180) });

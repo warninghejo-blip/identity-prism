@@ -2,6 +2,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Public NFT metadata is created with crypto.randomUUID(). The second branch
+// preserves the filename emitted by the historical Date.now()/Math.random()
+// fallback, so existing metadata URIs remain reachable on older deployments.
+const PUBLIC_NFT_METADATA_FILE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{13}-[0-9a-f]+)\.json$/i;
+
 function registerMetadataRoute(ctx) {
   const {
     requireJwt,
@@ -171,7 +176,7 @@ function registerMetadataRoute(ctx) {
         const parts = pathname.split('/').filter(Boolean);
         const rawName = parts[1] ?? '';
         const fileName = resolveMetadataFile(rawName);
-        if (!fileName) {
+        if (parts.length !== 2 || !fileName || !PUBLIC_NFT_METADATA_FILE.test(fileName)) {
           respondJson(res, 404, { error: 'Metadata not found' });
           return true;
         }

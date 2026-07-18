@@ -27,6 +27,7 @@ import { sfxPickup } from '@/lib/gameAudio';
 
 interface GravityRunnerProps {
   gameState: 'start' | 'countdown' | 'playing' | 'gameover';
+  paused?: boolean;
   onScore: (score: number) => void;
   onCoins: (coins: number) => void;
   onGameOver: (score: number, coins: number, extraStats?: { columns: number; crystals: number }) => void;
@@ -106,8 +107,8 @@ const LEVEL_THEMES: LevelTheme[] = [
     ceilColor: 'rgba(168,85,247,0.04)',
     accentColor: '#22d3ee',
     crystalColor: '#a855f7',
-    obstacleColor: '#374151',
-    obstacleHighlight: '#6b7280',
+    obstacleColor: '#3d4a6b',
+    obstacleHighlight: '#8b9dd4',
     scoreThreshold: 0,
   },
   {
@@ -118,8 +119,8 @@ const LEVEL_THEMES: LevelTheme[] = [
     ceilColor: 'rgba(239,68,68,0.04)',
     accentColor: '#f59e0b',
     crystalColor: '#fbbf24',
-    obstacleColor: '#57534e',
-    obstacleHighlight: '#a8a29e',
+    obstacleColor: '#5f5140',
+    obstacleHighlight: '#c4ad8a',
     scoreThreshold: 500,
   },
   {
@@ -131,7 +132,7 @@ const LEVEL_THEMES: LevelTheme[] = [
     accentColor: '#8b5cf6',
     crystalColor: '#ec4899',
     obstacleColor: '#4c1d95',
-    obstacleHighlight: '#7c3aed',
+    obstacleHighlight: '#8b5cf6',
     scoreThreshold: 1200,
   },
   {
@@ -142,7 +143,7 @@ const LEVEL_THEMES: LevelTheme[] = [
     ceilColor: 'rgba(16,185,129,0.06)',
     accentColor: '#06b6d4',
     crystalColor: '#10b981',
-    obstacleColor: '#134e4a',
+    obstacleColor: '#155e58',
     obstacleHighlight: '#2dd4bf',
     scoreThreshold: 2000,
   },
@@ -167,6 +168,48 @@ function getThemeForScore(score: number): LevelTheme {
   }
   return theme;
 }
+
+// ── Pillar palette — precomputed per theme (cached; zero per-frame allocation) ──
+interface PillarPalette {
+  edgeDark: string;
+  mid: string;
+  light: string;
+  capTint0: string;
+  capTint1: string;
+  facet: string;
+  rim: string;
+}
+type Rgb = [number, number, number];
+const _pillarPaletteCache = new Map<string, PillarPalette>();
+const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
+const rgbStr = (c: Rgb, al = 1) =>
+  al >= 1 ? `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})` : `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${al})`;
+function getPillarPalette(theme: LevelTheme): PillarPalette {
+  let p = _pillarPaletteCache.get(theme.name);
+  if (p) return p;
+  const base = hexToRgb(theme.obstacleColor);
+  const hi = hexToRgb(theme.obstacleHighlight);
+  const acc = hexToRgb(theme.accentColor);
+  const white: Rgb = [255, 255, 255];
+  const black: Rgb = [0, 0, 0];
+  p = {
+    edgeDark: rgbStr(mixRgb(base, black, 0.55)),
+    mid: rgbStr(base),
+    light: rgbStr(mixRgb(hi, white, 0.22)),
+    capTint0: rgbStr(acc, 0),
+    capTint1: rgbStr(acc, 0.2),
+    facet: rgbStr(mixRgb(hi, white, 0.5), 0.13),
+    rim: rgbStr(acc, 0.3),
+  };
+  _pillarPaletteCache.set(theme.name, p);
+  return p;
+}
+// Scratch buffer for crystal-teeth Y coords (avoids per-frame allocation)
+const _toothY = new Array<number>(16).fill(0);
 
 // ── Types ──
 interface AsteroidColumn {
@@ -253,10 +296,11 @@ interface StarLayer {
 }
 
 export default function GravityRunnerScene(props: GravityRunnerProps) {
-  const { gameState, onScore, onCoins, onGameOver, reviveRef, hasMintedId } = props;
+  const { gameState, paused = false, onScore, onCoins, onGameOver, reviveRef, hasMintedId } = props;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const countdownDidReset = useRef(false);
+  const pauseStartedAtRef = useRef<number | null>(null);
   const shipImgRef = useRef<HTMLImageElement | null>(null);
   const shipLoadedRef = useRef(false);
   const profileRef = useRef(getShipProfile(props.shipSkin));
@@ -350,7 +394,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
 
   // Input handlers — prevent double-flap from touch+mouse emulation
   useEffect(() => {
-    if (gameState !== 'playing') return;
+    if (gameState !== 'playing' || paused) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     let usesTouch = false;
@@ -377,7 +421,24 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       canvas.removeEventListener('mousedown', handleMouse);
       window.removeEventListener('keydown', handleKey);
     };
-  }, [gameState, flap]);
+  }, [gameState, paused, flap]);
+
+  // A revive countdown must not advance score, speed, physics, or spawn timing.
+  useEffect(() => {
+    const s = stateRef.current;
+    const now = performance.now();
+    if (paused) {
+      pauseStartedAtRef.current = now;
+      return;
+    }
+    if (pauseStartedAtRef.current !== null) {
+      const pausedFor = now - pauseStartedAtRef.current;
+      s.startTime += pausedFor;
+      s.lastTickTime = now;
+      (s as any)._prevFrame = now;
+      pauseStartedAtRef.current = null;
+    }
+  }, [paused]);
 
   // ── Main game loop ──
   useEffect(() => {
@@ -408,11 +469,11 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
     const cssW = () => canvas.width / dpr;
     const cssH = () => canvas.height / dpr;
 
-    // Reset state — skip only when countdown already did the reset
+    // Reset state only for a new run; preserve it across either countdown phase.
     const s = stateRef.current;
-    const skipReset = isCountdown ? false : countdownDidReset.current;
-    if (isCountdown) countdownDidReset.current = true;
-    if (!isCountdown) countdownDidReset.current = false;
+    const skipReset = !isCountdown && (countdownDidReset.current || paused);
+    if (isCountdown || paused) countdownDidReset.current = true;
+    if (!isCountdown && !paused) countdownDidReset.current = false;
 
     if (!skipReset) {
       const W = cssW();
@@ -693,29 +754,38 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       onGameOver(s.score, s.coins, { columns: s.columnsPassedForBonus, crystals: s.crystalsCollected });
     }
 
+    const applyRevive = () => {
+      if (!reviveRef.current) return false;
+      reviveRef.current = false;
+      s.alive = true;
+      // Compensate startTime for death duration (prevent score jump)
+      if (s._deathTime) {
+        s.startTime += performance.now() - s._deathTime;
+        s._deathTime = 0;
+      }
+      s.lastTickTime = performance.now();
+      s.screenShake = 0;
+      s._grazed = false; // reset graze immunity on revive
+      // Resume from the same centered lane as a new run, never from the floor.
+      s.playerY = cssH() / 2 - SHIP_H / 2;
+      s.velY = 0;
+      s.shipRotation = 0;
+      (s as any)._prevFrame = s.lastTickTime;
+      {
+        let _wi = 0;
+        for (let _i = 0; _i < s.obstacles.length; _i++) {
+          if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i];
+        }
+        s.obstacles.length = _wi;
+      }
+      s.particles = [];
+      return true;
+    };
+
     // ── Tick ──
     function tick() {
       // Revive check BEFORE alive guard so it works when dead
-      if (reviveRef.current) {
-        reviveRef.current = false;
-        s.alive = true;
-        // Compensate startTime for death duration (prevent score jump)
-        if (s._deathTime) {
-          s.startTime += performance.now() - s._deathTime;
-          s._deathTime = 0;
-        }
-        s.lastTickTime = performance.now();
-        s.screenShake = 0;
-        s._grazed = false; // reset graze immunity on revive
-        s.velY = FLAP_VEL * 0.5; // gentle upward push on revive
-        {
-          let _wi = 0;
-          for (let _i = 0; _i < s.obstacles.length; _i++) {
-            if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i];
-          }
-          s.obstacles.length = _wi;
-        }
-      }
+      applyRevive();
 
       if (!s.alive) return;
       const W = cssW();
@@ -1192,7 +1262,8 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
           const bottomTop = col.gapY + col.gapH / 2;
           const bottomH = floorY - bottomTop;
 
-          // Draw asteroid pillars with improved visuals
+          // Draw crystal prism pillars — cap/teeth face the GAP (top pillar's
+          // gap edge is at its bottom, bottom pillar's gap edge is at its top)
           drawAsteroidPillar(
             ctx,
             col.x,
@@ -1202,7 +1273,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             col.jagged,
             col.crackSeeds,
             theme,
-            false,
+            true,
             s.frameCount,
           );
           drawAsteroidPillar(
@@ -1214,7 +1285,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             col.jagged,
             col.crackSeeds,
             theme,
-            true,
+            false,
             s.frameCount,
           );
 
@@ -1346,6 +1417,15 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         ctx.save();
         ctx.translate(c.x, c.y);
         ctx.scale(scale, scale);
+        // Soft golden halo behind the coin — pickup readability + premium glow
+        const haloR = sz * 1.05;
+        const halo = ctx.createRadialGradient(0, 0, sz * 0.25, 0, 0, haloR);
+        halo.addColorStop(0, 'rgba(251,191,36,0.30)');
+        halo.addColorStop(1, 'rgba(251,191,36,0)');
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(0, 0, haloR, 0, Math.PI * 2);
+        ctx.fill();
         if (coinImgRef.current) {
           // Draw powerup_coin.png texture — same as Orbit/Defender coin powerup
           ctx.drawImage(coinImgRef.current, -sz / 2, -sz / 2, sz, sz);
@@ -1436,7 +1516,9 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       ctx.restore();
     }
 
-    // ── Draw asteroid pillar (improved rocky column) ──
+    // ── Draw crystal prism pillar — neon-prism aesthetic ──
+    // Collision geometry is exactly the rect (x, y, w, h): the solid body always
+    // fills that rect; teeth/glow are flourish at the gap-facing cap (≤ ~6px).
     function drawAsteroidPillar(
       ctx: CanvasRenderingContext2D,
       x: number,
@@ -1446,76 +1528,97 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       jagged: number[],
       crackSeeds: number[],
       theme: LevelTheme,
-      fromTop: boolean,
-      _frame: number,
+      gapAtBottom: boolean, // true → the gap-facing edge is at y+h
+      frame: number,
     ) {
       if (h <= 0) return;
+      const pal = getPillarPalette(theme);
+      const capY = gapAtBottom ? y + h : y;
+      const dir = gapAtBottom ? 1 : -1; // teeth extend toward the gap
 
-      // Main rocky body with gradient
-      const bodyGrad = ctx.createLinearGradient(x, y, x + w, y);
-      bodyGrad.addColorStop(0, theme.obstacleColor);
-      bodyGrad.addColorStop(0.3, theme.obstacleHighlight);
-      bodyGrad.addColorStop(0.7, theme.obstacleColor);
-      bodyGrad.addColorStop(1, 'rgba(0,0,0,0.4)');
+      // 1) Prism body — horizontal gradient: dark edges + off-center specular band
+      const bodyGrad = ctx.createLinearGradient(x, 0, x + w, 0);
+      bodyGrad.addColorStop(0, pal.edgeDark);
+      bodyGrad.addColorStop(0.24, pal.mid);
+      bodyGrad.addColorStop(0.38, pal.light);
+      bodyGrad.addColorStop(0.62, pal.mid);
+      bodyGrad.addColorStop(1, pal.edgeDark);
       ctx.fillStyle = bodyGrad;
       ctx.fillRect(x, y, w, h);
 
-      // Jagged edge on the gap side — more detailed
-      const edgeY = fromTop ? y + h : y;
-      ctx.beginPath();
-      const steps = Math.min(jagged.length, 10);
-      ctx.moveTo(x - 3, edgeY);
+      // 2) Accent tint intensifying toward the gap edge (reads as inner energy)
+      const bandH = Math.min(h, 64);
+      const bandTop = gapAtBottom ? capY - bandH : capY;
+      const capGrad = gapAtBottom
+        ? ctx.createLinearGradient(0, bandTop, 0, capY)
+        : ctx.createLinearGradient(0, capY + bandH, 0, capY);
+      capGrad.addColorStop(0, pal.capTint0);
+      capGrad.addColorStop(1, pal.capTint1);
+      ctx.fillStyle = capGrad;
+      ctx.fillRect(x, bandTop, w, bandH);
+
+      // 3) Crystal teeth on the gap-facing cap (deterministic from jagged seeds)
+      const steps = Math.min(jagged.length, 8);
       for (let i = 0; i <= steps; i++) {
-        const px = x + (w / steps) * i;
-        const offset = jagged[i % jagged.length] * (fromTop ? -1 : 1);
-        ctx.lineTo(px, edgeY + offset);
+        const j = Math.max(-6, Math.min(6, jagged[i % jagged.length]));
+        _toothY[i] = capY + dir * (2 + j * 0.7); // −2.2px recess … +6.2px into gap
       }
-      ctx.lineTo(x + w + 3, edgeY);
-      ctx.lineTo(x + w + 3, fromTop ? y : y + h);
-      ctx.lineTo(x - 3, fromTop ? y : y + h);
+      ctx.beginPath();
+      ctx.moveTo(x, capY - dir * 3);
+      for (let i = 0; i <= steps; i++) {
+        ctx.lineTo(x + (w / steps) * i, _toothY[i]);
+      }
+      ctx.lineTo(x + w, capY - dir * 3);
       ctx.closePath();
-      ctx.fillStyle = theme.obstacleColor;
+      ctx.fillStyle = pal.mid;
       ctx.fill();
 
-      // Surface texture — cracks
-      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-      ctx.lineWidth = 0.7;
-      for (let i = 0; i < crackSeeds.length; i++) {
+      // 4) Neon rim tracing the teeth — pulsing glow marks the danger edge
+      //    (uses frame counter, which freezes during pause → no animation while paused)
+      const pulse = 0.55 + 0.18 * Math.sin(frame * 0.05 + x * 0.012);
+      ctx.save();
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const px = x + (w / steps) * i;
+        if (i === 0) ctx.moveTo(px, _toothY[i]);
+        else ctx.lineTo(px, _toothY[i]);
+      }
+      ctx.strokeStyle = theme.accentColor;
+      ctx.lineWidth = 1.6;
+      ctx.lineJoin = 'round';
+      ctx.globalAlpha = pulse;
+      ctx.shadowColor = theme.accentColor;
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+      ctx.restore();
+
+      // 5) Facet lines — slanted translucent crystal facets (from crackSeeds)
+      ctx.strokeStyle = pal.facet;
+      ctx.lineWidth = 1;
+      const facets = Math.min(crackSeeds.length, 3);
+      for (let i = 0; i < facets; i++) {
         const cs = crackSeeds[i];
-        const cx = x + 3 + cs * (w - 6);
-        const cy = y + h * (0.15 + (i / crackSeeds.length) * 0.7);
-        if (cy < y || cy > y + h) continue;
+        const fx = x + 4 + cs * (w - 8);
         ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx + (cs - 0.5) * 12, cy + 8 + cs * 6);
-        ctx.lineTo(cx + (cs - 0.3) * 8, cy + 16 + cs * 4);
+        ctx.moveTo(fx, y + 2);
+        ctx.lineTo(fx + (cs - 0.5) * 8, y + h - 2);
         ctx.stroke();
       }
 
-      // Rocky bumps / highlights
-      ctx.fillStyle = theme.obstacleHighlight;
-      ctx.globalAlpha = 0.12;
-      for (let i = 0; i < 4; i++) {
-        const bx = x + 2 + ((i * 7 + 3) % (w - 4));
-        const by = y + h * (0.2 + i * 0.2);
-        if (by >= y && by <= y + h - 4) {
-          ctx.beginPath();
-          ctx.arc(bx, by, 2 + (i % 3), 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      ctx.globalAlpha = 1;
-
-      // Dark edge gradient for 3D depth
-      const depthGrad = ctx.createLinearGradient(x, y, x, y + h);
-      depthGrad.addColorStop(0, fromTop ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0)');
-      depthGrad.addColorStop(1, fromTop ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.15)');
-      ctx.fillStyle = depthGrad;
-      ctx.fillRect(x, y, w, h);
+      // 6) Side edge rims — thin accent lines for a glassy silhouette
+      ctx.strokeStyle = pal.rim;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + 0.5, y);
+      ctx.lineTo(x + 0.5, y + h);
+      ctx.moveTo(x + w - 0.5, y);
+      ctx.lineTo(x + w - 0.5, y + h);
+      ctx.stroke();
     }
 
     function loop() {
-      if (!isCountdown) tick();
+      if (paused) applyRevive();
+      if (!isCountdown && !paused) tick();
       draw();
       if (s.alive) {
         animRef.current = requestAnimationFrame(loop);
@@ -1523,24 +1626,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
         let deathFrames = 0;
         const deathLoop = () => {
           // Check for revive during death animation
-          if (reviveRef.current) {
-            reviveRef.current = false;
-            s.alive = true;
-            if (s._deathTime) {
-              s.startTime += performance.now() - s._deathTime;
-              s._deathTime = 0;
-            }
-            s.lastTickTime = performance.now();
-            s.screenShake = 0;
-            s.velY = FLAP_VEL * 0.5;
-            {
-              let _wi = 0;
-              for (let _i = 0; _i < s.obstacles.length; _i++) {
-                if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i];
-              }
-              s.obstacles.length = _wi;
-            }
-            s.particles = [];
+          if (applyRevive()) {
             animRef.current = requestAnimationFrame(loop);
             return;
           }
@@ -1568,24 +1654,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
             const waitForRevive = () => {
               if (unmounted) return;
               if (!animRef.current && animRef.current !== 0) return;
-              if (reviveRef.current) {
-                reviveRef.current = false;
-                s.alive = true;
-                if (s._deathTime) {
-                  s.startTime += performance.now() - s._deathTime;
-                  s._deathTime = 0;
-                }
-                s.lastTickTime = performance.now();
-                s.screenShake = 0;
-                s.velY = FLAP_VEL * 0.5;
-                {
-                  let _wi = 0;
-                  for (let _i = 0; _i < s.obstacles.length; _i++) {
-                    if (s.obstacles[_i].data.x > s.playerX + 200) s.obstacles[_wi++] = s.obstacles[_i];
-                  }
-                  s.obstacles.length = _wi;
-                }
-                s.particles = [];
+              if (applyRevive()) {
                 animRef.current = requestAnimationFrame(loop);
               } else {
                 animRef.current = setTimeout(waitForRevive, 100) as unknown as number;
@@ -1613,7 +1682,7 @@ export default function GravityRunnerScene(props: GravityRunnerProps) {
       document.removeEventListener('visibilitychange', onVisChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState, onScore, onCoins, onGameOver, reviveRef, hasMintedId]);
+  }, [gameState, paused, onScore, onCoins, onGameOver, reviveRef, hasMintedId]);
 
   return (
     <canvas ref={canvasRef} className="w-full h-full" style={{ touchAction: 'none', background: 'transparent' }} />

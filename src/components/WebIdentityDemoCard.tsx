@@ -186,7 +186,7 @@ export default function WebIdentityDemoCard() {
             aria-label={`Show ${TIER_LABELS[tier]} identity card`}
             title={TIER_LABELS[tier]}
           >
-            <img src={`/landing/textures/tiers/${tier}.png`} alt="" />
+            <img src={`/textures/tiers/${tier}.png`} alt="" />
           </button>
         ))}
       </div>

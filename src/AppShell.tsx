@@ -13,7 +13,6 @@ import {
   createDefaultWalletNotFoundHandler,
 } from '@solana-mobile/wallet-adapter-mobile';
 import { Capacitor } from '@capacitor/core';
-import { SeedVaultAdapter } from './lib/SeedVaultAdapter';
 import App from './App';
 import Index from './pages/Index';
 import NotFound from './pages/NotFound';
@@ -354,18 +353,11 @@ const mobileWalletAdapter = new SolanaMobileWalletAdapter({
 // On Seeker, prefer direct Seed Vault signing. Browser wallet adapters can appear
 // as loadable inside the WebView and cause native payment flows to open the wrong
 // approval surface.
-const wallets = isCapacitorNative
-  ? [
-      new SeedVaultAdapter(),
-      mobileWalletAdapter,
-      new PhantomWalletAdapter(),
-      new SolflareWalletAdapter(),
-    ]
-  : [
-      mobileWalletAdapter,
-      new PhantomWalletAdapter(),
-      new SolflareWalletAdapter(),
-    ];
+const wallets = [
+  mobileWalletAdapter,
+  new PhantomWalletAdapter(),
+  new SolflareWalletAdapter(),
+];
 const heliusRpcUrl = getHeliusRpcUrl();
 if (!heliusRpcUrl) {
   console.warn('Helius proxy URL missing. Wallet RPC will fall back to the public Solana endpoint.');

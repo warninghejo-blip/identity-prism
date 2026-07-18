@@ -14,7 +14,7 @@ import { Connection, PublicKey, Transaction, VersionedTransaction } from '@solan
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 import { Capacitor } from '@capacitor/core';
 import { extractMwaAddress, mwaAuthorizationCache } from '@/lib/mwaAuthorizationCache';
-import { armExternalWalletReturnGuard } from '@/lib/safeNavigate';
+import { armExternalWalletReturnGuard, cleanupWalletModals } from '@/lib/safeNavigate';
 
 type WalletDef = { adapter: Adapter; readyState: WalletReadyState };
 
@@ -48,7 +48,7 @@ type NativeSessionRestoreMarker = {
 
 const withNativeWalletDismissDetection = async <T,>(operation: () => Promise<T>, label: string): Promise<T> => {
   const hardTimeoutMs = Capacitor.isNativePlatform() ? 240_000 : 120_000;
-  const dismissGraceMs = Capacitor.isNativePlatform() ? 60_000 : 15_000;
+  const dismissGraceMs = Capacitor.isNativePlatform() ? 2_000 : 15_000;
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
@@ -97,8 +97,11 @@ const withNativeWalletDismissDetection = async <T,>(operation: () => Promise<T>,
     const onNativeResume = () => {
       if (!wentToBackground || settled) return;
       window.setTimeout(() => {
-        if (!settled && document.visibilityState === 'visible') startDismissTimer();
-      }, 1_500);
+        if (!settled && document.visibilityState === 'visible') {
+          settle(() => reject(new Error(`USER_REJECTED: ${label} dismissed`)));
+          cleanupWalletModals();
+        }
+      }, 1_000);
     };
 
     document.addEventListener('visibilitychange', onVisibility);
@@ -327,8 +330,8 @@ export const CustomWalletProvider = ({
     }
   }, [isNativePlatform]);
 
-  const startNativeMwaAssociationNudge = useCallback(() => {
-    if (!isNativePlatform || adapter?.name !== SolanaMobileWalletAdapterWalletName) {
+  const startNativeMwaAssociationNudge = useCallback((targetAdapter: Adapter | null) => {
+    if (!isNativePlatform || targetAdapter?.name !== SolanaMobileWalletAdapterWalletName) {
       return () => {};
     }
     let ticks = 0;
@@ -341,7 +344,7 @@ export const CustomWalletProvider = ({
     }, 250);
     window.dispatchEvent(new Event('blur'));
     return () => window.clearInterval(intervalId);
-  }, [adapter?.name, isNativePlatform]);
+  }, [isNativePlatform]);
 
   const ensureNativeMwaAdapterReady = useCallback(async () => {
     if (!isNativePlatform || adapter?.name !== SolanaMobileWalletAdapterWalletName || adapter.connected) return;
@@ -633,6 +636,7 @@ export const CustomWalletProvider = ({
     setConnecting(true);
     if (isNativePlatform) setNativeSessionRestoreMarker();
     armWalletReturnGuard();
+    const stopNudge = startNativeMwaAssociationNudge(activeAdapter);
     // Timeout guard: native Seed Vault can legitimately stay in its secure
     // PIN/activity flow longer than 15s during manual entry on-device.
     const connectTimeoutMs = isNativePlatform ? 90_000 : 15_000;
@@ -657,7 +661,10 @@ export const CustomWalletProvider = ({
       throw handleError(error as WalletError, activeAdapter);
     } finally {
       if (connectTimeoutId !== null) clearTimeout(connectTimeoutId);
+      window.setTimeout(stopNudge, 3_500);
       setConnecting(false);
+      // Clean up any MWA spinner/overlay that wasn't dismissed properly
+      window.setTimeout(cleanupWalletModals, 500);
     }
   }, [
     adapter,
@@ -737,7 +744,7 @@ export const CustomWalletProvider = ({
       if (!connected) throw handleError(new WalletNotConnectedError(), adapter);
       await ensureNativeMwaAdapterReady();
       armWalletReturnGuard();
-      const stopNudge = startNativeMwaAssociationNudge();
+      const stopNudge = startNativeMwaAssociationNudge(adapter);
       try {
         return await withNativeWalletDismissDetection(
           () => adapter.sendTransaction(transaction, connection, options),
@@ -757,7 +764,7 @@ export const CustomWalletProvider = ({
             if (!connected) throw handleError(new WalletNotConnectedError(), adapter);
             await ensureNativeMwaAdapterReady();
             armWalletReturnGuard();
-            const stopNudge = startNativeMwaAssociationNudge();
+            const stopNudge = startNativeMwaAssociationNudge(adapter);
             try {
               return await withNativeWalletDismissDetection(
                 () =>

@@ -45,6 +45,15 @@ import {
   loadTournaments,
 } from './services/loaders.js';
 import { appDb } from './services/appDb.js';
+import {
+  GAME_START_TOKEN_TTL_MAX_MS,
+  GAME_START_TOKEN_TTL_MS as DEFAULT_GAME_START_TOKEN_TTL_MS,
+  MAX_SESSION_AGE_MS,
+  MAX_SESSION_DURATION_MS,
+  MAX_SESSION_SCORE,
+  MAX_DELTA_PER_GAME as SHARED_MAX_DELTA_PER_GAME,
+  MAX_FREE_REVIVES_PER_RUN,
+} from './services/gameRules.js';
 import { DataStore } from './services/datastore.js';
 import { createPersistenceServices } from './services/persistence.js';
 import { createReputationBuilderService } from './services/reputationBuilder.js';
@@ -288,10 +297,10 @@ const GAME_SESSION_STORE_FILE = process.env.GAME_SESSION_STORE_FILE
 const SECURITY_EVENT_STORE_FILE = process.env.SECURITY_EVENT_STORE_FILE
   ? path.resolve(process.env.SECURITY_EVENT_STORE_FILE)
   : path.join(METADATA_DIR, 'security-events.json');
-const GAME_START_TOKEN_TTL_RAW = Number(process.env.GAME_START_TOKEN_TTL_MS ?? String(20 * 60 * 1000));
+const GAME_START_TOKEN_TTL_RAW = Number(process.env.GAME_START_TOKEN_TTL_MS ?? String(DEFAULT_GAME_START_TOKEN_TTL_MS));
 const GAME_START_TOKEN_TTL_MS = Number.isFinite(GAME_START_TOKEN_TTL_RAW) && GAME_START_TOKEN_TTL_RAW >= 60_000
-  ? Math.min(GAME_START_TOKEN_TTL_RAW, 30 * 60 * 1000)
-  : 20 * 60 * 1000;
+  ? Math.min(GAME_START_TOKEN_TTL_RAW, GAME_START_TOKEN_TTL_MAX_MS)
+  : DEFAULT_GAME_START_TOKEN_TTL_MS;
 const LEADERBOARD_STORE_FILE = process.env.LEADERBOARD_STORE_FILE
   ? path.resolve(process.env.LEADERBOARD_STORE_FILE)
   : path.join(METADATA_DIR, 'leaderboard.json');
@@ -1745,6 +1754,41 @@ const securityEventStore = createJsonColumnStore({
   logLabel: 'security-events',
 });
 
+// Bearer tokens must never enter a durable store. They are retained only long
+// enough to replay a lost response for a challenge-bound /session/start call.
+const gameSessionTokenMemory = new Map();
+const withoutSessionToken = (record) => {
+  if (!record || typeof record !== 'object' || Array.isArray(record) || !Object.hasOwn(record, 'sessionToken')) return record;
+  const { sessionToken, ...safeRecord } = record;
+  return safeRecord;
+};
+const rememberGameSessionToken = (tokenId, token, expiresAtMs) => {
+  gameSessionTokenMemory.set(tokenId, { token, expiresAtMs: Number(expiresAtMs) });
+  const delayMs = Math.max(0, Number(expiresAtMs) - Date.now());
+  const timer = setTimeout(() => {
+    const current = gameSessionTokenMemory.get(tokenId);
+    if (current && current.expiresAtMs <= Date.now()) gameSessionTokenMemory.delete(tokenId);
+  }, delayMs);
+  timer.unref?.();
+};
+const getRememberedGameSessionToken = (tokenId, tokenHash) => {
+  const remembered = gameSessionTokenMemory.get(tokenId);
+  if (!remembered || remembered.expiresAtMs <= Date.now()) {
+    gameSessionTokenMemory.delete(tokenId);
+    return null;
+  }
+  if (crypto.createHash('sha256').update(remembered.token).digest('hex') !== tokenHash) return null;
+  return remembered.token;
+};
+const sanitizeSecurityEventStore = () => {
+  // This also removes any token written by the previous implementation from
+  // both SQLite and its JSON fallback before the server accepts traffic.
+  const sanitized = new Map(
+    Array.from(securityEventStore.entries(), ([key, record]) => [key, withoutSessionToken(record)]),
+  );
+  securityEventStore.replaceAll(sanitized);
+};
+
 const selectSecurityEvent = appDb.prepare('SELECT data FROM security_events WHERE event_key = ?');
 const insertSecurityEvent = appDb.prepare('INSERT INTO security_events (event_key, data) VALUES (?, ?)');
 const updateSecurityEvent = appDb.prepare('UPDATE security_events SET data = ? WHERE event_key = ?');
@@ -1778,10 +1822,60 @@ const claimRemintBurn = (claim) => {
   return result;
 };
 
-const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId = null, seed, slot, seedSource = 'client' }) => {
+const challengeSessionTokenKey = (challengeId, walletAddress) => `challenge-game-session:${challengeId}:${walletAddress}`;
+
+const issueGameSessionTokenTx = appDb.transaction(({ record, challengeIndexKey, challengeIndexRecord }) => {
+  if (challengeIndexKey) {
+    const priorIndex = parseSecurityEventRow(selectSecurityEvent.get(challengeIndexKey));
+    if (priorIndex) {
+      const priorToken = typeof priorIndex.tokenId === 'string'
+        ? parseSecurityEventRow(selectSecurityEvent.get(`game-session-token:${priorIndex.tokenId}`))
+        : null;
+      const priorExpiryMs = Number(priorToken?.expiresAtMs);
+      // An active challenge token is the idempotency key for /session/start.
+      // Return that exact bearer token on a lost-response retry, never mint a
+      // second active token. Terminal or expired records may be replaced.
+      if (priorToken?.redeemedAt) {
+        // A consumed run is terminal, even if a legacy record's expiry is bad.
+        // It cannot authorize another settlement and may be replaced.
+      } else if (priorToken && Number.isFinite(priorExpiryMs) && priorExpiryMs <= record.issuedAtMs) {
+        // The previous unconsumed token has elapsed; replace it atomically.
+      } else if (priorToken && Number.isFinite(priorExpiryMs) && priorExpiryMs > record.issuedAtMs) {
+        const sessionToken = getRememberedGameSessionToken(priorToken.tokenId, priorToken.tokenHash);
+        if (!sessionToken) {
+          return { ok: false, reason: 'challenge_session_recovery_unavailable' };
+        }
+        return { ok: true, recovered: true, record: priorToken, sessionToken };
+      } else {
+        // A missing or malformed unredeemed indexed record is not safe to
+        // replace because it could conceal a still-usable token. Fail closed.
+        return { ok: false, reason: 'challenge_session_already_issued' };
+      }
+    }
+  }
+  insertSecurityEvent.run(`game-session-token:${record.tokenId}`, JSON.stringify(record));
+  if (challengeIndexKey) {
+    const existing = parseSecurityEventRow(selectSecurityEvent.get(challengeIndexKey));
+    if (existing) updateSecurityEvent.run(JSON.stringify(challengeIndexRecord), challengeIndexKey);
+    else insertSecurityEvent.run(challengeIndexKey, JSON.stringify(challengeIndexRecord));
+  }
+  return { ok: true };
+});
+
+const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId = null, seed, slot, seedSource = 'client', identityGameCoinMultiplier = 1, stakingBoost = 0, expiresAtMs: maximumExpiresAtMs = null, challengeDeadlineMs = null }) => {
   const tokenId = crypto.randomUUID();
   const issuedAtMs = Date.now();
-  const expiresAtMs = issuedAtMs + GAME_START_TOKEN_TTL_MS;
+  const requestedExpiresAtMs = maximumExpiresAtMs === null || maximumExpiresAtMs === undefined
+    ? null
+    : Number(maximumExpiresAtMs);
+  const expiresAtMs = Number.isFinite(requestedExpiresAtMs)
+    ? Math.min(issuedAtMs + GAME_START_TOKEN_TTL_MS, requestedExpiresAtMs)
+    : issuedAtMs + GAME_START_TOKEN_TTL_MS;
+  if (expiresAtMs <= issuedAtMs) {
+    const error = new Error('challenge_not_playable');
+    error.code = 'challenge_not_playable';
+    throw error;
+  }
   const token = signGameSessionToken({
     type: 'game-session',
     tokenId,
@@ -1793,7 +1887,7 @@ const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId =
     slot,
     seedSource,
     issuedAtMs,
-  }, Math.ceil(GAME_START_TOKEN_TTL_MS / 1000));
+  }, Math.max(1, Math.ceil((expiresAtMs - issuedAtMs) / 1000)));
   const record = {
     tokenId,
     tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
@@ -1806,11 +1900,46 @@ const issueGameSessionToken = ({ walletAddress, gameMode, purpose, referenceId =
     seedSource,
     issuedAtMs,
     expiresAtMs,
+    ...(Number.isFinite(Number(challengeDeadlineMs)) ? { challengeDeadlineMs: Number(challengeDeadlineMs) } : {}),
     proofId: null,
     redeemedAt: null,
     redeemedPurpose: null,
+    identityGameCoinMultiplier: Math.max(1, Math.floor(Number(identityGameCoinMultiplier) || 1)),
+    stakingBoost: Math.max(0, Number(stakingBoost) || 0),
+    pausedMs: 0,
+    pauseStartedAtMs: null,
+    pendingReviveIndex: null,
+    settlementFingerprint: null,
   };
+  const challengeIndexKey = referenceId ? challengeSessionTokenKey(referenceId, walletAddress) : null;
+  const challengeIndexRecord = challengeIndexKey
+    ? { tokenId, challengeId: referenceId, walletAddress, expiresAtMs, issuedAtMs }
+    : null;
+  const issued = issueGameSessionTokenTx.immediate({ record, challengeIndexKey, challengeIndexRecord });
+  if (!issued.ok) {
+    const error = new Error(issued.reason);
+    error.code = issued.reason;
+    throw error;
+  }
+  if (issued.recovered) {
+    const recovered = issued.record;
+    return {
+      token: issued.sessionToken,
+      tokenId: recovered.tokenId,
+      issuedAtMs: recovered.issuedAtMs,
+      expiresAtMs: recovered.expiresAtMs,
+      gameMode: recovered.gameMode,
+      purpose: recovered.purpose,
+      referenceId: recovered.referenceId,
+      seed: recovered.seed,
+      slot: recovered.slot,
+      seedSource: recovered.seedSource,
+      recovered: true,
+    };
+  }
+  if (challengeIndexKey) rememberGameSessionToken(tokenId, token, expiresAtMs);
   securityEventStore.set(`game-session-token:${tokenId}`, record);
+  if (challengeIndexKey) securityEventStore.set(challengeIndexKey, challengeIndexRecord);
   return { token, tokenId, issuedAtMs, expiresAtMs, gameMode, purpose, referenceId, seed, slot, seedSource };
 };
 
@@ -1820,7 +1949,9 @@ const verifyGameSessionToken = (token) => {
   }
   let payload;
   try {
-    payload = verifyGameSessionTokenSignature(token);
+    // A redeemed token remains a signed, bound receipt after its normal start
+    // TTL. Its expiry only rejects a first settlement; retries must replay it.
+    payload = verifyGameSessionTokenSignature(token, { ignoreExpiration: true });
   } catch (error) {
     return { ok: false, reason: error?.name === 'TokenExpiredError' ? 'expired_token' : 'invalid_token' };
   }
@@ -1829,8 +1960,8 @@ const verifyGameSessionToken = (token) => {
   }
   const record = securityEventStore.get(`game-session-token:${payload.tokenId}`);
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  if (!record || record.tokenHash !== tokenHash || record.expiresAtMs < Date.now()) {
-    return { ok: false, reason: record?.expiresAtMs < Date.now() ? 'expired_token' : 'invalid_token' };
+  if (!record || record.tokenHash !== tokenHash) {
+    return { ok: false, reason: 'invalid_token' };
   }
   if (
     record.walletAddress !== payload.walletAddress
@@ -1843,6 +1974,16 @@ const verifyGameSessionToken = (token) => {
   ) {
     return { ok: false, reason: 'token_binding_mismatch' };
   }
+  const recordExpiresAtMs = Number(record.expiresAtMs);
+  // Malformed storage is never a usable token, including a redeemed receipt.
+  if (!Number.isFinite(recordExpiresAtMs)) {
+    return { ok: false, reason: 'invalid_token' };
+  }
+  // A redeemed record can pass this layer only so the settlement transaction
+  // can replay its exact saved fingerprint. Every non-idempotent use rejects.
+  if (recordExpiresAtMs <= Date.now() && !record.redeemedAt) {
+    return { ok: false, reason: 'expired_token' };
+  }
   return { ok: true, payload, record };
 };
 
@@ -1850,10 +1991,10 @@ const bindGameSessionTokenProofTx = appDb.transaction(({ tokenId, tokenHash, pro
   const key = `game-session-token:${tokenId}`;
   const record = parseSecurityEventRow(selectSecurityEvent.get(key));
   if (!record || record.tokenHash !== tokenHash) return { ok: false, reason: 'invalid_token' };
-  if (record.expiresAtMs < Date.now()) return { ok: false, reason: 'expired_token' };
   if (record.redeemedAt) return { ok: false, reason: 'token_redeemed' };
+  if (!Number.isFinite(Number(record.expiresAtMs)) || Number(record.expiresAtMs) <= Date.now()) return { ok: false, reason: 'expired_token' };
   if (record.proofId && record.proofId !== proofId) return { ok: false, reason: 'token_already_bound' };
-  const updated = { ...record, proofId, proofBoundAt: record.proofBoundAt || Date.now() };
+  const updated = withoutSessionToken({ ...record, proofId, proofBoundAt: record.proofBoundAt || Date.now() });
   updateSecurityEvent.run(JSON.stringify(updated), key);
   return { ok: true, idempotent: record.proofId === proofId, record: updated };
 });
@@ -1874,8 +2015,8 @@ const redeemGameSessionTokenTx = appDb.transaction((expected) => {
   const key = `game-session-token:${expected.tokenId}`;
   const record = parseSecurityEventRow(selectSecurityEvent.get(key));
   if (!record || record.tokenHash !== expected.tokenHash) return { ok: false, reason: 'invalid_token' };
-  if (record.expiresAtMs < Date.now()) return { ok: false, reason: 'expired_token' };
   if (record.redeemedAt) return { ok: false, reason: 'token_redeemed' };
+  if (!Number.isFinite(Number(record.expiresAtMs)) || Number(record.expiresAtMs) <= Date.now()) return { ok: false, reason: 'expired_token' };
   if (!record.proofId || record.proofId !== expected.proofId) return { ok: false, reason: 'proof_binding_mismatch' };
   if (
     record.walletAddress !== expected.walletAddress
@@ -1888,11 +2029,11 @@ const redeemGameSessionTokenTx = appDb.transaction((expected) => {
   if (record.purpose !== expected.purpose || (record.referenceId || null) !== (expected.referenceId || null)) {
     return { ok: false, reason: 'token_purpose_mismatch' };
   }
-  const updated = {
+  const updated = withoutSessionToken({
     ...record,
     redeemedAt: Date.now(),
     redeemedPurpose: expected.purpose,
-  };
+  });
   updateSecurityEvent.run(JSON.stringify(updated), key);
   return { ok: true, record: updated };
 });
@@ -2032,7 +2173,9 @@ const normalizeStoredGameSessionEntry = (raw) => {
     startedAtMs: safeStartedAtMs,
     endedAtMs: safeEndedAtMs,
     durationMs,
+    clientReportedSurvivalTime: typeof raw.clientReportedSurvivalTime === 'string' ? raw.clientReportedSurvivalTime : null,
     scoreDelta,
+    seedStartDeltaMs: Number.isFinite(Number(raw.seedStartDeltaMs)) ? Math.floor(Number(raw.seedStartDeltaMs)) : null,
     verified: Boolean(raw.verified),
     proofUrl: typeof raw.proofUrl === 'string' && raw.proofUrl.trim() ? raw.proofUrl.trim() : null,
     verification: {
@@ -2046,6 +2189,7 @@ const normalizeStoredGameSessionEntry = (raw) => {
       slotBlockTimeMs: Number.isFinite(Number(raw?.verification?.slotBlockTimeMs))
         ? Math.floor(Number(raw.verification.slotBlockTimeMs))
         : null,
+      seedIssuedByServer: Boolean(raw?.verification?.seedIssuedByServer),
       reason:
         typeof raw?.verification?.reason === 'string' && raw.verification.reason.trim()
           ? raw.verification.reason.trim()
@@ -2055,6 +2199,7 @@ const normalizeStoredGameSessionEntry = (raw) => {
     lastVerifiedAt,
     createdAtMs,
     gameMode: typeof raw.gameMode === 'string' ? raw.gameMode : undefined,
+    txSignature: typeof raw.txSignature === 'string' ? raw.txSignature : null,
     coinsCredited: Number.isFinite(Number(raw.coinsCredited)) ? Math.max(0, Math.floor(Number(raw.coinsCredited))) : 0,
     identityGameCoinMultiplier: Number.isFinite(Number(raw.identityGameCoinMultiplier))
       ? Math.max(1, Math.floor(Number(raw.identityGameCoinMultiplier)))
@@ -2069,7 +2214,24 @@ const normalizeStoredGameSessionEntry = (raw) => {
     sessionTokenExpiresAtMs: Number.isFinite(Number(raw.sessionTokenExpiresAtMs))
       ? Math.floor(Number(raw.sessionTokenExpiresAtMs))
       : null,
+    seedSource: typeof raw.seedSource === 'string' ? raw.seedSource : null,
+    economyEligible: raw.economyEligible === true,
+    competitiveEligible: raw.competitiveEligible === true,
+    scoreCeiling: Number.isFinite(Number(raw.scoreCeiling)) ? Math.max(0, Math.floor(Number(raw.scoreCeiling))) : null,
+    pausedMs: Number.isFinite(Number(raw.pausedMs)) ? Math.max(0, Math.floor(Number(raw.pausedMs))) : 0,
+    wallDurationMs: Number.isFinite(Number(raw.wallDurationMs)) ? Math.max(0, Math.floor(Number(raw.wallDurationMs))) : null,
+    allowedActiveMs: Number.isFinite(Number(raw.allowedActiveMs)) ? Math.max(0, Math.floor(Number(raw.allowedActiveMs))) : null,
+    scoreCeilingDurationMs: Number.isFinite(Number(raw.scoreCeilingDurationMs))
+      ? Math.max(0, Math.floor(Number(raw.scoreCeilingDurationMs)))
+      : null,
     timingVerified: raw.timingVerified === true ? true : (raw.timingVerified === false ? false : null),
+    challengeReferenceId: typeof raw.challengeReferenceId === 'string' ? raw.challengeReferenceId : null,
+    reviveGrantIds: Array.isArray(raw.reviveGrantIds) ? raw.reviveGrantIds.filter((id) => typeof id === 'string') : [],
+    settlementFingerprint: typeof raw.settlementFingerprint === 'string' ? raw.settlementFingerprint : null,
+    challengeRun: raw.challengeRun === true,
+    creditResult: raw.creditResult && typeof raw.creditResult === 'object' && !Array.isArray(raw.creditResult)
+      ? raw.creditResult
+      : null,
   };
 };
 
@@ -2195,8 +2357,12 @@ const getCoinBalance = (address) => coinBalances.get(address) || 0;
 
 const setCoinBalance = (address, coins) => {
   const safe = Math.max(0, Math.round(coins));
+  // Balance mutations may be committed by an economy transaction before this
+  // compatibility mirror is refreshed. Preserve the DB-earned column instead
+  // of resetting it to zero on every mirror update.
+  const existing = coinBalanceStore.get(address);
   coinBalances.set(address, safe);
-  coinBalanceStore.set(address, { balance: safe, earned: 0 });
+  coinBalanceStore.set(address, { balance: safe, earned: Math.max(0, Number(existing?.earned) || 0) });
   // Keep walletDatabase in sync (walletDatabase is a Map)
   const wEntry = walletDatabase.get(address);
   if (wEntry) { wEntry.coins = safe; walletDatabase.set(address, wEntry); }
@@ -2614,7 +2780,7 @@ const isAchievementUnlockVerified = (address, achievementId) => {
 
 // ── Server-side Free Revive tracking (3 per day per game mode, requires minted ID) ──
 const REVIVES_STORE_FILE = path.join(METADATA_DIR, 'revive-usage.json');
-const FREE_REVIVES_PER_DAY = 3;
+const FREE_REVIVES_PER_DAY = MAX_FREE_REVIVES_PER_RUN;
 // address -> { orbit: { date: 'YYYY-MM-DD', used: number }, destroyer: { ... }, gravity: { ... } }
 const reviveData = new Map();
 const reviveStore = createJsonColumnStore({
@@ -2839,7 +3005,9 @@ const getQuestProgressSnapshot = (address, nowMs = Date.now()) => {
 const verifyGameEarnClaim = (address, source, gameSessionId) => {
   if (!gameSessionId) return { ok: false, error: 'gameSessionId required' };
   const session = gameSessionProofs.get(gameSessionId);
-  if (!session || !session.verified) return { ok: false, error: 'Invalid or unverified game session' };
+  if (!session || !session.verified || !session.sessionTokenId || session.timingVerified !== true || session.economyEligible !== true) {
+    return { ok: false, error: 'Token-backed, timing-verified game session required' };
+  }
   if (session.walletAddress !== address) return { ok: false, error: 'Session wallet mismatch' };
   if (session.usedForChallenge) return { ok: false, error: 'Challenge game — coins earned from challenge result' };
   const expectedMode = GAME_SOURCE_TO_MODE[source];
@@ -3179,6 +3347,9 @@ const toPublicGameSessionProof = (entry) => ({
   createdAt: entry.createdAt,
   lastVerifiedAt: entry.lastVerifiedAt,
   timingVerified: entry.timingVerified === true,
+  economyEligible: entry.economyEligible === true,
+  competitiveEligible: entry.competitiveEligible === true,
+  scoreCeiling: Number.isFinite(Number(entry.scoreCeiling)) ? Number(entry.scoreCeiling) : null,
 });
 
 const callMagicBlockRpc = async (method, params = []) => {
@@ -3301,7 +3472,7 @@ const verifyMagicBlockSeedSlot = async (seed, slot) => {
   return verification;
 };
 
-const normalizeGameSessionPayload = (payload) => {
+const normalizeGameSessionPayload = (payload, { allowStaleTimestamps = false } = {}) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Invalid session payload');
   }
@@ -3322,7 +3493,6 @@ const normalizeGameSessionPayload = (payload) => {
   const gameMode = typeof payload.gameMode === 'string' ? payload.gameMode.trim() : 'orbit';
   if (!VALID_GAME_MODES.has(gameMode)) throw new Error('invalid gameMode');
 
-  const MAX_SESSION_SCORE = 1_000_000;
   if (!Number.isFinite(score) || score < 0 || score > MAX_SESSION_SCORE) {
     throw new Error('score must be a non-negative number');
   }
@@ -3340,11 +3510,9 @@ const normalizeGameSessionPayload = (payload) => {
   if (startedAtMs > now + CLOCK_SKEW_MS || endedAtMs > now + CLOCK_SKEW_MS) {
     throw new Error('session timestamps are in the future');
   }
-  const MAX_SESSION_AGE_MS = 20 * 60 * 1000;
-  if (startedAtMs < now - MAX_SESSION_AGE_MS || endedAtMs < now - MAX_SESSION_AGE_MS) {
+  if (!allowStaleTimestamps && (startedAtMs < now - MAX_SESSION_AGE_MS || endedAtMs < now - MAX_SESSION_AGE_MS)) {
     throw new Error('session timestamps are too old');
   }
-  const MAX_SESSION_DURATION_MS = 15 * 60 * 1000;
   if (endedAtMs - startedAtMs > MAX_SESSION_DURATION_MS) {
     throw new Error('session duration exceeds maximum');
   }
@@ -3962,6 +4130,7 @@ async function handleGameLeaderboardGetV1(req, res, url) {
 }
 
 async function handleGameLeaderboardV1(req, res, url) {
+  return respondJson(res, 426, { error: 'Leaderboard submission requires the v2 token-backed session flow', code: 'CLIENT_UPDATE_REQUIRED' });
   if (!ipRateLimit('lb_post', getClientIp(req), 20, 60000)) return respondJson(res, 429, { error: 'Too many requests' });
   try {
     const raw = await readBody(req);
@@ -5388,7 +5557,7 @@ function addGameCoinsToday(address, amount) {
 }
 
 // ═══ Delta Validation per Game Mode ═══
-const MAX_DELTA_PER_GAME = { orbit: 1000, destroyer: 1800, gravity: 1200, wars: 800, territory: 800 };
+const MAX_DELTA_PER_GAME = { ...SHARED_MAX_DELTA_PER_GAME, wars: 800, territory: 800 };
 
 // ═══ Staking (Prism Vault) ═══
 // Stakes created before this timestamp use old flat rate; after use brackets
@@ -5843,6 +6012,8 @@ const ctx = createContext({
   bindGameSessionTokenProof,
   redeemGameSessionToken,
   getServerIssuedGameSeed,
+  reviveData,
+  persistReviveData,
   prismTransactions,
   feedItems,
   sybilInFlight,
@@ -6104,6 +6275,7 @@ const initOrchestrator = createInitOrchestrator({
   sybilVerdictStore,
   gameSessionProofStore,
   securityEventStore,
+  sanitizeSecurityEventStore,
   achievementStore,
   reviveStore,
   questProgressStore,

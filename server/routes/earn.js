@@ -65,8 +65,10 @@ function registerEarnRoute(ctx) {
       } = JSON.parse(await readBody(req));
       const address = jwtAuth.address;
       if (bodyAddress && bodyAddress !== address) return respondJson(res, 403, { error: 'Address mismatch' });
-      if (!address || !amount) return respondJson(res, 400, { error: 'address and amount required' });
+      if (!address) return respondJson(res, 400, { error: 'address required' });
       if (!source || !prismEarnMaxPerCall[source]) return respondJson(res, 400, { error: 'Invalid earn source' });
+      if (GAME_EARN_SOURCES.has(source)) return respondJson(res, 410, { error: 'Gameplay credit is settled only by POST /api/v2/game/session', code: 'CLIENT_GAME_CREDIT_DISABLED' });
+      if (!amount) return respondJson(res, 400, { error: 'amount required' });
       const maxAllowed = prismEarnMaxPerCall[source];
       if (!Number.isFinite(Number(amount)) || Number(amount) > maxAllowed) return respondJson(res, 400, { error: `Max ${maxAllowed} Coins per ${source || 'action'}` });
       if (source === 'first_mint') {
