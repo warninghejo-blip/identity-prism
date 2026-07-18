@@ -6,7 +6,7 @@
 [![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
 [![Tapestry](https://img.shields.io/badge/Reputation-Tapestry-orange)](https://tapestry.network/)
 
-**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo v4.0:** [YouTube](https://youtu.be/2JR4UN8-Elo) · **Demo v3.0:** [YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
+**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo v4.0:** [YouTube](https://youtu.be/jI_usQJ_P-E) · **Demo v3.0:** [YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
 
 ---
 
@@ -20,7 +20,7 @@
 | Version | Demo | What changed |
 |---------|------|--------------|
 | **v3.0** | [▶ YouTube Shorts](https://www.youtube.com/shorts/glZBXcYBB-k) | Core reputation engine, 3D planet card, NFT minting, Black Hole, Orbit Survival, Tapestry, Blinks |
-| **v4.0** | [▶ YouTube](https://youtu.be/2JR4UN8-Elo) | Cosmic Defender, Update Card + Co-Sign Guard, GLSL wormhole transitions, procedural audio engine, badge redesign, Sun/Star plasma shaders, InstancedMesh optimization |
+| **v4.0** | [▶ YouTube](https://youtu.be/jI_usQJ_P-E) | Cosmic Defender, Update Card + Co-Sign Guard, GLSL wormhole transitions, procedural audio engine, badge redesign, Sun/Star plasma shaders, InstancedMesh optimization |
 
 ### 1. MONOLITH (Solana Mobile Hackathon)
 *   **Track:** Mobile Track
