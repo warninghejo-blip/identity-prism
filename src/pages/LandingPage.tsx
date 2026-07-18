@@ -492,7 +492,7 @@ export default function LandingPage() {
                 </div>
                 <div className="sol-side">
                   <div className="sol-icon-frame to">
-                    <img src="/landing/phav.png" alt="" style={{ width: '64px', height: '64px', filter: 'drop-shadow(0 0 16px rgba(167,139,250,.6))' }} />
+                    <img src="/phav.png" alt="" style={{ width: '64px', height: '64px', filter: 'drop-shadow(0 0 16px rgba(167,139,250,.6))' }} />
                   </div>
                   <h5>After</h5>
                   <div className="label">Cosmic Identity</div>
@@ -588,11 +588,11 @@ export default function LandingPage() {
                 <div className="badge-cat-count">5 Badges</div>
               </div>
               <div className="badges-row reveal-stagger" style={{ ['--cat-c1' as string]: '#d4a04a', ['--cat-c2' as string]: '#7c5a1a', ['--cat-glow' as string]: 'rgba(212,160,74,.4)', ['--cat-bg' as string]: 'linear-gradient(160deg,rgba(124,90,26,.4),rgba(124,90,26,.12))', ['--cat-border' as string]: 'rgba(212,160,74,.25)', ['--cat-border-hover' as string]: 'rgba(212,160,74,.6)' } as React.CSSProperties}>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/early_adopter.png" alt="" /></div><div className="name">Early Bird</div><div className="desc">Wallet ≥ 1 year</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/veteran.png" alt="" /></div><div className="name">Veteran</div><div className="desc">2yrs &amp; 1K+ tx</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/whale.png" alt="" /></div><div className="name">Whale</div><div className="desc">≥ 50 SOL</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/nft_collector.png" alt="" /></div><div className="name">NFT Collector</div><div className="desc">≥ 10 NFTs</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/defi_architect.png" alt="" /></div><div className="name">DeFi Architect</div><div className="desc">3+ protocols</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/early_adopter.png" alt="" /></div><div className="name">Early Bird</div><div className="desc">Wallet ≥ 1 year</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/veteran.png" alt="" /></div><div className="name">Veteran</div><div className="desc">2yrs &amp; 1K+ tx</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/whale.png" alt="" /></div><div className="name">Whale</div><div className="desc">≥ 50 SOL</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/nft_collector.png" alt="" /></div><div className="name">NFT Collector</div><div className="desc">≥ 10 NFTs</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/defi_architect.png" alt="" /></div><div className="name">DeFi Architect</div><div className="desc">3+ protocols</div></div>
               </div>
             </div>
 
@@ -606,9 +606,9 @@ export default function LandingPage() {
                 <div className="badge-cat-count">3 Badges</div>
               </div>
               <div className="badges-row reveal-stagger" style={{ ['--cat-c1' as string]: '#4ac8e8', ['--cat-c2' as string]: '#0e7490', ['--cat-glow' as string]: 'rgba(74,200,232,.4)', ['--cat-bg' as string]: 'linear-gradient(160deg,rgba(22,78,99,.4),rgba(22,78,99,.12))', ['--cat-border' as string]: 'rgba(74,200,232,.25)', ['--cat-border-hover' as string]: 'rgba(74,200,232,.6)' } as React.CSSProperties}>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/verified_human.png" alt="" /></div><div className="name">Verified Human</div><div className="desc">Trust ≥ 80</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/clean_record.png" alt="" /></div><div className="name">Clean Record</div><div className="desc">Risk &lt; 10</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/trust_pillar.png" alt="" /></div><div className="name">Trust Pillar</div><div className="desc">Trust ≥ 95</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/verified_human.png" alt="" /></div><div className="name">Verified Human</div><div className="desc">Trust ≥ 80</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/clean_record.png" alt="" /></div><div className="name">Clean Record</div><div className="desc">Risk &lt; 10</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/trust_pillar.png" alt="" /></div><div className="name">Trust Pillar</div><div className="desc">Trust ≥ 95</div></div>
               </div>
             </div>
 
@@ -622,9 +622,9 @@ export default function LandingPage() {
                 <div className="badge-cat-count">3 Badges</div>
               </div>
               <div className="badges-row reveal-stagger" style={{ ['--cat-c1' as string]: '#34d399', ['--cat-c2' as string]: '#065f46', ['--cat-glow' as string]: 'rgba(52,211,153,.4)', ['--cat-bg' as string]: 'linear-gradient(160deg,rgba(6,95,70,.4),rgba(6,95,70,.12))', ['--cat-border' as string]: 'rgba(52,211,153,.25)', ['--cat-border-hover' as string]: 'rgba(52,211,153,.6)' } as React.CSSProperties}>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/game_master.png" alt="" /></div><div className="name">Game Master</div><div className="desc">3+ game types</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/achievement_hunter.png" alt="" /></div><div className="name">Achievement Hunter</div><div className="desc">10+ achievements</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/high_scorer.png" alt="" /></div><div className="name">High Scorer</div><div className="desc">Score ≥ 40</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/game_master.png" alt="" /></div><div className="name">Game Master</div><div className="desc">3+ game types</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/achievement_hunter.png" alt="" /></div><div className="name">Achievement Hunter</div><div className="desc">10+ achievements</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/high_scorer.png" alt="" /></div><div className="name">High Scorer</div><div className="desc">Score ≥ 40</div></div>
               </div>
             </div>
 
@@ -638,9 +638,9 @@ export default function LandingPage() {
                 <div className="badge-cat-count">3 Badges</div>
               </div>
               <div className="badges-row reveal-stagger" style={{ ['--cat-c1' as string]: '#a78bfa', ['--cat-c2' as string]: '#6d28d9', ['--cat-glow' as string]: 'rgba(167,139,250,.4)', ['--cat-bg' as string]: 'linear-gradient(160deg,rgba(88,28,135,.4),rgba(88,28,135,.12))', ['--cat-border' as string]: 'rgba(167,139,250,.25)', ['--cat-border-hover' as string]: 'rgba(167,139,250,.6)' } as React.CSSProperties}>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/seeker.png" alt="" /></div><div className="name">Seeker of Truth</div><div className="desc">Holds Seeker NFT</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/visionary.png" alt="" /></div><div className="name">Visionary</div><div className="desc">Pre-launch believer</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/binary.png" alt="" /></div><div className="name">Binary Sun</div><div className="desc">Dual-star combo</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/seeker.png" alt="" /></div><div className="name">Seeker of Truth</div><div className="desc">Holds Seeker NFT</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/visionary.png" alt="" /></div><div className="name">Visionary</div><div className="desc">Pre-launch believer</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/binary.png" alt="" /></div><div className="name">Binary Sun</div><div className="desc">Dual-star combo</div></div>
               </div>
             </div>
 
@@ -654,8 +654,8 @@ export default function LandingPage() {
                 <div className="badge-cat-count">2 Badges</div>
               </div>
               <div className="badges-row reveal-stagger" style={{ ['--cat-c1' as string]: '#ef4444', ['--cat-c2' as string]: '#991b1b', ['--cat-glow' as string]: 'rgba(239,68,68,.4)', ['--cat-bg' as string]: 'linear-gradient(160deg,rgba(127,29,29,.4),rgba(127,29,29,.12))', ['--cat-border' as string]: 'rgba(239,68,68,.25)', ['--cat-border-hover' as string]: 'rgba(239,68,68,.6)' } as React.CSSProperties}>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/arena_champion.png" alt="" /></div><div className="name">Arena Champion</div><div className="desc">5+ duels won</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/debate_king.png" alt="" /></div><div className="name">Sybil Hunter</div><div className="desc">5+ community reviews</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/arena_champion.png" alt="" /></div><div className="name">Arena Champion</div><div className="desc">5+ duels won</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/debate_king.png" alt="" /></div><div className="name">Sybil Hunter</div><div className="desc">5+ community reviews</div></div>
               </div>
             </div>
 
@@ -669,10 +669,10 @@ export default function LandingPage() {
                 <div className="badge-cat-count">4 Badges</div>
               </div>
               <div className="badges-row reveal-stagger" style={{ ['--cat-c1' as string]: '#f472b6', ['--cat-c2' as string]: '#9d174d', ['--cat-glow' as string]: 'rgba(244,114,182,.4)', ['--cat-bg' as string]: 'linear-gradient(160deg,rgba(131,24,67,.4),rgba(131,24,67,.12))', ['--cat-border' as string]: 'rgba(244,114,182,.25)', ['--cat-border-hover' as string]: 'rgba(244,114,182,.6)' } as React.CSSProperties}>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/quest_hunter.png" alt="" /></div><div className="name">Quest Master</div><div className="desc">15+ quests done</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/quest_hunter.png" alt="" /></div><div className="name">Quest Hunter</div><div className="desc">10+ quests done</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/streak_lord.png" alt="" /></div><div className="name">Streak Lord</div><div className="desc">7-day streak</div></div>
-                <div className="badge-card"><div className="img-wrap"><img src="/landing/badges/explorer.png" alt="" /></div><div className="name">Explorer</div><div className="desc">20+ wallet scans</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/quest_hunter.png" alt="" /></div><div className="name">Quest Master</div><div className="desc">15+ quests done</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/quest_hunter.png" alt="" /></div><div className="name">Quest Hunter</div><div className="desc">10+ quests done</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/streak_lord.png" alt="" /></div><div className="name">Streak Lord</div><div className="desc">7-day streak</div></div>
+                <div className="badge-card"><div className="img-wrap"><img src="/badges/explorer.png" alt="" /></div><div className="name">Explorer</div><div className="desc">20+ wallet scans</div></div>
               </div>
             </div>
 
@@ -698,16 +698,16 @@ export default function LandingPage() {
           </div>
 
           <div className="tiers-grid reveal-stagger">
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#b4a995' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/mercury.png" alt="" /></div><div className="tname">Mercury</div><div className="trange">0 — 99</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#ff6b4a' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/mars.png" alt="" /></div><div className="tname">Mars</div><div className="trange">100 — 219</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#ffd166' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/venus.png" alt="" /></div><div className="tname">Venus</div><div className="trange">220 — 349</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#5fa8ff' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/earth.png" alt="" /></div><div className="tname">Earth</div><div className="trange">350 — 479</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#4cc9f0' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/neptune.png" alt="" /></div><div className="tname">Neptune</div><div className="trange">480 — 599</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#80edff' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/uranus.png" alt="" /></div><div className="tname">Uranus</div><div className="trange">600 — 699</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#fcbf49' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/saturn.png" alt="" /></div><div className="tname">Saturn</div><div className="trange">700 — 799</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#f4a261' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/jupiter.png" alt="" /></div><div className="tname">Jupiter</div><div className="trange">800 — 879</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#ffdd99' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/sun.png" alt="" /></div><div className="tname">Sun</div><div className="trange">880 — 949</div></div>
-            <div className="tier-card" style={{ ['--tier-c' as string]: '#fffbe6' } as React.CSSProperties}><div className="planet"><img src="/landing/textures/tiers/binary_sun.png" alt="" /></div><div className="tname">Binary Sun</div><div className="trange">950 — 1000</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#b4a995' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/mercury.png" alt="" /></div><div className="tname">Mercury</div><div className="trange">0 — 99</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#ff6b4a' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/mars.png" alt="" /></div><div className="tname">Mars</div><div className="trange">100 — 219</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#ffd166' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/venus.png" alt="" /></div><div className="tname">Venus</div><div className="trange">220 — 349</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#5fa8ff' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/earth.png" alt="" /></div><div className="tname">Earth</div><div className="trange">350 — 479</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#4cc9f0' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/neptune.png" alt="" /></div><div className="tname">Neptune</div><div className="trange">480 — 599</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#80edff' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/uranus.png" alt="" /></div><div className="tname">Uranus</div><div className="trange">600 — 699</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#fcbf49' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/saturn.png" alt="" /></div><div className="tname">Saturn</div><div className="trange">700 — 799</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#f4a261' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/jupiter.png" alt="" /></div><div className="tname">Jupiter</div><div className="trange">800 — 879</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#ffdd99' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/sun.png" alt="" /></div><div className="tname">Sun</div><div className="trange">880 — 949</div></div>
+            <div className="tier-card" style={{ ['--tier-c' as string]: '#fffbe6' } as React.CSSProperties}><div className="planet"><img src="/textures/tiers/binary_sun.png" alt="" /></div><div className="tname">Binary Sun</div><div className="trange">950 — 1000</div></div>
           </div>
 
           <div className="tiers-formula reveal">
@@ -738,7 +738,7 @@ export default function LandingPage() {
             <div className="explode-ring r1"></div>
             <div className="explode-ring r2"></div>
             <div className="explode-ring r3"></div>
-            <div className="explode-planet"><img className="exp-saturn" src="/landing/textures/tiers/saturn.png" alt="Saturn" /><img className="exp-jupiter" src="/landing/textures/tiers/jupiter.png" alt="Jupiter" /></div>
+            <div className="explode-planet"><img className="exp-saturn" src="/textures/tiers/saturn.png" alt="Saturn" /><img className="exp-jupiter" src="/textures/tiers/jupiter.png" alt="Jupiter" /></div>
             <div className="explode-shard"></div><div className="explode-shard"></div><div className="explode-shard"></div>
             <div className="explode-shard"></div><div className="explode-shard"></div><div className="explode-shard"></div>
             <div className="explode-shard"></div><div className="explode-shard"></div><div className="explode-shard"></div>
@@ -780,11 +780,11 @@ export default function LandingPage() {
           </div>
 
           <div className="ranks-grid reveal-stagger">
-            <div className="rank-card" style={{ ['--rk-c' as string]: '#9ca3af' } as React.CSSProperties}><div className="badge-img"><img src="/landing/textures/ranks/rank_cadet.png" alt="" /></div><div className="rname">Cadet</div><div className="rxp">0 XP</div><div className="rperk">Starting rank · base gear</div></div>
-            <div className="rank-card" style={{ ['--rk-c' as string]: '#60a5fa' } as React.CSSProperties}><div className="badge-img"><img src="/landing/textures/ranks/rank_pilot.png" alt="" /></div><div className="rname">Pilot</div><div className="rxp">1,500 XP</div><div className="rperk">Unlock text quests</div></div>
-            <div className="rank-card" style={{ ['--rk-c' as string]: '#fbbf24' } as React.CSSProperties}><div className="badge-img"><img src="/landing/textures/ranks/rank_captain.png" alt="" /></div><div className="rname">Captain</div><div className="rxp">8,000 XP</div><div className="rperk">Yellow module slots</div></div>
-            <div className="rank-card" style={{ ['--rk-c' as string]: '#a78bfa' } as React.CSSProperties}><div className="badge-img"><img src="/landing/textures/ranks/rank_ace.png" alt="" /></div><div className="rname">Ace</div><div className="rxp">25,000 XP</div><div className="rperk">Red module slots</div></div>
-            <div className="rank-card" style={{ ['--rk-c' as string]: '#fde047' } as React.CSSProperties}><div className="badge-img"><img src="/landing/textures/ranks/rank_legend.png" alt="" /></div><div className="rname">Legend</div><div className="rxp">50,000+ XP</div><div className="rperk">Mastery — all systems</div></div>
+            <div className="rank-card" style={{ ['--rk-c' as string]: '#9ca3af' } as React.CSSProperties}><div className="badge-img"><img src="/textures/ranks/rank_cadet.png" alt="" /></div><div className="rname">Cadet</div><div className="rxp">0 XP</div><div className="rperk">Starting rank · base gear</div></div>
+            <div className="rank-card" style={{ ['--rk-c' as string]: '#60a5fa' } as React.CSSProperties}><div className="badge-img"><img src="/textures/ranks/rank_pilot.png" alt="" /></div><div className="rname">Pilot</div><div className="rxp">1,500 XP</div><div className="rperk">Unlock text quests</div></div>
+            <div className="rank-card" style={{ ['--rk-c' as string]: '#fbbf24' } as React.CSSProperties}><div className="badge-img"><img src="/textures/ranks/rank_captain.png" alt="" /></div><div className="rname">Captain</div><div className="rxp">8,000 XP</div><div className="rperk">Yellow module slots</div></div>
+            <div className="rank-card" style={{ ['--rk-c' as string]: '#a78bfa' } as React.CSSProperties}><div className="badge-img"><img src="/textures/ranks/rank_ace.png" alt="" /></div><div className="rname">Ace</div><div className="rxp">25,000 XP</div><div className="rperk">Red module slots</div></div>
+            <div className="rank-card" style={{ ['--rk-c' as string]: '#fde047' } as React.CSSProperties}><div className="badge-img"><img src="/textures/ranks/rank_legend.png" alt="" /></div><div className="rname">Legend</div><div className="rxp">50,000+ XP</div><div className="rperk">Mastery — all systems</div></div>
           </div>
         </div>
       </section>
@@ -800,10 +800,10 @@ export default function LandingPage() {
             <p className="sec-sub">Real-time, reaction-based games. Real humans get high scores. Bots burn out. Every session is an on-chain attestation of your humanity — and the primary source of Ranger XP.</p>
           </div>
           <div className="games-grid reveal-stagger">
-            <div className="game-card"><img src="/landing/games/orbit_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Orbit Survival</h3><p className="gdesc">Navigate asteroid fields. Reflexes &amp; reaction time scored in real-time.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Realtime</b></div><div className="stat"><b>Reflex</b></div></div></div></div>
-            <div className="game-card"><img src="/landing/games/wars_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Cosmic Defender</h3><p className="gdesc">Hold the line against relentless waves. Twitch aim &amp; survival under pressure.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Waves</b></div><div className="stat"><b>Twitch</b></div></div></div></div>
-            <div className="game-card"><img src="/landing/games/gravity_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Gravity Runner</h3><p className="gdesc">Physics-driven obstacle course. Pure motor skill — impossible to script.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Physics</b></div><div className="stat"><b>Motor</b></div></div></div></div>
-            <div className="game-card"><img src="/landing/games/quest_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Story</div><h3>Text Adventures</h3><p className="gdesc">Choice-driven narrative missions. Strategy &amp; judgment — a different proof of human.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Story</b></div><div className="stat"><b>Choices</b></div></div></div></div>
+            <div className="game-card"><img src="/games/orbit_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Orbit Survival</h3><p className="gdesc">Navigate asteroid fields. Reflexes &amp; reaction time scored in real-time.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Realtime</b></div><div className="stat"><b>Reflex</b></div></div></div></div>
+            <div className="game-card"><img src="/games/wars_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Cosmic Defender</h3><p className="gdesc">Hold the line against relentless waves. Twitch aim &amp; survival under pressure.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Waves</b></div><div className="stat"><b>Twitch</b></div></div></div></div>
+            <div className="game-card"><img src="/games/gravity_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Gravity Runner</h3><p className="gdesc">Physics-driven obstacle course. Pure motor skill — impossible to script.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Physics</b></div><div className="stat"><b>Motor</b></div></div></div></div>
+            <div className="game-card"><img src="/games/quest_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Story</div><h3>Text Adventures</h3><p className="gdesc">Choice-driven narrative missions. Strategy &amp; judgment — a different proof of human.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Story</b></div><div className="stat"><b>Choices</b></div></div></div></div>
           </div>
         </div>
       </section>
@@ -819,14 +819,14 @@ export default function LandingPage() {
             <p className="sec-sub">The Prism isn't a single page — it's a full hub of modules built around your reputation. Forge cosmetics. Lock vault stakes. Burn dust in the Black Hole. Fight in the Arena.</p>
           </div>
           <div className="eco-grid reveal-stagger">
-            <div className="eco-card eco-c-scanner"><span className="eco-tag">Core</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/scanner.png" alt="" /></div><h3>Sybil Hunt</h3></div><p>Scan any Solana wallet — composite score, full badge list, planetary tier, wallet age, and sybil-risk signals, all in one look.</p><div className="eco-feats"><div className="eco-feat">Composite score &amp; tier</div><div className="eco-feat">Full badge breakdown</div><div className="eco-feat">Sybil-risk signals</div></div></div>
-            <div className="eco-card eco-c-forge"><span className="eco-tag">Cosmetics</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/shop.png" alt="" /></div><h3>Stellar Forge</h3></div><p>Craft ship skins, frames, auras, and titles. Equip them on your identity card or your in-game ship. Rank-gated.</p><div className="eco-feats"><div className="eco-feat">50+ cosmetic items</div><div className="eco-feat">Ship stat boosts</div><div className="eco-feat">Rank-gated unlocks</div></div></div>
-            <div className="eco-card eco-c-vault"><span className="eco-tag">Staking</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/vault.png" alt="" /></div><h3>Cosmic Vault</h3></div><p>Lock coins for 1 week — 6 months. Yield from 1× to 4× multiplier based on tier &amp; lock duration.</p><div className="eco-feats"><div className="eco-feat">Up to 4× multiplier</div><div className="eco-feat">Tier-boosted APY</div><div className="eco-feat">1-week to 6-month locks</div></div></div>
-            <div className="eco-card eco-c-blackhole"><span className="eco-tag">Burn</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/blackhole.png" alt="" /></div><h3>Black Hole</h3></div><p>Scan token accounts &amp; NFTs, protect high-signal assets, then burn or close the worthless dust to reclaim locked SOL rent.</p><div className="eco-feats"><div className="eco-feat">Reclaim SOL rent</div><div className="eco-feat">Protects key assets</div><div className="eco-feat">Burn / close dust</div></div></div>
-            <div className="eco-card eco-c-arena"><span className="eco-tag">PvP</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/arena.png" alt="" /></div><h3>Prism Arena</h3></div><p>1v1 challenge duels. Stake PRISM coins, pick a game mode, and the winner takes the pot. Climb the ranks head-to-head.</p><div className="eco-feats"><div className="eco-feat">1v1 challenges</div><div className="eco-feat">Stake 5–1000 coins</div><div className="eco-feat">Winner takes 2×</div></div></div>
-            <div className="eco-card eco-c-quests"><span className="eco-tag">Adventure</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/quests.png" alt="" /></div><h3>Cosmic Quests</h3></div><p>Daily &amp; weekly missions. Lore-locked adventure chains. The main path from Cadet to Pilot.</p><div className="eco-feats"><div className="eco-feat">Daily refresh</div><div className="eco-feat">Streak rewards</div><div className="eco-feat">Lore-locked badges</div></div></div>
-            <div className="eco-card eco-c-leader"><span className="eco-tag">Compete</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/leaderboard.png" alt="" /></div><h3>Leaderboards</h3></div><p>Global rankings across every game, every badge category, every tier. Friends list &amp; rivals.</p><div className="eco-feats"><div className="eco-feat">Global &amp; friends</div><div className="eco-feat">Per-game boards</div><div className="eco-feat">Seasonal resets</div></div></div>
-            <div className="eco-card eco-c-league"><span className="eco-tag">Skill</span><div className="eco-head"><div className="eco-icon"><img src="/landing/hub/league.png" alt="" /></div><h3>Prism League</h3></div><p>The home of all skill games. Orbit Survival, Cosmic Defender, Gravity Runner &amp; Text Adventures in active rotation.</p><div className="eco-feats"><div className="eco-feat">4 live games</div><div className="eco-feat">Active rotation</div><div className="eco-feat">XP attestation</div></div></div>
+            <div className="eco-card eco-c-scanner"><span className="eco-tag">Core</span><div className="eco-head"><div className="eco-icon"><img src="/hub/scanner.png" alt="" /></div><h3>Sybil Hunt</h3></div><p>Scan any Solana wallet — composite score, full badge list, planetary tier, wallet age, and sybil-risk signals, all in one look.</p><div className="eco-feats"><div className="eco-feat">Composite score &amp; tier</div><div className="eco-feat">Full badge breakdown</div><div className="eco-feat">Sybil-risk signals</div></div></div>
+            <div className="eco-card eco-c-forge"><span className="eco-tag">Cosmetics</span><div className="eco-head"><div className="eco-icon"><img src="/hub/shop.png" alt="" /></div><h3>Stellar Forge</h3></div><p>Craft ship skins, frames, auras, and titles. Equip them on your identity card or your in-game ship. Rank-gated.</p><div className="eco-feats"><div className="eco-feat">50+ cosmetic items</div><div className="eco-feat">Ship stat boosts</div><div className="eco-feat">Rank-gated unlocks</div></div></div>
+            <div className="eco-card eco-c-vault"><span className="eco-tag">Staking</span><div className="eco-head"><div className="eco-icon"><img src="/hub/vault.png" alt="" /></div><h3>Cosmic Vault</h3></div><p>Lock coins for 1 week — 6 months. Yield from 1× to 4× multiplier based on tier &amp; lock duration.</p><div className="eco-feats"><div className="eco-feat">Up to 4× multiplier</div><div className="eco-feat">Tier-boosted APY</div><div className="eco-feat">1-week to 6-month locks</div></div></div>
+            <div className="eco-card eco-c-blackhole"><span className="eco-tag">Burn</span><div className="eco-head"><div className="eco-icon"><img src="/hub/blackhole.png" alt="" /></div><h3>Black Hole</h3></div><p>Scan token accounts &amp; NFTs, protect high-signal assets, then burn or close the worthless dust to reclaim locked SOL rent.</p><div className="eco-feats"><div className="eco-feat">Reclaim SOL rent</div><div className="eco-feat">Protects key assets</div><div className="eco-feat">Burn / close dust</div></div></div>
+            <div className="eco-card eco-c-arena"><span className="eco-tag">PvP</span><div className="eco-head"><div className="eco-icon"><img src="/hub/arena.png" alt="" /></div><h3>Prism Arena</h3></div><p>1v1 challenge duels. Stake PRISM coins, pick a game mode, and the winner takes the pot. Climb the ranks head-to-head.</p><div className="eco-feats"><div className="eco-feat">1v1 challenges</div><div className="eco-feat">Stake 5–1000 coins</div><div className="eco-feat">Winner takes 2×</div></div></div>
+            <div className="eco-card eco-c-quests"><span className="eco-tag">Adventure</span><div className="eco-head"><div className="eco-icon"><img src="/hub/quests.png" alt="" /></div><h3>Cosmic Quests</h3></div><p>Daily &amp; weekly missions. Lore-locked adventure chains. The main path from Cadet to Pilot.</p><div className="eco-feats"><div className="eco-feat">Daily refresh</div><div className="eco-feat">Streak rewards</div><div className="eco-feat">Lore-locked badges</div></div></div>
+            <div className="eco-card eco-c-leader"><span className="eco-tag">Compete</span><div className="eco-head"><div className="eco-icon"><img src="/hub/leaderboard.png" alt="" /></div><h3>Leaderboards</h3></div><p>Global rankings across every game, every badge category, every tier. Friends list &amp; rivals.</p><div className="eco-feats"><div className="eco-feat">Global &amp; friends</div><div className="eco-feat">Per-game boards</div><div className="eco-feat">Seasonal resets</div></div></div>
+            <div className="eco-card eco-c-league"><span className="eco-tag">Skill</span><div className="eco-head"><div className="eco-icon"><img src="/hub/league.png" alt="" /></div><h3>Prism League</h3></div><p>The home of all skill games. Orbit Survival, Cosmic Defender, Gravity Runner &amp; Text Adventures in active rotation.</p><div className="eco-feats"><div className="eco-feat">4 live games</div><div className="eco-feat">Active rotation</div><div className="eco-feat">XP attestation</div></div></div>
           </div>
         </div>
       </section>
@@ -870,7 +870,7 @@ export default function LandingPage() {
       {/* CTA */}
       <section id="cta">
         <div className="container cta">
-          <div className="cta-logo reveal-zoom"><img src="/landing/phav.png" alt="Identity Prism" /></div>
+          <div className="cta-logo reveal-zoom"><img src="/phav.png" alt="Identity Prism" /></div>
           <h2 className="reveal grad-cyan">Your reputation<br />starts now.</h2>
           <p className="cta-sub reveal">Connect your wallet. See your tier. Play the games. Carry your reputation across the entire Solana ecosystem.</p>
           <div className="cta-actions reveal">
@@ -885,7 +885,7 @@ export default function LandingPage() {
         <div className="container">
           <div className="foot-grid">
             <div className="foot-brand">
-              <img src="/landing/phav.png" alt="" />
+              <img src="/phav.png" alt="" />
               <h5>IDENTITY PRISM</h5>
               <p>The sybil-resistant identity layer for Solana. Reputation earned through behavior &amp; skill, never bought, never sold.</p>
             </div>

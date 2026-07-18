@@ -1,11 +1,20 @@
 import fs from 'node:fs';
 import { Connection } from '@solana/web3.js';
+import { appDb } from '../services/appDb.js';
 import {
   getAssociatedTokenAddress,
   getMint,
 } from '../utils/solanaToken.js';
 
 const pendingBuyRequests = new Set();
+const selectOnchainPaymentClaim = appDb.prepare('SELECT purpose, wallet, reference_id FROM onchain_payment_claims WHERE tx_signature = ?');
+const insertOnchainPaymentClaim = appDb.prepare('INSERT INTO onchain_payment_claims (tx_signature, purpose, wallet, reference_id, claimed_at) VALUES (?, ?, ?, ?, ?)');
+const claimBuyPaymentTx = appDb.transaction(({ txSignature, purpose, wallet, referenceId }) => {
+  const existing = selectOnchainPaymentClaim.get(txSignature);
+  if (existing) return { ok: false, reason: existing.purpose === purpose && existing.wallet === wallet && existing.reference_id === referenceId ? 'already_claimed' : 'TX_REPLAY' };
+  insertOnchainPaymentClaim.run(txSignature, purpose, wallet, referenceId, Date.now());
+  return { ok: true };
+});
 
 function registerBuyRoute(ctx) {
   const {
@@ -130,6 +139,8 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'SOL transfer to treasury not verified' });
           }
+          const claim = claimBuyPaymentTx.immediate({ txSignature, purpose: 'buy_sol', wallet: address, referenceId: `package:${pkgIdx}` });
+          if (!claim.ok) return respondJson(res, 409, { error: 'Transaction already claimed', reason: claim.reason });
           usedBuyTxSignatures.set(txSignature, Date.now());
         } catch (error) {
           usedBuyTxSignatures.delete(txSignature);
@@ -339,6 +350,8 @@ function registerBuyRoute(ctx) {
             usedBuyTxSignatures.delete(txSignature);
             return respondJson(res, 400, { error: 'SKR transfer to treasury not verified' });
           }
+          const claim = claimBuyPaymentTx.immediate({ txSignature, purpose: 'buy_skr', wallet: address, referenceId: `package:${pkgIdx}` });
+          if (!claim.ok) return respondJson(res, 409, { error: 'Transaction already claimed', reason: claim.reason });
           usedBuyTxSignatures.set(txSignature, Date.now());
         } catch (error) {
           usedBuyTxSignatures.delete(txSignature);

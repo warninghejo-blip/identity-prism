@@ -1,3 +1,5 @@
+import { getScoreCeiling } from '../services/gameRules.js';
+
 function registerLeaderboardRoute(ctx) {
   const {
     core: {
@@ -53,25 +55,26 @@ function registerLeaderboardRoute(ctx) {
         const playedAt = new Date().toISOString(); // server-authoritative timestamp
         const address = jwtAuth.address;
         if (bodyAddress && bodyAddress !== jwtAuth.address) return respondJson(res, 403, { error: 'Address mismatch' });
-        if (!address || typeof address !== 'string' || typeof score !== 'number' || score <= 0) {
-          respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number > 0) required' });
+        // score === 0 is a legitimate outcome (e.g. gravity's "columns passed" score is
+        // commonly 0 on a fast death) and must still be recorded — only reject negative/NaN.
+        if (!address || typeof address !== 'string' || typeof score !== 'number' || !Number.isFinite(score) || score < 0) {
+          respondJson(res, 400, { error: 'Invalid entry: address (string) and score (number >= 0) required' });
           return true;
         }
         // Require game session proof for leaderboard submit
         if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for leaderboard' });
         const session = gameSessionProofs.get(gameSessionId);
-        if (!session || !session.verified) return respondJson(res, 400, { error: 'Invalid or unverified game session' });
+        if (!session || !session.verified || !session.sessionTokenId || session.timingVerified !== true || session.economyEligible !== true || session.competitiveEligible !== true) {
+          return respondJson(res, 400, { error: 'Token-backed, timing-verified game session required' });
+        }
         if (session.walletAddress !== address) return respondJson(res, 403, { error: 'Session wallet mismatch' });
-        if (Math.abs(session.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof' });
+        if (session.score !== score) return respondJson(res, 400, { error: 'Score does not match session proof' });
         // Require gameType and enforce exact match
         if (!gameType) return respondJson(res, 400, { error: 'gameType required' });
         if (session.gameMode !== gameType) return respondJson(res, 400, { error: 'Session gameMode mismatch' });
         if (session.usedForLeaderboard) return respondJson(res, 400, { error: 'Session already used for leaderboard' });
-        // MAX_SCORE validation per game mode (BEFORE marking session used)
-        const MAX_SCORES = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
-        const gtCheck = gameType;
-        const maxScore = MAX_SCORES[gtCheck] || 9999;
-        if (score > maxScore) {
+        const scoreCeiling = Number(session.scoreCeiling);
+        if (!Number.isFinite(scoreCeiling) || scoreCeiling !== getScoreCeiling(session.gameMode, session.durationMs) || score > scoreCeiling) {
           respondJson(res, 400, { error: 'Score exceeds maximum allowed' });
           return true;
         }

@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
+import { CHALLENGE_SUBMIT_GRACE_MS, getScoreCeiling } from '../services/gameRules.js';
 
 function registerArenaRoute(ctx) {
   const { core, wallet, economy, sybil, auth, arena, game } = ctx;
@@ -469,7 +470,7 @@ function registerArenaRoute(ctx) {
         const { challengeId, score, gameSessionId } = JSON.parse(await readBody(req));
         const submitter = jwtAuth.address;
         if (!challengeId) return respondJson(res, 400, { error: 'challengeId required' });
-        if (typeof score !== 'number' || score < 0 || score > 100000) {
+        if (typeof score !== 'number' || score < 0) {
           return respondJson(res, 400, { error: 'Invalid score' });
         }
         const scoreNum = Math.floor(Number(score));
@@ -485,43 +486,31 @@ function registerArenaRoute(ctx) {
         if (challenge.status !== 'playing' && challenge.status !== 'open') {
           return respondJson(res, 400, { error: 'Challenge is not in playing state' });
         }
-
-        const chMaxScores = { orbit: 600, gravity: 600, destroyer: 9999, wars: 600, territory: 600 };
-        const chMaxScore = chMaxScores[challenge.gameMode] || 600;
-        if (scoreNum > chMaxScore) {
-          return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
+        const challengeExpiresAtMs = Number(challenge.expiresAt);
+        if (!Number.isFinite(challengeExpiresAtMs) || challengeExpiresAtMs + CHALLENGE_SUBMIT_GRACE_MS < Date.now()) {
+          return respondJson(res, 409, { error: 'Challenge deadline has passed' });
         }
 
-        const noProofMax = 30;
-        if (challenge.stakeAmount > 0 && !gameSessionId) {
-          return respondJson(res, 400, { error: 'Verified game session required for paid challenges' });
+        if (!gameSessionId) return respondJson(res, 400, { error: 'Token-backed game session required for game challenges' });
+        const challengeSession = gameSessionProofs.get(gameSessionId);
+        if (!challengeSession || !challengeSession.verified || !challengeSession.sessionTokenId || challengeSession.timingVerified !== true || challengeSession.economyEligible !== true || challengeSession.competitiveEligible !== true) {
+          return respondJson(res, 400, { error: 'Token-backed, timing-verified game session required' });
         }
-        if (gameSessionId) {
-          const challengeSession = gameSessionProofs.get(gameSessionId);
-          if (!challengeSession || !challengeSession.verified) {
-            if (scoreNum > noProofMax) {
-              return respondJson(res, 400, { error: 'Unverified session — score too high' });
-            }
-          } else {
-            if (challengeSession.walletAddress !== submitter) {
-              return respondJson(res, 403, { error: 'Session wallet mismatch' });
-            }
-            if (Math.abs(challengeSession.score - scoreNum) > 5) {
-              return respondJson(res, 400, { error: 'Score does not match session proof' });
-            }
-            if (challenge.gameMode && challengeSession.gameMode !== challenge.gameMode) {
-              return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
-            }
-            if (challengeSession.usedForChallenge && challengeSession.usedForChallenge.challengeId !== challengeId) {
-              return respondJson(res, 400, { error: 'Game session already used for another challenge' });
-            }
-            if (Number(challengeSession.coinsCredited) > 0) {
-              return respondJson(res, 400, { error: 'Game session already used for coin earnings' });
-            }
+        if (challengeSession.walletAddress !== submitter) return respondJson(res, 403, { error: 'Session wallet mismatch' });
+        if (challengeSession.sessionReferenceId !== challengeId) return respondJson(res, 400, { error: 'Session is not bound to this challenge' });
+        if (submitter === challenge.opponent) {
+          const acceptedAtMs = Number(challenge.acceptedAt);
+          const sessionStartedAtMs = Number(challengeSession.startedAtMs);
+          if (!Number.isFinite(acceptedAtMs) || !Number.isFinite(sessionStartedAtMs) || sessionStartedAtMs < acceptedAtMs) {
+            return respondJson(res, 409, { error: 'Opponent proof must start after challenge acceptance' });
           }
-        } else if (scoreNum > noProofMax) {
-          return respondJson(res, 400, { error: 'Game session required for this score' });
         }
+        if (challengeSession.score !== scoreNum) return respondJson(res, 400, { error: 'Score does not match session proof' });
+        if (challenge.gameMode && challengeSession.gameMode !== challenge.gameMode) return respondJson(res, 400, { error: 'Session gameMode does not match challenge' });
+        const scoreCeiling = Number(challengeSession.scoreCeiling);
+        if (!Number.isFinite(scoreCeiling) || scoreCeiling !== getScoreCeiling(challengeSession.gameMode, challengeSession.durationMs) || scoreNum > scoreCeiling) return respondJson(res, 400, { error: 'Score exceeds maximum for this game mode' });
+        if (challengeSession.usedForChallenge && challengeSession.usedForChallenge.challengeId !== challengeId) return respondJson(res, 400, { error: 'Game session already used for another challenge' });
+        if (Number(challengeSession.coinsCredited) > 0) return respondJson(res, 400, { error: 'Game session already used for coin earnings' });
 
         submitKey = `${challengeId}:${submitter}`;
         if (!globalThis._pendingSubmits) globalThis._pendingSubmits = new Set();

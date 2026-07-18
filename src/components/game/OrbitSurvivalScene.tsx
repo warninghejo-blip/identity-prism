@@ -32,6 +32,7 @@ interface GameProps {
   onCombo?: (combo: number, pts: number) => void;
   reviveRef?: React.MutableRefObject<boolean>;
   gameState: GameState;
+  paused?: boolean;
   traits: WalletTraits | null;
   challengeMode?: boolean;
   walletScore: number;
@@ -101,6 +102,10 @@ const DESPAWN_R = 42;
 const INIT_SPEED = 4.5;
 const MAX_SPEED = 22;
 const SPEED_GAIN = 0.18;
+// Global asteroid speed factor — owner-tuned ~18% slower for readability.
+// Safe for anti-cheat: score is time-based (floor(el)+bonus, server-capped),
+// asteroid speed affects feel only.
+const AST_SPEED_K = 0.82;
 // Near-miss scoring
 const NEAR_MISS_PTS = 3;
 const STREAK_MULT_CAP = 5;
@@ -207,15 +212,21 @@ const AST_M = [
 ];
 
 // Shared Lambert materials — one per texture pair (avoids 200 duplicate materials)
-// Lambert = per-vertex lighting, much cheaper than PBR Standard
-// MeshBasicMaterial — no lighting dependence, asteroids always look identical
-const AST_SHARED_MATS: THREE.MeshBasicMaterial[] = [];
+// Lambert = per-vertex lighting, much cheaper than PBR Standard, and the scene's
+// directional lights carve a lit side + shadow side → rocks read as 3D volumes.
+// VISIBILITY FLOOR: each material self-lights via emissive×emissiveMap (same rock
+// texture) so the shadow side keeps texture detail but never drops to near-black
+// against the dark starfield. Directional lights still add the lit-side contrast
+// on top, so rocks read as 3D everywhere on screen.
+const AST_SHARED_MATS: THREE.MeshLambertMaterial[] = [];
 // Regular rock materials (indices 0..3)
 AST_TEX_PAIRS.forEach((pair) => {
   AST_SHARED_MATS.push(
-    new THREE.MeshBasicMaterial({
+    new THREE.MeshLambertMaterial({
       map: pair.diffuse,
-      color: new THREE.Color('#8a8e9a'),
+      color: new THREE.Color('#d3d8e4'),
+      emissive: new THREE.Color('#4c5670'),
+      emissiveMap: pair.diffuse,
       side: THREE.DoubleSide,
     }),
   );
@@ -224,9 +235,11 @@ if (!IS_MOBILE) {
   // Ice materials (indices 4..7)
   AST_TEX_PAIRS.forEach((pair) => {
     AST_SHARED_MATS.push(
-      new THREE.MeshBasicMaterial({
+      new THREE.MeshLambertMaterial({
         map: pair.diffuse,
-        color: new THREE.Color('#7898b0'),
+        color: new THREE.Color('#b2d0e8'),
+        emissive: new THREE.Color('#3e5c78'),
+        emissiveMap: pair.diffuse,
         side: THREE.DoubleSide,
       }),
     );
@@ -234,9 +247,11 @@ if (!IS_MOBILE) {
   // Fire materials (indices 8..11)
   AST_TEX_PAIRS.forEach((pair) => {
     AST_SHARED_MATS.push(
-      new THREE.MeshBasicMaterial({
+      new THREE.MeshLambertMaterial({
         map: pair.diffuse,
-        color: new THREE.Color('#9a7860'),
+        color: new THREE.Color('#e2b494'),
+        emissive: new THREE.Color('#74482e'),
+        emissiveMap: pair.diffuse,
         side: THREE.DoubleSide,
       }),
     );
@@ -299,16 +314,18 @@ function makeRockGeo(seg: number, seed: number): THREE.SphereGeometry {
    Spawners
    ═══════════════════════════════════════════════════ */
 
-function assignAst(a: AsteroidData, el: number, sx: number, sy: number): void {
+function assignAst(a: AsteroidData, el: number, sx: number, sy: number, forcedAng?: number): void {
   const small = Math.random() < 0.6;
   const r = small ? rnd(0.4, 0.9) : rnd(1, 2);
-  const ang = rnd(0, 6.28),
+  // forcedAng: wave-director override — shapes spawn DIRECTION only; size/speed/
+  // count/timing are untouched so anti-cheat score bounds are unaffected.
+  const ang = forcedAng !== undefined ? forcedAng + rnd(-0.12, 0.12) : rnd(0, 6.28),
     dist = SPAWN_R + rnd(2, 5);
   const ca = ang + Math.PI + rnd(-0.55, 0.55);
   const speedRoll = Math.random();
   const speedMult = speedRoll < 0.2 ? rnd(1.8, 2.5) : speedRoll > 0.8 ? rnd(0.3, 0.55) : 1;
-  const sp = (small ? rnd(5, 8.5) : rnd(2.2, 4.8)) * (1 + el * 0.018) * speedMult;
-  const td = rnd(-1.8, 1.8) * (small ? 1 : 0.6);
+  const sp = (small ? rnd(5, 8.5) : rnd(2.2, 4.8)) * AST_SPEED_K * (1 + el * 0.018) * speedMult;
+  const td = rnd(-1.8, 1.8) * AST_SPEED_K * (small ? 1 : 0.6);
   const roll = Math.random();
   a.id = ++aidN;
   a.x = sx + Math.cos(ang) * dist;
@@ -344,7 +361,7 @@ function splitAsteroid(pool: AsteroidData[], parent: AsteroidData, el: number): 
     if (pool[i].active) continue;
     const f = pool[i];
     const ang = ((Math.PI * 2) / count) * spawned + (Math.random() - 0.5) * 0.8;
-    const sp = 3.5 + Math.random() * 4;
+    const sp = (3.5 + Math.random() * 4) * AST_SPEED_K;
     f.id = ++aidN;
     f.x = parent.x + Math.cos(ang) * 0.4;
     f.y = parent.y + Math.sin(ang) * 0.4;
@@ -408,12 +425,15 @@ function Cam({
   sPos,
   shake,
   gs,
+  paused = false,
 }: {
   sPos: React.MutableRefObject<{ x: number; y: number }>;
   shake: React.MutableRefObject<number>;
   gs: GameState;
+  paused?: boolean;
 }) {
   useFrame(({ camera }, delta) => {
+    if (paused) return; // camera frozen during revive countdown
     const dt = Math.min(delta, 0.033);
     const tx = gs === 'playing' ? sPos.current.x : 0;
     const ty = gs === 'playing' ? sPos.current.y : 0;
@@ -777,13 +797,16 @@ const BH_SPIRAL_FS = IS_MOBILE
   }
 `;
 
-function BHVisuals({ bhRef }: { bhRef: React.MutableRefObject<BHole[]> }) {
+function BHVisuals({ bhRef, paused = false }: { bhRef: React.MutableRefObject<BHole[]>; paused?: boolean }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
   const spiralMats = useRef<(THREE.ShaderMaterial | null)[]>([]);
   const warmFrames = useRef(0);
+  const tAcc = useRef(0);
 
-  useFrame((state) => {
-    const t = state.clock.elapsedTime;
+  useFrame((_, delta) => {
+    if (paused && warmFrames.current >= 3) return; // spirals frozen while paused
+    tAcc.current += Math.min(delta, 0.05);
+    const t = tAcc.current;
     // Warm-up pass: render ALL BH groups for 3 frames to fully warm GPU pipeline
     if (warmFrames.current < 3) {
       warmFrames.current++;
@@ -903,6 +926,8 @@ function Ship({
   nearRef,
   shieldRef,
   phaseRef,
+  streakRef,
+  paused = false,
   skinId,
   shipAura,
 }: {
@@ -913,11 +938,15 @@ function Ship({
   nearRef: React.MutableRefObject<number>;
   shieldRef: React.MutableRefObject<number>;
   phaseRef: React.MutableRefObject<number>;
+  streakRef?: React.MutableRefObject<number>;
+  paused?: boolean;
   skinId?: string | null;
   shipAura?: string | null;
 }) {
   const ac = (shipAura && AURA_GAME_COLORS[shipAura]) || DEFAULT_SHIP_COLORS;
   const profile = useMemo(() => getShipProfile(skinId), [skinId]);
+  const _ringBaseCol = useMemo(() => new THREE.Color(color), [color]);
+  const _ringHotCol = useMemo(() => new THREE.Color('#fbbf24'), []);
   const gRef = useRef<THREE.Group>(null);
   const bodyRef = useRef<THREE.Group>(null);
   const shRef = useRef<THREE.Mesh>(null);
@@ -987,6 +1016,7 @@ function Ship({
 
   useFrame((s, delta) => {
     if (!gRef.current) return;
+    if (paused) return; // freeze all ship visuals during revive countdown
     const dt = Math.min(delta, 0.033);
     const t = s.clock.elapsedTime;
     const tx = posRef.current.x,
@@ -1001,7 +1031,13 @@ function Ship({
     gRef.current.rotation.z = curRot + rotDiff * (1 - Math.exp(-10 * dt));
     if (shRef.current) {
       const m = shRef.current.material as THREE.MeshBasicMaterial;
-      m.opacity = slerp(m.opacity, nearRef.current > 0.1 ? 0.15 * nearRef.current : 0, 10, dt);
+      // Streak heat: near-miss ring tints cyan→gold and brightens as the dodge
+      // streak builds (visual feedback only, no score effect)
+      const hotK = clamp((streakRef?.current ?? 0) / STREAK_MULT_CAP, 0, 1);
+      m.color.copy(_ringBaseCol).lerp(_ringHotCol, hotK);
+      m.opacity = slerp(m.opacity, nearRef.current > 0.1 ? (0.4 + hotK * 0.3) * nearRef.current : 0, 10, dt);
+      // Scale pop — ring visibly swells with near-miss intensity
+      shRef.current.scale.setScalar(1 + nearRef.current * 0.45);
     }
     if (shipMatRef.current) {
       shipMatRef.current.opacity = phaseRef.current > 0 ? 0.2 + Math.sin(t * 10) * 0.1 : 1;
@@ -1165,7 +1201,13 @@ function AstMesh({ a, geos }: { a: AsteroidData; geos: THREE.SphereGeometry[] })
       rotation={[a.rx, a.ry, a.rz]}
       scale={[a.r * a.sx, a.r * a.sy, a.r * a.sz]}
     >
-      <meshLambertMaterial map={pair.diffuse} color="#d8dce8" side={THREE.DoubleSide} />
+      <meshLambertMaterial
+        map={pair.diffuse}
+        color="#d8dce8"
+        emissive="#4c5670"
+        emissiveMap={pair.diffuse}
+        side={THREE.DoubleSide}
+      />
     </mesh>
   );
 }
@@ -1177,9 +1219,11 @@ function AstMesh({ a, geos }: { a: AsteroidData; geos: THREE.SphereGeometry[] })
 function Explosion({
   pRef,
   actRef,
+  paused = false,
 }: {
   pRef: React.MutableRefObject<{ x: number; y: number }>;
   actRef: React.MutableRefObject<boolean>;
+  paused?: boolean;
 }) {
   const ptRef = useRef<THREE.Points>(null);
   const tRef = useRef(0);
@@ -1204,6 +1248,7 @@ function Explosion({
   }, []);
   const wasActive = useRef(false);
   useFrame((_, delta) => {
+    if (paused) return; // frozen during revive countdown
     const dt = Math.min(delta, 0.033);
     if (!actRef.current) {
       wasActive.current = false;
@@ -1291,7 +1336,7 @@ const S_PWR_TYPE_LIST: PwrType[] = ['shield', 'slowmo', 'phase', 'coin'];
 const _sPwrDiscGeo = new THREE.CircleGeometry(0.5, 64);
 const _sPwrEdgeGeo = new THREE.TorusGeometry(0.48, 0.018, 16, 64);
 
-function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> }) {
+function PowerUpVisuals({ pwRef, paused = false }: { pwRef: React.MutableRefObject<PowerUp[]>; paused?: boolean }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
   const lastTypes = useRef<(PwrType | null)[]>(Array(PWR_MAX).fill(null));
   const faceMats = useRef<THREE.MeshBasicMaterial[]>([]);
@@ -1311,8 +1356,11 @@ function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> })
     }
   }, [allSPwrTextures]);
 
-  useFrame((s) => {
-    const t = s.clock.elapsedTime;
+  const tAcc = useRef(0);
+  useFrame((_, delta) => {
+    if (paused) return; // frozen during revive countdown
+    tAcc.current += Math.min(delta, 0.05);
+    const t = tAcc.current;
     for (let i = 0; i < PWR_MAX; i++) {
       const g = refs.current[i];
       const pw = pwRef.current[i];
@@ -1328,7 +1376,8 @@ function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> })
       g.visible = fade > 0.02;
       g.position.set(pw.x, pw.y, Math.sin(t * 2.5 + i * 3) * 0.15);
       g.rotation.y = t * 1.8 + i * 1.5;
-      g.scale.setScalar(1.3);
+      // Beacon pulse — makes pickups easier to spot at a glance
+      g.scale.setScalar(1.3 + Math.sin(t * 3 + i * 2.1) * 0.2);
 
       if (pw.type !== lastTypes.current[i]) {
         lastTypes.current[i] = pw.type;
@@ -1347,7 +1396,7 @@ function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> })
       const eMat = edgeMats.current[i];
       if (eMat) {
         eMat.color.set(PWR_COL[pw.type]);
-        eMat.opacity = fade * 0.7;
+        eMat.opacity = fade * (0.7 + 0.3 * Math.sin(t * 4 + i));
       }
     }
   });
@@ -1399,8 +1448,10 @@ function PowerUpVisuals({ pwRef }: { pwRef: React.MutableRefObject<PowerUp[]> })
 const PICKUP_PARTICLES = 24;
 function PickupEffect({
   pickupRef,
+  paused = false,
 }: {
   pickupRef: React.MutableRefObject<{ active: boolean; type: PwrType; x: number; y: number; t: number }>;
+  paused?: boolean;
 }) {
   const ptsRef = useRef<THREE.Points>(null);
   const st = useMemo(() => {
@@ -1418,6 +1469,7 @@ function PickupEffect({
   }, []);
 
   useFrame((_, dt) => {
+    if (paused) return; // frozen during revive countdown
     const r = pickupRef.current;
     if (!r?.active || !ptsRef.current) return;
     r.t += dt;
@@ -1527,6 +1579,183 @@ function AsteroidInstances({
   );
 }
 
+/* ═══════════════════════════════════════════════════
+   Asteroid motion streaks — smooth tapering additive
+   glow tails aligned to each rock's velocity (soft
+   "motion blur" ribbon, not particles). One instanced
+   draw call, zero per-frame allocations. Purely visual.
+   ═══════════════════════════════════════════════════ */
+
+const STREAK_MAX = IS_MOBILE ? 40 : 80;
+const _streakGeo = new THREE.PlaneGeometry(1, 1);
+const _streakDummy = new THREE.Object3D();
+const _streakColor = new THREE.Color();
+
+// Soft tapering ribbon texture: bright rounded head at +X fading to a narrow
+// transparent tail at -X, gaussian falloff across the width → clean neon streak.
+function makeStreakTexture(): THREE.Texture {
+  const w = 128,
+    h = 64;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    const fy = (y + 0.5) / h - 0.5; // -0.5..0.5 across width
+    for (let x = 0; x < w; x++) {
+      const fx = (x + 0.5) / w; // 0 = tail, 1 = head
+      // Width tapers toward the tail (narrow sigma at fx≈0)
+      const sigma = 0.006 + 0.05 * fx * fx;
+      const vFall = Math.exp(-(fy * fy) / sigma);
+      // Brightness tapers smoothly toward the tail + soft bloom at the head
+      const taper = Math.pow(fx, 1.7) * 0.8;
+      const head = Math.exp(-Math.pow((1 - fx) * 3.5, 2)) * 0.5;
+      const aVal = Math.min(1, taper + head) * vFall;
+      const i = (y * w + x) * 4;
+      img.data[i] = 255;
+      img.data[i + 1] = 255;
+      img.data[i + 2] = 255;
+      img.data[i + 3] = Math.round(aVal * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
+function AsteroidStreaks({
+  pool,
+  sPos,
+  gs,
+  paused,
+}: {
+  pool: React.MutableRefObject<AsteroidData[]>;
+  sPos: React.MutableRefObject<{ x: number; y: number }>;
+  gs: GameState;
+  paused: boolean;
+}) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const tex = useMemo(makeStreakTexture, []);
+  const mat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+      }),
+    [tex],
+  );
+
+  useFrame(() => {
+    if (paused) return; // frozen during revive countdown
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    let n = 0;
+    if (gs === 'playing') {
+      const sx = sPos.current.x,
+        sy = sPos.current.y;
+      const poolArr = pool.current;
+      for (let i = 0; i < poolArr.length && n < STREAK_MAX; i++) {
+        const a = poolArr[i];
+        if (!a.active) continue;
+        const dx = a.x - sx,
+          dy = a.y - sy;
+        if (dx * dx + dy * dy > 900) continue; // only within ~30u of the ship
+        const spd2 = a.vx * a.vx + a.vy * a.vy;
+        if (spd2 < 6.25) continue; // slow drifters get no tail (spd < 2.5)
+        const spd = Math.sqrt(spd2);
+        const ux = a.vx / spd,
+          uy = a.vy / spd;
+        // Tail length grows with speed, scaled a bit by rock size
+        const len = Math.min(5, 0.9 + spd * 0.28) * (0.75 + a.r * 0.25);
+        const wid = a.r * 1.5;
+        _streakDummy.position.set(
+          a.x - ux * (a.r * 0.6 + len * 0.5),
+          a.y - uy * (a.r * 0.6 + len * 0.5),
+          -0.35,
+        );
+        _streakDummy.rotation.set(0, 0, Math.atan2(uy, ux));
+        _streakDummy.scale.set(len, wid, 1);
+        _streakDummy.updateMatrix();
+        mesh.setMatrixAt(n, _streakDummy.matrix);
+        // Tint by material family (rock / ice / fire), brightness with speed
+        const k = 0.22 + 0.5 * Math.min(1, (spd - 2.5) / 9);
+        const fam = a.mi < 4 ? 0 : a.mi < 8 ? 1 : 2;
+        if (fam === 1) _streakColor.setRGB(0.3 * k, 0.85 * k, 1.0 * k); // ice — cyan
+        else if (fam === 2) _streakColor.setRGB(1.0 * k, 0.55 * k, 0.3 * k); // fire — ember
+        else _streakColor.setRGB(0.5 * k, 0.55 * k, 1.0 * k); // rock — blue-violet
+        mesh.setColorAt(n, _streakColor);
+        n++;
+      }
+    }
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  });
+
+  return <instancedMesh ref={meshRef} args={[_streakGeo, mat, STREAK_MAX]} frustumCulled={false} renderOrder={-1} />;
+}
+
+/* ═══════════════════════════════════════════════════
+   Shockwave FX — expanding ring on shield break / revive
+   ═══════════════════════════════════════════════════ */
+
+const _shockGeo = new THREE.RingGeometry(0.9, 1.0, 48);
+
+function ShockwaveFX({
+  fxRef,
+  paused,
+}: {
+  fxRef: React.MutableRefObject<{ active: boolean; x: number; y: number; t: number; color: string; size: number }>;
+  paused: boolean;
+}) {
+  const mRef = useRef<THREE.Mesh>(null);
+  useFrame((_, delta) => {
+    if (paused) return;
+    const fx = fxRef.current;
+    const m = mRef.current;
+    if (!m) return;
+    if (!fx.active) {
+      m.visible = false;
+      return;
+    }
+    fx.t += Math.min(delta, 0.033);
+    const DUR = 0.6;
+    if (fx.t >= DUR) {
+      fx.active = false;
+      m.visible = false;
+      return;
+    }
+    const k = fx.t / DUR;
+    m.visible = true;
+    m.position.set(fx.x, fx.y, 0.3);
+    const s = (0.6 + k * 9) * fx.size;
+    m.scale.set(s, s, 1);
+    const mat = m.material as THREE.MeshBasicMaterial;
+    mat.color.set(fx.color);
+    mat.opacity = 0.8 * (1 - k);
+  });
+  return (
+    <mesh ref={mRef} visible={false} geometry={_shockGeo}>
+      <meshBasicMaterial
+        color="#22d3ee"
+        transparent
+        opacity={0}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  );
+}
+
 function GameWorld({
   gameState,
   onGameOver,
@@ -1540,6 +1769,7 @@ function GameWorld({
   shipAura,
   shipStats,
   challengeMode,
+  paused = false,
 }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   const asteroidPool = useRef<AsteroidData[]>([]);
@@ -1601,6 +1831,10 @@ function GameWorld({
   const streakTimer = useRef(0);
   const pickupEffect = useRef({ active: false, type: 'shield' as PwrType, x: 0, y: 0, t: 0 });
   const _activeIdx = useRef(new Int32Array(MAX_ASTEROIDS));
+  // Wave director state — shapes spawn directions only (see SPAWNING block)
+  const wave = useRef({ type: 0, angle: 0, left: 0, drift: 0, flip: false });
+  // Shockwave FX trigger (near-miss / shield break / revive) — purely visual
+  const shockFx = useRef({ active: false, x: 0, y: 0, t: 0, color: '#22d3ee', size: 1 });
 
   const sCol = traits?.planetTier ? TIER_COLORS[traits.planetTier] || '#22d3ee' : '#22d3ee';
   const sSc = traits?.planetTier === 'binary_sun' ? 1.05 : 1.0;
@@ -1628,7 +1862,7 @@ function GameWorld({
   );
 
   useEffect(() => {
-    if (gameState !== 'playing') return;
+    if (gameState !== 'playing' || paused) return;
     const rev = () => {
       orbDir.current = orbDir.current === 1 ? -1 : 1;
       headingBoost.current = TAP_BOOST * orbDir.current;
@@ -1656,7 +1890,7 @@ function GameWorld({
       window.removeEventListener('mousedown', onM);
       window.removeEventListener('touchstart', onT);
     };
-  }, [gameState]);
+  }, [gameState, paused]);
 
   useEffect(() => {
     if (gameState !== 'playing') return;
@@ -1693,6 +1927,9 @@ function GameWorld({
     shake.current = 0;
     explAct.current = false;
     pickupEffect.current.active = false;
+    wave.current.type = 0;
+    wave.current.left = 0;
+    shockFx.current.active = false;
     onScore(0);
   }, [gameState]);
 
@@ -1725,6 +1962,13 @@ function GameWorld({
       sfxRevive();
       shake.current = 0;
       physAccum.current = 0;
+      // Revive shockwave (visual juice only)
+      shockFx.current.active = true;
+      shockFx.current.x = shipPos.current.x;
+      shockFx.current.y = shipPos.current.y;
+      shockFx.current.t = 0;
+      shockFx.current.color = '#a855f7';
+      shockFx.current.size = 1.3;
       // Clear ALL nearby asteroids (large radius)
       for (const a of asteroidPool.current) {
         if (!a.active) continue;
@@ -1733,6 +1977,7 @@ function GameWorld({
         if (dx * dx + dy * dy < 64) a.active = false;
       }
     }
+    if (paused) return;
     if (gameState !== 'playing' || overRef.current) {
       // Clear visuals when not playing
       pws.current.length = 0;
@@ -1919,7 +2164,40 @@ function GameWorld({
         if (spawned >= wc) break;
         const a = asteroidPool.current[i];
         if (!a.active) {
-          assignAst(a, el, px, py);
+          // Wave director: occasionally shape the DIRECTION of the next few
+          // spawns into a readable pattern (arc volley / pincer / spiral).
+          // Spawn count & timing (si, wc) are untouched → score bounds intact.
+          const w = wave.current;
+          let forced: number | undefined;
+          if (w.left <= 0 && el > 3 && Math.random() < 0.55) {
+            const roll = Math.random();
+            w.angle = rnd(0, 6.28);
+            if (roll < 0.4) {
+              w.type = 1; // arc volley — sustained pressure from one direction
+              w.left = 4 + Math.floor(Math.random() * 3);
+              w.drift = 0;
+            } else if (roll < 0.7) {
+              w.type = 2; // pincer — alternating from two opposite directions
+              w.left = 4;
+              w.drift = 0;
+              w.flip = false;
+            } else {
+              w.type = 3; // spiral — direction sweeps around the player
+              w.left = 5 + Math.floor(Math.random() * 3);
+              w.drift = rnd(0.6, 1.0) * (Math.random() < 0.5 ? -1 : 1);
+            }
+          }
+          if (w.left > 0) {
+            if (w.type === 2) {
+              forced = w.flip ? w.angle + Math.PI : w.angle;
+              w.flip = !w.flip;
+            } else {
+              forced = w.angle;
+              w.angle += w.type === 3 ? w.drift : rnd(-0.2, 0.2);
+            }
+            w.left--;
+          }
+          assignAst(a, el, px, py, forced);
           spawned++;
         }
       }
@@ -2027,6 +2305,13 @@ function GameWorld({
             a.active = false;
             streak.current = 0;
             streakTimer.current = 0;
+            // Shield-break shockwave (visual juice only)
+            shockFx.current.active = true;
+            shockFx.current.x = sx;
+            shockFx.current.y = sy;
+            shockFx.current.t = 0;
+            shockFx.current.color = '#22d3ee';
+            shockFx.current.size = 1.2;
             continue;
           }
           splitAsteroid(asteroidPool.current, a, el);
@@ -2056,6 +2341,13 @@ function GameWorld({
           onCoins(coinBank.current);
           onCombo?.(streak.current, pts);
           sfxNearMiss();
+          // Gold dodge ring — visible feedback on EVERY scored near-miss
+          shockFx.current.active = true;
+          shockFx.current.x = sx;
+          shockFx.current.y = sy;
+          shockFx.current.t = 0;
+          shockFx.current.color = '#fbbf24';
+          shockFx.current.size = 0.5;
         }
       }
     }
@@ -2135,13 +2427,18 @@ function GameWorld({
   return (
     <>
       {/* No scene background — transparent, CosmicStarfield shows through */}
-      <ambientLight intensity={IS_MOBILE ? 0.6 : 0.5} />
-      <directionalLight intensity={0.65} color="#93c5fd" position={[8, 10, 14]} />
+      {/* Hemisphere = directional ambient (cool sky / violet ground) so unlit
+          asteroid sides stay visible with subtle gradient instead of flat black */}
+      <hemisphereLight args={['#c2cff2', '#5d4a8c', IS_MOBILE ? 0.9 : 0.8]} />
+      <ambientLight intensity={0.3} />
+      <directionalLight intensity={0.8} color="#93c5fd" position={[8, 10, 14]} />
       <directionalLight intensity={0.32} color="#f8fafc" position={[-12, -8, 12]} />
+      {/* Cyan rim light from below-left — prism accent on asteroid shadow sides */}
+      <directionalLight intensity={0.3} color="#22d3ee" position={[-6, -10, 10]} />
 
-      <Cam sPos={shipPos} shake={shake} gs={gameState} />
+      <Cam sPos={shipPos} shake={shake} gs={gameState} paused={paused} />
 
-      <BHVisuals bhRef={bhs} />
+      <BHVisuals bhRef={bhs} paused={paused} />
       <Ship
         posRef={shipPos}
         headRef={shipHead}
@@ -2150,15 +2447,19 @@ function GameWorld({
         nearRef={nearMiss}
         shieldRef={shieldT}
         phaseRef={phaseT}
+        streakRef={streak}
+        paused={paused}
         skinId={shipSkin}
         shipAura={shipAura}
       />
-      <PowerUpVisuals pwRef={pws} />
-      <PickupEffect pickupRef={pickupEffect} />
+      <PowerUpVisuals pwRef={pws} paused={paused} />
+      <PickupEffect pickupRef={pickupEffect} paused={paused} />
 
+      <AsteroidStreaks pool={asteroidPool} sPos={shipPos} gs={gameState} paused={paused} />
       <AsteroidInstances pool={asteroidPool} geos={geos} />
+      <ShockwaveFX fxRef={shockFx} paused={paused} />
 
-      <Explosion pRef={explPos} actRef={explAct} />
+      <Explosion pRef={explPos} actRef={explAct} paused={paused} />
       <FX />
       <ShaderPreWarm />
     </>

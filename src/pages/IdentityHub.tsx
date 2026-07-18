@@ -19,7 +19,7 @@ import './apk-pages.css';
 type PayCurrency = 'SOL' | 'SKR' | 'COINS';
 
 const PAY_OPTIONS: Array<{ key: PayCurrency; label: string; iconUrl?: string; emoji?: string }> = [
-  { key: 'SOL', label: 'SOL', iconUrl: '/landing/badges/sol.png' },
+  { key: 'SOL', label: 'SOL', iconUrl: '/badges/sol.png' },
   { key: 'SKR', label: 'SKR', iconUrl: '/tokens/skr-icon.png' },
   { key: 'COINS', label: 'PRISM', iconUrl: '/tokens/prism-icon.png' },
 ];

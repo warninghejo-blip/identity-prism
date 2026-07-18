@@ -118,7 +118,6 @@ import {
   getMagicBlockHealth,
   registerGameSessionProof,
   startGameSession,
-  generateFairSeed,
   HttpStatusError,
   type GameSessionProof,
 } from '@/lib/magicblock';
@@ -721,40 +720,114 @@ function hasUsableCompositeBreakdown(breakdown: WalletPreview['compositeBreakdow
   return Object.values(breakdown).some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
 }
 
-async function fetchServerRevives(
+type SecureReviveGrant = {
+  reviveGrantId: string;
+  reviveIndex: number;
+  type: 'free' | 'paid';
+  left?: number;
+  paidRevivesUsed?: number;
+};
+
+type PaidReviveIntent = {
+  paymentIntentId: string;
+  memo: string;
+  mint: string;
+  amountRaw: string;
+  treasury: string;
+  treasuryAta: string;
+  expiresAtMs: number;
+};
+
+async function secureReviveRequest<T>(
   walletAddress: string,
-  mode: ArcadeGameMode,
-): Promise<{ left: number; max: number } | null> {
-  try {
-    const base = getServerBase();
-    if (!base) return null;
-    const res = await fetch(`${base}/api/v2/game/revives?address=${encodeURIComponent(walletAddress)}&mode=${mode}`);
-    if (!res.ok) return null; // server unavailable — keep localStorage fallback
-    const data = await res.json();
-    return { left: data?.left ?? 0, max: data?.max ?? 3 };
-  } catch {
-    return null;
-  }
+  path: string,
+  body: Record<string, unknown>,
+): Promise<LeagueApiResponse<T>> {
+  const base = getServerBase();
+  const jwt = getChallengeJwt(walletAddress);
+  if (!base || !jwt) return { ok: false, status: 0, data: null, text: 'auth_or_api_unavailable' };
+  return leagueApiJson<T>(`${base}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${jwt}` },
+    body,
+    timeoutMs: 15_000,
+  });
 }
 
-async function serverRevive(walletAddress: string, mode: ArcadeGameMode): Promise<{ success: boolean; left: number }> {
-  try {
-    const base = getServerBase();
-    if (!base) return { success: false, left: 0 };
-    const jwt = getChallengeJwt(walletAddress);
-    if (!jwt) return { success: false, left: 0 }; // Require JWT
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
-    const res = await fetch(`${base}/api/v2/game/revives`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ address: walletAddress, mode }),
-    });
-    const data = await res.json();
-    if (res.ok && data?.success) return { success: true, left: data.left ?? 0 };
-    return { success: false, left: data?.left ?? 0 };
-  } catch {
-    return { success: false, left: 0 };
+async function pauseSecureGameSession(
+  walletAddress: string,
+  sessionToken: string,
+  gameMode: ArcadeGameMode,
+  reviveIndex: number,
+): Promise<boolean> {
+  const result = await secureReviveRequest<{ paused?: boolean; reviveIndex?: number }>(walletAddress, '/api/v2/game/session/pause', {
+    sessionToken,
+    gameMode,
+    reviveIndex,
+  });
+  return result.ok && result.data?.paused === true && result.data.reviveIndex === reviveIndex;
+}
+
+async function requestFreeReviveGrant(
+  walletAddress: string,
+  sessionToken: string,
+  gameMode: ArcadeGameMode,
+  reviveIndex: number,
+): Promise<SecureReviveGrant | null> {
+  const result = await secureReviveRequest<SecureReviveGrant>(walletAddress, '/api/v2/game/revives', {
+    sessionToken,
+    gameMode,
+    reviveIndex,
+  });
+  const grant = result.data;
+  return result.ok && grant?.type === 'free' && grant.reviveIndex === reviveIndex && typeof grant.reviveGrantId === 'string'
+    ? grant
+    : null;
+}
+
+async function preparePaidRevive(
+  walletAddress: string,
+  sessionToken: string,
+  gameMode: ArcadeGameMode,
+  reviveIndex: number,
+): Promise<PaidReviveIntent | null> {
+  const result = await secureReviveRequest<PaidReviveIntent>(walletAddress, '/api/v2/game/revives/paid/prepare', {
+    sessionToken,
+    gameMode,
+    reviveIndex,
+  });
+  const intent = result.data;
+  return result.ok && intent && typeof intent.paymentIntentId === 'string' && typeof intent.memo === 'string' &&
+    typeof intent.mint === 'string' && typeof intent.amountRaw === 'string' && typeof intent.treasuryAta === 'string'
+    ? intent
+    : null;
+}
+
+async function confirmPaidRevive(
+  walletAddress: string,
+  paymentIntentId: string,
+  txSignature: string,
+): Promise<SecureReviveGrant | null> {
+  // The server only grants a revive after finalization. Keep polling 202 while the
+  // server-side three-minute pause window can still yield a grant.
+  const deadlineMs = Date.now() + 170_000;
+  let retryDelayMs = 1_500;
+  while (Date.now() < deadlineMs) {
+    const result = await secureReviveRequest<SecureReviveGrant & { status?: string }>(
+      walletAddress,
+      '/api/v2/game/revives/paid/confirm',
+      { paymentIntentId, txSignature },
+    );
+    const grant = result.data;
+    if (result.status === 202 && grant?.status === 'PAYMENT_PENDING') {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      retryDelayMs = Math.min(10_000, retryDelayMs + 1_500);
+      continue;
+    }
+    if (result.ok && grant?.type === 'paid' && typeof grant.reviveGrantId === 'string') return grant;
+    return null;
   }
+  return null;
 }
 
 const formatAddress = (address?: string) => {
@@ -1471,8 +1544,10 @@ const PrismLeague = () => {
       setGameMode(urlMode);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const [gameState, setGameState] = useState<'start' | 'countdown' | 'playing' | 'gameover'>('start');
+  const [gameState, setGameState] = useState<'start' | 'session_starting' | 'countdown' | 'playing' | 'gameover'>('start');
+  const [sessionStartError, setSessionStartError] = useState<string | null>(null);
   const [countdownNum, setCountdownNum] = useState(3);
+  const [countdownPurpose, setCountdownPurpose] = useState<'challenge' | 'revive'>('challenge');
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [isNewBest, setIsNewBest] = useState(false);
@@ -1502,6 +1577,11 @@ const PrismLeague = () => {
   const [isJumpingBack, setIsJumpingBack] = useState(false);
   const transitionTimersRef = useRef<number[]>([]);
   const runStartedAtRef = useRef<number>(Date.now());
+  const practiceRunRef = useRef(true);
+  const reviveGrantIdsRef = useRef<string[]>([]);
+  const secureRevivePausedRef = useRef(false);
+  const pendingPaidConfirmationRef = useRef<{ paymentIntentId: string; txSignature: string } | null>(null);
+  const [serverAward, setServerAward] = useState<number | null>(null);
 
   const [isCommitting, setIsCommitting] = useState(false);
   const [lastTxSignature, setLastTxSignature] = useState<string | null>(null);
@@ -1995,42 +2075,6 @@ const PrismLeague = () => {
   const [isVictory, setIsVictory] = useState(false);
   const pendingGameOver = useRef<{ score: number; coins: number; endedAtMs: number; isVictory?: boolean } | null>(null);
 
-  // Helper: read/write daily free revives from localStorage per arcade mode.
-  const getDailyRevivesUsed = useCallback(
-    (mode: ArcadeGameMode = getArcadeGameMode(gameMode)) => {
-      try {
-        const raw = localStorage.getItem('free_revives_daily');
-        if (!raw) return 0;
-        const data = JSON.parse(raw);
-        const today = new Date().toISOString().slice(0, 10);
-        if (data && typeof data === 'object' && !Array.isArray(data) && 'date' in data) {
-          return mode === 'orbit' && data.date === today ? (data.used ?? 0) : 0;
-        }
-        const modeEntry = data?.[mode];
-        return modeEntry?.date === today ? (modeEntry.used ?? 0) : 0;
-      } catch {
-        return 0;
-      }
-    },
-    [gameMode],
-  );
-  const setDailyReviveUsed = useCallback(
-    (mode: ArcadeGameMode = getArcadeGameMode(gameMode)) => {
-      try {
-        const today = new Date().toISOString().slice(0, 10);
-        const raw = localStorage.getItem('free_revives_daily');
-        const parsed = raw ? JSON.parse(raw) : {};
-        const nextData =
-          parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('date' in parsed) ? parsed : {};
-        nextData[mode] = { date: today, used: getDailyRevivesUsed(mode) + 1 };
-        localStorage.setItem('free_revives_daily', JSON.stringify(nextData));
-      } catch {
-        /* ignore */
-      }
-    },
-    [gameMode, getDailyRevivesUsed],
-  );
-
   // Minted ID check → 2x coin multiplier
   // Active bonuses display (Defender) — DOM-driven, no re-render
   const _bonusesDomRef = useRef<HTMLDivElement>(null);
@@ -2124,21 +2168,13 @@ const PrismLeague = () => {
     };
   }, [address]);
 
-  // Update freeRevivesLeft when hasMintedId resolves late (e.g. challenge auto-start)
+  // This only enables the button. The secure grant endpoint enforces eligibility and limits.
   useEffect(() => {
     if (gameMode === 'text_quest') return;
     if (hasMintedId && freeRevivesLeft.current === 0) {
-      freeRevivesLeft.current = Math.max(0, FREE_REVIVES_PER_DAY - getDailyRevivesUsed());
-      if (address) {
-        const mode = getArcadeGameMode(gameMode);
-        fetchServerRevives(address, mode)
-          .then((result) => {
-            if (result) freeRevivesLeft.current = result.left;
-          })
-          .catch(() => {});
-      }
+      freeRevivesLeft.current = FREE_REVIVES_PER_DAY;
     }
-  }, [hasMintedId, address, gameMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasMintedId, gameMode]);
 
   /* MagicBlock state */
   const [mbHealthy, setMbHealthy] = useState<boolean | null>(null);
@@ -2263,7 +2299,7 @@ const PrismLeague = () => {
     setHighScore(currentBest);
   }, [address, playerStats, defenderStats, gravityLeaderboard, gameMode]);
 
-  const handleStart = () => {
+  const handleStart = async (forcePractice = false) => {
     if (gameMode === 'text_quest') {
       // Gate BEFORE opening the reader: if the daily quest is used up (and none in progress),
       // tell the player right here instead of opening a dead loading screen.
@@ -2285,21 +2321,26 @@ const PrismLeague = () => {
         return;
       }
     }
+    if (gameState === 'session_starting') return;
     initAudio();
-    // Start music after a short delay so AudioContext is definitely running
-    setTimeout(() => startMusic(gameMode === 'destroyer' ? 'defender' : gameMode === 'orbit' ? 'orbit' : 'menu'), 300);
     setScore(0);
     setCoins(0);
     setLastTxSignature(null);
     setOnchainBonusApplied(false);
     setSessionProof(null);
     setSessionProofStatus('idle');
+    setServerAward(null);
+    setSessionStartError(null);
     setNewAchievements([]);
     paidRevivesUsed.current = 0;
+    reviveGrantIdsRef.current = [];
+    secureRevivePausedRef.current = false;
+    pendingPaidConfirmationRef.current = null;
     defenderLevel.current = 0;
     defenderKills.current = 0;
-    // Init free revives from localStorage as immediate fallback
-    freeRevivesLeft.current = hasMintedId ? Math.max(0, FREE_REVIVES_PER_DAY - getDailyRevivesUsed()) : 0;
+    // This only controls whether the free-grant option is shown; the server makes the
+    // authoritative eligibility and daily-limit decision when the player consumes it.
+    freeRevivesLeft.current = hasMintedId ? FREE_REVIVES_PER_DAY : 0;
     pendingGameOver.current = null;
     setIsVictory(false);
     // Only reset challenge submitted if not already submitted for this challenge
@@ -2308,15 +2349,6 @@ const PrismLeague = () => {
     }
     setChallengeResult(null);
     setChallengeSubmitting(false);
-    // Then fetch authoritative count from server (async, overrides local)
-    if (hasMintedId && address) {
-      const mode = getArcadeGameMode(gameMode);
-      fetchServerRevives(address, mode)
-        .then((result) => {
-          if (result) freeRevivesLeft.current = result.left;
-        })
-        .catch(() => {});
-    }
     setShowContinue(false);
     setMbVerified(false);
     setMbSeed(null);
@@ -2325,60 +2357,69 @@ const PrismLeague = () => {
     mbSeedRef.current = null;
     mbSlotRef.current = 0;
     mbTokenRef.current = null;
-    runStartedAtRef.current = Date.now();
 
-    /* Start game — countdown for challenges, instant for normal play */
-    trackGameStart(gameMode);
-    if (activeChallengeId) {
-      setCountdownNum(3);
-      setGameState('countdown');
-    } else {
-      setGameState('playing');
+    const startGameplay = (practice: boolean) => {
+      practiceRunRef.current = practice;
+      runStartedAtRef.current = Date.now();
+      trackGameStart(gameMode);
+      setTimeout(() => startMusic(gameMode === 'destroyer' ? 'defender' : gameMode === 'orbit' ? 'orbit' : 'menu'), 300);
+      if (activeChallengeId && !practice) {
+        setCountdownNum(3);
+        setCountdownPurpose('challenge');
+        setGameState('countdown');
+      } else {
+        setGameState('playing');
+      }
+    };
+
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (forcePractice || !connected || !address || offline) {
+      if ((activeChallengeId || playMode === 'tournament') && !forcePractice) {
+        setSessionStartError('A secure connection is required for challenge and tournament runs.');
+        setGameState('start');
+        return;
+      }
+      startGameplay(true);
+      return;
     }
 
-    // Prefetch JWT in the background if not cached — an interactive wallet signature is
-    // appropriate here at game START, never at game-over (that path must stay non-blocking).
-    // startGameSession() needs a JWT to succeed, so wait for either the cached JWT or this
-    // fetch before calling it (but never block gameplay — the game is already rendering above).
-    const jwtReady: Promise<unknown> = getChallengeJwt(address)
-      ? Promise.resolve()
-      : obtainJwt(wallet).catch(() => null);
+    setGameState('session_starting');
+    try {
+      if (!getChallengeJwt(address)) await obtainJwt(wallet);
+      const sessionResult = await startGameSession({
+        gameMode: getArcadeGameMode(gameMode),
+        walletAddress: address,
+        ...(activeChallengeId ? { challengeReferenceId: activeChallengeId } : {}),
+      });
+      if (!sessionResult) throw new Error('Game session could not be secured');
 
-    // Server issues seed+slot+single-use token up front, taking the slow MagicBlock RPC
-    // off the coin-crediting critical path at game-over.
-    jwtReady
-      .then(() => startGameSession({ gameMode: getArcadeGameMode(gameMode), walletAddress: address }))
-      .then((sessionResult) => {
-        if (sessionResult) {
-          // Update refs immediately so finalizeDeath always sees latest values
-          mbTokenRef.current = sessionResult.sessionToken;
-          mbSeedRef.current = sessionResult.seed;
-          mbSlotRef.current = sessionResult.slot;
-          setMbSeed(sessionResult.seed);
-          setMbSlot(sessionResult.slot);
-          return;
-        }
-        // Fallback: startGameSession failed (still no JWT, /start down, etc). If the network
-        // is up, fetch a seed directly so a legacy tokenless submit can still credit at
-        // game-over — never leave the game with no seed at all while online.
-        if (mbSeedRef.current) return; // already populated by a slower-resolving path
-        return generateFairSeed().then((seedResult) => {
-          if (!seedResult || mbSeedRef.current) return;
-          mbSeedRef.current = seedResult.seed;
-          mbSlotRef.current = seedResult.slot;
-          setMbSeed(seedResult.seed);
-          setMbSlot(seedResult.slot);
-        });
-      })
-      .catch(() => {});
+      // These values are server-issued and must exist before the game clock can begin.
+      mbTokenRef.current = sessionResult.sessionToken;
+      mbSeedRef.current = sessionResult.seed;
+      mbSlotRef.current = sessionResult.slot;
+      // Authoritative per-day free-revive remaining from the server — replaces the optimistic
+      // per-run reset so the Continue screen shows the true daily count (not 3/3 every run).
+      freeRevivesLeft.current = hasMintedId ? (sessionResult.freeRevivesLeft ?? 0) : 0;
+      setMbSeed(sessionResult.seed);
+      setMbSlot(sessionResult.slot);
+      startGameplay(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Game session could not be secured';
+      if (activeChallengeId || playMode === 'tournament') {
+        setSessionStartError('Secure session failed. Challenge/tournament submission is unavailable.');
+      } else {
+        setSessionStartError(message);
+      }
+      setGameState('start');
+    }
   };
 
-  // Countdown 3-2-1 for challenge mode
+  // Shared 3-2-1-Go gate for initial challenge starts and granted revives.
   useEffect(() => {
     if (gameState !== 'countdown') return;
     if (countdownNum <= 0) {
-      setGameState('playing');
-      return;
+      const t = setTimeout(() => setGameState('playing'), 600);
+      return () => clearTimeout(t);
     }
     const t = setTimeout(() => setCountdownNum((n) => n - 1), 1000);
     return () => clearTimeout(t);
@@ -2392,16 +2433,17 @@ const PrismLeague = () => {
     if (!connected || !address) return; // wait for wallet
     // hasMintedId is loaded — either true or false (fetch completed when address changes)
     challengeAutoStarted.current = true;
-    // Notify server that player started playing (prevents opponent from cancelling)
+    // Preserve the challenge-start marker used by the opponent flow and cancellation rules.
     const jwt = getChallengeJwt(address);
-    if (jwt) {
-      fetch(`${getServerBase()}/api/challenge/start`, {
+    const serverBase = getServerBase();
+    if (jwt && serverBase) {
+      void fetch(`${serverBase}/api/challenge/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({ challengeId: urlChallengeId }),
       }).catch(() => {});
     }
-    handleStart();
+    void handleStart();
   }, [urlChallengeId, urlMode, connected, address, hasMintedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finalizeDeath = useCallback(
@@ -2420,16 +2462,12 @@ const PrismLeague = () => {
       setScore(finalScore);
       setCoins(finalCoins);
 
+      const isPracticeRun = practiceRunRef.current || !mbTokenRef.current;
+
       // Keep the round result local, but let the backend be authoritative for wallet totals.
       const walletAddr = address || 'anonymous';
-      if (walletAddr === 'anonymous' && finalCoins > 0 && !activeChallengeId) {
-        const prev = readWalletCoins(walletAddr);
-        const next = prev + finalCoins;
-        writeWalletCoins(walletAddr, next);
-        setTotalCoins(next);
-      }
       // Quest auto-tracking (coins already earned during gameplay above)
-      if (walletAddr !== 'anonymous') {
+      if (!isPracticeRun && walletAddr !== 'anonymous') {
         // Quest auto-tracking
         import('@/lib/prismQuests')
           .then(({ getQuestState, incrementQuest }) => {
@@ -2466,15 +2504,10 @@ const PrismLeague = () => {
         const curSlot = mbSlotRef.current;
         const curToken = mbTokenRef.current;
 
-        if (!curSeed || curSlot <= 0) {
-          // No seed at all (offline at start, or session/start never resolved) — terminal, no waiting.
+        if (isPracticeRun || !curSeed || curSlot <= 0 || !curToken) {
+          // Practice and incomplete starts are decorative-only: never submit a tokenless result.
           setSessionProofStatus('unverified');
           setMbVerified(false);
-          if (finalCoins > 0 && !activeChallengeId && playerAddr !== 'anonymous') {
-            void restoreServerCoins(playerAddr).then((serverCoins) => {
-              if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
-            });
-          }
           return;
         }
 
@@ -2518,8 +2551,8 @@ const PrismLeague = () => {
                 startedAtMs,
                 endedAtMs,
                 gameMode,
-                sessionToken: curToken ?? undefined,
-                coinsDelta: finalCoins > 0 && !activeChallengeId ? finalCoins : undefined,
+                sessionToken: curToken,
+                reviveGrantIds: reviveGrantIdsRef.current,
               });
               proof = result?.session ?? null;
               credit = result?.credit ?? null;
@@ -2578,15 +2611,17 @@ const PrismLeague = () => {
           // Server-side proof is the real verification.
           setMbVerified(Boolean(proof?.verified));
 
-          // Coin credit — prefer the atomic credit returned by the submit itself.
-          // Skip coin earning when playing a challenge — earnings come from challenge result.
-          if (finalCoins > 0 && !activeChallengeId) {
+          // The server derives the award. The in-game counter is provisional only.
+          if (!activeChallengeId) {
             if (credit && typeof credit.coins === 'number') {
               writeWalletCoins(walletAddr, credit.coins);
               setTotalCoins(credit.coins);
+              const earned = typeof credit.earned === 'number' ? credit.earned : 0;
+              setServerAward(earned);
+              setCoins(earned);
               window.dispatchEvent(new CustomEvent('identity-prism-balance-updated'));
-              if (credit.earned) {
-                toast.success(`+${credit.earned} coins credited`);
+              if (earned) {
+                toast.success(`+${earned} coins credited`);
               } else if (credit.capped) {
                 toast.warning('Daily coin cap reached — ' + (credit.reason || 'no credit'));
               }
@@ -2599,40 +2634,10 @@ const PrismLeague = () => {
                   })
                   .catch(() => {});
               }
-            } else if (proof?.id && proof.verified) {
-              // Fallback ONLY for an old server that doesn't return `credit` in the submit response.
-              const prev = readWalletCoins(walletAddr);
-              syncCoinsToServer(walletAddr, prev, finalCoins, gameMode, proof.id)
-                .then((serverResult) => {
-                  if (serverResult && typeof serverResult.coins === 'number') {
-                    writeWalletCoins(walletAddr, serverResult.coins);
-                    setTotalCoins(serverResult.coins);
-                    window.dispatchEvent(new CustomEvent('identity-prism-balance-updated'));
-                    if (serverResult.earned) toast.success(`+${serverResult.earned} coins credited`);
-                  }
-                  if (serverResult?.failed) {
-                    toast.warning('Coins not credited: ' + (serverResult.error || serverResult.status));
-                    void restoreServerCoins(walletAddr).then((serverCoins) => {
-                      if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
-                    });
-                  } else if (serverResult?.capped && !serverResult?.earned) {
-                    toast.warning('Daily coin cap reached — ' + (serverResult.reason || 'no credit'));
-                  }
-                  if (walletAddr !== 'anonymous') {
-                    import('@/lib/prismCoin')
-                      .then(({ getPrismBalance }) => {
-                        getPrismBalance(walletAddr)
-                          .then(() => window.dispatchEvent(new CustomEvent('identity-prism-balance-updated')))
-                          .catch(() => {});
-                      })
-                      .catch(() => {});
-                  }
-                })
-                .catch(() => {
-                  void restoreServerCoins(walletAddr).then((serverCoins) => {
-                    if (typeof serverCoins === 'number') setTotalCoins(serverCoins);
-                  });
-                });
+            } else {
+              // A secure server must return its authoritative credit with settlement.
+              setServerAward(0);
+              setCoins(0);
             }
           }
 
@@ -2816,6 +2821,13 @@ const PrismLeague = () => {
         toast.success(`New High Score: ${fmtScore(finalScore, gameMode)}!`);
       } else {
         setIsNewBest(false);
+        // Below-best runs are still recorded (server keeps the higher score) — without this,
+        // a run that doesn't beat the existing best shows no confirmation at all, which reads
+        // as "the score wasn't saved" (most visible on gravity, where scores are small and a
+        // fresh best is rare).
+        if (!isPracticeRun && !activeChallengeId) {
+          toast.info(`Score recorded: ${fmtScore(finalScore, gameMode)} (best: ${fmtScore(highScore, gameMode)})`);
+        }
       }
     },
     [
@@ -2830,23 +2842,35 @@ const PrismLeague = () => {
   );
 
   const handleGameOver = useCallback(
-    (finalScore: number, finalCoins: number, victory?: boolean) => {
+    async (finalScore: number, finalCoins: number, victory?: boolean) => {
       // Victory — no revive, go straight to game over
       if (victory) {
         finalizeDeath(finalScore, finalCoins, true);
         return;
       }
-      // Show continue if: has free revives OR paid revives remain for this game.
-      if (freeRevivesLeft.current > 0 || (paidRevivesUsed.current < PAID_REVIVES_PER_GAME && connected)) {
-        pendingGameOver.current = { score: finalScore, coins: finalCoins, endedAtMs: Date.now() };
-        setScore(finalScore);
-        setCoins(finalCoins);
-        setShowContinue(true);
-        return;
+      const sessionToken = mbTokenRef.current;
+      const mode = getArcadeGameMode(gameMode);
+      const reviveIndex = reviveGrantIdsRef.current.length + 1;
+      const canRequestSecureRevive =
+        !practiceRunRef.current && !!sessionToken && !!address &&
+        (freeRevivesLeft.current > 0 || paidRevivesUsed.current < PAID_REVIVES_PER_GAME);
+      if (canRequestSecureRevive) {
+        // A server pause is the first operation after death. Without it, no secure
+        // revive UI is offered and the run is finalized normally.
+        const paused = await pauseSecureGameSession(address, sessionToken, mode, reviveIndex).catch(() => false);
+        if (paused) {
+          secureRevivePausedRef.current = true;
+          pendingGameOver.current = { score: finalScore, coins: finalCoins, endedAtMs: Date.now() };
+          setScore(finalScore);
+          setCoins(finalCoins);
+          setShowContinue(true);
+          return;
+        }
+        toast.error('Secure revive is unavailable because the game session could not be paused.');
       }
       finalizeDeath(finalScore, finalCoins, false);
     },
-    [finalizeDeath, connected],
+    [finalizeDeath, gameMode, address],
   );
 
   // Gravity-specific game over handler — captures extra session stats then calls shared handler
@@ -2861,79 +2885,91 @@ const PrismLeague = () => {
   );
 
   const handleContinue = useCallback(async () => {
-    if (!pendingGameOver.current || revivePaying) return;
+    const sessionToken = mbTokenRef.current;
+    if (!pendingGameOver.current || revivePaying || !secureRevivePausedRef.current || !address || !sessionToken) return;
+    const mode = getArcadeGameMode(gameMode);
+    const reviveIndex = reviveGrantIdsRef.current.length + 1;
 
-    // Free revive for ID holders (3 per day per arcade mode, server-authoritative)
+    // Free revive: grant first, then consume it locally.
     if (freeRevivesLeft.current > 0) {
-      const mode = getArcadeGameMode(gameMode);
-      if (address) {
-        // Confirm with server first
-        const serverResult = await serverRevive(address, mode);
-        if (!serverResult.success) {
-          // Server denied — sync local state
-          freeRevivesLeft.current = serverResult.left;
-          if (serverResult.left <= 0) {
-            toast.error('No free revives left today (server)');
-          } else {
-            toast.warning('Free revive unavailable — try paid revive');
-          }
-          // Fall through to paid revive below
-        } else {
-          freeRevivesLeft.current = serverResult.left;
-          setDailyReviveUsed();
-          setShowContinue(false);
-          reviveRef.current = true;
-          pendingGameOver.current = null;
-          toast.success(`Free Revive! (${serverResult.left} left today)`);
-          hapticSuccess();
-          return;
-        }
-      } else {
-        // No address — use local only
-        freeRevivesLeft.current--;
-        setDailyReviveUsed();
+      const grant = await requestFreeReviveGrant(address, sessionToken, mode, reviveIndex);
+      if (grant) {
+        freeRevivesLeft.current = typeof grant.left === 'number' ? grant.left : 0;
+        reviveGrantIdsRef.current.push(grant.reviveGrantId);
+        secureRevivePausedRef.current = false;
         setShowContinue(false);
         reviveRef.current = true;
         pendingGameOver.current = null;
+        setCountdownNum(3);
+        setCountdownPurpose('revive');
+        setGameState('countdown');
         toast.success(`Free Revive! (${freeRevivesLeft.current} left today)`);
+        hapticSuccess();
         return;
       }
+      // Keep the pause open and permit the paid flow only while it remains valid.
+      freeRevivesLeft.current = 0;
+      toast.warning('Free revive was not granted. You can use a paid revive instead.');
     }
 
-    // Paid revive via SKR
+    // Paid revive: prepare → exact server-directed SKR transfer with memo → confirm grant.
     setRevivePaying(true);
     try {
       const { payForRevive, REVIVE_SKR_AMOUNT } = await import('@/lib/payForRevive');
-      const result = await payForRevive(wallet, address);
-      if (result.success) {
-        paidRevivesUsed.current += 1;
+      let pendingPayment = pendingPaidConfirmationRef.current;
+      if (!pendingPayment) {
+        const intent = await preparePaidRevive(address, sessionToken, mode, reviveIndex);
+        if (!intent) throw new Error('Unable to prepare secure paid revive');
+        const result = await payForRevive(wallet, intent, address);
+        if (!result.success) {
+          if (result.error) {
+            const e = result.error;
+            if (e.code === 'INSUFFICIENT_SKR') {
+              toast.error('Insufficient SKR', { description: `Need ${e.required} SKR, you have ${e.skrBalance.toFixed(1)} SKR.` });
+            } else if (e.code === 'INSUFFICIENT_SOL') {
+              toast.error('Insufficient SOL for fee', { description: `Need ~${e.required} SOL for tx fee.` });
+            } else if (e.code === 'SIMULATION_FAILED') {
+              toast.error('Transaction failed', { description: e.message });
+            } else if (e.code === 'USER_CANCELLED') {
+              toast.info('Transaction cancelled');
+            } else {
+              toast.error('Revive failed', { description: e.message });
+            }
+          }
+          return;
+        }
+        if (!result.signature) throw new Error('Paid revive transaction has no signature');
+        pendingPayment = { paymentIntentId: intent.paymentIntentId, txSignature: result.signature };
+        pendingPaidConfirmationRef.current = pendingPayment;
+      }
+      const grant = await confirmPaidRevive(address, pendingPayment.paymentIntentId, pendingPayment.txSignature);
+      if (grant) {
+        reviveGrantIdsRef.current.push(grant.reviveGrantId);
+        pendingPaidConfirmationRef.current = null;
+        // The server owns paid-revive accounting. Do not increment a client counter.
+        if (typeof grant.paidRevivesUsed === 'number') {
+          paidRevivesUsed.current = grant.paidRevivesUsed;
+        } else if (typeof grant.left === 'number') {
+          paidRevivesUsed.current = Math.max(0, PAID_REVIVES_PER_GAME - grant.left);
+        }
         setShowContinue(false);
+        secureRevivePausedRef.current = false;
         reviveRef.current = true;
         pendingGameOver.current = null;
-        toast.success(`Revived! (-${REVIVE_SKR_AMOUNT} SKR, ${paidRevivesUsed.current}/${PAID_REVIVES_PER_GAME} used)`);
+        setCountdownNum(3);
+        setCountdownPurpose('revive');
+        setGameState('countdown');
+        toast.success(`Revived! (-${REVIVE_SKR_AMOUNT} SKR)`);
         hapticSuccess();
-      } else if (result.error) {
-        const e = result.error;
-        if (e.code === 'INSUFFICIENT_SKR') {
-          toast.error(`Insufficient SKR`, {
-            description: `Need ${e.required} SKR, you have ${e.skrBalance.toFixed(1)} SKR.`,
-          });
-        } else if (e.code === 'INSUFFICIENT_SOL') {
-          toast.error(`Insufficient SOL for fee`, { description: `Need ~${e.required} SOL for tx fee.` });
-        } else if (e.code === 'SIMULATION_FAILED') {
-          toast.error(`Transaction failed`, { description: e.message });
-        } else if (e.code === 'USER_CANCELLED') {
-          toast.info('Transaction cancelled');
-        } else {
-          toast.error('Revive failed', { description: e.message });
-        }
+      } else {
+        toast.info('Payment is awaiting final confirmation. Tap Continue to retry confirmation without another payment.');
       }
     } catch (err) {
       toast.error('Revive error', { description: err instanceof Error ? err.message : String(err) });
     } finally {
       setRevivePaying(false);
     }
-  }, [wallet, revivePaying, gameMode, address, setDailyReviveUsed]);
+  }, [wallet, revivePaying, gameMode, address]);
 
   const handleDeclineContinue = useCallback(() => {
     if (!pendingGameOver.current) return;
@@ -3232,6 +3268,9 @@ const PrismLeague = () => {
     );
   }, [isJumpingBack, clearTransitionTimers, navigate, gameState, activeChallengeId]);
 
+  const reviveCountdownActive = gameState === 'countdown' && countdownPurpose === 'revive';
+  const sceneGameState = gameState === 'session_starting' ? 'start' : gameState;
+
   return (
     <div className="prism-league-page relative w-full h-screen overflow-hidden">
       {/* Moving starfield background — always visible, parallax via CSS var */}
@@ -3247,7 +3286,7 @@ const PrismLeague = () => {
                   ? 'down'
                   : 'right'
           }
-          paused={gameState === 'gameover'}
+          paused={gameState === 'gameover' || reviveCountdownActive}
         />
       </div>
       <div className="league-aurora league-aurora--a" aria-hidden="true" />
@@ -3257,7 +3296,8 @@ const PrismLeague = () => {
       <div className="absolute inset-0 z-0">
         {gameMode === 'orbit' && (
           <OrbitSurvivalScene
-            gameState={gameState}
+            gameState={reviveCountdownActive ? 'playing' : sceneGameState === 'countdown' ? 'start' : sceneGameState}
+            paused={reviveCountdownActive}
             onScore={throttledSetScore}
             onCoins={throttledSetCoins}
             onGameOver={handleGameOver}
@@ -3274,7 +3314,8 @@ const PrismLeague = () => {
         )}
         {gameMode === 'destroyer' && (
           <AsteroidDestroyerScene
-            gameState={gameState}
+            gameState={reviveCountdownActive ? 'playing' : sceneGameState}
+            paused={reviveCountdownActive}
             onScore={throttledSetScore}
             onCoins={throttledSetCoins}
             onGameOver={handleGameOver}
@@ -3292,7 +3333,8 @@ const PrismLeague = () => {
         )}
         {gameMode === 'gravity' && (
           <GravityRunnerScene
-            gameState={gameState}
+            gameState={reviveCountdownActive ? 'playing' : sceneGameState}
+            paused={reviveCountdownActive}
             onScore={throttledSetScore}
             onCoins={throttledSetCoins}
             onGameOver={handleGravityGameOver}
@@ -3311,7 +3353,16 @@ const PrismLeague = () => {
       {/* FPS overlay */}
       {gameState === 'playing' && <FpsOverlay />}
 
-      {/* Challenge countdown overlay */}
+      {gameState === 'session_starting' && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm pointer-events-auto">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <RotateCw className="w-8 h-8 text-cyan-300 animate-spin" />
+            <span className="text-sm font-bold tracking-wide text-cyan-100">Securing game session…</span>
+          </div>
+        </div>
+      )}
+
+      {/* Shared challenge/revive countdown overlay */}
       {gameState === 'countdown' && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="text-center">
@@ -3325,7 +3376,9 @@ const PrismLeague = () => {
             >
               {countdownNum > 0 ? countdownNum : 'GO!'}
             </div>
-            <p className="text-sm text-white/40 mt-6 font-bold tracking-widest uppercase">Challenge Mode</p>
+            <p className="text-sm text-white/40 mt-6 font-bold tracking-widest uppercase">
+              {countdownPurpose === 'revive' ? 'Get Ready' : 'Challenge Mode'}
+            </p>
           </div>
         </div>
       )}
@@ -3693,7 +3746,7 @@ const PrismLeague = () => {
                             ? 'bg-gradient-to-r from-purple-500 via-purple-400 to-fuchsia-400 hover:from-purple-400 hover:via-purple-300 hover:to-fuchsia-300 text-white shadow-[0_0_40px_rgba(168,85,247,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-purple-300/30'
                             : 'bg-gradient-to-r from-cyan-500 via-cyan-400 to-teal-400 hover:from-cyan-400 hover:via-cyan-300 hover:to-teal-300 text-black shadow-[0_0_40px_rgba(6,182,212,0.35),inset_0_1px_0_rgba(255,255,255,0.25)] border border-cyan-300/30'
                       }`}
-                      onClick={handleStart}
+                      onClick={() => void handleStart()}
                       disabled={shipStatsLoading}
                     >
                       {shipStatsLoading ? (
@@ -3719,6 +3772,21 @@ const PrismLeague = () => {
                         </>
                       )}
                     </Button>
+                    {sessionStartError && (
+                      <div className="w-full mb-3 rounded-xl border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs text-red-200/80">
+                        <div>{sessionStartError}</div>
+                        {!activeChallengeId && playMode !== 'tournament' && connected && (
+                          <div className="mt-2 flex justify-center gap-3">
+                            <button className="font-bold text-cyan-300 hover:text-cyan-100" onClick={() => void handleStart()}>
+                              Retry
+                            </button>
+                            <button className="font-bold text-white/70 hover:text-white" onClick={() => void handleStart(true)}>
+                              Practice
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {!connected && (
                       <button
                         className="mb-3 text-xs text-cyan-400/60 hover:text-cyan-300 transition-colors"
@@ -4652,12 +4720,6 @@ const PrismLeague = () => {
                       </>
                     ) : (
                       <>
-                        <img
-                          src="/tokens/skr-icon.png"
-                          alt=""
-                          className="w-5 h-5 mr-1.5 object-contain"
-                          loading="lazy"
-                        />{' '}
                         Revive for 5 SKR ({PAID_REVIVES_PER_GAME - paidRevivesUsed.current} left)
                       </>
                     )}
@@ -4758,11 +4820,21 @@ const PrismLeague = () => {
                         </div>
                         <div className="flex flex-col items-center px-3 py-1.5 rounded-xl bg-yellow-500/5 border border-yellow-500/15">
                           <span className="text-[10px] uppercase tracking-widest text-yellow-400/60 font-semibold">
-                            Coins
+                            {practiceRunRef.current ? 'Practice' : 'Award'}
                           </span>
                           <div className="flex items-center gap-1">
                             <img src="/tokens/prism-icon.png" alt="" className="w-4 h-4 text-yellow-400 object-contain" loading="lazy" />
-                            <span className="text-2xl font-black text-yellow-400 tabular-nums">{coins}</span>
+                            <span className="text-2xl font-black text-yellow-400 tabular-nums">
+                              {activeChallengeId
+                                ? 'Challenge'
+                                : practiceRunRef.current
+                                  ? '—'
+                                  : serverAward === null
+                                    ? sessionProofStatus === 'failed_network' || sessionProofStatus === 'unverified'
+                                      ? '—'
+                                      : '…'
+                                    : serverAward}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -4810,7 +4882,13 @@ const PrismLeague = () => {
                         <span className="text-sm font-bold text-yellow-300">
                           {activeChallengeId
                             ? 'Challenge'
-                            : `+${onchainBonusApplied ? Math.round(coins * ONCHAIN_BONUS_MULTIPLIER) : coins}`}
+                            : practiceRunRef.current
+                              ? 'Practice'
+                              : serverAward === null
+                                ? sessionProofStatus === 'failed_network' || sessionProofStatus === 'unverified'
+                                  ? "Couldn't verify"
+                                  : 'Settling…'
+                                : `+${serverAward}`}
                         </span>
                         {onchainBonusApplied && (
                           <span className="text-[10px] font-bold text-green-400 animate-in fade-in slide-in-from-left-2 duration-500">
@@ -4920,7 +4998,8 @@ const PrismLeague = () => {
                               href={sessionProof.proofUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-cyan-300/60 hover:text-cyan-200 flex-shrink-0"
+                              className="text-cyan-300/60 hover:text-cyan-200 flex-shrink-0 inline-flex items-center"
+                              style={{ minHeight: 0 }}
                             >
                               <ExternalLink className="w-3 h-3" />
                             </a>
@@ -5052,7 +5131,7 @@ const PrismLeague = () => {
                             color: '#000',
                             boxShadow: '0 0 24px rgba(34,211,238,0.4)',
                           }}
-                          onClick={handleStart}
+                          onClick={() => void handleStart()}
                         >
                           <RotateCcw className="w-5 h-5" />
                           Play Again

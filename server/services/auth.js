@@ -43,11 +43,12 @@ function signGameSessionToken(payload, expiresInSeconds) {
   });
 }
 
-function verifyGameSessionTokenSignature(token) {
+function verifyGameSessionTokenSignature(token, { ignoreExpiration = false } = {}) {
   return jwt.verify(token, JWT_SECRET, {
     algorithms: ['HS256'],
     issuer: 'identity-prism',
     audience: 'identity-prism-game-session',
+    ignoreExpiration,
   });
 }
 

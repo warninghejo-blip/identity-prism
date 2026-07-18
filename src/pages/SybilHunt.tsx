@@ -124,7 +124,7 @@ export default function SybilHunt() {
 
               <div className="sybil-console">
                 <div className="apk-panel sybil-card recruit-card">
-                  <img src="/landing/textures/ranks/rank_cadet.png" alt="" style={{ width: 88 }} />
+                  <img src="/textures/ranks/rank_cadet.png" alt="" style={{ width: 88 }} />
                   <div className="recruit-stat"><b>0</b><span>hunts</span></div>
                   <div className="recruit-stat"><b style={{ color: '#f87171' }}>0</b><span>caught</span></div>
                   <div className="recruit-stat"><b>Tracker</b><span>next rank</span></div>

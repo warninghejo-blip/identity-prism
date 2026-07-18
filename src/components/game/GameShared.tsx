@@ -29,6 +29,8 @@ export interface GameProps {
   onActiveBonuses?: (bonuses: ActiveBonus[]) => void;
   reviveRef?: React.MutableRefObject<boolean>;
   gameState: GameState;
+  /** A non-destructive pause used while a granted revive counts down. */
+  paused?: boolean;
   traits: WalletTraits | null;
   walletScore: number;
   hasMintedId?: boolean;

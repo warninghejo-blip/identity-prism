@@ -4,7 +4,7 @@ import { Toaster as Sonner } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Outlet, useLocation } from 'react-router-dom';
-import { cleanupOverlays } from '@/lib/safeNavigate';
+import { cleanupOverlays, cleanupWalletModals } from '@/lib/safeNavigate';
 import { trackPageView } from '@/lib/analytics';
 import { useChallengeNotifier } from '@/lib/useChallengeNotifier';
 
@@ -22,6 +22,14 @@ const queryClient = new QueryClient({
 const App = () => {
   const location = useLocation();
   useChallengeNotifier();
+
+  // Clean up stuck wallet-adapter / MWA overlays when the window regains focus.
+  // Event-driven — zero overhead when idle.
+  useEffect(() => {
+    const onFocus = () => cleanupWalletModals();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
 
   // Dismiss HTML preloader and stale overlays on route change.
   // Index.tsx has its own preloader dismissal — cleanupOverlays handles

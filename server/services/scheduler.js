@@ -3,6 +3,7 @@ import {
   getMsUntilNextLouvainWindow,
   runLouvainCommunityDetection,
 } from './louvainCommunityDetection.js';
+import { CHALLENGE_SUBMIT_GRACE_MS } from './gameRules.js';
 
 const readIntervalMs = (envName, fallbackMs) => {
   const override = Number(process.env[envName]);
@@ -168,7 +169,12 @@ function startSchedulers(ctx) {
     let changed = false;
     for (const challenge of challenges) {
       if (!challenge.expiresAt || challenge.status === 'completed' || challenge.status === 'cancelled' || challenge.status === 'expired') continue;
-      if (now < challenge.expiresAt) continue;
+      const expiryAtMs = Number(challenge.expiresAt);
+      if (!Number.isFinite(expiryAtMs)) continue;
+      const expiresWithSubmitGraceAtMs = challenge.status === 'playing'
+        ? expiryAtMs + CHALLENGE_SUBMIT_GRACE_MS
+        : expiryAtMs;
+      if (now <= expiresWithSubmitGraceAtMs) continue;
       if (challenge.status === 'open') {
         challenge.status = 'expired';
         challenge.completedAt = new Date().toISOString();
@@ -205,19 +211,32 @@ function startSchedulers(ctx) {
         console.log(`[challenges] Expired ${challenge.id} (scoring timeout, ${Math.round((now - challenge.createdAt) / 60000)}m)`);
         continue;
       }
-      if (challenge.status === 'playing' && !challenge.opponent) {
+      if (challenge.status === 'playing') {
         challenge.status = 'expired';
+        challenge.result = 'timeout_playing';
         challenge.completedAt = new Date().toISOString();
         changed = true;
         if (challenge.stakeAmount > 0) {
           setCoinBalance(challenge.creator, getCoinBalance(challenge.creator) + challenge.stakeAmount);
           refundCoinSpent(challenge.creator, challenge.stakeAmount);
+          // A direct opponent is present before acceptance but has not staked yet.
+          // Refund an opponent only after acceptedAt proves their stake was locked.
+          if (challenge.opponent && challenge.acceptedAt) {
+            setCoinBalance(challenge.opponent, getCoinBalance(challenge.opponent) + challenge.stakeAmount);
+            refundCoinSpent(challenge.opponent, challenge.stakeAmount);
+          }
         }
         pushNotification(challenge.creator, 'challenge_expired', `Your challenge expired — ${challenge.stakeAmount} coins refunded`, {
           challengeId: challenge.id,
           refunded: challenge.stakeAmount,
         });
-        console.log(`[challenges] Expired ${challenge.id} (playing/game, no opponent joined, ${Math.round((now - challenge.createdAt) / 60000)}m)`);
+        if (challenge.opponent && challenge.acceptedAt) {
+          pushNotification(challenge.opponent, 'challenge_expired', `Challenge expired — ${challenge.stakeAmount} coins refunded`, {
+            challengeId: challenge.id,
+            refunded: challenge.stakeAmount,
+          });
+        }
+        console.log(`[challenges] Voided ${challenge.id} (playing/game deadline, ${Math.round((now - challenge.createdAt) / 60000)}m)`);
       }
     }
     if (changed) {

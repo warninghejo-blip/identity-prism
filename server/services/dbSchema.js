@@ -237,6 +237,95 @@ function initAppDbSchema(db) {
     // placeholder for future migrations when upgrading from v1 DBs
     db.pragma('user_version = 2');
   }
+
+  // v3: economy settlement and on-chain payment replay protection.  This is
+  // deliberately guarded (rather than relying only on CREATE IF NOT EXISTS)
+  // so upgrading a live v2 database has an explicit, idempotent migration.
+  if (currentVersion < 3) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS game_coin_daily (
+        address TEXT NOT NULL,
+        day TEXT NOT NULL,
+        earned INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (address, day)
+      );
+
+      CREATE TABLE IF NOT EXISTS coin_ledger (
+        event_key TEXT PRIMARY KEY,
+        address TEXT NOT NULL,
+        delta INTEGER NOT NULL,
+        balance_after INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        session_token_id TEXT,
+        proof_id TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS coin_ledger_session_source
+      ON coin_ledger(session_token_id, source)
+      WHERE session_token_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS revive_grants (
+        grant_id TEXT PRIMARY KEY,
+        session_token_id TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        game_mode TEXT NOT NULL,
+        revive_index INTEGER NOT NULL,
+        grant_type TEXT NOT NULL CHECK (grant_type IN ('free','paid')),
+        tx_signature TEXT,
+        payment_intent_id TEXT,
+        issued_at INTEGER NOT NULL,
+        consumed_at INTEGER,
+        consumed_proof_id TEXT,
+        UNIQUE(session_token_id, revive_index)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS revive_grants_tx
+      ON revive_grants(tx_signature)
+      WHERE tx_signature IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS revive_payment_intents (
+        intent_id TEXT PRIMARY KEY,
+        session_token_id TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        game_mode TEXT NOT NULL,
+        revive_index INTEGER NOT NULL,
+        memo TEXT NOT NULL UNIQUE,
+        expires_at INTEGER NOT NULL,
+        tx_signature TEXT UNIQUE
+      );
+
+      CREATE TABLE IF NOT EXISTS onchain_payment_claims (
+        tx_signature TEXT PRIMARY KEY,
+        purpose TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        reference_id TEXT NOT NULL,
+        claimed_at INTEGER NOT NULL
+      );
+    `);
+    db.pragma('user_version = 3');
+  }
+
+  // v4: retain today's legacy JSON daily usage when switching settlement to
+  // game_coin_daily. The migration is one-time and a missing/corrupt mirror is
+  // intentionally equivalent to an empty legacy ledger.
+  if (currentVersion < 4) {
+    const legacyDailyFile = path.join(process.cwd(), 'game_coins_today.json');
+    const today = new Date().toISOString().slice(0, 10);
+    let legacyEntries = [];
+    try {
+      const raw = JSON.parse(fs.readFileSync(legacyDailyFile, 'utf8'));
+      legacyEntries = Object.entries(raw || {}).filter(([, entry]) => entry?.date === today);
+    } catch {}
+    const seedDaily = db.prepare(`INSERT INTO game_coin_daily (address, day, earned) VALUES (?, ?, ?)
+      ON CONFLICT(address, day) DO UPDATE SET earned = MAX(game_coin_daily.earned, excluded.earned)`);
+    const seedLegacyDaily = db.transaction(() => {
+      for (const [address, entry] of legacyEntries) {
+        const earned = Math.max(0, Math.floor(Number(entry?.coins) || 0));
+        if (address && earned > 0) seedDaily.run(address, today, earned);
+      }
+    });
+    seedLegacyDaily();
+    db.pragma('user_version = 4');
+  }
 }
 
 export {

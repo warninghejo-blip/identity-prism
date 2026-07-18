@@ -783,34 +783,69 @@ function EnemyVisuals({
    Enemy bullet visuals
    ═══════════════════════════════════════════════════ */
 
+// Shared geometry + materials for enemy bullets — one geo/mat instead of 80
+// (visual upgrade: hot core + additive plasma halo; hitbox logic unchanged)
+const _ebCoreGeo = new THREE.SphereGeometry(0.09, 8, 8);
+const _ebGlowGeo = new THREE.SphereGeometry(0.22, 8, 8);
+const _ebCoreMat = new THREE.MeshBasicMaterial({
+  color: '#ff5566',
+  transparent: true,
+  opacity: 0.95,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  toneMapped: false,
+});
+const _ebGlowMat = new THREE.MeshBasicMaterial({
+  color: '#ff2244',
+  transparent: true,
+  opacity: 0.3,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+});
+
 function EnemyBulletVisuals({ poolRef }: { poolRef: React.MutableRefObject<EnemyBullet[]> }) {
   const refs = useRef<(THREE.Mesh | null)[]>([]);
-  useFrame(() => {
+  const glowRefs = useRef<(THREE.Mesh | null)[]>([]);
+  useFrame((s) => {
+    // Shared-material shimmer — one update per frame, not per bullet
+    _ebGlowMat.opacity = 0.3 + 0.12 * Math.sin(s.clock.elapsedTime * 9);
     for (let i = 0; i < MAX_ENEMY_BULLETS; i++) {
       const m = refs.current[i];
+      const g = glowRefs.current[i];
       const b = poolRef.current[i];
-      if (!m) continue;
+      if (!m || !g) continue;
       if (!b || !b.active) {
         m.visible = false;
+        g.visible = false;
         continue;
       }
       m.visible = true;
+      g.visible = true;
       m.position.set(b.x, b.y, 0);
+      g.position.set(b.x, b.y, 0);
     }
   });
   return (
     <>
       {Array.from({ length: MAX_ENEMY_BULLETS }).map((_, i) => (
-        <mesh
-          key={i}
-          ref={(el) => {
-            refs.current[i] = el;
-          }}
-          visible={false}
-        >
-          <sphereGeometry args={[0.08, 5, 5]} />
-          <meshBasicMaterial color="#ff2244" transparent opacity={0.9} blending={THREE.AdditiveBlending} />
-        </mesh>
+        <React.Fragment key={i}>
+          <mesh
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            visible={false}
+            geometry={_ebCoreGeo}
+            material={_ebCoreMat}
+          />
+          <mesh
+            ref={(el) => {
+              glowRefs.current[i] = el;
+            }}
+            visible={false}
+            geometry={_ebGlowGeo}
+            material={_ebGlowMat}
+          />
+        </React.Fragment>
       ))}
     </>
   );
@@ -1277,6 +1312,7 @@ function DestroyerWorld({
   shipAura,
   shipStats,
   challengeMode,
+  paused = false,
 }: GameProps) {
   const coinMult = hasMintedId ? 2 : 1;
   // Throttled score/coins updates — batch React setState to max once per 100ms
@@ -1405,7 +1441,7 @@ function DestroyerWorld({
 
   // Input handling
   useEffect(() => {
-    if (gameState !== 'playing') return;
+    if (gameState !== 'playing' || paused) return;
     const keys = new Set<string>();
 
     const syncInput = () => {
@@ -1477,7 +1513,7 @@ function DestroyerWorld({
       window.removeEventListener('touchend', onTouchEnd);
       window.removeEventListener('contextmenu', onCtx);
     };
-  }, [gameState]);
+  }, [gameState, paused]);
 
   // Reset on game start
   useEffect(() => {
@@ -1557,6 +1593,7 @@ function DestroyerWorld({
       invulnT.current = 3; // 3 seconds of invulnerability (semi-transparent)
       for (const b of enemyBullets.current) b.active = false;
     }
+    if (paused) return;
     if (gameState !== 'playing' || overRef.current) {
       // Clear visuals when not playing
       for (const pw of powerups.current) pw.active = false;

@@ -8,6 +8,7 @@ function createInitOrchestrator({
   sybilVerdictStore,
   gameSessionProofStore,
   securityEventStore,
+  sanitizeSecurityEventStore,
   achievementStore,
   reviveStore,
   questProgressStore,
@@ -80,6 +81,7 @@ function createInitOrchestrator({
         console.log(`[sqlite] Seeded ${label} with ${result.count} record(s) from JSON`);
       }
     }
+    sanitizeSecurityEventStore?.();
 
     await loadCoinBalances();
     loadMintedAddresses();

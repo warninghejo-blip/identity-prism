@@ -76,8 +76,8 @@ export interface RegisterGameSessionPayload {
   gameMode?: string;
   /** Server-issued single-use token from startGameSession(); omitted for legacy submits. */
   sessionToken?: string;
-  /** Coins to credit atomically as part of this submit (server is authoritative/idempotent). */
-  coinsDelta?: number;
+  /** Ordered server-issued grants consumed by this run. */
+  reviveGrantIds?: string[];
 }
 
 /** Result of an atomic coin credit performed as part of a session submit. */
@@ -100,6 +100,8 @@ export interface RegisterGameSessionResult {
 export interface StartGameSessionPayload {
   gameMode: string;
   walletAddress?: string;
+  /** Required when this run is bound to an arena challenge. */
+  challengeReferenceId?: string;
 }
 
 export interface StartGameSessionResult {
@@ -109,6 +111,8 @@ export interface StartGameSessionResult {
   startedAtMs: number;
   expiresAtMs: number | null;
   seedSource: string | null;
+  /** Real per-day free-revive remaining for this wallet/mode (server-authoritative). */
+  freeRevivesLeft: number | null;
 }
 
 export interface GameSessionProof {
@@ -176,7 +180,7 @@ export async function generateFairSeed(signal?: AbortSignal): Promise<{ seed: st
 }
 
 /**
- * Single-attempt POST to /api/game/session/start, honoring the tight timeout budget
+ * Single-attempt POST to /api/v2/game/session/start, honoring the tight timeout budget
  * (fetch abort 4s; native connect 3s / read 4s). Never throws for HTTP-level failures —
  * callers inspect `ok`/`status`/`data`. May throw on network/timeout errors.
  */
@@ -221,12 +225,8 @@ async function requestSessionStart(
  * Start a server-authoritative game session: server issues a single-use token bound to a
  * seed+slot, taking the slow client-side MagicBlock RPC off the coin-crediting critical path.
  *
- * Requires a cached JWT (obtained via obtainJwt() at game start) — returns null without one,
- * in which case the caller proceeds tokenless (legacy submit path).
- *
- * Compat-shim: an OLD server (pre-rework) requires the client to supply seed/slot itself and
- * responds `400 seed is required` — in that case we fetch a seed via generateFairSeed() once
- * and retry /start with it.
+ * Requires a cached JWT (obtained via obtainJwt() at game start). Secure callers must not
+ * start gameplay when this returns null.
  */
 export async function startGameSession(payload: StartGameSessionPayload): Promise<StartGameSessionResult | null> {
   const base = getGameSessionApiBase();
@@ -234,7 +234,7 @@ export async function startGameSession(payload: StartGameSessionPayload): Promis
   const jwt = getCachedGameJwt(payload.walletAddress);
   if (!jwt) return null;
 
-  const url = `${base}/api/game/session/start`;
+  const url = `${base}/api/v2/game/session/start`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` };
 
   const toResult = (data: Record<string, unknown> | null): StartGameSessionResult | null => {
@@ -250,11 +250,14 @@ export async function startGameSession(payload: StartGameSessionPayload): Promis
       startedAtMs: typeof data.startedAtMs === 'number' ? data.startedAtMs : Date.now(),
       expiresAtMs: typeof data.expiresAtMs === 'number' ? data.expiresAtMs : null,
       seedSource: typeof data.seedSource === 'string' ? data.seedSource : null,
+      freeRevivesLeft: Number.isFinite(Number(data.freeRevivesLeft)) ? Number(data.freeRevivesLeft) : null,
     };
   };
 
-  let body: Record<string, unknown> = { gameMode: payload.gameMode };
-  let shimAttempted = false;
+  const body: Record<string, unknown> = {
+    gameMode: payload.gameMode,
+    ...(payload.challengeReferenceId ? { challengeReferenceId: payload.challengeReferenceId } : {}),
+  };
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let result: { ok: boolean; status: number; data: Record<string, unknown> | null } | null = null;
@@ -266,23 +269,6 @@ export async function startGameSession(payload: StartGameSessionPayload): Promis
     if (result.ok) {
       const parsed = toResult(result.data);
       if (parsed) return parsed;
-      continue;
-    }
-    const errText = typeof result.data?.error === 'string' ? result.data.error : '';
-    if (!shimAttempted && result.status === 400 && /seed is required/i.test(errText)) {
-      // Old-server compat shim: fetch a seed ourselves and retry once with it.
-      shimAttempted = true;
-      const ctrl = new AbortController();
-      const shimTimeout = setTimeout(() => ctrl.abort(), 2000);
-      let seedResult: { seed: string; slot: number } | null = null;
-      try {
-        seedResult = await generateFairSeed(ctrl.signal);
-      } finally {
-        clearTimeout(shimTimeout);
-      }
-      if (!seedResult) return null;
-      body = { gameMode: payload.gameMode, seed: seedResult.seed, slot: seedResult.slot };
-      attempt -= 1; // the shim retry doesn't consume one of the 2 network-failure tries
       continue;
     }
     if (result.status >= 400 && result.status < 500) return null; // non-retryable client error
@@ -369,7 +355,7 @@ export async function registerGameSessionProof(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const jwt = getCachedGameJwt(payload.walletAddress);
   if (jwt) headers['Authorization'] = `Bearer ${jwt}`;
-  const url = `${base}/api/game/session`;
+  const url = `${base}/api/v2/game/session`;
   let data: { session?: GameSessionProof; credit?: GameCoinsCreditResult };
 
   try {

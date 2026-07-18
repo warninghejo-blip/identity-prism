@@ -1,3 +1,5 @@
+import { getScoreCeiling } from '../services/gameRules.js';
+
 function registerTournamentRoute(ctx) {
   const {
     core: {
@@ -100,21 +102,14 @@ function registerTournamentRoute(ctx) {
         new Promise((resolve) => setTimeout(() => resolve({ rpcHealthy: false, seedMatchesSlot: false, reason: 'reverify_timeout' }), 4000)),
       ]);
       if (!verification || !verification.rpcHealthy) return session;
-      let modeScoreValid = true;
-      const exDurationSec = Math.max(1, (session.durationMs || 0) / 1000);
-      if (session.gameMode === 'destroyer') {
-        modeScoreValid = session.score <= Math.floor(exDurationSec * 100);
-      } else if (session.gameMode === 'gravity') {
-        modeScoreValid = session.score <= Math.floor(exDurationSec * 10);
-      }
-      const scoreDeltaToleranceSec = 8;
+      const modeScoreValid = session.score <= getScoreCeiling(session.gameMode, session.durationMs);
       const maxSeedStartDriftMs = 120_000;
       const seedStartDeltaMs = Number.isFinite(Number(verification.slotBlockTimeMs))
         ? Math.abs((session.startedAtMs || 0) - Number(verification.slotBlockTimeMs))
         : session.seedStartDeltaMs ?? 0;
       const seedTimeValid = !Number.isFinite(Number(verification.slotBlockTimeMs)) || seedStartDeltaMs <= maxSeedStartDriftMs;
       const verified =
-        verification.seedMatchesSlot && seedTimeValid && (session.scoreDelta ?? 0) <= scoreDeltaToleranceSec && modeScoreValid;
+        verification.seedMatchesSlot && seedTimeValid && modeScoreValid;
       if (verified !== session.verified) {
         const refreshed = {
           ...session,
@@ -218,7 +213,9 @@ function registerTournamentRoute(ctx) {
         if (typeof score !== 'number' || score <= 0) return respondJson(res, 400, { error: 'Valid score required', reason: 'invalid_score' });
         if (!gameSessionId) return respondJson(res, 400, { error: 'gameSessionId required for tournament', reason: 'session_id_required' });
         let tSession = gameSessionProofs.get(gameSessionId);
-        if (!tSession) return respondJson(res, 400, { error: 'Invalid game session', reason: 'session_not_found' });
+        if (!tSession || !tSession.sessionTokenId || tSession.timingVerified !== true || tSession.economyEligible !== true || tSession.competitiveEligible !== true) {
+          return respondJson(res, 400, { error: 'Token-backed, timing-verified game session required', reason: 'session_not_found' });
+        }
         if (!tSession.verified) {
           tSession = await reverifySession(tSession);
           if (!tSession.verified) {
@@ -226,7 +223,7 @@ function registerTournamentRoute(ctx) {
           }
         }
         if (tSession.walletAddress !== addr) return respondJson(res, 403, { error: 'Session wallet mismatch', reason: 'wallet_mismatch' });
-        if (Math.abs(tSession.score - score) > 5) return respondJson(res, 400, { error: 'Score does not match session proof', reason: 'score_proof_mismatch' });
+        if (tSession.score !== score) return respondJson(res, 400, { error: 'Score does not match session proof', reason: 'score_proof_mismatch' });
         const requestedMode = bodyMode || tSession.gameMode;
         if (!requestedMode) return respondJson(res, 400, { error: 'mode required', reason: 'mode_required' });
         const mode = normalizeTournamentMode(requestedMode);
@@ -243,9 +240,10 @@ function registerTournamentRoute(ctx) {
         if (!tournament || tournament.status === 'ended' || Date.now() > tournament.endTime) return respondJson(res, 400, { error: 'Tournament has ended', reason: 'tournament_ended' });
         if (!tournament.entries[addr]) return respondJson(res, 400, { error: 'Not joined', reason: 'not_joined' });
         if (tSession.usedForTournament) return respondJson(res, 400, { error: 'Session already used for a tournament submission', reason: 'session_used' });
-        const maxTournamentScores = { orbit: 600, gravity: 600, destroyer: 9999 };
-        const maxTournamentScore = maxTournamentScores[mode] || 9999;
-        if (score > maxTournamentScore) return respondJson(res, 400, { error: 'Score exceeds maximum', reason: 'score_too_high' });
+        const scoreCeiling = Number(tSession.scoreCeiling);
+        if (!Number.isFinite(scoreCeiling) || scoreCeiling !== getScoreCeiling(mode, tSession.durationMs) || score > scoreCeiling) {
+          return respondJson(res, 400, { error: 'Score exceeds maximum', reason: 'score_too_high' });
+        }
         tSession.usedForTournament = { tier, mode, addr, at: Date.now() };
         persistGameSessionProofs();
         const previousScore = tournament.entries[addr].score || 0;

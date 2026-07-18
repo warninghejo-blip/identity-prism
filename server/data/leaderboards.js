@@ -33,7 +33,9 @@ function createLeaderboardStore({ storeFile, maxEntries }) {
 
   const submitLeaderboardEntry = (entry) => {
     const { address, score, playedAt, txSignature, gameType } = entry;
-    if (!address || typeof score !== 'number' || score <= 0) return null;
+    // score === 0 is a legitimate outcome (e.g. gravity's "columns passed" score is
+    // commonly 0 on a fast death) and must still be recorded — only reject negative/NaN.
+    if (!address || typeof score !== 'number' || !Number.isFinite(score) || score < 0) return null;
     const gt = gameType || 'orbit';
     // Find existing entry for same address + gameType
     const existing = leaderboardEntries.findIndex((e) => e.address === address && (e.gameType || 'orbit') === gt);
