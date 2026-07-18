@@ -55,6 +55,7 @@ import {
   type WalletPreview,
 } from '@/components/prism/shared';
 import { earnPrism } from '@/lib/prismCoin';
+import { isDemoMode } from '@/lib/demoMode';
 import { toast } from 'sonner';
 import { getProgramLabel, PROGRAM_LABELS } from '@/lib/solanaPrograms';
 
@@ -769,6 +770,10 @@ export default function PrismScanner() {
   }, [fetchSybil, rescanUsedAt, result?.address]);
 
   const handleFeedbackSubmit = useCallback(async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!result?.address || !huntVerdict) return;
     try {
       const jwt = await ensureJwt();
@@ -808,6 +813,8 @@ export default function PrismScanner() {
       setHuntVerdict(verdict);
       setShowVerdictAnim(true);
       setTimeout(() => setShowVerdictAnim(false), 3000);
+
+      if (isDemoMode()) return;
 
       setHuntCoinsEarned(0);
       // Ensure server-side sybil cache is warm before claiming earn reward.

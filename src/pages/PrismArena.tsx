@@ -10,6 +10,7 @@ import { invalidateBalanceCache } from '@/lib/prefetch';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { isDemoMode } from '@/lib/demoMode';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import {
   Plus,
@@ -542,6 +543,10 @@ export default function PrismArena() {
 
   // ── Create challenge ──
   const handleCreate = useCallback(async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (actionLockRef.current) return;
     if (!myAddress) {
       toast.error('Connect your wallet first');
@@ -647,6 +652,10 @@ export default function PrismArena() {
   // ── Accept challenge ──
   const handleAccept = useCallback(
     async (challengeId: string) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (actionLockRef.current) return;
       if (!myAddress) {
         toast.error('Connect your wallet first');
@@ -728,6 +737,10 @@ export default function PrismArena() {
 
   const handleCancel = useCallback(
     async (challengeId: string) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (actionLockRef.current) return;
       setCancelConfirm(null);
 

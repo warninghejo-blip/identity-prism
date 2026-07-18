@@ -54,6 +54,7 @@ import type { ForgeLoadout } from '@/lib/forgeItems';
 import { isTextQuestLockedToday } from '@/lib/textQuests';
 import { api } from '@/lib/api';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { isDemoMode, setDemoModeEnabled } from '@/lib/demoMode';
 
 type GameMode = 'orbit' | 'destroyer' | 'gravity' | 'text_quest';
 type ArcadeGameMode = Exclude<GameMode, 'text_quest'>;
@@ -1235,6 +1236,7 @@ function formatTournamentTimeLeft(endsAt: string): string {
    ═══════════════════════════════════════════════════ */
 
 const PrismLeague = () => {
+  const demoMode = isDemoMode();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -1292,7 +1294,7 @@ const PrismLeague = () => {
   const { publicKey, connected: walletConnected, wallets: availableWallets, select, connect, disconnect } = wallet;
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const address = useActiveWalletAddress() || publicKey?.toBase58();
-  const connected = walletConnected || Boolean(address);
+  const connected = !demoMode && (walletConnected || Boolean(address));
 
   useEffect(() => {
     setAuthWallet(wallet);
@@ -1482,6 +1484,14 @@ const PrismLeague = () => {
 
   /* Mobile wallet connection logic matching main app */
   const handleWalletConnect = useCallback(async () => {
+    if (demoMode) {
+      setDemoModeEnabled(false);
+      try {
+        sessionStorage.removeItem('prism_active_address');
+      } catch {
+        /* ignore */
+      }
+    }
     if (connected) return;
 
     if (useMobileWallet) {
@@ -1535,7 +1545,7 @@ const PrismLeague = () => {
     } else {
       setWalletModalVisible(true);
     }
-  }, [connected, useMobileWallet, isCapacitor, isAndroid, availableWallets, select, connect, setWalletModalVisible]);
+  }, [connected, useMobileWallet, isCapacitor, isAndroid, availableWallets, select, connect, setWalletModalVisible, demoMode]);
 
   const [gameMode, setGameMode] = useState<GameMode>('orbit');
   // Auto-select game mode from URL param (challenge)
@@ -2300,7 +2310,12 @@ const PrismLeague = () => {
   }, [address, playerStats, defenderStats, gravityLeaderboard, gameMode]);
 
   const handleStart = async (forcePractice = false) => {
+    const practiceOnly = forcePractice || demoMode;
     if (gameMode === 'text_quest') {
+      if (demoMode) {
+        toast.info('Demo mode supports arcade Practice runs only.');
+        return;
+      }
       // Gate BEFORE opening the reader: if the daily quest is used up (and none in progress),
       // tell the player right here instead of opening a dead loading screen.
       if (isTextQuestLockedToday(address)) {
@@ -2315,7 +2330,7 @@ const PrismLeague = () => {
       return;
     }
     // Tournament mode: current arcade mode must have its own joined tournament.
-    if (playMode === 'tournament') {
+    if (playMode === 'tournament' && !practiceOnly) {
       if (!activeTournament?.userJoined) {
         toast.error('Join the tournament first!');
         return;
@@ -2373,8 +2388,8 @@ const PrismLeague = () => {
     };
 
     const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-    if (forcePractice || !connected || !address || offline) {
-      if ((activeChallengeId || playMode === 'tournament') && !forcePractice) {
+    if (practiceOnly || !connected || !address || offline) {
+      if ((activeChallengeId || playMode === 'tournament') && !practiceOnly) {
         setSessionStartError('A secure connection is required for challenge and tournament runs.');
         setGameState('start');
         return;
@@ -2428,6 +2443,7 @@ const PrismLeague = () => {
   // Auto-start for challenge mode — wait for wallet + hasMintedId before calling handleStart
   const challengeAutoStarted = useRef(false);
   useEffect(() => {
+    if (demoMode) return;
     if (!urlChallengeId || !urlMode) return;
     if (challengeAutoStarted.current) return;
     if (!connected || !address) return; // wait for wallet
@@ -2444,7 +2460,7 @@ const PrismLeague = () => {
       }).catch(() => {});
     }
     void handleStart();
-  }, [urlChallengeId, urlMode, connected, address, hasMintedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [urlChallengeId, urlMode, connected, address, hasMintedId, demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finalizeDeath = useCallback(
     (finalScore: number, finalCoins: number, victory = false, endedAtOverrideMs?: number) => {
@@ -2885,6 +2901,10 @@ const PrismLeague = () => {
   );
 
   const handleContinue = useCallback(async () => {
+    if (demoMode) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     const sessionToken = mbTokenRef.current;
     if (!pendingGameOver.current || revivePaying || !secureRevivePausedRef.current || !address || !sessionToken) return;
     const mode = getArcadeGameMode(gameMode);
@@ -2969,7 +2989,7 @@ const PrismLeague = () => {
     } finally {
       setRevivePaying(false);
     }
-  }, [wallet, revivePaying, gameMode, address]);
+  }, [wallet, revivePaying, gameMode, address, demoMode]);
 
   const handleDeclineContinue = useCallback(() => {
     if (!pendingGameOver.current) return;
@@ -2979,6 +2999,10 @@ const PrismLeague = () => {
   }, [finalizeDeath]);
 
   const handleCommitOnchain = async () => {
+    if (demoMode) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!connected || !address) {
       toast.error('Connect wallet to save score on-chain');
       return;
@@ -3096,6 +3120,10 @@ const PrismLeague = () => {
 
   const claimingAchRef = useRef(false);
   const handleClaimAchievement = async (achId: string) => {
+    if (demoMode) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!address) {
       toast.error('Connect wallet to claim');
       return;

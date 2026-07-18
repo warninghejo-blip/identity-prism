@@ -69,6 +69,7 @@ import {
 import { getPrismBalance, spendPrism, type PrismBalance } from '@/lib/prismCoin';
 import { getQuestProgress, getQuestState } from '@/lib/prismQuests';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { isDemoMode } from '@/lib/demoMode';
 
 type TopTab = 'shop' | 'inventory';
 type ShopFilter = ForgeCategory | 'all' | 'module';
@@ -584,6 +585,7 @@ export default function StellarForge() {
 
   const syncLoadoutNow = useCallback(
     async (nextLoadout: ForgeLoadout) => {
+      if (isDemoMode()) return false;
       const jwt = await obtainJwt(wallet);
       if (!jwt) return false;
       const base = getApiBase();
@@ -810,6 +812,10 @@ export default function StellarForge() {
 
   const handlePurchase = useCallback(
     async (item: ForgeItem) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (!walletAddress || !loadout || !balance) return;
       if (purchasing) return; // prevent double-click
       if (item.requiredRank && !meetsRequiredRank(rangerRank, item.requiredRank)) {
@@ -874,6 +880,10 @@ export default function StellarForge() {
 
   const handleEquip = useCallback(
     (item: ForgeItem) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (!loadout) return;
       const newLoadout = equipItem(loadout, item.id);
       saveLocalLoadout(newLoadout);
@@ -886,6 +896,10 @@ export default function StellarForge() {
 
   const handleUnequip = useCallback(
     (category: ForgeCategory) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (!loadout) return;
       const newLoadout = unequipItem(loadout, category);
       saveLocalLoadout(newLoadout);
@@ -904,6 +918,10 @@ export default function StellarForge() {
 
   const handlePurchaseModule = useCallback(
     async (moduleId: string) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (!loadout || !balance || !walletAddress) return;
       const mod = getModuleById(moduleId);
       if (!mod) return;
@@ -949,6 +967,10 @@ export default function StellarForge() {
 
   const handleInstallModule = useCallback(
     async (itemId: string, moduleId: string) => {
+      if (isDemoMode()) {
+        toast.info('This is a demo — connect a wallet to do this.');
+        return;
+      }
       if (!loadout || !walletAddress || installingModule) return;
       const mod = getModuleById(moduleId);
       if (!mod) return;

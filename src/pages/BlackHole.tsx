@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { isDemoMode } from '@/lib/demoMode';
 import type { WalletName } from '@solana/wallet-adapter-base';
 import {
   PublicKey,
@@ -2605,6 +2606,10 @@ const BlackHole = () => {
   );
 
   const handleIncinerate = async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!publicKey) {
       toast.error('Connect wallet to resolve assets');
       return;

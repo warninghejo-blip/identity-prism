@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { SolanaMobileWalletAdapterWalletName } from '@solana-mobile/wallet-adapter-mobile';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
 import { getCachedJwt, obtainJwt, setAuthWallet } from '@/components/prism/shared';
+import { isDemoMode } from '@/lib/demoMode';
 
 interface WalletRequiredProps {
   children: ReactNode;
@@ -50,6 +51,8 @@ export default function WalletRequired({ children }: WalletRequiredProps) {
       setSigning(false);
     }
   }, [canSign, publicKey, wallet]);
+
+  if (isDemoMode()) return <>{children}</>;
 
   if (activeAddress || liveHasJwt) {
     return <>{children}</>;

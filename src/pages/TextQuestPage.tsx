@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties }
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useActiveWalletAddress } from '@/lib/useActiveWalletAddress';
+import { isDemoMode } from '@/lib/demoMode';
 import { goBack as _goBack } from '@/lib/safeNavigate';
 import { startFadeTransition, fadeOutTransition } from '@/lib/fadeTransition';
 import { ArrowLeft, RotateCcw, ChevronRight, Lock, Trophy, Clock, Zap } from 'lucide-react';
@@ -419,6 +420,10 @@ export default function TextQuestPage() {
   );
 
   const handleClaimReward = useCallback(async () => {
+    if (isDemoMode()) {
+      toast.info('This is a demo — connect a wallet to do this.');
+      return;
+    }
     if (!questState?.reward || !walletAddress || rewardClaimed || claimingReward) return;
     setClaimingReward(true);
     try {
