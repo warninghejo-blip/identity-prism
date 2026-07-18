@@ -41,6 +41,22 @@ The Codex-driven hardening landed in commit `614d5b2`:
 - Metadata route allowlist (closes unauthenticated system-JSON exposure) — `server/routes/metadata.js`
 - Anti-cheat test suite — `server/__tests__/game-anticheat.test.ts` (10/10 passing)
 
+## Status: live in production
+
+The hardening (`614d5b2`) is deployed to production as part of release **v2.0.2**
+(`android/app/build.gradle`, `applicationId com.identityprism2.app`). It has been
+running on real player traffic since the round-4 red-team pass closed the last
+finding.
+
+On top of the security work, Codex (`gpt-5.6-terra`) also shipped a **no-wallet
+demo mode** (`98ade80`) for judges and first-time users: a "Try Demo (no wallet)"
+entry on the landing screen opens the full app read-only under a pre-populated
+demo identity — games run in Practice, and every signature action prompts to
+connect a real wallet. Client-only change, no server/anti-cheat surface touched.
+
+Try it yourself: **[identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk)**
+→ install → open → tap "Try Demo (no wallet)". No wallet, no setup.
+
 ## Stack
 
 React · Vite · Three.js · Tailwind · Capacitor (Android) · Node.js · SQLite ·
