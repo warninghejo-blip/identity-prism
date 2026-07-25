@@ -3,6 +3,12 @@
   publish = "dist"
 
 [[redirects]]
+  from = "https://www.identityprism.xyz/*"
+  to = "https://identityprism.xyz/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
   from = "/api/*"
   to = "https://identityprism.xyz/api/:splat"
   status = 200
@@ -21,6 +27,168 @@
   force = true
 
 [[redirects]]
-  from = "/*"
-  to = "/index.html"
+  from = "/landing"
+  to = "/"
+  status = 301
+
+[[redirects]]
+  from = "/sybil-hunt"
+  to = "/sybil-check"
+  status = 301
+
+[[redirects]]
+  from = "/market"
+  to = "/arena"
+  status = 301
+
+[[redirects]]
+  from = "/constellation"
+  to = "/scan"
+  status = 301
+
+[[redirects]]
+  from = "/scam-checker"
+  to = "/scan"
+  status = 301
+
+# Serve each fixed BrowserRouter route from its build-time HTML artifact while
+# keeping the clean, non-trailing-slash URL in the address bar.
+[[redirects]]
+  from = "/blackhole"
+  to = "/blackhole/index.html"
   status = 200
+  force = true
+
+[[redirects]]
+  from = "/identity"
+  to = "/identity/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/sybil-check"
+  to = "/sybil-check/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/leaderboard"
+  to = "/leaderboard/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/app"
+  to = "/app/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/demo"
+  to = "/demo/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/home"
+  to = "/home/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/share"
+  to = "/share/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/game"
+  to = "/game/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/preview"
+  to = "/preview/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/verify"
+  to = "/verify/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/compare"
+  to = "/compare/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/forge"
+  to = "/forge/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/scan"
+  to = "/scan/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/arena"
+  to = "/arena/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/vault"
+  to = "/vault/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/quests"
+  to = "/quests/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/recovery"
+  to = "/recovery/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/text-quest"
+  to = "/text-quest/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/inbox"
+  to = "/inbox/index.html"
+  status = 200
+  force = true
+
+# Known dynamic BrowserRouter namespaces get a noindex app shell. There is
+# deliberately no global /* rewrite: unknown URLs must reach dist/404.html
+# and receive Netlify's real HTTP 404 response.
+[[redirects]]
+  from = "/app/*"
+  to = "/app/index.html"
+  status = 200
+
+[[redirects]]
+  from = "/preview/:tier"
+  to = "/preview/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/profile/:address"
+  to = "/_spa-noindex/profile.html"
+  status = 200
+  force = true

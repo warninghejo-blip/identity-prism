@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/prerender-seo.mjs",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:seo": "node scripts/test-seo.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/analytics": "^7.3.0",

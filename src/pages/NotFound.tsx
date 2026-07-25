@@ -1,9 +1,16 @@
 import { useLocation, Link } from 'react-router-dom';
 import { useEffect } from 'react';
 import { fadeOutTransition } from '@/lib/fadeTransition';
+import { useSeo } from '@/hooks/useSeo';
 
 const NotFound = () => {
   const location = useLocation();
+  useSeo({
+    title: 'Page Not Found | Identity Prism',
+    description: 'The requested Identity Prism page could not be found.',
+    noindex: true,
+    structuredData: null,
+  });
 
   useEffect(() => {
     fadeOutTransition();

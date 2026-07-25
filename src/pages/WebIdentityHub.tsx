@@ -10,7 +10,7 @@ import { CelestialCard as WebCelestialCard } from '@/components/WebCelestialCard
 import { useWalletData, type PlanetTier, type WalletData, type WalletTraits } from '@/hooks/useWalletData';
 import { useCompositeScore } from '@/hooks/useCompositeScore';
 import { useWebComposite } from '@/hooks/useWebComposite';
-import { useSeo } from '@/hooks/useSeo';
+import { usePublicRouteSeo } from '@/hooks/usePublicRouteSeo';
 import { TIER_LABELS, TIER_HEX, getCompositeTierFromScore } from '@/lib/constants/tierColors';
 import { mintIdentityPrism, updateIdentityPrism } from '@/lib/mintIdentityPrism';
 import { useMintCost } from '@/lib/mintPricing';
@@ -85,12 +85,7 @@ function shortAddress(address: string) {
 }
 
 export default function WebIdentityHub() {
-  useSeo({
-    title: 'Your Solana Identity Passport — On-Chain Reputation | Identity Prism',
-    description:
-      'Mint your Identity Prism passport: a sybil-resistant, wallet-bound reputation NFT on Solana. Tier, badges and a portable composite score earned through real on-chain activity.',
-    path: '/identity',
-  });
+  usePublicRouteSeo('/identity');
   const wallet = useWallet();
   const { setVisible } = useWalletModal();
   const address = wallet.publicKey?.toBase58() ?? '';

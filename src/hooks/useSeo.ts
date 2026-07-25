@@ -1,4 +1,8 @@
 import { useEffect } from 'react';
+import {
+  DEFAULT_IMAGE,
+  SITE_ORIGIN,
+} from '../../scripts/seo-routes.mjs';
 
 /**
  * useSeo — per-route SEO without SSR. Updates document.title + the SEO meta tags
@@ -13,10 +17,11 @@ export interface SeoOptions {
   image?: string;
   /** Set to true on auth-gated / thin pages we don't want indexed. */
   noindex?: boolean;
+  /** Skip DOM updates while preserving unconditional React hook ordering. */
+  enabled?: boolean;
+  /** Route-specific JSON-LD. Pass null to remove a previous route schema. */
+  structuredData?: Record<string, unknown> | null;
 }
-
-const SITE = 'https://identityprism.xyz';
-const DEFAULT_IMAGE = `${SITE}/og-image.png`;
 
 function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
   let el = document.head.querySelector<HTMLMetaElement>(`meta[${attr}="${key}"]`);
@@ -38,10 +43,38 @@ function upsertLink(rel: string, href: string) {
   el.setAttribute('href', href);
 }
 
-export function useSeo({ title, description, path, image, noindex }: SeoOptions) {
+function syncStructuredData(structuredData: Record<string, unknown> | null | undefined) {
+  if (structuredData === undefined) return;
+  const existing = Array.from(
+    document.head.querySelectorAll<HTMLScriptElement>(
+      'script[type="application/ld+json"][data-ip-route-schema]',
+    ),
+  );
+  if (structuredData === null) {
+    existing.forEach((script) => script.remove());
+    return;
+  }
+  const script = existing.shift() ?? document.createElement('script');
+  script.type = 'application/ld+json';
+  script.dataset.ipRouteSchema = '';
+  script.textContent = JSON.stringify(structuredData).replaceAll('<', '\\u003c');
+  if (!script.parentNode) document.head.appendChild(script);
+  existing.forEach((duplicate) => duplicate.remove());
+}
+
+export function useSeo({
+  title,
+  description,
+  path,
+  image,
+  noindex,
+  enabled = true,
+  structuredData,
+}: SeoOptions) {
   useEffect(() => {
+    if (!enabled) return;
     const pathname = path ?? (typeof window !== 'undefined' ? window.location.pathname : '/');
-    const url = `${SITE}${pathname}`;
+    const url = `${SITE_ORIGIN}${pathname}`;
     const img = image || DEFAULT_IMAGE;
 
     document.title = title;
@@ -57,5 +90,6 @@ export function useSeo({ title, description, path, image, noindex }: SeoOptions)
     upsertMeta('name', 'twitter:title', title);
     upsertMeta('name', 'twitter:description', description);
     upsertMeta('name', 'twitter:image', img);
-  }, [title, description, path, image, noindex]);
+    syncStructuredData(structuredData);
+  }, [title, description, path, image, noindex, enabled, structuredData]);
 }

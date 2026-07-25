@@ -37,7 +37,7 @@ import { fadeOutTransition } from '@/lib/fadeTransition';
 import { ensureJwt, getApiBase, setAuthWallet } from '@/components/prism/shared';
 import { api, type IdentityPerkSnapshot } from '@/lib/api';
 import SiteHeader from '@/components/SiteHeader';
-import { useSeo } from '@/hooks/useSeo';
+import { usePublicRouteSeo } from '@/hooks/usePublicRouteSeo';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -1412,12 +1412,7 @@ const finalizeIncompleteClassification = (token: TokenAccount) => {
 };
 
 const BlackHole = () => {
-  useSeo({
-    title: 'Solana Black Hole — Reclaim SOL Rent & Burn Dust Safely | Identity Prism',
-    description:
-      'Scan your Solana token accounts and NFTs, protect high-signal assets, then burn or close worthless dust to reclaim the SOL rent locked inside. Identity Prism holders pay just 2% vs 10%.',
-    path: '/blackhole',
-  });
+  usePublicRouteSeo('/blackhole');
   const { connection } = useConnection();
   const wallet = useWallet();
   const { publicKey, signTransaction, sendTransaction, connecting } = wallet;

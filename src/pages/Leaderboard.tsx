@@ -10,6 +10,7 @@ import { getTierIcon } from '@/lib/constants/tierColors';
 import PageShell from '@/components/PageShell';
 import HubReturnButton from '@/components/HubReturnButton';
 import { fetchApiJson } from '@/components/prism/shared';
+import { usePublicRouteSeo } from '@/hooks/usePublicRouteSeo';
 
 // Leaderboard loads via fetchApiJson, which already retries 3× with backoff and uses a
 // fast default timeout (CapacitorHttp connect 3.5s / read 4.5s). Previously this passed an
@@ -140,6 +141,7 @@ function formatDate(dateStr: string): string {
 // ── Component ──
 
 export default function Leaderboard() {
+  usePublicRouteSeo('/leaderboard');
   const navigate = useNavigate();
   const wallet = useWallet();
   const myAddress = useActiveWalletAddress() || wallet.publicKey?.toBase58() || '';

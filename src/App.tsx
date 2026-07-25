@@ -7,6 +7,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { cleanupOverlays, cleanupWalletModals } from '@/lib/safeNavigate';
 import { trackPageView } from '@/lib/analytics';
 import { useChallengeNotifier } from '@/lib/useChallengeNotifier';
+import { useNoindexRouteSeo } from '@/hooks/useNoindexRouteSeo';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,6 +23,7 @@ const queryClient = new QueryClient({
 const App = () => {
   const location = useLocation();
   useChallengeNotifier();
+  useNoindexRouteSeo(location.pathname);
 
   // Clean up stuck wallet-adapter / MWA overlays when the window regains focus.
   // Event-driven — zero overhead when idle.
