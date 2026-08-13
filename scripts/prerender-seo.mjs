@@ -60,6 +60,7 @@ function clearManagedHead(html) {
     result = removeTagByAttribute(result, 'meta', 'property', property);
   }
   result = removeTagByAttribute(result, 'link', 'rel', 'canonical');
+  result = result.replace(/<link\b(?=[^>]*\bdata-ip-hreflang(?:=(['"])[^'"]*\1)?)[^>]*>\s*/gi, '');
   result = result.replace(
     /<script\b(?=[^>]*\btype=(["'])application\/ld\+json\1)[^>]*>[\s\S]*?<\/script>\s*/gi,
     '',
@@ -67,15 +68,18 @@ function clearManagedHead(html) {
   return result;
 }
 
-function managedHead({ title, description, canonical, robots, schema, type = 'website' }) {
+function managedHead({ title, description, canonical, robots, schema, type = 'website', alternates = [] }) {
   const jsonLd = schema
     ? `\n    <script type="application/ld+json" data-ip-route-schema>${JSON.stringify(schema).replaceAll('<', '\\u003c')}</script>`
     : '';
+  const alternateLinks = alternates
+    .map(({ hreflang, href }) => `\n    <link rel="alternate" hreflang="${escapeHtml(hreflang)}" href="${escapeHtml(href)}" data-ip-hreflang />`)
+    .join('');
   return `
     <title>${escapeHtml(title)}</title>
     <meta name="description" content="${escapeHtml(description)}" />
     <meta name="robots" content="${escapeHtml(robots)}" />
-    <link rel="canonical" href="${escapeHtml(canonical)}" />
+    <link rel="canonical" href="${escapeHtml(canonical)}" />${alternateLinks}
     <meta property="og:title" content="${escapeHtml(title)}" />
     <meta property="og:description" content="${escapeHtml(description)}" />
     <meta property="og:type" content="${escapeHtml(type)}" />
@@ -95,6 +99,10 @@ function managedHead({ title, description, canonical, robots, schema, type = 'we
 function replaceHead(html, metadata) {
   const cleaned = clearManagedHead(html);
   return cleaned.replace('</head>', `${managedHead(metadata)}\n  </head>`);
+}
+
+function replaceDocumentLanguage(html, language = 'en') {
+  return html.replace(/<html\b([^>]*)\blang=(['"])[^'"]*\2([^>]*)>/i, `<html$1lang="${escapeHtml(language)}"$3>`);
 }
 
 function renderLinks(links) {
@@ -152,16 +160,17 @@ async function writeRoute(pathname, html) {
 
 for (const route of indexableSpaRoutes) {
   const canonical = `${SITE_ORIGIN}${route.path}`;
-  const html = replaceRoot(
+  const html = replaceDocumentLanguage(replaceRoot(
     replaceHead(baseHtml, {
       title: route.title,
       description: route.description,
       canonical,
       robots: 'index, follow, max-image-preview:large, max-snippet:-1',
       schema: route.schema,
+      alternates: route.alternates,
     }),
     indexableShell(route),
-  );
+  ), route.language);
   await writeRoute(route.path, html);
 }
 

@@ -118,6 +118,7 @@ const TrustRecovery = React.lazy(() => import('./pages/TrustRecovery'));
 const TextQuestPage = React.lazy(() => import('./pages/TextQuestPage'));
 // Landing pages
 const LandingPage = React.lazy(() => import('./pages/LandingPage'));
+const RussianLandingPage = React.lazy(() => import('./pages/RussianLandingPage'));
 const ApkIdentityHub = React.lazy(() => import('./pages/ApkIdentityHub'));
 const WebIdentityHub = React.lazy(() => import('./pages/WebIdentityHub'));
 const WebBlackHole = React.lazy(() => import('./pages/WebBlackHole'));
@@ -175,6 +176,7 @@ const appRoutes = [
       element: <App />,
       children: [
         { index: true, element: isCapacitorNative ? <Index /> : lazyRoute(<LandingPage />) },
+        { path: 'ru', element: lazyRoute(<RussianLandingPage />) },
         { path: 'app', element: <Index /> },
         { path: 'app/*', element: <Index /> },
         { path: 'landing', element: lazyRoute(<LandingPage />) },

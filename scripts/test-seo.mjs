@@ -65,6 +65,8 @@ function assertManagedHead(html, expected) {
   const ogImageHeights = attrValues(html, 'meta', 'property', 'og:image:height');
   const twitterTitles = attrValues(html, 'meta', 'name', 'twitter:title');
   const twitterImages = attrValues(html, 'meta', 'name', 'twitter:image');
+  const htmlLanguage = html.match(/<html\b[^>]*\blang=(['"])(.*?)\1/i)?.[2];
+  const alternateTags = (html.match(/<link\b(?=[^>]*\brel=(['"])alternate\1)(?=[^>]*\bdata-ip-hreflang)[^>]*>/gi) ?? []);
 
   assert.equal(titles.length, 1, `${expected.path}: expected exactly one title`);
   assert.equal(
@@ -105,6 +107,17 @@ function assertManagedHead(html, expected) {
     twitterImages.length,
     1,
     `${expected.path}: expected exactly one twitter:image`,
+  );
+  assert.equal(htmlLanguage, expected.language ?? 'en', `${expected.path}: html language does not match manifest`);
+
+  const actualAlternates = alternateTags.map((tag) => ({
+    hreflang: tag.match(/\bhreflang=(['"])(.*?)\1/i)?.[2],
+    href: tag.match(/\bhref=(['"])(.*?)\1/i)?.[2],
+  }));
+  assert.deepEqual(
+    actualAlternates,
+    expected.alternates ?? [],
+    `${expected.path}: hreflang alternates do not match manifest`,
   );
 
   assert.match(
@@ -158,6 +171,8 @@ for (const route of indexableSpaRoutes) {
     description: route.description,
     canonical,
     robots: 'index, follow, max-image-preview:large, max-snippet:-1',
+    language: route.language,
+    alternates: 'alternates' in route ? route.alternates : [],
   });
   assert.equal(
     count(html, /<h1\b[^>]*>/gi),
@@ -256,6 +271,14 @@ assert.equal(
   0,
   'sitemap must not contain unverifiable lastmod values',
 );
+assert.ok(sitemapLocs.includes('/ru'), 'sitemap must include the Russian landing page');
+
+const indexNowKey = 'd2c9a91817e24bc1a66d59bb9f47e612';
+assert.equal(
+  (await read(new URL(`${indexNowKey}.txt`, DIST))).trim(),
+  indexNowKey,
+  'IndexNow verification file must match the configured public key',
+);
 
 const notFound = await read(new URL('404.html', DIST));
 assert.match(notFound, /<meta name="robots" content="noindex, follow"/i);
@@ -337,6 +360,7 @@ const sourceCopyChecks = [
   ['src/pages/WebIdentityHub.tsx', 'Identity Passport'],
   ['src/pages/SybilCheckerPage.tsx', 'Scan any wallet.'],
   ['src/pages/Leaderboard.tsx', 'Top explorers across the Prism universe'],
+  ['src/pages/RussianLandingPage.tsx', 'Solana Identity (Солана Идентити)'],
 ];
 for (const [relative, marker] of sourceCopyChecks) {
   const source = await read(new URL(relative, ROOT));

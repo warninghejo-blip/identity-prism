@@ -12,6 +12,12 @@ export const DEFAULT_IMAGE = `${SITE_ORIGIN}${DEFAULT_IMAGE_PATH}`;
 export const DEFAULT_IMAGE_WIDTH = 2752;
 export const DEFAULT_IMAGE_HEIGHT = 1536;
 
+export const localeAlternates = [
+  { hreflang: 'en', href: `${SITE_ORIGIN}/` },
+  { hreflang: 'ru', href: `${SITE_ORIGIN}/ru` },
+  { hreflang: 'x-default', href: `${SITE_ORIGIN}/` },
+];
+
 const primaryLinks = [
   { href: '/', label: 'Identity Prism home' },
   { href: '/identity', label: 'Solana Identity Passport' },
@@ -20,11 +26,14 @@ const primaryLinks = [
   { href: '/leaderboard', label: 'Identity Prism leaderboard' },
   { href: '/whitepaper.html', label: 'Identity Prism whitepaper' },
   { href: '/developers.html', label: 'Developer API documentation' },
+  { href: '/ru', label: 'Identity Prism на русском' },
 ];
 
 export const indexableSpaRoutes = [
   {
     path: '/',
+    language: 'en',
+    alternates: localeAlternates,
     title: 'Identity Prism — Sybil-Resistant Reputation & Identity on Solana',
     description:
       'Build a portable, sybil-resistant on-chain identity on Solana. Earn a composite reputation score through real activity and skill-based games, then check any wallet’s sybil risk for free.',
@@ -71,7 +80,45 @@ export const indexableSpaRoutes = [
     },
   },
   {
+    path: '/ru',
+    language: 'ru',
+    alternates: localeAlternates,
+    title: 'Solana Identity (Солана Идентити) — репутация кошелька | Identity Prism',
+    description:
+      'Identity Prism — Solana Identity на русском: паспорт репутации кошелька, бесплатная проверка sybil-риска и безопасная очистка токен-аккаунтов через Black Hole.',
+    h1: 'Solana Identity — репутация кошелька в Identity Prism',
+    paragraphs: [
+      'Identity Prism превращает открытую историю Solana-кошелька в переносимый паспорт репутации. Он объединяет ончейн-активность, возраст кошелька, достижения, планетарный уровень и сигналы доверия в понятный составной рейтинг.',
+      'Бесплатная проверка sybil-риска помогает изучить связи, источники финансирования и поведенческие паттерны любого публичного адреса Solana. Это аналитические сигналы, а не KYC, кредитный рейтинг или гарантия личности владельца.',
+      'Black Hole помогает вручную проверить пыль и ненужные токен-аккаунты, защитить значимые активы и вернуть доступную SOL-ренту. Ничего не перемещается автоматически: каждое действие подтверждает владелец кошелька.',
+    ],
+    links: [
+      { href: '/identity', label: 'Открыть паспорт Solana Identity' },
+      { href: '/sybil-check', label: 'Проверить Solana-кошелёк на sybil-риск' },
+      { href: '/blackhole', label: 'Очистить пыль через Black Hole' },
+      { href: '/whitepaper.html', label: 'Прочитать техническое описание' },
+      { href: '/', label: 'English version' },
+    ],
+    schema: {
+      '@context': 'https://schema.org',
+      '@type': 'WebPage',
+      name: 'Solana Identity — Identity Prism на русском',
+      url: `${SITE_ORIGIN}/ru`,
+      inLanguage: 'ru',
+      description:
+        'Русскоязычный обзор Identity Prism: паспорт репутации Solana-кошелька, проверка sybil-риска и Black Hole.',
+      isPartOf: { '@id': `${SITE_ORIGIN}/#website` },
+      about: {
+        '@type': 'SoftwareApplication',
+        name: 'Identity Prism',
+        applicationCategory: 'FinanceApplication',
+        operatingSystem: 'Web, Android',
+      },
+    },
+  },
+  {
     path: '/blackhole',
+    language: 'en',
     title: 'Solana Black Hole — Reclaim SOL Rent & Burn Dust Safely | Identity Prism',
     description:
       'Scan your Solana token accounts and NFTs, protect high-signal assets, then burn or close worthless dust to reclaim the SOL rent locked inside. Identity Prism holders pay just 2% vs 10%.',
@@ -106,6 +153,7 @@ export const indexableSpaRoutes = [
   },
   {
     path: '/identity',
+    language: 'en',
     title: 'Your Solana Identity Passport — On-Chain Reputation | Identity Prism',
     description:
       'Mint your Identity Prism passport: a sybil-resistant, wallet-bound reputation NFT on Solana. Tier, badges and a portable composite score earned through real on-chain activity.',
@@ -134,6 +182,7 @@ export const indexableSpaRoutes = [
   },
   {
     path: '/sybil-check',
+    language: 'en',
     title: 'Solana Sybil Checker — Free Wallet Sybil & Trust Analysis | Identity Prism',
     description:
       'Instantly check any Solana wallet for sybil risk. Composite trust score, cluster detection, funding-source analysis and behavioral signals — free, no signup.',
@@ -163,6 +212,7 @@ export const indexableSpaRoutes = [
   },
   {
     path: '/leaderboard',
+    language: 'en',
     title: 'Solana Reputation & Game Leaderboard | Identity Prism',
     description:
       'Explore the public Identity Prism leaderboard for overall reputation and skill-game rankings across the Solana identity ecosystem.',

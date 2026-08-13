@@ -21,6 +21,8 @@ export interface SeoOptions {
   enabled?: boolean;
   /** Route-specific JSON-LD. Pass null to remove a previous route schema. */
   structuredData?: Record<string, unknown> | null;
+  language?: string;
+  alternates?: Array<{ hreflang: string; href: string }>;
 }
 
 function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
@@ -62,6 +64,18 @@ function syncStructuredData(structuredData: Record<string, unknown> | null | und
   existing.forEach((duplicate) => duplicate.remove());
 }
 
+function syncAlternates(alternates: Array<{ hreflang: string; href: string }>) {
+  document.head.querySelectorAll('link[data-ip-hreflang]').forEach((link) => link.remove());
+  for (const alternate of alternates) {
+    const link = document.createElement('link');
+    link.rel = 'alternate';
+    link.hreflang = alternate.hreflang;
+    link.href = alternate.href;
+    link.dataset.ipHreflang = '';
+    document.head.appendChild(link);
+  }
+}
+
 export function useSeo({
   title,
   description,
@@ -70,12 +84,16 @@ export function useSeo({
   noindex,
   enabled = true,
   structuredData,
+  language = 'en',
+  alternates = [],
 }: SeoOptions) {
   useEffect(() => {
     if (!enabled) return;
     const pathname = path ?? (typeof window !== 'undefined' ? window.location.pathname : '/');
     const url = `${SITE_ORIGIN}${pathname}`;
     const img = image || DEFAULT_IMAGE;
+
+    document.documentElement.lang = language;
 
     document.title = title;
     upsertMeta('name', 'description', description);
@@ -90,6 +108,7 @@ export function useSeo({
     upsertMeta('name', 'twitter:title', title);
     upsertMeta('name', 'twitter:description', description);
     upsertMeta('name', 'twitter:image', img);
+    syncAlternates(alternates);
     syncStructuredData(structuredData);
-  }, [title, description, path, image, noindex, enabled, structuredData]);
+  }, [title, description, path, image, noindex, enabled, structuredData, language, alternates]);
 }

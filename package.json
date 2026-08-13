@@ -9,7 +9,8 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:seo": "node scripts/test-seo.mjs"
+    "test:seo": "node scripts/test-seo.mjs",
+    "seo:submit": "node scripts/submit-indexnow.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/analytics": "^7.3.0",

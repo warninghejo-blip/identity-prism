@@ -16,5 +16,7 @@ export function usePublicRouteSeo(path: string) {
     description: route.description,
     path: route.path,
     structuredData: route.schema,
+    language: route.language,
+    alternates: 'alternates' in route ? route.alternates : [],
   });
 }

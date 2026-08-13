@@ -60,6 +60,12 @@
   force = true
 
 [[redirects]]
+  from = "/ru"
+  to = "/ru/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/identity"
   to = "/identity/index.html"
   status = 200
