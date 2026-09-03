@@ -36,11 +36,11 @@ export const indexableSpaRoutes = [
     alternates: localeAlternates,
     title: 'Identity Prism — Sybil-Resistant Reputation & Identity on Solana',
     description:
-      'Build a portable, sybil-resistant on-chain identity on Solana. Earn a composite reputation score through real activity and skill-based games, then check any wallet’s sybil risk for free.',
+      'Build a portable Solana wallet reputation profile from public chain data and server-verified application signals, then inspect any wallet’s sybil risk for free.',
     h1: 'Your reputation, earned not bought.',
     paragraphs: [
-      'Identity Prism is a decentralized identity protocol where real humans build reputation through gameplay, on-chain history, and verifiable activity while coordinated sybil behavior is surfaced for review.',
-      'One portable reputation combines planetary tiers, on-chain badges, and a sybil-risk score that Solana applications can use as an additional signal for airdrops, governance, communities, and access.',
+      'Identity Prism builds wallet reputation from public on-chain history, server-verified gameplay, and application activity while coordinated sybil behavior is surfaced for review.',
+      'One portable profile combines planetary tiers, profile badges, and a sybil-risk score that Solana applications can use as an additional signal for airdrops, governance, communities, and access.',
     ],
     links: primaryLinks.filter((link) => link.href !== '/'),
     schema: {
@@ -63,7 +63,7 @@ export const indexableSpaRoutes = [
           url: `${SITE_ORIGIN}/`,
           name: 'Identity Prism',
           description:
-            'Sybil-resistant on-chain identity and reputation for Solana.',
+            'Wallet reputation and sybil-risk signals for Solana.',
           publisher: { '@id': `${SITE_ORIGIN}/#organization` },
         },
         {
@@ -154,12 +154,12 @@ export const indexableSpaRoutes = [
   {
     path: '/identity',
     language: 'en',
-    title: 'Your Solana Identity Passport — On-Chain Reputation | Identity Prism',
+    title: 'Your Solana Identity Passport — Wallet Reputation | Identity Prism',
     description:
-      'Mint your Identity Prism passport: a sybil-resistant, wallet-bound reputation NFT on Solana. Tier, badges and a portable composite score earned through real on-chain activity.',
+      'Mint your Identity Prism passport as a wallet-owned Metaplex Core NFT. Its metadata records the tier, badges, and composite profile present at mint time.',
     h1: 'Identity Passport',
     paragraphs: [
-      'Identity Prism reads public wallet activity to build a sybil-resistant identity passport with a composite reputation score, planetary tier, and achievement badges.',
+      'Identity Prism reads public wallet activity and application signals to build an identity passport with a composite reputation score, planetary tier, badges, and sybil-risk indicators.',
       'Connect your wallet to view your live passport. The public home page includes a non-personal demo and tier preview, so no wallet is required to explore how the identity card works.',
     ],
     links: [
@@ -176,7 +176,7 @@ export const indexableSpaRoutes = [
       applicationCategory: 'FinanceApplication',
       operatingSystem: 'Web, Android',
       description:
-        'A wallet-bound Solana identity passport with reputation tiers, badges, and a composite score derived from public on-chain activity.',
+        'A wallet-owned Solana identity passport with reputation tiers, badges, and a composite score derived from public on-chain and server-recorded application signals.',
       isPartOf: { '@id': `${SITE_ORIGIN}/#website` },
     },
   },

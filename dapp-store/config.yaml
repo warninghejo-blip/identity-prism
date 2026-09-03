@@ -42,16 +42,16 @@ release:
   catalog:
     en-US:
       name: Identity Prism
-      short_description: On-chain identity on Solana
+      short_description: Solana wallet reputation and identity
       long_description: |
         Identity Prism scans any Solana wallet and builds a cosmic identity card with
-        real on-chain data. Your tier (Mercury → Binary Sun) is determined by SOL balance,
-        wallet age, transaction history, NFT holdings, and behavioral traits.
+        public on-chain data and server-recorded application signals. Your tier
+        (Mercury → Binary Sun) follows the current composite score.
 
         Features:
         - 3D interactive planet card with score history sparkline and progress ring
         - 13 achievement badges with custom artwork
-        - Prism League — Orbit Survival (dodge asteroids, MagicBlock-verified scores)
+        - Prism League — Orbit Survival (dodge asteroids, server-verified scores)
           and Cosmic Defender (top-down shooter, 4 levels, bosses, powerups)
         - Procedural Audio Engine — all game SFX synthesized via Web Audio API, zero files
         - Update Card — update NFT metadata without burning, Co-Sign Authority Guard
@@ -64,8 +64,9 @@ release:
 
         Built for the Solana community — collectors, degens, builders, and explorers.
       new_in_version: |
-        v2.0.2: MagicBlock fast game-proof — instant score verification across all 3
-        games (was slow/delayed). Fixed mint and identity-update transaction issues.
+        v2.0.2: Server-issued game sessions and server-side score verification across
+        all 3 games. A MagicBlock devnet blockhash may be used as session input; games
+        do not run on an Ephemeral Rollup. Fixed mint and identity-update transaction issues.
         Fixed loading-overlay getting stuck. Fixed wallet balance display. Fixed Vault
         buy flow. Coin purchases now verified on-chain. Improved identity-card
         discoverability with a clearer call-to-action and hint.
@@ -98,8 +99,9 @@ solana_mobile_dapp_publisher_portal:
     6. Tap Mint to mint a cNFT identity card. Try dismissing the wallet prompt to verify instant cancel detection.
     7. Use Share to verify the Twitter share with card image works.
     8. Tap the game icon to enter Orbit Survival — tap/space to reverse orbit direction.
-    9. After game over, try "Save Score On-Chain" with zero balance — verify insufficient SOL warning appears.
-    10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
+    9. After game over, use "Save On-Chain" to review the separate user-signed Memo attestation flow.
+    10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN. Its score and tier are live values and may change.
+# CLI-generated submission cache. This is not the current Android version or an identity-mint count.
 lastSubmittedVersionOnChain:
   address: FZ1T6CvCU1JBH1quoDvkodAkfxqNYbMp9upRVwGbsvvg
   version_code: 43

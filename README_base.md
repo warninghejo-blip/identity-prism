@@ -1,5 +1,8 @@
 # Identity Prism — On-Chain Reputation & Identity Layer for Solana
 
+> [!WARNING]
+> This file is an archived project snapshot and contains historical hackathon wording. It is not the source of current product, scoring, MagicBlock, token, or on-chain claims. Use [README.md](./README.md) and [docs/METRICS.md](./docs/METRICS.md) for the current verified description.
+
 > **Your wallet tells a story. Identity Prism reads it.**
 
 [![Solana Mobile](https://img.shields.io/badge/Platform-Solana%20Mobile-blue)](https://solanamobile.com/)

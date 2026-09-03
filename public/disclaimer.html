@@ -54,7 +54,7 @@
     <p>The Service relies on Solana RPC providers, third-party indexers, and heuristic algorithms. Data may be stale, incomplete, or wrong. False positives and false negatives in sybil detection are possible. We make no warranty that any score, tier, or flag is accurate.</p>
 
     <h2 id="s3"><span class="num">03</span>Smart contract risk</h2>
-    <p>Our on-chain components — Memo attestations, Metaplex Core NFTs, MagicBlock rollup integrations — are deployed contracts. <strong>Smart contracts can contain bugs, exploits, or unintended behavior.</strong> Audits reduce but do not eliminate risk. If a contract is exploited, locked or burned funds may be unrecoverable.</p>
+    <p>Supported on-chain actions use existing Solana programs, including the Memo Program, token programs, and Metaplex Core. Identity Prism gameplay and settlement run on the application server; a MagicBlock devnet RPC blockhash may be used as input, but the games do not run on an Ephemeral Rollup. <strong>On-chain programs and transactions can still contain bugs or unintended behavior.</strong> If an operation fails or is exploited, funds may be unrecoverable.</p>
 
     <h2 id="s4"><span class="num">04</span>Blockchain risk</h2>
     <p>Solana is a third-party network. Outages, forks, congestion, validator collusion, or chain halts can affect Service availability. We do not control Solana and cannot reverse, accelerate, or modify any on-chain state.</p>
@@ -73,7 +73,7 @@
     <p>Secondary trading happens on third-party marketplaces under their rules, which we don't control.</p>
 
     <h2 id="s7"><span class="num">07</span>Game outcomes are non-refundable</h2>
-    <p>Tournament entries, staking lockups, and Stellar Forge purchases are <strong>final</strong>. Game scores, even disputed ones, cannot be retroactively adjusted once committed on-chain.</p>
+    <p>Signed transactions may be irreversible once confirmed. Game scores and application balances are server records unless a user separately signs an on-chain transaction; dispute and correction options depend on the applicable feature rules.</p>
 
     <h2 id="s8"><span class="num">08</span>Regulatory risk</h2>
     <p>Cryptocurrency and Web3 regulations vary by jurisdiction and change frequently. You are responsible for determining whether your use of the Service is lawful where you live. We may restrict or terminate access in any jurisdiction at any time.</p>

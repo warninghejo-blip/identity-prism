@@ -38,12 +38,12 @@
   <h1 class="legal-title">Whitepaper</h1>
   <div class="legal-meta">
     <span><strong>Network:</strong> Solana</span>
-    <span><strong>Version:</strong> 1.0 (Overview)</span>
-    <span><strong>Updated:</strong> May 2026</span>
+    <span><strong>Version:</strong> 1.1 (Overview)</span>
+    <span><strong>Updated:</strong> September 2026</span>
   </div>
 
   <div class="callout-box">
-    <p><strong>TL;DR —</strong> Identity Prism turns an anonymous Solana wallet into a portable, sybil-resistant reputation. A composite score (0–1000) is built from on-chain history, DeFi activity, trust signals, real-time skill games, and social proof. Sybils get caught by the very games they try to farm; humans get cleared. Non-custodial. Zero KYC.</p>
+    <p><strong>TL;DR —</strong> Identity Prism turns public Solana wallet activity and server-recorded application signals into a portable reputation profile. A composite score (0–1000) combines on-chain history, trust analysis, server-verified gameplay, social signals, and engagement. It is a risk signal, not proof of personhood. Non-custodial. Zero KYC.</p>
   </div>
 
   <div class="toc">
@@ -63,8 +63,8 @@
 
   <article>
     <h2 id="s1"><span class="num">01</span>Abstract</h2>
-    <p>Identity Prism is an on-chain reputation and sybil-defense protocol for the Solana blockchain. It reads a wallet's <em>public</em> on-chain story, combines it with verified, skill-based gameplay, and produces a single composite score from 0 to 1000 — mapped to ten celestial tiers from Mercury to Binary Sun.</p>
-    <p>The protocol's central claim is simple: reputation should be <strong>earned, not bought</strong>. A score cannot be transferred, sold, or scripted into existence. It can only be proven — through years of genuine on-chain behavior and through real-time games that bots cannot consistently win at scale.</p>
+    <p>Identity Prism is a wallet reputation and sybil-defense service for Solana. It reads a wallet's <em>public</em> on-chain story, combines it with server-verified application activity, and produces a composite score from 0 to 1000 — mapped to ten celestial tiers from Mercury to Binary Sun.</p>
+    <p>The product principle is <strong>earned, not bought</strong>: the score is computed from observed signals rather than issued as a transferable asset. Like any heuristic score, it can be incomplete or wrong and must not be treated as proof of identity.</p>
 
     <h2 id="s2"><span class="num">02</span>The Sybil Problem</h2>
     <p>Every airdrop, governance vote, and "fair launch" in web3 is drained by sybil farms — single operators running thousands of wallets through every quest, claiming everything, and dumping the moment vesting unlocks. Real users lose. Protocols lose. Trust erodes.</p>
@@ -77,12 +77,12 @@
 
     <h2 id="s3"><span class="num">03</span>The Prism Solution — wallet to identity</h2>
     <p>Identity Prism converts an anonymous address into a scored, badged, portable reputation profile without ever taking custody of keys, tokens, or personal data. The flow is <strong>Connect → Analyze → Play → Earn</strong>.</p>
-    <p>On connect, the Prism reads the wallet's full on-chain history — transactions, token holdings, NFT collections, DeFi positions, and behavioral patterns — and assigns a starting score and tier. From there, the wallet <em>plays</em>: skill-based games keep the score alive, grow it, and continuously re-verify that a real human is at the keyboard.</p>
+    <p>On connect, the Prism reads indexed public wallet history — transactions, token holdings, NFT collections, DeFi positions, and behavioral patterns — and assigns a starting score and tier. Gameplay then contributes capped, server-validated signals; it does not continuously prove that a real human controls the wallet.</p>
     <ul>
       <li><strong>Non-custodial.</strong> The protocol never receives private keys, seed phrases, or signing material.</li>
-      <li><strong>Zero KYC.</strong> No passport, no selfie — humanity is proven through behavior.</li>
+      <li><strong>Zero KYC.</strong> No passport or selfie; gameplay contributes bounded behavioral signals rather than proving personhood.</li>
       <li><strong>Portable.</strong> One score works across any Solana protocol that integrates Prism.</li>
-      <li><strong>Earned, not bought.</strong> Score is non-transferable and cannot be faked.</li>
+      <li><strong>Computed, not transferred.</strong> The score is a server-computed signal and can still be affected by incomplete or adversarial data.</li>
     </ul>
 
     <h2 id="s4"><span class="num">04</span>Composite Score &amp; Tiers</h2>
@@ -95,7 +95,7 @@
       <tr><td>Social</td><td>10%</td><td>PvP results, community contribution</td></tr>
       <tr><td>Engagement</td><td>10%</td><td>Quests, streaks, exploration</td></tr>
     </table>
-    <p>The weighted result <code>onchain×0.40 + trust×0.25 + games×0.15 + social×0.10 + engagement×0.10</code> maps to one of ten planetary tiers:</p>
+    <p>The implemented maxima are 400 on-chain points, 250 trust points, 150 human-proof points, 100 social points, and 100 engagement points. These capped contributions are summed, not multiplied a second time, and map to one of ten planetary tiers:</p>
     <table>
       <tr><th>Tier</th><th>Score Range</th><th>Tier</th><th>Score Range</th></tr>
       <tr><td>Mercury</td><td>0 — 99</td><td>Uranus</td><td>600 — 699</td></tr>
@@ -104,15 +104,15 @@
       <tr><td>Earth</td><td>350 — 479</td><td>Sun</td><td>880 — 949</td></tr>
       <tr><td>Neptune</td><td>480 — 599</td><td>Binary Sun</td><td>950 — 1000</td></tr>
     </table>
-    <p>Tiers are not static. As the score climbs and crosses a threshold, the planet on the identity card shatters and reassembles into the next world — and the transition is committed on-chain.</p>
+    <p>Tiers follow the current composite score. Crossing a threshold changes the profile presentation; it does not automatically write a transaction. An on-chain score record requires a separate user-reviewed and signed Memo attestation.</p>
 
     <h2 id="s5"><span class="num">05</span>Anti-Sybil Game Filter</h2>
     <p>Anti-sybil defense is not a one-time scan; it is a continuous filter. This is the heart of the protocol.</p>
-    <p>When a cluster is flagged — shared funding sources, identical transaction timing, copy-paste behavior — affected wallets see their score drop and are pushed toward the games to recover it. Recovery requires real-time skill: reacting, aiming, and surviving. Bots cannot ace skill games at scale, so coordinated clusters collapse together and fall into the Black Hole, permanently excluded from drops.</p>
-    <div class="warn-box"><p><strong>The asymmetry is the point.</strong> A real human recovers reputation through play. A farm of 10,000 wallets cannot — there is no human behind them to pass the skill check.</p></div>
+    <p>When a cluster is flagged — for example through shared funding sources, synchronized activity, or circular flows — the trust pillar can be reduced. Gameplay and other activity may contribute only within configured recovery caps; they do not automatically clear a verdict or permanently exclude a wallet from external programs.</p>
+    <div class="warn-box"><p><strong>Signals are not identity proof.</strong> Automated systems and real users can both produce unusual behavior, so false positives and false negatives remain possible.</p></div>
 
     <h2 id="s6"><span class="num">06</span>Ranger Ranks &amp; XP</h2>
-    <p>Ranger Rank is a <em>separate</em> metric from the composite tier. Where the composite score reflects who you are on-chain, Ranger Rank is an XP-based progression earned purely through play — unlocking gear, module slots, and ranked content.</p>
+    <p>Ranger Rank is a <em>separate</em> metric from the composite tier. It is an XP-based progression derived from bounded gameplay and application-activity sources and can unlock gear, module slots, and ranked content.</p>
     <table>
       <tr><th>Rank</th><th>XP Threshold</th><th>Unlocks</th></tr>
       <tr><td>Cadet</td><td>0 XP</td><td>Starting rank · base gear</td></tr>
@@ -121,33 +121,25 @@
       <tr><td>Ace</td><td>25,000 XP</td><td>Red module slots</td></tr>
       <tr><td>Legend</td><td>50,000+ XP</td><td>Mastery — all systems</td></tr>
     </table>
-    <p>Roughly 70% of XP comes from skill games, 20% from daily and weekly quests, and 10% from achievements, streaks, and social contributions.</p>
+    <p>XP sources and caps are defined by the current server rules. No fixed percentage split is guaranteed across wallets or releases.</p>
 
     <h2 id="s7"><span class="num">07</span>Badges</h2>
-    <p>Twenty on-chain badges are auto-awarded by reading wallet history, game performance, and community contribution, organized into six categories:</p>
-    <ul>
-      <li><strong>On-Chain</strong> (5) — Early Bird, Veteran, Whale, NFT Collector, DeFi Architect.</li>
-      <li><strong>Trust</strong> (3) — Verified Human, Clean Record, Trust Pillar.</li>
-      <li><strong>Games</strong> (3) — Game Master, Achievement Hunter, High Scorer.</li>
-      <li><strong>Identity Prism</strong> (3) — Seeker of Truth, Visionary, Binary Sun.</li>
-      <li><strong>Social</strong> (2) — Arena Champion, Sybil Hunter.</li>
-      <li><strong>Engagement</strong> (4) — Quest Master, Quest Hunter, Streak Lord, Explorer.</li>
-    </ul>
-    <p>Badges minted on-chain become permanent, public attestations tied to the wallet.</p>
+    <p>The current product ships 13 custom identity badge assets and also derives bounded trust, gameplay, social, and engagement indicators for the composite profile.</p>
+    <p>Profile badges are server/application records unless they are included in a separately minted card or explicit signed attestation. They are not automatically individual on-chain assets.</p>
 
     <h2 id="s8"><span class="num">08</span>Architecture</h2>
-    <p>Identity Prism is built natively on Solana and is non-custodial by design. Wallet reads are served through Solana RPC indexing; gameplay results are verified before any on-chain commit so that scores reflect genuine skill rather than spoofed inputs.</p>
+    <p>Identity Prism is non-custodial. Wallet reads are served through Solana RPC and DAS indexing, while gameplay sessions and settlement are validated by the application server. A MagicBlock devnet RPC blockhash may provide entropy or verification input; the games do not run on an Ephemeral Rollup.</p>
     <ul>
       <li><strong>Identity cards</strong> are issued as NFTs (Metaplex Core), carrying score, tier, and earned badges at mint time.</li>
-      <li><strong>Game attestations</strong> are committed on-chain as proof of humanity and as the primary source of Ranger XP.</li>
+      <li><strong>Game results</strong> are server records and Ranger-XP inputs. A user may separately review and sign a Memo attestation; ordinary sessions are not automatically on-chain.</li>
       <li><strong>Hub modules</strong> — Prism Scanner, Stellar Forge, Cosmic Vault, Black Hole, Wallet Arena, Leaderboards, and Prism League — compose around the same reputation primitive.</li>
     </ul>
     <div class="warn-box"><p><strong>Blockchains are immutable.</strong> Once a card, score, or badge is published on-chain, it cannot be deleted by anyone. Mint with intent.</p></div>
 
     <h2 id="s9"><span class="num">09</span>Roadmap</h2>
     <ul>
-      <li><strong>Phase 1 — Core.</strong> Composite scoring, ten tiers, twenty badges, Prism Scanner, identity card mint.</li>
-      <li><strong>Phase 2 — Prism League.</strong> Orbit Survival, Cosmic Defender, Gravity Runner, and Text Adventures live with on-chain attestation.</li>
+      <li><strong>Phase 1 — Core.</strong> Composite scoring, ten tiers, profile badges, Prism Scanner, identity card mint.</li>
+      <li><strong>Phase 2 — Prism League.</strong> Orbit Survival, Cosmic Defender, Gravity Runner, and Text Adventures with server-side settlement and optional signed attestations.</li>
       <li><strong>Phase 3 — Hub economy.</strong> Stellar Forge cosmetics, Cosmic Vault staking, Black Hole burn, Wallet Arena PvP, leaderboards.</li>
       <li><strong>Phase 4 — Composability.</strong> Public API and SDK so any Solana protocol can gate drops, votes, and access on a portable Prism score.</li>
       <li><strong>Phase 5 — Cross-app reputation.</strong> Shared social graph integration so reputation follows the user across the ecosystem.</li>

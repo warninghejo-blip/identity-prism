@@ -58,6 +58,8 @@ The implemented game-economy hardening keeps money-affecting outcomes server-aut
 
 MagicBlock boundary: a devnet RPC blockhash may provide session entropy or verification input, while games and settlement run on the app server, not on an Ephemeral Rollup. See [HACKATHON.md](./HACKATHON.md) for the implementation notes. These controls reduce client-side tampering; they are not proof of perfect security.
 
+Live metrics use separate server and on-chain definitions. In particular, the public `idsMinted` counter is a unique recorded-wallet presence count, not cumulative mint transactions or the current NFT supply. See [Public metrics and on-chain inventory](./docs/METRICS.md) and reproduce the snapshot with `npm run metrics:verify`.
+
 ---
 
 ## Features

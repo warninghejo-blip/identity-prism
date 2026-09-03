@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:seo": "node scripts/test-seo.mjs",
+    "metrics:verify": "node scripts/verify-public-metrics.mjs",
     "seo:submit": "node scripts/submit-indexnow.mjs"
   },
   "dependencies": {

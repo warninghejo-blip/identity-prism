@@ -1,3 +1,4 @@
+# Legacy com.identityprism.app publishing snapshot. Current metadata lives in ../dapp-store/config.yaml.
 publisher:
   name: Identity Prism
   website: https://identityprism.xyz

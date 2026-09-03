@@ -39,11 +39,11 @@
   <h1 class="legal-title">Cookie Policy</h1>
   <div class="legal-meta">
     <span><strong>Effective:</strong> May 1, 2026</span>
-    <span><strong>Last updated:</strong> May 9, 2026</span>
+    <span><strong>Last updated:</strong> September 4, 2026</span>
   </div>
 
   <div class="callout-box">
-    <p><strong>Summary —</strong> We use a tiny number of strictly-necessary cookies plus some <code>localStorage</code> entries to keep you logged in and remember your preferences. No advertising trackers. No third-party analytics.</p>
+    <p><strong>Summary —</strong> The client uses browser or device storage for authentication, wallet/session state, preferences, and caches. Configured analytics and error-monitoring providers may also process client events. We do not use advertising cookies.</p>
   </div>
 
   <article>
@@ -51,36 +51,22 @@
     <p>A cookie is a small text file stored by your browser. <code>localStorage</code> is similar — key-value data scoped to our domain. Both let the Service remember things between visits.</p>
 
     <h2 id="s2"><span class="num">02</span>Cookies we set</h2>
-    <p>We use only first-party, strictly-necessary cookies. There are no advertising or cross-site tracking cookies anywhere in the Service.</p>
-    <table>
-      <tr><th>Name</th><th>Purpose</th><th>Duration</th><th>Type</th></tr>
-      <tr><td><code>ip_session</code></td><td>Authenticated session token (JWT, signed by your wallet)</td><td>7 days</td><td>Necessary</td></tr>
-      <tr><td><code>ip_csrf</code></td><td>CSRF protection on POST endpoints</td><td>Session</td><td>Necessary</td></tr>
-      <tr><td><code>ip_consent</code></td><td>Records your cookie banner choice</td><td>365 days</td><td>Necessary</td></tr>
-    </table>
+    <p>Authentication and infrastructure providers may set first-party or operational cookies. Exact names and durations can vary by deployed client and hosting configuration; inspect your browser's storage panel for the current values. We do not intentionally set advertising cookies.</p>
 
     <h2 id="s3"><span class="num">03</span>Local storage we use</h2>
-    <table>
-      <tr><th>Key</th><th>Purpose</th></tr>
-      <tr><td><code>ip-theme</code></td><td>Your selected color theme (default: cosmos-dark)</td></tr>
-      <tr><td><code>ip-locale</code></td><td>UI language (en / ru / es / zh)</td></tr>
-      <tr><td><code>ip-onboarding</code></td><td>Whether you've completed first-run onboarding</td></tr>
-      <tr><td><code>ip-last-tab</code></td><td>Last-viewed hub module (Forge, League, Black Hole, etc.)</td></tr>
-      <tr><td><code>ip-game-mute</code></td><td>Audio mute preference for in-game sound</td></tr>
-      <tr><td><code>ip-leaderboard-cache</code></td><td>Cached leaderboard data, refreshed every 60s</td></tr>
-    </table>
+    <p>Local storage can contain wallet/session state, authentication state, preferences, feature progress, and response caches. These values are local application records and are not themselves on-chain transactions.</p>
 
     <h2 id="s4"><span class="num">04</span>Third-party services</h2>
-    <p>Some third-party endpoints (Solana RPC, Helius, Cloudflare CDN) may set their own cookies in transit. These are operational only — TLS session keys, anti-DDoS challenges, edge routing. None track you across sites.</p>
+    <p>Infrastructure and configured providers can include Cloudflare, Solana RPC/Helius, Firebase Analytics, and Sentry. They may process cookies, device identifiers, request metadata, product events, or diagnostics under their own policies and configuration.</p>
 
     <h2 id="s5"><span class="num">05</span>Managing cookies</h2>
-    <p>You can disable cookies at the browser level — but the Service won't work without the strictly-necessary ones (you'll be logged out on every page reload, CSRF-protected actions will fail). To clear our <code>localStorage</code>, open DevTools → Application → Local Storage → <code>identityprism.xyz</code> → Clear.</p>
+    <p>You can disable or clear cookies and local storage in your browser. Authentication, wallet/session continuity, preferences, or cached features may stop working or reset.</p>
 
     <h2 id="s6"><span class="num">06</span>Do Not Track</h2>
-    <p>We honor the <code>DNT</code> browser header by default — there's nothing to disable, because we don't track you in the first place.</p>
+    <p>Browser <code>DNT</code> signals are not a substitute for the storage and provider controls described above. Use browser privacy controls and any consent controls exposed by the deployed client.</p>
 
     <h2 id="s7"><span class="num">07</span>Changes &amp; contact</h2>
-    <p>If we add or change cookies, this page is updated and the version-bump is announced via in-app banner.</p>
+    <p>If storage or provider practices materially change, this page will be updated.</p>
     <p>Questions: <a href="mailto:support@identityprism.xyz">support@identityprism.xyz</a></p>
   </article>
 </main>
