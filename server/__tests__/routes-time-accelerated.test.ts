@@ -6,23 +6,26 @@ import { fileURLToPath } from 'node:url';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import Database from 'better-sqlite3';
 import jwt from 'jsonwebtoken';
+import { Keypair } from '@solana/web3.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const SERVER_ENTRY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'helius-proxy.js');
 const TEST_JWT_SECRET = 'routes-time-accelerated-test-secret';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const fixtureAddress = (seed: number) =>
+  Keypair.fromSeed(Uint8Array.from({ length: 32 }, () => seed)).publicKey.toBase58();
 
 const ADDRESSES = {
-  openCreator: '44444444444444444444444444444441',
-  gameCreator: '44444444444444444444444444444442',
-  tournamentWinner: '44444444444444444444444444444443',
-  tournamentLoser: '44444444444444444444444444444444',
-  vaultMature: '44444444444444444444444444444445',
-  quizCap: '44444444444444444444444444444446',
-  nonGameCap: '44444444444444444444444444444447',
-  scanCap: '44444444444444444444444444444448',
-  huntCap: '44444444444444444444444444444449',
-  cleanTarget: '11111111111111111111111111111111',
+  openCreator: fixtureAddress(1),
+  gameCreator: fixtureAddress(2),
+  tournamentWinner: fixtureAddress(3),
+  tournamentLoser: fixtureAddress(4),
+  vaultMature: fixtureAddress(5),
+  quizCap: fixtureAddress(6),
+  nonGameCap: fixtureAddress(7),
+  scanCap: fixtureAddress(8),
+  huntCap: fixtureAddress(9),
+  cleanTarget: fixtureAddress(10),
   sybilTarget: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
 };
 

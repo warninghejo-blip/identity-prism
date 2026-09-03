@@ -25,6 +25,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     scoreHistoryStore: makeStore(),
     walletStore: makeStore(),
     sybilVerdictStore: makeStore(),
+    securityEventStore: makeStore(),
     gameSessionProofStore: makeStore(),
     achievementStore: makeStore(),
     reviveStore: makeStore(),

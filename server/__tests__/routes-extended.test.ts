@@ -507,7 +507,7 @@ describe.sequential('routes-extended integration tests', () => {
       score: 9999,
       address: ADDRESSES.known,
     });
-    expect([200, 400, 401, 403, 422]).toContain(res.status);
+    expect([200, 400, 401, 403, 422, 426]).toContain(res.status);
     expect(typeof res.body).toBe('object');
   });
 

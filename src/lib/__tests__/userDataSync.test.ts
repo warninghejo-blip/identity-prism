@@ -10,10 +10,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('@/components/prism/shared', () => ({
   getApiBase: () => 'http://localhost:3000',
   ensureJwt: vi.fn().mockResolvedValue('test-jwt'),
+  postApiJson: vi.fn().mockResolvedValue({}),
 }));
 
-// Mock fetch globally (we test debounce, not actual network)
-global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as Response);
+import { postApiJson } from '@/components/prism/shared';
 
 import { collectLocalData, syncToServer } from '../userDataSync';
 
@@ -85,25 +85,25 @@ describe('collectLocalData', () => {
 });
 
 describe('syncToServer debounce', () => {
-  it('does not call fetch immediately', () => {
+  it('does not call postApiJson immediately', () => {
     syncToServer({ loadout: { a: 1 } });
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(postApiJson).not.toHaveBeenCalled();
   });
 
-  it('calls fetch after 3 second debounce', async () => {
+  it('calls postApiJson after 3 second debounce', async () => {
     syncToServer({ loadout: { a: 1 } });
     vi.advanceTimersByTime(3000);
     // Allow microtasks (promise resolution)
     await Promise.resolve();
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(postApiJson).toHaveBeenCalledTimes(1);
   });
 
-  it('debounces multiple rapid calls into a single fetch', async () => {
+  it('debounces multiple rapid calls into a single postApiJson call', async () => {
     syncToServer({ loadout: { a: 1 } });
     syncToServer({ loadout: { a: 2 } });
     syncToServer({ loadout: { a: 3 } });
     vi.advanceTimersByTime(3000);
     await Promise.resolve();
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(postApiJson).toHaveBeenCalledTimes(1);
   });
 });

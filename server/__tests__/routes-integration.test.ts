@@ -465,7 +465,7 @@ describe.sequential('route integration tests', () => {
     const notifications = (inbox.body as { notifications: Array<Record<string, unknown>> }).notifications;
     const payout = notifications.find((notification) => notification.type === 'tournament_result');
     expect(payout).toBeTruthy();
-    expect(payout?.message).toContain('daily tournament ended');
+    expect(payout?.message).toContain('daily orbit tournament ended');
     expect(payout?.meta).toMatchObject({ tier: 'daily', placement: 1 });
     expect((payout?.meta as Record<string, number>).prize).toBeGreaterThan(0);
   });

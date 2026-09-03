@@ -23,6 +23,14 @@ export default function WalletRequired({ children }: WalletRequiredProps) {
     () => Boolean(liveAddress && getCachedJwt(liveAddress)),
     [liveAddress, authTick],
   );
+  const activeHasJwt = useMemo(
+    () => {
+      const hasLegacyLocalStorageJwt =
+        typeof window !== 'undefined' && Boolean(window.localStorage.getItem('ip_auth_jwt'));
+      return Boolean(activeAddress && !hasLegacyLocalStorageJwt && getCachedJwt(activeAddress));
+    },
+    [activeAddress, authTick],
+  );
   const canSign = Boolean(publicKey && (wallet.signMessage || wallet.signIn));
 
   const signWallet = useCallback(async () => {
@@ -54,7 +62,7 @@ export default function WalletRequired({ children }: WalletRequiredProps) {
 
   if (isDemoMode()) return <>{children}</>;
 
-  if (activeAddress || liveHasJwt) {
+  if (activeHasJwt || liveHasJwt) {
     return <>{children}</>;
   }
 
@@ -86,7 +94,7 @@ export default function WalletRequired({ children }: WalletRequiredProps) {
     );
   }
 
-  if (!activeAddress) {
+  if (!activeAddress || !activeHasJwt) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 px-4 text-center">
         <Wallet className="w-10 h-10 text-purple-400/60" />
