@@ -6,7 +6,7 @@
 [![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
 [![Tapestry](https://img.shields.io/badge/Reputation-Tapestry-orange)](https://tapestry.network/)
 
-**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo Video:** [YouTube](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/app-release.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
+**Live:** [https://identityprism.xyz](https://identityprism.xyz) · **Demo Video:** [YouTube](https://www.youtube.com/shorts/glZBXcYBB-k) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Android APK:** [Download](https://identityprism.xyz/demo.apk) · **Tapestry Social Graph:** [Explorer](https://explorer.usetapestry.dev/)
 
 ---
 
@@ -280,7 +280,7 @@ See `.env.example` for all required variables. Key ones:
 - **Tapestry Explorer:** [https://explorer.usetapestry.dev/](https://explorer.usetapestry.dev/)
 - **Reputation API:** [https://identityprism.xyz/api/reputation?address=YOUR_WALLET](https://identityprism.xyz/api/reputation?address=vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg)
 - **Blink:** `solana-action:https://identityprism.xyz/api/actions/share`
-- **Android APK:** [https://identityprism.xyz/app-release.apk](https://identityprism.xyz/app-release.apk)
+- **Android APK:** [https://identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk)
 - **Solana Mobile:** Built for Saga & Seeker with native Mobile Wallet Adapter support
 
 ---

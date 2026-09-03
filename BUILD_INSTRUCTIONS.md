@@ -14,8 +14,8 @@
 # Установка ядра Capacitor и CLI
 npm install @capacitor/core @capacitor/cli
 
-# Инициализация Capacitor (Имя: Identity Prism, ID: com.identityprism.app)
-npx cap init "Identity Prism" com.identityprism.app --web-dir dist
+# Инициализация Capacitor (Имя: Identity Prism, ID: com.identityprism2.app)
+npx cap init "Identity Prism" com.identityprism2.app --web-dir dist
 ```
 
 ## 3. Установка Android-платформы
