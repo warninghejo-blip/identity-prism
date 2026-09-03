@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { createScanOrchestrator } from '../services/scanOrchestrator.js';
+import { getCompositeTrustProfile } from '../services/sybilVerdict.js';
 
 function registerSybilRoute(ctx) {
   const runSybilAnalysis = createScanOrchestrator(ctx);
@@ -9,7 +10,7 @@ function registerSybilRoute(ctx) {
   const { optionalJwt } = ctx.auth;
   const { walletDatabase, updateWalletEntry, triggerCompositeUpdate, achievements, leaderboardEntries } = ctx.wallet;
   const { getPrismEarnRateLimit, setPrismEarnRateLimit, getScanRewardState, skrMint } = ctx.economy;
-  const { sybilCache, getSybilVerdict } = ctx.sybil;
+  const { sybilCache, getSybilVerdict, buildCompositeInput } = ctx.sybil;
   // flat: not yet in a slice
   const {
     sybilInFlight,
@@ -418,28 +419,33 @@ function registerSybilRoute(ctx) {
     // Vault check
     const vaultStaked = Boolean(entry.staking?.tier);
 
-    // Activity bonus calculation (max 25)
-    let activityBonus = 0;
-    if (gamesPlayedCount > 0) activityBonus += Math.min(6, gameTypesCount * 2); // up to 3 game types = +6
-    if (achievementCount > 3) activityBonus += 3;
-    if (questsCompleted > 3) activityBonus += 3;
-    if (streakDays > 3) activityBonus += 3;
-    if (realScanCount > 5) activityBonus += 3;
-    if (realChallengeWins > 0) activityBonus += 2;
-    if (textQuestsCompleted > 0) activityBonus += 2;
-    if (gamesPlayedCount > 20) activityBonus += 3;
-    if (vaultStaked) activityBonus += 2;
-    activityBonus = Math.min(25, activityBonus);
+    const { trustRecovery } = buildCompositeInput(address);
+    const { twitterBonus, activityBonus, crossVerifBonus } = trustRecovery;
+    const requestedRecoveryBonus = twitterBonus + activityBonus + crossVerifBonus;
 
-    const currentTrustScore = entry.sybil?.trustScore || 0;
-    const adjustedTrustScore = Math.min(100, currentTrustScore + activityBonus);
+    const trustProfile = getCompositeTrustProfile({
+      verdict: entry.sybil ? getSybilVerdict(entry.sybil) : null,
+      trustScore: entry.sybil?.trustScore || 0,
+      recoveryBonus: requestedRecoveryBonus,
+    });
 
     respondJson(res, 200, {
-      currentTrustScore,
-      adjustedTrustScore,
-      recoveryBonus: activityBonus,
+      currentTrustScore: trustProfile.rawTrustScore,
+      baseCompositeTrust: trustProfile.baseCompositeTrust,
+      adjustedTrustScore: trustProfile.effectiveTrust,
+      requestedRecoveryBonus: trustProfile.requestedRecoveryBonus,
+      recoveryBonus: trustProfile.recoveryBonus,
+      recoveryCap: trustProfile.recoveryCap,
+      compositeTrustContribution: trustProfile.compositeTrustContribution,
+      verdict: trustProfile.verdictKey
+        ? { key: trustProfile.verdictKey, label: trustProfile.verdictLabel }
+        : null,
       breakdown: {
+        twitterBonus,
         activityBonus,
+        crossVerifBonus,
+        appliedRecoveryBonus: trustProfile.recoveryBonus,
+        compositeTrustContribution: trustProfile.compositeTrustContribution,
       },
       activity: {
         gameTypes: gameTypesCount,

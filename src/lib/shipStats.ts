@@ -210,6 +210,20 @@ export function applyFrameToBreakdown(bd: CompositeBreakdown, loadout: ForgeLoad
   });
 }
 
+function sumCompositeBreakdown(bd: CompositeBreakdown): number {
+  return (bd.onchain || 0)
+    + (bd.sybilTrust || 0)
+    + (bd.humanProof || 0)
+    + (bd.social || 0)
+    + (bd.engagement || 0);
+}
+
+/** Base reputation score from the server-provided composite breakdown. */
+export function getBaseCompositeScore(bd: CompositeBreakdown | null): number | null {
+  if (!bd) return null;
+  return sumCompositeBreakdown(normalizeCompositeBreakdown(bd));
+}
+
 function deriveBaseStatsFromBreakdown(bd: CompositeBreakdown): ShipStats {
   const speed = 5 + (((bd.engagement || 0) + (bd.social || 0)) / 200) * 65;
   const shield = 5 + ((bd.sybilTrust || 0) / 250) * 65;
@@ -336,6 +350,24 @@ export function computeShipStats(preview: WalletPreview | null, loadout: ForgeLo
 }
 
 /**
+ * Keep the base reputation value separate from the equipment-derived ship
+ * rating. Equipment changes gameplay stats only; it must not be written back
+ * to the wallet's composite score or tier.
+ */
+export function getShipRating(
+  preview: WalletPreview | null,
+  loadout: ForgeLoadoutLike | null,
+): { baseReputationScore: number; shipStats: ShipStats } | null {
+  if (!preview || preview.compositeScore == null || !preview.compositeBreakdown) return null;
+  const baseReputationScore = getBaseCompositeScore(preview.compositeBreakdown);
+  if (baseReputationScore == null) return null;
+  return {
+    baseReputationScore,
+    shipStats: computeShipStats(preview, loadout),
+  };
+}
+
+/**
  * Legacy: Compute ship stats from WalletTraits.
  * Still works, but prefer computeShipStats(preview, loadout) when possible.
  */
@@ -349,20 +381,35 @@ export function deriveShipStats(traits: WalletTraits | null, loadout: ForgeLoado
 /** Default stats for unauthenticated players */
 export const DEFAULT_SHIP_STATS: ShipStats = { speed: 15, shield: 15, firepower: 15, luck: 15 };
 
-/** Get boosted composite score + breakdown with frame bonus applied. */
+/**
+ * Get a loadout preview with both values named explicitly. `score` remains the
+ * equipment-inclusive legacy value for callers that render a ship preview;
+ * use `baseScore`/`reputationScore` for the actual reputation value.
+ */
 export function getBoostedCompositeScore(
   breakdown: CompositeBreakdown | null,
   loadout: ForgeLoadoutLike | null,
-): { score: number; breakdown: CompositeBreakdown } | null {
+): {
+  score: number;
+  baseScore: number;
+  reputationScore: number;
+  shipRatingScore: number;
+  breakdown: CompositeBreakdown;
+  baseBreakdown: CompositeBreakdown;
+} | null {
   if (!breakdown) return null;
+  const baseBreakdown = normalizeCompositeBreakdown(breakdown);
   const boosted = applyFrameToBreakdown(breakdown, loadout);
-  const score =
-    (boosted.onchain || 0) +
-    (boosted.sybilTrust || 0) +
-    (boosted.humanProof || 0) +
-    (boosted.social || 0) +
-    (boosted.engagement || 0);
-  return { score, breakdown: boosted };
+  const baseScore = sumCompositeBreakdown(baseBreakdown);
+  const shipRatingScore = sumCompositeBreakdown(boosted);
+  return {
+    score: shipRatingScore,
+    baseScore,
+    reputationScore: baseScore,
+    shipRatingScore,
+    breakdown: boosted,
+    baseBreakdown,
+  };
 }
 
 /** Short category labels for frame composite bonuses */

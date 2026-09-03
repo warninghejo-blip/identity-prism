@@ -399,12 +399,12 @@ export default function LandingPage() {
                 <span className="l1">Your reputation,</span>
                 <span className="l2">earned not bought.</span>
               </h1>
-              <p className="hero-desc">A decentralized identity protocol where <strong>real humans rise</strong> through gameplay, on-chain history, and verified humanity — and <strong>sybils get caught</strong> by the very games they try to farm.</p>
-              <p className="hero-desc2">One portable reputation: <strong>10 planetary tiers</strong>, <strong>20 on-chain badges</strong>, and a sybil-risk score any Solana app can read to gate airdrops, governance, and access — earned by playing, never bought.</p>
+              <p className="hero-desc">A Solana identity protocol that combines wallet history, behavioral signals, and server-verified play into a changing reputation profile — with suspicious patterns surfaced for review.</p>
+              <p className="hero-desc2">One portable profile: <strong>10 composite tiers</strong>, <strong>earned badges</strong>, and sybil-risk signals that an integrating Solana app can read when making its own access or reward decisions.</p>
               <div className="hero-stats">
                 <CountUpStat value={stats?.idsMinted ?? 0} label="Identities" />
                 <div className="hero-stat"><div className="n">10</div><div className="l">Composite Tiers</div></div>
-                <div className="hero-stat"><div className="n">20</div><div className="l">On-Chain Badges</div></div>
+                <div className="hero-stat"><div className="n">6</div><div className="l">Badge Categories</div></div>
                 <CountUpStat value={stats?.sybilsCaught ?? 0} label="Sybils Caught" />
               </div>
             </div>
@@ -504,13 +504,13 @@ export default function LandingPage() {
 
             <div className="sol-text reveal">
               <h3>Connect once. <em>Carry your reputation everywhere.</em></h3>
-              <p>The Prism reads your wallet's full on-chain story — every transaction, every token, every protocol. It analyzes patterns, awards badges, calculates a score, and assigns you a tier among the planets.</p>
-              <p>Then you <strong>play</strong>. Skill-based games keep your score alive and growing — and surface bots automatically.</p>
+              <p>The Prism analyzes the available public wallet history, behavioral patterns, and application activity, then calculates a score and assigns a tier among the planets.</p>
+              <p>Then you <strong>play</strong>. Server-verified game results and quests can add evidence to the profile and advance Ranger XP; they are signals, not unforgeable identity proof.</p>
               <div className="sol-checks">
                 <div className="sol-check"><div className="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg></div><span><b>Non-custodial.</b> We never hold your keys, your tokens, or your data.</span></div>
-                <div className="sol-check"><div className="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg></div><span><b>Zero KYC.</b> No passport, no selfie — humanity proven through behavior.</span></div>
+                <div className="sol-check"><div className="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg></div><span><b>Wallet-first.</b> No KYC is required for the public scan; behavioral signals are not identity verification.</span></div>
                 <div className="sol-check"><div className="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg></div><span><b>Portable.</b> Your score works across any Solana protocol that integrates Prism.</span></div>
-                <div className="sol-check"><div className="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg></div><span><b>Earned, not bought.</b> Score can't be transferred, sold, or faked — only proven.</span></div>
+                <div className="sol-check"><div className="sol-check-mark"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg></div><span><b>Separate systems.</b> Equipment can change ship stats in games, but never the base reputation score or tier.</span></div>
               </div>
             </div>
           </div>
@@ -524,8 +524,8 @@ export default function LandingPage() {
         <div className="container">
           <div className="sec-head sc-hero reveal">
             <div className="sec-tag">The core mechanic</div>
-            <h3><span className="red">Sybils get caught.</span><br /><span className="green">Humans get cleared.</span></h3>
-            <p>Anti-sybil isn't a one-time scan — it's a continuous filter. Real humans recover their reputation through skill. Bots can't. That's the whole protocol.</p>
+            <h3><span className="red">Suspicious patterns get flagged.</span><br /><span className="green">More evidence can improve the profile.</span></h3>
+            <p>Anti-sybil combines wallet scans with behavioral and graph signals. Results can change as evidence changes; gameplay may provide capped recovery signals, but it does not prove personhood.</p>
           </div>
           <div className="sc-flow">
             <div className="sc-track bad reveal">
@@ -534,13 +534,13 @@ export default function LandingPage() {
                 <div><h4>The Sybil Path</h4><div className="sub">Bot · Farm · Multi-account</div></div>
               </div>
               <div className="sc-steps">
-                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects 10,000 wallets</b><span>An operator spins up a farm and replays the same scripted on-chain history across every wallet.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects many wallets</b><span>An operator may replay similar funding and activity patterns across multiple addresses.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">02</div><div className="sc-step-content"><b>Pattern flagged</b><span>The Prism detects shared funding sources, identical timing, copy-paste behavior.</span></div></div>
-                <div className="sc-step"><div className="sc-step-n">03</div><div className="sc-step-content"><b>Forced into games</b><span>Score drops. To recover, the wallet must prove it can actually play in real time.</span></div></div>
-                <div className="sc-step"><div className="sc-step-n">04</div><div className="sc-step-content"><b>Game performance fails</b><span>Bots can't ace skill games at scale. Cluster scores collapse together.</span></div></div>
-                <div className="sc-step"><div className="sc-step-n">05</div><div className="sc-step-content"><b>Permanently filtered</b><span>The whole cluster is excluded from drops, governance, and gated rewards — for good.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">03</div><div className="sc-step-content"><b>Evidence is reviewed</b><span>Gameplay and other activity can add capped recovery signals, but no single signal decides the result.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">04</div><div className="sc-step-content"><b>Risk remains visible</b><span>Server checks and new wallet evidence can keep the cluster linked to a current risk verdict.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">05</div><div className="sc-step-content"><b>Current policy applies</b><span>Integrating protocols decide eligibility from the current signals and their own rules.</span></div></div>
               </div>
-              <div className="sc-result"><div className="sc-result-tag">Outcome</div>Cluster eliminated · Drops protected · Trust restored</div>
+              <div className="sc-result"><div className="sc-result-tag">Outcome</div>Cluster flagged · Current policy applies · Evidence can be revisited</div>
             </div>
             <div className="sc-track good reveal">
               <div className="sc-track-head">
@@ -548,27 +548,27 @@ export default function LandingPage() {
                 <div><h4>The Human Path</h4><div className="sub">Real player · Earned reputation</div></div>
               </div>
               <div className="sc-steps">
-                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects one wallet</b><span>Real on-chain history — genuine transactions and real time spent on Solana.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">01</div><div className="sc-step-content"><b>Connects one wallet</b><span>Public wallet history and application activity provide the starting evidence.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">02</div><div className="sc-step-content"><b>Initial scan</b><span>The Prism reads the full on-chain story and assigns a starting score and tier.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">03</div><div className="sc-step-content"><b>Plays the games</b><span>Orbit Survival, Cosmic Defender, Gravity Runner — skill-based, time-based, replayable.</span></div></div>
                 <div className="sc-step"><div className="sc-step-n">04</div><div className="sc-step-content"><b>Score grows</b><span>Performance lifts the score. Streaks unlock badges. Tier rises through the planets.</span></div></div>
-                <div className="sc-step"><div className="sc-step-n">05</div><div className="sc-step-content"><b>Reputation cleared</b><span>Verified human. Eligible for drops, governance, and gated experiences across the ecosystem.</span></div></div>
+                <div className="sc-step"><div className="sc-step-n">05</div><div className="sc-step-content"><b>Profile updated</b><span>Current trust and reputation signals are available to integrations for their own decisions.</span></div></div>
               </div>
-              <div className="sc-result"><div className="sc-result-tag">Outcome</div>Verified human · Reputation portable · Earned, not bought</div>
+              <div className="sc-result"><div className="sc-result-tag">Outcome</div>Profile updated · Signals portable · Earned through activity</div>
             </div>
           </div>
         </div>
       </section>
 
-      <div className="sec-divider"><div className="ribbon">— On-Chain Badges —</div></div>
+      <div className="sec-divider"><div className="ribbon">— Earned Badges —</div></div>
 
       {/* BADGES — match dapp categories exactly */}
       <section id="badges">
         <div className="container">
           <div className="sec-head reveal">
-            <div className="sec-tag">20 on-chain badges</div>
-            <h2 className="sec-title">Proof of you,<br />signed by the chain.</h2>
-            <p className="sec-sub">Badges are auto-awarded by reading your wallet's on-chain history, game performance, and community contribution. Six categories — each a different shade of trust.</p>
+            <div className="sec-tag">6 badge categories</div>
+            <h2 className="sec-title">Signals about you,<br />kept in your profile.</h2>
+            <p className="sec-sub">Badges are awarded from configured wallet, gameplay, and community signals. They are profile records; not every badge is an on-chain asset.</p>
           </div>
 
           <div className="badges-cats">
@@ -578,7 +578,7 @@ export default function LandingPage() {
               <div className="badge-cat-head">
                 <div className="badge-cat-title">
                   <div className="pip" style={{ background: '#d4a04a', boxShadow: '0 0 8px #d4a04a' }}></div>
-                  <h4>On-Chain</h4><span className="meta">· Wallet history &amp; activity</span>
+                  <h4>Wallet</h4><span className="meta">· Wallet history &amp; activity</span>
                 </div>
                 <div className="badge-cat-count">5 Badges</div>
               </div>
@@ -683,7 +683,7 @@ export default function LandingPage() {
           <div className="sec-head reveal">
             <div className="sec-tag">From Mercury to Binary Sun</div>
             <h2 className="sec-title">Ten planets.<br />Score-based.</h2>
-            <p className="sec-sub">Your composite score lands you on one of ten planets. Score caps at 1,000 — Binary Sun is the absolute pinnacle of on-chain reputation.</p>
+            <p className="sec-sub">Your composite score places the profile on one of ten planets. It ranges from 0 to 1,000 and combines wallet, trust, gameplay, social, and engagement signals.</p>
           </div>
 
           <div className="tier-meter reveal">
@@ -727,7 +727,7 @@ export default function LandingPage() {
           <div className="sec-head reveal">
             <div className="sec-tag">Score is alive</div>
             <h2 className="sec-title">Tiers explode.<br />Tiers reform.</h2>
-            <p className="sec-sub">Your tier isn't static. As your score climbs, planets shatter and reassemble into the next world. Every tier change is on-chain — and visually unmistakable.</p>
+            <p className="sec-sub">Your tier follows the current composite score. As the score crosses a threshold, the profile moves to the next world; an on-chain record requires a separate signed attestation.</p>
           </div>
           <div className="explode-stage reveal">
             <div className="explode-ring r1"></div>
@@ -759,7 +759,7 @@ export default function LandingPage() {
               <h4>· Two Metrics ·</h4>
               <div className="ranks-vs-row">
                 <span className="badge t">Composite</span>
-                <div><b>Score 0 – 1000</b><span>Mercury → Binary Sun. Built from on-chain history, DeFi, trust, games &amp; social. Powers your tier and ship stats.</span></div>
+                <div><b>Score 0 – 1000</b><span>Mercury → Binary Sun. Built from wallet, trust, games, social, and engagement signals. Powers your tier and base ship stats; equipment adds separate gameplay modifiers.</span></div>
               </div>
               <div className="ranks-vs-row">
                 <span className="badge r">Ranger</span>
@@ -791,13 +791,13 @@ export default function LandingPage() {
         <div className="container">
           <div className="sec-head reveal">
             <div className="sec-tag">Prism League</div>
-            <h2 className="sec-title">Skill is the proof.<br />Bots can't fake it.</h2>
-            <p className="sec-sub">Real-time, reaction-based games. Real humans get high scores. Bots burn out. Every session is an on-chain attestation of your humanity — and the primary source of Ranger XP.</p>
+            <h2 className="sec-title">Skill is a signal.<br />Play is server-verified.</h2>
+            <p className="sec-sub">Real-time, reaction-based games produce server-verified scores and Ranger XP. A session is not automatically an on-chain attestation, and gameplay is one signal among several.</p>
           </div>
           <div className="games-grid reveal-stagger">
             <div className="game-card"><img src="/games/orbit_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Orbit Survival</h3><p className="gdesc">Navigate asteroid fields. Reflexes &amp; reaction time scored in real-time.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Realtime</b></div><div className="stat"><b>Reflex</b></div></div></div></div>
             <div className="game-card"><img src="/games/wars_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Cosmic Defender</h3><p className="gdesc">Hold the line against relentless waves. Twitch aim &amp; survival under pressure.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Waves</b></div><div className="stat"><b>Twitch</b></div></div></div></div>
-            <div className="game-card"><img src="/games/gravity_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Gravity Runner</h3><p className="gdesc">Physics-driven obstacle course. Pure motor skill — impossible to script.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Physics</b></div><div className="stat"><b>Motor</b></div></div></div></div>
+            <div className="game-card"><img src="/games/gravity_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Solo</div><h3>Gravity Runner</h3><p className="gdesc">Physics-driven obstacle course. A motor-skill challenge designed to make scripted play harder.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Physics</b></div><div className="stat"><b>Motor</b></div></div></div></div>
             <div className="game-card"><img src="/games/quest_cover.png" alt="" className="cover" /><div className="veil"></div><div className="body"><div className="pill">Live · Story</div><h3>Text Adventures</h3><p className="gdesc">Choice-driven narrative missions. Strategy &amp; judgment — a different proof of human.</p><div className="stats"><div className="stat"><b>Solo</b></div><div className="stat"><b>Story</b></div><div className="stat"><b>Choices</b></div></div></div></div>
           </div>
         </div>
@@ -821,7 +821,7 @@ export default function LandingPage() {
             <div className="eco-card eco-c-arena"><span className="eco-tag">PvP</span><div className="eco-head"><div className="eco-icon"><img src="/hub/arena.png" alt="" /></div><h3>Prism Arena</h3></div><p>1v1 challenge duels. Stake PRISM coins, pick a game mode, and the winner takes the pot. Climb the ranks head-to-head.</p><div className="eco-feats"><div className="eco-feat">1v1 challenges</div><div className="eco-feat">Stake 5–1000 coins</div><div className="eco-feat">Winner takes 2×</div></div></div>
             <div className="eco-card eco-c-quests"><span className="eco-tag">Adventure</span><div className="eco-head"><div className="eco-icon"><img src="/hub/quests.png" alt="" /></div><h3>Cosmic Quests</h3></div><p>Daily &amp; weekly missions. Lore-locked adventure chains. The main path from Cadet to Pilot.</p><div className="eco-feats"><div className="eco-feat">Daily refresh</div><div className="eco-feat">Streak rewards</div><div className="eco-feat">Lore-locked badges</div></div></div>
             <div className="eco-card eco-c-leader"><span className="eco-tag">Compete</span><div className="eco-head"><div className="eco-icon"><img src="/hub/leaderboard.png" alt="" /></div><h3>Leaderboards</h3></div><p>Global rankings across every game, every badge category, every tier. Friends list &amp; rivals.</p><div className="eco-feats"><div className="eco-feat">Global &amp; friends</div><div className="eco-feat">Per-game boards</div><div className="eco-feat">Seasonal resets</div></div></div>
-            <div className="eco-card eco-c-league"><span className="eco-tag">Skill</span><div className="eco-head"><div className="eco-icon"><img src="/hub/league.png" alt="" /></div><h3>Prism League</h3></div><p>The home of all skill games. Orbit Survival, Cosmic Defender, Gravity Runner &amp; Text Adventures in active rotation.</p><div className="eco-feats"><div className="eco-feat">4 live games</div><div className="eco-feat">Active rotation</div><div className="eco-feat">XP attestation</div></div></div>
+            <div className="eco-card eco-c-league"><span className="eco-tag">Skill</span><div className="eco-head"><div className="eco-icon"><img src="/hub/league.png" alt="" /></div><h3>Prism League</h3></div><p>The home of all skill games. Orbit Survival, Cosmic Defender, Gravity Runner &amp; Text Adventures in active rotation.</p><div className="eco-feats"><div className="eco-feat">4 live games</div><div className="eco-feat">Active rotation</div><div className="eco-feat">XP progression</div></div></div>
           </div>
         </div>
       </section>
@@ -882,7 +882,7 @@ export default function LandingPage() {
             <div className="foot-brand">
               <img src="/phav.png" alt="" />
               <h5>IDENTITY PRISM</h5>
-              <p>The sybil-resistant identity layer for Solana. Reputation earned through behavior &amp; skill, never bought, never sold.</p>
+              <p>A Solana identity profile built from wallet history, behavioral signals, and server-verified activity.</p>
             </div>
             <div className="foot-col"><h6>Protocol</h6><a href="#solution">How it works</a><a href="#badges">Badges</a><a href="#tiers">Composite tiers</a><a href="#ranks">Ranger ranks</a><a href="#games">Prism League</a><a href="#ecosystem">Hub modules</a></div>
             <div className="foot-col"><h6>Resources</h6><a href="/identity">Launch app</a><a href="/whitepaper.html">Whitepaper</a><a href="/developers.html">API docs</a><a href="https://github.com/warninghejo-blip/identity-prism" target="_blank" rel="noopener noreferrer">GitHub</a><a href="/brand.html">Brand assets</a></div>
@@ -890,7 +890,7 @@ export default function LandingPage() {
           </div>
           <div className="foot-bottom">
             <div>© 2026 Identity Prism · All rights reserved</div>
-            <div>Built on Solana · Powered by MagicBlock</div>
+            <div>Built on Solana · Server-verified gameplay</div>
           </div>
         </div>
       </footer>

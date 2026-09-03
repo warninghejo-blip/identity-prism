@@ -4307,10 +4307,13 @@ const server = http.createServer(async (req, res) => {
   // ── API Version Dispatch ──────────────────────────────────────────────────
   // Detect version BEFORE parsing url/pathname so we can rewrite for v2
   const _rawUrl = req.url ?? '/';
-  const _apiMeta = getApiMeta(req, new URL(_rawUrl, 'http://localhost').pathname);
+  const _rawPathname = new URL(_rawUrl, 'http://localhost').pathname;
+  const _apiMeta = getApiMeta(req, _rawPathname);
   res.setHeader('X-API-Version', _apiMeta.apiVersion);
 
-  if (_apiMeta.apiVersion === 'v2') {
+  // The dedicated reputation v2 handler owns the versioned path and must see
+  // it unchanged; the legacy inline handler owns /api/reputation.
+  if (_apiMeta.apiVersion === 'v2' && _rawPathname !== '/api/v2/reputation') {
     // Rewrite /api/v2/* → /api/* before parsing, so existing router works unchanged
     req.url = _rawUrl.replace('/api/v2/', '/api/');
     // Run lazy migration for authenticated requests (optionalJwt never sends a response)

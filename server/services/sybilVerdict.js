@@ -61,6 +61,8 @@ const COMPOSITE_TRUST_RULES = {
   confirmed_sybil: { useRaw: false, floor: 0, ceil: 20, recoveryCap: 0, allowBadges: false },
 };
 
+const COMPOSITE_TRUST_MAX = 250;
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const toNumber = (value, fallback = 0) => {
@@ -135,6 +137,7 @@ export function getCompositeTrustProfile({ verdict = null, trustScore = 0, recov
   const recoveryRoom = Math.max(0, 50 - baseCompositeTrust);
   const appliedRecoveryBonus = Math.min(rule.recoveryCap, requestedRecoveryBonus, recoveryRoom);
   const effectiveTrust = clamp(baseCompositeTrust + appliedRecoveryBonus, 0, 100);
+  const compositeTrustContribution = Math.round((effectiveTrust / 100) * COMPOSITE_TRUST_MAX);
 
   return {
     verdictKey,
@@ -146,6 +149,7 @@ export function getCompositeTrustProfile({ verdict = null, trustScore = 0, recov
     recoveryBonus: appliedRecoveryBonus,
     recoveryCap: rule.recoveryCap,
     effectiveTrust,
+    compositeTrustContribution,
     allowBadges: Boolean(rule.allowBadges),
   };
 }
@@ -223,7 +227,7 @@ export function deriveSybilVerdictFromAnalysis(analysis) {
   } else if (networkConfirmed && riskScore >= 80) {
     key = 'confirmed_sybil';
   } else if (
-    riskScore >= 80 &&
+    (riskScore >= 50 || trustScore <= 50) &&
     ((legacySybilFlag && (supportingNetworkCount >= 1 || strongBehaviorCount >= 1)) ||
       (supportingNetworkCount >= 1 && strongBehaviorCount >= 1) ||
       strongBehaviorCount >= 2)
@@ -294,10 +298,10 @@ export function deriveSybilVerdictFromAnalysis(analysis) {
     dataQuality: txCount === 0 ? 'none' : txCount < 10 ? 'thin' : txCount < 50 ? 'sampled' : 'rich',
     networkConfirmed,
     legacySybilFlag,
-    // Caught/bounty = a clear risk-score line (Risk >= 60 / Trust <= 40), regardless of
+    // Caught/bounty = a clear risk-score line (Risk >= 50), regardless of
     // whether the nuanced key landed on cluster_linked or suspicious. clean/unknown never pay.
-    bountyEligible: riskScore >= 60 && key !== 'clean' && key !== 'unknown',
-    rewardPath: riskScore >= 60 && key !== 'clean' && key !== 'unknown' ? 'sybil_hunt' : 'scan_wallet',
+    bountyEligible: riskScore >= 50 && key !== 'clean' && key !== 'unknown',
+    rewardPath: riskScore >= 50 && key !== 'clean' && key !== 'unknown' ? 'sybil_hunt' : 'scan_wallet',
     reasons,
     evidence: {
       flaggedSignals: flaggedSignals.length,
@@ -338,7 +342,7 @@ export function getSybilVerdict(analysis) {
   // already-cached verdicts (baked before the threshold change) credit catches
   // consistently — and so the client's verdict matches what earn.js will approve.
   if (rs !== null && result?.key) {
-    const bounty = rs >= 60 && result.key !== 'clean' && result.key !== 'unknown';
+    const bounty = rs >= 50 && result.key !== 'clean' && result.key !== 'unknown';
     if (result.bountyEligible !== bounty || result.rewardPath !== (bounty ? 'sybil_hunt' : 'scan_wallet')) {
       result = { ...result, bountyEligible: bounty, rewardPath: bounty ? 'sybil_hunt' : 'scan_wallet' };
     }

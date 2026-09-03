@@ -69,8 +69,11 @@ describe('getBoostedCompositeScore', () => {
       equippedShipSkin: null,
       equippedAura: null,
     });
-    // solar_flare adds to onchain, so boosted score should be higher
-    expect(boostedResult!.score).toBeGreaterThan(baseResult!.score);
+    // The frame changes the ship rating, not the underlying reputation score.
+    expect(boostedResult!.baseScore).toBe(baseResult!.score);
+    expect(boostedResult!.reputationScore).toBe(baseResult!.score);
+    expect(boostedResult!.shipRatingScore).toBeGreaterThan(baseResult!.score);
+    expect(boostedResult!.score).toBe(boostedResult!.shipRatingScore);
   });
 
   it('returns breakdown with all five fields', () => {

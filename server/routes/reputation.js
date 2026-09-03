@@ -98,7 +98,7 @@ function registerReputationRoute(ctx) {
         const displayScore = score > 100 ? score : Math.round(score * 10);
         const blinkPayload = {
           type: 'action',
-          icon: 'https://identityprism.xyz/og-image.png',
+          icon: 'https://identityprism.xyz/phav.png',
           title: 'Identity Prism — Sybil Snapshot',
           description: `Check the sybil risk and reputation score for this Solana wallet: ${shortAddr}\n\nScore: ${displayScore}/1000  |  Tier: ${String(tier).toUpperCase()}  |  Risk: ${String(risk).toUpperCase()}\n\nPowered by Identity Prism behavioral + on-chain sybil detection.`,
           label: 'View Full Report',
@@ -319,7 +319,7 @@ function registerReputationRoute(ctx) {
           compositeTier: compositeData.compositeTier,
           scoreBreakdown: compositeData.breakdown,
           scoreDetails: compositeData.details || null,
-          identity: { score: identity.score, maxScore: 1000, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
+          identity: { score: identity.score, maxScore: 400, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
           stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
           sybilAnalysis: sybil ? {
             trustScore: sybil.trustScore,

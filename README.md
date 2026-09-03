@@ -1,33 +1,27 @@
-# Identity Prism — On-Chain Reputation & Identity Layer for Solana
+# Identity Prism — Wallet Reputation & Activity on Solana
 
 > **Your wallet tells a story. Identity Prism reads it.**
 
 [![Solana Mobile](https://img.shields.io/badge/Platform-Solana%20Mobile-blue)](https://solanamobile.com/)
-[![MagicBlock](https://img.shields.io/badge/Powered%20by-MagicBlock-purple)](https://magicblock.gg/)
 [![Built with Codex + GPT-5.6](https://img.shields.io/badge/Built%20with-Codex%20%2B%20GPT--5.6-black)](./HACKATHON.md)
 
-**Live:** [identityprism.xyz](https://identityprism.xyz) · **Judge Demo (no wallet needed):** [identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Solana dApp Store:** `com.identityprism2.app`
+**Live:** [identityprism.xyz](https://identityprism.xyz) · **Judge Demo (no wallet needed):** [identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk) · **Official mobile demo:** [YouTube](https://www.youtube.com/watch?v=jI_usQJ_P-E) · **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism) · **Solana dApp Store:** `com.identityprism2.app`
 
 ---
 
-## 🏆 OpenAI Build Week — Codex + GPT-5.6 as an adversarial security co-engineer
+## Current security model
 
-Identity Prism's in-app game economy (Prism League) was hardened during OpenAI Build Week using the **OpenAI Codex CLI running GPT-5.6** — not just as a code generator, but as an **adversarial security co-engineer** in a tight audit → spec → build → red-team loop:
-
-- **Audited** the revive/coins/leaderboard flow and surfaced concrete exploits: client-controlled coin deltas, forgeable scores, and an unauthenticated metadata-file exposure.
-- **Redesigned** the economy to be **server-authoritative** — client-supplied coin deltas are fully ignored; coins are derived from server-verified play.
-- **Built** single-use MagicBlock session tokens, on-chain SKR payment verification for paid revives, and atomic SQLite settlement.
-- **Red-teamed itself across 4 rounds**, each pass finding narrower bugs, until the money path was provably safe. Final result: **10/10 anti-cheat tests passing**, deployed to production (v2.0.2).
-
-Full story, Codex session IDs, and code pointers → **[HACKATHON.md](./HACKATHON.md)**. Track: *Apps for Your Life.*
+Prism League sessions use server-issued tokens and server-side checks before scores or coin rewards are recorded. Paid revives require verification of the corresponding on-chain payment. These controls reduce client-side tampering; they are not a claim that every game action or identity signal is on-chain.
 
 ---
 
 ## What is Identity Prism?
 
-Identity Prism is an **on-chain reputation and identity scoring system** built on Solana. It analyzes wallet activity — transactions, holdings, NFTs, DeFi positions, and wallet age — to produce a **reputation score**, **celestial tier**, and **achievement badges** that represent a user's true on-chain identity.
+Identity Prism analyzes public Solana wallet activity — transactions, holdings, NFTs, DeFi positions, and wallet age — together with server-recorded application activity. It produces a **base identity score**, a **composite reputation score**, a **celestial tier**, and **achievement badges**.
 
-Unlike simple wallet trackers, Identity Prism turns raw blockchain data into a **composable reputation layer** — combining on-chain fundamentals with behavioral sybil detection — that dApps, DAOs, and social platforms can query via an API-first design to assess trust and engagement.
+Actual product loop: a weak-scoring wallet can improve only through capped, verified gameplay and app activity. Playing earns off-chain **PRISM points**; PRISM can be spent on gameplay gear/modules and PvP or tournament entry and rewards. Purchased gear affects ship stats, but never base reputation or tier. PRISM is not presently an on-chain token, and future token conversion is not guaranteed.
+
+The profile combines on-chain fundamentals with behavioral sybil signals and in-app activity. Integrators can query the available HTTP endpoints and make their own access or reward decisions; the result is not a guarantee about a person's identity.
 
 ### The problem
 - Wallets are anonymous addresses — there's no quick way to assess trust or reputation.
@@ -35,11 +29,12 @@ Unlike simple wallet trackers, Identity Prism turns raw blockchain data into a *
 - dApps lack a standardized way to gate features or rewards based on on-chain behavior.
 
 ### The solution
-1. **Composite Reputation Score (0–1000)** — blends five signals: on-chain fundamentals (SOL, wallet age, tx count, NFTs, DeFi), sybil-resistance trust, and in-app activity (games, arena, quests). See [Scoring System](#scoring-system).
-2. **Sybil Trust Grade & Risk** — behavioral + on-chain sybil detection yields a **trust grade (A+ → F)** and a **risk level (clean → critical)**, so a wallet's reputation reflects that it's *real*, not just wealthy.
-3. **Celestial Tiers** — Mercury → Mars → Venus → Earth → Neptune → Uranus → Saturn → Jupiter → Sun, plus the rare **Binary Sun** (Seeker Genesis + Chapter 2 Preorder holders).
-4. **Achievement Badges** — identity badges (OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early Adopter) plus activity badges (Verified Human, Clean Record, Trust Pillar, Game Master, Arena Champion, and more).
-5. **API-first design** — every wallet's reputation is available via a public REST API for integration into any dApp.
+1. **Base identity score (0–400)** — wallet fundamentals such as SOL, wallet age, transactions, NFTs, DeFi, and configured identity traits.
+2. **Composite Reputation Score (0–1000)** — combines the five contribution categories described in [Scoring System](#scoring-system).
+3. **Sybil Trust Grade & Risk** — behavioral and on-chain analysis returns trust/risk signals with a verdict and confidence level; it is evidence, not personhood verification.
+4. **Celestial Tiers** — Mercury → Mars → Venus → Earth → Neptune → Uranus → Saturn → Jupiter → Sun, plus Binary Sun for the configured combo.
+5. **Achievement Badges** — profile badges derived from wallet, gameplay, and community signals.
+6. **Ranger XP and ship stats** — play and quests advance the XP track; purchased or unlocked equipment changes ship gameplay stats only, not base reputation or tier.
 
 ---
 
@@ -57,40 +52,53 @@ You can also just use the live web app at **[identityprism.xyz](https://identity
 
 ---
 
+## OpenAI Build Week
+
+The implemented game-economy hardening keeps money-affecting outcomes server-authoritative: rewards are computed on the server, session tokens are single-use, paid revives require verification of the on-chain payment, and score/coin settlement is atomic in SQLite. A metadata allowlist closes the unauthenticated system-JSON path, with focused anti-cheat tests covering these game flows.
+
+MagicBlock boundary: a devnet RPC blockhash may provide session entropy or verification input, while games and settlement run on the app server, not on an Ephemeral Rollup. See [HACKATHON.md](./HACKATHON.md) for the implementation notes. These controls reduce client-side tampering; they are not proof of perfect security.
+
+---
+
 ## Features
 
 ### 🌐 Reputation API
-A public REST API to query any Solana wallet's reputation:
+A JSON HTTP API is served from the main application origin:
 
 ```bash
-# Single wallet
+# Current composite profile
+GET https://identityprism.xyz/api/v2/reputation?address=<SOLANA_ADDRESS>
+
+# Public v1 profile
+GET https://identityprism.xyz/api/v1/reputation/<SOLANA_ADDRESS>
+
+# Legacy identity profile
 GET https://identityprism.xyz/api/reputation?address=<SOLANA_ADDRESS>
 
-# Compare two wallets
+# Legacy comparison and batch routes
 GET https://identityprism.xyz/api/reputation/compare?a=<ADDR_1>&b=<ADDR_2>
-
-# Batch (up to 5 wallets)
 POST https://identityprism.xyz/api/reputation/batch
-Body: { "addresses": ["addr1", "addr2", ...] }
+Body: { "addresses": ["addr1", "addr2"] }
 ```
 
-**Response** (fields match the real `/api/reputation` v2.1 payload; values illustrative):
+The v2 response separates the on-chain identity pillar from the composite profile:
+
 ```json
 {
   "version": "2.1",
-  "onchainScore": 172,
-  "compositeScore": 640,
-  "compositeTier": "uranus",
-  "identity": { "score": 172, "tier": "earth", "badges": ["collector", "titan"], "badgeCount": 2 },
-  "stats": { "solBalance": 4.2, "walletAgeDays": 810, "transactionCount": 3982, "tokenCount": 6, "nftCount": 11 },
-  "sybilAnalysis": {
-    "trustScore": 86, "trustGrade": "A",
-    "riskScore": 8, "riskLevel": "clean",
-    "verdict": "likely_human",
-    "signalsDetected": 1, "totalSignals": 14
-  }
+  "address": "<SOLANA_ADDRESS>",
+  "onchainScore": 0,
+  "compositeScore": 0,
+  "compositeTier": "mercury",
+  "scoreBreakdown": { "onchain": 0, "sybilTrust": 0, "humanProof": 0, "social": 0, "engagement": 0 },
+  "identity": { "score": 0, "maxScore": 400, "tier": "mercury", "badges": [], "badgeCount": 0 },
+  "sybilAnalysis": null
 }
 ```
+
+Composite contribution maxima are `onchain` 400, `sybilTrust` 250, `humanProof` 150, `social` 100, and `engagement` 100. The legacy route's `score` is the base identity score (0–400), not the composite score.
+
+The available sybil and activity routes are `GET /api/sybil/analysis?address=...` (wallet session required), `POST /api/sybil/batch` (up to 20 addresses), and `GET /api/recovery/status?address=...`. Recovery is bounded by the current verdict; gameplay signals do not turn into an unlimited trust score.
 
 ### 🃏 Interactive 3D Identity Card
 A Three.js / react-three-fiber celestial card that renders your wallet's identity as a planet — the higher your tier, the more impressive the celestial body. Cards flip to reveal detailed stats, badges, and score history.
@@ -99,7 +107,7 @@ A Three.js / react-three-fiber celestial card that renders your wallet's identit
 Share your Identity Prism card directly in any Blink-compatible client (wallets, social feeds):
 - **Share Card** — display your identity card as a Solana Action
 - **Mint as NFT** — mint your identity card as an on-chain NFT (Metaplex Core)
-- **Attest** — publish your score on-chain as a Blink
+- **Attest** — prepare an explicit user-signed score attestation
 
 ```
 https://identityprism.xyz/api/actions/share?address=<YOUR_WALLET>
@@ -107,10 +115,10 @@ https://identityprism.xyz/api/actions/attest?address=<YOUR_WALLET>
 ```
 
 ### ⛓️ On-Chain Attestation
-Record your reputation score permanently on Solana via the **Memo Program**. The attestation is co-signed by the Identity Prism authority, creating a verifiable, immutable proof any smart contract or dApp can check.
+The attestation action can record a score on Solana through the **Memo Program** after the user reviews and signs it. Ordinary scans, tier changes, game sessions, and badges are not automatically attestations.
 
 ### 🎮 Prism League — server-verified arcade games
-Three browser-based game modes running inside the app, each seeded via **MagicBlock** and scored **server-side**:
+Browser-based game modes run inside the app and are scored **server-side**:
 
 | Game | Description |
 |---|---|
@@ -118,7 +126,7 @@ Three browser-based game modes running inside the app, each seeded via **MagicBl
 | **Cosmic Defender** | Top-down shooter — 4 sectors of enemies and bosses, auto-fire, powerups. |
 | **Gravity Runner** | Tap to fly, collect crystals, dodge asteroid columns. |
 
-Every run starts with a server-issued MagicBlock session token; the final score and coin reward are computed by the server from verified in-run telemetry, not from client-reported values. Scores land on a global leaderboard, and Prism League also hosts recurring **tournaments** and **text-adventure "Quests"** (branching story chapters, no reflexes required).
+Every run starts with a server-issued session token; the final score and coin reward are computed by the server from in-run telemetry, not only from client-reported values. Scores can appear on the global leaderboard, and Prism League also hosts recurring **tournaments** and **text-adventure "Quests"**.
 
 ### 🏦 Prism Vault
 Stake Identity Prism assets and claim rewards over time, directly from the app (`/api/prism/vault/stake`, `/claim`, `/unstake`, `/status`).
@@ -145,14 +153,14 @@ Native Android app via Capacitor with Solana Mobile Wallet Adapter (Seed Vault) 
 
 ## Security & Anti-Cheat
 
-The Prism League economy is designed so that **the client is never trusted with money-affecting values**. This is the concrete Build Week deliverable (see [HACKATHON.md](./HACKATHON.md) for the full audit → build → red-team story):
+The Prism League economy keeps money-affecting values under server control:
 
 - **Server-authoritative economy** — coin rewards are computed server-side from verified play; the client-supplied coin delta is fully ignored, not just validated.
-- **Single-use session tokens** — every game run is bound to a server-issued MagicBlock session token that can be redeemed exactly once (`server/routes/game.js`, `server/services/gameRules.js`).
+- **Single-use session tokens** — a game run is bound to a server-issued session token that can be redeemed exactly once (`server/routes/game.js`, `server/services/gameRules.js`).
 - **On-chain payment verification for paid revives** — a paid revive (5 SKR) is only granted after the server verifies the actual on-chain transaction (`verifyPaidReviveTransaction` in `server/routes/game.js`).
 - **Atomic settlement** — score/coin/revive state changes are committed atomically in SQLite so a run can't be partially credited or double-spent.
 - **Metadata route allowlist** — closed an unauthenticated system-JSON file exposure in the metadata route (`server/routes/metadata.js`).
-- **Anti-cheat test suite** — `server/__tests__/game-anticheat.test.ts`, 10/10 passing.
+- **Anti-cheat test suite** — focused server tests cover the money-affecting game paths.
 
 ---
 
@@ -163,7 +171,7 @@ The Prism League economy is designed so that **the client is never trusted with 
 | **Frontend** | React 18, TypeScript, Vite, Three.js (`@react-three/fiber`, `@react-three/drei`, `@react-three/postprocessing`), Tailwind CSS, shadcn/ui (Radix), Framer Motion |
 | **Backend** | Node.js (custom HTTP server, no framework), `better-sqlite3`, Helius DAS API proxy, Metaplex Core / Umi |
 | **Blockchain** | Solana (`@solana/web3.js`), Metaplex Core NFTs, SPL Tokens, Solana Actions (Blinks), SKR payments |
-| **Gaming** | MagicBlock Ephemeral Rollups (session seeding), Canvas/WebGL game engines |
+| **Gaming** | Server-issued sessions, server verification, Canvas/WebGL game engines |
 | **Data / RPC** | Helius RPC + DAS (wallet holdings, NFTs, history) |
 | **Mobile** | Capacitor (Android), Solana Mobile Wallet Adapter, Seed Vault, Solana dApp Store |
 | **Observability** | Sentry (`@sentry/react`, `@sentry/node`), Firebase Analytics |
@@ -190,10 +198,10 @@ The Prism League economy is designed so that **the client is never trusted with 
         ┌──────────────┼───────────────────┐
         ▼              ▼                   ▼
 ┌──────────────┐ ┌──────────────┐  ┌────────────────┐
-│ Solana        │ │ MagicBlock   │  │ Helius          │
-│ mainnet       │ │ Ephemeral    │  │ RPC + DAS       │
-│ (Metaplex Core│ │ Rollups      │  │ (holdings, NFTs,│
-│  Memo, SKR/SOL│ │ (game seeds) │  │  tx history)    │
+│ Solana        │ │ App server   │  │ Helius          │
+│ mainnet       │ │ sessions and │  │ RPC + DAS       │
+│ (Metaplex Core│ │ verification │  │ (holdings, NFTs,│
+│  Memo, SKR/SOL│ │              │  │  tx history)    │
 │  payments)    │ │              │  │                 │
 └──────────────┘ └──────────────┘  └────────────────┘
 ```
@@ -202,7 +210,7 @@ The Prism League economy is designed so that **the client is never trusted with 
 
 ## Scoring System
 
-Identity Prism computes a **Composite Reputation Score (0–1000)** that blends five independent signals — so a high score means a wallet is old **and** real **and** active, not just wealthy:
+Identity Prism computes a **Composite Reputation Score (0–1000)** from five contribution categories. It is a product signal, not a proof of a person's identity:
 
 | Pillar | Max | What it measures |
 |---|---:|---|
@@ -213,7 +221,11 @@ Identity Prism computes a **Composite Reputation Score (0–1000)** that blends 
 | **Engagement** | 100 | Quests completed, daily streaks, wallet scans. |
 | **Composite total** | **1000** | |
 
-The **on-chain identity** pillar (0–400) is itself a composite of SOL balance, wallet age, tx count, token/NFT holdings, and DeFi exposure; it maps a wallet to a **celestial tier** and awards **identity badges** (OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early Adopter, Binary). In-app activity unlocks further **badges** — Verified Human, Clean Record, Trust Pillar, Game Master, Arena Champion, Quest Hunter, Streak Lord, Explorer, and more.
+The **on-chain identity** pillar (0–400) is a composite of wallet fundamentals and configured traits. It contributes to the celestial tier and profile badges. In-app activity contributes separate gameplay and engagement signals. Equipment can change ship stats in games; it does not change the base reputation score or tier.
+
+### Recovery limits
+
+Recovery activity is capped by the current sybil verdict and cannot raise effective trust above 50 for a low-trust profile. The current recovery caps are: Clean 25, Unknown/Suspicious 10, Cluster Linked 6, Probable Sybil 2, and Confirmed Sybil 0 trust points. The resulting trust contribution is part of the `sybilTrust` composite pillar (maximum 250).
 
 ### Tier mapping (by composite score)
 
@@ -272,7 +284,7 @@ npx cap sync android
 cd android && ./gradlew assembleRelease
 ```
 
-See `.env.example` for required environment variables (Helius API keys, treasury address, public base URL, etc.).
+See `.env.example` for the backend environment variables used by a local deployment.
 
 ---
 
@@ -281,7 +293,7 @@ See `.env.example` for required environment variables (Helius API keys, treasury
 - **Live app:** [https://identityprism.xyz](https://identityprism.xyz)
 - **Judge demo APK (no wallet):** [https://identityprism.xyz/demo.apk](https://identityprism.xyz/demo.apk)
 - **Twitter:** [@Identity_Prism](https://x.com/Identity_Prism)
-- **Reputation API example:** [identityprism.xyz/api/reputation?address=...](https://identityprism.xyz/api/reputation?address=vines1vzrYbzLMRdu58ou5XTby4qAqVRLmqo36NKPTg)
+- **Reputation API example:** `https://identityprism.xyz/api/v2/reputation?address=<SOLANA_ADDRESS>`
 - **Blink:** `solana-action:https://identityprism.xyz/api/actions/share`
 - **Solana dApp Store:** `com.identityprism2.app`
 - **Build Week write-up:** [HACKATHON.md](./HACKATHON.md)

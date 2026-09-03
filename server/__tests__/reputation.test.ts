@@ -394,6 +394,17 @@ describe.sequential('public reputation endpoint', () => {
     });
   });
 
+  it('GET /api/v2/reputation without an address returns the dedicated v2 error contract', async () => {
+    const response = await getJson('/api/v2/reputation', '198.51.100.15');
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      error: expect.stringContaining('address'),
+      docs: expect.stringContaining('/api/v2/reputation'),
+    });
+    expect(response.body).not.toEqual({ error: 'address required' });
+  });
+
   it('respects the 60 req/min public rate limit', async () => {
     for (let index = 0; index < 60; index += 1) {
       const response = await getJson(`/api/v1/reputation/${ADDRESSES.known}`, '198.51.100.12');
