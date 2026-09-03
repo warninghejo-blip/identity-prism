@@ -4,35 +4,18 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { getCachedJwt } from '@/components/prism/shared';
 import { isDemoMode } from '@/lib/demoMode';
 
-const AUTH_JWT_KEY = 'ip_auth_jwt';
-
 const looksLikeSolanaAddress = (value: string | null | undefined) =>
   Boolean(value && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value));
 
-const parseJwtAddress = (raw: string | null) => {
-  if (!raw) return '';
-  try {
-    const parsed = JSON.parse(raw) as { address?: string };
-    return looksLikeSolanaAddress(parsed.address) ? (parsed.address ?? '') : '';
-  } catch {
-    return '';
-  }
-};
-
 const readJwtAddress = () => {
   try {
-    const sessionRaw = sessionStorage.getItem(AUTH_JWT_KEY);
-    const sessionAddress = parseJwtAddress(sessionRaw);
-    if (sessionAddress && getCachedJwt(sessionAddress)) return sessionAddress;
+    const raw = sessionStorage.getItem('ip_auth_jwt');
+    if (!raw) return '';
+    const parsed = JSON.parse(raw) as { address?: string };
+    const address = parsed.address ?? '';
+    if (looksLikeSolanaAddress(address) && getCachedJwt(address)) return address;
   } catch {
     // ignore sessionStorage failures
-  }
-  try {
-    const localRaw = localStorage.getItem(AUTH_JWT_KEY);
-    const localAddress = parseJwtAddress(localRaw);
-    if (localAddress && getCachedJwt(localAddress)) return localAddress;
-  } catch {
-    // ignore localStorage failures
   }
   return '';
 };

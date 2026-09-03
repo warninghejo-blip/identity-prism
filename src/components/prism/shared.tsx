@@ -612,21 +612,7 @@ type StoredAuthJwt = {
 
 function readStoredAuthJwt(): string | null {
   try {
-    const sessionRaw = sessionStorage.getItem(AUTH_JWT_KEY);
-    if (sessionRaw) return sessionRaw;
-  } catch {
-    /* ignore */
-  }
-  try {
-    const localRaw = localStorage.getItem(AUTH_JWT_KEY);
-    if (localRaw) {
-      try {
-        sessionStorage.setItem(AUTH_JWT_KEY, localRaw);
-      } catch {
-        /* ignore */
-      }
-      return localRaw;
-    }
+    return sessionStorage.getItem(AUTH_JWT_KEY);
   } catch {
     /* ignore */
   }
@@ -637,11 +623,6 @@ function storeAuthJwt(entry: StoredAuthJwt): void {
   const raw = JSON.stringify(entry);
   try {
     sessionStorage.setItem(AUTH_JWT_KEY, raw);
-  } catch {
-    /* ignore */
-  }
-  try {
-    localStorage.setItem(AUTH_JWT_KEY, raw);
   } catch {
     /* ignore */
   }

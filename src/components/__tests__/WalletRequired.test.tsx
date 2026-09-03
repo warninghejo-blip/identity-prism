@@ -79,6 +79,8 @@ describe('WalletRequired', () => {
 
     expect(screen.getByText('Connect Your Wallet')).toBeInTheDocument();
     expect(screen.queryByText('Guarded content')).not.toBeInTheDocument();
+    expect(sessionStorage.getItem('ip_auth_jwt')).toBeNull();
+    expect(localStorage.getItem('ip_auth_jwt')).toContain('legacy-token');
   });
 
   it('requires a wallet signature when a live wallet has no cached JWT', () => {
