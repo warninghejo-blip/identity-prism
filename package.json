@@ -13,7 +13,7 @@
     "seo:submit": "node scripts/submit-indexnow.mjs"
   },
   "dependencies": {
-    "@capacitor-firebase/analytics": "^7.3.0",
+    "@capacitor-firebase/analytics": "^8.5.1",
     "@capacitor/core": "^8.0.1",
     "@capacitor/haptics": "^8.0.1",
     "@metaplex-foundation/mpl-bubblegum": "^5.0.2",
@@ -31,6 +31,7 @@
     "@react-three/postprocessing": "^2.19.1",
     "@sentry/react": "^9.43.0",
     "@solana-mobile/wallet-adapter-mobile": "^2.2.5",
+    "@solana/spl-token": "^0.4.15",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-phantom": "^0.9.28",
     "@solana/wallet-adapter-react": "^0.15.39",
