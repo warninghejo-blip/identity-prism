@@ -139,3 +139,40 @@ check-all-pw.sh
 check-candidates.sh
 mount-shadow.ps1
 e2e-proxy.mjs
+
+# Server runtime state (keep source modules under server/data tracked)
+/server/data/*.db
+/server/data/*.db-wal
+/server/data/*.db-shm
+/server/data/*.sqlite
+/server/data/*.sqlite-wal
+/server/data/*.sqlite-shm
+/server/uploads/
+/uploads/
+
+# Local verification, deployment evidence, and generated deliverables
+/.artifacts/
+/.evidence/
+/artifacts/
+/deploy-evidence/
+/evidence/
+/playwright-report/
+/test-results/
+/generated-media/
+/generated-presentations/
+/presentations/generated/
+
+# Additional Android build/signing outputs
+android/.cxx/
+android/app/release/
+android/capacitor-cordova-android-plugins/build/
+*.aab
+*.keystore
+*.p12
+*.pfx
+
+# Local credential exports
+credentials*.json
+service-account*.json
+id_rsa*
+id_ed25519*

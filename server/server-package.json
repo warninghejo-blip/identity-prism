@@ -1,18 +1,8 @@
 {
-  "name": "identityprism-helius-proxy",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "helius-proxy.js",
-  "scripts": {
-    "start": "node helius-proxy.js"
-  },
-  "dependencies": {
-    "@metaplex-foundation/mpl-core": "^1.4.0",
-    "@metaplex-foundation/umi": "^1.4.1",
-    "@metaplex-foundation/umi-bundle-defaults": "^1.4.1",
-    "@metaplex-foundation/umi-web3js-adapters": "^1.4.1",
-    "@solana/web3.js": "^1.98.4",
-    "canvas": "^3.2.0",
-    "jsonwebtoken": "^9.0.2"
-  }
+  "name": "identityprism-server-legacy-metadata",
+  "private": true,
+  "description": "Legacy deployment metadata only. Use ../package.json and ../package-lock.json for installs, tests, local server execution, and CI.",
+  "x-status": "non-installable-reference",
+  "x-canonical-package": "../package.json",
+  "x-canonical-lockfile": "../package-lock.json"
 }
