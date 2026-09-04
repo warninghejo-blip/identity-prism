@@ -321,7 +321,7 @@ THREAD_TOPICS = [
     'what makes a wallet trustworthy on-chain — and how we measure it',
     'the future of Solana dApps that gate access by on-chain reputation instead of KYC',
     'why building on Solana Mobile (Seeker/Saga) forced us to rethink our entire UX',
-    'how Tapestry social graph + reputation scoring creates a new identity primitive',
+    'how wallet reputation and server-verified activity combine into a practical identity layer',
 ]
 
 TREND_POST_PROMPT = (

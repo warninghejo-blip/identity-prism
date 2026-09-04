@@ -77,6 +77,7 @@
       <tr><td>Wallet identifier</td><td>Your public Solana address</td><td>You, by connecting</td></tr>
       <tr><td>On-chain signals</td><td>Tx count, age, balances, NFT holdings, DeFi positions</td><td>Solana RPC / Helius</td></tr>
       <tr><td>Gameplay data</td><td>Scores, durations, input cadence, achievement progress</td><td>Your sessions in our games</td></tr>
+      <tr><td>Abuse and session security</td><td>Client IP and its in-memory association with a wallet address</td><td>Service requests and wallet sessions</td></tr>
       <tr><td>Diagnostics and analytics</td><td>Error events, product events, page-load timings, device or browser type</td><td>Your client and configured providers</td></tr>
     </table>
     <p>We do not collect your name, email address, phone number, IP-derived precise location, government ID, biometrics, or any document of any kind. We do not run KYC. We never ask.</p>
@@ -112,14 +113,13 @@
       <tr><td>MagicBlock</td><td>Optional devnet RPC/blockhash input; games do not run on an Ephemeral Rollup</td><td>Public RPC requests when that route is used</td></tr>
       <tr><td>Firebase Analytics</td><td>Configured product analytics</td><td>Product events and client metadata</td></tr>
       <tr><td>Sentry</td><td>Configured error monitoring</td><td>Error and diagnostic context</td></tr>
-      <tr><td>Tapestry</td><td>Cross-app social graph</td><td>Wallet address, public profile fields you opt in</td></tr>
       <tr><td>Cloudflare</td><td>CDN, DDoS protection</td><td>Standard request metadata</td></tr>
       <tr><td>Solana RPC nodes</td><td>Blockchain reads</td><td>Public address queries</td></tr>
     </table>
     <p>We do not sell, rent, or barter user data. Period.</p>
 
     <h2 id="s7"><span class="num">07</span>Data retention</h2>
-    <p>Off-chain records and diagnostics are retained according to operational, security, and legal needs; no fixed retention period is guaranteed by the current implementation. You may request deletion of eligible off-chain records. Data submitted to Solana follows the network's public and effectively permanent retention model.</p>
+    <p>The wallet-address-to-client-IP association used for abuse and session security is held in memory and evicted after approximately 24 hours. Server logs may contain operational request metadata and may be retained under the applicable logging, security, and legal policy; the implementation does not promise a fixed on-disk retention period. Other eligible off-chain records may be retained according to operational, security, and legal needs, and you may request their deletion. Data submitted to Solana follows the network's public and effectively permanent retention model.</p>
 
     <h2 id="s8"><span class="num">08</span>Your rights</h2>
     <p>Depending on your jurisdiction (GDPR, CCPA, UK DPA), you have the right to:</p>

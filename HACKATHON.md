@@ -18,7 +18,7 @@ Codex CLI (GPT-5.6). We used GPT-5.6 not just to generate code, but as an
 4. **Adversarial verify** — GPT-5.6 repeatedly red-teamed its own implementation
    across four rounds, each pass finding narrower bugs (a `Number(null)` timing
    bug, revive-grant ordering by UUID instead of index, a plaintext-token leak in
-   a public route) until the money path was provably safe.
+   a public route) until focused tests passed for the identified money-path cases.
 
 ## Codex Session IDs
 
@@ -44,9 +44,10 @@ The Codex-driven hardening landed in commit `614d5b2`:
 ## Status: live in production
 
 The hardening (`614d5b2`) is deployed to production as part of release **v2.0.2**
-(`android/app/build.gradle`, `applicationId com.identityprism2.app`). It has been
-running on real player traffic since the round-4 red-team pass closed the last
-finding.
+(`android/app/build.gradle`, `applicationId com.identityprism2.app`). The described
+controls were tested and hardened against the scenarios covered by the round-4
+pass; that is bounded test evidence, not a claim that every production path or
+later change is vulnerability-free.
 
 On top of the security work, Codex (`gpt-5.6-terra`) also shipped a **no-wallet
 demo mode** (`98ade80`) for judges and first-time users: a "Try Demo (no wallet)"

@@ -70,7 +70,7 @@ code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(255
     <p>All addresses are base58 Solana public keys. Reputation combines public wallet history with server-recorded application activity. Scores, tiers, and badges are computed by the application; an explicit user-signed action is required when a result is recorded on Solana.</p>
 
     <h2 id="s2"><span class="num">02</span>Access</h2>
-    <p>The read routes below are served from the main application origin and are rate-limited. No separate client package is required: call the HTTP endpoints directly. The sybil-analysis route requires the wallet session used by the application.</p>
+    <p>The read routes below are served from the main application origin and are rate-limited. No separate client package is required: call the HTTP endpoints directly. The sybil-analysis route is public and rate-limited when no token is sent. A wallet-session JWT is optional; if an <code>Authorization: Bearer &lt;token&gt;</code> header is supplied, the token must be valid or the request is rejected.</p>
 
     <h2 id="s3"><span class="num">03</span>Endpoints</h2>
 
@@ -83,8 +83,12 @@ code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(255
   "version": "2.1",
   "address": "SOLANA_ADDRESS",
   "onchainScore": 0,
+  "baseScore": 0,
+  "baseTier": "mercury",
+  "baseMaxScore": 400,
   "compositeScore": 0,
   "compositeTier": "mercury",
+  "compositeMaxScore": 1000,
   "scoreBreakdown": {
     "onchain": 0, "sybilTrust": 0, "humanProof": 0,
     "social": 0, "engagement": 0
@@ -105,22 +109,19 @@ code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:rgba(255
     <p>Returns the stored score-history entries for the address. Each entry includes the computed timestamp, score, and risk level.</p>
 
     <h3><span class="method">GET</span><span class="endpoint-path">/api/sybil/analysis?address=</span></h3>
-    <p>Authenticated application route for a wallet's sybil analysis, including trust/risk values, verdict, and detected signals. The caller must use a valid wallet session.</p>
+    <p>Returns a wallet's sybil analysis. Without a token it is a public, IP-rate-limited request. A wallet-session JWT may be supplied as <code>Authorization: Bearer &lt;token&gt;</code>; an invalid supplied token is rejected rather than ignored.</p>
     <pre><code>GET /api/sybil/analysis?address=7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
 
 200 OK
 {
   "address": "7xKX...gAsU",
-  "trust": 92,
-  "risk": "low",
-  "verdict": "verified_human",
-  "signals": {
-    "shared_funding_source": false,
-    "timing_correlation": 0.04,
-    "scripted_behavior": false,
-    "game_skill_verified": true
-  }
+  "trustScore": 92,
+  "riskScore": 8,
+  "riskLevel": "low",
+  "verdict": {},
+  "signals": []
 }</code></pre>
+    <p class="legal-meta"><code>verdict</code> is an object with the route's verdict metadata; <code>signals</code> is an array of detected signal records. The empty containers above avoid implying findings for the example wallet.</p>
 
     <h3><span class="method">POST</span><span class="endpoint-path">/api/sybil/batch</span></h3>
     <p>Returns cached or graph-backed sybil summaries for up to 20 addresses. A missing analysis is reported as <code>not_analyzed</code>.</p>
@@ -136,7 +137,7 @@ Content-Type: application/json
     <p>Legacy batch lookup for 1–5 addresses. <span class="method">GET</span> <code>/api/reputation/compare?a=&amp;b=</code> compares two addresses.</p>
 
     <div class="callout-box">
-      <p><strong>Errors —</strong> Failed requests return JSON with the matching HTTP status: <code>400</code> for invalid input, <code>401</code> for an invalid or missing session where required, <code>404</code> for an unknown address, and <code>429</code> when a route is rate limited.</p>
+      <p><strong>Errors —</strong> Failed requests return JSON with the matching HTTP status: <code>400</code> for invalid input, <code>401</code> for an invalid supplied token or a missing session on routes that require one, <code>404</code> for an unknown address, and <code>429</code> when a route is rate limited.</p>
     </div>
 
     <h2 id="s4"><span class="num">04</span>Rate Limits</h2>

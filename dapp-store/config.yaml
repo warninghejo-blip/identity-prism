@@ -59,9 +59,8 @@ release:
         - Update Card — update NFT metadata without burning, Co-Sign Authority Guard
         - Mint identity as Metaplex Core NFT — pay with SOL or SKR (50% off for Seeker)
         - Black Hole — burn unwanted tokens and NFTs, reclaim rent SOL
-        - Custom GLSL wormhole transitions at 60 FPS
+        - Custom GLSL wormhole navigation transitions and animations
         - Solana Blinks — share your card as an interactive link
-        - Tapestry Social Graph integration
         - Full Solana Mobile Wallet Adapter (MWA) support for Seeker
 
         Built for the Solana community — collectors, degens, builders, and explorers.
@@ -77,7 +76,7 @@ release:
         v4.0: Cosmic Defender — new top-down shooter mode in Prism League (4 levels,
         bosses, powerups, 9 achievements). Update Card — update NFT metadata in-place
         without burning (~0.0005 SOL), protected by Co-Sign Authority Guard. Custom GLSL
-        Wormhole Transitions for all navigation at 60 FPS. Procedural Audio Engine — all
+        Wormhole Transitions and animations for navigation. Procedural Audio Engine — all
         game SFX synthesized via Web Audio API, zero audio files. Redesigned badge artwork,
         4 new badges (13 total). Score History sparkline and Progress Ring on card back.
         Procedural plasma shader for Sun/Binary Sun with organic godrays. Realistic asteroid
@@ -104,6 +103,8 @@ solana_mobile_dapp_publisher_portal:
     8. Tap the game icon to enter Orbit Survival — tap/space to reverse orbit direction.
     9. After game over, verify the server-verified score first. "Save On-Chain" is a separate, explicit user-signed Memo attestation flow; game events are not written automatically.
     10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN. Its score and tier are live values and may change.
+# The Solana dApp Store CLI generates .asset-manifest.json only during publisher portal
+# submission. Do not create or edit that manifest manually.
 # CLI-generated submission cache. This is not the current Android version or an identity-mint count.
 lastSubmittedVersionOnChain:
   address: FZ1T6CvCU1JBH1quoDvkodAkfxqNYbMp9upRVwGbsvvg

@@ -34,3 +34,6 @@ jobs:
 
       - name: Build production bundle
         run: npm run build
+
+      - name: Run SEO regression checks
+        run: npm run test:seo

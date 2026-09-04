@@ -1,102 +1,60 @@
-# 🚀 Deployment & Integration Guide: Identity Prism
+# Deployment Guide
 
-This guide explains how to prepare and transport the Identity Prism module into a production Solana dApp or deploy it as a standalone application.
+Identity Prism is deployed as two cooperating services:
 
-## 1. 🏗️ Build for Production
+- a Vite-built static web application from `dist/`;
+- a separate long-running Node.js service started from the repository root with `node server/helius-proxy.js`.
 
-To create an optimized production build:
+The static host does not replace the Node service. Route API requests to the Node service through the production reverse proxy while serving the Vite artifacts as static files.
+
+## Prerequisites and configuration
+
+Use Node.js 22 and the root npm manifests. Install from the repository root:
 
 ```bash
-npm run build
+npm ci
 ```
 
-This will generate a `dist` folder containing:
-- `index.html` (Entry point)
-- `assets/` (Compiled JS and CSS)
-- `textures/` (Copied from public/textures)
+Copy the root `.env.example` to `.env` and supply environment-specific values outside version control. `.env.example` is the authoritative inventory of backend environment variables and runtime paths for local and production operation.
 
-### Preview Locally
-Before deploying, verify the build works locally:
+Service credentials, including RPC credentials, belong in the server environment. Do not expose a Helius key or another secret through a browser-prefixed `VITE_*` variable, and never commit `.env`.
+
+## Build and verify the web application
+
+From the repository root:
+
+```bash
+npm test
+npm run build
+npm run test:seo
+```
+
+`npm run build` compiles the Vite application and prerenders the configured SEO routes into `dist/`. `npm run test:seo` validates that generated output, so it must run after the build.
+
+For a local inspection of the generated site, run:
+
 ```bash
 npm run preview
 ```
 
----
+The preview server is a local verification aid, not the production backend.
 
-## 2. 📦 Transporting to Another Solana dApp
+## Run the Node service
 
-If you are moving this code into an existing Solana project (e.g., Next.js or another Vite app), follow these steps:
+Start the backend from the repository root so the paths and environment described by `.env.example` resolve consistently:
 
-### A. Dependencies
-Ensure the target project has these packages installed:
-```json
-"dependencies": {
-  "@react-three/fiber": "^8.18.0",
-  "@react-three/drei": "^9.122.0",
-  "three": "^0.160.1",
-  "framer-motion": "^12.0.0",
-  "lucide-react": "^0.462.0",
-  "@solana/wallet-adapter-react": "^0.15.35",
-  "clsx": "^2.1.1",
-  "tailwind-merge": "^2.6.0"
-}
+```bash
+node server/helius-proxy.js
 ```
 
-### B. File Migration
-Copy the following folders to your target project:
+In production, supervise this command with the platform's process manager. Keep secrets in the service environment, apply the platform's log-retention policy, and terminate TLS and forward API traffic through the chosen reverse proxy. The repository does not require a particular host name, IP address, or provider.
 
-1. **Components**: `src/components/` -> `your-app/src/components/`
-   - *Crucial files:* `CelestialCard.tsx`, `Planet3D.tsx`, `StarField.tsx`
-2. **Hooks**: `src/hooks/` -> `your-app/src/hooks/`
-   - *Crucial file:* `useWalletData.ts`
-3. **Utils**: `src/utils/` -> `your-app/src/utils/`
-4. **Assets**: `public/textures/` -> `your-app/public/textures/`
-   - *Note:* Ensure the path `/textures/...` remains accessible from the root.
+## Publish static artifacts
 
-### C. Environment Variables
-You must set the Helius API key in your destination project's `.env` file:
+Publish the contents of `dist/` to a static host or CDN that serves the application from the configured domain root. Preserve the repository's redirect and route configuration, and forward backend API requests to the separately running Node service.
 
-**Vite:**
-```env
-VITE_HELIUS_API_KEY=your_api_key_here
-```
+Do not publish source files, `.env`, runtime databases, uploads, logs, evidence bundles, or Android signing material with `dist/`.
 
-**Next.js:**
-```env
-NEXT_PUBLIC_HELIUS_API_KEY=your_api_key_here
-```
-*Note: If using Next.js, update `src/constants.ts` to use `process.env.NEXT_PUBLIC_HELIUS_API_KEY` instead of `import.meta.env`.*
+## Solana dApp Store submission
 
----
-
-## 3. 🚢 Standalone Deployment
-
-### Vercel / Netlify
-1. Push this repository to GitHub.
-2. Import project into Vercel/Netlify.
-3. Set the **Build Command**: `npm run build`
-4. Set the **Output Directory**: `dist`
-5. **Important:** Add `VITE_HELIUS_API_KEY` in the project settings (Environment Variables).
-
-### Solana Hosting (Shdw Drive / IPFS)
-For decentralized hosting:
-1. Run `npm run build`.
-2. Upload the contents of the `dist` folder to Shdw Drive or IPFS.
-3. Ensure relative paths are handled correctly (you may need to set `base: './'` in `vite.config.ts` if not serving from domain root).
-
----
-
-## 4. 🎨 Customization Checklist
-
-- **Saturn Rings**: Updated to use volumetric Torus geometry in `Planet3D.tsx`.
-- **Sun Shaders**: Custom shaders for pulsing magma effect are in `Planet3D.tsx`.
-- **Card Flip**: Controlled via `isFlipped` state in `CelestialCard.tsx`.
-- **Badges**: Definitions are in `CelestialCard.tsx` (function `getBadgeItems`).
-
----
-
-## 5. ⚠️ Troubleshooting
-
-- **Textures not loading?** Check that the `public/textures` folder was copied correctly and that your web server serves static files from the root.
-- **Wallet not connecting?** Ensure `WalletProvider` is wrapping your application (see `src/main.tsx`).
-- **3D Performance?** The `Planet3D` component uses high-quality shaders. For mobile optimization, consider reducing `pixelRatio` in the `Canvas` component in `CelestialCard.tsx`.
+The tracked source of submission metadata is `dapp-store/config.yaml` plus its referenced media and APK. The Solana dApp Store CLI generates `dapp-store/.asset-manifest.json` only as part of publisher portal submission. Do not create or edit that manifest manually, and do not treat a local generated manifest as proof of portal or on-chain state.

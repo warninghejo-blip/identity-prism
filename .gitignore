@@ -149,6 +149,35 @@ e2e-proxy.mjs
 /server/data/*.sqlite-shm
 /server/uploads/
 /uploads/
+/payments.db
+/prism_data.json
+
+# Root-only diagnostic and verification scratch files
+/window_dump.xml
+/out_norm.txt
+/base_norm.txt
+/bash.exe.stackdump
+/tournament_data (1).json
+/dapp-verification-form.txt
+/DAPP-STORE-*.txt
+/public/* (1).*
+
+# Root-only pitch, deck, demo, screenshot, crop, and voice evidence
+/.demo-recon/
+/dapp-store-screenshots/
+/deck-html/
+/demo-video/
+/demo_storyboard.md
+/Identity_Prism_Pitch_Deck*.pdf
+/Identity_Prism_Pitch_Deck*.pptx
+/Pitch.pptx
+/crop_*.png
+/shot_*.png
+/voice*.mp3
+/voice_transcript.*
+
+# Generated only by the Solana dApp Store CLI during portal submission
+/dapp-store/.asset-manifest.json
 
 # Local verification, deployment evidence, and generated deliverables
 /.artifacts/
