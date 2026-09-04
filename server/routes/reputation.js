@@ -6,6 +6,10 @@ import {
   TransactionInstruction,
 } from '@solana/web3.js';
 import { checkApiKey } from '../services/apiKeyMiddleware.js';
+import {
+  BASE_IDENTITY_MAX_SCORE,
+  buildReputationScoreContract,
+} from '../services/reputationContract.js';
 
 const apiKeyRegistry = new Map(
   (process.env.REPUTATION_API_KEYS || '').split(',').filter(Boolean).map((key) => [key.trim(), true]),
@@ -317,9 +321,9 @@ function registerReputationRoute(ctx) {
           onchainScore: identity.score,
           compositeScore: compositeData.compositeScore,
           compositeTier: compositeData.compositeTier,
+          ...buildReputationScoreContract(identity, compositeData),
           scoreBreakdown: compositeData.breakdown,
           scoreDetails: compositeData.details || null,
-          identity: { score: identity.score, maxScore: 400, tier: identity.tier, badges: identity.badges || [], badgeCount: identity.badges?.length || 0 },
           stats: { solBalance: Math.round(snapshot.solBalance * 1000) / 1000, walletAgeDays: snapshot.walletAgeDays, transactionCount: snapshot.txCount, tokenCount: snapshot.tokenCount, nftCount: snapshot.nftCount },
           sybilAnalysis: sybil ? {
             trustScore: sybil.trustScore,
@@ -425,6 +429,7 @@ function registerReputationInlineRoute(ctx) {
       score: snapshot.identity.score,
       tier: snapshot.identity.tier,
       badges: snapshot.identity.badges,
+      ...buildReputationScoreContract(snapshot.identity, comp, { primary: 'base' }),
       compositeScore: comp.compositeScore,
       compositeTier: comp.compositeTier,
       stats: {
@@ -434,6 +439,19 @@ function registerReputationInlineRoute(ctx) {
         tokenCount: snapshot.tokenCount,
         nftCount: snapshot.nftCount,
       },
+    };
+  };
+
+  const formatLegacyReputation = (address, legacyResponse) => {
+    const comp = walletDatabase.get(address)?.composite || calculateCompositeScore(buildCompositeInput(address));
+    return {
+      ...legacyResponse,
+      ...buildReputationScoreContract({
+        score: legacyResponse.score,
+        tier: legacyResponse.tier,
+        badges: legacyResponse.badges,
+      }, comp, { primary: 'base' }),
+      compositeBreakdown: comp.breakdown,
     };
   };
 
@@ -474,7 +492,7 @@ function registerReputationInlineRoute(ctx) {
 
       const cachedWallet = walletDatabase.get(address);
       if (cachedWallet?.lastReputationAt && Date.now() - cachedWallet.lastReputationAt < 60_000 && cachedWallet._lastReputation) {
-        respondJson(res, 200, cachedWallet._lastReputation);
+        respondJson(res, 200, formatLegacyReputation(address, cachedWallet._lastReputation));
         return true;
       }
 
@@ -569,7 +587,7 @@ function registerReputationInlineRoute(ctx) {
         });
         triggerCompositeUpdate(address);
 
-        const repResponse = {
+        const repResponse = formatLegacyReputation(address, {
           address,
           score: identity.score,
           tier: identity.tier,
@@ -587,7 +605,7 @@ function registerReputationInlineRoute(ctx) {
             tokenCount,
             nftCount,
           },
-        };
+        });
         updateWalletEntry(address, { _lastReputation: repResponse, lastReputationAt: Date.now() });
         respondJson(res, 200, repResponse);
       } catch (error) {
@@ -625,6 +643,7 @@ function registerReputationInlineRoute(ctx) {
               score: snapshot.identity.score,
               tier: snapshot.identity.tier,
               badges: snapshot.identity.badges,
+              ...buildReputationScoreContract(snapshot.identity, comp, { primary: 'base' }),
               compositeScore: comp.compositeScore,
               compositeTier: comp.compositeTier,
               stats: {
@@ -735,8 +754,8 @@ function registerReputationInlineRoute(ctx) {
           respondJson(res, 200, {
             type: 'action',
             icon: `${baseUrl}/api/actions/render?address=${address}&side=front`,
-            title: `Attest Score: ${snapshot.identity.score}/1000 — ${snapshot.identity.tier.replace('_', ' ').toUpperCase()}`,
-            description: `Badges: ${snapshot.identity.badges.join(', ') || 'none'}. Click to record this reputation permanently on the Solana blockchain.`,
+            title: `Attest Base Identity Score: ${snapshot.identity.score}/${BASE_IDENTITY_MAX_SCORE} — ${snapshot.identity.tier.replace('_', ' ').toUpperCase()}`,
+            description: `Base identity badges: ${snapshot.identity.badges.join(', ') || 'none'}. Click to record this base identity score permanently on the Solana blockchain.`,
             label: `Attest ${snapshot.identity.score} pts`,
             links: {
               actions: [

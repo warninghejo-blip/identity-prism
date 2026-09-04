@@ -59,6 +59,8 @@ const seedWorkspace = () => {
       [ADDRESSES.known]: {
         address: ADDRESSES.known,
         score: 210,
+        tier: 'neptune',
+        badges: ['collector'],
         scoreBreakdown: {
           solBalance: { pts: 24, max: 40, raw: 1.7 },
           walletAge: { pts: 72, max: 100, raw: 420 },
@@ -114,6 +116,8 @@ const seedWorkspace = () => {
       [ADDRESSES.flagged]: {
         address: ADDRESSES.flagged,
         score: 60,
+        tier: 'mars',
+        badges: [],
         scoreBreakdown: {
           solBalance: { pts: 8, max: 40, raw: 0.2 },
           walletAge: { pts: 14, max: 100, raw: 45 },
@@ -345,6 +349,20 @@ describe.sequential('public reputation endpoint', () => {
     expect(response.body).toMatchObject({
       address: ADDRESSES.known,
       tier: expect.any(String),
+      maxScore: 1000,
+      baseScore: 210,
+      baseTier: 'neptune',
+      baseMaxScore: 400,
+      compositeScore: expect.any(Number),
+      compositeTier: expect.any(String),
+      compositeMaxScore: 1000,
+      identity: {
+        score: 210,
+        maxScore: 400,
+        tier: 'neptune',
+        badges: ['collector'],
+        badgeCount: 1,
+      },
       sybilRisk: 'low',
       breakdown: {
         onchain: expect.any(Number),
@@ -370,6 +388,8 @@ describe.sequential('public reputation endpoint', () => {
       ttl: 300,
     });
     expect(response.body.score).toBeGreaterThan(0);
+    expect(response.body.score).toBe(response.body.compositeScore);
+    expect(response.body.tier).toBe(response.body.compositeTier);
     expect(response.body.sybilConfidence).toBeGreaterThanOrEqual(0);
     expect(response.body.sybilConfidence).toBeLessThanOrEqual(1);
     expect(new Date(response.body.updatedAt).toISOString()).toBe(response.body.updatedAt);

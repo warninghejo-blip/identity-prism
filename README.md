@@ -90,15 +90,19 @@ The v2 response separates the on-chain identity pillar from the composite profil
   "version": "2.1",
   "address": "<SOLANA_ADDRESS>",
   "onchainScore": 0,
+  "baseScore": 0,
+  "baseTier": "mercury",
+  "baseMaxScore": 400,
   "compositeScore": 0,
   "compositeTier": "mercury",
+  "compositeMaxScore": 1000,
   "scoreBreakdown": { "onchain": 0, "sybilTrust": 0, "humanProof": 0, "social": 0, "engagement": 0 },
   "identity": { "score": 0, "maxScore": 400, "tier": "mercury", "badges": [], "badgeCount": 0 },
   "sybilAnalysis": null
 }
 ```
 
-Composite contribution maxima are `onchain` 400, `sybilTrust` 250, `humanProof` 150, `social` 100, and `engagement` 100. The legacy route's `score` is the base identity score (0–400), not the composite score.
+Composite contribution maxima are `onchain` 400, `sybilTrust` 250, `humanProof` 150, `social` 100, and `engagement` 100. Public reputation responses expose explicit `baseScore`/`baseTier`/`baseMaxScore` and `compositeScore`/`compositeTier`/`compositeMaxScore` fields. For compatibility, `/api/v1/reputation/:address` keeps `score`/`tier` as composite aliases with `maxScore: 1000`; the legacy `/api/reputation`, batch, and compare routes keep `score`/`tier` as base identity aliases with `maxScore: 400`. Attest actions record that base identity score, not the five-pillar composite.
 
 The available sybil and activity routes are `GET /api/sybil/analysis?address=...` (wallet session required), `POST /api/sybil/batch` (up to 20 addresses), and `GET /api/recovery/status?address=...`. Recovery is bounded by the current verdict; gameplay signals do not turn into an unlimited trust score.
 

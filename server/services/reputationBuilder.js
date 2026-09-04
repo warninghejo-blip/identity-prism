@@ -1,6 +1,7 @@
 import { calculateIdentity } from './scoring.js';
 import { calculateCompositeScore } from './compositeScore.js';
 import { createCompositeOrchestrator } from './compositeOrchestrator.js';
+import { buildReputationScoreContract } from './reputationContract.js';
 
 const USER_DATA_GAME_STATS = [
   { key: 'orbit_survival_stats_v1', gameType: 'orbit', scoreFields: ['bestScore', 'totalSurvivalTime'] },
@@ -178,6 +179,7 @@ function createReputationBuilderService({
       address,
       score: compositeData.compositeScore,
       tier: compositeData.compositeTier,
+      ...buildReputationScoreContract(walletEntry, compositeData, { primary: 'composite' }),
       sybilRisk: mapPublicSybilRisk(sybilVerdict?.key),
       sybilConfidence: Math.max(0, Math.min(1, Number(sybilVerdict?.confidenceScore || 35) / 100)),
       breakdown: compositeData.breakdown,
