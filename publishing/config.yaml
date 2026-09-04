@@ -37,19 +37,15 @@ release:
   catalog:
     en-US:
       name: Identity Prism
-      short_description: Solana wallet identity card
+      short_description: Solana wallet reputation and identity
       long_description: |-
-        Identity Prism transforms your Solana wallet activity into a living identity card. It analyzes transactions, holdings, NFTs, DeFi positions, and wallet age to produce a reputation score (0–1400), a celestial tier (Mercury → Binary Sun), and achievement badges that represent your true on-chain identity.
-        Features: • Reputation Score — composite score based on SOL balance, wallet age, transaction count,
-          NFT holdings, DeFi activity, and special assets.
-        • Celestial Tiers — from Mercury (new wallets) through Mars, Earth, Saturn, Jupiter,
-          to Sun (top-tier OGs). Holders of both Seeker Genesis + Chapter 2 Preorder earn
-          the rare Binary Sun tier.
-        • Achievement Badges — OG, Whale, Collector, Titan, Maxi, Seeker, Visionary, Early
-          Adopter, and more.
+        Identity Prism transforms public Solana wallet data and server-recorded application signals into a living identity card. The legacy/base identity score spans 0–400; the current five-pillar composite spans 0–1000, and the celestial tier follows that composite.
+        Features: • Reputation Scores — legacy/base identity and current five-pillar composite values are calculated from the latest available inputs.
+        • Celestial Tiers — the current tier follows the five-pillar composite score.
+        • Achievement Badges — 13 current in-app badge assets. Badge and tier events are not automatically written on-chain.
         • 3D Identity Card — stunning Three.js-powered celestial card with interactive planet
           rendering based on your tier.
-        • Mint as NFT — mint your identity card as a Metaplex Core NFT on Solana. • Solana Blinks — share and attest your identity via Solana Actions. • Tapestry Social Graph — publish identity profiles for cross-app reputation discovery. • Reputation API — public REST API for any dApp to query wallet reputation. • AI Twitter Agent — autonomous bot analyzing on-chain identity and posting insights.
+        • Mint as NFT — mint your identity card as a Metaplex Core NFT on Solana. • Solana Blinks — share the card and explicitly sign a separate Memo attestation via Solana Actions. • Tapestry Social Graph — publish identity profiles for cross-app reputation discovery. • Reputation API — public REST API for any dApp to query wallet reputation. • AI Twitter Agent — autonomous bot summarizing wallet signals and posting insights.
       new_in_version: 'v4.0: Cosmic Defender — new top-down shooter mode (4 levels, bosses, powerups, 9 achievements). Update Card — update NFT metadata in-place without burning (~0.0005 SOL), protected by Co-Sign Authority Guard. Custom GLSL Wormhole Transitions for all navigation at 60 FPS. Procedural Audio Engine — all game SFX synthesized via Web Audio API, zero audio files. Redesigned badges, 4 new (13 total). Score History sparkline and Progress Ring. Procedural plasma shader for Sun/Binary Sun with godrays. Realistic asteroid textures (Poly Haven CC0). InstancedMesh — 200 to 4 draw calls. Wallet reconnection fix.'
       saga_features: Native Mobile Wallet Adapter (Seed Vault) support for seamless wallet connection on Seeker and Saga devices. Full MWA integration for signing, minting, and updating NFTs directly from the app.
   android_details:
@@ -64,7 +60,7 @@ solana_mobile_dapp_publisher_portal:
   testing_instructions: |-
     1. Open the app and tap 'Connect Wallet' to connect via Phantom or any Solana wallet. 2. The app will scan your wallet and display your Identity Prism card with tier, score,
        and badges.
-    3. Flip the card to see detailed stats (SOL balance, wallet age, transaction count, NFTs). 4. Tap 'MINT IDENTITY' to mint your card as an on-chain NFT (requires ~0.01 SOL). 5. Use 'SHARE TO TWITTER' to post your identity on X. 6. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN (Binary Sun tier, score 1140).
+    3. Flip the card to see detailed stats (SOL balance, wallet age, transaction count, NFTs). 4. Tap 'MINT IDENTITY' to mint your card as a Metaplex Core NFT (requires ~0.01 SOL). 5. Use 'SHARE TO TWITTER' to post your identity on X. 6. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN. Its score and tier are live values and may change.
 lastSubmittedVersionOnChain:
   address: 8FhukmBa19nh6KhiNY5BvchhtpVumJyao3S6jZB6ucp9
   version_code: 24

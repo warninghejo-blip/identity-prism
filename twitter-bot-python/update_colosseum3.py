@@ -11,18 +11,18 @@ api_key = secrets["apiKey"]
 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 new_desc = (
-    "Identity Prism is an on-chain reputation and identity layer for Solana. "
-    "Connect any wallet to get a reputation score (0-1400), celestial tier, achievement badges, "
-    "and a stunning 3D identity card — all computed from real on-chain data.\n\n"
+    "Identity Prism is a wallet reputation and identity experience for Solana. "
+    "It uses public on-chain data and server-recorded application signals. The legacy/base identity score spans 0-400; "
+    "the current five-pillar composite spans 0-1000, its tier follows that composite, and wallet values are dynamic.\n\n"
     "Core Features:\n"
     "- Reputation API (public REST): /api/reputation?address=WALLET — any dApp can integrate\n"
-    "- On-Chain Attestation: Record reputation permanently on Solana via Memo program, co-signed by authority. Works as Solana Blink.\n"
+    "- Optional On-Chain Attestation: explicitly sign a separate Memo snapshot, co-signed by authority. Badge, tier, and game events are not written automatically.\n"
     "- Attestation Verify Page: identityprism.xyz/verify — verify any attestation tx\n"
     "- AI Twitter Agent (@Identity_Prism): Auto-replies with real reputation data when mentioned with a wallet address\n"
     "- 3D Solar System Visualization (Three.js)\n"
-    "- 14 scoring factors, 13 badge types, 10 celestial tiers\n"
+    "- Current composite tiers and 13 in-app badge assets\n"
     "- Solana Blinks/Actions: share card, mint NFT, attest reputation\n"
-    "- cNFT Minting via Metaplex Core\n"
+    "- Metaplex Core identity NFT minting\n"
     "- Black Hole token burner\n"
     "- Android app via Capacitor + Solana MWA\n\n"
     "Stack: Vite+React+Three.js, Node.js, Helius DAS, Gemini AI, Metaplex Core, Solana Actions/Blinks, Memo program\n"
@@ -30,13 +30,13 @@ new_desc = (
 )
 
 new_solana = (
-    "1. Helius RPC + DAS API: Wallet tx history, token holdings, NFT collections for 14-factor reputation scoring\n"
-    "2. Solana Memo Program: On-chain attestation — writes reputation as JSON memo, co-signed by treasury authority\n"
+    "1. Helius RPC + DAS API: Public wallet-data inputs for reputation analysis\n"
+    "2. Solana Memo Program: Optional user-signed reputation snapshot, co-signed by treasury authority\n"
     "3. Metaplex Core: Mints identity cards as on-chain NFTs\n"
     "4. SPL Token: SOL payments, token balance analysis for scoring\n"
     "5. Solana Actions/Blinks: Three Blink endpoints — share card, mint NFT, attest reputation\n"
     "6. Black Hole: Burns SPL tokens (TOKEN_PROGRAM + TOKEN_2022), reclaims rent\n"
-    "7. Reputation API: Public REST endpoints for trust assessment and sybil detection"
+    "7. Reputation API: Public REST endpoints exposing wallet-analysis signals, not definitive personhood verification"
 )
 
 payload = {

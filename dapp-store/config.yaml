@@ -45,12 +45,14 @@ release:
       short_description: Solana wallet reputation and identity
       long_description: |
         Identity Prism scans any Solana wallet and builds a cosmic identity card with
-        public on-chain data and server-recorded application signals. Your tier
-        (Mercury → Binary Sun) follows the current composite score.
+        public on-chain data and server-recorded application signals. The legacy/base
+        identity score spans 0–400; the current five-pillar composite spans 0–1000,
+        and the celestial tier follows that composite.
 
         Features:
         - 3D interactive planet card with score history sparkline and progress ring
-        - 13 achievement badges with custom artwork
+        - 13 in-app achievement badge assets with custom artwork; badge and tier events
+          are not automatically written on-chain
         - Prism League — Orbit Survival (dodge asteroids, server-verified scores)
           and Cosmic Defender (top-down shooter, 4 levels, bosses, powerups)
         - Procedural Audio Engine — all game SFX synthesized via Web Audio API, zero files
@@ -68,7 +70,8 @@ release:
         all 3 games. A MagicBlock devnet blockhash may be used as session input; games
         do not run on an Ephemeral Rollup. Fixed mint and identity-update transaction issues.
         Fixed loading-overlay getting stuck. Fixed wallet balance display. Fixed Vault
-        buy flow. Coin purchases now verified on-chain. Improved identity-card
+        buy flow. Payment transactions for in-app point purchases are now verified on-chain;
+        PRISM remains off-chain application points, and a future token is not guaranteed. Improved identity-card
         discoverability with a clearer call-to-action and hint.
 
         v4.0: Cosmic Defender — new top-down shooter mode in Prism League (4 levels,
@@ -93,13 +96,13 @@ solana_mobile_dapp_publisher_portal:
   testing_instructions: |
     1. Open the app and connect any Solana wallet via MWA (Seeker recommended).
     2. Wait for the scan — the space curtain should open to reveal the card.
-    3. Verify the 3D planet matches the wallet tier (e.g. high-score wallets get Sun/Jupiter).
+    3. Verify the 3D planet matches the wallet's current composite tier.
     4. Flip to back to view stats tab and badges tab.
     5. Tap "Black Hole" portal on the card to enter the token burner — select any SPL token and burn it.
-    6. Tap Mint to mint a cNFT identity card. Try dismissing the wallet prompt to verify instant cancel detection.
+    6. Tap Mint to mint a Metaplex Core identity NFT. Try dismissing the wallet prompt to verify instant cancel detection.
     7. Use Share to verify the Twitter share with card image works.
     8. Tap the game icon to enter Orbit Survival — tap/space to reverse orbit direction.
-    9. After game over, use "Save On-Chain" to review the separate user-signed Memo attestation flow.
+    9. After game over, verify the server-verified score first. "Save On-Chain" is a separate, explicit user-signed Memo attestation flow; game events are not written automatically.
     10. Test wallet: 2psA2ZHmj8miBjfSqQdjimMCSShVuc2v6yUpSLeLr4RN. Its score and tier are live values and may change.
 # CLI-generated submission cache. This is not the current Android version or an identity-mint count.
 lastSubmittedVersionOnChain:

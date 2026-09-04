@@ -18,9 +18,9 @@ base_urls = [
 ]
 
 new_data = {
-    "description": "Identity Prism is an on-chain reputation and identity layer for Solana. Connect any wallet to get a reputation score (0-1400), celestial tier, achievement badges, and a 3D identity card from real on-chain data.\n\nCore Features:\n- Reputation API (public REST): /api/reputation?address=WALLET\n- On-Chain Attestation: Memo program, co-signed by authority. Works as Solana Blink.\n- Verify Page: identityprism.xyz/verify\n- AI Twitter Agent with wallet auto-reply\n- 3D Solar System (Three.js), 14 scoring factors, 13 badges, 10 tiers\n- Solana Blinks: share card, mint NFT, attest reputation\n- cNFT Minting, Black Hole burner, Android app\n\nLive: https://identityprism.xyz",
-    "repoLink": "https://github.com/YourIdentityPrism/identity-prism",
-    "solanaIntegration": "1. Helius RPC+DAS: 14-factor reputation scoring\n2. Memo Program: On-chain attestation co-signed by treasury\n3. Metaplex Core: NFT minting\n4. SPL Token analysis\n5. Actions/Blinks: share, mint, attest\n6. Black Hole: token burn + rent reclaim\n7. Reputation REST API",
+    "description": "Identity Prism is a wallet reputation and identity experience for Solana, using public on-chain data and server-recorded application signals. The legacy/base identity score spans 0-400; the current five-pillar composite spans 0-1000, its tier follows that composite, and wallet values are dynamic.\n\nCore Features:\n- Reputation API (public REST): /api/reputation?address=WALLET\n- Optional On-Chain Attestation: separate, explicit user-signed Memo snapshot, co-signed by authority; badge, tier, and game events are not written automatically\n- Verify Page: identityprism.xyz/verify\n- AI Twitter Agent with wallet auto-reply\n- 3D Solar System (Three.js), 13 in-app badge assets, current composite tiers\n- Solana Blinks: share card, mint NFT, attest reputation\n- Metaplex Core identity NFT minting, Black Hole burner, Android app\n\nLive: https://identityprism.xyz",
+    "repoLink": "https://github.com/warninghejo-blip/identity-prism",
+    "solanaIntegration": "1. Helius RPC+DAS: public wallet-data inputs for reputation analysis\n2. Memo Program: optional user-signed attestation snapshot, co-signed by treasury\n3. Metaplex Core: identity NFT minting\n4. SPL Token analysis\n5. Actions/Blinks: share, mint, attest\n6. Black Hole: token burn + rent reclaim\n7. Reputation REST API",
 }
 
 # Auth variations

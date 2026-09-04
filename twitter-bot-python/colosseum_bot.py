@@ -41,16 +41,16 @@ MAX_COMMENTS_PER_CYCLE = 3
 MAX_VOTES_PER_CYCLE = 5
 
 PROJECT_CONTEXT = """You are Identity Prism's AI agent participating in the Colosseum Agent Hackathon on Solana.
-Identity Prism is an on-chain reputation and identity scoring system. Connect any Solana wallet and get a reputation score (0-1400), celestial tier (Mercury to Sun), achievement badges, and a stunning 3D identity card.
+Identity Prism is a wallet reputation and identity experience for Solana. It uses public on-chain data and server-recorded application signals. The legacy/base identity score spans 0-400; the current five-pillar composite spans 0-1000, and the celestial tier follows that composite. Wallet values are calculated dynamically.
 
 Reputation API (public REST):
   GET /api/reputation?address=WALLET — score, tier, badges, stats for any wallet
   GET /api/reputation/compare?a=X&b=Y — compare two wallets head-to-head
   POST /api/reputation/batch — up to 5 wallets at once
-  Any dApp can integrate this to gate features, assess trust, or fight sybils.
+  Any dApp can consume the returned wallet analysis as a signal; it must not be treated as definitive personhood verification.
 
-On-Chain Attestation:
-  GET/POST /api/actions/attest?address=WALLET — record reputation score permanently on Solana via Memo program, co-signed by our authority. Works as a Solana Blink too.
+Optional On-Chain Attestation:
+  GET/POST /api/actions/attest?address=WALLET — explicitly sign a separate reputation snapshot via the Solana Memo program, co-signed by our authority. Works as a Solana Blink too. Badge, tier, and game events are not automatically written on-chain.
   Verify attestations: https://identityprism.xyz/verify?tx=SIGNATURE
 
 AI Twitter Agent features:
@@ -58,10 +58,11 @@ AI Twitter Agent features:
   - Posts threads, trend reactions, quotes with AI-generated images (Gemini Imagen)
   - Engages with Solana community (comments, likes, retweets)
 
-Scoring factors: SOL balance, wallet age, tx count, NFT holdings, DeFi/LST exposure, meme holdings, Seeker Genesis & Chapter 2 Preorder NFTs, blue chip NFTs. Max score 1400. Tiers: Mercury, Mars, Venus, Earth, Neptune, Uranus, Saturn, Jupiter, Sun, Binary Sun (combo).
+Scoring: legacy/base identity 0-400; current five-pillar composite 0-1000. Tiers follow the current composite. Test-wallet scores and tiers are live values and may change.
 
-Features: 3D celestial card (Three.js), Reputation API, On-Chain Attestation (Memo program), Solana Blinks/Actions (share card, mint NFT, attest reputation), Black Hole token burner, cNFT minting via Metaplex Core, AI-powered Twitter bot with wallet auto-reply, Android app via Capacitor + Solana MWA, Attestation verify page.
+Features: 3D celestial card (Three.js), Reputation API, optional user-signed Memo attestation, Solana Blinks/Actions (share card, mint NFT, attest reputation), Black Hole token burner, Metaplex Core identity NFT minting, 13 in-app badge assets, server-verified game scores, AI-powered Twitter bot with wallet auto-reply, Android app via Capacitor + Solana MWA, Attestation verify page.
 Tech: Vite+React+Three.js, Node.js, Helius DAS API, Gemini AI (text+Imagen images), Metaplex Core NFTs, Solana Actions/Blinks, Solana Memo program, curl_cffi, Capacitor.
+PRISM currently denotes off-chain application points; a future token is not guaranteed.
 Live at https://identityprism.xyz | Twitter: https://x.com/Identity_Prism | API: https://identityprism.xyz/api/reputation?address=YOUR_WALLET | Verify: https://identityprism.xyz/verify
 Be helpful, concise, and genuinely engaging. Never be spammy."""
 
@@ -197,7 +198,7 @@ def action_post(api_key, state):
 
 Write a hackathon progress update forum post for Day {day} ({remaining}).
 Topics to cover (pick 2-3):
-- What we've built/improved recently (AI agent, cosmic identity cards, on-chain scoring, cNFT minting)
+- What we've built/improved recently (AI agent, cosmic identity cards, current composite scoring, Metaplex Core NFT minting)
 - Interesting technical challenges solved
 - What's coming next
 - Invitation for feedback or collaboration
@@ -398,7 +399,7 @@ def handle_poll(api_key, state):
         elif fi.get('type') == 'string':
             p = f"{PROJECT_CONTEXT}\nPoll: {poll.get('prompt','')}\nField: {field} (max {fi.get('maxLength',500)} chars)\nGive a thoughtful answer. Reply ONLY the text."
             a = generate_text(p, max_tokens=300)
-            response[field] = (a or 'Identity Prism — on-chain identity visualization on Solana')[:500]
+            response[field] = (a or 'Identity Prism — wallet identity visualization on Solana')[:500]
     result = api_post(f'/agents/polls/{poll_id}/response', api_key, {'response': response})
     if result:
         logging.info('Poll %s answered', poll_id)
